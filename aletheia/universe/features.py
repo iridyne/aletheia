@@ -505,33 +505,28 @@ async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
     return all_tickers
 
 
-async def _fetch_feature_orderbook(exchange, asset: dict, ccxt_symbol: str) -> dict | None:
-    """Acquire and durably publish one exact physical-market observation."""
-    from aletheia.data.collectors.microstructure import _contract_size, _parse_orderbook
-
+async def _fetch_feature_orderbook(
+    exchange, asset: dict, ccxt_symbol: str, *, orderbook_reader=None,
+) -> dict | None:
+    """Durably publish one normalized exact physical-market observation."""
     try:
         venue = str(asset.get("venue") or "")
-        if not venue or getattr(exchange, "id", None) != venue:
+        reader = orderbook_reader or getattr(exchange, "get_orderbook_observation", None)
+        if not venue or reader is None:
             return None
-        market = exchange.market(ccxt_symbol)
-        is_perp = _is_derivatives_market(asset.get("market_type"))
-        if market.get("symbol") != ccxt_symbol or bool(market.get("contract")) != is_perp:
-            return None
-        if not is_perp and not market.get("spot"):
-            return None
-        size = _contract_size(market)
-        started = time.monotonic()
-        async with asyncio.timeout(5):
-            book = await exchange.fetch_order_book(ccxt_symbol, limit=20)
-        if book.get("symbol") not in (None, ccxt_symbol):
-            return None
-        snap = _parse_orderbook(
-            asset["symbol"], venue, book, int((time.monotonic() - started) * 1000),
-            contract_size=size, market_type=str(asset["market_type"]),
+        row = await reader(
+            asset["symbol"],
+            market_type=str(asset.get("market_type") or "spot"),
         )
-        if snap is None:
+        if not isinstance(row, dict) or any(
+            row.get(field) != expected
+            for field, expected in (
+                ("symbol", asset.get("symbol")),
+                ("exchange", venue),
+                ("market_type", str(asset.get("market_type") or "spot")),
+            )
+        ):
             return None
-        row = snap.model_dump()
         repo.insert_orderbook_snapshot(row)
         return row
     except Exception:
@@ -550,6 +545,7 @@ async def _fetch_single_feature(
     taker_reader: Callable[[str], Awaitable[float | None]] | None = None,
     funding_reader: Callable[..., Awaitable[dict | None]] | None = None,
     open_interest_reader: Callable[[str], Awaitable[dict | None]] | None = None,
+    orderbook_reader: Callable[..., Awaitable[dict | None]] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -743,7 +739,12 @@ async def _fetch_single_feature(
         asset, now=enrichment_at,
     )
     if ob_row is None:
-        ob_row = await _fetch_feature_orderbook(exchange, asset, ccxt_sym)
+        ob_row = await _fetch_feature_orderbook(
+            exchange,
+            asset,
+            ccxt_sym,
+            orderbook_reader=orderbook_reader,
+        )
 
     if ob_row is None and diagnostics_out is not None:
         diagnostics_out["orderbook_unavailable"] = 1
@@ -1146,6 +1147,11 @@ async def collect_features(
                                         if _is_derivatives_market(asset.get("market_type")) else None),
                         open_interest_reader=(getattr(perp_provider, "get_open_interest_observation", None)
                                               if _is_derivatives_market(asset.get("market_type")) else None),
+                        orderbook_reader=(getattr(
+                            perp_provider if _is_derivatives_market(asset.get("market_type")) else spot_provider,
+                            "get_orderbook_observation",
+                            None,
+                        )),
                     )
                 except Exception as e:
                     local_diagnostics["ohlcv_unavailable"] = 1

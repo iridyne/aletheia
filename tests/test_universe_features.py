@@ -642,6 +642,21 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         async def fetch_order_book(self, symbol, limit):
             self.calls.append(symbol)
             return {"symbol": symbol, "bids": [[99.99, 100]], "asks": [[100.01, 100]]}
+
+        async def get_orderbook_observation(self, symbol, *, market_type="spot"):
+            from aletheia.data.collectors.microstructure import _parse_orderbook
+
+            physical_symbol = f"{symbol}:USDT" if market_type == "perp" else symbol
+            self.calls.append(physical_symbol)
+            snapshot = _parse_orderbook(
+                symbol,
+                "okx",
+                {"symbol": physical_symbol, "bids": [[99.99, 100]], "asks": [[100.01, 100]]},
+                0,
+                contract_size=2 if market_type == "perp" else 1,
+                market_type=market_type,
+            )
+            return snapshot.model_dump() if snapshot else None
         async def fetch_ohlcv(self, symbol, timeframe, limit):
             interval = {"15m": 900000, "1h": 3600000, "4h": 14400000}[timeframe]
             end = int(now.timestamp() * 1000) // interval * interval
@@ -735,12 +750,21 @@ async def test_discovery_rejects_unavailable_books_without_persisting(tmp_path, 
     setup_env(tmp_path, monkeypatch)
     class Exchange:
         id = "binance" if failure == "venue" else "okx"
-        def market(self, symbol):
-            return {"symbol": symbol, "spot": failure != "market", "contract": failure == "market", "contractSize": 1}
-        async def fetch_order_book(self, symbol, limit):
+        async def get_orderbook_observation(self, symbol, *, market_type="spot"):
+            from aletheia.data.collectors.microstructure import _parse_orderbook
+
             if failure == "cancel":
                 raise asyncio.CancelledError
-            return {"symbol": symbol, "bids": [] if failure == "empty" else [[101 if failure == "crossed" else 99.99, float("nan") if failure == "nan" else 1]], "asks": [[100.01, 1]]}
+            snapshot = _parse_orderbook(
+                symbol,
+                "binance" if failure == "venue" else "okx",
+                {"symbol": symbol,
+                 "bids": [] if failure == "empty" else [[101 if failure == "crossed" else 99.99, float("nan") if failure == "nan" else 1]],
+                 "asks": [[100.01, 1]]},
+                0,
+                market_type="perp" if failure == "market" else market_type,
+            )
+            return snapshot.model_dump() if snapshot else None
     if failure == "persist":
         def unavailable(data):
             raise RuntimeError("writer unavailable")

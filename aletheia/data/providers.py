@@ -309,6 +309,11 @@ class MarketDataProvider(Protocol):
     source-timestamped observation mappings. They perform no persistence or
     fallback; Core owns freshness admission, stored fallback and feature writes.
 
+    The optional async ``get_orderbook_observation(symbol, *, market_type)``
+    capability returns one normalized exact-market orderbook mapping without
+    persistence or fallback. Core owns freshness reuse, diagnostics and the
+    sole orderbook repository write.
+
     The optional async ``get_market_instruments()`` capability returns active
     USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
     primary venue, without persistence or cross-venue fallback. Core retains

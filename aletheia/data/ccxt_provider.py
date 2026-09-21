@@ -504,6 +504,40 @@ class CCXTProvider:
             "fact": fact,
         }
 
+    async def get_orderbook_observation(
+        self, symbol: str, *, market_type: str = "spot",
+    ) -> dict | None:
+        """Acquire and normalize one exact-market orderbook without writing it."""
+        from aletheia.data.collectors.microstructure import _contract_size, _parse_orderbook
+
+        exchange = self._ensure_primary(market_type)
+        ccxt_symbol = to_ccxt_perp(symbol) if market_type in {"perp", "futures"} else to_canonical(symbol)
+        with self._market_type_context(exchange, market_type):
+            await exchange.load_markets()
+            market = exchange.market(ccxt_symbol)
+            is_perp = market_type in {"perp", "futures"}
+            if (
+                market.get("symbol") != ccxt_symbol
+                or bool(market.get("contract")) != is_perp
+                or (not is_perp and not market.get("spot"))
+            ):
+                return None
+            contract_size = _contract_size(market)
+            started = time.monotonic()
+            async with asyncio.timeout(5):
+                book = await exchange.fetch_order_book(ccxt_symbol, limit=20)
+        if not isinstance(book, dict) or book.get("symbol") not in (None, ccxt_symbol):
+            return None
+        snapshot = _parse_orderbook(
+            to_canonical(symbol),
+            self._primary_name,
+            book,
+            int((time.monotonic() - started) * 1000),
+            contract_size=contract_size,
+            market_type=market_type,
+        )
+        return snapshot.model_dump() if snapshot is not None else None
+
     async def get_market_instruments(self) -> list[MarketInstrument]:
         exchange = self._ensure_primary()
         await exchange.load_markets()
