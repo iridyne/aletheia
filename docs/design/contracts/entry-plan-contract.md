@@ -98,7 +98,7 @@ execution field and requires a stable non-OK reason.
 Before the first bind, the Planner requires available 15m candles, anchors, and
 an exact-venue/symbol/market orderbook observed no later than the cutoff and at
 most two seconds earlier. It reuses a qualified stored book or acquires one via
-the existing native public Microstructure collector with a five-second total
+the existing normalized Data provider orderbook capability with a five-second total
 timeout, exact physical market routing, and no venue fallback. Collection and
 provider close occur outside database transactions; acquired facts are persisted
 before being referenced. The cutoff is selected after acquisition. Missing,
