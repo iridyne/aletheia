@@ -148,7 +148,7 @@ open gate where stated.
 | `uta` (8) | Existing normalized contract/models/errors, funding facts, account manager and loop-owned registry | Core Exchange Port/lifecycle. `compat.py` normalizes local rows into typed query scopes; it is not a forwarding alias for a retired adapter. Concrete CCXT, venue profiles and credential composition have moved to Extensions. |
 | `utils` (2) | Datetime helper | Core utility; no new wrapper needed. |
 | `extensions` root (1) | Package initializer | No runtime authority. |
-| `extensions/data` (15) | CCXT public Data, fallback chain, public sources and six context/native collectors | Existing normalized Data provider and request-local acquisition; no Exchange mutation or credentials. Core caches/facts and repository owners remain unchanged. |
+| `extensions/data` (15) | CCXT public Data, fallback chain, public sources, seven context/native collectors and IV derivation | Existing normalized Data provider and request-local acquisition; no Exchange mutation or credentials. Core caches/facts and repository owners remain unchanged. |
 | `extensions/exchanges` (18) | Generic CCXT adapter, profiles, Bitget native reads/protection, scoped auth and composition/credential ingress | Concrete Exchange boundary; normal orders remain Core Risk/Gateway/UTA commands. Retired alternate native trading clients are not retained. |
 | `extensions/model_endpoints` (6) | Official HTTP SDK transports and scoped endpoint credential/probe composition | Concrete Model boundary; Core keeps selection, task tiers, inference identity and explicit fallback. |
 | `extensions/regime` (3) | Detection, collection and cache | Optional market context; Core Universe retains persistence/publication and Risk retains verdicts. |
