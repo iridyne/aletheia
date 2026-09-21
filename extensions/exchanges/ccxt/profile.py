@@ -1,4 +1,4 @@
-"""Shared CCXT normalization; venue profiles only declare real differences."""
+"""Generic CCXT normalization; venue profiles only declare real differences."""
 
 from __future__ import annotations
 

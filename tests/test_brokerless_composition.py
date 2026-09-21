@@ -8,7 +8,11 @@ import pytest
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
-@pytest.mark.parametrize("missing", ["aletheia.exchanges", "aletheia.exchanges.composition", "broken_dependency"])
+@pytest.mark.parametrize("missing", [
+    "aletheia.exchanges", "aletheia.exchanges.composition", "broken_dependency",
+    "extensions", "extensions.exchanges", "extensions.exchanges.ccxt",
+    "extensions.exchanges.ccxt.adapter", "extensions.exchanges.ccxt.profile",
+])
 def test_brokerless_composition(entrypoint, missing):
     script = f"entrypoint = {entrypoint!r}\nmissing = {missing!r}\n" + '''
 import asyncio
