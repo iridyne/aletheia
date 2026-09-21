@@ -163,6 +163,12 @@ def test_sizing_trace_missing_fills_table_still_uses_positions(monkeypatch):
     assert report["summary"]["sample_size"] == 1
     assert report["traces"][0]["executed_notional_usdt"] == 25.0
     assert report["schema_errors"]
+    trace = report["traces"][0]
+    assert trace["proposal_notional_usdt"] == 25.0
+    assert trace["paper_trade_count"] is None
+    assert trace["current_policy_projection_usdt"] is None
+    assert trace["effective_kelly"] is None
+    assert trace["main_reason"] == "sample_evidence_unavailable"
 
 
 def test_sizing_trace_detects_low_conviction(monkeypatch):

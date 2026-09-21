@@ -284,7 +284,9 @@ def _conviction_for_proposal(db, proposal: dict) -> int | None:
     return int(row["conviction"]) if row and row["conviction"] is not None else None
 
 
-def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> int:
+def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> int | None:
+    if not _table_exists(db, "fills"):
+        return None
     if not strategy_id or not _table_exists(db, "positions"):
         return 0
     from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
@@ -313,12 +315,20 @@ def _reconstruct_current_config_size(
     *,
     symbol: str | None,
     conviction: int | None,
-    paper_trade_count: int,
+    paper_trade_count: int | None,
     atr_pct: float | None,
 ) -> dict:
     from aletheia.trading.sizing import compute_position_size
 
     base = _effective_base_notional(cfg, symbol)
+    if paper_trade_count is None:
+        return {
+            "base_notional_usdt": _round(base),
+            "effective_kelly": None,
+            "raw_vol_size": None,
+            "kelly_cap": None,
+            "intended_position_size_usdt": None,
+        }
     base_kelly = _effective_kelly_base(cfg, symbol)
     effective_kelly = _effective_kelly(base_kelly, paper_trade_count)
     conviction_i = int(conviction if conviction is not None else 70)
@@ -464,7 +474,7 @@ def _reason(
     conviction: int | None,
     base_notional: float | None,
     effective_kelly: float | None,
-    paper_trade_count: int,
+    paper_trade_count: int | None,
     atr_pct: float | None,
     raw_vol_size: float | None,
     risk_cap_hit: bool | None,
@@ -472,6 +482,8 @@ def _reason(
     executed_notional: float | None,
 ) -> tuple[str, list[str]]:
     notes: list[str] = []
+    if paper_trade_count is None:
+        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if risk_cap_hit:
         notes.append("Risk decision or configured notional cap constrained the proposal.")
         return "risk_cap", notes
