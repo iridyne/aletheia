@@ -183,6 +183,28 @@ def test_r_multiple_unverifiable_row_not_in_bins():
     assert result["eligible_r_multiple_count"] == 0
 
 
+@pytest.mark.parametrize("error", [FileNotFoundError, PermissionError])
+def test_r_multiple_readonly_failure_never_opens_writer(monkeypatch, error):
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_trade_insights
+    from aletheia.storage import repositories, sqlite
+
+    rows = [_make_row(id="p1")]
+    monkeypatch.setattr(outcome_integrity, "read_complete_outcome_cohort", lambda **kw: _complete_cohort(rows))
+    with (
+        patch.object(sqlite, "readonly_db", side_effect=error("unavailable")),
+        patch.object(repositories, "get_db", side_effect=AssertionError("writer opened")) as writer,
+    ):
+        result = get_trade_insights(execution_mode="bitget_demo")
+    writer.assert_not_called()
+    assert sum(item["count"] for item in result["r_multiple_distribution"]) == 0
+    assert result["r_multiple_distribution_meta"]["eligible_r_multiple_count"] == 0
+    assert result["r_multiple_distribution_meta"]["unavailable_r_multiple_count"] == 1
+    assert result["r_multiple_distribution_meta"]["unavailability_reasons"] == {
+        "readonly_database_unavailable": 1,
+    }
+
+
 def test_r_multiple_no_proxy_risk():
     """Rows without verifiable initial risk are never proxied via 2%-notional."""
     from aletheia.analytics.trade_insights import _r_multiple_distribution

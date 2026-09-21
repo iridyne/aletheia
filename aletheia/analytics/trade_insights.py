@@ -488,7 +488,6 @@ def _r_multiple_distribution(rows) -> dict:
     proxy is explicitly removed.
     """
     from aletheia.analytics.entry_exit_geometry import _initial_risk as _compute_initial_risk
-    from aletheia.storage import repositories as repo
     try:
         from aletheia.storage.sqlite import readonly_db
         _db_context = readonly_db
@@ -507,9 +506,11 @@ def _r_multiple_distribution(rows) -> dict:
 
     def _get_initial_risk_verified(row, db):
         """Try to get verified initial risk from frozen plan evidence."""
+        if db is None:
+            return None, "readonly_database_unavailable"
         try:
             position_id = str(row.get("id") or row.get("position_id") or "")
-            position = (db or repo.get_db()).execute(
+            position = db.execute(
                 "SELECT * FROM positions WHERE id=?", (position_id,)
             ).fetchone()
             if position is None:
@@ -518,12 +519,12 @@ def _r_multiple_distribution(rows) -> dict:
             proposal_id = position.get("proposal_id")
             proposal = None
             if proposal_id:
-                p_row = (db or repo.get_db()).execute(
+                p_row = db.execute(
                     "SELECT * FROM trade_proposals WHERE id=?", (proposal_id,)
                 ).fetchone()
                 if p_row:
                     proposal = dict(p_row)
-            plans_rows = (db or repo.get_db()).execute(
+            plans_rows = db.execute(
                 "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version ASC",
                 (position_id,),
             ).fetchall()
