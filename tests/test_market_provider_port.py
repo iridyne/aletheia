@@ -36,7 +36,7 @@ async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypat
     calls, writes, closed = [], [], []
     monkeypatch.setattr(market_data, "load_config", lambda: object())
     monkeypatch.setattr(market_data, "_build_dynamic_instruments", lambda cfg: [] if token else [instrument])
-    monkeypatch.setattr(market_data, "xstocks_instruments_from_config", lambda cfg: [instrument] if token else [])
+    monkeypatch.setattr(market_data, "stock_tokens_from_config", lambda cfg: [instrument] if token else [])
     monkeypatch.setattr(market_data, "_xstock_failure_counts", {})
     monkeypatch.setattr(market_data, "insert_market_snapshot_batch", lambda rows: writes.extend(rows) or len(rows))
 
