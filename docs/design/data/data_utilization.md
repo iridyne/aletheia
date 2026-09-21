@@ -63,7 +63,7 @@
 | 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
 | xStock 上市状态（责任交易所 active spot market list） | market_data 失败路径经 `get_market_data_provider(native_ccxt=True)` 查询 | 不落行情表；确认缺失时只更新 canonical `observed_stock_tokens` 并写 audit，见[配置 Contract](../contracts/configuration_contract.md) | 仅维护 observation-only xStock 采集范围 | 🟡；单轮每 venue 一次、10s 硬截止；超时/网络失败/空列表均为 indeterminate，保留配置 |
 | **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot**；亦注入 Serenity equity_chain lens 上下文 | ✅ |
-| 市场状态 regime | MacroCollector 内联风险标签 + `regime/collector.py`/detector | `macro_snapshots.risk_regime` + `market_regimes` | market_observer / emitter / ranker / System Operator | ✅ Universe regime 使用真实约7天 market-cap baseline 与已完成日K true range；缺历史时 unavailable，不回落24h proxy |
+| 市场状态 regime | MacroCollector 与存量读取共用 `data/freshness.py` 风险标签投影；独立 `extensions/regime/collector.py`/detector | `macro_snapshots.risk_regime` + `market_regimes` | market_observer / emitter / ranker / System Operator | ✅ 宏观标签不依赖 collector 可用性；Universe regime 使用真实约7天 market-cap baseline 与已完成日K true range；缺历史时 unavailable，不回落24h proxy |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
 | 清算 liquidations | CoinalyzeCollector（key-guard，data_collector_context；DU-S06/DU-T01） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
 | LLM 逻辑调用/物理 attempt/context manifest | inference harness + provider tracing | `llm_inference_calls` + `runtime_cost_events` + `llm_context_artifacts` | tokenomics 审查、caller coverage、Learning B1/technical-context paired evaluation | ✅ observation-only；仅身份/版本/哈希/计数，不存 prompt、response 或 source body（DU-S25） |
@@ -176,7 +176,7 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |
 | DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
 | DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
-| DU-S05 | L2a | 不存在 `class RegimeCollector`；`MacroCollector._classify_risk_regime()` 是 regime 的唯一实现（防虚构采集器类） |
+| DU-S05 | L2a | 不存在 `class RegimeCollector`；宏观风险标签由 `data/freshness.py` 的单一投影供采集与存量读取共用，不依赖 optional collector；独立市场 regime detector 语义不变 |
 | DU-S06 | L2a | `scheduler.py` 含 `CoinalyzeCollector` 引用（已注册 `_async_data_collector_context`）且 `config/schema.py` 定义 `enable_coinalyze` + `coinalyze_api_key`（调度+配置结构双锁） |
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
 | DU-S12 | L2a | 默认新闻源包含 SEC/CFTC/Ethereum Foundation 官方 RSS，且 §3 登记为 NewsCollector→`news_items`→market_observer/research_worker |

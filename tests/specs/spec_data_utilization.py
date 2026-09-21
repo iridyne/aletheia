@@ -641,33 +641,38 @@ def test_yfinance_provider_declared_in_utilization_doc():
 @spec_claim(
     SpecClaim(
         "DU-S05", _CONTRACT, "§regime inline derivation", "L2a",
-        "§3 lists 'RegimeCollector' as the regime collector, but no such class "
-        "exists. Regime is MacroCollector._classify_risk_regime() writing "
-        "risk_regime into macro_snapshots. Guards against ghost RegimeCollector "
-        "class creation and locks the truthful naming.",
+        "Macro risk labels use the single freshness projection for both "
+        "collection and stored-context reads. No standalone RegimeCollector "
+        "or acquisition dependency is needed to classify stored facts.",
         status="implemented",
     ),
 )
 def test_regime_is_inline_not_separate_collector():
-    """Regime lives inside MacroCollector; no standalone RegimeCollector class."""
+    """Macro labels share one projection; no standalone RegimeCollector class."""
     collectors_dir = _ROOT / "aletheia" / "data" / "collectors"
     regime_files = list(collectors_dir.glob("*regime*"))
     assert not regime_files, (
         f"Unexpected RegimeCollector file(s): {regime_files}. "
-        "Regime must stay an inline derivation inside MacroCollector."
+        "Macro labels must remain a projection, not a second collector."
     )
 
     macro_py = collectors_dir / "macro.py"
     macro_src = macro_py.read_text(encoding="utf-8")
-    assert "_classify_risk_regime" in macro_src, (
-        "MacroCollector must contain _classify_risk_regime (inline regime derivation)"
-    )
+    assert "fresh_macro_row" in macro_src
+    assert "def _classify_risk_regime" not in macro_src
+    from aletheia.data.freshness import fresh_macro_row
+    from datetime import datetime, timezone
+    projected = fresh_macro_row(dict(
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        total_market_cap_change_24h_pct=-5.0,
+    ))
+    assert projected["risk_regime"] == "risk_off"
 
     for py_file in (_ROOT / "aletheia").rglob("*.py"):
         text = py_file.read_text(encoding="utf-8", errors="ignore")
         assert "class RegimeCollector" not in text, (
             f"{py_file}: RegimeCollector must not exist as a class "
-            "(ghost code -- regime is inline in MacroCollector)"
+            "(macro labels use the existing freshness projection)"
         )
 
 

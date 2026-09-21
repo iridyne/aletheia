@@ -362,18 +362,3 @@ def _fetch_one_tradfi_ticker(ticker_sym: str) -> tuple | None:
     except Exception as e:
         logger.debug("yfinance tradfi ticker %s failed: %s", ticker_sym, e)
     return None
-
-
-def _classify_risk_regime(
-    vix: float | None, cap_change: float | None
-) -> str | None:
-    """Simple heuristic: VIX > 25 or cap down > 3% → risk_off; VIX < 15 + cap up → risk_on."""
-    if vix is None and cap_change is None:
-        return None
-    if vix is not None and vix > 25:
-        return "risk_off"
-    if cap_change is not None and cap_change < -3.0:
-        return "risk_off"
-    if vix is not None and vix < 15 and (cap_change is None or cap_change > 0):
-        return "risk_on"
-    return "neutral"
