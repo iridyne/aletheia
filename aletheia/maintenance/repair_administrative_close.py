@@ -324,7 +324,7 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from aletheia.exchanges.composition import bind_uta_provider
+    from extensions.exchanges.composition import bind_uta_provider
 
     bind_uta_provider()
     parser = argparse.ArgumentParser(description=__doc__)

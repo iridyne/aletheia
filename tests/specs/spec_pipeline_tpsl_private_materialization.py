@@ -148,7 +148,7 @@ def _patch_configured_reader(monkeypatch, *identities):
     otherwise its assertions pass vacuously through the identity gate.
     """
     import aletheia.uta.manager as uta_manager
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
 
     monkeypatch.setattr(uta_manager, "_native_protection_reader_factory", composition.create_native_protection_reader)
     monkeypatch.setattr(uta_manager, "_native_protection_modes", composition.NATIVE_PROTECTION_EXECUTION_MODES)

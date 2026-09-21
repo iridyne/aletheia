@@ -87,6 +87,7 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     forbidden_imports = (
         "aletheia.storage",
         "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "ccxt",
     )
@@ -229,7 +230,7 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
             else:
                 continue
             for name in names:
-                if name.startswith("aletheia.exchanges") or name in {
+                if name.startswith(("aletheia.exchanges", "extensions.exchanges")) or name in {
                     "aletheia.execution.okx_broker",
                     "aletheia.execution.binance_broker",
                     "aletheia.execution.bitget_broker",

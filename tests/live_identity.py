@@ -2,7 +2,7 @@
 
 
 def bind_live_identity(monkeypatch, credential_reader):
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
     from aletheia.uta import manager
 
     monkeypatch.setattr(composition, "get_secret", credential_reader)

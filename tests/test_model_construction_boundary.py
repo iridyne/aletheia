@@ -150,7 +150,7 @@ def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(mo
     monkeypatch.setattr(outcome_hooks, "_feedback_executor", None)
     monkeypatch.setattr("aletheia.risk.engine._lesson_treatment", None)
     monkeypatch.setattr(http_runtime, "get_secret", forbidden)
-    monkeypatch.setattr("aletheia.exchanges.composition.bind_uta_provider", lambda: None)
+    monkeypatch.setattr("extensions.exchanges.composition.bind_uta_provider", lambda: None)
     main._configure_runtime()
     assert router._provider_factory is http_runtime.build_http_provider
     assert router._provider_identity_reader is http_runtime.http_configuration_identity

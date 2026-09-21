@@ -31,7 +31,7 @@ def _imports(relative_path: str) -> set[str]:
 ))
 def test_learning_has_no_execution_or_risk_authority():
     forbidden_prefixes = (
-        "aletheia.exchanges", "aletheia.execution", "aletheia.server.routes.live",
+        "aletheia.exchanges", "extensions.exchanges", "aletheia.execution", "aletheia.server.routes.live",
         "aletheia.risk",
     )
     violations: dict[str, list[str]] = {}
@@ -55,7 +55,7 @@ def test_operator_and_frontend_have_no_direct_exchange_order_path():
     operator_violations = {
         str(path.relative_to(ROOT)): sorted(
             module for module in _imports(str(path.relative_to(ROOT)))
-            if module.startswith("aletheia.exchanges")
+            if module.startswith(("aletheia.exchanges", "extensions.exchanges"))
         )
         for path in operator_paths
     }

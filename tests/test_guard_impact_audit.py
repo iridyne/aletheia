@@ -161,6 +161,7 @@ def test_guard_impact_read_model_has_no_llm_http_or_exchange_calls():
         "aletheia.agents",
         "aletheia.agent_shell",
         "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "aletheia.model_provider",
         "openai",

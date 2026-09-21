@@ -30,7 +30,7 @@ from tests.test_demo_trading import (
 
 @pytest.fixture(autouse=True)
 def configured_funding_retention(monkeypatch):
-    from aletheia.exchanges.composition import funding_history_retention_contract
+    from extensions.exchanges.composition import funding_history_retention_contract
 
     monkeypatch.setattr("aletheia.uta.manager._retention_contract", funding_history_retention_contract)
 

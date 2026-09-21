@@ -5,6 +5,24 @@ Source checkpoint: `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`, under
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
 
+## Exchange compartment follow-up
+
+Rechecked against base `c2bdd7f62e71c10432f2ee3296fb99e01fa92905`:
+the existing UTA account factories and scoped credential HTTP ingress belong to
+`extensions.exchanges.composition` and `extensions.exchanges.credential_routes`.
+The CCXT order-rule reader and concrete transport-error classification belong to
+`extensions.exchanges.ccxt`. Their former `aletheia.exchanges` files and package
+initializers are removed without a forwarding facade. Core UTA identity,
+registry/lifecycle and numeric quantity policy remain their existing owners.
+
+Only CLI/Web and the two explicit maintenance entrypoints bind the existing
+factories; binding performs no credential or network access. Web mounts the
+existing credential routes conditionally. Missing Exchange clears the existing
+bindings; unrelated internal import failures still propagate. The import,
+composition, credential/redaction, exact-instrument quantity and UTA specs cover
+this bounded cutover. This follow-up neither refreshes every dated count below
+nor proves full Scheme A or deployed/runtime/economic acceptance.
+
 ## Coverage and entrypoints
 
 The source walk contains 562 Python files: 35 first-level packages and 12 root

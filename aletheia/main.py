@@ -70,10 +70,10 @@ def _configure_runtime() -> None:
     from aletheia.execution.order_constraints import configure_order_constraints_reader
 
     try:
-        from aletheia.exchanges.composition import bind_uta_provider
+        from extensions.exchanges.composition import bind_uta_provider
     except ModuleNotFoundError as exc:
         if exc.name not in {
-            "aletheia.exchanges", "aletheia.exchanges.composition",
+            "extensions.exchanges.composition",
             "extensions", "extensions.exchanges", "extensions.exchanges.ccxt",
             "extensions.exchanges.ccxt.adapter", "extensions.exchanges.ccxt.profile",
         }:

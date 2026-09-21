@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from aletheia.execution.order_constraints import ConstraintUnavailable, OrderConstraints, _decimal
-from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
+from extensions.exchanges.ccxt.submission_errors import is_ambiguous_submission_error
 from aletheia.uta.compat import instrument_from_local
 
 

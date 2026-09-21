@@ -291,7 +291,7 @@ async def test_failed_position_read_keeps_other_account_but_revokes_aggregate(mo
 
 
 def test_targeted_adapter_never_resolves_unrelated_credentials(monkeypatch):
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
 
     def scoped_secret(key):
         assert key.startswith("bitget.demo."), "unrelated credential scope accessed"

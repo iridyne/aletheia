@@ -2,7 +2,7 @@
 
 import pytest
 
-from aletheia.exchanges import composition
+from extensions.exchanges import composition
 from aletheia.uta import manager
 
 

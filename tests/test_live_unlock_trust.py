@@ -58,7 +58,7 @@ def test_live_identity_preserves_pre_extraction_hashes(monkeypatch, broker, prof
 @pytest.mark.anyio
 async def test_missing_credentials_fail_without_probe(monkeypatch):
     cfg, trust = _config(monkeypatch, "bitget")
-    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", lambda _ref: None)
+    monkeypatch.setattr("extensions.exchanges.composition.get_secret", lambda _ref: None)
 
     async def forbidden(*_a, **_k):
         pytest.fail("missing credentials cannot reach the private probe")
@@ -71,7 +71,7 @@ async def test_missing_credentials_fail_without_probe(monkeypatch):
 
 @pytest.mark.parametrize("requested,configured_mode", [("okx_live_limited", "live"), ("bitget_live_limited", "demo")])
 def test_revision_reader_cannot_read_unselected_scope(monkeypatch, requested, configured_mode):
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
 
     cfg, _trust = _config(monkeypatch, "bitget")
     cfg.exchange.mode = configured_mode
@@ -91,7 +91,7 @@ async def test_credential_revision_failure_never_echoes_secret_store_error(monke
     def unavailable(_ref):
         raise ValueError("synthetic-sensitive-store-error")
 
-    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", unavailable)
+    monkeypatch.setattr("extensions.exchanges.composition.get_secret", unavailable)
     result = await trust.run_live_preflight(cfg)
     assert result["reason_code"] == "credential_revision_unavailable"
     assert "synthetic-sensitive-store-error" not in str(result)
@@ -103,7 +103,7 @@ async def test_credential_revision_failure_never_echoes_secret_store_error(monke
     ("okx", "okx_live"), ("binance", "binance_live"),
 ])
 def test_live_identity_uses_scoped_uta_metadata_without_client(monkeypatch, broker, profile):
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
     from aletheia.uta import manager
 
     cfg, trust = _config(monkeypatch, broker)
@@ -152,7 +152,7 @@ async def test_unbound_live_identity_fails_before_private_probe(monkeypatch):
 ])
 def test_live_identity_rejects_mismatched_uta_account(monkeypatch, change):
     from types import SimpleNamespace
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
     from aletheia.uta import manager
 
     cfg, trust = _config(monkeypatch, "bitget")
@@ -384,7 +384,7 @@ def test_evidence_expires_and_binds_credential_revision(monkeypatch):
     assert valid is False
     assert reason == "stale_unlock_evidence"
 
-    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", lambda ref: f"rotated:{ref}")
+    monkeypatch.setattr("extensions.exchanges.composition.get_secret", lambda ref: f"rotated:{ref}")
     valid, reason = trust.evidence_matches_config(cfg, evidence)
     assert valid is False
     assert reason == "credential_revision_mismatch"

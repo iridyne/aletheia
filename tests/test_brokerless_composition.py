@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
 @pytest.mark.parametrize("missing", [
-    "aletheia.exchanges", "aletheia.exchanges.composition", "broken_dependency",
+    "extensions.exchanges.composition", "broken_dependency",
     "extensions", "extensions.exchanges", "extensions.exchanges.ccxt",
     "extensions.exchanges.ccxt.adapter", "extensions.exchanges.ccxt.profile",
 ])
@@ -36,7 +36,7 @@ manager.configure_uta_provider(
 attempted = []
 class MissingExchange:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == (missing if missing != "broken_dependency" else "aletheia.exchanges.composition"):
+        if fullname == (missing if missing != "broken_dependency" else "extensions.exchanges.composition"):
             attempted.append(fullname)
             raise ModuleNotFoundError("isolated missing dependency", name=missing)
 sys.meta_path.insert(0, MissingExchange())

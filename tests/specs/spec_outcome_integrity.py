@@ -108,7 +108,7 @@ def test_dependency_neutral_outcome_read_model_exists():
         assert token in source
     for forbidden in (
         "aletheia.learning", "aletheia.risk", "aletheia.execution",
-        "aletheia.exchanges", "aletheia.agent_shell",
+        "aletheia.exchanges", "extensions.exchanges", "aletheia.agent_shell",
     ):
         assert forbidden not in source
     assessment_source = _source("aletheia/analytics/outcome_semantics.py")
