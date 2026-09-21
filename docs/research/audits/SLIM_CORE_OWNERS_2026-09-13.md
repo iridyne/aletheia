@@ -208,6 +208,36 @@ runtime path. Current source traces establish the following distinctions:
   ordering and pagination are unchanged. This does not classify the active
   inference ledger, pricing worker or paired-evaluation writers as Legacy.
 
+### Economics and research consumer disposition
+
+This source audit distinguishes current inference provenance from optional
+research and archive access. The package name is not an ownership boundary.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| `model_provider.base` → `economics.tracing` | Physical Model attempts append `runtime_cost_events`; `agent_runtime.run_logger` initializes tracing and reads run aggregates. Pricing snapshots have one catalog writer. These are current Core inference facts, not realized trading PnL or Legacy report generation. `agent_roles` only classifies attribution. |
+| `agents.helpers`, startup provider probe and explicit model ping → `inference_calls` / `context_artifacts` | Logical calls, structured attempt outcomes and bounded prompt-free context metadata have dedicated ledger writers. Web startup reconciles interrupted logical calls. Explicit model ping also records success/empty-response/failure verification through `model_provider.router.persist_provider_verification`, which uses canonical `mutate_config` and invalidates the health cache after persistence. Learning entry-context reads the same persisted identities and costs; optional research does not own the shared provenance kernel. |
+| `economics.schema` | Owns economics DDL, the `agent_tool_calls` cost-mirroring trigger and bounded backfill marker. First-time DDL refuses an active caller transaction. Active telemetry query helpers may still invoke initialization, so they are not claimed physically inert; archive viability reads are separately confined above. No Order/Position/Outcome authority is created here. |
+| `economics.pricing_sync` | Mixed responsibility: immutable event-time catalog observations/resolution serve Core attempts; public catalog HTTP acquisition, cache publication and one bounded refresh worker serve optional reference updates. Web startup, the existing scheduler, explicit API refresh and Core resolution of an unmatched model in an active catalog trigger the same worker; unmatched refresh has a per-catalog negative cache. The API writes `pricing_refresh_requested` and successful workers write `pricing_refresh_applied` through `files.jsonl.write_audit`. Whole-module movement would invert Core accounting dependencies. The public LiteLLM catalog is not an embedded LiteLLM transport SDK. |
+| `economics.budgets` / `usage_insights` | Explicit audit CLI commands declare/enable/remove budget policies. Shared Model fallback computes would-block metadata and owns conditional admission in `_enforce_budget_if_configured`: enabled economics, an exceeded observed budget and a non-`warn_only` mode can raise `BudgetExceededError` before inference. Safety callers `pi_trading_decision`, `risk_critic` and `agent_shell/trading_decision` remain exempt. Usage v2 projects logical/physical ledgers through `readonly_db`, including missing-evidence states, without persisting its display calculations. Neither is a second trading settlement owner. |
+| `economics.context_effectiveness` | Explicit CLI paired evaluations call the shared Model path and write blinded packets outside the repository; score commands persist aggregate owner reviews. This is optional research, not automatic effectiveness/policy promotion. Its inference ledger dependencies remain shared Core provenance. |
+| `agents.research_worker` | Optional Serenity producer writes namespaced runs/evidence/claims/themes/opportunities and invokes the Learning information-policy epoch helper. CAS claims and guarded terminal transitions preserve cancellation truth. The research lock is a fixed, non-renewed 1,800-second lease: an expired lease can be acquired while the prior thread is still running, so it does not prove whole-pipeline mutual exclusion. Manual and automatic retries share durable retry identity; automatic retry uses the existing scheduler, not another scheduler instance. |
+| Serenity publication | Manual API promotion and worker auto-promotion both call `trading.serenity_publication`; exact source/PA preparation precedes a short transaction that revalidates evidence and calls canonical `publish_candidate_snapshot` / current Generation owners. Research does not create a second Candidate writer, execute a Proposal, or bypass Risk/Gateway. |
+
+Serenity worker threads are daemon-owned, with cancellation checkpoints between
+stages/lenses/provider calls. The existing scheduler reconciles prior-process
+attempts at startup; Core lifespan does not individually join these threads.
+The [Serenity Contract](../../design/contracts/serenity_contract.md#51-research-run-lifecycle-truth)
+preserves cooperative cancellation, not physical thread termination. This
+inventory does not claim whole-subsystem shutdown or optional-absence proof.
+
+Behavioral evidence includes `test_economics_cli_crud`, `test_economics_routes`,
+`test_economics_budgets`, `test_economics_budget_contract`, `test_usage_insights_v2`,
+`test_pricing_sync`, `test_serenity_workbench`,
+`test_serenity_scheduler_continuity` and `test_serenity_p0_p3_e2e`.
+Fixture results establish their named behaviors, not live model availability,
+deployed lifecycle health, or economic qualification.
+
 ### Data consumer and side-effect disposition
 
 The following source observations distinguish shared facts from optional
