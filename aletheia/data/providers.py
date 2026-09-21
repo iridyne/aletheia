@@ -107,6 +107,7 @@ class MarketInstrument:
     amount_precision: int | None = None
     is_test_or_dated: bool = False
     is_tokenized_equity: bool = False
+    contract_size: float | None = None
 
 
 @dataclass
@@ -332,10 +333,12 @@ class MarketDataProvider(Protocol):
     exact primary venue. It performs no persistence or cross-venue fallback;
     Core retains prefilter, volume and feature semantics.
 
-    The optional async ``get_market_instruments()`` capability returns active
-    USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
-    primary venue, without persistence or cross-venue fallback. Core retains
-    product admission, configured exclusions and registry lifecycle ownership.
+    The optional async ``get_market_instruments(market_type=None)`` capability
+    returns active USDT non-option listing facts as ``list[MarketInstrument]``
+    from the exact primary venue, without persistence or cross-venue fallback.
+    ``MarketInstrument.contract_size`` is normalized metadata for contract
+    volume conversion. Core retains product admission, configured exclusions
+    and registry lifecycle ownership.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...

@@ -18,6 +18,12 @@ def test_standard_core_consumers_do_not_import_concrete_data(module):
     )
 
 
+def test_feature_scans_do_not_bootstrap_raw_exchange_clients():
+    source = (Path(__file__).resolve().parents[1] / "aletheia" / "universe" / "features.py").read_text()
+    assert "_ensure_primary" not in source
+    assert ".load_markets" not in source
+
+
 @pytest.mark.parametrize("exact_venue", [False, True])
 def test_factory_preserves_policy_and_request_ownership(monkeypatch, exact_venue):
     from aletheia.data import ccxt_provider, providers

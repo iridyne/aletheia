@@ -16,6 +16,7 @@ from aletheia.data.symbols import (
     InstrumentId,
     instrument_analysis_context,
     instrument_background_from_metadata,
+    to_ccxt_perp,
 )
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
@@ -291,7 +292,8 @@ def _load_fresh_enrichment_rows(
 
 
 def _quote_volume_24h(
-    exchange, ccxt_symbol: str, ticker: dict,
+    exchange, ccxt_symbol: str, ticker: dict, *,
+    market_metadata: dict[str, dict] | None = None,
 ) -> float | None:
     """Return 24h quote-currency volume for spot or contract tickers.
 
@@ -321,7 +323,13 @@ def _quote_volume_24h(
     if last is None:
         return None
 
-    markets = getattr(exchange, "markets", {}) or {}
+    markets = (
+        market_metadata
+        if market_metadata is not None
+        else getattr(exchange, "markets", {}) or {}
+    )
+    if market_metadata is not None and ccxt_symbol not in markets:
+        return None
     market = markets.get(ccxt_symbol) or {}
     if market.get("contract"):
         contract_size_raw = market.get("contractSize")
@@ -334,6 +342,35 @@ def _quote_volume_24h(
 
     result = base_volume * last
     return result if math.isfinite(result) else None
+
+
+async def _read_market_metadata(provider, market_type: str) -> dict[str, dict]:
+    """Read normalized primary-venue metadata needed for volume conversion."""
+    reader = getattr(provider, "get_market_instruments", None)
+    if not callable(reader):
+        return {}
+    try:
+        instruments = await reader(market_type=market_type)
+    except Exception as exc:
+        logger.warning(
+            "%s market metadata unavailable: %s", market_type, type(exc).__name__,
+        )
+        return {}
+    if not isinstance(instruments, list):
+        return {}
+    metadata = {}
+    for instrument in instruments:
+        if getattr(instrument, "market_type", None) != market_type:
+            continue
+        symbol = str(getattr(instrument, "symbol", "") or "")
+        if not symbol:
+            continue
+        ccxt_symbol = to_ccxt_perp(symbol) if market_type == "perp" else symbol
+        metadata[ccxt_symbol] = {
+            "contract": market_type == "perp",
+            "contractSize": getattr(instrument, "contract_size", None),
+        }
+    return metadata
 
 
 def _ticker_candidate_fact(
@@ -368,6 +405,8 @@ def _evaluate_ticker_prefilters(
     min_volume: float,
     priority_asset_ids: set[str] | None = None,
     derivative_exchange=None,
+    market_metadata: dict[str, dict] | None = None,
+    derivative_market_metadata: dict[str, dict] | None = None,
 ) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
     """Evaluate ticker availability and volume in order without sampling facts."""
     candidates: list[tuple[dict, dict]] = []
@@ -420,7 +459,14 @@ def _evaluate_ticker_prefilters(
             if is_perp and derivative_exchange is not None
             else exchange
         )
-        volume = _quote_volume_24h(volume_exchange, ccxt_symbol, ticker)
+        volume = _quote_volume_24h(
+            volume_exchange,
+            ccxt_symbol,
+            ticker,
+            market_metadata=(
+                derivative_market_metadata if is_perp else market_metadata
+            ),
+        )
         if volume is None:
             volume_facts.append(_ticker_candidate_fact(
                 asset,
@@ -556,6 +602,7 @@ async def _fetch_single_feature(
     open_interest_reader: Callable[[str], Awaitable[dict | None]] | None = None,
     orderbook_reader: Callable[..., Awaitable[dict | None]] | None = None,
     ohlcv_reader: Callable[..., Awaitable[list]] | None = None,
+    market_metadata: dict[str, dict] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -566,7 +613,9 @@ async def _fetch_single_feature(
     venue = str(asset.get("venue") or getattr(exchange, "id", "unknown"))
     market_type = str(asset.get("market_type") or "spot")
 
-    quote_volume_24h = _quote_volume_24h(exchange, ccxt_sym, ticker)
+    quote_volume_24h = _quote_volume_24h(
+        exchange, ccxt_sym, ticker, market_metadata=market_metadata,
+    )
     bid = ticker.get("bid")
     ask = ticker.get("ask")
     spread = _spread_bps(
@@ -1030,7 +1079,6 @@ async def collect_features(
     Phase B: pre-filter by min_volume, then fetch OHLCV concurrently with semaphore.
     """
     from aletheia.data.providers import get_market_data_provider
-    from aletheia.data.symbols import to_ccxt_perp
 
     # Feature observation capabilities pin their external reads to the primary
     # venue; ordinary provider fallback remains configured for other consumers.
@@ -1055,54 +1103,51 @@ async def collect_features(
         # --- Phase A: batch ticker fetch (spot + perp) ---
         spot_assets = [a for a in assets if not _is_derivatives_market(a.get("market_type"))]
         perp_assets = [a for a in assets if _is_derivatives_market(a.get("market_type"))]
-        spot_exchange = None
-        try:
-            spot_exchange = spot_provider._ensure_primary()
-            spot_exchange.options["defaultType"] = "spot"
-            await spot_exchange.load_markets()
-        except Exception as exc:
-            spot_exchange = None
-            logger.warning("Spot market bootstrap failed: %s", type(exc).__name__)
-        perp_exchange = None
+        spot_market_metadata: dict[str, dict] = {}
+        if spot_assets:
+            spot_market_metadata = await _read_market_metadata(spot_provider, "spot")
+        perp_provider = None
+        perp_market_metadata: dict[str, dict] = {}
         if perp_assets:
             perp_provider = get_market_data_provider(
                 exchange=venue, exact_venue=True, fallback_venue=fallback_venue,
             )
             providers.append(perp_provider)
-            try:
-                perp_exchange = perp_provider._ensure_primary("perp")
-                perp_exchange.options["defaultType"] = "swap"
-                await perp_exchange.load_markets()
-                perp_exchange._candidate_markets_acquired_at = datetime.now(timezone.utc).isoformat()
-            except Exception as exc:
-                perp_exchange = None
-                logger.warning("Perp market bootstrap failed: %s", type(exc).__name__)
+            perp_market_metadata = await _read_market_metadata(perp_provider, "perp")
 
         spot_symbols = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
         perp_symbols = list(dict.fromkeys(a["symbol"] for a in perp_assets if a.get("symbol")))
 
         tickers: dict = {}
 
-        if spot_symbols and spot_exchange is not None:
+        if spot_symbols:
             reader = getattr(spot_provider, "get_tickers_observation", None)
             if reader is not None:
-                tickers.update(await reader(spot_symbols, market_type="spot"))
+                try:
+                    tickers.update(await reader(spot_symbols, market_type="spot"))
+                except Exception as exc:
+                    logger.warning("Spot ticker observation failed: %s", type(exc).__name__)
 
-        if perp_symbols and perp_exchange is not None:
+        if perp_symbols and perp_provider is not None:
             reader = getattr(perp_provider, "get_tickers_observation", None)
             if reader is not None:
-                tickers.update(await reader(perp_symbols, market_type="perp"))
+                try:
+                    tickers.update(await reader(perp_symbols, market_type="perp"))
+                except Exception as exc:
+                    logger.warning("Perp ticker observation failed: %s", type(exc).__name__)
 
         # --- Volume pre-filter ---
         min_vol = cfg.universe.min_volume_24h_usdt
         candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
             assets,
             tickers,
-            spot_exchange,
+            spot_provider,
             to_ccxt_perp,
             min_volume=min_vol,
             priority_asset_ids=priority_asset_ids,
-            derivative_exchange=perp_exchange,
+            derivative_exchange=perp_provider,
+            market_metadata=spot_market_metadata,
+            derivative_market_metadata=perp_market_metadata,
         )
         _record_ticker_prefilter_batches(
             scanner_run_id, ticker_facts, volume_facts, cfg,
@@ -1123,7 +1168,7 @@ async def collect_features(
             )) or {}).get("kind") == "crypto"
             for asset, _ticker in candidates
         )
-        if needs_btc_context and spot_exchange is not None:
+        if needs_btc_context:
             try:
                 btc_reader = getattr(spot_provider, "get_ohlcv_observation", None)
                 btc_ohlcv = []
@@ -1158,9 +1203,14 @@ async def collect_features(
             async with sem:
                 try:
                     exchange = (
-                        perp_exchange
+                        perp_provider
                         if _is_derivatives_market(asset.get("market_type"))
-                        else spot_exchange
+                        else spot_provider
+                    )
+                    market_metadata = (
+                        perp_market_metadata
+                        if _is_derivatives_market(asset.get("market_type"))
+                        else spot_market_metadata
                     )
                     return await _fetch_single_feature(
                         exchange, asset, ticker, now, to_ccxt_perp,
@@ -1188,6 +1238,7 @@ async def collect_features(
                             "get_orderbook_observation",
                             None,
                         )),
+                        market_metadata=market_metadata,
                     )
                 except Exception as e:
                     local_diagnostics["ohlcv_unavailable"] = 1

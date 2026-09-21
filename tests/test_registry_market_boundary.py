@@ -98,18 +98,20 @@ async def test_adapter_normalizes_market_facts_without_registry_authority(monkey
     class Exchange:
         markets = {
             "BTC": raw("BTC", precision={"price": 0.01, "amount": 3}, limits={"cost": {"min": 5}}),
-            "TEST": raw("TEST", swap=True),
+            "TEST": raw("TEST", swap=True, contractSize=0.01),
             "EQUITY": raw("SPCX", info={"instCategory": "3"}),
             "inactive": raw("BAD", active=False),
             "option": raw("OPT", option=True),
             "other_quote": raw("USD", quote="USDC"),
         }
 
+        options = {}
+
         async def load_markets(self):
             return self.markets
 
     provider = CCXTProvider(exchange="bitget", fallback_exchange="okx")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: Exchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: Exchange())
     monkeypatch.setattr(provider, "_ensure_fallback", lambda: pytest.fail("cross-venue listing"))
     monkeypatch.setattr(registry.repo, "sync_universe_assets", lambda *args, **kwargs: pytest.fail("Data must not persist registry"))
     facts = await provider.get_market_instruments()
@@ -117,4 +119,7 @@ async def test_adapter_normalizes_market_facts_without_registry_authority(monkey
     assert [item.symbol for item in facts] == ["BTC/USDT", "TEST/USDT", "SPCX/USDT"]
     assert (facts[0].price_precision, facts[0].amount_precision, facts[0].min_notional) == (2, 3, 5)
     assert facts[1].is_test_or_dated and facts[1].market_type == "perp"
+    assert facts[1].contract_size == 0.01
     assert facts[2].is_tokenized_equity and facts[2].background["asset_class"] == "equity"
+    perp_facts = await provider.get_market_instruments("perp")
+    assert [item.symbol for item in perp_facts] == ["TEST/USDT"]

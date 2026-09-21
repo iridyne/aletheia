@@ -90,6 +90,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             return self.exchange
 
         async def get_tickers_observation(self, symbols, *, market_type="spot"):
+            self.exchange.options["defaultType"] = "swap" if market_type == "perp" else "spot"
             requested = [
                 f"{symbol}:USDT" if market_type == "perp" else symbol
                 for symbol in symbols
@@ -118,11 +119,12 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             self.closed = True
 
     async def fetch_single(exchange, asset, *_args, **_kwargs):
+        raw_exchange = exchange.exchange
         reader = _kwargs["taker_reader"]
         if asset["market_type"] == "perp":
-            assert reader.__self__.exchange is exchange
-            assert _kwargs["funding_reader"].__self__.exchange is exchange
-            assert _kwargs["open_interest_reader"].__self__.exchange is exchange
+            assert reader.__self__.exchange is raw_exchange
+            assert _kwargs["funding_reader"].__self__.exchange is raw_exchange
+            assert _kwargs["open_interest_reader"].__self__.exchange is raw_exchange
         else:
             assert reader is None
             assert _kwargs["funding_reader"] is None
@@ -132,7 +134,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             if asset["market_type"] == "perp"
             else asset["symbol"]
         )
-        physical = await exchange.fetch_ohlcv(symbol, "feature", 1)
+        physical = await raw_exchange.fetch_ohlcv(symbol, "feature", 1)
         return {
             "asset_id": asset["id"],
             "market_type": asset["market_type"],
@@ -209,6 +211,7 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
             return self.exchange
 
         async def get_tickers_observation(self, symbols, *, market_type="spot"):
+            await self.exchange.load_markets()
             requested = [
                 f"{symbol}:USDT" if market_type == "perp" else symbol
                 for symbol in symbols
@@ -265,6 +268,29 @@ def test_quote_volume_converts_okx_contract_volume_to_quote_currency():
     }
 
     assert _quote_volume_24h(exchange, "BTC/USDT:USDT", ticker) == 5_400_000_000.0
+
+
+@pytest.mark.asyncio
+async def test_feature_volume_uses_normalized_provider_market_metadata():
+    from aletheia.data.providers import MarketInstrument
+    from aletheia.universe import features
+
+    class Provider:
+        async def get_market_instruments(self, *, market_type):
+            assert market_type == "perp"
+            return [MarketInstrument(
+                "okx", "BTC/USDT", "BTC", "USDT", "perp", {},
+                contract_size=0.01,
+            )]
+
+    metadata = await features._read_market_metadata(Provider(), "perp")
+
+    assert features._quote_volume_24h(
+        Provider(),
+        "BTC/USDT:USDT",
+        {"quoteVolume": None, "baseVolume": 9_000_000, "last": 60_000},
+        market_metadata=metadata,
+    ) == 5_400_000_000.0
 
 
 def test_quote_volume_converts_spot_base_volume_when_quote_is_missing():

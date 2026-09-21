@@ -19,9 +19,10 @@ exception (routing through the generic factory would select the configured fallb
 - xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
   because only Bitget lists those tokens and the config fallback (bybit) would not find them.
 
-Registry sync uses the existing Core factory's exact-venue selection and the
-normalized ``get_market_instruments`` capability. It loads primary metadata
-only; the historical configured fallback client was never read by registry.
+Registry sync and feature volume conversion use the existing Core factory's
+exact-venue selection and normalized ``get_market_instruments`` capability.
+They load primary metadata only; the historical configured fallback client was
+never read by either path.
 
 Any NEW direct construction site should be added here with its reason; a bare
 ``CCXTProvider(...)`` outside this list is a review-flagged deviation.
@@ -578,9 +579,17 @@ class CCXTProvider:
         )
         return snapshot.model_dump() if snapshot is not None else None
 
-    async def get_market_instruments(self) -> list[MarketInstrument]:
-        exchange = self._ensure_primary()
-        await exchange.load_markets()
+    async def get_market_instruments(
+        self, market_type: str | None = None,
+    ) -> list[MarketInstrument]:
+        requested_market_type = market_type
+        exchange = (
+            self._ensure_primary(requested_market_type)
+            if requested_market_type is not None
+            else self._ensure_primary()
+        )
+        with self._market_type_context(exchange, requested_market_type or "spot"):
+            await exchange.load_markets()
         result = []
         for symbol_key, info in exchange.markets.items():
             if not info.get("active", True) or info.get("option"):
@@ -589,7 +598,9 @@ class CCXTProvider:
             base = (info.get("base") or "").upper()
             if quote != "USDT" or not base:
                 continue
-            market_type = "perp" if info.get("swap") or info.get("future") else "spot"
+            instrument_market_type = "perp" if info.get("swap") or info.get("future") else "spot"
+            if requested_market_type and instrument_market_type != requested_market_type:
+                continue
             native_id = (info.get("id") or "").upper()
             precision = info.get("precision") or {}
             result.append(MarketInstrument(
@@ -597,16 +608,17 @@ class CCXTProvider:
                 symbol=f"{base}/{quote}",
                 base_asset=base,
                 quote_asset=quote,
-                market_type=market_type,
+                market_type=instrument_market_type,
                 background=build_instrument_background(
                     symbol=str(info.get("symbol") or symbol_key),
                     venue=self._primary_name,
-                    market_type=market_type,
+                    market_type=instrument_market_type,
                     market_info=info,
                 ),
                 min_notional=((info.get("limits") or {}).get("cost") or {}).get("min"),
                 price_precision=_precision_to_decimals(precision.get("price")),
                 amount_precision=_precision_to_decimals(precision.get("amount")),
+                contract_size=_opt_float(info.get("contractSize")),
                 is_test_or_dated="TEST" in native_id or "_" in native_id,
                 is_tokenized_equity=str((info.get("info") or {}).get("instCategory") or "") == "3",
             ))
