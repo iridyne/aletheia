@@ -504,11 +504,20 @@ def _attribution_fields(proposal: dict) -> dict:
 
 def _require_compatible_entry_position(order: dict, position: dict) -> dict:
     """Fail closed when a durable entry backlink crosses position identity."""
+    from aletheia.execution.coordinator import _position_account
+    from aletheia.uta.models import UTAAccountIdentity
+
     for field in ("symbol", "market_type", "direction", "execution_mode"):
         if position.get(field) != order.get(field):
             raise MaterializationIntegrityError(f"entry Order {field} does not match linked Position")
     if position.get("status") != "open":
         raise MaterializationIntegrityError("entry Order references a linked Position that is not open")
+    try:
+        account = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
+        if _position_account(position) != account:
+            raise ValueError("account mismatch")
+    except ValueError as exc:
+        raise MaterializationIntegrityError("entry Order account does not match linked Position") from exc
     return position
 
 
@@ -554,7 +563,12 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
             continue
         if (candidate.get("trade_school") or "short_term") != proposal_school:
             continue
-        return candidate
+        try:
+            return _require_compatible_entry_position(order, candidate)
+        except MaterializationIntegrityError:
+            # An unlinked candidate in another or unknown account cannot absorb
+            # this private Fill. Its historical identity is never inferred.
+            continue
     return None
 
 

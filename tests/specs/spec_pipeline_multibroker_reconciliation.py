@@ -326,8 +326,28 @@ old_source,):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 
+    # Known account identity is independent of private-fill verification. Keep
+    # the old economics unverified, but prove which account owns that exposure.
+    old_proposal, old_decision = _seed_authority(execution_mode, suffix=f"old-average-{execution_mode}")
+    old_order = Order(
+        proposal_id=old_proposal.id,
+        risk_decision_id=old_decision.id,
+        client_order_id=old_proposal.id,
+        symbol=old_proposal.symbol,
+        market_type=old_proposal.market_type,
+        direction=old_proposal.direction,
+        order_type=old_proposal.order_type,
+        quantity=old_proposal.quantity,
+        price=old_proposal.price,
+        execution_mode=execution_mode,
+        status="filled",
+        uta_account_identity_json=_identity(execution_mode).model_dump_json(),
+    )
+    repo.insert_order(old_order)
     old_position = Position(
         id=f"position-unverified-{execution_mode}",
+        order_id=old_order.id,
+        proposal_id=old_proposal.id,
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
