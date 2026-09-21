@@ -183,6 +183,12 @@ runtime path. Current source traces establish the following distinctions:
 - `data.price_feed` and `history_downloader` now construct exact-venue providers
   through the existing Data port (#3330). Cache/event and history-writer owners
   remain unchanged; this does not classify every collector as Core.
+- `data.context_builder` owns the pure stored Position X advisory projection.
+  Core attribution and historical rendering do not import `data.position_x`;
+  offline material parsing and holder/batch calculations remain optional producer
+  work, not Core read dependencies. The fresh-process absence regression uses
+  persisted market facts and the real attribution reader; no online qualification
+  or whole optional-subsystem absence is inferred from it.
 - Missing `learning.control` fails classified Learning jobs before Model or
   knowledge effects (#3331), while Core/measurement jobs continue. Classification
   has one definition in `trust.learning_safety`; this is not blanket absence

@@ -390,6 +390,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         }, None)
 
     monkeypatch.setattr(observer, "llm_structured", contrary_read)
+    monkeypatch.setattr(observer, "get_provider_for_tier", lambda _tier: object())
     monkeypatch.setattr(observer, "record_step", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(observer, "log_tool", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
