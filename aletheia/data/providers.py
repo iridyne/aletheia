@@ -294,10 +294,11 @@ class MarketDataProvider(Protocol):
     underlying session and must be idempotent.
 
     Sources may additionally expose ``get_ohlcv_observation(symbol, timeframe,
-    limit, since) -> OHLCVResult`` as an async capability. It must not persist
-    market history or change venue health. Observation consumers require this
-    capability explicitly; ordinary OHLCV support does not imply it, and its
-    absence is unavailable rather than permission to use a writable read.
+    limit, since, use_cache) -> OHLCVResult`` as an async capability. It must
+    use the exact primary venue, perform no cross-venue fallback, persist no
+    market history and change no venue health. Observation consumers require
+    this capability explicitly; ordinary OHLCV support does not imply it, and
+    its absence is unavailable rather than permission to use a writable read.
 
     The optional async ``get_taker_buy_ratio(symbol) -> float | None`` reads
     the existing primary venue's 1h buy/sell ratio without writes or fallback.

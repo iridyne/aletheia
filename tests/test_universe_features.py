@@ -96,6 +96,15 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             ]
             return await self.exchange.fetch_tickers(requested)
 
+        async def get_ohlcv_observation(
+            self, instrument, *, timeframe="1h", limit=100, use_cache=False,
+        ):
+            from tests.ohlcv_test_helpers import observation_reader
+
+            return await observation_reader(self.exchange)(
+                instrument, timeframe=timeframe, limit=limit, use_cache=use_cache,
+            )
+
         async def get_taker_buy_ratio(self, symbol):
             return 1.25
 
@@ -530,8 +539,10 @@ async def test_live_funding_override_requires_finite_rate(
                 },
             }
 
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = Exchange()
     feature = await _fetch_single_feature(
-        Exchange(),
+        exchange,
         {
             "id": "asset-btc",
             "symbol": "BTC/USDT",
@@ -545,6 +556,7 @@ async def test_live_funding_override_requires_finite_rate(
         },
         now,
         lambda symbol: f"{symbol}:USDT",
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feature is not None
@@ -615,9 +627,11 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
                 "fact": {"availability": "available", "value": 123.0},
             }
 
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = Exchange()
     snapshots = []
     feature = await features._fetch_single_feature(
-        Exchange(),
+        exchange,
         {
             "id": "asset-btc",
             "symbol": "BTC/USDT",
@@ -628,6 +642,7 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
         scan_started_at,
         lambda symbol: f"{symbol}:USDT",
         snapshot_buffer=snapshots,
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feature is not None
@@ -676,14 +691,19 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
             end = int(now.timestamp() * 1000) // interval * interval
             return [[end - i * interval, 100, 101, 99, 100, 1000] for i in range(limit - 1, -1, -1)]
 
+    from tests.ohlcv_test_helpers import observation_reader
     exchange = Exchange()
+    ohlcv = observation_reader(exchange)
     for market in ("spot", "perp"):
         asset = {"id": market, "symbol": "ETH/USDT", "venue": "okx", "market_type": market}
         get_db().execute("INSERT INTO universe_registry (id, symbol, venue, market_type) VALUES (?, ?, ?, ?)",
                          (market, "ETH/USDT", "okx", market))
         get_db().commit()
         assert features._load_fresh_enrichment_rows(asset, now=now)[0] is None
-        feature = await features._fetch_single_feature(exchange, asset, {"quoteVolume": 1000000}, now, lambda s: f"{s}:USDT")
+        feature = await features._fetch_single_feature(
+            exchange, asset, {"quoteVolume": 1000000}, now,
+            lambda s: f"{s}:USDT", ohlcv_reader=ohlcv,
+        )
         assert feature["depth_10bps_usd"] == (40000 if market == "perp" else 20000)
         row = repo.latest_orderbook("ETH/USDT", exchange="okx", market_type=market)
         assert row["total_depth_10bps_usd"] == feature["depth_10bps_usd"]
@@ -695,7 +715,10 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         assert all(window["availability"] == "available" for window in admitted.values())
         repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=NULL, last_mutated_at=NULL WHERE exchange=? AND symbol=? AND market_type=?",
                            ("okx", "ETH/USDT", market))
-        repeated = await features._fetch_single_feature(exchange, asset, {"quoteVolume": 2000000}, now, lambda s: f"{s}:USDT")
+        repeated = await features._fetch_single_feature(
+            exchange, asset, {"quoteVolume": 2000000}, now,
+            lambda s: f"{s}:USDT", ohlcv_reader=ohlcv,
+        )
         assert repeated["feature_snapshot_id"] == feature["feature_snapshot_id"]
         recovered = repo.get_ohlcv_candles("ETH/USDT", "15m", 96, "okx", market, include_provenance=True)
         admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", {"15m": recovered}, datetime.now(timezone.utc))

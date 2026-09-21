@@ -76,11 +76,14 @@ async def test_core_owns_taker_trigger_and_optional_failure(monkeypatch, market,
             raise TimeoutError("optional taker unavailable")
         return 2.5
 
+    from tests.ohlcv_test_helpers import observation_reader
     monkeypatch.setattr(features.repo, "get_latest_feature_snapshot", lambda *args: None)
+    exchange = Exchange()
     result = await features._fetch_single_feature(
-        Exchange(), {"id": "fixture", "venue": "fixture", "market_type": market, "symbol": "BTC/USDT"},
+        exchange, {"id": "fixture", "venue": "fixture", "market_type": market, "symbol": "BTC/USDT"},
         {"bid": 99, "ask": 101}, now, lambda symbol: symbol + ":USDT",
         snapshot_buffer=[], taker_reader=None if mode == "absent" else read,
+        ohlcv_reader=observation_reader(exchange),
     )
     assert result is not None
     assert calls == (["BTC/USDT"] if called else [])
