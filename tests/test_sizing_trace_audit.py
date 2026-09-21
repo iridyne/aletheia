@@ -169,6 +169,29 @@ def test_sizing_trace_missing_fills_table_still_uses_positions(monkeypatch):
     assert trace["current_policy_projection_usdt"] is None
     assert trace["effective_kelly"] is None
     assert trace["main_reason"] == "sample_evidence_unavailable"
+    bottleneck = report["main_sizing_bottleneck"]
+    assert bottleneck["evidence_basis"] == "sample_evidence_unavailable"
+    assert "projection is unavailable" in bottleneck["summary"]
+
+
+def test_sizing_trace_missing_fills_preserves_risk_rejection(monkeypatch):
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _cfg())
+    db = get_db()
+    _insert_proposal(db, 1, notional=25.0, status="rejected")
+    _insert_risk_rejection(db, 1, "max_demo_position_margin_usdt")
+    db.execute("DROP TABLE fills")
+    db.commit()
+
+    report = build_sizing_trace_audit(hours=24, min_sample_size=1)
+
+    assert report["traces"][0]["current_policy_projection_usdt"] is None
+    assert report["traces"][0]["main_reason"] == "risk_cap"
+    assert report["main_sizing_bottleneck"]["reason"] == "risk_cap"
+    assert report["main_sizing_bottleneck"]["severity"] == "warn"
+    assert "Current config projection only" not in report["main_sizing_bottleneck"]["summary"]
 
 
 def test_sizing_trace_detects_low_conviction(monkeypatch):

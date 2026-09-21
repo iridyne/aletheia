@@ -223,8 +223,9 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             proposal_notional=proposal_notional,
             executed_notional=executed_notional,
         )
-        notes.append("reconstructed_from_current_config")
-        notes.append("current_policy_projection_not_historical_intent")
+        if sizing["intended_position_size_usdt"] is not None:
+            notes.append("reconstructed_from_current_config")
+            notes.append("current_policy_projection_not_historical_intent")
         traces.append({
             "proposal_id": proposal["id"],
             "position_id": position.get("id") if position else None,
@@ -482,11 +483,11 @@ def _reason(
     executed_notional: float | None,
 ) -> tuple[str, list[str]]:
     notes: list[str] = []
-    if paper_trade_count is None:
-        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if risk_cap_hit:
         notes.append("Risk decision or configured notional cap constrained the proposal.")
         return "risk_cap", notes
+    if paper_trade_count is None:
+        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if base_notional is not None and base_notional <= _LOW_BASE_NOTIONAL_USDT:
         notes.append(f"Base notional is {base_notional}U.")
         return "low_base_notional", notes
@@ -576,13 +577,19 @@ def _main_sizing_bottleneck(report: dict, min_sample_size: int) -> dict:
     tiny = median_exec is not None and median_exec <= _TINY_EXECUTED_NOTIONAL_USDT
     if top["reason"] == "unknown" and not tiny:
         severity = "ok"
+    projection_available = summary.get("median_current_policy_projection_usdt") is not None
+    projection_note = (
+        "Current config projection only, not historical intent."
+        if projection_available
+        else "Sample-dependent sizing projection is unavailable."
+    )
     return _bottleneck(
         top["reason"],
         severity,
-        f"Current config projection only, not historical intent. {top['evidence']} "
+        f"{projection_note} {top['evidence']} "
         f"Median executed notional={_fmt_usdt(median_exec)}.",
         _next_action(top["reason"]),
-        evidence_basis="current_config_projection",
+        evidence_basis="current_config_projection" if projection_available else "sample_evidence_unavailable",
     )
 
 
