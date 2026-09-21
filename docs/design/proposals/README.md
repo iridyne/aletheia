@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Options Data compartment](slim_core_options_data_compartment.md): isolate
+  Deribit acquisition and derivation while preserving the Core snapshot contract.
+
 - [Public-context Data adapters](slim_core_public_context_adapters.md): place
   existing optional protocol collectors behind the established Data boundary.
 

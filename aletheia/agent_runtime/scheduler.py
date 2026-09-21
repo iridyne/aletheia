@@ -4331,7 +4331,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     from extensions.data.collectors.defillama import DefiLlamaCollector
     from extensions.data.collectors.hyperliquid import HyperliquidCollector
     from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.options_structure import OptionsStructureCollector
+    from extensions.data.collectors.options_structure import OptionsStructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.storage import repositories as repo
 
