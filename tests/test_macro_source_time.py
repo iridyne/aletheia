@@ -1,5 +1,6 @@
 """#1465: an acquisition clock must not rejuvenate daily source facts."""
 import json
+import builtins
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from contextlib import asynccontextmanager
@@ -11,6 +12,31 @@ from aletheia.data.context_builder import build_market_context_from_db
 from aletheia.data.freshness import fresh_row
 from extensions.regime.collector import _get_latest_vix
 from aletheia.storage import repositories as repo
+
+
+def test_stored_macro_context_survives_absent_collector(monkeypatch):
+    row = dict(
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        vix_close=40, risk_regime='risk_off', fng_value=55,
+        total_market_cap_change_24h_pct=1.5,
+    )
+    repo.insert_macro_snapshot(row)
+    raw = repo._select_all('macro_snapshots', limit=1)[0]
+    real_import = builtins.__import__
+
+    def without_collector(name, *args, **kwargs):
+        if name == 'aletheia.data.collectors.macro':
+            raise ModuleNotFoundError(name, name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', without_collector)
+    current = repo.latest_macro_snapshot()
+    context = build_market_context_from_db([])
+    for projected in (current, context.macro):
+        assert projected['vix_close'] is None  # no source proof, not rejuvenated
+        assert projected['risk_regime'] == 'neutral'
+        assert projected['fng_value'] == 55
+    assert repo._select_all('macro_snapshots', limit=1)[0] == raw
 
 
 @pytest.mark.asyncio

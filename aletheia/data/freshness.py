@@ -148,12 +148,25 @@ def fresh_rows(
     ]
 
 
+def _classify_risk_regime(
+    vix: float | None, cap_change: float | None
+) -> str | None:
+    """Simple heuristic: VIX > 25 or cap down > 3% → risk_off; VIX < 15 + cap up → risk_on."""
+    if vix is None and cap_change is None:
+        return None
+    if vix is not None and vix > 25:
+        return "risk_off"
+    if cap_change is not None and cap_change < -3.0:
+        return "risk_off"
+    if vix is not None and vix < 15 and (cap_change is None or cap_change > 0):
+        return "risk_on"
+    return "neutral"
+
+
 def fresh_macro_row(row: Mapping | None, *, now: datetime | None = None) -> dict | None:
     """Project mixed macro inputs without refreshing source dates on acquisition."""
     if not assess_freshness(row, "macro", now=now).usable:
         return None
-    from aletheia.data.collectors.macro import _classify_risk_regime
-
     result = dict(row)
     try:
         source_times = json.loads(row.get("source_times_json") or "{}")

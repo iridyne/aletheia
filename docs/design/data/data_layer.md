@@ -33,9 +33,11 @@ flowchart TD
 
 `MarketDataProvider` is defined in `aletheia/data/providers.py` and currently exposes bounded async ticker/OHLCV reads plus close semantics.
 
-`get_market_data_provider()` in `aletheia/data/ccxt_provider.py` is the normal factory for crypto public-market reads. It returns a **fresh provider per caller/event loop** because async CCXT sessions are loop-bound.
+Consumers using the normalized Core boundary enter through `get_market_data_provider()` in `aletheia/data/providers.py`. Composition binds the concrete implementation from `extensions/data/ccxt_provider.py`; an absent binding reports market data unavailable. The adapter returns a **fresh provider per caller/event loop** because async CCXT sessions are loop-bound.
 
-When crypto fallback is enabled, the factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks. Callers that require CCXT-native market metadata may request the native CCXT surface through the same factory contract.
+When crypto fallback is enabled, the adapter factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks in `extensions/data/sources/`. The Core provider contract exposes normalized capabilities, not native CCXT metadata. Primary-only observation capabilities do not use cross-source fallback. Ordinary ticker/OHLCV methods retain their configured fallback policy: selecting `exact_venue=True` does not disable that fallback when a distinct `fallback_venue` is explicitly supplied.
+
+This boundary is not yet universal. Remaining exceptions include `aletheia/data/collectors/volume_scanner.py`, `microstructure.py` and `derivatives.py`, which use the concrete factory's native CCXT surface; Entry Planner directly invokes `MicrostructureCollector` for its first orderbook refresh. These examples are not a complete consumer inventory or evidence that Core/optional Data separation is complete.
 
 ## Public market-data contract
 
