@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from aletheia.model_provider.base import ModelResponse
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -120,16 +121,14 @@ def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
 # Fake LLM plumbing for behavioral tests (mock only the network boundary)
 # ---------------------------------------------------------------------------
 
-class _Resp:
+class _Resp(ModelResponse):
     def __init__(self, content, completion_tokens=10):
-        self.content = content
-        # Production reads `resp.usage or raw.get("usage")` (helpers.py:880). Without
-        # the attribute, attempt 0 raised AttributeError, the outer handler turned it
-        # into `llm_unavailable`, and every retry/repair/empty-content behaviour these
-        # tests assert was unreachable. Falsy on purpose so the raw fallback below is
-        # what supplies completion_tokens, exactly as before.
-        self.usage = {}
-        self.raw = {"usage": {"completion_tokens": completion_tokens}}
+        # The transport supplies normalized facts; Core does not decode raw usage.
+        super().__init__(
+            content=content,
+            output_tokens=completion_tokens,
+            raw={"usage": {"completion_tokens": completion_tokens}},
+        )
 
 
 class _Schema:
@@ -694,6 +693,7 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
             enable_coingecko_top=True,
             coingecko_top_n=10,
             derivatives_history_hours=0,
+            derivatives_comparison_venues=[],
         )
     )
 
