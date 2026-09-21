@@ -1,4 +1,4 @@
-"""Binance Futures Testnet UTA profile."""
+"""Binance Futures UTA profile owned by the frozen Exchange Extension."""
 
 from decimal import Decimal
 

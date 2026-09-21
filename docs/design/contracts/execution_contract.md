@@ -110,8 +110,8 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
 
 | Adapter | 支持 market_type | 路由要点 | 来源 |
 |---------|-----------------|----------|------|
-| okx | `spot` + `usdt_futures` | UTA profile 处理精确 contract-size、client-id 与 spot/perp 参数；实际可用性仍由 venue facts 与资格约束 | `uta/profiles/okx.py` |
-| bitget | profile 声明 `spot` + `usdt_futures` | Classic v2 / UTA v3 明确隔离；声明能力不代表 demo 标的或凭据已合格 | `uta/profiles/bitget.py` |
+| okx | `spot` + `usdt_futures` | UTA profile 处理精确 contract-size、client-id 与 spot/perp 参数；实际可用性仍由 venue facts 与资格约束 | `extensions/exchanges/okx/profile.py` |
+| bitget | profile 声明 `spot` + `usdt_futures` | Classic v2 / UTA v3 明确隔离；声明能力不代表 demo 标的或凭据已合格 | `extensions/exchanges/bitget/profile.py` |
 
 > **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
 > 当前 market_type 来自 canonical Candidate/EntryPlan 的 exact instrument；不存在旧 PI fallback 类型选择。
@@ -174,7 +174,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | 路径 | Gateway → Coordinator → UTA profile | `execution/coordinator.py` |
 | 内容 | 持久化 protection child 后发送 typed protective_stop / take_profit command | `place_protection` |
 | SL / TP | 使用 Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `place_protection` |
-| 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `uta/profiles/` |
+| 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `extensions/exchanges/{venue}/profile.py` |
 | 持久化 | 仅已确认的 venue IDs 写入 position.exchange_tpsl_order_id；未决 child 保留 | `execution/coordinator.py` |
 | 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功 | `replace_protective_stop` |
 

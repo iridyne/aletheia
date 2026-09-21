@@ -92,8 +92,8 @@ ambiguous submissions retain their records and are never resubmitted elsewhere.
 
 ## Adding a profile within the current exchange scope
 
-A contributor adds one narrow class under `aletheia/uta/profiles/`, registers its
-immutable factory in `aletheia/uta/manager.py`, supplies canonical fixture and
+A contributor adds one narrow class under `extensions/exchanges/{venue}/profile.py`, registers its
+immutable factory in `aletheia/exchanges/composition.py`, supplies canonical fixture and
 conformance tests, and proves the normal execution path for that exact profile and account generation. Raw venue parameters stay in the profile. Agent,
 Risk, Gateway, Portfolio, recovery and Trust business logic must not change merely
 to add the profile; needing such a change means the frozen contract is insufficient

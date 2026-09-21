@@ -976,7 +976,7 @@ def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
     from decimal import Decimal
-    from aletheia.uta.profiles.okx import OKXDemoProfile, OKXLiveProfile
+    from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
     from aletheia.uta.models import ReadCompleteness
 
     profile_type = OKXDemoProfile if account_mode == "demo" else OKXLiveProfile
@@ -1016,7 +1016,7 @@ def test_binance_private_reader_normalizes_order_matched_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
     from decimal import Decimal
-    from aletheia.uta.profiles.binance import BinanceTestnetProfile, BinanceLiveProfile
+    from extensions.exchanges.binance.profile import BinanceTestnetProfile, BinanceLiveProfile
     from aletheia.uta.models import ReadCompleteness
 
     profile_type = BinanceTestnetProfile if account_mode == "testnet" else BinanceLiveProfile
