@@ -23,6 +23,19 @@ composition, credential/redaction, exact-instrument quantity and UTA specs cover
 this bounded cutover. This follow-up neither refreshes every dated count below
 nor proves full Scheme A or deployed/runtime/economic acceptance.
 
+## Regime compartment follow-up
+
+Rechecked against base `301a62d60ff1856a70c0f9a4d74e4bcff1032964`:
+the three detection/collection modules now belong to `extensions.regime`, with
+no surviving source or forwarding module at `aletheia.regime`. Detection,
+debounce/cache, freshness, policy-epoch attribution and log categories are
+unchanged. CLI/Web still bind the existing readers without collecting data.
+Universe retains `insert_market_regime` and publication; Risk retains its
+strict unavailable handling and every verdict. Historical Trade Insights reads
+persisted labels without importing the detector (#3325). Package absence does
+not stop publication/history; internal import defects are not optional absence.
+This bounded move does not refresh the other dated package classifications.
+
 ## Coverage and entrypoints
 
 The source walk contains 562 Python files: 35 first-level packages and 12 root

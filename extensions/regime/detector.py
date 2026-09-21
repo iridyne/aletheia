@@ -282,7 +282,7 @@ def debounced_detect(
 async def collect_regime_record(min_hold_periods: int) -> MarketRegimeRecord | None:
     """Return normalized context; Universe retains its existing persistence owner."""
     import json
-    from aletheia.regime.collector import collect_regime_inputs
+    from extensions.regime.collector import collect_regime_inputs
 
     inputs = await collect_regime_inputs()
     if not inputs:

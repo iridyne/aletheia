@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from aletheia.regime.detector import (
+from extensions.regime.detector import (
     detect_regime,
     debounced_detect,
     reset_state,
@@ -102,7 +102,7 @@ class TestDetectRegime:
 
 
 def test_market_cap_change_uses_real_seven_day_baseline(monkeypatch):
-    from aletheia.regime.collector import _get_market_cap_change_7d
+    from extensions.regime.collector import _get_market_cap_change_7d
     from aletheia.storage import repositories as repo
 
     latest_at = datetime.now(timezone.utc)
@@ -129,7 +129,7 @@ def test_market_cap_change_uses_real_seven_day_baseline(monkeypatch):
 
 
 def test_market_cap_change_is_unavailable_without_historical_baseline(monkeypatch):
-    from aletheia.regime.collector import _get_market_cap_change_7d
+    from extensions.regime.collector import _get_market_cap_change_7d
     from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(
@@ -148,7 +148,7 @@ def test_market_cap_change_is_unavailable_without_historical_baseline(monkeypatc
 
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
 def test_market_cap_change_rejects_nonfinite_values(monkeypatch, bad_value):
-    from aletheia.regime.collector import _get_market_cap_change_7d
+    from extensions.regime.collector import _get_market_cap_change_7d
     from aletheia.storage import repositories as repo
 
     observed_at = datetime(2026, 7, 19, tzinfo=timezone.utc).isoformat()
@@ -167,7 +167,7 @@ def test_market_cap_change_rejects_nonfinite_values(monkeypatch, bad_value):
 
 
 def test_regime_funding_uses_latest_fresh_row_per_instrument(monkeypatch):
-    from aletheia.regime.collector import _get_avg_funding_rate
+    from extensions.regime.collector import _get_avg_funding_rate
     from aletheia.storage import repositories as repo
 
     now = datetime.now(timezone.utc)
@@ -192,7 +192,7 @@ def test_regime_funding_uses_latest_fresh_row_per_instrument(monkeypatch):
 
 
 def test_stale_macro_values_are_unavailable(monkeypatch):
-    from aletheia.regime.collector import _get_latest_vix, _get_market_cap_change_7d
+    from extensions.regime.collector import _get_latest_vix, _get_market_cap_change_7d
     from aletheia.storage import repositories as repo
 
     stale = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -248,7 +248,7 @@ def test_macro_snapshot_near_selects_closest_valid_seven_day_row(tmp_path, monke
 
 
 def test_regime_atr_uses_completed_daily_true_ranges():
-    from aletheia.regime.collector import _compute_btc_atr_ratio
+    from extensions.regime.collector import _compute_btc_atr_ratio
 
     day_ms = 86_400_000
     start = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)
@@ -267,7 +267,7 @@ def test_regime_atr_uses_completed_daily_true_ranges():
 
 @pytest.mark.parametrize("field", ["high", "low", "close"])
 def test_regime_atr_rejects_nonfinite_candles(field):
-    from aletheia.regime.collector import _compute_btc_atr_ratio
+    from extensions.regime.collector import _compute_btc_atr_ratio
 
     day_ms = 86_400_000
     candles = [

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aletheia.regime import detector
+from extensions.regime import detector
 from aletheia.storage import repositories as repo
 
 

@@ -9,7 +9,7 @@ import pytest
 from aletheia.data.collectors import macro
 from aletheia.data.context_builder import build_market_context_from_db
 from aletheia.data.freshness import fresh_row
-from aletheia.regime.collector import _get_latest_vix
+from extensions.regime.collector import _get_latest_vix
 from aletheia.storage import repositories as repo
 
 
