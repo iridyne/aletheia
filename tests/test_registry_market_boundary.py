@@ -123,3 +123,49 @@ async def test_adapter_normalizes_market_facts_without_registry_authority(monkey
     assert facts[2].is_tokenized_equity and facts[2].background["asset_class"] == "equity"
     perp_facts = await provider.get_market_instruments("perp")
     assert [item.symbol for item in perp_facts] == ["TEST/USDT"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dated_first", [False, True])
+@pytest.mark.parametrize("requested_market", [None, "perp"])
+async def test_dated_future_never_supplies_perpetual_metadata(
+    monkeypatch, dated_first, requested_market,
+):
+    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.universe import features
+
+    perpetual = {
+        "id": "BTC-USDT-SWAP", "symbol": "BTC/USDT:USDT",
+        "base": "BTC", "quote": "USDT", "settle": "USDT",
+        "swap": True, "future": False, "contractSize": 0.01,
+    }
+    dated = {
+        **perpetual, "id": "BTC-USDT-261225", "symbol": "BTC/USDT:USDT-261225",
+        "swap": False, "future": True, "contractSize": 10,
+    }
+
+    class Exchange:
+        options = {}
+        markets = {item["symbol"]: item for item in (
+            (dated, perpetual) if dated_first else (perpetual, dated)
+        )}
+
+        async def load_markets(self):
+            return self.markets
+
+    exchange = Exchange()
+    provider = CCXTProvider("okx", "bitget")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
+    facts = await provider.get_market_instruments(requested_market)
+    assert [(item.symbol, item.market_type, item.contract_size) for item in facts] == [
+        ("BTC/USDT", "perp", 0.01),
+    ]
+    metadata = await features._read_market_metadata(provider, "perp")
+    assert features._quote_volume_24h(
+        provider, "BTC/USDT:USDT",
+        {"quoteVolume": None, "baseVolume": 100, "last": 60_000},
+        market_metadata=metadata,
+    ) == 60_000
+    exchange.markets = {dated["symbol"]: dated}
+    assert await provider.get_market_instruments(requested_market) == []
+    assert await features._read_market_metadata(provider, "perp") == {}
