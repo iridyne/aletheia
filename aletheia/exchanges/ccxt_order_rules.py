@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from aletheia.execution.order_constraints import ConstraintUnavailable, OrderConstraints, _decimal
+from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
 
 
 def _amount_step(precision: Any, precision_mode: str) -> Decimal:
@@ -101,7 +102,10 @@ async def read_order_constraints(venue: str, symbol: str, market_type: str) -> O
     except ConstraintUnavailable:
         raise
     except Exception as exc:
-        raise ConstraintUnavailable(f"could not refresh executable venue rules: {exc}") from exc
+        raise ConstraintUnavailable(
+            f"could not refresh executable venue rules: {exc}",
+            temporary=is_ambiguous_submission_error(exc),
+        ) from exc
     finally:
         try:
             await exchange.close()
