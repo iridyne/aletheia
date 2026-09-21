@@ -87,9 +87,17 @@ The scheduler is the only production derivation composition path. Fresh-process
 validation/persistence/history export works with all Extensions denied; this does
 not grant options trading authority or prove online Deribit qualification.
 
-The current tracked source contains 531 Python files under `aletheia`: 33
-first-level packages and 12 root modules. `extensions` contains 45 Python files:
-18 Exchange, 6 Model Endpoint, 17 Data, 3 Regime and one root initializer. Counts include
+News RSS acquisition, Model-backed analysis and their optional API now belong to
+`extensions/data`. Their old modules are removed; shared exact-entity matching
+and historical `batch_news` reads remain Core. Web composition skips an absent
+news router but propagates unrelated internal import failures. Scheduler cadence,
+bounded workers, pause/config gates, failure accounting, namespaced news writes
+and existing Learning policy-epoch effects retain their owners and semantics.
+Fresh-process route/history checks do not start a Gateway or qualify live feeds.
+
+The current tracked source contains 528 Python files under `aletheia`: 33
+first-level packages and 12 root modules. `extensions` contains 48 Python files:
+18 Exchange, 6 Model Endpoint, 20 Data, 3 Regime and one root initializer. Counts include
 package initializers, exclude bytecode, and are dated observations rather than
 brittle acceptance thresholds. Reproduce the census from `git ls-files
 'aletheia/*.py' 'extensions/*.py'`, grouping by the first package below each root.
@@ -131,7 +139,7 @@ open gate where stated.
 | `cli` (33) | Operator commands, diagnostics and explicit maintenance entrypoints | Mixed minimum Core controls and optional/Ops commands. |
 | `config` (9) | Typed schema, locked atomic mutation, redaction, secret storage, and the execution-identity environment/venue registry | Core configuration/storage primitives; concrete Exchange/Model credential resolution and ingress are in their Extensions. Secret-store ownership does not itself authorize a consumer to read raw values; other operator/optional credential callers still need scoped classification. Generic Core callers consume the identity registry. |
 | `counterfactual` (8) | Replay, advisory, calibration and experiment measurements | Optional research state, never authoritative realized trading economics. |
-| `data` (31) | Public venue/network collectors, caches and market facts | Mixed market boundary and optional enrichment. Listing consumers and chart/technical-context/Outcome/Position-observation/registry provider creation use the existing `data.providers` contract, bound by CLI/Web/collector composition; `extensions.data.ccxt_provider` owns concrete fresh-provider policy and listing I/O. Exact-venue reads retain pinned native-provider selection without a Core CCXT flag; ordinary configured fallback remains unchanged. Position observation requires the documented optional no-history/no-venue-health-write capability. Registry consumes normalized `MarketInstrument` facts; Data owns raw market metadata/precision decoding and supplies normalized contract-size metadata for feature volume conversion, while Core retains demo whitelist, exclusions, product support, blacklists and atomic registry writes. Missing/error/wrong-identity facts cannot write registry. The same provider now owns normalized funding/OI and orderbook feature observations; Core retains freshness/reuse, diagnostics, Candidate proof stamping, feature snapshot and orderbook repository writes. Universe feature construction uses only the provider port. |
+| `data` (29) | Public venue/network collectors, caches and market facts | Mixed market boundary and optional enrichment. Listing consumers and chart/technical-context/Outcome/Position-observation/registry provider creation use the existing `data.providers` contract, bound by CLI/Web/collector composition; `extensions.data.ccxt_provider` owns concrete fresh-provider policy and listing I/O. Exact-venue reads retain pinned native-provider selection without a Core CCXT flag; ordinary configured fallback remains unchanged. Position observation requires the documented optional no-history/no-venue-health-write capability. Registry consumes normalized `MarketInstrument` facts; Data owns raw market metadata/precision decoding and supplies normalized contract-size metadata for feature volume conversion, while Core retains demo whitelist, exclusions, product support, blacklists and atomic registry writes. Missing/error/wrong-identity facts cannot write registry. The same provider now owns normalized funding/OI and orderbook feature observations; Core retains freshness/reuse, diagnostics, Candidate proof stamping, feature snapshot and orderbook repository writes. Universe feature construction uses only the provider port. |
 | `diagnostics` (3) | Read-only reports/config checks and explicit Doctor infrastructure repair | Core operator reads / Ops repair; ordinary probe does not authorize fix. |
 | `economics` (11) | Logical inference calls, usage/budgets, pricing references and context measurements | Mixed Core inference provenance and optional reference/analysis work. |
 | `execution` (19) | Gateway/Coordinator, claims, reconciliation, materialization and broker helpers | Mixed Core semantics and concrete normalization; keep one Risk-gated command path. |
@@ -146,7 +154,7 @@ open gate where stated.
 | `policies` (3) | `PolicyStore` writes immutable `ps_policy_versions`; lesson reviewer is a current consumer | Optional policy history, not equivalent to retired PS execution tables; do not delete by `ps_` name. |
 | `portfolio` (17) | Position/close/funding reconciliation, PnL and Outcome hooks | Core lifecycle/economics with concrete account seams still to isolate. |
 | `risk` (5) | Canonical evaluation, policy/kill switch and quality gates | Core safety authority; independently persists preflight/authoritative decisions. |
-| `server` (30) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. Telegram routes now belong to the optional Telegram package. |
+| `server` (29) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. Telegram routes now belong to the optional Telegram package. |
 | `storage` (12) | SQLite/transactions, models, repositories, migrations, event/artifact stores | Mixed canonical operational persistence and namespaced optional schemas; table use must determine ownership. |
 | `sync` (4) | Bundle export/import and conflict handling | Import is restricted to six namespaced research tables; Core Proposal and retired PS runtime rows are rejected before mutation. Artifact-category and whole-payload preflight remain separate restore/atomicity boundaries. |
 | `telegram` (3) | Configured notification/polling endpoint and optional routes | Optional external adapter; no independent execution authority. |
@@ -157,7 +165,7 @@ open gate where stated.
 | `uta` (8) | Existing normalized contract/models/errors, funding facts, account manager and loop-owned registry | Core Exchange Port/lifecycle. `compat.py` normalizes local rows into typed query scopes; it is not a forwarding alias for a retired adapter. Concrete CCXT, venue profiles and credential composition have moved to Extensions. |
 | `utils` (2) | Datetime helper | Core utility; no new wrapper needed. |
 | `extensions` root (1) | Package initializer | No runtime authority. |
-| `extensions/data` (17) | CCXT public Data, fallback chain, public sources nine context/native collectors and IV derivation | Existing normalized Data provider and request-local acquisition; no Exchange mutation. Macro/FRED and Coinalyze retain the approved own-reference credential exception. Core caches/facts and repository owners remain unchanged. |
+| `extensions/data` (20) | CCXT public Data, fallback chain, public sources, nine context/native collectors, IV derivation and news acquisition/analysis/API | Existing normalized Data provider and request-local acquisition; no Exchange mutation. Macro/FRED and Coinalyze retain the approved own-reference credential exception. Core caches/facts and repository owners remain unchanged. |
 | `extensions/exchanges` (18) | Generic CCXT adapter, profiles, Bitget native reads/protection, scoped auth and composition/credential ingress | Concrete Exchange boundary; normal orders remain Core Risk/Gateway/UTA commands. Retired alternate native trading clients are not retained. |
 | `extensions/model_endpoints` (6) | Official HTTP SDK transports and scoped endpoint credential/probe composition | Concrete Model boundary; Core keeps selection, task tiers, inference identity and explicit fallback. |
 | `extensions/regime` (3) | Detection, collection and cache | Optional market context; Core Universe retains persistence/publication and Risk retains verdicts. |

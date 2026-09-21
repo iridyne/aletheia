@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Optional news compartment](slim_core_news_compartment.md): isolate existing
+  RSS/analysis/API work while retaining Core historical matching.
+
 - [Scoped credential Data collectors](slim_core_scoped_data_collectors.md): preserve
   the approved per-adapter credential exception within the Data compartment.
 

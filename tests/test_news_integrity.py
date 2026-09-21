@@ -43,7 +43,7 @@ def test_news_entity_matcher_requires_exact_ticker_or_asset_name(text, expected)
 
 
 def test_news_publication_time_does_not_invent_or_accept_future_time():
-    from aletheia.data.news_collector import _parse_time
+    from extensions.data.news_collector import _parse_time
 
     now = datetime.now(timezone.utc)
     assert _parse_time({}, now=now) == ""
@@ -94,7 +94,7 @@ async def test_analyzer_first_failure_schedules_retry_without_marking_analyzed(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -122,7 +122,7 @@ async def test_analyzer_first_failure_schedules_retry_without_marking_analyzed(
 @pytest.mark.asyncio
 async def test_analyzer_second_due_failure_becomes_terminal_failed(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -152,7 +152,7 @@ async def test_analyzer_second_due_failure_becomes_terminal_failed(tmp_path, mon
 @pytest.mark.asyncio
 async def test_analyzer_timeout_records_first_retry_attempt(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -182,7 +182,7 @@ async def test_analyzer_timeout_records_first_retry_attempt(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_news_analyzer_disables_provider_reasoning(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -214,7 +214,7 @@ async def test_news_analyzer_disables_provider_reasoning(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_analyzer_retry_waits_thirty_minutes(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -256,7 +256,7 @@ async def test_analyzer_fairly_interleaves_old_new_and_due_retry_rows(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -292,7 +292,7 @@ async def test_analyzer_persists_exact_entities_not_model_symbol_guesses(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -324,7 +324,7 @@ async def test_analyzer_persists_exact_entities_not_model_symbol_guesses(
 
 def test_news_analysis_is_an_independent_bounded_scheduler_job(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
 
     calls = []
 
@@ -491,7 +491,7 @@ def test_shared_async_timeout_worker_allows_news_and_rss_coroutines_to_progress(
 @pytest.mark.asyncio
 async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
     from aletheia.learning import opportunity_information_policy
     from aletheia.storage.sqlite import close_db, get_db
 
@@ -549,7 +549,7 @@ async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monke
 @pytest.mark.asyncio
 async def test_news_fetch_reports_all_feed_failures(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
     from aletheia.learning import opportunity_information_policy
 
     feeds = [
@@ -587,7 +587,7 @@ async def test_news_fetch_reports_all_feed_failures(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_news_fetch_preserves_valid_rows_in_partial_batch(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
     from aletheia.learning import opportunity_information_policy
     from aletheia.storage.sqlite import get_db
 
@@ -627,7 +627,7 @@ async def test_news_fetch_preserves_valid_rows_in_partial_batch(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_news_fetch_empty_success_is_not_failure(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
     from aletheia.learning import opportunity_information_policy
 
     feeds = [
@@ -659,7 +659,7 @@ async def test_news_fetch_empty_success_is_not_failure(tmp_path, monkeypatch):
 
 
 def test_news_fetch_rejects_http_error_with_parseable_empty_body(monkeypatch):
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
 
     monkeypatch.setattr(
         news_collector.feedparser,
@@ -672,7 +672,7 @@ def test_news_fetch_rejects_http_error_with_parseable_empty_body(monkeypatch):
 
 
 def test_news_fetch_accepts_not_modified_response(monkeypatch):
-    from aletheia.data import news_collector
+    from extensions.data import news_collector
 
     monkeypatch.setattr(
         news_collector.feedparser,
@@ -688,7 +688,7 @@ async def test_news_analysis_counts_row_removed_in_flight_as_unresolved_failure(
     tmp_path, monkeypatch
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -719,7 +719,7 @@ async def test_news_analysis_counts_row_removed_in_flight_as_unresolved_failure(
 @pytest.mark.asyncio
 async def test_news_analysis_reports_partial_batch_failure(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -905,7 +905,7 @@ async def test_manual_analyze_one_item_success_persists_all_structured_fields(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -957,7 +957,7 @@ async def test_manual_analyze_one_item_failure_never_marks_analyzed(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -990,7 +990,7 @@ async def test_manual_analyze_already_analyzed_returns_persisted_without_rerun(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.data import news_analyzer
+    from extensions.data import news_analyzer
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
