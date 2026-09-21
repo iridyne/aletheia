@@ -594,13 +594,13 @@ class CCXTProvider:
                 exchange._candidate_markets_acquired_at = datetime.now(timezone.utc).isoformat()
         result = []
         for symbol_key, info in exchange.markets.items():
-            if not info.get("active", True) or info.get("option"):
+            if not info.get("active", True) or info.get("option") or info.get("future"):
                 continue
             quote = (info.get("quote") or "").upper()
             base = (info.get("base") or "").upper()
             if quote != "USDT" or not base:
                 continue
-            instrument_market_type = "perp" if info.get("swap") or info.get("future") else "spot"
+            instrument_market_type = "perp" if info.get("swap") else "spot"
             if requested_market_type and instrument_market_type != requested_market_type:
                 continue
             native_id = (info.get("id") or "").upper()

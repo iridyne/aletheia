@@ -334,8 +334,9 @@ class MarketDataProvider(Protocol):
     Core retains prefilter, volume and feature semantics.
 
     The optional async ``get_market_instruments(market_type=None)`` capability
-    returns active USDT non-option listing facts as ``list[MarketInstrument]``
+    returns active USDT spot/perpetual listing facts as ``list[MarketInstrument]``
     from the exact primary venue, without persistence or cross-venue fallback.
+    Dated futures are not perpetual instruments and are excluded by the adapter.
     ``MarketInstrument.contract_size`` is normalized metadata for contract
     volume conversion. Core retains product admission, configured exclusions
     and registry lifecycle ownership.
