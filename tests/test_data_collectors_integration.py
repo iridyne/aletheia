@@ -126,7 +126,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     # real factories rather than a mock captured during first module import.
     from aletheia import net as net_mod
     from aletheia.data.collectors import macro as macro_mod
-    from aletheia.data.collectors import derivatives as deriv_mod
+    from extensions.data.collectors import derivatives as deriv_mod
     from extensions.data.collectors import coingecko_top as cg_mod
     monkeypatch.setattr(net_mod, "httpx_client", _fake_httpx_client)
     monkeypatch.setattr(macro_mod, "httpx_client", _fake_httpx_client)
@@ -137,7 +137,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.storage import repositories as repo
