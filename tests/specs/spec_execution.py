@@ -503,16 +503,16 @@ def test_fill_model_defaults_fee_source_estimated():
 @spec_claim(
     SpecClaim(
         "EX-S07", "execution_contract", "§3.2 symbol filter", "L2a",
-        "_check_symbol_availability and _load_registry_symbols are callable in gateway; "
+        "Gateway availability and the shared normalized symbol capability reader are callable; "
         "the shared execution-mode venue registry maps all real exchange modes",
     ),
 )
 def test_symbol_availability_check_structure():
-    from aletheia.execution import gateway
+    from aletheia.execution import gateway, venue_capabilities
     from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
     assert callable(gateway._check_symbol_availability)
-    assert callable(gateway._load_registry_symbols)
+    assert callable(venue_capabilities.get_supported_symbols)
 
     required_modes = {
         "okx_live_limited",
@@ -577,10 +577,11 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
 )
 def test_symbol_check_registry_modes(monkeypatch):
     import aletheia.execution.gateway as gw
+    import aletheia.execution.venue_capabilities as capabilities
     import aletheia.storage.repositories as repo
 
     # ── case A: registry loaded, WLD absent for usdt_futures ──
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(
         repo, "list_universe_assets",
         lambda *a, **kw: [
@@ -592,7 +593,7 @@ def test_symbol_check_registry_modes(monkeypatch):
     assert reason is not None, "Registry loaded but symbol absent — must reject"
 
     # ── case B: WLD available as spot, but NOT for a perp order ──
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(
         repo, "list_universe_assets",
         lambda *a, **kw: [
@@ -605,7 +606,7 @@ def test_symbol_check_registry_modes(monkeypatch):
     assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot") is None
 
     # ── case C: registry empty (not yet synced) → fail-open ──
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
@@ -613,7 +614,7 @@ def test_symbol_check_registry_modes(monkeypatch):
     # ── case D: futures-only registry rejects spot request ──
     # Deterministic trigger from issue #1222: loaded registry with no key for the
     # requested market_type must reject, not fall through to success.
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(
         repo, "list_universe_assets",
         lambda *a, **kw: [
@@ -627,7 +628,7 @@ def test_symbol_check_registry_modes(monkeypatch):
     )
 
     # ── case E: symbol present in the exact requested partition passes ──
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures") is None, (
         "Symbol present in the loaded futures partition must pass"
     )
@@ -646,6 +647,7 @@ def test_symbol_check_registry_modes(monkeypatch):
 )
 def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
     import aletheia.execution.gateway as gw
+    import aletheia.execution.venue_capabilities as capabilities
     import aletheia.storage.repositories as repo
 
     assets = [
@@ -660,7 +662,7 @@ def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
         observed_limits.append(limit)
         return assets if limit is None else assets[:limit]
 
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", _list_assets)
 
     assert gw._check_symbol_availability(
@@ -669,7 +671,7 @@ def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
         "usdt_futures",
     ) is None
     assert observed_limits == [None]
-    gw._registry_symbol_cache.clear()
+    capabilities._registry_symbol_cache.clear()
 
 
 @spec_claim(
