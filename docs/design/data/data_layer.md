@@ -49,6 +49,13 @@ optional Coinalyze presence probe and reports unavailable if the adapter is abse
 Existing FRED attempt provenance and Coinalyze Learning policy-epoch behavior
 remain unchanged; neither adapter is claimed to be entirely side-effect-free.
 
+Deribit options acquisition/GEX parsing lives in
+`extensions/data/collectors/options_structure.py`; observation-only IV derivation
+lives in `extensions/data/options_volatility.py`. Core keeps the persisted
+`OptionsVolatilitySnapshot` contract in `aletheia/data/options_volatility.py`,
+so repository validation and historical export do not require acquisition code.
+Scheduler cadence, source clocks, GEX/IV formulas and repository writers are unchanged.
+
 ### Canonical values
 
 Current canonical market-data models include:

@@ -487,7 +487,7 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from extensions.data.collectors.defillama import DefiLlamaCollector
     from extensions.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.options_structure import OptionsStructureCollector
+    from extensions.data.collectors.options_structure import OptionsStructureCollector
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
