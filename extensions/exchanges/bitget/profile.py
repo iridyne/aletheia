@@ -1,4 +1,4 @@
-"""Independent Bitget Classic-v2 and UTA-v3 profiles."""
+"""Bitget Extension profiles with independent Classic-v2 and UTA-v3 behavior."""
 
 import json
 from datetime import datetime

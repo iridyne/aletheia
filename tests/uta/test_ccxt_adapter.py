@@ -29,9 +29,9 @@ from aletheia.uta.models import (
     VerifiedExitQuery,
     VerifiedExitState,
 )
-from aletheia.uta.profiles.binance import BinanceLiveProfile, BinanceTestnetProfile
-from aletheia.uta.profiles.okx import OKXDemoProfile, OKXLiveProfile
-from aletheia.uta.profiles.bitget import (
+from extensions.exchanges.binance.profile import BinanceLiveProfile, BinanceTestnetProfile
+from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
+from extensions.exchanges.bitget.profile import (
     BitgetClassicV2LiveProfile,
     BitgetClassicV2Profile,
     BitgetUTAV3LiveProfile,

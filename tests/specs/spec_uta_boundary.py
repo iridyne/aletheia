@@ -116,9 +116,9 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     )
 )
 def test_migrated_mutations_have_one_gateway_coordinator_path():
-    from aletheia.uta.profiles.binance import BinanceLiveProfile
-    from aletheia.uta.profiles.okx import OKXDemoProfile, OKXLiveProfile
-    from aletheia.uta.profiles.bitget import (
+    from extensions.exchanges.binance.profile import BinanceLiveProfile
+    from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
+    from extensions.exchanges.bitget.profile import (
         BitgetClassicV2LiveProfile,
         BitgetClassicV2Profile,
         BitgetUTAV3LiveProfile,

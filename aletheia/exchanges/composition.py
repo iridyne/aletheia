@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def _profile_spec(cfg, execution_mode: str):
     if execution_mode == "binance_testnet":
-        from aletheia.uta.profiles.binance import BinanceTestnetProfile
+        from extensions.exchanges.binance.profile import BinanceTestnetProfile
 
         return (
             "binance.testnet",
@@ -33,7 +33,7 @@ def _profile_spec(cfg, execution_mode: str):
             BinanceTestnetProfile,
         )
     if execution_mode == "okx_demo":
-        from aletheia.uta.profiles.okx import OKXDemoProfile
+        from extensions.exchanges.okx.profile import OKXDemoProfile
 
         return (
             "okx.demo",
@@ -44,7 +44,7 @@ def _profile_spec(cfg, execution_mode: str):
             OKXDemoProfile,
         )
     if execution_mode == "binance_live_limited":
-        from aletheia.uta.profiles.binance import BinanceLiveProfile
+        from extensions.exchanges.binance.profile import BinanceLiveProfile
 
         return (
             "binance.live",
@@ -55,7 +55,7 @@ def _profile_spec(cfg, execution_mode: str):
             BinanceLiveProfile,
         )
     if execution_mode == "okx_live_limited":
-        from aletheia.uta.profiles.okx import OKXLiveProfile
+        from extensions.exchanges.okx.profile import OKXLiveProfile
 
         return (
             "okx.live",
@@ -66,7 +66,7 @@ def _profile_spec(cfg, execution_mode: str):
             OKXLiveProfile,
         )
     if execution_mode == "bitget_demo":
-        from aletheia.uta.profiles.bitget import BitgetClassicV2Profile, BitgetUTAV3Profile
+        from extensions.exchanges.bitget.profile import BitgetClassicV2Profile, BitgetUTAV3Profile
 
         profile = cfg.exchange.bitget_profile
         profile_type = BitgetUTAV3Profile if profile == "uta_v3" else BitgetClassicV2Profile
@@ -79,7 +79,7 @@ def _profile_spec(cfg, execution_mode: str):
             profile_type,
         )
     if execution_mode == "bitget_live_limited":
-        from aletheia.uta.profiles.bitget import BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile
+        from extensions.exchanges.bitget.profile import BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile
 
         profile = cfg.exchange.bitget_profile
         profile_type = (

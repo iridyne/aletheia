@@ -1,4 +1,4 @@
-"""OKX Demo UTA profile."""
+"""OKX UTA profile owned by the frozen Exchange Extension."""
 
 from datetime import datetime, timedelta
 from decimal import Decimal
