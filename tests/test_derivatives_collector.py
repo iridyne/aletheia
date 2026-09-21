@@ -1,4 +1,4 @@
-"""Unit tests for aletheia/data/collectors/derivatives.py — B3 batch (plan §9.1).
+"""Unit tests for extensions/data/collectors/derivatives.py — B3 batch (plan §9.1).
 
 Covers:
   - _parse_oi: LSR threading (value present + value None)
@@ -29,7 +29,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     tmp_path,
     monkeypatch,
 ):
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
     from aletheia.config import loader as cfg_loader
     from aletheia.data.freshness import fresh_row
     from aletheia.storage import migrations, repositories as repo
@@ -133,7 +133,7 @@ def test_parse_oi_threads_lsr_value():
     OpenInterestSnapshot whose long_short_ratio == 2.09 (single-construction,
     no follow-up UPDATE).
     """
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
     from aletheia.data.models import OpenInterestSnapshot
 
     raw = {
@@ -155,7 +155,7 @@ def test_parse_oi_lsr_none_when_absent():
     """Same raw dict, lsr=None → snapshot constructs with long_short_ratio=None
     (must not raise — LSR is an optional augmentation per MS-C01).
     """
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
     from aletheia.data.models import OpenInterestSnapshot
 
     raw = {
@@ -172,7 +172,7 @@ def test_parse_oi_lsr_none_when_absent():
 def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
     invalid_ratio,
 ):
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
 
     snap = _parse_oi(
         "BTC/USDT",
@@ -200,7 +200,7 @@ def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
 
     Pattern mirrors spec_macro_signals.py::test_coingecko_top_degraded_does_not_raise.
     """
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
 
     class FailingClient:
         async def get(self, *args, **kwargs):
@@ -223,7 +223,7 @@ def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
 
 
 def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
 
     class Client:
         async def get(self, url, *, params):
@@ -253,7 +253,7 @@ def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
 @pytest.mark.parametrize("failure", ["timeout", "http_error"])
 def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure):
     """LSR is optional enrichment; its timeout must not consume the live path."""
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
     from aletheia.config import loader as cfg_loader
     from extensions.data import ccxt_provider as provider_mod
 
@@ -354,7 +354,7 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
             "observed_at": (now - timedelta(minutes=offset)).isoformat(),
         })
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_funding_history
 
     class _FakeExchange:
         async def fetch_funding_rate_history(self, *args, **kwargs):
@@ -388,7 +388,7 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_oi_history
 
     class _FakeBitget:
         async def fetch_open_interest_history(self, *args, **kwargs):
@@ -421,14 +421,14 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     ],
 )
 def test_parse_funding_rejects_nonfinite_or_nonpositive_mark(raw):
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from extensions.data.collectors.derivatives import _parse_funding
 
     assert _parse_funding("BTC/USDT", "okx", raw) is None
 
 
 @pytest.mark.parametrize("rate", [-0.0001, 0.0, 0.0001])
 def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate):
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from extensions.data.collectors.derivatives import _parse_funding
 
     snap = _parse_funding("BTC/USDT", "okx", {"fundingRate": rate})
 
@@ -443,7 +443,7 @@ def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate)
 
 def test_parse_oi_returns_none_without_usd():
     """_parse_oi drops a row it cannot express in USD (honest gap over garbage)."""
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
 
     assert _parse_oi("BTC/USDT", "binance", {"openInterestAmount": 1.0}) is None
 
@@ -499,7 +499,7 @@ def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
     from aletheia.storage import sqlite as sq
     from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
     sq.close_db()
     mig.run_migrations()
 
@@ -529,7 +529,7 @@ def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
     sq.close_db()
     mig.run_migrations()
 
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
     from extensions.data import ccxt_provider as provider_mod
 
     class _Provider:
@@ -690,7 +690,7 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
                 }
             ]
 
-    from aletheia.data.collectors.derivatives import (
+    from extensions.data.collectors.derivatives import (
         _maybe_backfill_funding_history,
         _maybe_backfill_oi_history,
     )
@@ -768,7 +768,7 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
             ts_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
             return [{"timestamp": ts_ms, "fundingRate": 0.0002}]
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_funding_history
     result = asyncio.run(_maybe_backfill_funding_history(
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
@@ -828,7 +828,7 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
         async def fetch_open_interest_history(self, perp_sym, timeframe, limit=24):
             return [{"timestamp": shared_ts_ms, "openInterestValue": 2.0e9, "info":{"oiUsd":2e9,"sumOpenInterestValue":2e9}, "openInterestAmount": 30000.0}]
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_oi_history
     result = asyncio.run(_maybe_backfill_oi_history(
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
@@ -843,7 +843,7 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
 
 
 def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch):
-    import aletheia.data.collectors.derivatives as mod
+    import extensions.data.collectors.derivatives as mod
     active = peak = 0
     calls = []
 

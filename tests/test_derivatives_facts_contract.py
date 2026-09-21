@@ -105,7 +105,7 @@ def test_aggregate_liquidation_does_not_gain_exact_venue_or_zero_price():
 
 def test_new_provenance_survives_dedup_without_rewriting_legacy():
     from aletheia.storage import repositories as repo
-    from aletheia.data.collectors import derivatives
+    from extensions.data.collectors import derivatives
     import json
 
     clock = datetime.now(timezone.utc)

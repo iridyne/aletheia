@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from aletheia.config.schema import AletheiaConfig
-from aletheia.data.collectors import derivatives
+from extensions.data.collectors import derivatives
 from aletheia.data.derivatives_facts import comparison_row, ccxt_metadata, read_derivatives_facts
 from aletheia.storage import repositories as repo
 

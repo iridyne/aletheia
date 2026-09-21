@@ -122,7 +122,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     from tests.test_candidate_selection_utility import _controlled_admitted_target_candidate
     from aletheia.config.loader import load_config, save_config
     from aletheia.data.providers import Candle
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
     from aletheia.agent_shell.entry_planner import plan_next_candidate
     from aletheia.trading.entry_analysis import EntryHypothesis
 

@@ -699,7 +699,7 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
             return {"symbol": symbol, "bids": [[99.99, 100]], "asks": [[100.01, 100]]}
 
         async def get_orderbook_observation(self, symbol, *, market_type="spot"):
-            from aletheia.data.collectors.microstructure import _parse_orderbook
+            from extensions.data.collectors.microstructure import _parse_orderbook
 
             physical_symbol = f"{symbol}:USDT" if market_type == "perp" else symbol
             self.calls.append(physical_symbol)
@@ -821,7 +821,7 @@ async def test_discovery_rejects_unavailable_books_without_persisting(tmp_path, 
     class Exchange:
         id = "binance" if failure == "venue" else "okx"
         async def get_orderbook_observation(self, symbol, *, market_type="spot"):
-            from aletheia.data.collectors.microstructure import _parse_orderbook
+            from extensions.data.collectors.microstructure import _parse_orderbook
 
             if failure == "cancel":
                 raise asyncio.CancelledError

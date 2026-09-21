@@ -27,7 +27,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
+_DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
 _MACRO = _ROOT / "aletheia" / "data" / "collectors" / "macro.py"
 _CG_TOP = _ROOT / "extensions" / "data" / "collectors" / "coingecko_top.py"
 _MODELS = _ROOT / "aletheia" / "data" / "models.py"
@@ -476,7 +476,7 @@ def test_backfill_idempotent_with_existing_rows(tmp_path, monkeypatch):
             "observed_at": (now - timedelta(minutes=offset)).isoformat(),
         })
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_funding_history
 
     class _FakeExchange:
         async def fetch_funding_rate_history(self, *args, **kwargs):
@@ -508,7 +508,7 @@ def test_oi_history_swallows_not_supported(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
+    from extensions.data.collectors.derivatives import _maybe_backfill_oi_history
 
     class _FakeBitget:
         async def fetch_open_interest_history(self, *args, **kwargs):

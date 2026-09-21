@@ -1,7 +1,7 @@
 """Current economic consumers must use source-proved units and intervals."""
 from datetime import datetime, timedelta, timezone
 import pytest
-from aletheia.data.collectors import derivatives
+from extensions.data.collectors import derivatives
 from aletheia.storage import repositories as repo
 
 MARKET=dict(id='BTC-USDT-SWAP',symbol='BTC/USDT:USDT',swap=True,base='BTC',quote='USDT',settle='USDT',linear=True,contractSize=.01)
