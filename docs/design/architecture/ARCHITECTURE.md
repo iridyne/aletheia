@@ -95,7 +95,7 @@ UTA 只负责外部账户 I/O。已注册的 Demo/Testnet 模式仍不证明凭�
 |------|------|
 | `aletheia/risk/` | 风控核心，行为变更必须有回归测试 |
 | `aletheia/execution/` | 执行网关，直接影响资金安全 |
-| `aletheia/exchanges/bitget/auth.py` | 凭证签名逻辑 |
+| `extensions/exchanges/bitget/auth.py` | 凭证签名逻辑 |
 | `aletheia/config/secrets.py` | 密钥处理 |
 | `aletheia/agent_runtime/permissions.py` | Agent 权限边界 |
 | `aletheia/server/routes/live.py` | 实盘开关 |

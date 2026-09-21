@@ -8,7 +8,7 @@ not by tables belonging to the retired native trading implementation.
 
 import pytest
 
-from aletheia.exchanges.bitget.client import BitgetClient
+from extensions.exchanges.bitget.client import BitgetClient
 
 
 # ─── Construction ────────────────────────────────────────────────────────────

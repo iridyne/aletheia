@@ -129,7 +129,7 @@ def _private_close_report(exchange_order_id: str, identity):
 
 
 def _observe_reader_close(monkeypatch, calls, event):
-    from aletheia.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+    from extensions.exchanges.bitget.native_protection import BitgetNativeProtectionReader
 
     close = BitgetNativeProtectionReader.close
 
@@ -238,7 +238,7 @@ def _exact_fill_reads(calls) -> list[tuple[str, str]]:
 def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkeypatch, report_kind):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from aletheia.uta import manager
     from aletheia.uta.models import NativeProtectionHistory
@@ -327,7 +327,7 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -434,7 +434,7 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -576,7 +576,7 @@ def test_incomplete_or_ambiguous_plan_identity_stays_open(
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -629,7 +629,7 @@ def test_incomplete_or_ambiguous_plan_identity_stays_open(
 def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -756,7 +756,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
 ):
     from aletheia.agent_runtime import scheduler
     from aletheia.execution import exchange_materialization
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.learning import control
     from aletheia.storage import repositories, sqlite
 
@@ -881,7 +881,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
 def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -985,7 +985,7 @@ def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypat
 def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -1103,7 +1103,7 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position = _seed_position(
@@ -1205,7 +1205,7 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
 
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from aletheia.uta.compat import utc
 
@@ -1382,7 +1382,7 @@ def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch
 
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from extensions.exchanges.ccxt.profile import CCXTProfile
 

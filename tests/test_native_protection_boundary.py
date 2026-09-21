@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.real_place_order
 def test_native_client_exposes_only_required_private_reads():
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     methods = {
         name for name, member in inspect.getmembers(BitgetClient)

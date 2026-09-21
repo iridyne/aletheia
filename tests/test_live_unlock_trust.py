@@ -194,7 +194,7 @@ async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
         def __init__(self, mode):
             raise AssertionError("selected OKX preflight must not construct Bitget")
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", UnexpectedBitget)
 
@@ -227,7 +227,7 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", ValidBitget)
     result = await trust.run_live_preflight(cfg)
@@ -255,7 +255,7 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", FakeBitget)
     result = await trust.run_live_preflight(cfg)
@@ -289,7 +289,7 @@ async def test_bitget_denied_authority_is_reported_without_losing_private_facts(
         async def close(self):
             pass
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", FakeBitget)
     result = await trust.run_live_preflight(cfg)

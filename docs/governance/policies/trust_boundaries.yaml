@@ -19,12 +19,12 @@ trust_boundaries:
       - uv run pytest tests/e2e/test_pipeline_exchange_entry_to_position.py tests/specs/spec_pipeline_exchange_materialization.py -q
   - id: bitget_auth
     paths:
-      - aletheia/exchanges/bitget/auth.py
+      - extensions/exchanges/bitget/auth.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: bitget_client
     paths:
-      - aletheia/exchanges/bitget/client.py
+      - extensions/exchanges/bitget/client.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: secrets

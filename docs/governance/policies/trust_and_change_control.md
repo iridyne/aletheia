@@ -494,8 +494,8 @@ These modules are change-controlled:
 ```text
 aletheia/risk/
 aletheia/execution/
-aletheia/exchanges/bitget/auth.py
-aletheia/exchanges/bitget/client.py
+extensions/exchanges/bitget/auth.py
+extensions/exchanges/bitget/client.py
 aletheia/config/secrets.py
 aletheia/agent_runtime/permissions.py
 aletheia/agent_shell/registry.py
@@ -555,13 +555,13 @@ Tests: uv run pytest tests/test_workflow_routes.py -q
 - Do not create replacement proposals or orders to hide state transitions.
 - Tests must assert proposal/order/risk IDs.
 
-`aletheia/exchanges/bitget/auth.py`
+`extensions/exchanges/bitget/auth.py`
 
 - Do not change signing logic without checking current official Bitget docs.
 - Tests must cover deterministic signatures and secret redaction.
 - Never log raw prehash strings if they contain sensitive material.
 
-`aletheia/exchanges/bitget/client.py`
+`extensions/exchanges/bitget/client.py`
 
 - Market-data changes may use public endpoints.
 - Account/order changes must use stored credentials and redaction.

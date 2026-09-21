@@ -23,8 +23,8 @@ Touch only when the task explicitly requires it:
 ```text
 aletheia/risk
 aletheia/execution
-aletheia/exchanges/bitget/auth.py
-aletheia/exchanges/bitget/client.py
+extensions/exchanges/bitget/auth.py
+extensions/exchanges/bitget/client.py
 aletheia/config/secrets.py
 aletheia/agent_runtime/permissions.py
 aletheia/agent_runtime/tool_registry.py

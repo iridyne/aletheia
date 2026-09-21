@@ -12,7 +12,9 @@ import pytest
      "import asyncio\nfrom aletheia.config.schema import AletheiaConfig\ncfg = AletheiaConfig()\ncfg.exchange.name = 'bitget'\ncfg.exchange.mode = 'live'\nassert asyncio.run(module.run_live_preflight(cfg))['reason_code'] == 'exchange_adapter_unavailable'"),
     ("aletheia.server.routes.bitget", ("aletheia.config.secrets", "aletheia.exchanges", "ccxt"),
      "assert not {'set_exchange_credentials', 'test_candidate_credentials', 'get_secret', 'set_secret'} & vars(module).keys()"),
-    ("aletheia.server.app", ("aletheia.exchanges.bitget.auth",),
+    ("aletheia.server.app", ("extensions.exchanges.bitget.auth",),
+     "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
+    ("aletheia.server.app", ("extensions.exchanges.bitget",),
      "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
     ("aletheia.exchanges.composition", ("extensions.exchanges.binance.profile", "extensions.exchanges.okx.profile"),
      "from aletheia.config.schema import ExchangeConfig\nmodule.get_secret = lambda key: 'synthetic-test-value' if key.startswith('bitget.demo.') else None\nmodule.get_credential_generation = lambda scope: 0\ncfg = SimpleNamespace(exchange=ExchangeConfig())\nassert [i.execution_mode for i in module.build_uta_registry(cfg).configured_identities()] == ['bitget_demo']\nassert module.build_uta_registry(cfg, execution_modes=('okx_demo',)).configured_identities() == ()"),
@@ -57,6 +59,18 @@ def test_venue_profile_has_one_extension_implementation(venue):
     assert not (root / f"aletheia/uta/profiles/{venue}.py").exists()
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(f"aletheia.uta.profiles.{venue}")
+
+
+@pytest.mark.parametrize("name", ["auth", "client", "native_protection", "profile_config"])
+def test_native_bitget_has_one_extension_implementation(name):
+    import importlib
+
+    module = importlib.import_module(f"extensions.exchanges.bitget.{name}")
+    root = Path(__file__).resolve().parents[2]
+    assert Path(module.__file__) == root / f"extensions/exchanges/bitget/{name}.py"
+    assert not any((root / "aletheia/exchanges/bitget").glob("*.py"))
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(f"aletheia.exchanges.bitget.{name}")
 
 
 @pytest.mark.parametrize("error_type", ["ImportError", "ModuleNotFoundError"])

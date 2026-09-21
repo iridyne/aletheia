@@ -5,6 +5,8 @@ used by the current native-protection reader: parent/child plan history, exact
 order fills, and normalized Fill reports. These reads retain their request-scoped
 transport, signing, profile selection, exact-order filtering and pagination.
 The client is an Exchange implementation, not a Core or Legacy credential owner.
+Its surviving implementation, native reader, signing and profile configuration
+live in `extensions/exchanges/bitget`; the old package has no forwarding facade.
 
 The former account, position, order submission/cancellation, leverage, funding,
 verified-exit and public-market methods were not selected by current production

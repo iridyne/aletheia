@@ -274,6 +274,9 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
                         "aletheia.exchanges.binance",
                         "aletheia.exchanges.bitget",
                         "aletheia.exchanges.okx",
+                        "extensions.exchanges.bitget",
+                        "extensions.exchanges.okx",
+                        "extensions.exchanges.binance",
                     )
                 )
                 or name in {

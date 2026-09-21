@@ -9,8 +9,8 @@ import asyncio
 
 import pytest
 
-from aletheia.exchanges.bitget import client as bg
-from aletheia.exchanges.bitget.client import BitgetClient
+from extensions.exchanges.bitget import client as bg
+from extensions.exchanges.bitget.client import BitgetClient
 
 
 class _Resp:
@@ -136,7 +136,7 @@ def _use_profile(tmp_path, monkeypatch, profile):
 
 
 def test_configured_profile_helper_reads_config(tmp_path, monkeypatch):
-    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+    from extensions.exchanges.bitget.profile_config import configured_bitget_profile
 
     _use_profile(tmp_path, monkeypatch, "uta_v3")
     assert configured_bitget_profile() == "uta_v3"

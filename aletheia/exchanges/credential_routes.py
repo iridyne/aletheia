@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_secret, set_secret
-from aletheia.exchanges.bitget.auth import probe_candidate_credentials
+from extensions.exchanges.bitget.auth import probe_candidate_credentials
 from aletheia.files.jsonl import write_audit
 from aletheia.trust.live_unlock import active_live_profile_conflict
 
