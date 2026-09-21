@@ -234,3 +234,76 @@ def test_existing_exchange_composition_binds_rules_without_io(monkeypatch):
     monkeypatch.setattr(composition, "get_secret", forbidden)
     composition.bind_uta_provider()
     assert rules._constraints_reader is read_order_constraints
+
+
+@pytest.mark.parametrize("case", ["dated_first", "dated_only", "perpetual_inactive"])
+@pytest.mark.parametrize("allow_increase", [False, True])
+async def test_gateway_quantity_rules_use_exact_perpetual_identity(monkeypatch, case, allow_increase):
+    """Actual Bitget market parsing cannot substitute delivery minima for a swap."""
+    from types import SimpleNamespace
+    import ccxt.async_support as ccxt
+    from aletheia import net
+    from aletheia.execution import gateway, order_constraints as rules
+    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+
+    exchange = ccxt.bitget({"options": {"fetchMarkets": {"types": ["swap"]}}})
+    common = {
+        "baseCoin": "BTC", "quoteCoin": "USDT", "supportMarginCoins": ["USDT"],
+        "symbolStatus": "normal", "pricePlace": "1", "priceEndStep": "1",
+        "volumePlace": "3", "sizeMultiplier": "0.001", "minTradeUSDT": "5",
+    }
+    raw = [{
+        **common, "symbol": "BTCUSDT_261225", "symbolType": "delivery",
+        "deliveryTime": "1798156800000",
+        "minTradeNum": "1" if case == "dated_first" else "0.001",
+    }]
+    if case != "dated_only":
+        raw.append({
+            **common, "symbol": "BTCUSDT", "symbolType": "perpetual", "minTradeNum": "0.001",
+            "symbolStatus": "offline" if case == "perpetual_inactive" else "normal",
+        })
+
+    async def contracts(params):
+        return {"code": "00000", "data": raw if params["productType"] == "USDT-FUTURES" else []}
+
+    exchange.publicMixGetV2MixMarketContracts = contracts
+    try:
+        exchange.set_markets(await exchange.fetch_default_markets({}))
+        markets = exchange.markets
+    finally:
+        await exchange.close()
+    assert next(iter(markets)) == "BTC/USDT:USDT-261225"
+    assert markets["BTC/USDT:USDT-261225"]["future"] is True
+    events = []
+
+    async def load():
+        events.append("load")
+
+    async def close():
+        events.append("close")
+
+    monkeypatch.setattr(net, "make_ccxt", lambda *_a, **_kw: (SimpleNamespace(
+        markets=markets, load_markets=load, close=close, precisionMode=ccxt.TICK_SIZE,
+    ), None))
+    monkeypatch.setattr(rules, "_constraints_reader", read_order_constraints)
+    monkeypatch.setattr(rules, "_cache", {})
+    quantity, error = gateway._prepare_exchange_quantity(
+        "bitget_demo", "BTC/USDT", "usdt_futures", 0.002, 60000,
+        allow_increase=allow_increase,
+    )
+    assert events == ["load", "close"]
+    assert quantity == 0.002
+    if case == "dated_first":
+        assert error is None
+    else:
+        assert error is not None
+        assert "No order was sent" in error
+
+
+def test_rules_lookup_keeps_spot_distinct_from_same_pair_perpetual():
+    from types import SimpleNamespace
+    from aletheia.exchanges.ccxt_order_rules import _find_market
+
+    spot = _market(spot=True, swap=False, contractSize=None)
+    exchange = SimpleNamespace(markets={"BTC/USDT:USDT": _market(), "BTC/USDT": spot})
+    assert _find_market(exchange, "BTC/USDT", "spot") is spot

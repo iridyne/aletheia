@@ -7,6 +7,7 @@ from typing import Any
 
 from aletheia.execution.order_constraints import ConstraintUnavailable, OrderConstraints, _decimal
 from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
+from aletheia.uta.compat import instrument_from_local
 
 
 def _amount_step(precision: Any, precision_mode: str) -> Decimal:
@@ -72,16 +73,12 @@ def _precision_mode_name(exchange: Any) -> str:
 
 
 def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]:
-    base, quote = symbol.upper().split("/", 1)
-    wants_spot = market_type == "spot"
-    for market in (exchange.markets or {}).values():
-        if not market.get("active", True):
-            continue
-        if str(market.get("base") or "").upper() != base or str(market.get("quote") or "").upper() != quote:
-            continue
-        if wants_spot and market.get("spot"):
+    instrument = instrument_from_local(symbol, market_type)
+    market = (exchange.markets or {}).get(instrument.venue_symbol)
+    if market and market.get("active", True):
+        if instrument.market_type == "spot" and market.get("spot"):
             return market
-        if not wants_spot and (market.get("swap") or market.get("future")):
+        if instrument.market_type == "usdt_futures" and market.get("swap") and not market.get("future"):
             return market
     raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue")
 
