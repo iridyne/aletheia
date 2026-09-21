@@ -702,16 +702,6 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     return replace_protective_stop(position_id, new_stop_price)
 
 
-# Compatibility alias retained for existing execution specs that clear the
-# authoritative shared cache between cases.
-_registry_symbol_cache = _venue_capabilities._registry_symbol_cache
-
-
-def _load_registry_symbols(venue: str) -> dict | None:
-    """Compatibility wrapper for the shared read-only capability seam."""
-    return _venue_capabilities.load_registry_symbols(venue)
-
-
 def _check_symbol_availability(symbol: str, execution_mode: str, market_type: str = "usdt_futures") -> str | None:
     """Return a rejection reason if the symbol is not available on the target exchange.
 
@@ -723,30 +713,8 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
 
     canonical = to_canonical(symbol)
 
-    # OKX demo uses the shared normalized capability seam backed by its
-    # dedicated CCXT sandbox market load (subset of live OKX).
-    if execution_mode == "okx_demo":
-        capabilities = _venue_capabilities.load_venue_capabilities(execution_mode)
-        key = "spot" if market_type == "spot" else "swap"
-        supported = None if capabilities is None else capabilities.get(key, frozenset())
-        if supported is not None and canonical not in supported:
-            return f"{symbol} not available on OKX demo ({market_type})"
-        return None
-
-    # All other real-exchange modes: check universe_registry, market-type-aware.
-    venue = execution_mode_venue(execution_mode)
-    if venue is None:
-        return None  # unknown/future mode — fail-open
-
-    registry = _load_registry_symbols(venue)
-    if registry is None:
-        return None  # registry not yet synced — fail-open
-    if market_type not in registry:
-        return (
-            f"{symbol} ({market_type}) not available on {execution_mode} (no {market_type} products in venue registry)"
-        )
-    supported = registry[market_type]
-    if canonical not in supported:
+    supported = _venue_capabilities.get_supported_symbols(execution_mode, market_type)
+    if supported is not None and canonical not in supported:
         return f"{symbol} ({market_type}) not available on {execution_mode}"
     return None
 
