@@ -598,7 +598,7 @@ def test_close_fallback_uses_capability_and_closes_exact_quote_provider(
         raise AssertionError("Core must use the normalized provider port")
 
     monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", factory)
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", concrete_forbidden)
+    monkeypatch.setattr("extensions.data.ccxt_provider.get_market_data_provider", concrete_forbidden)
     result = gateway.close_exchange_position(position.id, "operator_close")
     command = commands[0]
     supported = support == "supported"

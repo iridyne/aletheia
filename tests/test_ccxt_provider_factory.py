@@ -18,12 +18,12 @@ from types import SimpleNamespace
 import pytest
 
 from aletheia.config import loader
-from aletheia.data.ccxt_provider import (
+from extensions.data.ccxt_provider import (
     _install_market_id_guard,
     get_market_data_provider,
     CCXTProvider,
 )
-from aletheia.data.sources.chain import FallbackChainProvider
+from extensions.data.sources.chain import FallbackChainProvider
 
 
 def _fake_config(exchange="binance", fallback="bybit", crypto_fallback=True):

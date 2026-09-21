@@ -1077,7 +1077,7 @@ async def _prefetch_instruments(
     concurrency: int = _MARKET_OBSERVER_PREFETCH_CONCURRENCY,
 ) -> list:
     """Build all symbol contexts with one run-scoped provider and bounded fan-out."""
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from extensions.data.ccxt_provider import get_market_data_provider
 
     provider = get_market_data_provider(exchange=venue)
     semaphore = asyncio.Semaphore(max(1, concurrency))

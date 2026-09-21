@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.data.ccxt_provider import get_market_data_provider
+from extensions.data.ccxt_provider import get_market_data_provider
 from aletheia.data.symbols import MARKET_SPOT
 from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
 from aletheia.storage.models import Opportunity

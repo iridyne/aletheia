@@ -46,7 +46,7 @@ class DerivativesCollector:
     domain = "derivatives"
 
     async def collect(self, symbols: list[str]) -> dict[str, Any]:
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from extensions.data.ccxt_provider import get_market_data_provider
         from aletheia.config.loader import load_config
 
         provider = get_market_data_provider()
@@ -191,7 +191,7 @@ class DerivativesCollector:
 
     async def collect_comparison(self, cfg) -> dict[str, Any]:
         """Public observation coverage; primary/native Funding/OI retain their current writers."""
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
         from aletheia.data.derivatives_facts import comparison_row, instrument_from_market, normalize_open_interest, price_snapshot, project_price_snapshot, project_snapshot
         workset = comparison_workset(cfg)
         acquired = datetime.now(timezone.utc)
@@ -330,7 +330,7 @@ class DerivativesCollector:
 
     async def collect_history(self, symbols: list[str]) -> dict[str, Any]:
         """Best-effort sparse history backfill outside the live Funding/OI path."""
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from extensions.data.ccxt_provider import get_market_data_provider
         from aletheia.config.loader import load_config
 
         cfg = load_config()

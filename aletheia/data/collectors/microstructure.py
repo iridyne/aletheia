@@ -17,7 +17,7 @@ class MicrostructureCollector:
     domain = "microstructure"
 
     async def collect(self, symbols: list[str], *, venue: str | None = None) -> dict[str, Any]:
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from extensions.data.ccxt_provider import get_market_data_provider
 
         try:
             provider = get_market_data_provider(exchange=venue, native_ccxt=True)

@@ -198,7 +198,7 @@ class TestGetVenueListing:
         }
         provider = self._mock_provider(markets)
         # Patch in the ccxt_provider module because that's where the lazy import resolves.
-        with patch("aletheia.data.ccxt_provider.get_market_data_provider",
+        with patch("extensions.data.ccxt_provider.get_market_data_provider",
                    return_value=provider):
             result = await get_venue_listing("bitget")
 
@@ -219,7 +219,7 @@ class TestGetVenueListing:
             "ETH/USDT": {"active": None},        # unknown — keep (fail-open)
         }
         provider = self._mock_provider(markets)
-        with patch("aletheia.data.ccxt_provider.get_market_data_provider",
+        with patch("extensions.data.ccxt_provider.get_market_data_provider",
                    return_value=provider):
             result = await get_venue_listing("bitget")
 
@@ -238,7 +238,7 @@ class TestGetVenueListing:
         ))
         provider.close = AsyncMock()
 
-        with patch("aletheia.data.ccxt_provider.get_market_data_provider",
+        with patch("extensions.data.ccxt_provider.get_market_data_provider",
                    return_value=provider):
             result = await get_venue_listing("bitget")
 
@@ -255,7 +255,7 @@ class TestGetVenueListing:
         ))
         provider.close = AsyncMock()
 
-        with patch("aletheia.data.ccxt_provider.get_market_data_provider",
+        with patch("extensions.data.ccxt_provider.get_market_data_provider",
                    return_value=provider):
             await get_venue_listing("bybit")
 
@@ -315,7 +315,7 @@ class TestCcxtProviderPerpDefaultType:
 
     @pytest.mark.asyncio
     async def test_binance_perp_uses_usdm_client(self):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         provider = CCXTProvider(exchange="binance", fallback_exchange="binance")
         client = MagicMock()
@@ -346,7 +346,7 @@ class TestCcxtProviderPerpDefaultType:
 
     @pytest.mark.asyncio
     async def test_same_venue_is_not_retried_as_its_own_fallback(self):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         exchange_mock = MagicMock()
         exchange_mock.options = {}
@@ -373,7 +373,7 @@ class TestCcxtProviderPerpDefaultType:
     @pytest.mark.asyncio
     async def test_perp_sets_defaulttype_swap(self):
         """get_ticker for a perp InstrumentId must set defaultType=swap before fetch."""
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         perp_inst = InstrumentId(exchange="bitget", symbol="BTC/USDT", market_type=MARKET_PERP)
         observed_default_types: list[str | None] = []
@@ -407,7 +407,7 @@ class TestCcxtProviderPerpDefaultType:
     @pytest.mark.asyncio
     async def test_spot_does_not_set_defaulttype(self):
         """get_ticker for a spot InstrumentId must NOT change defaultType."""
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         spot_inst = InstrumentId(exchange="binance", symbol="BTC/USDT", market_type=MARKET_SPOT)
         observed_default_types: list[str | None] = []
@@ -438,7 +438,7 @@ class TestCcxtProviderPerpDefaultType:
     @pytest.mark.asyncio
     async def test_perp_restores_defaulttype_after_successful_fetch(self):
         """defaultType is restored to its original value after a successful perp fetch."""
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         perp_inst = InstrumentId(exchange="bitget", symbol="BTC/USDT", market_type=MARKET_PERP)
 
@@ -466,7 +466,7 @@ class TestCcxtProviderPerpDefaultType:
     @pytest.mark.parametrize("market_type", [MARKET_PERP, MARKET_FUTURES])
     @pytest.mark.asyncio
     async def test_binance_derivative_ohlcv_uses_usdm_swap_client(self, market_type):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         provider = CCXTProvider(exchange="binance", fallback_exchange="binance")
         client = MagicMock()
@@ -493,7 +493,7 @@ class TestCcxtProviderPerpDefaultType:
     @pytest.mark.parametrize("venue", ["bitget", "bybit"])
     @pytest.mark.asyncio
     async def test_perp_ohlcv_restores_defaulttype_after_success(self, venue):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         client = MagicMock()
         client.options = {"defaultType": "spot"}
@@ -516,7 +516,7 @@ class TestCcxtProviderPerpDefaultType:
 
     @pytest.mark.asyncio
     async def test_perp_ohlcv_restores_absent_defaulttype_after_cancel(self):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         client = MagicMock()
         client.options = {}
@@ -539,7 +539,7 @@ class TestCcxtProviderPerpDefaultType:
 
     @pytest.mark.asyncio
     async def test_spot_ohlcv_keeps_defaulttype_and_same_venue_attempts_once(self):
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from extensions.data.ccxt_provider import CCXTProvider
 
         client = MagicMock()
         client.options = {}

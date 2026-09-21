@@ -24,7 +24,7 @@ def test_core_features_do_not_call_native_taker_endpoints():
     ("binanceusdm", None, None),
 ])
 async def test_adapter_preserves_existing_native_ratio_semantics(monkeypatch, venue, raw, expected):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     calls = []
 

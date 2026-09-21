@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.data.ccxt_provider import CCXTProvider
 from aletheia.data.cache import get_cache
 
 _GET_OHLCV = CCXTProvider.get_ohlcv
@@ -47,7 +47,7 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
 @pytest.mark.asyncio
 async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeypatch):
     from aletheia.data import providers
-    from aletheia.data.ccxt_provider import create_market_data_provider
+    from extensions.data.ccxt_provider import create_market_data_provider
 
     class FakeExchange:
         async def fetch_ohlcv(self, *_args, **_kwargs):
@@ -58,11 +58,11 @@ async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeyp
     assert provider._primary_name == provider._fallback_name == "fixture"
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: FakeExchange())
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.record_venue_success",
+        "extensions.data.ccxt_provider.record_venue_success",
         lambda _name: pytest.fail("observation fetch must not clear venue health"),
     )
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.record_venue_failure",
+        "extensions.data.ccxt_provider.record_venue_failure",
         lambda *_args: pytest.fail("observation fetch must not change venue health"),
     )
     monkeypatch.setattr(

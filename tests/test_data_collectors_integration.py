@@ -77,7 +77,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
         async def close(self):
             return None
 
-    from aletheia.data import ccxt_provider as ccxt_mod
+    from extensions.data import ccxt_provider as ccxt_mod
     monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FakeProvider())
 
     # ----- mock httpx for: Binance LSR + Alt.me F&G + CoinGecko top -----

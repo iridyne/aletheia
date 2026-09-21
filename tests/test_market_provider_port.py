@@ -13,7 +13,7 @@ import pytest
 def test_standard_core_consumers_do_not_import_concrete_data(module):
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
     assert not any(
-        isinstance(node, ast.ImportFrom) and node.module == "aletheia.data.ccxt_provider"
+        isinstance(node, ast.ImportFrom) and node.module == "extensions.data.ccxt_provider"
         for node in ast.walk(tree)
     )
 
@@ -28,7 +28,8 @@ def test_feature_scans_do_not_bootstrap_raw_exchange_clients():
 @pytest.mark.parametrize("symbol, market", [("BTC/USDT", "spot"), ("BTC/USDT", "perp"), ("AAPLON/USDT", "spot")])
 @pytest.mark.parametrize("quote_fails", [False, True])
 async def test_price_refresh_uses_exact_bound_provider(monkeypatch, symbol, market, quote_fails):
-    from aletheia.data import ccxt_provider, price_feed, providers
+    from extensions.data import ccxt_provider
+    from aletheia.data import price_feed, providers
     from aletheia.data.symbols import InstrumentId
 
     instrument = InstrumentId.from_parts("bitget", symbol, market)
@@ -73,7 +74,8 @@ async def test_price_refresh_uses_exact_bound_provider(monkeypatch, symbol, mark
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fetch_fails", [False, True])
 async def test_backfill_uses_exact_bound_provider_and_keeps_writer(monkeypatch, fetch_fails):
-    from aletheia.data import ccxt_provider, history_downloader, providers
+    from extensions.data import ccxt_provider
+    from aletheia.data import history_downloader, providers
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
 
@@ -120,7 +122,8 @@ async def test_backfill_uses_exact_bound_provider_and_keeps_writer(monkeypatch, 
 @pytest.mark.parametrize("token", [False, True])
 @pytest.mark.parametrize("quote_fails", [False, True])
 async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypatch, token, quote_fails):
-    from aletheia.data import ccxt_provider, providers
+    from extensions.data import ccxt_provider
+    from aletheia.data import providers
     from aletheia.data.symbols import InstrumentId
     from aletheia.trading import market_data
 
@@ -171,7 +174,8 @@ async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypat
 
 @pytest.mark.parametrize("exact_venue", [False, True])
 def test_factory_preserves_policy_and_request_ownership(monkeypatch, exact_venue):
-    from aletheia.data import ccxt_provider, providers
+    from extensions.data import ccxt_provider
+    from aletheia.data import providers
 
     first, second = object(), object()
     factory = Mock(side_effect=[first, second])
@@ -214,7 +218,7 @@ import sys
 attempted = []
 class MissingAdapter:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.data.ccxt_provider":
+        if fullname == "extensions.data.ccxt_provider":
             attempted.append(fullname)
             raise ModuleNotFoundError("isolated missing adapter", name=fullname)
 sys.meta_path.insert(0, MissingAdapter())

@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.data.ccxt_provider import CCXTProvider
 from aletheia.data.providers import OHLCVResult, parse_ohlcv_candle
-from aletheia.data.sources.chain import FallbackChainProvider
+from extensions.data.sources.chain import FallbackChainProvider
 
 _GET_OHLCV = CCXTProvider.get_ohlcv
 

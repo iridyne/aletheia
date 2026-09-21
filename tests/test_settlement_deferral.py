@@ -163,7 +163,7 @@ def test_a_transport_error_is_reported_as_deferred_not_as_no_price(monkeypatch):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-banned")
@@ -189,7 +189,7 @@ def test_an_invalid_empty_answer_is_deferred(monkeypatch):
 
     provider = _InvalidAnsweringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-empty")
@@ -218,7 +218,7 @@ def test_an_unusable_instrument_stays_terminal(monkeypatch):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-unplannable")
@@ -245,7 +245,7 @@ def test_deferrals_are_logged_once_per_batch_as_an_outage(monkeypatch, caplog):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
     rows = [_forward_row(f"row-log-{i}") for i in range(3)]
@@ -439,7 +439,7 @@ def test_missing_outcome_venue_is_typed_deferral_without_market_data(monkeypatch
     row = _forward_row("missing-venue")
     row["venue"] = " \t"
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: pytest.fail(
             "missing identity must not instantiate a market provider"
         ),

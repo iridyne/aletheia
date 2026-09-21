@@ -26,9 +26,9 @@ def main() -> None:
     from aletheia.data.providers import configure_listing_reader, configure_market_data_factory
 
     try:
-        from aletheia.data.ccxt_provider import read_market_listing, create_market_data_provider
+        from extensions.data.ccxt_provider import read_market_listing, create_market_data_provider
     except ModuleNotFoundError as exc:
-        if exc.name != "aletheia.data.ccxt_provider":
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.ccxt_provider"}:
             raise
         configure_listing_reader(None)
         configure_market_data_factory(None)

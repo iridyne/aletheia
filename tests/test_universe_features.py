@@ -17,7 +17,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
     monkeypatch,
 ):
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.universe import features
 
     cfg = AletheiaConfig()
@@ -167,7 +167,7 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
     failed_market,
 ):
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.universe import features
 
     cfg = AletheiaConfig()
@@ -762,7 +762,7 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
 @pytest.mark.parametrize("failure", ["ticker", "ohlcv", "low_volume"])
 async def test_collection_failure_is_not_a_successful_empty_population(monkeypatch, failure):
     from aletheia.universe import features
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.config.schema import AletheiaConfig
     cfg = AletheiaConfig()
     cfg.universe.min_volume_24h_usdt = 1000

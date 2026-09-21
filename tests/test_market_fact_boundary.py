@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timezone
 class MissingProvider:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.data.ccxt_provider":
+        if fullname == "extensions.data.ccxt_provider":
             raise AssertionError("Core facts must not import the concrete provider")
 sys.meta_path.insert(0, MissingProvider())
 from aletheia.data.market_structure import MarketStructureProvider
@@ -39,14 +39,14 @@ windows, structures, anchors, refs = entry_causal_windows(
 assert all(row["availability"] == "unavailable" for row in windows.values())
 assert all(row["availability"] == "unavailable" for row in structures.values())
 assert not anchors and not refs
-assert "aletheia.data.ccxt_provider" not in sys.modules
+assert "extensions.data.ccxt_provider" not in sys.modules
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
 
 
 def test_concrete_provider_has_no_forwarding_fact_exports():
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     assert not hasattr(ccxt_provider, "timeframe_ms")
     assert not hasattr(ccxt_provider, "require_exact_ticker_venue")

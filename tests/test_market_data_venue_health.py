@@ -1,8 +1,8 @@
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
-from aletheia.data.sources.binance_public import BinancePublicProvider
-from aletheia.data.sources.chain import FallbackChainProvider
+from extensions.data.ccxt_provider import CCXTProvider
+from extensions.data.sources.binance_public import BinancePublicProvider
+from extensions.data.sources.chain import FallbackChainProvider
 from aletheia.data.venue_health import (
     get_provider_capability_snapshot,
     get_venue_health_snapshot,
@@ -86,7 +86,7 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ccxt_rejects_invalid_ticker_before_recording_success(monkeypatch):
-    import aletheia.data.ccxt_provider as ccxt_module
+    import extensions.data.ccxt_provider as ccxt_module
 
     successes = []
     monkeypatch.setattr(ccxt_module, "record_venue_success", successes.append)
@@ -129,7 +129,7 @@ async def test_ccxt_all_invalid_tickers_are_unavailable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ccxt_all_invalid_ohlcv_keeps_venue_cooling_until_valid_data(monkeypatch):
-    import aletheia.data.ccxt_provider as ccxt_module
+    import extensions.data.ccxt_provider as ccxt_module
     import aletheia.data.venue_health as health
 
     monkeypatch.setattr(health, "emit_infra_event", lambda **_kwargs: None)

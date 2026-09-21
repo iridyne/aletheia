@@ -28,7 +28,7 @@ def test_parse_orderbook_accepts_ccxt_count_column_and_contract_size():
 @pytest.mark.parametrize("failure", [None, "load_markets", "fetch_order_book", "parse"])
 def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkeypatch, failure):
     from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.symbols import InstrumentId
 
     closed = []

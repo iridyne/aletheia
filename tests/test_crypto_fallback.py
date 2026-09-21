@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from types import SimpleNamespace
 
 from aletheia.data.providers import Candle, Ticker
-from aletheia.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
+from extensions.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
 from aletheia.data.symbols import to_binance as to_binance_symbol
-from aletheia.data.sources.coingecko import CoinGeckoProvider
-from aletheia.data.sources.binance_public import BinancePublicProvider
-from aletheia.data.sources.chain import FallbackChainProvider
+from extensions.data.sources.coingecko import CoinGeckoProvider
+from extensions.data.sources.binance_public import BinancePublicProvider
+from extensions.data.sources.chain import FallbackChainProvider
 
 
 # ---------------------------------------------------------------------------
@@ -42,10 +42,10 @@ class TestCoinGeckoProvider:
     @pytest.mark.anyio
     async def test_get_ticker(self, monkeypatch):
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._last_request_time", 0.0
+            "extensions.data.sources.coingecko._last_request_time", 0.0
         )
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
+            "extensions.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
         )
 
         mock_resp = MagicMock()
@@ -85,10 +85,10 @@ class TestCoinGeckoProvider:
     @pytest.mark.anyio
     async def test_unknown_symbol_raises(self, monkeypatch):
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._last_request_time", 0.0
+            "extensions.data.sources.coingecko._last_request_time", 0.0
         )
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
+            "extensions.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
         )
         provider = CoinGeckoProvider()
         # F6: unmapped symbol raises a clear ValueError (not KeyError) so the provider
@@ -343,7 +343,7 @@ class TestFallbackChainProvider:
         chain = FallbackChainProvider([p1, p2])
 
         with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
+            "extensions.data.sources.chain._load_divergence_config",
             return_value=(False, 2.0),
         ):
             result = await chain.get_ticker("BTC/USDT")
@@ -513,7 +513,7 @@ def test_ticker_accepts_zero_volume_and_change():
 class TestFactory:
     def test_fallback_enabled_returns_chain(self, monkeypatch):
         from aletheia.config import loader
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from extensions.data.ccxt_provider import get_market_data_provider
 
         md = SimpleNamespace(
             ccxt_exchange="binance",
@@ -528,7 +528,7 @@ class TestFactory:
 
     def test_fallback_disabled_returns_ccxt(self, monkeypatch):
         from aletheia.config import loader
-        from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+        from extensions.data.ccxt_provider import get_market_data_provider, CCXTProvider
 
         md = SimpleNamespace(
             ccxt_exchange="binance",

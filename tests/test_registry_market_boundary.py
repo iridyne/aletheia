@@ -90,7 +90,7 @@ async def test_registry_retains_admission_blacklist_and_cleanup(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_adapter_normalizes_market_facts_without_registry_authority(monkeypatch):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     def raw(base, **kwargs):
         return {"base": base, "quote": "USDT", "id": base, "symbol": f"{base}/USDT", **kwargs}
@@ -131,7 +131,7 @@ async def test_adapter_normalizes_market_facts_without_registry_authority(monkey
 async def test_dated_future_never_supplies_perpetual_metadata(
     monkeypatch, dated_first, requested_market,
 ):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.universe import features
 
     perpetual = {

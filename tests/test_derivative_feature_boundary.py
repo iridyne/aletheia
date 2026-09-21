@@ -20,7 +20,7 @@ def test_features_do_not_call_derivative_endpoints():
 
 @pytest.mark.asyncio
 async def test_provider_returns_normalized_funding_and_oi_without_fallback(monkeypatch):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     calls = []
     source_timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -80,7 +80,7 @@ async def test_provider_returns_normalized_funding_and_oi_without_fallback(monke
 async def test_bitget_funding_uses_existing_ticker_and_contract_interval(monkeypatch):
     import json
 
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.universe.candidate_funding import (
         PERP_FUNDING_EVIDENCE_VERSION,
         proved_funding_interval,
@@ -143,7 +143,7 @@ async def test_bitget_funding_uses_existing_ticker_and_contract_interval(monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("previous", [None, "2026-09-20T00:00:00+00:00"])
 async def test_failed_market_load_does_not_create_or_refresh_interval_proof(monkeypatch, previous):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     class Exchange:
         options = {}
