@@ -194,6 +194,30 @@ runtime path. Current source traces establish the following distinctions:
   has one definition in `trust.learning_safety`; this is not blanket absence
   proof for the entire optional tree.
 
+### Data consumer and side-effect disposition
+
+The following source observations distinguish shared facts from optional
+acquisition/research. They supplement the package census, not authorize moving
+the whole `data` package or claim whole-subsystem absence safety.
+
+| Observed flow | Ownership evidence and movement constraint |
+| --- | --- |
+| `news_collector` / `news_analyzer` | Optional RSS acquisition and Model-backed analysis write namespaced `news_items`; both also invoke the existing Learning information-policy epoch helper. Scheduler jobs retain their existing gates and failure accounting. These are not pure readers, and moving them must preserve those side effects without creating another scheduler. The manual news route uses the same analyzer. |
+| `news_entities.news_matches_symbol` | Shared pure fact matcher: Core `repositories.batch_news` revalidates stored article text with it; research and acquisition also consume it. It cannot simply follow optional RSS acquisition out of Core. |
+| `polymarket_provider` / `yfinance_provider` | Optional public HTTP/executor acquisition, without their own persistence or trading authority. Prediction observer owns namespaced run/snapshot persistence; prediction routes also consume history acquisition. Market context catches unavailable yFinance enrichment. These specific consumers do not prove every optional route is absent-safe. |
+| `macro_liquidity` | Mixed module: Core `repositories.insert_fred_source_batch` consumes its constants and immutable-batch validation, while the Macro Extension reads prior source batches for cadence/provenance and CLI research derives as-of liquidity. Preserve the persisted validation contract; whole-module relocation would invert a Core dependency. No credential resolution occurs in this module. |
+| `positioning_evidence` | Read-only as-of research over canonical derivatives facts, consumed by CLI. Comparisons retain exact venue/instrument/unit provenance and compatible grouping; this is not execution or settlement authority. |
+| `position_x` / `collectors.vergex_structure` / `perp_structure_shadow` | Offline material/aggregate production and explicit CLI ingestion write namespaced structure snapshots and shadow outcomes, with the existing Learning epoch/audit effects. Shadow settlement reuses market observations and is called non-fatally by the existing outcome recorder; it is not realized Position settlement or a second scheduler. The stored advisory projection belongs to Core `context_builder` as described above. |
+| `market_structure` / `universe.market_structure` / `smc_enrichment` | Shared causal geometry is consumed by Entry analysis and repository requalification. The Universe projection serves the production momentum trigger and reuses that kernel; it is not a duplicate geometry algorithm. The provider wrapper reads an injected Data provider; optional FVG enrichment does not grant execution authority. Do not delete or move the shared kernel based on the wrapper's caller count. |
+| `data_coverage` | Operator read model over persisted facts and current collector targets, with a bounded in-memory refresh cache. It does not acquire market data or own a Core lifecycle writer. |
+
+Relevant behavioral evidence is in `test_news_integrity`,
+`test_positioning_evidence`, `test_macro_liquidity`, `test_market_structure`,
+`test_market_data_coverage`, `spec_market_structure`, `test_market_fact_boundary`,
+and the Position X absence/settlement tests. Source traces establish the named
+consumers and side effects; these tests do not establish deployed health,
+economic qualification, or complete dynamic-import absence coverage.
+
 Full Scheme A remains pending: Core versus optional roles inside mixed
 analytics, CLI/API, Data, Agent Shell and Universe still need complete
 consumer/side-effect disposition. The table must not be used as a package-wide
