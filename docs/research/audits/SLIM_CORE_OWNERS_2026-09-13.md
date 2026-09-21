@@ -324,6 +324,28 @@ Behavioral evidence includes `test_candidate_facts`, `test_candidate_coverage_co
 `test_factor_feedback` and `test_exit_policy_advisor`; it is not runtime or
 economic qualification evidence.
 
+### Historical report and diagnostic consumers
+
+The following disposition separates read projections from current producers;
+neither a historical name nor a `read_only` output flag proves inertness.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| `opportunity audit --view ranker-objective` → `ranker_objective_audit` | Uses `readonly_db` plus a temporary query-only guard to analyze persisted shortlist membership and fixed-horizon outcomes. Reads batch boundaries, exact instrument/time linkage and historical admission facts; never invokes the retired Ranker, loads its policy or promotes a result. Missing intended membership remains unavailable; descriptive historical metrics do not grant current admission authority. |
+| `inspect position-path` / `stop-loss-path` → `position_path_observations` | Reads append-only observations and existing Position economics; shares the observer's pure expected-bucket calculation, not its collection loop. Derives coverage, excursions and stop-loss attribution without acquiring candles, settling Positions or writing observations. Ordinary repository openers mean physical read-only permissions are not established by this trace. |
+| Trade-statistics / strategy-KPI API and order-statistics CLI → `trade_stats` | Aggregates persisted Order lifecycle facts and centrally eligible Position outcomes, with family-scorecard reads. These consumers do not submit Orders or materialize final PnL. Order fill-rate summaries and realized Outcome cohorts remain different populations. Ordinary repository connections are not a new mutation owner or proof of enforced read-only access. |
+| Trade-insight API → `trade_insights` | Chart helpers are pure projections of the loaded Outcome cohort. Frozen-risk geometry uses a read-only connection; the later failure-path repair removes its ordinary-opener fallback and reports unavailable R evidence instead. This narrow guarantee does not cover every cohort reader or the whole Analytics package. |
+| Doctor / sizing CLI / Opportunity flow → `sizing_trace` | Separates persisted proposal/Fill/Position notional from an explicitly labeled current-config approximation. Reuses sizing arithmetic and Risk policy reads, without submitting a trade or changing a Risk decision. However, its config loader uses the default migration-persistence mode, and its database opener is ordinary: the full diagnostic is not yet proven physically inert. Historical-data gaps and projection availability must not be repaired by inventing eligible Outcome counts. |
+
+Focused evidence includes `test_ranker_objective_audit`,
+`test_ranker_objective_cli`, `test_stop_loss_path_attribution`,
+`test_trade_insights` and `test_trade_insights_m1`. The sizing trace's historical
+schema regression is recorded separately in its corrective PR; this inventory
+does not claim its entire suite is green or that all diagnostic import and
+configuration side effects are closed. Package movement must preserve the shared
+read rules while keeping collection, configuration migration and trading writers
+with their actual owners.
+
 ## Canonical mutation seams
 
 These are observed API owners and callers, not a blanket claim that each
