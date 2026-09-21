@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import hashlib
 import json
 import sqlite3
@@ -1484,9 +1485,43 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     assert persisted["attention_status"] == "active"
 
 
-@pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout", "load", "fetch", "invalid", "persistence"])
+def test_fresh_stored_book_does_not_import_optional_collector(monkeypatch):
+    from aletheia.agent_shell import entry_planner
+    from aletheia.data.collectors.microstructure import _parse_orderbook
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    book = _parse_orderbook("BTC/USDT", "bitget", {
+        "bids": [[99.99, 200]], "asks": [[100.01, 200]],
+    }, 0, market_type="perp")
+    repo.insert_orderbook_snapshot(book.model_dump())
+    reached = []
+
+    def context_probe(*args, **kwargs):
+        reached.append(kwargs["orderbook"])
+        raise ValueError("stop_before_model")
+
+    async def forbidden_model(*args):
+        pytest.fail("probe must not invoke model")
+
+    real_import = builtins.__import__
+    def without_collector(name, *args, **kwargs):
+        if name == "aletheia.data.collectors.microstructure":
+            raise ModuleNotFoundError(name, name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(entry_planner, "build_entry_analysis_context", context_probe)
+    monkeypatch.setattr(builtins, "__import__", without_collector)
+    result = asyncio.run(plan_next_candidate(forbidden_model))
+    assert result["status"] == "unavailable"
+    assert reached, repo.get_candidate_planning_generation(generation["id"])["result_json"]
+    assert reached[0]["symbol"] == "BTC/USDT"
+
+
+@pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout", "load", "fetch", "invalid", "persistence", "factory", "capability", "close", "malformed"])
 def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book, caplog):
-    from aletheia.data.collectors.microstructure import MicrostructureCollector, _parse_orderbook
+    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data import providers
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
@@ -1505,9 +1540,8 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
     recovered = False
     calls = []
 
-    async def collect(self, symbols, *, venue):
-        assert venue == "bitget"
-        assert symbols[0].symbol == "BTC/USDT" and symbols[0].market_type == "perp"
+    async def observe(self, symbol, *, market_type):
+        assert symbol == "BTC/USDT" and market_type == "perp"
         if not recovered and bad_book == "timeout":
             raise TimeoutError
         snapshot = _parse_orderbook(
@@ -1516,9 +1550,16 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
         )
         if not recovered:
             if bad_book in {"load", "fetch", "invalid"}:
-                return {"snapshots": [], "errors": [{"load": "load_markets:TimeoutError", "fetch": "fetch_order_book:NetworkError", "invalid": "parse:invalid_orderbook"}[bad_book]]}
+                if bad_book == "invalid":
+                    return None
+                raise providers.MarketDataObservationError(
+                    "load_markets" if bad_book == "load" else "fetch_order_book",
+                    TimeoutError() if bad_book == "load" else ConnectionError(),
+                )
             if bad_book == "missing":
-                return {"snapshots": [], "errors": []}
+                return None
+            if bad_book == "malformed":
+                return []
             if bad_book == "venue":
                 snapshot.exchange = "binance"
             elif bad_book == "market":
@@ -1527,13 +1568,28 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
                 snapshot.observed_at = (datetime.now(timezone.utc) + timedelta(
                     seconds=60 if bad_book == "future" else -60
                 )).isoformat()
-        return {"snapshots": [snapshot], "errors": []}
+        return snapshot.model_dump()
 
     async def planner(context):
         calls.append(context)
         raise PlannerBackpressure("busy")
 
-    monkeypatch.setattr(MicrostructureCollector, "collect", collect)
+    closed = []
+    class Provider:
+        get_orderbook_observation = observe
+        async def close(self):
+            closed.append(True)
+            if not recovered and bad_book == "close":
+                raise RuntimeError("private close detail")
+    def factory(venue, *, exact_venue):
+        assert venue == "bitget" and exact_venue
+        if not recovered and bad_book == "factory":
+            raise RuntimeError("private factory detail")
+        if not recovered and bad_book == "capability":
+            from types import SimpleNamespace
+            return SimpleNamespace(close=Provider().close)
+        return Provider()
+    monkeypatch.setattr(providers, "get_market_data_provider", factory)
     insert = repo.insert_orderbook_snapshot
     def persist(book):
         if not recovered and bad_book == "persistence":
@@ -1543,6 +1599,7 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
     result = asyncio.run(plan_next_candidate(planner))
     stored = repo.get_candidate_planning_generation(generation["id"])
     assert result["status"] == "unavailable" and calls == []
+    assert closed == ([] if bad_book == "factory" else [True])
     assert stored["planner_input_json"] is None and stored["attempt_count"] == 0
     diagnostic = [record for record in caplog.records if record.msg == "entry_orderbook_unavailable"][-1]
     assert diagnostic.category == {
@@ -1550,13 +1607,18 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
         "future": "future", "stale": "stale", "timeout": "timeout",
         "load": "collector_error", "fetch": "collector_error", "invalid": "invalid_payload",
         "persistence": "persistence_error",
+        "factory": "collector_error", "capability": "collector_error",
+        "close": "collector_error", "malformed": "invalid_payload",
     }[bad_book]
     assert "private database detail" not in caplog.text
+    assert "private close detail" not in caplog.text
+    assert "private factory detail" not in caplog.text
     recovered = True
     repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?", (generation["id"],))
     result = asyncio.run(plan_next_candidate(planner))
     assert result["status"] == "backpressure", repo.get_candidate_planning_generation(generation["id"])["result_json"]
     assert len(calls) == 1
+    assert closed == ([True] if bad_book == "factory" else [True, True])
     frozen = repo.get_candidate_planning_generation(generation["id"])
     assert frozen["planner_input_json"] is not None
     book = repo.latest_orderbook("BTC/USDT", "bitget", "perp")
@@ -1656,19 +1718,27 @@ def test_real_task_cancellation_is_shielded_and_dispatch_retries_are_bounded(mon
     original = repo.get_candidate_planning_generation(generation["id"])
 
     async def exercise():
+        closed = []
         for attempt in range(3 if phase == "model" else 1):
             entered = asyncio.Event()
             async def wait_for_cancel(*args, **kwargs):
                 entered.set()
                 await asyncio.Event().wait()
             if phase == "prefetch":
-                monkeypatch.setattr("aletheia.data.collectors.microstructure.MicrostructureCollector.collect", wait_for_cancel)
+                from types import SimpleNamespace
+                async def close():
+                    closed.append(True)
+                monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", lambda *args, **kwargs: SimpleNamespace(
+                    get_orderbook_observation=wait_for_cancel, close=close,
+                ))
             task = asyncio.create_task(plan_next_candidate(wait_for_cancel))
             await asyncio.wait_for(entered.wait(), timeout=1)
             task.cancel()
             asyncio.get_running_loop().call_soon(task.cancel)
             with pytest.raises(asyncio.CancelledError):
                 await task
+            if phase == "prefetch":
+                assert closed == [True]
             row = repo.get_candidate_planning_generation(generation["id"])
             assert row["owner_token"] is None
             assert row["attempt_count"] == (attempt + 1 if phase == "model" else 0)
