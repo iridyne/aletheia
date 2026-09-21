@@ -4,7 +4,7 @@ This module is strictly observation-only. It turns authorized offline research
 materials into:
 
 1. compact knowledge cards (safe summaries, never raw prompts/secrets), and
-2. normalized perp-structure snapshots / advisory context blocks.
+2. normalized perp-structure snapshots.
 
 It does not call external APIs, does not persist secrets, and does not alter
 trading/risk/execution behavior.
@@ -12,7 +12,7 @@ trading/risk/execution behavior.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -22,7 +22,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from aletheia.utils.dt import parse_utc
 from aletheia.data.models import PerpStructureSnapshot
 
 
@@ -871,93 +870,6 @@ def extract_position_x_snapshot(payload: dict[str, Any]) -> PerpStructureSnapsho
     return PerpStructureSnapshot(**normalized)
 
 
-def build_position_x_agent_context(
-    row: dict[str, Any] | None,
-    *,
-    now_iso: str | None = None,
-    max_age_minutes: int = 60,
-) -> dict[str, Any]:
-    """Build a compact advisory-only agent block from a stored structure row."""
-    base = {
-        "status": "insufficient_data",
-        "advisory_only": True,
-        "bias": None,
-        "composite_z": None,
-        "rank": None,
-        "universe_size": None,
-        "dimension_reads": {},
-        "risk_context": {},
-        "caveats": [],
-        "source_identity": None,
-        "rendered": "Position X (advisory only): insufficient_data",
-    }
-    if not row:
-        return base
-
-    now = parse_utc(now_iso) or datetime.now(timezone.utc)
-    as_of = parse_utc(row.get("as_of_time")) or parse_utc(row.get("observed_at"))
-    if not as_of or now - as_of > timedelta(minutes=max_age_minutes):
-        return base
-
-    dimension_reads = _loads_json(row.get("dimension_scores_json"))
-    risk_context = _loads_json(row.get("risk_context_json"))
-    caveats: list[str] = []
-    if str(row.get("data_quality") or "").lower() not in ("", "complete"):
-        caveats.append("degraded_data")
-
-    bias = row.get("structure_bias") or row.get("vendor_bias")
-    composite = row.get("composite_z")
-    rank = row.get("structure_rank") or row.get("vendor_rank")
-    universe_size = row.get("universe_size") or row.get("vendor_universe_size")
-
-    rendered_parts = ["Position X (advisory only)"]
-    if bias:
-        rendered_parts.append(f"bias {bias}")
-    if composite is not None:
-        rendered_parts.append(f"composite_z {float(composite):+.2f}".replace("+", ""))
-    if rank is not None and universe_size:
-        rendered_parts.append(f"rank {int(rank)}/{int(universe_size)}")
-    dim_bits: list[str] = []
-    for key in _DIRECTIONAL_KEYS:
-        dim = dimension_reads.get(key) or {}
-        direction = dim.get("direction")
-        strength = dim.get("strength")
-        percentile = dim.get("percentile")
-        if not direction:
-            continue
-        bit = f"{key} {direction}"
-        if strength:
-            bit += f" {strength}"
-        if percentile is not None:
-            bit += f" p{float(percentile):.1f}"
-        dim_bits.append(bit)
-    if dim_bits:
-        rendered_parts.append("; ".join(dim_bits[:3]))
-    if caveats:
-        rendered_parts.append("caveat " + ",".join(caveats))
-
-    return {
-        "status": "ok",
-        "advisory_only": True,
-        "bias": bias,
-        "composite_z": composite,
-        "rank": rank,
-        "universe_size": universe_size,
-        "dimension_reads": dimension_reads,
-        "risk_context": risk_context,
-        "caveats": caveats,
-        "source_identity": {
-            "id": row.get("id"),
-            "source": row.get("source"),
-            "source_ref": row.get("source_ref"),
-            "source_hash": row.get("source_hash"),
-            "as_of_time": row.get("as_of_time"),
-            "observed_at": row.get("observed_at"),
-        },
-        "rendered": ": ".join([rendered_parts[0], "; ".join(rendered_parts[1:])]) if len(rendered_parts) > 1 else rendered_parts[0],
-    }
-
-
 def _safe_text(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1253,20 +1165,6 @@ def _pct_text(value: Any) -> str:
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug or "sample"
-
-
-def _loads_json(value: Any) -> dict[str, Any]:
-    if not value:
-        return {}
-    if isinstance(value, dict):
-        return value
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 
 
 def _number(value: Any) -> float | None:

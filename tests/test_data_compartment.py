@@ -56,6 +56,66 @@ def test_public_data_has_one_physical_implementation():
         assert (root / "extensions/data" / relative).is_file()
 
 
+def test_attribution_and_stored_context_survive_absent_position_x(tmp_path):
+    script = '''
+from datetime import datetime, timezone
+import socket
+import sys
+
+attempted = []
+class MissingPositionX:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "aletheia.data.position_x":
+            attempted.append(fullname)
+            raise ModuleNotFoundError(fullname, name=fullname)
+sys.meta_path.insert(0, MissingPositionX())
+side_effects = []
+def forbidden(*args, **kwargs):
+    side_effects.append("network_or_credentials")
+    raise AssertionError("stored context must not access network or credentials")
+socket.socket.connect = forbidden
+from aletheia.config import secrets
+secrets.get_secret = forbidden
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.trading.entry_snapshot import capture_attribution_snapshot
+run_migrations()
+now = datetime.now(timezone.utc).isoformat()
+repo.insert_orderbook_snapshot(dict(
+    symbol="BTC/USDT", exchange="bitget", market_type="perp",
+    bid_price=100, ask_price=101, spread_bps=10,
+    bid_depth_10bps_usd=10000, ask_depth_10bps_usd=10000,
+    total_depth_10bps_usd=20000, observed_at=now,
+))
+repo.insert_funding_rate_snapshot(dict(
+    symbol="BTC/USDT", exchange="bitget", funding_rate=0.0001,
+    funding_rate_annualized=0.1095, observed_at=now,
+))
+context = capture_attribution_snapshot(
+    "BTC/USDT", exchange="bitget", market_type="perp",
+)["market_context"]
+assert context.get("data_completeness") == 0.67, context
+assert context["tradability"]["depth_10bps_usd"] == 20000
+assert context["leverage"]["funding_rate"] == 0.0001
+
+from aletheia.data.context_builder import render_enriched_context_md
+row = dict(as_of_time=now, source="fixture", venue="bitget", data_quality="degraded",
+    structure_bias="bearish", composite_z=-0.9, structure_rank=25, universe_size=30,
+    dimension_scores_json='{"cgo":{"direction":"bearish","percentile":13.3}}')
+rendered = render_enriched_context_md(["BTC/USDT"], {}, {}, None,
+    perp_structure={"BTC/USDT": row})
+assert "Position X (advisory only): bias bearish; composite_z -0.90; rank 25/30" in rendered
+assert "cgo bearish p13.3; caveat degraded_data" in rendered
+assert not attempted and not side_effects, (attempted, side_effects)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_stored_options_contract_survives_absent_data_extension(tmp_path):
     script = '''
 import socket
