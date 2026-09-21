@@ -83,7 +83,7 @@ async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
     if not row:
         raise HTTPException(status_code=404, detail="News item not found")
 
-    from aletheia.data.news_analyzer import analyze_one_item
+    from extensions.data.news_analyzer import analyze_one_item
     result = await analyze_one_item(news_id)
 
     if result["success"]:

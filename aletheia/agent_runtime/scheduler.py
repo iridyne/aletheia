@@ -3150,7 +3150,7 @@ def _run_cleanup():
 
 def _prune_news(cfg) -> dict[str, int | str | None]:
     try:
-        from aletheia.data.news_collector import prune_old_news
+        from extensions.data.news_collector import prune_old_news
         deleted = prune_old_news(cfg.news.retention_days)
         return {"deleted": deleted, "error": None}
     except Exception as e:
@@ -3258,7 +3258,7 @@ def _run_news_fetch():
 
 
 async def _async_news_fetch():
-    from aletheia.data.news_collector import fetch_news_feeds
+    from extensions.data.news_collector import fetch_news_feeds
     return await fetch_news_feeds()
 
 
@@ -3291,7 +3291,7 @@ def _run_news_analyze():
 
 
 async def _async_news_analyze():
-    from aletheia.data.news_analyzer import analyze_pending_news
+    from extensions.data.news_analyzer import analyze_pending_news
 
     return await analyze_pending_news(batch_size=3)
 
