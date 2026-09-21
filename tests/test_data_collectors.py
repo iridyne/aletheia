@@ -1,13 +1,13 @@
 """Unit tests for the market data collection layer.
 
-All tests are offline (no network, no DB). We mock ccxt and httpx.
+All tests are offline. We mock ccxt/httpx and use temporary repository fixtures.
 """
 
 from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -63,12 +63,15 @@ def test_parse_funding_basic():
         "fundingRate": 0.0001,
         "fundingDatetime": "2026-06-14T08:00:00Z",
         "markPrice": 50000.0,
+        "interval": "8h",
     }
     snap = _parse_funding("BTC/USDT", "binance", raw)
     assert snap is not None
     assert snap.funding_rate == 0.0001
     assert snap.funding_rate_annualized == pytest.approx(0.0001 * 3 * 365, rel=1e-3)
     assert snap.mark_price == 50000.0
+    raw.pop("interval")
+    assert _parse_funding("BTC/USDT", "binance", raw).funding_rate_annualized is None
 
 
 def test_parse_funding_missing_rate():
@@ -81,25 +84,29 @@ def test_parse_funding_missing_rate():
 def test_parse_oi_basic():
     from aletheia.data.collectors.derivatives import _parse_oi
 
+    market = dict(id="BTCUSDT", symbol="BTC/USDT:USDT", swap=True,
+                  base="BTC", quote="USDT", settle="USDT", linear=True, contractSize=1)
     raw = {"openInterestValue": 1_000_000_000.0, "info": {"sumOpenInterest": "20000"}}
-    snap = _parse_oi("BTC/USDT", "binance", raw)
+    assert _parse_oi("BTC/USDT", "binance", raw, market=market) is None
+    raw["info"]["sumOpenInterestValue"] = "1000000000"
+    snap = _parse_oi("BTC/USDT", "binance", raw, market=market)
     assert snap is not None
     assert snap.open_interest_usd == 1_000_000_000.0
-    assert snap.open_interest_coin == 20000.0
+    assert snap.open_interest_coin is None  # The raw amount does not prove base-coin units.
 
 
 def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
     from aletheia.data.collectors.hyperliquid import _parse_oi
+    from aletheia.data.derivatives_facts import hyperliquid_metadata
     from aletheia.storage import repositories as repo
 
-    monkeypatch.setattr(
-        repo,
-        "open_interest_near",
-        lambda symbol, exchange, **kwargs: {
-            "exchange": "hyperliquid",
-            "open_interest_usd": 100.0,
-        },
-    )
+    now = datetime.now(timezone.utc)
+    earlier = (now - timedelta(hours=1)).isoformat()
+    repo.insert_open_interest_snapshot(dict(
+        symbol="BTC/USDT", exchange="hyperliquid", open_interest_usd=100.0,
+        observed_at=earlier,
+        derivatives_metadata_json=hyperliquid_metadata("BTC/USDT", earlier, oi=True),
+    ))
     monkeypatch.setattr(
         repo,
         "latest_open_interest",
@@ -109,22 +116,22 @@ def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
     snap = _parse_oi(
         "BTC/USDT",
         {"openInterest": "11", "markPx": "10"},
-        datetime.now(timezone.utc).isoformat(),
+        now.isoformat(),
     )
 
     assert snap is not None
-    assert snap.oi_change_1h_pct == 10.0
+    assert snap.oi_change_1h_pct == pytest.approx(10.0)
 
 
-def test_hyperliquid_oi_delta_over_300_percent_is_unavailable(monkeypatch):
+def test_hyperliquid_oi_delta_without_proved_baseline_is_unavailable():
     from aletheia.data.collectors.hyperliquid import _parse_oi
     from aletheia.storage import repositories as repo
 
-    monkeypatch.setattr(
-        repo,
-        "open_interest_near",
-        lambda *args, **kwargs: {"open_interest_usd": 1.0},
-    )
+    earlier = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    repo.insert_open_interest_snapshot(dict(
+        symbol="BTC/USDT", exchange="hyperliquid", open_interest_usd=1.0,
+        observed_at=earlier,  # Legacy row has no unit/instrument/clock proof.
+    ))
 
     snap = _parse_oi(
         "BTC/USDT",
