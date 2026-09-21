@@ -76,7 +76,7 @@
 | Universe Relative Rank Shadow（DU-S26） | 同一 `universe_refresh` 的 coarse survivors；observed spread/depth/freshness 为硬证据，perp 额外要求 funding/OI/OI delta/global account ratio/top-trader position ratio | `universe_relative_rank_shadow_batches` + namespaced `filter_candidate_outcomes(horizon='4h')` | Step-v1 control vs `50/30/20` 连续横截面 treatment 的完整 scanner-run cluster utility；Alpha Audit 只读投影 | 🟡 独立 prospective Shadow-only；动态使用实际 eligible `N`，`N<20` unavailable；50 complete clusters/arm + 7 UTC dates才结束样本不足，但仍不授予 promotion/authority |
 | Opportunity/决策来源证据 | 原始 scanner trigger + Observer/System Operator 实际渲染 source identities | `opportunities.metadata.evidence_manifest` + `pi_decisions.evidence_manifest_json` | Operator、trace、case study、post-trade reviewer | ✅ `opportunity_information_integrity/v1` 分离 T0/T1；prediction divergence 写标准 T0；Observer 原始来源只留在 `opportunity_t1`，Operator direct 只记实际展示的技术/Position X；Serenity 按独立 id namespace 保存 exact Layer 3 evidence ids；历史缺失显示 unavailable，不按当前 latest row 反推 |
 | System Operator 无候选观察 | PI daemon 的 explicit zero-pending queue summary（5 分钟去重） | `operator_evaluation_events` | doctor `loop.skip_halt`、运行诊断与后续只读 Skip report | 🟡 observation-only；30 天 retention（详见 [`RETENTION_POLICY.md`](RETENTION_POLICY.md)）；不是 PiDecision、不进 candidate outcome、不改配置或交易权限 |
-| Broker 私有仓位/成交历史 | Bitget/OKX/Binance execution adapter 按完整 account+instrument identity 直查 | 不保存原始响应；只返回标准化 `VerifiedExitResult` | `execution.verified_exit` → 后续 RG-T07 verified/admin close 分流 | ✅ 只读、按 venue 分页；网络/权限/游标/时间窗/歧义失败统一 `inconclusive`，不影响下单路径 |
+| Broker 私有仓位/成交历史 | UTA generic CCXT + Bitget/OKX/Binance profile 按完整 account+instrument identity 直查 | 不保存原始响应；Exchange 返回 `VerifiedExitReport`，Core 投影为 `VerifiedExitResult` | `execution.verified_exit` → 后续 RG-T07 verified/admin close 分流 | ✅ 只读、按 venue 分页；网络/权限/游标/时间窗/歧义失败统一 `inconclusive`，不影响下单路径 |
 | Measured Learning ledger + canonical/fallback outcome provenance | Universe measurement-supported 路径与 evaluator 写入的内部事实；不是外部采集器 | 7 个永久 Learning 表 + `filter_candidate_outcomes` + selected-member `universe_forward_outcomes` mirror/fallback | evaluator/lifecycle/doctor + cached 有界只读 `lco-v1` summary/registry-backed dashboard selector | 🟠 Universe 测量闭环、owner projection、当前路由性能与响应式无障碍已实现；Operator bundle 因缺少 decision-utility causal outcome 保持 static fallback；明细/分页和完整 workbench 仍缺失；不需要新增采集 DU claim |
 
 ---
@@ -166,8 +166,8 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-S14 | L2a | `Position X` 离线解析器存在，能通过目录式 bundle 提取安全 knowledge cards / 结构快照；market_observer 与 System Operator 只消费压缩后的 advisory 结构证据 |
 | DU-S21 | L2c | Hyperliquid OI 按 source + freshness 读取并与 funding 一起渲染，System Operator manifest 保存实际 row ids |
 | DU-S22 | L2c | owner aggregate import 保存 source ref/hash + audit，建立 1h/4h/24h shadow outcomes；14 天前及无数据时均不影响决策 |
-| DU-S23 | L2c | 本地 paper 历史账本 settler 消费 primary-venue funding history；不冒充 broker ledger |
-| DU-S24 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
+| DU-S23 | superseded | 本地 paper funding settler 已退役；公共费率保留为市场/研究事实，不替代外部账户私有资金费证据 |
+| DU-S24 | L2b | xStock 上市状态源在 §3 登记；Core 经 listing Port 精确查询责任 venue，Adapter 负责 native provider 与关闭；单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
 | DU-S27 | L2a | LiteLLM 公共模型/原生工具价格目录生成不可变、事件时点解析的快照；Gateway startup 单飞 refresh，且没有前端或人工价格 writer；cache/reasoning/web-search 的已观察计数必须有对应费率，Usage 只读计算且历史账本不回写 |
 | DU-S28 | L2a | Binance Spot/USD-M 公共 fast-market facts 仅进入 Fast Monitoring 内存消费者；不持久化、不读取凭证、不进入订单路由，Spot depth 未完成 snapshot/diff 连续桥接时 unavailable |
@@ -181,6 +181,6 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
 | DU-S12 | L2a | 默认新闻源包含 SEC/CFTC/Ethereum Foundation 官方 RSS，且 §3 登记为 NewsCollector→`news_items`→market_observer/research_worker |
 | DU-T01 | L2b | 离线注入 CoinalyzeCollector 输出，断言 scheduler 写入 `open_interest_snapshots` 与 `liquidation_events`（不依赖真实 API key） |
-| DU-S19 | L2a | 三家 execution adapter 的私有仓位/成交历史已登记，统一消费为 `VerifiedExitResult` 三态；原始响应不落库，失败不得伪装 absent |
+| DU-S19 | L2b | 三家 Exchange profile 经 UTA 返回 `VerifiedExitReport`；Core 保留 verified/absent/inconclusive 区分，网络、分页、过期与账户不符不得伪装完整证据 |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。

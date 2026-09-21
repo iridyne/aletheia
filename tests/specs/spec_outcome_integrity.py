@@ -13,6 +13,7 @@ docs/archive/legacy/issues/audits/RECONCILED_GONE_INTEGRITY_AUDIT_2026-07-12.md.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -153,40 +154,75 @@ def test_reconciler_declares_durable_disappearance_candidates():
 @spec_claim(
     SpecClaim(
         "OI-B02", "outcome_integrity", "§5 broker-neutral verified exit", "L2b",
-        "Bitget, OKX, and Binance implement one verified-position-exit protocol whose result is "
-        "verified_fill, confirmed_absent_without_fill, or inconclusive; network and pagination "
-        "failures are inconclusive.",
+        "Bitget, OKX, and Binance use UTA verified exit evidence whose Core projection "
+        "distinguishes verified fills, complete absence without fills, and inconclusive "
+        "history; network and pagination failures are inconclusive.",
         status="implemented",
     )
 )
-def test_all_broker_clients_implement_verified_position_exit():
-    assert importlib.util.find_spec("aletheia.execution.verified_exit") is not None
-    from aletheia.execution.verified_exit import (
-        VerifiedExitRequest,
-        classify_verified_exit,
-    )
+@pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance"])
+@pytest.mark.parametrize("case", ["complete", "empty", "network_error", "full_unpageable"])
+async def test_all_broker_clients_implement_verified_position_exit(monkeypatch, venue, case):
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
 
+    from aletheia.execution.verified_exit import VerifiedExitRequest
+    from aletheia.portfolio import disappearance_settlement as settlement
+    from aletheia.uta import manager
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
+
+    profile = _profile(venue)
+    account = _identity(profile)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    exchange = FakeExchange()
+    row = {
+        "id": "close-fill", "order": "close-order", "symbol": "BTC/USDT:USDT",
+        "side": "sell", "amount": "1", "price": "60000", "timestamp": now_ms - 1000,
+        "fee": {"cost": "0.25", "currency": "USDT"},
+        "info": {"positionSide": "LONG", "posSide": "long", "tradeSide": "close"},
+    }
+    exchange.trades = [] if case == "empty" else [row] * (1000 if case == "full_unpageable" else 1)
+    if case == "network_error":
+        exchange.fetch_my_trades = AsyncMock(side_effect=TimeoutError("synthetic outage"))
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(account, profile)
+    monkeypatch.setattr(settlement.repo, "get_position", lambda _id: {"order_id": "entry-order"})
+    monkeypatch.setattr(settlement.repo, "get_order", lambda _id: {
+        "uta_account_identity_json": account.model_dump_json(),
+    })
+
+    async def query(mode, operation, query, *, expected_account):
+        assert mode == account.execution_mode
+        assert operation == "verify_position_exit"
+        assert query.identity == expected_account == account
+        assert query.local_order_ids == ("entry-order",)
+        return await adapter.verify_position_exit(query)
+
+    monkeypatch.setattr(manager, "query_uta", query)
     request = VerifiedExitRequest(
-        broker_id="bitget_demo", account_environment="demo",
-        account_scope="logical-account", execution_mode="bitget_demo",
-        position_id="p1", symbol="BTC/USDT", market_type="usdt_futures",
-        direction="long", quantity=1.0, history_start_ms=1,
-        history_end_ms=2,
+        broker_id=account.execution_mode, account_environment=account.environment,
+        account_scope=account.account_fingerprint, execution_mode=account.execution_mode,
+        position_id="position", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=0.01, history_start_ms=now_ms - 60_000,
+        history_end_ms=now_ms, known_entry_order_ids=("entry-order",),
     )
-    assert classify_verified_exit(
-        request, position_absent=True, history_complete=True, close_fills=(),
-        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
-    ).state == "confirmed_absent_without_fill"
-    assert classify_verified_exit(
-        request, position_absent=True, history_complete=False, close_fills=(),
-        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
-    ).state == "inconclusive"
-    for path in (
-        "aletheia/exchanges/bitget/client.py",
-        "aletheia/exchanges/okx/client.py",
-        "aletheia/exchanges/binance/client.py",
-    ):
-        assert "get_verified_position_exit" in _source(path), path
+    try:
+        result = await settlement._query_uta_verified_exit(account.execution_mode, request)
+        expected = {"complete": "verified_fill", "empty": "confirmed_absent_without_fill"}
+        assert result.state == expected.get(case, "inconclusive")
+        if case == "complete":
+            assert len(result.fills) == 1
+            fill = result.fills[0]
+            assert (fill.fill_id, fill.order_id) == ("close-fill", "close-order")
+            assert (fill.price, fill.quantity, fill.fee, fill.fee_currency) == (
+                60000.0, 0.01, 0.25, "USDT",
+            )
+            assert fill.filled_at_ms == now_ms - 1000
+        else:
+            assert result.fills == ()
+    finally:
+        await adapter.close()
 
 
 @spec_claim(
@@ -390,12 +426,11 @@ def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
         ),
         "tests/specs/spec_pipeline_adopted_position.py": (
             "test_run_reconcile_non_bitget_no_orphan_close",
-            "test_paper_internal_is_outside_exchange_reconciliation_scope",
+            "test_archived_account_is_outside_active_reconciliation_scope",
         ),
         "tests/test_verified_exit.py": (
             "test_bitget_verified_exit_uses_direct_position_and_close_fill",
-            "test_okx_verified_exit_normalizes_contract_quantity",
-            "test_binance_verified_exit_and_network_error_fail_closed",
+            "test_uta_verified_exit_preserves_private_evidence_boundary",
         ),
         "tests/test_outcome_history_remediation.py": (
             "test_history_remediation_dry_run_apply_and_repeat_are_non_destructive",
@@ -403,9 +438,12 @@ def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
         ),
     }
     for path, tests in coverage.items():
-        source = _source(path)
+        functions = {
+            node.name for node in ast.walk(ast.parse(_source(path)))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
         for test_name in tests:
-            assert f"def {test_name}" in source, f"{path} missing {test_name}"
+            assert test_name in functions, f"{path} missing {test_name}"
     audit = _source(
         "docs/archive/legacy/status/audits/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md"
     )
