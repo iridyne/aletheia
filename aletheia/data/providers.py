@@ -340,6 +340,13 @@ class MarketDataProvider(Protocol):
     ``MarketInstrument.contract_size`` is normalized metadata for contract
     volume conversion. Core retains product admission, configured exclusions
     and registry lifecycle ownership.
+
+    The optional async ``get_public_market_capabilities(*, sandbox=False)``
+    reads active USDT symbols from the exact primary venue/environment, returning
+    ``{"spot": frozenset[str], "swap": frozenset[str]}``. Empty sets are known
+    absence, not a failed read. Errors propagate; no fallback, credentials,
+    persistence or venue-health writes are permitted. The request-local sandbox
+    client is closed before returning, without changing ordinary provider clients.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...
