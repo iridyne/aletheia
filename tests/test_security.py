@@ -516,10 +516,12 @@ def test_all_model_providers_use_shared_credential_scrubber():
     raise_for_status_without_secrets (error-leak 2.7 — unified)."""
     import pathlib
 
-    provider_dir = pathlib.Path("aletheia/model_provider")
+    provider_dirs = (pathlib.Path("aletheia/model_provider"), pathlib.Path("extensions/model_endpoints"))
     offenders = []
-    for f in provider_dir.glob("*.py"):
-        text = f.read_text(encoding="utf-8")
-        if "resp.raise_for_status()" in text:
-            offenders.append(f.name)
+    for provider_dir in provider_dirs:
+        assert provider_dir.is_dir(), f"missing model source tree: {provider_dir}"
+        for f in provider_dir.glob("*.py"):
+            text = f.read_text(encoding="utf-8")
+            if "resp.raise_for_status()" in text:
+                offenders.append(str(f))
     assert not offenders, f"providers still using bare raise_for_status(): {offenders}"

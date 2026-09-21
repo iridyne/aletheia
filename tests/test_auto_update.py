@@ -594,7 +594,7 @@ from aletheia.config import loader, secrets
 from aletheia.config.schema import AletheiaConfig, ProviderConfig
 from aletheia.diagnostics import doctor
 from aletheia.exchanges import composition
-from aletheia.model_provider import http_runtime
+from extensions.model_endpoints import http_runtime
 from aletheia.storage import migrations
 cfg = AletheiaConfig()
 cfg.exchange.mode = "demo"

@@ -7,11 +7,11 @@ from unittest.mock import patch, AsyncMock
 from tests.model_http import model_http
 
 from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
-from aletheia.model_provider.openai_compatible import (
+from extensions.model_endpoints.openai_compatible import (
     OpenAICompatibleProvider,
     _extract_chat_completion_text,
 )
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.router import (
     clear_cache,
     healthcheck_all,
@@ -27,7 +27,7 @@ from aletheia.model_provider.router import (
 @pytest.fixture(autouse=True)
 def _bind_http_constructor(monkeypatch):
     from aletheia.model_provider import router
-    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity
+    from extensions.model_endpoints.http_runtime import build_http_provider, http_configuration_identity
 
     monkeypatch.setattr(router, "_provider_factory", build_http_provider)
     monkeypatch.setattr(router, "_provider_identity_reader", http_configuration_identity)
@@ -160,7 +160,7 @@ async def test_async_provider_configuration_check_runs_off_event_loop(tmp_path, 
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", lambda _ref: "secret")
+    monkeypatch.setattr("extensions.model_endpoints.http_runtime.get_secret", lambda _ref: "secret")
     clear_cache()
     cfg = load_config()
     cfg.models.providers["async-provider"] = ProviderConfig(
@@ -202,7 +202,7 @@ async def test_async_router_shares_one_cached_instance(monkeypatch):
         time.sleep(0.02)
         return "synthetic-key"
 
-    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", read)
+    monkeypatch.setattr("extensions.model_endpoints.http_runtime.get_secret", read)
     clear_cache()
     try:
         providers = await asyncio.gather(*(get_provider_async("http") for _ in range(8)))
@@ -354,7 +354,7 @@ async def test_http_provider_reuses_loop_owned_client(monkeypatch):
         return client
 
     monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
+        "extensions.model_endpoints.openai_compatible.httpx_client",
         factory,
     )
     provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")

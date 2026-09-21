@@ -33,7 +33,7 @@ async def test_retired_model_type_cannot_probe_or_resolve_credentials(
     def forbidden(*_args, **_kwargs):
         pytest.fail("retired configuration must not resolve credentials")
 
-    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", forbidden)
+    monkeypatch.setattr("extensions.model_endpoints.http_runtime.get_secret", forbidden)
     router.clear_cache()
     try:
         assert not router.provider_is_configured(name, pcfg)

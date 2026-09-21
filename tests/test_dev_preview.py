@@ -16,11 +16,14 @@ def test_dev_api_refuses_the_stable_gateway_ports():
     assert "reserved" in result.output
 
 
-def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_path):
+@pytest.mark.parametrize("extensions_present", [False, True])
+def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_path, extensions_present):
     import aletheia.cli.dev as dev
     import aletheia.runtime_paths as runtime_paths
 
     captured: dict = {}
+    if extensions_present:
+        (tmp_path / "extensions").mkdir()
 
     monkeypatch.setattr(dev, "project_root", lambda: tmp_path)
     monkeypatch.setattr(runtime_paths, "_user_home", lambda: tmp_path)
@@ -34,6 +37,9 @@ def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_p
     assert captured["env"]["ALETHEIA_RUNTIME_STATE"] == "shadow"
     expected = runtime_paths.preview_instance_dir(tmp_path, 8791)
     assert Path(captured["env"]["ALETHEIA_PREVIEW_DATA_DIR"]) == expected
+    command = captured["command"]
+    watched = [command[index + 1] for index, value in enumerate(command) if value == "--reload-dir"]
+    assert watched == [str(tmp_path / "aletheia")] + ([str(tmp_path / "extensions")] if extensions_present else [])
 
 
 def test_preview_data_dir_requires_the_worktree_preview_root(monkeypatch, tmp_path):
@@ -52,6 +58,24 @@ def test_preview_data_dir_requires_the_worktree_preview_root(monkeypatch, tmp_pa
     monkeypatch.setenv("ALETHEIA_PREVIEW_DATA_DIR", str(tmp_path / "outside"))
     with pytest.raises(RuntimeError, match="dev-preview"):
         loader.preview_data_dir()
+
+
+@pytest.mark.parametrize("extensions_present", [False, True])
+def test_opt_in_watcher_tracks_present_source_roots_without_starting_runtime(monkeypatch, tmp_path, extensions_present):
+    import watchfiles
+    from scripts import watch_backend
+
+    (tmp_path / "aletheia").mkdir()
+    if extensions_present:
+        (tmp_path / "extensions").mkdir()
+    captured = []
+    monkeypatch.setattr(watch_backend, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(watch_backend, "ALETHEIA_DIR", tmp_path / "aletheia")
+    monkeypatch.setenv("ALETHEIA_DEV_RELOAD", "1")
+    monkeypatch.setattr(watch_backend, "check_live_guard", lambda: True)
+    monkeypatch.setattr(watchfiles, "watch", lambda *paths, **kwargs: captured.extend(paths) or iter(()))
+    watch_backend.main()
+    assert captured == [tmp_path / "aletheia"] + ([tmp_path / "extensions"] if extensions_present else [])
 
 
 @pytest.mark.anyio

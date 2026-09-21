@@ -319,7 +319,7 @@ def _full_path(path: str) -> bool:
 def _critical_path(path: str) -> bool:
     if path.startswith(CRITICAL_PREFIXES):
         return True
-    return path.startswith("aletheia/") and any(token in path for token in CRITICAL_TOKENS)
+    return path.startswith(("aletheia/", "extensions/")) and any(token in path for token in CRITICAL_TOKENS)
 
 
 def _coverage_path(path: str) -> bool:

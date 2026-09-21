@@ -10,8 +10,8 @@ import httpx
 def mock_model_probe(monkeypatch):
     """Replace only model side effects; keep Settings verification/persistence real."""
     from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 
     async def healthy(provider):
         return ModelHealth(provider=provider.name, available=True, model=provider.model, models=[provider.model])
@@ -38,5 +38,5 @@ def model_http(*, provider="openai_compatible", post=None, get=None):
         return httpx.Response(response.status_code, json=response.json(), request=request)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handle), timeout=300)
-    with patch(f"aletheia.model_provider.{provider}.httpx_client", return_value=client):
+    with patch(f"extensions.model_endpoints.{provider}.httpx_client", return_value=client):
         yield client

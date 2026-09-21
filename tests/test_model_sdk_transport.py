@@ -10,8 +10,8 @@ from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 
 from aletheia.model_provider.base import ModelRequest
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
+from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
 
 @pytest.fixture(params=[
@@ -151,7 +151,7 @@ async def test_sdk_returns_normalized_completion_facts(endpoint, facts, confirme
 
 
 def test_malformed_http_metadata_does_not_invent_completion_facts():
-    from aletheia.model_provider.http_runtime import http_response_facts
+    from extensions.model_endpoints.http_runtime import http_response_facts
 
     assert http_response_facts({
         "choices": [{"finish_reason": ["private-provider-text"]}],

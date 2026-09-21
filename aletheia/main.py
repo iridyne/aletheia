@@ -169,9 +169,9 @@ def _configure_runtime() -> None:
         configure_outcome_feedback(execute_outcome_feedback)
 
     try:
-        from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
+        from extensions.model_endpoints.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
     except ModuleNotFoundError as exc:
-        if exc.name != "aletheia.model_provider.http_runtime":
+        if exc.name not in {"extensions", "extensions.model_endpoints", "extensions.model_endpoints.http_runtime"}:
             raise
         configure_model_provider(None)
     else:
@@ -215,9 +215,9 @@ app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience
 app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only.")
 
 try:
-    from aletheia.model_provider.credential_cli import set_cmd as set_model_credentials
+    from extensions.model_endpoints.credential_cli import set_cmd as set_model_credentials
 except ModuleNotFoundError as exc:
-    if exc.name != "aletheia.model_provider.credential_cli":
+    if exc.name not in {"extensions", "extensions.model_endpoints", "extensions.model_endpoints.credential_cli"}:
         raise
 else:
     model_app.command(name="set")(set_model_credentials)

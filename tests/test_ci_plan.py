@@ -74,6 +74,14 @@ def test_critical_and_ci_authority_escalate() -> None:
     ]
 
 
+@pytest.mark.parametrize("module", ["credential_routes", "credential_cli", "http_runtime"])
+def test_moved_model_boundaries_preserve_deep_validation(module) -> None:
+    report = _plan([f"extensions/model_endpoints/{module}.py"])
+    assert report["mode"] == "deep"
+    for lane in ("runtime", "integration", "specifications", "e2e"):
+        assert report["required"][lane] is True
+
+
 def test_frontend_operator_native_do_not_pull_unrelated_stacks() -> None:
     frontend = _plan(["frontend/src/App.tsx"])
     assert frontend["mode"] == "affected"

@@ -1,4 +1,4 @@
-"""OpenAI-compatible model provider (chat_completions and responses protocols)."""
+"""HTTP Model Extension for OpenAI Chat Completions and Responses protocols."""
 
 import asyncio
 import json
@@ -19,7 +19,7 @@ from aletheia.model_provider.base import (
     structured_via_complete,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
-from aletheia.model_provider.http_runtime import http_response_facts
+from extensions.model_endpoints.http_runtime import http_response_facts
 
 # SDK debug request logs include prompts. Content-free telemetry belongs to the
 # inference harness, including when the application's root logger is verbose.
