@@ -73,7 +73,7 @@ async def _collect_currency(currency: str, *, volatility_snapshots: list | None 
     finally:
         # Derive after GEX so added processing cannot shift its clock reads.
         if volatility_snapshots is not None:
-            from aletheia.data.options_volatility import derive_options_volatility
+            from extensions.data.options_volatility import derive_options_volatility
 
             try:
                 volatility_snapshots.append(derive_options_volatility(currency, items, acquired_at))

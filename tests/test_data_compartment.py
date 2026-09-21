@@ -9,7 +9,7 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("collector", ["coingecko_top", "defillama", "hyperliquid"])
+@pytest.mark.parametrize("collector", ["coingecko_top", "defillama", "hyperliquid", "options_structure"])
 def test_missing_context_adapter_does_not_stop_primary_lane(collector, monkeypatch):
     from aletheia.agent_runtime import scheduler
 
@@ -49,9 +49,47 @@ def test_public_data_has_one_physical_implementation():
         "collectors/volume_scanner.py",
         "collectors/coingecko_top.py", "collectors/defillama.py",
         "collectors/hyperliquid.py",
+        "collectors/options_structure.py",
     ):
         assert not (root / "aletheia/data" / relative).exists()
         assert (root / "extensions/data" / relative).is_file()
+
+
+def test_stored_options_contract_survives_absent_data_extension(tmp_path):
+    script = '''
+import socket
+import sys
+
+class MissingData:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "extensions" or fullname.startswith("extensions."):
+            raise AssertionError("stored options contract must not import Extensions")
+sys.meta_path.insert(0, MissingData())
+def forbidden(*args, **kwargs):
+    raise AssertionError("stored options must not access network or credentials")
+socket.socket.connect = forbidden
+from aletheia.config import secrets
+secrets.get_secret = forbidden
+from aletheia.data.options_volatility import OptionsVolatilitySnapshot
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+run_migrations()
+cutoff = "2026-09-11T08:00:00+00:00"
+snapshot = OptionsVolatilitySnapshot(symbol="BTC", acquired_at=cutoff, atm_iv_30d=65)
+repo.insert_options_volatility_snapshot(snapshot.model_dump())
+exported = repo.options_volatility_at("BTC", cutoff)
+assert exported["available"] and exported["atm_iv_30d"] == 65
+assert exported["authority"] == "observation_only"
+assert exported["derivation_version"] == snapshot.derivation_version
+assert repo.options_volatility_at("BTC", "2026-09-11T08:31:00+00:00")["reason"] == "stale_snapshot"
+assert repo.latest_options_structure("BTC") is None
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web", "collector"])

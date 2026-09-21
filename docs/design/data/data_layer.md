@@ -41,6 +41,13 @@ The native CCXT consumers `volume_scanner.py`, `microstructure.py` and `derivati
 
 ## Public market-data contract
 
+Deribit options acquisition/GEX parsing lives in
+`extensions/data/collectors/options_structure.py`; observation-only IV derivation
+lives in `extensions/data/options_volatility.py`. Core keeps the persisted
+`OptionsVolatilitySnapshot` contract in `aletheia/data/options_volatility.py`,
+so repository validation and historical export do not require acquisition code.
+Scheduler cadence, source clocks, GEX/IV formulas and repository writers are unchanged.
+
 ### Canonical values
 
 Current canonical market-data models include:

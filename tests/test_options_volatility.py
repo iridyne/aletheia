@@ -8,7 +8,7 @@ from statistics import NormalDist
 
 import pytest
 
-from aletheia.data.options_volatility import derive_options_volatility
+from extensions.data.options_volatility import derive_options_volatility
 
 NOW = datetime(2026, 9, 11, 8, tzinfo=timezone.utc)
 
@@ -115,7 +115,7 @@ def test_sparse_delta_and_duplicate_input():
 
 
 def test_delta_interpolation_boundary():
-    from aletheia.data.options_volatility import _delta_point
+    from extensions.data.options_volatility import _delta_point
 
     def rows(a, b):
         return [{"delta": d, "side": "C", "iv": 60, "id": str(d), "instrument": str(d)} for d in (a, b)]
@@ -212,7 +212,7 @@ def test_cutoff_storage_and_legacy_isolation():
 
 @pytest.mark.parametrize("invalid_iv", [None, 5e-324, 1e308])
 def test_same_response_gex_unchanged(monkeypatch, invalid_iv):
-    import aletheia.data.collectors.options_structure as collector
+    import extensions.data.collectors.options_structure as collector
 
     calls = []
 

@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Options Data compartment](slim_core_options_data_compartment.md): isolate
+  Deribit acquisition and derivation while preserving the Core snapshot contract.
+
 - [Native Data collector compartment](slim_core_native_data_collectors.md): keep
   existing native protocol acquisition in the Data Extension.
 
