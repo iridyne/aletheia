@@ -618,8 +618,8 @@ async def test_operator_recommendations_do_not_flag_candidate_supply_when_execut
 
 
 @pytest.mark.anyio
-async def test_operator_recommendations_include_candidate_supply_drought_for_consecutive_low_cycles(client):
-    from aletheia.agent_shell.operator_store import create_event
+async def test_retired_candidate_supply_history_cannot_recommend_current_scan(client):
+    from aletheia.agent_shell.operator_store import create_event, list_events
 
     payload = {
         "executable_count": 1,
@@ -648,13 +648,12 @@ async def test_operator_recommendations_include_candidate_supply_drought_for_con
         item for item in recommendations.json()
         if item["kind"] == "candidate_supply_drought"
     ]
-    assert len(drought) == 1
-    assert drought[0]["taskType"] == "run_market_scan"
-    assert drought[0]["metadata"]["task_type"] == "run_market_scan"
-    assert drought[0]["metadata"]["main_reason"] == "ttl_expired"
-    assert drought[0]["metadata"]["executable_count"] == 1
-    assert drought[0]["metadata"]["floor"] == 3
-    assert drought[0]["metadata"]["consecutive_cycles"] == 2
+    assert drought == []
+    # Retiring control authority does not delete historical audit evidence.
+    assert len([
+        event for event in list_events(limit=100)
+        if event["event_type"] == "candidate_supply_snapshot"
+    ]) == 2
 
 
 @pytest.mark.anyio
