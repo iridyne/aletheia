@@ -2180,10 +2180,14 @@ class EquitiesConfigUpdate(SettingsRequest):
 def update_observed_equities(req: EquitiesConfigUpdate):
     """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
     normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
-    cfg = load_config()
-    old = list(cfg.market_data.observed_equities or [])
-    cfg.market_data.observed_equities = normalized
-    save_config(cfg)
+    old = []
+
+    def apply_update(cfg):
+        old.extend(cfg.market_data.observed_equities)
+        cfg.market_data.observed_equities = normalized
+        return True
+
+    mutate_config(apply_update)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "equities_config_changed",
                  "entity_type": "market_data_config", "before": {"observed_equities": old},
@@ -2351,7 +2355,6 @@ class MarketDataConfigUpdate(SettingsRequest):
     confirm_exchange_divergence: bool = False
     ohlcv_cache_ttl_min: Optional[int] = None
     enable_yfinance_macro: Optional[bool] = None
-    observed_stocks: Optional[list[str]] = None
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget r-series,
     # Bitget ON-series, future OKX SWAP).  Replaces the narrower observed_xstocks.
     observed_stock_tokens: Optional[list[str]] = None
@@ -2378,7 +2381,6 @@ class MarketDataConfigUpdate(SettingsRequest):
     prediction_enabled: Optional[bool] = None
     price_divergence_threshold_pct: Optional[float] = None
     price_divergence_alert_enabled: Optional[bool] = None
-    observed_equities: Optional[list[str]] = None
 
 
 _MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
@@ -2419,7 +2421,7 @@ def update_market_data_config(req: MarketDataConfigUpdate):
             value = str(value).strip().lower()
             if value not in _MARKET_DATA_PROVIDERS:
                 raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
-        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
+        if field in {"observed_stock_tokens", "observed_xstocks", "observed_prediction_markets"}:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         validated_updates[field] = value
 

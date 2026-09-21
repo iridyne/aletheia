@@ -74,7 +74,7 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'universe.market_type', 'universe.family_quota', 'universe.family_quota_by_regime',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
-    'market_data.observed_stocks', 'market_data.observed_stock_tokens', 'market_data.observed_prediction_markets',
+    'market_data.observed_stock_tokens', 'market_data.observed_prediction_markets',
     // These DO have UI controls — were missing from the set so the coverage matrix
     // falsely labelled them "config.yaml only" (CUI-3, honesty fix):
     'market_data.prediction_enabled',   // PredictionToggleCard

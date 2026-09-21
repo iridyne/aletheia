@@ -22,6 +22,80 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 
+@pytest.mark.parametrize("canonical", [None, [], ["AAPL"]])
+def test_historical_equities_decode_once_and_explicit_clear_survives_reload(canonical):
+    from aletheia.config.schema import MarketDataConfig
+
+    raw = {"observed_stocks": ["TSLA"]}
+    if canonical is not None:
+        raw["observed_equities"] = canonical
+    cfg = MarketDataConfig.model_validate(raw, extra="forbid")
+    assert cfg.observed_equities == (canonical or ["TSLA"])
+    assert raw["observed_stocks"] == ["TSLA"]
+    assert not hasattr(cfg, "observed_stocks")
+    cfg.observed_equities = []
+    saved = cfg.model_dump()
+    assert "observed_stocks" not in saved
+    assert MarketDataConfig.model_validate(saved, extra="forbid").observed_equities == []
+
+
+@pytest.mark.parametrize("legacy", [None, "TSLA", [1]])
+def test_equities_decode_rejects_invalid_legacy_even_when_canonical_wins(legacy):
+    from pydantic import ValidationError
+    from aletheia.config.schema import MarketDataConfig
+
+    with pytest.raises(ValidationError):
+        MarketDataConfig.model_validate({"observed_equities": ["AAPL"], "observed_stocks": legacy})
+
+
+@pytest.mark.parametrize("field", ["observed_stocks", "observed_equities"])
+def test_market_data_cannot_bypass_the_canonical_equities_writer(monkeypatch, field):
+    from fastapi import FastAPI
+    from aletheia.server.routes import settings
+
+    load = MagicMock(side_effect=AssertionError("reject before loading config"))
+    monkeypatch.setattr(settings, "load_config", load)
+    app = FastAPI()
+    app.include_router(settings.router)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/api/settings/market-data", json={field: ["TSLA"]})
+    assert response.status_code == 422
+    load.assert_not_called()
+    assert any(error["loc"] == ["body", field] and error["type"] == "extra_forbidden"
+               for error in response.json()["detail"])
+
+
+@pytest.mark.parametrize("tickers,expected", [([], []), ([" aapl ", "AAPL", ""], ["AAPL"])])
+def test_equities_save_uses_latest_locked_config_and_canonical_workset(monkeypatch, tickers, expected):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import settings
+    from aletheia.agent_runtime import scheduler
+
+    cfg = AletheiaConfig.model_validate({"market_data": {"observed_stocks": ["TSLA"]}})
+    cfg.market_data.ohlcv_cache_ttl_min = 23
+    audits, saved = [], []
+
+    def mutate(change):
+        if change(cfg):
+            saved.append(cfg.model_dump())
+
+    monkeypatch.setattr(settings, "load_config", lambda: pytest.fail("must mutate latest config under lock"))
+    monkeypatch.setattr(settings, "mutate_config", mutate)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", audits.append)
+    assert settings.update_observed_equities(settings.EquitiesConfigUpdate(tickers=tickers)) == {
+        "observed_equities": expected,
+    }
+    assert len(saved) == 1 and saved[0]["market_data"]["ohlcv_cache_ttl_min"] == 23
+    assert audits[0]["before"] == {"observed_equities": ["TSLA"]}
+    assert audits[0]["after"] == {"observed_equities": expected}
+    reloaded = AletheiaConfig.model_validate(saved[0])
+    assert reloaded.market_data.observed_equities == expected
+    if not expected:
+        monkeypatch.setattr(scheduler, "load_config", lambda: reloaded)
+        monkeypatch.setattr(scheduler, "_run_async_with_timeout", lambda *args: pytest.fail("empty workset must not run"))
+        scheduler._run_equity_observer()
+
+
 # ---------------------------------------------------------------------------
 # Event Triggers POST — dead fields must be rejected (extra="forbid")
 # ---------------------------------------------------------------------------

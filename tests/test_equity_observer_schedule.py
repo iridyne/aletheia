@@ -36,7 +36,7 @@ def test_equity_observer_does_not_add_a_wall_clock_misfire_gate(monkeypatch):
         "load_config",
         lambda: SimpleNamespace(
             runtime=SimpleNamespace(paused=False),
-            market_data=SimpleNamespace(observed_equities=["SPY"], observed_stocks=[]),
+            market_data=SimpleNamespace(observed_equities=["SPY"]),
         ),
     )
     monkeypatch.setattr(

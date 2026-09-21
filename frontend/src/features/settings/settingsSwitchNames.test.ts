@@ -7,7 +7,8 @@ const sources = import.meta.glob("./**/*.tsx", {
 }) as Record<string, string>;
 
 const switchTag = /<(?:Switch|Toggle)\b[\s\S]*?\/>/g;
-const checkboxTag = /<input\b[\s\S]*?type=["']checkbox["'][\s\S]*?\/>/g;
+const checkboxTags = (source: string) => [...source.matchAll(/<input\b[\s\S]*?\/>/g)]
+	.filter(([tag]) => /\btype=["']checkbox["']/.test(tag));
 const rowBlock = /<(?:Row|SettingsRow)\b[\s\S]*?<\/(?:Row|SettingsRow)>/g;
 const labelBlock = /<label\b[\s\S]*?<\/label>/g;
 
@@ -26,6 +27,15 @@ function stripComments(source: string): string {
 }
 
 describe("Settings switch naming source contract", () => {
+	it("keeps checkbox matches inside one input, including arrow handlers", () => {
+		const checkbox = '<input onChange={e => set(e.target.checked)} type="checkbox" />';
+		const source = `<input type="number" /><label>${checkbox}</label>`;
+		const matches = checkboxTags(source);
+		expect(matches.map(([tag]) => tag)).toEqual([checkbox]);
+		expect(matches[0].index).toBe(source.indexOf(checkbox));
+		expect(hasProp(matches[0][0], "aria-label")).toBe(false);
+	});
+
 	it("requires every direct Settings switch to be named or enclosed by a SettingsRow", () => {
 		const violations: string[] = [];
 
@@ -54,7 +64,7 @@ describe("Settings switch naming source contract", () => {
 				start: match.index ?? 0,
 				end: (match.index ?? 0) + match[0].length,
 			}));
-			for (const match of source.matchAll(checkboxTag)) {
+			for (const match of checkboxTags(source)) {
 				const start = match.index ?? 0;
 				const tag = match[0];
 				const named = ["aria-label", "aria-labelledby"].some((prop) =>

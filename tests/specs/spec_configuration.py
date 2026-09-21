@@ -68,3 +68,32 @@ def test_dynamic_mapping_keys_remain_valid(tmp_path):
 
     assert loaded.models.providers["operator_selected"].type == "openai_compatible"
     assert loaded.universe.family_quota == {"momentum": 0.5, "mean_reversion": 0.5}
+
+
+@spec_claim(
+    SpecClaim(
+        "CFG-S03", "configuration_contract", "canonical equity observation settings", "L2b",
+        "Historical equities decode without source rewrite; canonical clear persists without a runtime fallback.",
+    )
+)
+def test_historical_equities_clear_persists_through_canonical_writer(tmp_path, monkeypatch):
+    from aletheia.config import loader
+    from aletheia.server.routes import settings
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["market_data"].update(observed_equities=[], observed_stocks=["TSLA"])
+    original = yaml.safe_dump(raw)
+    config_file.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_file)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: None)
+    loader._invalidate_config_cache()
+    loaded = loader.load_config(persist_migrations=False)
+    assert loaded.market_data.observed_equities == ["TSLA"]
+    assert config_file.read_text(encoding="utf-8") == original
+    settings.update_observed_equities(settings.EquitiesConfigUpdate(tickers=[]))
+    reloaded = loader.load_config(persist_migrations=False, use_cache=False)
+    assert reloaded.market_data.observed_equities == []
+    assert not hasattr(reloaded.market_data, "observed_stocks")
+    assert "observed_stocks" not in yaml.safe_load(config_file.read_text())["market_data"]
