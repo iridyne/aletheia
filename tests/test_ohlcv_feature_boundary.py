@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from aletheia.data.ccxt_provider import CCXTProvider
-from aletheia.data.providers import OHLCVResult, parse_ohlcv_candle
+from aletheia.data.providers import Candle, OHLCVResult, parse_ohlcv_candle
 from aletheia.data.symbols import InstrumentId
 
 
@@ -18,6 +18,19 @@ def test_universe_features_does_not_call_native_ohlcv() -> None:
         isinstance(node, ast.Attribute) and node.attr == "fetch_ohlcv"
         for node in ast.walk(tree)
     )
+
+
+def test_feature_observation_rows_exclude_forming_candles() -> None:
+    from aletheia.universe.features import _observed_candle_rows
+
+    closed = Candle(1_700_000_000_000, 100, 101, 99, 100.5, 10,
+                    provider="fixture", exchange="okx")
+    forming = Candle(1_700_003_600_000, 100.5, 102, 100, 101.5, 8,
+                     is_closed=False, provider="fixture", exchange="okx")
+
+    rows = _observed_candle_rows([closed, forming], venue="okx")
+
+    assert [row[0] for row in rows] == [closed.timestamp]
 
 
 @pytest.mark.asyncio
@@ -53,6 +66,30 @@ async def test_ccxt_ohlcv_observation_is_fresh_primary_only(monkeypatch) -> None
     assert result[0].exchange == "okx"
     assert result[0].provider == "ccxt"
     assert calls == [("BTC/USDT", "1h", 1)]
+
+
+@pytest.mark.asyncio
+async def test_ccxt_ohlcv_observation_honors_primary_cooldown(monkeypatch) -> None:
+    import aletheia.data.ccxt_provider as ccxt_module
+    from aletheia.data.venue_health import VenueCoolingDownError
+
+    provider = CCXTProvider("okx", "bitget")
+    monkeypatch.setattr(ccxt_module, "is_venue_available", lambda _name: False)
+    monkeypatch.setattr(
+        provider,
+        "_ensure_primary",
+        lambda *_args: pytest.fail("cooling primary must not construct an exchange"),
+    )
+
+    with pytest.raises(VenueCoolingDownError) as exc_info:
+        await provider.get_ohlcv_observation(
+            InstrumentId.from_parts("okx", "BTC/USDT", "spot"),
+            timeframe="1h",
+            limit=1,
+            use_cache=False,
+        )
+
+    assert exc_info.value.ohlcv_attempts[0].provider == "okx"
 
 
 @pytest.mark.asyncio

@@ -640,6 +640,17 @@ class CCXTProvider:
             if cached is not None:
                 return _cached_ohlcv_result(cached, limit)
 
+        if not is_venue_available(self._primary_name):
+            exc = VenueCoolingDownError(
+                f"market-data venue cooling down: {self._primary_name}"
+            )
+            exc.ohlcv_attempts = (OHLCVAttempt(  # type: ignore[attr-defined]
+                provider=self._primary_name,
+                outcome="failed",
+                reason=type(exc).__name__,
+            ),)
+            raise exc
+
         exchange = self._ensure_primary(mkt)
         try:
             with self._market_type_context(exchange, mkt):

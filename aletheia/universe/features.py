@@ -522,7 +522,7 @@ async def _fetch_feature_orderbook(
 
 
 def _observed_candle_rows(result, *, venue: str) -> list:
-    """Convert a provider OHLCV observation to the legacy feature row shape."""
+    """Convert closed, exact-venue observations to legacy feature rows."""
     rows = []
     for candle in result or ():
         if (
@@ -530,6 +530,8 @@ def _observed_candle_rows(result, *, venue: str) -> list:
             or not str(getattr(candle, "provider", "") or "").strip()
         ):
             return []
+        if not getattr(candle, "is_closed", True):
+            continue
         rows.append([
             candle.timestamp,
             candle.open,
