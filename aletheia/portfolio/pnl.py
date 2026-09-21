@@ -768,7 +768,7 @@ def close_position(
     Exchange closes without private evidence remain explicitly ineligible.
     The materialization callback writes Order/Fill rows in the same transaction.
     """
-    from aletheia.analytics.close_reasons import is_synthetic_close
+    from aletheia.analytics.outcome_integrity import is_synthetic_close
 
     if is_synthetic_close(reason):
         raise ValueError("administrative close reasons must use close_position_administrative")

@@ -28,7 +28,7 @@ def _clean_rows(rows: list[dict]) -> list[dict]:
     cleanups close near ~entry (near-random) and would tip the promote/deprecate
     thresholds on fabricated evidence.
     """
-    from aletheia.analytics.close_reasons import is_synthetic_close
+    from aletheia.analytics.outcome_integrity import is_synthetic_close
     from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
     return [
         r for r in rows

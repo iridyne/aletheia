@@ -157,7 +157,7 @@ owner 要点:把 Operator 可抉择的**大参数值域**纳入 Learning,让它�
   - **action** = 在 persona 区间内选的一组参数值(基准%/杠杆/kelly/加仓/止损)。
   - **reward** = 该次交易的**风险调整后收益**(不是裸 PnL;计入回撤/方差)。
 - **必须只用干净窗**([[aletheia-reconciler-false-orphan-thrash]] 的血泪):thrash/synthetic/adopted 碎片
-  会毒化 reward → 学到噪音。Learning 的样本必须过 `close_reasons.is_synthetic_close` 过滤 + 要求真实归因
+  会毒化 reward → 学到噪音。Learning 的样本必须过 `outcome_integrity.is_synthetic_close` 过滤 + 要求真实归因
   (strategy_id/opportunity_id 齐全)。**没有干净数据,宁可不学。**
 - **探索受硬边界约束**:探索(试更大仓位/杠杆)永远 clamp 在风控硬边界内;探索预算本身也是被 kill
   switch 保护的。

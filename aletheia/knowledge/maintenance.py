@@ -92,7 +92,7 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
     """
     from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.retrieval import reindex_all
-    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
+    from aletheia.analytics.outcome_integrity import SYNTHETIC_CLOSE_REASONS
 
     db = get_db()
     like_clauses: list[str] = []
