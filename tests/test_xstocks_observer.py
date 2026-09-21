@@ -15,7 +15,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.trading.instruments import xstocks_instruments_from_config
+from aletheia.trading.instruments import stock_tokens_from_config
 from aletheia.data.symbols import InstrumentId
 
 
@@ -39,13 +39,13 @@ def _setup(tmp_path, monkeypatch):
 
 # --- Config helpers ---
 
-def test_xstocks_instruments_from_config(tmp_path, monkeypatch):
-    """xstocks_instruments_from_config returns bitget-exchange InstrumentIds."""
+def test_stock_tokens_from_config(tmp_path, monkeypatch):
+    """stock_tokens_from_config returns bitget-exchange InstrumentIds."""
     _setup(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config
     cfg = load_config()
     # Default config has 4 xStocks
-    xs = xstocks_instruments_from_config(cfg)
+    xs = stock_tokens_from_config(cfg)
     assert len(xs) >= 1
     for x in xs:
         assert isinstance(x, InstrumentId)
@@ -56,14 +56,13 @@ def test_xstocks_instruments_from_config(tmp_path, monkeypatch):
 
 
 def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
-    """No crash when both observed_xstocks and observed_stock_tokens are empty."""
+    """An empty canonical token workset schedules no token instruments."""
     _setup(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
-    xs = xstocks_instruments_from_config(cfg)
+    xs = stock_tokens_from_config(cfg)
     assert xs == []
     reset_db()
 
@@ -78,7 +77,6 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["AAPL"]
-    cfg.market_data.observed_xstocks = []  # no xStocks cross-validation in this test
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -124,7 +122,6 @@ def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_p
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["MSFT"]
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 

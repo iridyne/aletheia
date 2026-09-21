@@ -486,11 +486,7 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
         outputs.append("no_equities_configured")
         return {"outputs": outputs, "errors": errors}
 
-    # Merge new observed_stock_tokens (r-series + ON-series + future OKX) with the
-    # legacy observed_xstocks so existing configs continue to work without changes.
-    _new = list(cfg.market_data.observed_stock_tokens or [])
-    _legacy = list(cfg.market_data.observed_xstocks or [])
-    observed_xstocks: list[str] = list(dict.fromkeys(_new + _legacy))  # dedup, order-preserving
+    observed_xstocks = list(dict.fromkeys(cfg.market_data.observed_stock_tokens))
 
     linked_strategy_id = None
     for s in list_strategies(limit=50):

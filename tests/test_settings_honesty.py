@@ -48,7 +48,38 @@ def test_equities_decode_rejects_invalid_legacy_even_when_canonical_wins(legacy)
         MarketDataConfig.model_validate({"observed_equities": ["AAPL"], "observed_stocks": legacy})
 
 
-@pytest.mark.parametrize("field", ["observed_stocks", "observed_equities"])
+@pytest.mark.parametrize("canonical", [None, [], ["rNVDA/USDT"]])
+def test_historical_stock_tokens_decode_once_and_clear_survives_reload(canonical):
+    from aletheia.config.schema import MarketDataConfig
+    from aletheia.trading.instruments import stock_tokens_from_config
+    from types import SimpleNamespace
+
+    raw = {"observed_xstocks": ["AAPLON/USDT"]}
+    if canonical is not None:
+        raw["observed_stock_tokens"] = canonical
+    expected = list(dict.fromkeys(
+        (MarketDataConfig().observed_stock_tokens if canonical is None else canonical)
+        + ["AAPLON/USDT"]
+    ))
+    cfg = MarketDataConfig.model_validate(raw, extra="forbid")
+    assert cfg.observed_stock_tokens == expected
+    assert raw["observed_xstocks"] == ["AAPLON/USDT"]
+    assert not hasattr(cfg, "observed_xstocks")
+    cfg.observed_stock_tokens = []
+    reloaded = MarketDataConfig.model_validate(cfg.model_dump(), extra="forbid")
+    assert stock_tokens_from_config(SimpleNamespace(market_data=reloaded)) == []
+
+
+@pytest.mark.parametrize("legacy", [None, "AAPLON/USDT", [1]])
+def test_stock_token_decode_rejects_invalid_legacy(legacy):
+    from pydantic import ValidationError
+    from aletheia.config.schema import MarketDataConfig
+
+    with pytest.raises(ValidationError):
+        MarketDataConfig.model_validate({"observed_xstocks": legacy})
+
+
+@pytest.mark.parametrize("field", ["observed_stocks", "observed_equities", "observed_xstocks"])
 def test_market_data_cannot_bypass_the_canonical_equities_writer(monkeypatch, field):
     from fastapi import FastAPI
     from aletheia.server.routes import settings

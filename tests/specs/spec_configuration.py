@@ -97,3 +97,32 @@ def test_historical_equities_clear_persists_through_canonical_writer(tmp_path, m
     assert reloaded.market_data.observed_equities == []
     assert not hasattr(reloaded.market_data, "observed_stocks")
     assert "observed_stocks" not in yaml.safe_load(config_file.read_text())["market_data"]
+
+
+@spec_claim(
+    SpecClaim(
+        "CFG-S04", "configuration_contract", "canonical tokenized-equity observation settings", "L2b",
+        "Historical tokens decode without source rewrite; canonical API clear persists without a runtime alias.",
+    )
+)
+def test_historical_tokens_clear_persists_through_settings_writer(tmp_path, monkeypatch):
+    from aletheia.config import loader
+    from aletheia.server.routes import settings
+    from aletheia.trading.instruments import stock_tokens_from_config
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["market_data"].update(observed_stock_tokens=[], observed_xstocks=["AAPLON/USDT"])
+    original = yaml.safe_dump(raw)
+    config_file.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_file)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: None)
+    loader._invalidate_config_cache()
+    loaded = loader.load_config(persist_migrations=False)
+    assert loaded.market_data.observed_stock_tokens == ["AAPLON/USDT"]
+    assert config_file.read_text(encoding="utf-8") == original
+    settings.update_market_data_config(settings.MarketDataConfigUpdate(observed_stock_tokens=[]))
+    reloaded = loader.load_config(persist_migrations=False, use_cache=False)
+    assert stock_tokens_from_config(reloaded) == []
+    assert "observed_xstocks" not in yaml.safe_load(config_file.read_text())["market_data"]
