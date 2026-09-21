@@ -41,6 +41,7 @@ from aletheia.economics.tracing import (
 )
 from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.fallback import get_model_health_snapshot
+from aletheia.storage.sqlite import readonly_db
 
 router = APIRouter(prefix="/api/economics", tags=["economics"])
 
@@ -164,24 +165,28 @@ def viability_reports(
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List historical viability reports without recomputing."""
-    db = ensure_economics_schema()
     where_clauses: list[str] = []
     params: list = []
     if scope:
         where_clauses.append("scope = ?")
         params.append(scope)
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    rows = [
-        dict(row)
-        for row in db.execute(
-            f"SELECT * FROM viability_reports {where_sql} ORDER BY window_end DESC LIMIT ? OFFSET ?",
-            (*params, limit, offset),
-        ).fetchall()
-    ]
-    total_row = db.execute(
-        f"SELECT COUNT(*) FROM viability_reports {where_sql}",
-        tuple(params),
-    ).fetchone()
+    with readonly_db(allow_missing=True) as db:
+        if db is None or not db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='viability_reports'"
+        ).fetchone():
+            return {"reports": [], "limit": limit, "offset": offset, "total": 0}
+        rows = [
+            dict(row)
+            for row in db.execute(
+                f"SELECT * FROM viability_reports {where_sql} ORDER BY window_end DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        ]
+        total_row = db.execute(
+            f"SELECT COUNT(*) FROM viability_reports {where_sql}",
+            tuple(params),
+        ).fetchone()
     total_value = total_row[0] if total_row else 0
     total = total_value if isinstance(total_value, int) else 0
     return {"reports": rows, "limit": limit, "offset": offset, "total": total}

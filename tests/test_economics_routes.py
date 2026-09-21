@@ -800,6 +800,26 @@ async def test_viability_reports_empty(client):
 
 
 @pytest.mark.anyio
+async def test_viability_reports_does_not_initialize_current_economics(client):
+    from aletheia.economics.schema import _TOOL_BACKFILL_KEY
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_viability_report(db, report_id="archived")
+    db.execute("DELETE FROM economics_settings WHERE key=?", (_TOOL_BACKFILL_KEY,))
+    db.commit()
+    before = db.total_changes
+    resp = await client.get("/api/economics/viability/reports")
+    assert resp.status_code == 200
+    assert resp.json()["reports"][0]["id"] == "archived"
+    assert resp.json()["total"] == 1
+    assert db.total_changes == before
+    assert db.execute(
+        "SELECT 1 FROM economics_settings WHERE key=?", (_TOOL_BACKFILL_KEY,),
+    ).fetchone() is None
+
+
+@pytest.mark.anyio
 async def test_viability_reports_pagination(client):
     from aletheia.storage.sqlite import get_db
 

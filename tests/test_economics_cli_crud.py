@@ -214,6 +214,7 @@ def test_absent_viability_history_does_not_create_database_or_schema(tmp_path, e
 import sqlite3
 from aletheia.storage.sqlite import db_path
 from aletheia.economics.historical_viability import list_viability_reports, get_viability_report
+from aletheia.server.routes.economics import viability_reports
 path = db_path()
 if empty_database:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +222,8 @@ if empty_database:
 before = path.read_bytes() if path.exists() else None
 assert list_viability_reports() == []
 assert get_viability_report("missing") is None
+assert viability_reports(scope=None, limit=20, offset=0) == {
+    "reports": [], "limit": 20, "offset": 0, "total": 0}
 assert (path.read_bytes() if path.exists() else None) == before
 '''
     result = subprocess.run(
