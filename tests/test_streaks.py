@@ -90,7 +90,7 @@ def test_report_wires_streaks_section(monkeypatch):
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
         lambda **_: fake,
     )
-    rep = pr._collect()
+    rep = pr._collect(execution_mode="bitget_demo")
     assert "streaks" in rep
     assert rep["streaks"]["max_consecutive_wins"] == 2
     assert rep["streaks"]["max_consecutive_losses"] == 1
