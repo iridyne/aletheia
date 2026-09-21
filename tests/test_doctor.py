@@ -1871,6 +1871,28 @@ def test_candidate_planning_read_failure_is_unavailable(monkeypatch):
     assert "planning unavailable" in report.checks[0].detail
 
 
+def test_retired_skip_evidence_does_not_warn_about_current_planning(tmp_path, monkeypatch):
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision, list_pi_decisions
+
+    setup_env(tmp_path, monkeypatch)
+    insert_pi_decision(PiDecision(
+        id="historical-skip-without-trace", action="skip",
+        opportunity_id="retired-opportunity", symbol="BTC/USDT",
+    ))
+    before = list_pi_decisions()
+    report = dx.Report()
+    dx._probe_skip_halt(report)
+
+    check = next(item for item in report.checks if item.name == "loop.skip_halt")
+    assert check.severity == "info"
+    assert "historical entry evidence" in check.detail
+    assert "not current planning health" in check.detail
+    assert "finding=recording_incident" in check.detail
+    assert "raw_24h_missing_trace=1" in check.detail
+    assert list_pi_decisions() == before
+
+
 
 
 def test_frontdoor_probe_reports_backend_readiness(monkeypatch):
