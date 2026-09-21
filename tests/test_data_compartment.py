@@ -26,6 +26,8 @@ def test_missing_context_adapter_does_not_stop_primary_lane(collector, monkeypat
         return {"status": "success", "error_codes": []}
 
     monkeypatch.delenv("ALETHEIA_COLLECTOR_PROCESS", raising=False)
+    monkeypatch.setattr(scheduler, "_DC_TICK", 0)
+    monkeypatch.setattr(scheduler, "_DC_CONTEXT_TICK", 0)
     monkeypatch.setattr(builtins, "__import__", import_without_adapter)
     monkeypatch.setattr(scheduler, "load_config", lambda: object())
     monkeypatch.setattr(scheduler, "_async_data_collectors", primary)
