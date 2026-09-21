@@ -249,6 +249,10 @@ async def test_xstock_listing_source_is_registered_and_bounded(monkeypatch):
     from aletheia.data import providers
     from aletheia.trading.market_data import _listed_symbols_on_exchange
     from tests.test_market_listing_boundary import test_adapter_preserves_listing_filters_and_closes
+    from tests.specs.spec_pipeline_market_data import (
+        test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup,
+    )
+    from aletheia.data import ccxt_provider
 
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     source = _MARKET_DATA.read_text(encoding="utf-8")
@@ -261,6 +265,8 @@ async def test_xstock_listing_source_is_registered_and_bounded(monkeypatch):
     reader.side_effect = TimeoutError("synthetic listing timeout")
     assert await _listed_symbols_on_exchange("bitget") is None
     await test_adapter_preserves_listing_filters_and_closes(monkeypatch, True)
+    monkeypatch.setattr(providers, "_listing_reader", ccxt_provider.read_market_listing)
+    await test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monkeypatch)
     assert "_XSTOCK_LISTING_TIMEOUT_SEC" in source
     assert "listing_cache" in source
     assert "xstock_observation_config_auto_removed" in source

@@ -161,32 +161,68 @@ def test_reconciler_declares_durable_disappearance_candidates():
     )
 )
 @pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance"])
-async def test_all_broker_clients_implement_verified_position_exit(monkeypatch, venue):
-    assert importlib.util.find_spec("aletheia.execution.verified_exit") is not None
-    from aletheia.execution.verified_exit import (
-        VerifiedExitRequest,
-        classify_verified_exit,
-    )
+@pytest.mark.parametrize("case", ["complete", "empty", "network_error", "full_unpageable"])
+async def test_all_broker_clients_implement_verified_position_exit(monkeypatch, venue, case):
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
 
+    from aletheia.execution.verified_exit import VerifiedExitRequest
+    from aletheia.portfolio import disappearance_settlement as settlement
+    from aletheia.uta import manager
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
+
+    profile = _profile(venue)
+    account = _identity(profile)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    exchange = FakeExchange()
+    row = {
+        "id": "close-fill", "order": "close-order", "symbol": "BTC/USDT:USDT",
+        "side": "sell", "amount": "1", "price": "60000", "timestamp": now_ms - 1000,
+        "fee": {"cost": "0.25", "currency": "USDT"},
+        "info": {"positionSide": "LONG", "posSide": "long", "tradeSide": "close"},
+    }
+    exchange.trades = [] if case == "empty" else [row] * (1000 if case == "full_unpageable" else 1)
+    if case == "network_error":
+        exchange.fetch_my_trades = AsyncMock(side_effect=TimeoutError("synthetic outage"))
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(account, profile)
+    monkeypatch.setattr(settlement.repo, "get_position", lambda _id: {"order_id": "entry-order"})
+    monkeypatch.setattr(settlement.repo, "get_order", lambda _id: {
+        "uta_account_identity_json": account.model_dump_json(),
+    })
+
+    async def query(mode, operation, query, *, expected_account):
+        assert mode == account.execution_mode
+        assert operation == "verify_position_exit"
+        assert query.identity == expected_account == account
+        assert query.local_order_ids == ("entry-order",)
+        return await adapter.verify_position_exit(query)
+
+    monkeypatch.setattr(manager, "query_uta", query)
     request = VerifiedExitRequest(
-        broker_id="bitget_demo", account_environment="demo",
-        account_scope="logical-account", execution_mode="bitget_demo",
-        position_id="p1", symbol="BTC/USDT", market_type="usdt_futures",
-        direction="long", quantity=1.0, history_start_ms=1,
-        history_end_ms=2,
+        broker_id=account.execution_mode, account_environment=account.environment,
+        account_scope=account.account_fingerprint, execution_mode=account.execution_mode,
+        position_id="position", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=0.01, history_start_ms=now_ms - 60_000,
+        history_end_ms=now_ms, known_entry_order_ids=("entry-order",),
     )
-    assert classify_verified_exit(
-        request, position_absent=True, history_complete=True, close_fills=(),
-        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
-    ).state == "confirmed_absent_without_fill"
-    assert classify_verified_exit(
-        request, position_absent=True, history_complete=False, close_fills=(),
-        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
-    ).state == "inconclusive"
-    from tests.test_verified_exit import test_uta_verified_exit_preserves_private_evidence_boundary
-
-    for case in ("complete", "network_error", "full_unpageable"):
-        await test_uta_verified_exit_preserves_private_evidence_boundary(monkeypatch, venue, case)
+    try:
+        result = await settlement._query_uta_verified_exit(account.execution_mode, request)
+        expected = {"complete": "verified_fill", "empty": "confirmed_absent_without_fill"}
+        assert result.state == expected.get(case, "inconclusive")
+        if case == "complete":
+            assert len(result.fills) == 1
+            fill = result.fills[0]
+            assert (fill.fill_id, fill.order_id) == ("close-fill", "close-order")
+            assert (fill.price, fill.quantity, fill.fee, fill.fee_currency) == (
+                60000.0, 0.01, 0.25, "USDT",
+            )
+            assert fill.filled_at_ms == now_ms - 1000
+        else:
+            assert result.fills == ()
+    finally:
+        await adapter.close()
 
 
 @spec_claim(
