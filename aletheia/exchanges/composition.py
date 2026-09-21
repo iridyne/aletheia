@@ -220,8 +220,8 @@ NATIVE_PROTECTION_EXECUTION_MODES = ("bitget_demo", "bitget_live_limited")
 
 
 def create_native_protection_reader(execution_mode: str, *, expected_account: UTAAccountIdentity):
-    from aletheia.exchanges.bitget.native_protection import BitgetNativeProtectionReader
-    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+    from extensions.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+    from extensions.exchanges.bitget.profile_config import configured_bitget_profile
 
     if execution_mode not in NATIVE_PROTECTION_EXECUTION_MODES or expected_account.execution_mode != execution_mode:
         raise ValueError("native_protection_account_unsupported")

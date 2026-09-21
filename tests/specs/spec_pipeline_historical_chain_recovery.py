@@ -636,7 +636,7 @@ def test_entry_gap_selector_excludes_durable_close_identity(
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix="close-identity")
@@ -685,7 +685,7 @@ def test_verified_closed_position_clears_stale_pending_locally(
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix="clear")
@@ -728,7 +728,7 @@ def test_closed_pending_cleanup_survives_jsonl_audit_outage(
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position, _ = _seed_closed_pending(suffix="audit-outage")
@@ -773,7 +773,7 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix=defect)

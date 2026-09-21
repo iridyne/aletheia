@@ -6,7 +6,7 @@ from aletheia.uta.models import FillReport, NativeProtectionHistory, UTAAccountI
 
 class BitgetNativeProtectionReader:
     def __init__(self, identity: UTAAccountIdentity, *, profile: str):
-        from aletheia.exchanges.bitget.client import BitgetClient
+        from extensions.exchanges.bitget.client import BitgetClient
 
         if identity.venue != "bitget" or identity.environment not in {"demo", "live"}:
             raise ValueError("native_protection_account_unsupported")

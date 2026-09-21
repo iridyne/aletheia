@@ -8,8 +8,8 @@ from urllib.parse import urlencode
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.models import FillReport, UTAAccountIdentity
 from aletheia.net import httpx_client
-from aletheia.exchanges.bitget.auth import BASE_URL, build_headers
-from aletheia.exchanges.bitget.profile_config import _KNOWN_PROFILES
+from extensions.exchanges.bitget.auth import BASE_URL, build_headers
+from extensions.exchanges.bitget.profile_config import _KNOWN_PROFILES
 from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_canonical
 

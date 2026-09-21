@@ -489,7 +489,7 @@ def test_entry_route_gates_use_registered_capabilities():
 
 def test_agent_shell_does_not_import_exchange_auth():
     """agent_shell cannot directly import exchange auth or secrets."""
-    forbidden = {"aletheia.exchanges.bitget.auth", "aletheia.config.secrets"}
+    forbidden = {"aletheia.exchanges.bitget.auth", "extensions.exchanges.bitget.auth", "aletheia.config.secrets"}
     for name in ("permissions.py", "registry.py", "runtime.py"):
         path = SRC / "agent_shell" / name
         if not path.exists():

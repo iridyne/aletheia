@@ -1221,7 +1221,8 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name not in {
         "aletheia.exchanges", "aletheia.exchanges.credential_routes",
-        "aletheia.exchanges.bitget", "aletheia.exchanges.bitget.auth",
+        "extensions", "extensions.exchanges",
+        "extensions.exchanges.bitget", "extensions.exchanges.bitget.auth",
     }:
         raise
     logger.warning("exchange_credential_routes_unavailable")

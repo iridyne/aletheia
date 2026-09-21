@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from aletheia.exchanges.bitget import client as native_client
-from aletheia.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+from extensions.exchanges.bitget import client as native_client
+from extensions.exchanges.bitget.native_protection import BitgetNativeProtectionReader
 from tests.uta.test_ccxt_adapter import _identity, _profile
 
 
