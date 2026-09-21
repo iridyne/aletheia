@@ -16,7 +16,6 @@ from typing import Any
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.analytics.trade_path import build_trade_path_rows
 from aletheia.storage import repositories as repo
-from aletheia.storage.hashing import sha256_json
 from aletheia.storage.models import TradeProposal
 from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
 
@@ -348,8 +347,7 @@ def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
         started = True
         try:
             model = TradeProposal.model_validate(stored)
-            payload = model.model_dump(exclude={"status", "commit_hash"})
-            expected_hash = sha256_json(payload)[:16]
+            expected_hash = repo.validate_trade_proposal_commit_hash(model)
         except Exception:
             return False
         if commit_hash != expected_hash:
