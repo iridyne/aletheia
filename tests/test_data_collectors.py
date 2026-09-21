@@ -213,7 +213,7 @@ async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
 
 def test_coinalyze_loads_only_its_credential_reference(monkeypatch):
     import aletheia.config.secrets as secrets
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
 
     requested: list[str] = []
     monkeypatch.setattr(
@@ -228,7 +228,7 @@ def test_coinalyze_loads_only_its_credential_reference(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_without_key_has_no_policy_side_effect(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
     import aletheia.learning.opportunity_information_policy as policy
 
     monkeypatch.setattr(mod, "_load_api_key", lambda: None)
@@ -249,7 +249,7 @@ async def test_coinalyze_without_key_has_no_policy_side_effect(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_errors_do_not_expose_credentials(monkeypatch, caplog):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
     import aletheia.learning.opportunity_information_policy as policy
 
     secret = "coinalyze-secret"
@@ -295,7 +295,7 @@ async def test_coinalyze_errors_do_not_expose_credentials(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
     from aletheia.storage import repositories as repo
 
     class Response:
@@ -340,7 +340,7 @@ async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_coinalyze_skips_coin_only_and_nonfinite_oi(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
 
     class Response:
         status_code = 200
@@ -377,7 +377,7 @@ async def test_coinalyze_skips_coin_only_and_nonfinite_oi(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
 
     now = datetime.now(timezone.utc)
 
@@ -417,7 +417,7 @@ async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_open_interest_batches_all_requested_symbols(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
 
     requested = [f"S{i:02d}/USDT" for i in range(30)]
     calls: list[str] = []
@@ -467,7 +467,7 @@ async def test_coinalyze_open_interest_batches_all_requested_symbols(monkeypatch
 async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred(
     monkeypatch,
 ):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.data.collectors.coinalyze as mod
     import aletheia.learning.opportunity_information_policy as policy
     from aletheia.data.collector_health import classify_collector_result
 
@@ -551,7 +551,7 @@ def test_classify_risk_regime_neutral():
 async def test_fetch_fred_parses_response(monkeypatch):
     """FRED fetcher extracts latest non-'.' observation value."""
     import httpx
-    from aletheia.data.collectors.macro import _fetch_fred
+    from extensions.data.collectors.macro import _fetch_fred
 
     # Mock a FRED-like JSON response
     def _mock_response(series_id):
@@ -594,7 +594,7 @@ async def test_fetch_fred_parses_response(monkeypatch):
 async def test_fetch_fred_skips_dots(monkeypatch):
     """All '.' values → returns None for that series."""
     import httpx
-    from aletheia.data.collectors.macro import _fetch_fred
+    from extensions.data.collectors.macro import _fetch_fred
 
     class FakeResponse:
         status_code = 200

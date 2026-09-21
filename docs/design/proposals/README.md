@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Scoped credential Data collectors](slim_core_scoped_data_collectors.md): preserve
+  the approved per-adapter credential exception within the Data compartment.
+
 - [Options Data compartment](slim_core_options_data_compartment.md): isolate
   Deribit acquisition and derivation while preserving the Core snapshot contract.
 

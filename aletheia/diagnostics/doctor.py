@@ -1503,7 +1503,7 @@ def _probe_coinalyze(report: Report) -> None:
             report.add("data.liquidations", "info", "Coinalyze liquidation feed disabled in settings")
             return
 
-        from aletheia.data.collectors.coinalyze import is_configured
+        from extensions.data.collectors.coinalyze import is_configured
         if not is_configured():
             report.add(
                 "data.coinalyze",

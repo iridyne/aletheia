@@ -41,6 +41,14 @@ The native CCXT consumers `volume_scanner.py`, `microstructure.py` and `derivati
 
 ## Public market-data contract
 
+Macro/FRED and Coinalyze acquisition lives in `extensions/data/collectors`.
+These concrete adapters retain the owner-approved exception to resolve only
+their own credential reference; Core consumers receive facts, not raw keys.
+Scheduler composition owns cadence and snapshot persistence. Doctor calls the
+optional Coinalyze presence probe and reports unavailable if the adapter is absent.
+Existing FRED attempt provenance and Coinalyze Learning policy-epoch behavior
+remain unchanged; neither adapter is claimed to be entirely side-effect-free.
+
 Deribit options acquisition/GEX parsing lives in
 `extensions/data/collectors/options_structure.py`; observation-only IV derivation
 lives in `extensions/data/options_volatility.py`. Core keeps the persisted

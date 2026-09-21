@@ -9,7 +9,7 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("collector", ["coingecko_top", "defillama", "hyperliquid", "options_structure"])
+@pytest.mark.parametrize("collector", ["coingecko_top", "defillama", "hyperliquid", "macro", "coinalyze", "options_structure"])
 def test_missing_context_adapter_does_not_stop_primary_lane(collector, monkeypatch):
     from aletheia.agent_runtime import scheduler
 
@@ -49,6 +49,7 @@ def test_public_data_has_one_physical_implementation():
         "collectors/volume_scanner.py",
         "collectors/coingecko_top.py", "collectors/defillama.py",
         "collectors/hyperliquid.py",
+        "collectors/macro.py", "collectors/coinalyze.py",
         "collectors/options_structure.py",
     ):
         assert not (root / "aletheia/data" / relative).exists()

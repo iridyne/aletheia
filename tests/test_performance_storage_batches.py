@@ -121,7 +121,7 @@ def test_context_collector_defers_network_results_into_one_transaction(tmp_path,
     _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
     from extensions.data.collectors.defillama import DefiLlamaCollector
-    from aletheia.data.collectors.macro import MacroCollector
+    from extensions.data.collectors.macro import MacroCollector
     from aletheia.data.models import MacroSnapshot
     from aletheia.storage.models import OnchainSnapshot
 

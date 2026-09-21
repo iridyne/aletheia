@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from aletheia.data import macro_liquidity as ml
-from aletheia.data.collectors import macro
+from extensions.data.collectors import macro
 from aletheia.storage import repositories as repo
 
 CUTOFF = "2026-09-11T12:00:00+00:00"
