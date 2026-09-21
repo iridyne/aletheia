@@ -536,7 +536,8 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     checks = [check for check in report.checks if check.name == "loop.skip_halt"]
     assert len(checks) == 1
     check = checks[0]
-    assert check.severity == "warn"
+    assert check.severity == "info"
+    assert "historical entry evidence; not current planning health" in check.detail
     assert "raw_24h_candidate_skips=1" in check.detail
     assert "raw_24h_missing_trace=1" in check.detail
     assert "raw_24h_missing_outcome_seed=1" in check.detail

@@ -1746,14 +1746,10 @@ def _probe_trading_loop(report: Report) -> None:
 
 
 def _probe_skip_halt(report: Report) -> None:
-    """Expose candidate-skip evidence gaps without changing trading behavior.
+    """Read retired entry evidence, never current Candidate/Plan health.
 
-    ``loop.profit`` detects proposal drought.  This companion probe answers the
-    necessary next question: are candidate-scoped skips actually auditable and
-    waiting for fixed outcomes, or did the Operator consume work without trace
-    evidence?  Legacy unscoped heartbeat skips are reported separately and never
-    enter the candidate cohort.  Current zero-pending heartbeats are counted from
-    their dedicated observation table.  The probe is read-only by design.
+    Preserve historical trace, outcome and heartbeat diagnostics. Current entry
+    liveness belongs to the canonical workbench and _probe_candidate_planning.
     """
     try:
         from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
@@ -1881,41 +1877,12 @@ def _probe_skip_halt(report: Report) -> None:
         f"{int(scoped_counts.get('unreconstructable_adverse_evidence', 0))}, "
         f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
-    fix_hint = (
-        "inspect candidate skip trace/outcome coverage and the read-only Skip diagnosis; "
-        "does not change PI, config, Risk, or execution"
+    report.add(
+        "loop.skip_halt", "info",
+        "historical entry evidence; not current planning health — " + detail,
+        "inspect historical skip trace/outcome coverage; use Candidate/Plan diagnostics "
+        "for current entry; does not change PI, config, Risk, or execution",
     )
-    if diagnosis.finding in {"recording_incident", "operator_liveness_incident", "diagnosis_unavailable"}:
-        report.add("loop.skip_halt", "warn", detail, fix_hint)
-    elif unscoped:
-        report.add(
-            "loop.skip_halt",
-            "warn",
-            detail + " — legacy unscoped heartbeat skips are excluded from effectiveness cohorts",
-            fix_hint,
-        )
-    elif candidate_skips:
-        finding_note = {
-            "awaiting_outcomes": (
-                "recent candidate evidence complete; await the preceding bounded "
-                "cohort's fixed-horizon settlement"
-            ),
-            "protective_skip_observed": (
-                "mature fixed-horizon cohort supports retaining the current policy"
-            ),
-        }.get(diagnosis.finding, "candidate evidence complete; no behavior change authorized")
-        report.add(
-            "loop.skip_halt",
-            "info",
-            detail + f" — {finding_note}",
-            fix_hint,
-        )
-    else:
-        report.add(
-            "loop.skip_halt", "info",
-            detail + " — no candidate-scoped skips in window; no-target heartbeats are observations",
-            fix_hint,
-        )
 
 
 def _probe_round1(report: Report) -> None:
