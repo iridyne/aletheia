@@ -4,6 +4,7 @@ import ast
 import sqlite3
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -199,6 +200,44 @@ def test_guard_impact_read_model_has_no_llm_http_or_exchange_calls():
             func = node.func
             name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
             assert name not in forbidden_call_names
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_guard_impact_file_access_is_readonly(tmp_path, monkeypatch, exists):
+    import aletheia.analytics.guard_impact as report_module
+    import aletheia.storage.sqlite as sq
+
+    path = tmp_path / "guard-history.db"
+    if exists:
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE sentinel (value TEXT)")
+            connection.execute("INSERT INTO sentinel VALUES ('preserved')")
+    sq.reset_db()
+    sq._db_conn = None
+    monkeypatch.setattr(sq, "db_path", lambda: path)
+    original_get_db = sq.get_db
+    observations = []
+
+    def checked_get_db():
+        connection = original_get_db()
+        observations.append(connection.execute("PRAGMA query_only").fetchone()[0])
+        assert observations[-1] == 1
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("UPDATE sentinel SET value='must not persist'")
+        return connection
+
+    monkeypatch.setattr(report_module, "get_db", checked_get_db)
+    try:
+        report = report_module.build_guard_impact_audit(hours=24)
+        assert report["verdict"] == "insufficient_data"
+        assert path.exists() is exists
+        if exists:
+            assert observations == [1]
+            with sqlite3.connect(path) as connection:
+                assert connection.execute("SELECT value FROM sentinel").fetchall() == [("preserved",)]
+    finally:
+        sq.reset_db()
+        sq._db_conn = None
 
 
 def test_guard_impact_empty_db_does_not_crash(monkeypatch):
