@@ -6,6 +6,9 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.test_broker_funding_economics import (
+    configured_funding_retention as configured_funding_retention,
+)
+from tests.test_broker_funding_economics import (
     test_expired_funding_prefix_does_not_starve_recoverable_close as _assert_prefix_progress,
 )
 from tests.test_broker_funding_economics import (
