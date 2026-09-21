@@ -137,7 +137,6 @@ _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
 _OHLCV_15M_LIMIT = 100
-_TICKER_CHUNK_SIZE = 100
 # taker_buy_ratio is only consumed by the event family, which gates on a sharp
 # 1h move; fetch it lazily for movers above this |return_1h| % to keep the scan
 # cheap (the taker endpoint is a per-symbol call with no batch form).
@@ -490,19 +489,6 @@ def _record_ticker_prefilter_batches(
         },
         min_interval_sec=HEAVY_BATCH_MIN_INTERVAL_SEC,
     )
-
-
-async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
-    """Fetch tickers in chunks to stay within Binance URL length limits."""
-    all_tickers: dict = {}
-    valid = [s for s in symbols if _is_valid_symbol(s) and s in exchange.markets]
-    for i in range(0, len(valid), _TICKER_CHUNK_SIZE):
-        chunk = valid[i:i + _TICKER_CHUNK_SIZE]
-        try:
-            all_tickers.update(await exchange.fetch_tickers(chunk))
-        except Exception as e:
-            logger.warning("Ticker chunk %d-%d failed: %s", i, i + len(chunk), e)
-    return all_tickers
 
 
 async def _fetch_feature_orderbook(
@@ -1059,15 +1045,19 @@ async def collect_features(
                 logger.warning("Perp market bootstrap failed: %s", type(exc).__name__)
 
         spot_symbols = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
-        perp_symbols = list(dict.fromkeys(to_ccxt_perp(a["symbol"]) for a in perp_assets if a.get("symbol")))
+        perp_symbols = list(dict.fromkeys(a["symbol"] for a in perp_assets if a.get("symbol")))
 
         tickers: dict = {}
 
         if spot_symbols and spot_exchange is not None:
-            tickers.update(await _chunked_fetch_tickers(spot_exchange, spot_symbols))
+            reader = getattr(spot_provider, "get_tickers_observation", None)
+            if reader is not None:
+                tickers.update(await reader(spot_symbols, market_type="spot"))
 
         if perp_symbols and perp_exchange is not None:
-            tickers.update(await _chunked_fetch_tickers(perp_exchange, perp_symbols))
+            reader = getattr(perp_provider, "get_tickers_observation", None)
+            if reader is not None:
+                tickers.update(await reader(perp_symbols, market_type="perp"))
 
         # --- Volume pre-filter ---
         min_vol = cfg.universe.min_volume_24h_usdt

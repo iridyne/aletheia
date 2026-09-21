@@ -89,6 +89,13 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         def _ensure_primary(self, _market_type=None):
             return self.exchange
 
+        async def get_tickers_observation(self, symbols, *, market_type="spot"):
+            requested = [
+                f"{symbol}:USDT" if market_type == "perp" else symbol
+                for symbol in symbols
+            ]
+            return await self.exchange.fetch_tickers(requested)
+
         async def get_taker_buy_ratio(self, symbol):
             return 1.25
 
@@ -191,6 +198,13 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
 
         def _ensure_primary(self, _market_type=None):
             return self.exchange
+
+        async def get_tickers_observation(self, symbols, *, market_type="spot"):
+            requested = [
+                f"{symbol}:USDT" if market_type == "perp" else symbol
+                for symbol in symbols
+            ]
+            return await self.exchange.fetch_tickers(requested)
 
         async def close(self):
             self.closed = True
@@ -723,6 +737,13 @@ async def test_collection_failure_is_not_a_successful_empty_population(monkeypat
             pass
         def _ensure_primary(self, *args):
             return Exchange()
+
+        async def get_tickers_observation(self, symbols, *, market_type="spot"):
+            try:
+                return await self._ensure_primary(market_type).fetch_tickers(symbols)
+            except Exception:
+                return {}
+
         async def close(self):
             closed.append(True)
     monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
