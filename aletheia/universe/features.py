@@ -1029,7 +1029,7 @@ async def collect_features(
     Phase A: fetch all tickers in batch (spot + perp separately) — ~2-4s total.
     Phase B: pre-filter by min_volume, then fetch OHLCV concurrently with semaphore.
     """
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.data.providers import get_market_data_provider
     from aletheia.data.symbols import to_ccxt_perp
 
     # Feature observation capabilities pin their external reads to the primary
@@ -1037,7 +1037,9 @@ async def collect_features(
     md = cfg.market_data
     venue = md.ccxt_exchange
     fallback_venue = md.ccxt_fallback or venue
-    spot_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+    spot_provider = get_market_data_provider(
+        exchange=venue, exact_venue=True, fallback_venue=fallback_venue,
+    )
     providers = [spot_provider]
     results = []
     priority_asset_ids = set(priority_asset_ids or ())
@@ -1063,7 +1065,9 @@ async def collect_features(
             logger.warning("Spot market bootstrap failed: %s", type(exc).__name__)
         perp_exchange = None
         if perp_assets:
-            perp_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+            perp_provider = get_market_data_provider(
+                exchange=venue, exact_venue=True, fallback_venue=fallback_venue,
+            )
             providers.append(perp_provider)
             try:
                 perp_exchange = perp_provider._ensure_primary("perp")

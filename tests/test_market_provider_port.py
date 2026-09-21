@@ -9,7 +9,7 @@ from unittest.mock import Mock, call
 import pytest
 
 
-@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py"])
+@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py", "universe/features.py"])
 def test_standard_core_consumers_do_not_import_concrete_data(module):
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
     assert not any(
@@ -40,6 +40,21 @@ def test_exact_provider_requires_venue_before_factory(monkeypatch):
     with pytest.raises(ValueError, match="requires a venue"):
         providers.get_market_data_provider(exact_venue=True)
     factory.assert_not_called()
+
+
+def test_exact_provider_preserves_explicit_fallback_construction(monkeypatch):
+    from aletheia.data import providers
+
+    factory = Mock(return_value=object())
+    monkeypatch.setattr(providers, "_provider_factory", factory)
+
+    providers.get_market_data_provider(
+        "bitget", exact_venue=True, fallback_venue="okx",
+    )
+
+    factory.assert_called_once_with(
+        "bitget", exact_venue=True, fallback_venue="okx",
+    )
 
 
 def test_core_provider_port_is_absent_safe_without_concrete_imports():

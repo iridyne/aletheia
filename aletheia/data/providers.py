@@ -24,13 +24,25 @@ def configure_market_data_factory(factory: Callable[..., MarketDataProvider] | N
     _provider_factory = factory
 
 
-def get_market_data_provider(exchange: str | None = None, *, exact_venue: bool = False) -> MarketDataProvider:
-    """Create a request-owned provider; exact reads forbid cross-source fallback."""
+def get_market_data_provider(
+    exchange: str | None = None,
+    *,
+    exact_venue: bool = False,
+    fallback_venue: str | None = None,
+) -> MarketDataProvider:
+    """Create a request-owned provider; exact reads forbid cross-source fallback.
+
+    ``fallback_venue`` only preserves the adapter's ordinary-read construction
+    policy; optional observation capabilities remain primary-only when
+    ``exact_venue`` is true.
+    """
     if exact_venue and not exchange:
         raise ValueError("exact market data requires a venue")
     if _provider_factory is None:
         raise RuntimeError("market data provider unavailable")
-    return _provider_factory(exchange, exact_venue=exact_venue)
+    return _provider_factory(
+        exchange, exact_venue=exact_venue, fallback_venue=fallback_venue,
+    )
 
 
 def configure_listing_reader(
