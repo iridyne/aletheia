@@ -78,11 +78,17 @@ async def test_provider_returns_normalized_funding_and_oi_without_fallback(monke
 
 @pytest.mark.asyncio
 async def test_bitget_funding_uses_existing_ticker_and_contract_interval(monkeypatch):
+    import json
+
     from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.universe.candidate_funding import (
+        PERP_FUNDING_EVIDENCE_VERSION,
+        proved_funding_interval,
+    )
 
     class Exchange:
         id = "bitget"
-        _candidate_markets_acquired_at = "2026-09-20T00:00:00+00:00"
+        options = {}
         markets = {
             "BTC/USDT:USDT": {
                 "id": "BTCUSDT_UMCBL",
@@ -96,11 +102,18 @@ async def test_bitget_funding_uses_existing_ticker_and_contract_interval(monkeyp
             }
         }
 
+        async def load_markets(self):
+            return self.markets
+
         async def fetch_funding_rate(self, _symbol):
             pytest.fail("Bitget funding uses the already acquired ticker")
 
     provider = CCXTProvider("bitget", "okx")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type: Exchange())
+    exchange = Exchange()
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type: exchange)
+    before = datetime.now(timezone.utc)
+    assert len(await provider.get_market_instruments("perp")) == 1
+    after = datetime.now(timezone.utc)
     observation = await provider.get_funding_observation(
         "BTC/USDT",
         ticker={
@@ -112,4 +125,37 @@ async def test_bitget_funding_uses_existing_ticker_and_contract_interval(monkeyp
     assert observation["funding_rate"] == 0.001
     assert observation["interval_source"] == "bitget.contracts.fundInterval"
     assert observation["interval_raw"] == "1h"
-    assert observation["interval_acquired_at"] == "2026-09-20T00:00:00+00:00"
+    acquired = datetime.fromisoformat(observation["interval_acquired_at"])
+    assert before <= acquired <= after
+    proof = observation["evidence"] | {
+        "version": PERP_FUNDING_EVIDENCE_VERSION,
+        "interval_source": observation["interval_source"],
+        "interval_acquired_at": observation["interval_acquired_at"],
+    }
+    assert proved_funding_interval({
+        "venue": "bitget", "symbol": "BTC/USDT",
+        "entry_ts": datetime.now(timezone.utc).isoformat(),
+        "funding_rate_at_entry": observation["funding_rate"],
+        "funding_evidence_json": json.dumps(proof),
+    }) == 3600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous", [None, "2026-09-20T00:00:00+00:00"])
+async def test_failed_market_load_does_not_create_or_refresh_interval_proof(monkeypatch, previous):
+    from aletheia.data.ccxt_provider import CCXTProvider
+
+    class Exchange:
+        options = {}
+
+        async def load_markets(self):
+            raise RuntimeError("metadata unavailable")
+
+    exchange = Exchange()
+    if previous is not None:
+        exchange._candidate_markets_acquired_at = previous
+    provider = CCXTProvider("bitget", "okx")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type: exchange)
+    with pytest.raises(RuntimeError, match="metadata unavailable"):
+        await provider.get_market_instruments("perp")
+    assert getattr(exchange, "_candidate_markets_acquired_at", None) == previous

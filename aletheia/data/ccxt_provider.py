@@ -590,6 +590,8 @@ class CCXTProvider:
         )
         with self._market_type_context(exchange, requested_market_type or "spot"):
             await exchange.load_markets()
+            if requested_market_type == "perp":
+                exchange._candidate_markets_acquired_at = datetime.now(timezone.utc).isoformat()
         result = []
         for symbol_key, info in exchange.markets.items():
             if not info.get("active", True) or info.get("option") or info.get("future"):
