@@ -122,18 +122,18 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     async def _fake_httpx_client(*args, **kwargs):
         yield _FakeClient()
 
-    # Patch httpx_client at source (collectors import it lazily).
+    # Import bound consumers before patching the source, so teardown restores
+    # real factories rather than a mock captured during first module import.
     from aletheia import net as net_mod
-    monkeypatch.setattr(net_mod, "httpx_client", _fake_httpx_client)
-    # Also patch the macro module's bound reference (top-of-file import).
     from aletheia.data.collectors import macro as macro_mod
+    from aletheia.data.collectors import derivatives as deriv_mod
+    from aletheia.data.collectors import coingecko_top as cg_mod
+    monkeypatch.setattr(net_mod, "httpx_client", _fake_httpx_client)
     monkeypatch.setattr(macro_mod, "httpx_client", _fake_httpx_client)
     monkeypatch.setattr(
         macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None
     )
-    from aletheia.data.collectors import derivatives as deriv_mod
     monkeypatch.setattr(deriv_mod, "httpx_client", _fake_httpx_client)
-    from aletheia.data.collectors import coingecko_top as cg_mod
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
