@@ -12,7 +12,7 @@ import time
 import ccxt
 import pytest
 
-from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
     CancelOrderCommand,

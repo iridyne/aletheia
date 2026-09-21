@@ -788,7 +788,7 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
     )
     repo.insert_risk_decision(decision)
 
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
 
     profile = _profile("uta_v3")

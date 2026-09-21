@@ -16,10 +16,10 @@ import pytest
      "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
     ("aletheia.exchanges.composition", ("extensions.exchanges.binance.profile", "extensions.exchanges.okx.profile"),
      "from aletheia.config.schema import ExchangeConfig\nmodule.get_secret = lambda key: 'synthetic-test-value' if key.startswith('bitget.demo.') else None\nmodule.get_credential_generation = lambda scope: 0\ncfg = SimpleNamespace(exchange=ExchangeConfig())\nassert [i.execution_mode for i in module.build_uta_registry(cfg).configured_identities()] == ['bitget_demo']\nassert module.build_uta_registry(cfg, execution_modes=('okx_demo',)).configured_identities() == ()"),
-    ("aletheia.uta.manager", ("aletheia.config.secrets", "aletheia.uta.ccxt_adapter", "aletheia.uta.profiles", "extensions.exchanges"),
+    ("aletheia.uta.manager", ("aletheia.config.secrets", "extensions.exchanges", "aletheia.uta.profiles"),
      "assert module.build_uta_registry().configured_identities() == ()\nimport asyncio\nstate = asyncio.run(module.get_unified_state(SimpleNamespace(), execution_modes=('bitget_demo',)))\nassert state.total_equity_usdt is None\nassert state.errors == ['bitget_demo:account_not_configured']"),
-    ("aletheia.uta.models", ("aletheia.uta.ccxt_adapter", "aletheia.uta.profiles", "extensions.exchanges"), ""),
-    ("aletheia.uta.ccxt_adapter", ("extensions.exchanges.binance", "extensions.exchanges.okx", "extensions.exchanges.bitget"), ""),
+    ("aletheia.uta.models", ("extensions.exchanges", "aletheia.uta.profiles"), ""),
+    ("extensions.exchanges.ccxt.adapter", ("extensions.exchanges.binance", "extensions.exchanges.okx", "extensions.exchanges.bitget"), ""),
     ("aletheia.exchanges.composition", ("extensions.exchanges.bitget",),
      "from aletheia.config.schema import ExchangeConfig\ncfg = SimpleNamespace(exchange=ExchangeConfig())\nassert module.build_uta_registry(cfg, execution_modes=('bitget_demo',)).configured_identities() == ()"),
     ("aletheia.exchanges.composition", ("extensions.exchanges.binance.profile", "extensions.exchanges.okx.profile"),
@@ -81,3 +81,23 @@ else:
         capture_output=True, text=True, timeout=20,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_generic_ccxt_has_one_physical_implementation_outside_core():
+    import ast
+    import importlib
+    from extensions.exchanges.ccxt import adapter, profile
+
+    root = Path(__file__).resolve().parents[2]
+    assert not (root / "aletheia/uta/ccxt_adapter.py").exists()
+    assert not (root / "aletheia/uta/profiles/base.py").exists()
+    for retired in ("aletheia.uta.ccxt_adapter", "aletheia.uta.profiles.base"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(retired)
+    assert adapter.CCXTUTAAdapter.__module__ == "extensions.exchanges.ccxt.adapter"
+    assert profile.CCXTProfile.__module__ == "extensions.exchanges.ccxt.profile"
+    for module in (adapter, profile):
+        tree = ast.parse(Path(module.__file__).read_text())
+        imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+        imports += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
+        assert not any(name and name.startswith(("aletheia.uta.profiles", "aletheia.exchanges.bitget", "aletheia.exchanges.okx", "aletheia.exchanges.binance", "extensions.exchanges.bitget", "extensions.exchanges.okx", "extensions.exchanges.binance")) for name in imports)

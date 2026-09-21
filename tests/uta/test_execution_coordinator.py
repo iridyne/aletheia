@@ -710,7 +710,7 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     from aletheia.execution import coordinator, gateway
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
     from aletheia.storage import repositories as repo
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
     from aletheia.uta.models import CancelOrderCommand
     from extensions.exchanges.binance.profile import BinanceTestnetProfile, BinanceLiveProfile

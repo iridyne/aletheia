@@ -47,15 +47,15 @@ _CCXT_EXCHANGE_IDS = {"okx", "binance", "binanceusdm", "binancecoinm", "bitget"}
 
 
 def _iter_py_files():
-    for p in _PKG.rglob("*.py"):
-        yield p
+    for root in (_PKG, _PKG.parent / "extensions"):
+        yield from root.rglob("*.py")
 
 
 def _find_bare_ccxt_constructors() -> list[str]:
     """Return 'file:line' for every ccxt.<exchange>(...) call outside net.py."""
     offenders: list[str] = []
     for path in _iter_py_files():
-        if path.name == "net.py":
+        if path == _PKG / "net.py":
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))

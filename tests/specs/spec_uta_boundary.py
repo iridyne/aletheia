@@ -12,6 +12,33 @@ ROOT = Path(__file__).resolve().parents[2]
 UTA_ROOT = ROOT / "aletheia" / "uta"
 
 
+def _mutation_command_importers(root):
+    owners = {
+        "aletheia/uta/contract.py", "aletheia/uta/models.py",
+        "aletheia/execution/coordinator.py", "aletheia/execution/gateway.py",
+        "extensions/exchanges/ccxt/adapter.py",
+    }
+    commands = {"SubmitOrderCommand", "ModifyOrderCommand", "CancelOrderCommand"}
+    command_importers = []
+    for directory in ("aletheia", "extensions"):
+        for path in (root / directory).rglob("*.py"):
+            relative = path.relative_to(root).as_posix()
+            if relative in owners:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            names = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    names.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    names.add(node.attr)
+                elif isinstance(node, ast.ImportFrom):
+                    names.update(alias.name for alias in node.names)
+            if names & commands:
+                command_importers.append(relative)
+    return sorted(command_importers)
+
+
 @spec_claim(
     SpecClaim(
         "UTA-S01",
@@ -109,16 +136,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
     stops = (ROOT / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
 
 
-    command_importers = []
-    for path in (ROOT / "aletheia").rglob("*.py"):
-        if path.is_relative_to(UTA_ROOT) or path in {coordinator_path, ROOT / "aletheia" / "execution" / "gateway.py"}:
-            continue
-        text = path.read_text(encoding="utf-8")
-        if any(name in text for name in (
-            "SubmitOrderCommand", "ModifyOrderCommand", "CancelOrderCommand"
-        )):
-            command_importers.append(str(path.relative_to(ROOT)))
-    assert command_importers == []
+    assert _mutation_command_importers(ROOT) == []
     assert all((
         BinanceLiveProfile.mutation_market_order,
         BinanceLiveProfile.mutation_limit_order,

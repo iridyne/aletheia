@@ -161,7 +161,7 @@ def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None
     from datetime import datetime, timedelta, timezone
 
     from aletheia.execution import reconciliation
-    from aletheia.uta.profiles.base import CCXTProfile
+    from extensions.exchanges.ccxt.profile import CCXTProfile
     from tests.specs.uta_private_history import patch_private_history
 
     patch_private_history(monkeypatch, reconciliation, fill_rows, calls=calls)
@@ -1376,7 +1376,7 @@ def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch
     from aletheia.agent_runtime import scheduler
     from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
-    from aletheia.uta.profiles.base import CCXTProfile
+    from extensions.exchanges.ccxt.profile import CCXTProfile
 
     now = datetime.now(timezone.utc)
     retention = CCXTProfile.private_history_retention_days

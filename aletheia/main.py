@@ -72,7 +72,11 @@ def _configure_runtime() -> None:
     try:
         from aletheia.exchanges.composition import bind_uta_provider
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.exchanges", "aletheia.exchanges.composition"}:
+        if exc.name not in {
+            "aletheia.exchanges", "aletheia.exchanges.composition",
+            "extensions", "extensions.exchanges", "extensions.exchanges.ccxt",
+            "extensions.exchanges.ccxt.adapter", "extensions.exchanges.ccxt.profile",
+        }:
             raise
         configure_uta_provider(registry_factory=None, retention_contract=None)
         configure_order_constraints_reader(None)

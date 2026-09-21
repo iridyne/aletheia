@@ -11,7 +11,7 @@ from aletheia.config.exchanges import live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_credential_generation, get_secret
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
-from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
 from aletheia.uta.manager import UTA_EXECUTION_MODES, configure_uta_provider
 from aletheia.uta.models import UTAAccountIdentity
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
