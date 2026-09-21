@@ -96,7 +96,7 @@ def test_parse_oi_basic():
 
 
 def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.data.collectors.hyperliquid import _parse_oi
     from aletheia.data.derivatives_facts import hyperliquid_metadata
     from aletheia.storage import repositories as repo
 
@@ -124,7 +124,7 @@ def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
 
 
 def test_hyperliquid_oi_delta_without_proved_baseline_is_unavailable():
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.data.collectors.hyperliquid import _parse_oi
     from aletheia.storage import repositories as repo
 
     earlier = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -152,7 +152,7 @@ def test_hyperliquid_oi_delta_without_proved_baseline_is_unavailable():
     ],
 )
 def test_hyperliquid_oi_rejects_nonfinite_or_nonpositive_values(ctx):
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.data.collectors.hyperliquid import _parse_oi
 
     assert _parse_oi(
         "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
@@ -168,7 +168,7 @@ def test_hyperliquid_oi_rejects_nonfinite_or_nonpositive_values(ctx):
     ],
 )
 def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
-    from aletheia.data.collectors.hyperliquid import _parse_funding
+    from extensions.data.collectors.hyperliquid import _parse_funding
 
     assert _parse_funding(
         "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
@@ -177,7 +177,7 @@ def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
 
 @pytest.mark.asyncio
 async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
-    import aletheia.data.collectors.hyperliquid as mod
+    import extensions.data.collectors.hyperliquid as mod
 
     class Response:
         def raise_for_status(self):

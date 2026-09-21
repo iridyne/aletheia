@@ -484,8 +484,8 @@ def test_data_collectors_keeps_collecting_during_layered_trading_pause(monkeypat
 
 def test_symbol_independent_context_collectors_run_without_instruments(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.options_structure import OptionsStructureCollector
 
@@ -549,10 +549,10 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     reproduction.
     """
     from aletheia.agent_runtime import scheduler
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+    from extensions.data.collectors.hyperliquid import HyperliquidCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector

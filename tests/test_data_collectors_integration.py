@@ -133,13 +133,13 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     )
     from aletheia.data.collectors import derivatives as deriv_mod
     monkeypatch.setattr(deriv_mod, "httpx_client", _fake_httpx_client)
-    from aletheia.data.collectors import coingecko_top as cg_mod
+    from extensions.data.collectors import coingecko_top as cg_mod
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.storage import repositories as repo
 
     symbols = ["BTC/USDT"]

@@ -1,6 +1,7 @@
 """Concrete public Data is absent-safe at the existing composition roots."""
 
 import os
+import builtins
 from pathlib import Path
 import subprocess
 import sys
@@ -8,11 +9,42 @@ import sys
 import pytest
 
 
+@pytest.mark.parametrize("collector", ["coingecko_top", "defillama", "hyperliquid"])
+def test_missing_context_adapter_does_not_stop_primary_lane(collector, monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    missing = f"extensions.data.collectors.{collector}"
+    original_import = builtins.__import__
+    failures, successes = [], []
+
+    def import_without_adapter(name, *args, **kwargs):
+        if name == missing:
+            raise ModuleNotFoundError(missing, name=missing)
+        return original_import(name, *args, **kwargs)
+
+    async def primary(_cfg, _tick):
+        return {"status": "success", "error_codes": []}
+
+    monkeypatch.delenv("ALETHEIA_COLLECTOR_PROCESS", raising=False)
+    monkeypatch.setattr(builtins, "__import__", import_without_adapter)
+    monkeypatch.setattr(scheduler, "load_config", lambda: object())
+    monkeypatch.setattr(scheduler, "_async_data_collectors", primary)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda job, reason: failures.append((job, reason)))
+    monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
+    scheduler._run_data_collector_context()
+    assert failures == [("data_collector_context", missing)]
+    assert not successes
+    assert scheduler._run_data_collectors()["status"] == "success"
+    assert successes == ["data_collectors"]
+
+
 def test_public_data_has_one_physical_implementation():
     root = Path(__file__).resolve().parents[1]
     for relative in (
         "ccxt_provider.py", "sources/__init__.py", "sources/chain.py",
         "sources/coingecko.py", "sources/binance_public.py",
+        "collectors/coingecko_top.py", "collectors/defillama.py",
+        "collectors/hyperliquid.py",
     ):
         assert not (root / "aletheia/data" / relative).exists()
         assert (root / "extensions/data" / relative).is_file()

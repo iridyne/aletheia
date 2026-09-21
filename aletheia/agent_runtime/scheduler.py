@@ -4327,9 +4327,9 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     import time as _time
     from aletheia.data.collectors.coinalyze import CoinalyzeCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
-    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.defillama import DefiLlamaCollector
+    from extensions.data.collectors.hyperliquid import HyperliquidCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.options_structure import OptionsStructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector

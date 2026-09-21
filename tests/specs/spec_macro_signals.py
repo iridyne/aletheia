@@ -29,7 +29,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _ROOT = Path(__file__).parent.parent.parent
 _DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
 _MACRO = _ROOT / "aletheia" / "data" / "collectors" / "macro.py"
-_CG_TOP = _ROOT / "aletheia" / "data" / "collectors" / "coingecko_top.py"
+_CG_TOP = _ROOT / "extensions" / "data" / "collectors" / "coingecko_top.py"
 _MODELS = _ROOT / "aletheia" / "data" / "models.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
 _REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
@@ -224,12 +224,12 @@ async def test_fng_failure_isolated_from_other_fields(monkeypatch):
 @spec_claim(
     SpecClaim(
         "MS-S08", _CONTRACT, "§3.3 CoinGecko collector", "L2a",
-        "aletheia/data/collectors/coingecko_top.py exists and exports CoinGeckoTopCollector",
+        "extensions/data/collectors/coingecko_top.py exists and exports CoinGeckoTopCollector",
     ),
 )
 def test_coingecko_top_collector_exists():
     assert _CG_TOP.exists(), "coingecko_top.py not found"
-    from aletheia.data.collectors import coingecko_top as mod
+    from extensions.data.collectors import coingecko_top as mod
     assert hasattr(mod, "CoinGeckoTopCollector")
     assert callable(getattr(mod.CoinGeckoTopCollector, "collect"))
 
@@ -310,11 +310,11 @@ def test_coingecko_top_bulk_uses_begin_commit():
 def test_coingecko_top_degraded_does_not_raise():
     import asyncio
 
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
 
     async def run():
         # Monkeypatch httpx_client to raise inside the body.
-        import aletheia.data.collectors.coingecko_top as mod
+        import extensions.data.collectors.coingecko_top as mod
         original = mod.httpx_client
 
         class FailingCtx:

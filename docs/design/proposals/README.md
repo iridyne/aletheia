@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Public-context Data adapters](slim_core_public_context_adapters.md): place
+  existing optional protocol collectors behind the established Data boundary.
+
 - [Planner Data boundary](slim_core_planner_data_boundary.md): use normalized
   observations without coupling stored-fact reads to optional collectors.
 
