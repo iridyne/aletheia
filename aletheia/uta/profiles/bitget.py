@@ -26,6 +26,7 @@ class _BitgetDemoProfile(CCXTProfile):
     mutation_leverage = True
     mutation_post_only = True
     mutation_client_order_id = True
+    match_cap_close_fallback = True
     mutation_trigger_order = True
     native_tpsl = True
     protection_replace = True

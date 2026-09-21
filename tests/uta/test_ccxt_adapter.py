@@ -217,6 +217,28 @@ def _install(monkeypatch, exchange):
     return session, calls
 
 
+@pytest.mark.parametrize("profile_cls,supported", [
+    (BitgetClassicV2Profile, True), (BitgetUTAV3Profile, True),
+    (BitgetClassicV2LiveProfile, True), (BitgetUTAV3LiveProfile, True),
+    (BinanceTestnetProfile, False), (BinanceLiveProfile, False),
+    (OKXDemoProfile, False), (OKXLiveProfile, False),
+])
+def test_match_cap_close_fallback_is_explicit_profile_capability(profile_cls, supported):
+    from aletheia.uta.models import CapabilitySupport, UTACapabilities
+
+    options = {"api_key": "test-key", "secret": "test-secret"}
+    if profile_cls.expected_venue != "binance":
+        options["passphrase"] = "test-passphrase"
+    profile = profile_cls(**options)
+    identity = _identity(profile).model_copy(update={
+        "execution_mode": profile.expected_execution_mode,
+    })
+    adapter = CCXTUTAAdapter(identity, profile)
+    expected = CapabilitySupport.SUPPORTED if supported else CapabilitySupport.UNSUPPORTED
+    assert adapter.capabilities.match_cap_close_fallback is expected
+    assert UTACapabilities(source="undeclared").match_cap_close_fallback is CapabilitySupport.UNKNOWN
+
+
 @pytest.mark.parametrize("kind", ["binance", "okx", "classic_v2", "uta_v3"])
 @pytest.mark.asyncio
 async def test_profiles_construct_on_active_loop_and_enable_demo_before_first_request(

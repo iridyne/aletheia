@@ -107,6 +107,7 @@ class CCXTProfile:
     mutation_leverage = False
     mutation_post_only = False
     mutation_client_order_id = False
+    match_cap_close_fallback = False
 
     @staticmethod
     def external_client_order_id(value: str | None) -> str | None:

@@ -440,6 +440,18 @@ def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
         return row, close_order
 
 
+async def _close_reference_price(row, venue: str):
+    from aletheia.data.providers import get_market_data_provider
+    from aletheia.data.symbols import InstrumentId
+
+    instrument = InstrumentId.from_parts(
+        venue, row["symbol"], "spot" if row["market_type"] == "spot" else "perp",
+    )
+    provider = get_market_data_provider(exchange=venue, exact_venue=True)
+    ticker = await _call_and_close(provider, "get_ticker", instrument)
+    return ticker.last_price
+
+
 def close_position(
     position_id: str,
     reason: str = "exit_rule",
@@ -480,16 +492,12 @@ def close_position(
     quantity = float(row["quantity"])
     order_type = "market"
     limit_price = None
-    if row["execution_mode"] in {"bitget_demo", "bitget_live_limited"} and _venue_match_cap_cancel_count(position_id):
-        from aletheia.data.ccxt_provider import get_market_data_provider
-        from aletheia.data.symbols import InstrumentId
-
+    if (
+        _venue_match_cap_cancel_count(position_id)
+        and adapter.capabilities.match_cap_close_fallback is CapabilitySupport.SUPPORTED
+    ):
         try:
-            provider = get_market_data_provider(exchange="bitget", native_ccxt=True, fallback_exchange="bitget")
-            ticker = _run(provider.get_ticker(InstrumentId.from_parts(
-                "bitget", row["symbol"], "spot" if row["market_type"] == "spot" else "perp",
-            )))
-            reference = ticker.last_price
+            reference = _run(_close_reference_price(row, adapter.identity.venue))
             venue_buy = row["direction"] not in {"long", "buy"}
             factor = 1.0 + _MARKETABLE_LIMIT_TOLERANCE if venue_buy else 1.0 - _MARKETABLE_LIMIT_TOLERANCE
             limit_price = _quantize_to_reference_precision(reference * factor, reference, up=not venue_buy)

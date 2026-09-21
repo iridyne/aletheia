@@ -107,6 +107,7 @@ class CCXTUTAAdapter:
             leverage=self._support(profile.mutation_leverage),
             post_only=self._support(profile.mutation_post_only),
             client_order_id=self._support(profile.mutation_client_order_id),
+            match_cap_close_fallback=self._support(profile.match_cap_close_fallback),
             native_tpsl=self._support(profile.native_tpsl),
             protection_replace=self._support(profile.protection_replace),
             protection_cancel=self._support(profile.protection_cancel),

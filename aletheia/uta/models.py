@@ -184,6 +184,7 @@ class UTACapabilities(UTAModel):
     post_only: CapabilitySupport = CapabilitySupport.UNKNOWN
     reduce_only: CapabilitySupport = CapabilitySupport.UNKNOWN
     close_position: CapabilitySupport = CapabilitySupport.UNKNOWN
+    match_cap_close_fallback: CapabilitySupport = CapabilitySupport.UNKNOWN
     one_way_mode: CapabilitySupport = CapabilitySupport.UNKNOWN
     hedge_mode: CapabilitySupport = CapabilitySupport.UNKNOWN
     leverage: CapabilitySupport = CapabilitySupport.UNKNOWN

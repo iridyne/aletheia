@@ -16,7 +16,10 @@ from tests.fill_reports import reports
 
 class _CloseAdapter:
     def __init__(self, captured):
-        from aletheia.uta.models import UTAAccountIdentity
+        from aletheia.uta.models import UTAAccountIdentity, UTACapabilities, CapabilitySupport
+        self.capabilities = UTACapabilities(
+            source="test", match_cap_close_fallback=CapabilitySupport.SUPPORTED,
+        )
         self.identity = UTAAccountIdentity(
             account_id="bitget_demo", execution_mode="bitget_demo", venue="bitget",
             environment="demo", profile="bitget_uta_v3_demo", credential_generation=1,
@@ -336,7 +339,10 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
             captured["ticker"] = instrument
             return SimpleNamespace(last_price=1.5)
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", lambda **_kw: _Provider())
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
     result = coordinator.close_position("pos-clip", reason="stop_loss")
@@ -377,7 +383,10 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
         async def get_ticker(self, instrument):
             raise RuntimeError("ticker unavailable")
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", lambda **_kw: _Provider())
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
     coordinator.close_position("pos-clip", reason="stop_loss")
@@ -426,7 +435,7 @@ def test_market_close_stays_market_without_cancel_history(tmp_path, monkeypatch)
         async def get_ticker(self, instrument):
             raise AssertionError("ticker must not be consulted without cancel history")
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", lambda **_kw: _Provider())
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
     coordinator.close_position("pos-clip", reason="stop_loss")

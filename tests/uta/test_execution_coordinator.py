@@ -546,6 +546,78 @@ def test_external_gateway_close_uses_bound_account(tmp_path, monkeypatch, mode):
     assert adapter.calls == 1
 
 
+@pytest.mark.parametrize("mode,support", [
+    ("binance_testnet", "supported"),
+    ("bitget_demo", "unsupported"),
+    ("bitget_demo", "unknown"),
+])
+@pytest.mark.parametrize("quote_fails", [False, True])
+def test_close_fallback_uses_capability_and_closes_exact_quote_provider(
+    tmp_path, monkeypatch, mode, support, quote_fails,
+):
+    import asyncio
+    from decimal import Decimal
+    from aletheia.execution import coordinator, gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.uta.models import CapabilitySupport
+
+    _setup_db(tmp_path, monkeypatch)
+    position = Position(symbol="BTC/USDT", market_type="spot", direction="long",
+                        quantity=2, entry_price=100, execution_mode=mode, status="open")
+    _insert_bound_position(position)
+    commands, events = [], []
+
+    async def submit(command):
+        commands.append(command)
+        return _ack(command)
+
+    adapter = _Adapter(submit, mode)
+    adapter.capabilities = SimpleNamespace(match_cap_close_fallback=CapabilitySupport(support))
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(coordinator, "_venue_match_cap_cancel_count", lambda _id: 1)
+
+    class Provider:
+        async def get_ticker(self, instrument):
+            assert instrument.exchange == adapter.identity.venue
+            assert instrument.symbol == position.symbol
+            events.append(("read", asyncio.get_running_loop()))
+            if quote_fails:
+                raise RuntimeError("quote unavailable")
+            return SimpleNamespace(last_price=100.0)
+
+        async def close(self):
+            events.append(("close", asyncio.get_running_loop()))
+
+    def factory(*, exchange, exact_venue):
+        assert exchange == adapter.identity.venue and exact_venue is True
+        events.append(("create", asyncio.get_running_loop()))
+        return Provider()
+
+    def concrete_forbidden(**kwargs):
+        raise AssertionError("Core must use the normalized provider port")
+
+    monkeypatch.setattr("aletheia.data.providers.get_market_data_provider", factory)
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", concrete_forbidden)
+    result = gateway.close_exchange_position(position.id, "operator_close")
+    command = commands[0]
+    supported = support == "supported"
+    assert command.order_type == ("limit" if supported and not quote_fails else "market")
+    assert command.quantity == (1 if supported and quote_fails else 2)
+    assert command.limit_price == (Decimal("99") if supported and not quote_fails else None)
+    assert command.position_id == position.id
+    assert command.expected_account == adapter.identity
+    order = repo.get_order(result["order_id"])
+    assert order["position_id"] == position.id and order["risk_decision_id"] is None
+    if supported:
+        assert [event for event, _loop in events] == ["create", "read", "close"]
+        assert len({id(loop) for _event, loop in events}) == 1
+    else:
+        assert events == []
+    assert gateway.close_exchange_position(position.id, "operator_close")["already_pending"]
+    assert len(commands) == 1
+
+
 
 def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
