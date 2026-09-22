@@ -227,6 +227,39 @@ runtime path. Current source traces establish the following distinctions:
   ordering and pagination are unchanged. This does not classify the active
   inference ledger, pricing worker or paired-evaluation writers as Legacy.
 
+### Agent producer disposition
+
+Source trace at `eb87f2202e4a77184998d39179e04b363741af6d` separates the
+remaining producer functions from the shared registry/inference helpers above.
+Existing scheduler/manual execution owns their invocation; this table does not
+grant a producer its own scheduler or imply that removing its dependencies is safe.
+
+| Producer | Observed effects and ownership constraint |
+| --- | --- |
+| `research_agent` / `risk_critic` | Shared Model calls and knowledge notes, not Candidate/RiskDecision writers. Research notes use speculative confidence; Risk Critic reads Proposal/Risk history and writes a medium-confidence advisory note. Knowledge admission remains a separate gate. |
+| `portfolio_agent` | Resolves the configured execution identity and delegates `compute_and_store_snapshot`. This is a Core portfolio snapshot effect, not a Model-backed optional rebalancer or a second accounting algorithm. |
+| `equity_observer` | Public yfinance bars/live quotes and request-local Data-adapter token quotes, shared Model interpretation, observation-only equity Opportunities and telemetry. It reads historical strategy status only to attach `linked_strategy_id`; no strategy lifecycle transition occurs. |
+| `prediction_observer` | Public prediction acquisition, shared Model interpretation, prediction run/event/market/snapshot/claim persistence, observation-only Opportunities and optional Serenity evidence. Prediction research is not Exchange order authority. |
+| `divergence_scanner` | Reads prediction observations, resolves a public spot ticker and closes its per-call provider in `finally`. It writes shared Learning epoch attribution and filter evidence; Opportunity creation and its terminal producer fact share a transaction/savepoint. Current code sets `execution_eligible=False` despite the old module header. Source-version deduplication is research identity, not Candidate/Order admission. |
+| `market_observer` | Reads the exact open snapshot/member carrier and verifies persisted emitter admission before enrichment. It writes pre-filter evidence, Learning attribution/exposure, inference telemetry, namespaced latency/cursor settings and open-Opportunity enrichment. Scanner direction/score stay producer-owned; no standalone Opportunity or Candidate is created. Public Data prefetch and shared Model inference are real side effects, not an inert historical reader. |
+| `post_trade_reviewer` | Central `eligible_strategy_outcomes` controls cohort admission after a cheap closed-Position prefilter. Shared Model calls write medium-confidence knowledge reviews; deterministic case/guard generation uses the existing case builder. Shared Learning epoch and durable forward/reopened-prefix cursor writes are additional effects. No final PnL/eligibility writer is introduced. |
+| `dreaming_agent` | Full manual agent execution writes knowledge summaries/daily reviews and a Git artifact snapshot. The scheduled `dreaming_daily` wrapper instead enqueues the existing Serenity worker and invokes lesson extraction; it does not call the full manual function. Extraction proposes lessons from supported review evidence and routes automatic block recommendations to shadow guard candidates. Historical strategy summaries do not restore strategy execution authority. |
+| `lesson_reviewer` | Reads scoped Candidate outcome evidence, applies deterministic floors and shared Model review, then uses LessonStore CAS and a transaction to accept/reject/apply lessons and create immutable policy versions. Draft-skill creation/recovery is another namespaced write; it does not activate skills or mutate RiskDecision/Order/Position. `ps_policy_versions` is current optional policy history, not proof of a retired PS execution owner. |
+
+`agents.round_robin` persists namespaced `settings` cursors used by the bounded
+observer/reviewer loops; it is not a pure ordering helper. The registry's lazy
+module discovery, scheduler's direct lesson-extraction import, Doctor's reviewer
+probe and context-effectiveness evaluation's MarketRead/prompt import remain
+physical-cutover consumers. They must be accounted for when compartmentalizing
+these producers; moving the whole `agents` package would also move Core helpers.
+
+Focused observer/knowledge/lesson regressions on this base: 170 passed, 3 skipped,
+28 spec claims. The skips cover two retired `pi_agent_*` layout probes and a
+production-database-dependent lesson check; they are not verified behavior.
+Together with the separate Serenity worker trace, this establishes the listed
+source dispositions, not complete optional-package absence safety, Fedora
+shutdown behavior, deployed economics or readiness for the whole Scheme A move.
+
 ### Analytics shared rules and active writer disposition
 
 These source traces separate shared trading evidence rules from optional report
