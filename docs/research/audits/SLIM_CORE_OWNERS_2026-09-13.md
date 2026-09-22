@@ -240,6 +240,31 @@ Behavioral evidence includes `test_candidate_funding`,
 `test_observation_lab_evaluator` and `test_write_guardrails`.
 These fixtures do not prove deployed concurrency, runtime health or economics.
 
+### Replay, lifecycle and research evidence disposition
+
+These traces distinguish persisted-fact readers from evidence admission and
+explicit artifact output. A report's lack of trading writes does not imply that
+its entire dependency package is optional or that its database connection is
+physically read-only.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| Inspect replay/diagnosis and closed-Position story → `position_replay` | Reads persisted Position, Proposal, Order/Fill, Risk, producer identity, protection and exact-instrument OHLCV facts. Standalone replay uses `readonly_db`; an injected connection's existing transaction is preserved. Cutoff masks and central Outcome assessment prevent later mutable facts or incomplete economics from becoming historical proof. No acquisition, settlement or history repair is performed. |
+| Inspect Position/Opportunity stories → lifecycle-story builders | Join persisted ancestry, decisions, Risk, execution, protection and path evidence. Opportunity stories distinguish absent sources from empty descendants; nested Position stories share the caller's connection. Standalone stories use ordinary repository connections, not a physical read-only guarantee. Rendering and prefix hypothesis evaluation do not submit actions or call Model endpoints. Required shared Outcome/identity helpers must not move with optional report presentation. |
+| Inspect profit-gradient → `profit_gradient` / `profit_gradient_estimators` | Pure supplied-evidence calculations retain distinct layer denominators, cohort identities, reconciliation and deterministic local bootstrap. The verdict explicitly denies automatic behavior-change authority. CLI accepts the current compiled artifact format and revalidates its sources before selection; a historical artifact's hash alone is not current CLI admission. |
+| Inspect profit-gradient-evidence → `profit_gradient_evidence` | Compiler uses a physical read-only database snapshot and existing Candidate facts/Position replay readers. Registered epoch, exact producer/runtime identities, cutoff, cost-model provenance and explicit treatment/control pairing gate confirmatory samples. Exploratory counterfactuals remain excluded. The CLI then explicitly creates the requested output directory/file; artifact output is a side effect, not a Core authority writer. No registration or qualification window is created/reset. |
+| Inspect profit-counterfactual → `profit_loop_counterfactual` | Reads existing registration epochs through ordinary `get_db` connections, validates their immutable identity/hash and evaluates a finite fixed-prefix registry against supplied costs and frozen Position facts. Pure `build_policy_epoch` hashing is used, not epoch persistence. Output remains exploratory and `promotion_eligible=False`; unavailable registration, costs or provenance do not become permission to evaluate/promote. |
+| Alpha/report consumers → `learning.read_models` | Projects existing Lab windows, results, inference plans, exposures and job health through the Lab read-only connection. Running-cohort comparison stays unavailable without evidence; projected measurement and lifecycle explicitly deny authority/mutation. Projection failure is unavailable, not an empty healthy Lab. This reader does not own Lab registration, evaluation or adoption. |
+| Explicit module reports → `exit_attribution` / `exit_driver_comparison`; report consumers → `holding_time`, `performance_summary`, `streaks` | Closure distribution includes raw closed records, while exit-driver performance first loads centrally eligible strategy outcomes. These answer different questions and must not be merged merely because both group exits. Aggregation, holding-time availability and supplied-PnL metrics are pure; report loaders use existing repository readers. None is a close/settlement writer or evidence of causal policy improvement. |
+| Filter controller → `filter_registry` | Immutable descriptors retain historical ID decode separately from the current control list. Retired entry stages are excluded from `FILTER_REGISTRY`; the registry itself neither writes config nor actuates recommendations. Controller/Lab side effects remain with the active writer disposition above, not with this descriptor table. Historical capability/reason strings are not Core business routing. |
+
+Relevant bounded checks include `test_position_replay`, lifecycle-story tests,
+`test_profit_gradient` and its property tests, evidence-compiler tests,
+`test_profit_loop_counterfactual`, `test_learning_read_models`,
+`test_exit_attribution`, `test_exit_driver_comparison`, `test_performance_summary`
+and `test_streaks`. They do not prove deployed economics or whole optional-tree
+absence; direct shared dependencies and composition remain separate obligations.
+
 ### Economics and research consumer disposition
 
 This source audit distinguishes current inference provenance from optional
