@@ -1155,6 +1155,18 @@ else:
     configure_market_data_factory(create_market_data_provider)
 
 
+from aletheia.economics.pricing_sync import configure_pricing_fetcher
+
+try:
+    from extensions.data.public_pricing import fetch_price_map
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.data", "extensions.data.public_pricing"}:
+        raise
+    configure_pricing_fetcher(None)
+else:
+    configure_pricing_fetcher(fetch_price_map)
+
+
 from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch, configure_regime_reader
 from aletheia.universe.service import configure_regime_refresh
 

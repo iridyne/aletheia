@@ -94,6 +94,17 @@ def _configure_runtime() -> None:
         configure_listing_reader(read_market_listing)
         configure_market_data_factory(create_market_data_provider)
 
+    from aletheia.economics.pricing_sync import configure_pricing_fetcher
+
+    try:
+        from extensions.data.public_pricing import fetch_price_map
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.public_pricing"}:
+            raise
+        configure_pricing_fetcher(None)
+    else:
+        configure_pricing_fetcher(fetch_price_map)
+
     from aletheia.uta.manager import configure_uta_provider
     from aletheia.execution.order_constraints import configure_order_constraints_reader
 

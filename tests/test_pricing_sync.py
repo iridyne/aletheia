@@ -49,6 +49,34 @@ def _isolate_pricing_refresh_globals():
     _reset_pricing_refresh_state()
 
 
+@pytest.mark.parametrize("case", ["bytes", "size", "shrink"])
+def test_refresh_validates_adapter_evidence_before_cache_write(monkeypatch, case):
+    catalog = json.loads(_full_catalog_bytes())
+    content = json.dumps(catalog).encode()
+    if case == "bytes":
+        content = b"{}"
+    elif case == "size":
+        catalog, content = {}, b"{}"
+    monkeypatch.setattr(pricing_sync, "_load_cached_count", lambda: 200 if case == "shrink" else None)
+    def forbidden(*args):
+        raise AssertionError("invalid evidence cannot reach cache writer")
+    monkeypatch.setattr(pricing_sync, "_save_cache", forbidden)
+    with pytest.raises(ValueError):
+        pricing_sync.refresh_pricing(lambda: (catalog, content))
+
+
+def test_absent_fetcher_preserves_verified_cache_and_reports_failed_refresh(monkeypatch, tmp_path):
+    monkeypatch.setattr(pricing_sync, "_catalog_fetcher", None)
+    monkeypatch.setattr(pricing_sync, "_cache_path", lambda: tmp_path / "catalog.json")
+    saved = pricing_sync._save_cache(_full_catalog_bytes(), "2026-01-01T00:00:00+00:00")
+    pricing_sync._refresh_worker("test_absent")
+    assert pricing_sync.pricing_refresh_status()["error"] == "RuntimeError: pricing_catalog_unavailable"
+    assert pricing_sync.capture_catalog_observation() == saved
+    assert activate_cached_catalog() == saved
+    snapshot, reason = resolve_pricing_from_observation("provider", "model-1", "2026-01-01T00:00:01+00:00", saved)
+    assert reason == "formula_priced" and snapshot is not None
+
+
 # ── unit tests for the auto-discovery helpers ────────────────────────────────
 
 
@@ -377,6 +405,7 @@ def test_unmatched_model_refresh_is_negative_cached_per_catalog(monkeypatch):
 def test_refresh_reports_unmatched_models_correctly(monkeypatch):
     """Models with no LiteLLM match appear in unmatched_models."""
     price_map = {"groq/gpt-4o": {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5}}
+    price_map.update(json.loads(_full_catalog_bytes()))
     monkeypatch.setattr(pricing_sync, "_save_cache", lambda content: None)
     monkeypatch.setattr(pricing_sync, "_runtime_models", lambda: [("openai_compatible", "totally-unknown-model")])
     monkeypatch.setattr(pricing_sync, "add_catalog_pricing_snapshot", lambda **kw: None)
@@ -416,6 +445,7 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
             "output_cost_per_token": 0.000015,
         },
     }
+    price_map.update(json.loads(_full_catalog_bytes()))
     written = []
     monkeypatch.setattr(pricing_sync, "_save_cache", lambda content: None)
     monkeypatch.setattr(
