@@ -1,4 +1,4 @@
-"""Optional report modules must not gate Core accounting imports."""
+"""Unrelated report modules must not gate Core accounting imports."""
 
 from pathlib import Path
 import subprocess

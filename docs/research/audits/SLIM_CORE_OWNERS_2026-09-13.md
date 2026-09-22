@@ -226,10 +226,12 @@ production. They do not classify all Analytics modules as optional or read-only.
 | Core Risk / Candidate producers → `filter_evidence`; scheduled controller → Lab | Filter facts use canonical repository writers; required Risk evidence joins the authoritative decision transaction. Controller recommendation persistence is only part of its effect: it builds bounded replays, registers experiments and invokes the existing Lab window runner. Main/worker ownership and cycle exclusion remain with the existing scheduler/Lab owners. Lab evaluation can revoke paper manifests through its canonical safety disposition; it is not a second Core settlement owner. |
 
 The report-facing `temporal`, `attribution`, `streaks` and performance-summary
-calculations do not themselves write trading state. Their imports alone do not
-establish whole-package absence safety: the Analytics initializer currently
-eagerly imports report and lifecycle-story modules. Remaining read models and
-dynamic consumers still need disposition before a package-wide move.
+calculations do not themselves write trading state. The unused eager package
+re-exports are removed: Core accounting can import shared Outcome rules without
+loading those reports or lifecycle stories. Direct report consumers keep their
+existing module APIs, and Candidate's strict temporal parser remains a required
+shared dependency. This narrow import proof is not whole-package absence safety;
+remaining read models and dynamic consumers need disposition before a package-wide move.
 
 Behavioral evidence includes `test_candidate_funding`,
 `test_candidate_selection_utility`, `test_outcome_integrity_read_model`,
