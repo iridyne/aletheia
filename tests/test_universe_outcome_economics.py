@@ -6,6 +6,63 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 
+@pytest.mark.parametrize("missing", [
+    "aletheia.knowledge", "aletheia.knowledge.manager", "broken_knowledge_dependency",
+])
+def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog, missing):
+    import builtins
+    from unittest.mock import AsyncMock
+
+    from aletheia.data import perp_structure_shadow
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe import outcome_recorder
+
+    now = datetime.now(timezone.utc)
+    row = UniverseForwardOutcome(
+        member_id="optional-guard-member", snapshot_id="optional-guard-snapshot",
+        symbol="BTC/USDT", venue="okx", market_type="spot", direction="long",
+        scanner_family="momentum", horizon="4h", entry_price_usd=100.0,
+        entry_ts=(now - timedelta(hours=5)).isoformat(),
+        due_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    repo.insert_forward_outcome(row)
+    monkeypatch.setattr(outcome_recorder, "_batch_fetch_market_observations", AsyncMock(
+        return_value={row.id: {
+            "exit_price": 95.0, "range_high": 101.0, "range_low": 94.0,
+            "price_source": "horizon_ohlcv", "price_quality_ok": True,
+            "settlement_lag_sec": 0,
+        }},
+    ))
+    shadow = AsyncMock(return_value=2)
+    monkeypatch.setattr(perp_structure_shadow, "settle_due_perp_structure_outcomes", shadow)
+    real_import = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name == "aletheia.knowledge.manager":
+            raise ModuleNotFoundError(name=missing)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+    if missing == "broken_knowledge_dependency":
+        with pytest.raises(ModuleNotFoundError) as exc:
+            asyncio.run(outcome_recorder.settle_due(max_rows=1))
+        assert exc.value.name == missing
+        shadow.assert_not_awaited()
+    else:
+        assert asyncio.run(outcome_recorder.settle_due(max_rows=1)) == 3
+        shadow.assert_awaited_once_with(limit=100)
+        assert "guard candidates unavailable" in caplog.text
+
+    persisted = get_db().execute(
+        "SELECT status, net_return_pct FROM universe_forward_outcomes WHERE id = ?", (row.id,),
+    ).fetchone()
+    assert persisted["status"] == "settled"
+    assert persisted["net_return_pct"] < -3.0  # qualifying 4h loss, not a filtered-out row
+    assert outcome_recorder._settle_in_flight is False
+
+
 def test_short_perp_funding_credit_and_directional_path():
     from aletheia.universe.outcome_economics import estimate_outcome_economics
 
