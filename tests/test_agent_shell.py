@@ -1655,10 +1655,15 @@ def test_context_summary_text():
 
 @patch("aletheia.agent_shell.context.load_config")
 @patch("extensions.learning.lessons.LessonStore")
-def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, mock_cfg):
+def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, mock_cfg, monkeypatch):
     """The live Operator receives reviewed Learning facts, never raw proposals."""
     from types import SimpleNamespace
     from unittest.mock import MagicMock
+    from aletheia.agent_shell import context
+
+    # Installed composition binds the reader; Core no longer imports LessonStore.
+    monkeypatch.setattr(context, "_list_learning_lessons", None)
+    context.configure_learning_context_reader(mock_lessons.return_value.list_all)
 
     cfg = MagicMock()
     cfg.agent.permission_mode = "Paper"
@@ -1688,6 +1693,7 @@ def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, m
 
     ctx = build_app_context(["learning"])
 
+    mock_lessons.return_value.list_all.assert_called_once_with(status="applied", limit=30)
     assert ctx["learning"]["advisory_only"] is True
     assert ctx["learning"]["lessons"] == [
         {
@@ -1701,20 +1707,11 @@ def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, m
     assert ctx["learning"]["manifest"]["lesson_ids"] == ["applied-current"]
 
 
-def test_learning_context_is_unavailable_when_learning_extension_is_missing(monkeypatch):
-    import builtins
+def test_learning_context_is_unavailable_when_learning_reader_is_unbound(monkeypatch):
+    from aletheia.agent_shell import context
 
-    from aletheia.agent_shell.context import build_app_context
-
-    real_import = builtins.__import__
-
-    def missing_learning(name, *args, **kwargs):
-        if name == "extensions.learning.lessons":
-            raise ModuleNotFoundError(name=name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", missing_learning)
-    learning = build_app_context(["learning"])["learning"]
+    monkeypatch.setattr(context, "_list_learning_lessons", None)
+    learning = context.build_app_context(["learning"])["learning"]
 
     assert learning["advisory_only"] is True
     assert learning["lessons"] == []
