@@ -29,6 +29,24 @@ wording is not the current work queue. This inventory is not a declaration that
 compartmentalization or all single writers are proven. No runtime/data migration
 follows from classification here.
 
+## Shared Core formats and Knowledge persistence follow-up
+
+Core runtime scope/identity, canonical Knowledge row/document history and FTS
+maintenance no longer import optional Knowledge authoring/retrieval. The unique
+format implementations live in `files/frontmatter.py` and
+`files/knowledge_document.py`; `storage/knowledge_index.py` owns the existing
+high-confidence index gate, explicit rebuild and removal. Schema-v3 strict
+rebuild and Operator assessment use that same Core owner. Canonicalization,
+100000-row rebuild bound, transaction ownership, integrity conflicts and logger
+identities are unchanged; optional retrieval still owns advisory scoring.
+
+Candidate timestamp validation uses `utils.dt.parse_utc_instant`, moved unchanged
+from the temporal report. Its rejection of naive timestamps remains distinct
+from `utils.dt.parse_utc`. Report bucketing consumes the same strict kernel.
+Focused absence proof exercises actual scope validation, document persistence,
+history, fresh migrations and Operator indexing without Knowledge; it is not a
+claim that every optional Knowledge/Learning path is independent or Scheme A ready.
+
 ## Advisory Research compartment follow-up
 
 Dreaming, Lesson Reviewer and the Serenity research worker now have their unique

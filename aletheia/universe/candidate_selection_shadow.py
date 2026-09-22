@@ -6,7 +6,7 @@ import json
 import math
 from typing import Mapping, Sequence
 
-from aletheia.analytics.temporal import parse_utc_instant
+from aletheia.utils.dt import parse_utc_instant
 from aletheia.config.schema import UniverseConfig
 from aletheia.storage.models import UniverseTwinShadowBatch, UniverseTwinShadowEvidence
 from aletheia.universe.candidate_eligibility import canonical_fingerprint, evaluate_hard_gate

@@ -307,7 +307,7 @@ async def test_guard_reads_fail_with_stable_unavailable_response(client, monkeyp
 
 @pytest.mark.anyio
 async def test_learning_funnel_reports_contradictions(client):
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
@@ -344,7 +344,7 @@ async def test_learning_funnel_contradiction_via_frontmatter_body(client):
     Regression for #1886: the earlier SELECT omitted content/file_path so the
     detector fell back to title-only extraction and missed frontmatter evidence.
     """
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
@@ -429,7 +429,7 @@ async def test_learning_funnel_detection_failure_clears_coverage(client, monkeyp
 @pytest.mark.anyio
 async def test_learning_funnel_truncated_scan_is_partial(client):
     """A real 500-row slice cannot hide an older conflict as a confirmed zero."""
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
@@ -489,7 +489,7 @@ async def test_learning_funnel_contradiction_input_is_db_only(client, monkeypatc
     contradiction_inspected was fixed, so the denominator lied and file-only
     active guards could enter detect_contradictions() without being counted.
     """
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
     from aletheia.knowledge import guards as guards_module

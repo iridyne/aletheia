@@ -15,29 +15,11 @@ ignored.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Sequence
 
 from aletheia.analytics.attribution import segment_stats
-
-
-def parse_utc_instant(value) -> datetime | None:
-    """Parse an ISO timestamp into a UTC-aware datetime, or None."""
-    if not value:
-        return None
-    s = str(value).strip()
-    if not s:
-        return None
-    # normalize trailing 'Z' (UTC) which fromisoformat <3.11 cannot read
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        return None
-    return dt.astimezone(timezone.utc)
+from aletheia.utils.dt import parse_utc_instant
 
 
 def _parse_closed_at(value) -> datetime | None:

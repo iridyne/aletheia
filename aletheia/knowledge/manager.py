@@ -5,12 +5,13 @@ import logging
 from pathlib import Path
 
 from aletheia.storage.models import KnowledgeItem
+from aletheia.storage.knowledge_index import _index
 from aletheia.storage.repositories import (
     insert_knowledge_item, insert_knowledge_item_if_absent, update_knowledge_item,
     list_knowledge_items,
 )
 
-from aletheia.knowledge.document import canonicalize_written_document
+from aletheia.files.knowledge_document import canonicalize_written_document
 logger = logging.getLogger("aletheia.knowledge.manager")
 
 _MIN_CONTENT_LENGTH = 80
@@ -52,18 +53,6 @@ from aletheia.files.markdown import (
 
 VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "deprecated"}
 VALID_STATUSES = {"active", "archived", "deprecated"}
-
-
-def _index(item, content: str) -> None:
-    """Best-effort full-text index of a canonical Knowledge document."""
-    try:
-        if item.confidence != "high_confidence":
-            return
-        from aletheia.knowledge.retrieval import index_knowledge_item
-
-        index_knowledge_item(item, item.content or content, outcome=item.outcome or "")
-    except Exception as e:
-        logger.warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
 
 
 def _canonicalize_item(item: KnowledgeItem, path: Path) -> KnowledgeItem:
@@ -347,7 +336,7 @@ def create_guard_candidate(
 def _unindex(item_id: str) -> None:
     """Best-effort removal from the FTS index (archived/deprecated → not recalled)."""
     try:
-        from aletheia.knowledge.retrieval import remove_from_index
+        from aletheia.storage.knowledge_index import remove_from_index
         remove_from_index(item_id)
     except Exception:
         pass
@@ -443,8 +432,8 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
 
 
 def _item_meta_and_body(item: dict) -> tuple[dict, str] | None:
-    from aletheia.knowledge.document import read_knowledge_document
-    from aletheia.knowledge.frontmatter import parse_frontmatter_text
+    from aletheia.files.knowledge_document import read_knowledge_document
+    from aletheia.files.frontmatter import parse_frontmatter_text
 
     document = read_knowledge_document(item)
     if "content_format" in item and document.state not in {

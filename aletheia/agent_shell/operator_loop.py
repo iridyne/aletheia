@@ -1067,7 +1067,7 @@ def _persist_assessment(summary: dict) -> None:
 
         from aletheia.storage.models import KnowledgeItem
         from aletheia.storage.repositories import insert_knowledge_item
-        from aletheia.knowledge.manager import _index
+        from aletheia.storage.knowledge_index import _index
 
         item = KnowledgeItem(
             item_type="operator_assessment",

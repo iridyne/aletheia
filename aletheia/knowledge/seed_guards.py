@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
-from aletheia.knowledge.frontmatter import render_frontmatter
+from aletheia.files.frontmatter import render_frontmatter
 
 _SEED_GUARDS = [
     {

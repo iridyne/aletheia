@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
-from aletheia.analytics.temporal import parse_utc_instant
+from aletheia.utils.dt import parse_utc_instant
 from aletheia.data.derivatives_facts import finite, project_snapshot
 from aletheia.data.freshness import assess_freshness
 

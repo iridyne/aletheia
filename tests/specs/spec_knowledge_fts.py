@@ -41,37 +41,38 @@ _CONTRACT = "knowledge_fts_integrity"
 _ROOT = Path(__file__).parent.parent.parent
 _MANAGER = _ROOT / "aletheia" / "knowledge" / "manager.py"
 _RETRIEVAL = _ROOT / "aletheia" / "knowledge" / "retrieval.py"
+_INDEX = _ROOT / "aletheia" / "storage" / "knowledge_index.py"
 _OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
 
 
 # ---------------------------------------------------------------------------
-# KF-S01 — _index() lives only in manager.py and gates on high_confidence
+# KF-S01 — Core _index() gates on high_confidence
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "KF-S01", _CONTRACT, "§A _index() is the sole FTS write gate", "L2a",
-        "manager.py defines _index() and it is the only path that calls "
-        "index_knowledge_item(); it gates on confidence == 'high_confidence'. "
-        "No module may call index_knowledge_item() directly outside of _index().",
+        "Core knowledge_index.py owns the high_confidence _index() write gate "
+        "and explicit strict rebuild. Optional manager uses that same owner; "
+        "other production modules cannot bypass it with index_knowledge_item().",
     ),
 )
 def test_index_is_sole_fts_write_gate():
     import ast
     import glob
-    src = _MANAGER.read_text(encoding="utf-8")
-    assert "def _index(" in src, "manager.py missing _index() function"
+    src = _INDEX.read_text(encoding="utf-8")
+    assert "def _index(" in src, "Core missing _index() function"
     assert "confidence != \"high_confidence\"" in src or "confidence == \"high_confidence\"" not in src.replace("!= ", "== "), \
-        "manager.py _index() must gate on high_confidence"
+        "Core _index() must gate on high_confidence"
 
-    # No other file (outside manager.py and retrieval.py) may call
+    # No other file outside the canonical index owner may call
     # index_knowledge_item() directly — all writes must go through _index().
     allowed = {
-        str(_MANAGER.resolve()),
-        str(_RETRIEVAL.resolve()),
+        str(_INDEX.resolve()),
     }
-    py_files = glob.glob(str(_ROOT / "aletheia" / "**" / "*.py"), recursive=True)
+    py_files = [fp for directory in ("aletheia", "extensions")
+                for fp in glob.glob(str(_ROOT / directory / "**" / "*.py"), recursive=True)]
     violations = []
     for fp in py_files:
         p = Path(fp).resolve()
@@ -111,7 +112,7 @@ def test_index_is_sole_fts_write_gate():
 def test_persist_assessment_calls_index():
     src = _OPERATOR_LOOP.read_text(encoding="utf-8")
     assert "_persist_assessment" in src, "operator_loop.py missing _persist_assessment"
-    assert "from aletheia.knowledge.manager import _index" in src, (
+    assert "from aletheia.storage.knowledge_index import _index" in src, (
         "_persist_assessment must import and call _index() to write FTS body"
     )
     assert "_index(item, content)" in src, (
@@ -133,17 +134,17 @@ def test_persist_assessment_calls_index():
 @spec_claim(
     SpecClaim(
         "KF-S03", _CONTRACT, "§B reindex_all skips missing-file items", "L2a",
-        "reindex_all() in retrieval.py must skip items whose file_path does not "
+        "reindex_all() in storage/knowledge_index.py must skip items whose file_path does not "
         "exist on disk (or log a warning), rather than indexing an empty body. "
         "An empty-body FTS row is worse than no row: it wastes space and is "
         "invisible to BM25 queries while appearing in counts.",
     ),
 )
 def test_reindex_skips_empty_body():
-    src = _RETRIEVAL.read_text(encoding="utf-8")
-    assert "reindex_all" in src, "retrieval.py missing reindex_all()"
+    src = _INDEX.read_text(encoding="utf-8")
+    assert "reindex_all" in src, "Core index missing reindex_all()"
     # reindex_all must skip when body is empty — check for the guard
-    assert "_read_body" in src, "retrieval.py missing _read_body helper"
+    assert "read_knowledge_document" in src, "rebuild must verify canonical documents"
     # The implementation should check body length before indexing
     # We verify this invariant behaviorally below (KF-B02)
 
@@ -162,7 +163,7 @@ def test_reindex_skips_empty_body():
 )
 def test_index_is_idempotent():
     from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import index_knowledge_item, _fts_table_exists
+    from aletheia.storage.knowledge_index import index_knowledge_item, _fts_table_exists
     from aletheia.storage.models import KnowledgeItem
 
     db = get_db()
@@ -206,7 +207,7 @@ def test_index_is_idempotent():
     ),
 )
 def test_reindex_skips_missing_file_items():
-    from aletheia.knowledge.retrieval import reindex_all, _fts_table_exists, index_knowledge_item
+    from aletheia.storage.knowledge_index import reindex_all, _fts_table_exists, index_knowledge_item
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import KnowledgeItem
 

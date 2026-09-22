@@ -49,7 +49,7 @@ def reindex():
     retrievable. Idempotent and safe to re-run.
     """
     from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
 
     assert_migrations_current()
     count = reindex_all()

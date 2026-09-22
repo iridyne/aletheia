@@ -33,7 +33,8 @@ def test_reindex_survives_disk_body_loss(tmp_path, monkeypatch):
         create_daily_review,
         create_trading_guard,
     )
-    from aletheia.knowledge.retrieval import reindex_all, retrieve_lessons
+    from aletheia.storage.knowledge_index import reindex_all
+    from aletheia.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import get_db
 
     body = (

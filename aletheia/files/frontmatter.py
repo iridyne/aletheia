@@ -1,4 +1,4 @@
-"""YAML frontmatter parser/renderer for knowledge artifacts."""
+"""Core YAML frontmatter parser/renderer for scope and knowledge artifacts."""
 
 from pathlib import Path
 from typing import Any

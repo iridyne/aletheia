@@ -11,7 +11,7 @@ root = Path(__file__).parent.parent
 sys.path.insert(0, str(root))
 
 from aletheia.config.loader import get_data_dir
-from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
 
 GUARDS_DIR = get_data_dir() / "knowledge" / "guards"
 

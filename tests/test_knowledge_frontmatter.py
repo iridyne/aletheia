@@ -1,7 +1,7 @@
 """Tests for knowledge frontmatter parser."""
 
-from aletheia.knowledge.frontmatter import parse_frontmatter_text, render_frontmatter
-from aletheia.knowledge.retrieval import _clean_body
+from aletheia.files.frontmatter import parse_frontmatter_text, render_frontmatter
+from aletheia.storage.knowledge_index import _clean_body
 
 
 def test_parse_valid_frontmatter():

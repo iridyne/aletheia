@@ -9,7 +9,7 @@ from numbers import Real
 from statistics import mean, stdev
 from typing import Literal, Mapping, Sequence
 
-from aletheia.analytics.temporal import parse_utc_instant
+from aletheia.utils.dt import parse_utc_instant
 from aletheia.universe.candidate_eligibility import canonical_fingerprint
 from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION

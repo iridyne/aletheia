@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from aletheia.config.loader import get_data_dir, load_config
-from aletheia.knowledge.frontmatter import parse_frontmatter
+from aletheia.files.frontmatter import parse_frontmatter
 
 
 class ActiveGuardLoadError(RuntimeError):

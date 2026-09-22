@@ -105,7 +105,8 @@ def test_empty_query_and_empty_index_return_nothing(tmp_path, monkeypatch):
 def test_reindex_backfills_existing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons, reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
+    from aletheia.knowledge.retrieval import retrieve_lessons
     import aletheia.storage.sqlite as sq
 
     create_research_note("Trend lesson",

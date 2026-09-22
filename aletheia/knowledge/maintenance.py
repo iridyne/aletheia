@@ -42,7 +42,7 @@ def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
     surface errors so a partial mutation is visible rather than silently swallowed.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
 
     db = get_db()
     matched = db.execute(
@@ -91,7 +91,7 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
     FTS retrieval pool after reindexing.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
     from aletheia.analytics.outcome_integrity import SYNTHETIC_CLOSE_REASONS
 
     db = get_db()
@@ -150,8 +150,8 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
 
 def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dict:
     """Downgrade active high-confidence rows with no verified document."""
-    from aletheia.knowledge.document import read_knowledge_document
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.files.knowledge_document import read_knowledge_document
+    from aletheia.storage.knowledge_index import reindex_all
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -214,11 +214,11 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
 
 def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
     """Backfill canonical documents and provenance from the current data root."""
-    from aletheia.knowledge.document import (
+    from aletheia.files.knowledge_document import (
         canonicalize_written_document,
         read_knowledge_document,
     )
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -288,8 +288,8 @@ def downgrade_unattributed_trade_case_studies(*, dry_run: bool = False) -> dict:
     direction, or prose would fabricate attribution. Keep the row active/auditable,
     but move it out of the high-confidence learning pool.
     """
-    from aletheia.knowledge.document import read_knowledge_document
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.files.knowledge_document import read_knowledge_document
+    from aletheia.storage.knowledge_index import reindex_all
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

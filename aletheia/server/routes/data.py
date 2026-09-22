@@ -2491,7 +2491,7 @@ def get_reviews_summary():
 def get_knowledge_content(item_id: str):
     """Read a verified, current-root-bound Knowledge document."""
     _ensure_db()
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
 
     items = repo._select_all("knowledge_items", where="id = ?", params=(item_id,), limit=1)
     if not items:
