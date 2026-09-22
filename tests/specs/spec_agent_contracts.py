@@ -80,7 +80,7 @@ def test_guard_pipeline_functions():
     ),
 )
 def test_equity_observer_exists():
-    from aletheia.agents import equity_observer
+    from extensions.research import equity_observer
 
     assert hasattr(equity_observer, "EquityRead")
 
@@ -536,7 +536,7 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
 
     # The retired wake sources must stay retired.
     retired = {
-        "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
+        "extensions/research/equity_observer.py": "equity_observer_opportunity",
         "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
         "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
         "aletheia/analytics/guard_promotion.py": "guard_set_changed",

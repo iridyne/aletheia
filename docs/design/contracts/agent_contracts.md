@@ -165,6 +165,9 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 
 #### equity_observer (replaces stock_observer)
 
+- **Owner**: `extensions/research/equity_observer.py`, registered by CLI/Web
+  composition in the existing Core registry. An absent Research package makes
+  the manual catalog unavailable and omits this scheduler job, not a failed run.
 - **Trigger**: cron 工作日 09:30-16:00 America/New_York, every 30min
 - **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
 - **LLM**: Yes

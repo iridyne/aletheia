@@ -14,7 +14,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_EQUITY_OBS = _ROOT / "aletheia" / "agents" / "equity_observer.py"
+_EQUITY_OBS = _ROOT / "extensions" / "research" / "equity_observer.py"
 _PRED_OBS = _ROOT / "aletheia" / "agents" / "prediction_observer.py"
 _SYMBOLS = _ROOT / "aletheia" / "data" / "symbols.py"
 _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
@@ -28,12 +28,12 @@ _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 @spec_claim(
     SpecClaim(
         "OBS-S01", "agent_contracts", "§4 equity_observer", "L2a",
-        "aletheia/agents/equity_observer.py exists and exports a callable run_equity_observer",
+        "extensions/research/equity_observer.py exists and exports a callable run_equity_observer",
     ),
 )
 def test_equity_observer_exists_and_callable():
     assert _EQUITY_OBS.exists(), "equity_observer.py not found"
-    from aletheia.agents import equity_observer
+    from extensions.research import equity_observer
 
     assert callable(equity_observer.run_equity_observer)
 

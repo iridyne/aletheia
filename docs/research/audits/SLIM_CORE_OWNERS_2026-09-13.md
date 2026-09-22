@@ -11,6 +11,12 @@ follows from classification here.
 
 ## Advisory Research compartment follow-up
 
+Equity Observer now also lives in `extensions/research`, retaining its unchanged
+public-data/model algorithm and observation-only Opportunity writes. CLI/Web bind
+it in the existing registry; absent Research omits the equity scheduler job and
+marks its manual catalog entry unavailable. Eastern-time cadence, DST/misfire
+behavior, permissions and execution eligibility are unchanged.
+
 The unchanged Research Agent and Risk Critic implementations now live in
 `extensions/research`; their former modules are deleted without forwarding
 facades. Core retains the existing agent registry, inference helpers and execution
@@ -19,7 +25,7 @@ an absent Research package clears stale registrations, while internal import
 defects propagate. The manual catalog reports unavailable implementations rather
 than implying they can run. Model calls, note confidence/admission, permissions,
 scheduled cadence and Risk authority are unchanged. This bounded cutover does
-not move the other observers/reviewers or prove whole-Research absence safety.
+not move the remaining observers/reviewers or prove whole-Research absence safety.
 
 ## Exchange compartment follow-up
 

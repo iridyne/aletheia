@@ -78,7 +78,7 @@ def test_stock_token_functions_exist():
     ),
 )
 def test_equity_observer_uses_priority_token_lookup():
-    src = (_ROOT / "aletheia" / "agents" / "equity_observer.py").read_text(encoding="utf-8")
+    src = (_ROOT / "extensions" / "research" / "equity_observer.py").read_text(encoding="utf-8")
     assert "ticker_to_stock_tokens" in src, (
         "equity_observer must import/call ticker_to_stock_tokens"
     )

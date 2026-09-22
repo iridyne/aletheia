@@ -73,7 +73,7 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     """equity_observer writes asset_class=equity, execution_eligible=False for equity tickers."""
     _setup(tmp_path, monkeypatch)
 
-    import aletheia.agents.equity_observer as eo
+    import extensions.research.equity_observer as eo
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["AAPL"]
@@ -97,7 +97,7 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
                  "key_observations": ["price above SMA50"]}, None)
     monkeypatch.setattr(eo, "llm_structured", fake_llm)
 
-    from aletheia.agents.equity_observer import run_equity_observer
+    from extensions.research.equity_observer import run_equity_observer
     out = asyncio.run(run_equity_observer(permission_mode="Full", run_id="run-eq-1"))
 
     opps = repo.list_opportunities(limit=20)
@@ -118,7 +118,7 @@ def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_p
     """equity_observer must set scanner_family, valid_until, and confidence_score=0 on LLM failure (#183)."""
     _setup(tmp_path, monkeypatch)
 
-    import aletheia.agents.equity_observer as eo
+    import extensions.research.equity_observer as eo
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["MSFT"]
@@ -139,7 +139,7 @@ def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_p
         return (None, "llm_timeout")
     monkeypatch.setattr(eo, "llm_structured", fake_llm_fail)
 
-    from aletheia.agents.equity_observer import run_equity_observer
+    from extensions.research.equity_observer import run_equity_observer
     asyncio.run(run_equity_observer(permission_mode="Full", run_id="run-eq-attr"))
 
     opps = repo.list_opportunities(limit=20)

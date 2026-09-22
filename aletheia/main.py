@@ -55,6 +55,7 @@ def _configure_runtime() -> None:
     from aletheia.agents import register_agent, unregister_agent
 
     try:
+        from extensions.research.equity_observer import run_equity_observer
         from extensions.research.research_agent import run_research_agent
         from extensions.research.risk_critic import run_risk_critic
     except ModuleNotFoundError as exc:
@@ -62,9 +63,11 @@ def _configure_runtime() -> None:
             raise
         unregister_agent("research_agent")
         unregister_agent("risk_critic")
+        unregister_agent("equity_observer")
     else:
         register_agent("research_agent")(run_research_agent)
         register_agent("risk_critic")(run_risk_critic)
+        register_agent("equity_observer")(run_equity_observer)
 
     from aletheia.notifications import configure_telegram_sender
 

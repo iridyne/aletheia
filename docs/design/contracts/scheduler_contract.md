@@ -69,7 +69,7 @@ _EXECUTOR_WORKERS = {
 
 全局 `job_defaults`（`scheduler.py:321`）：`coalesce=True`，`max_instances=1`（universe_refresh 在 job 级别显式重复声明 `max_instances=1`，`scheduler.py:438`）。
 
-以下为 `init_scheduler()` 内全部 `_scheduler.add_job()` 调用，按行号排序。`ohlcv_nightly_backfill` 受配置开关保护（见注）。
+下表记录任务的调度参数；实际注册还受配置与 composition 准入约束（见注），不是所有任务无条件同时存在的保证。
 
 | # | job_id | 行 | trigger | 参数 | executor | timeout(s) | misfire_grace |
 |---|---|---|---|---|---|---|---|
@@ -90,10 +90,10 @@ _EXECUTOR_WORKERS = {
 | 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | 45 | 30 |
 | 18 | `cleanup` | 399 | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
 | 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |
-| 20 | `equity_observer` | 411 | cron | day_of_week=mon-fri, hour=14-21, minute=*/30, tz=UTC | agents | 240 | 300 |
+| 20 | `equity_observer` | — | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟；仅注册已组合的 producer | agents | 240 | 300 |
 | 21 | `prediction_observer` | 417 | interval | minutes=30 | agents | 240 | 120 |
 | 22 | `post_trade_reviewer` | 424 | interval | hours=4 | agents | 300 | 300 |
-| 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
+| 23 | `risk_critic` | — | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
 | 24b | `funding_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
@@ -130,7 +130,12 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 达到配置预算 80% 后最多 64 MiB。它必须持有 SQLite process/cross-process writer permit，
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
-**注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。任务总数随配置和实际职责变化，不设源码调用数量下限。
+**注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。
+`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
+`extensions/research` producer 绑定到既有 agent registry、`get_agent_fn()` 可解析时注册。
+Research 缺失时省略对应 job，不创建失败 AgentRun 或调度失败健康记录；Core 任务保持注册。
+Equity 的 `_equity_observer_trigger()` 保留 Eastern-time DST 与 misfire 语义。
+任务总数随配置、已组合 producer 和实际职责变化，不设源码调用数量下限。
 
 ### 3.1 Observation Lab experiment scheduling
 

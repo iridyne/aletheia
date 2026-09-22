@@ -22,7 +22,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "serenity_xstock_execution"
 _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
-_EQUITY_OBSERVER = _ROOT / "aletheia" / "agents" / "equity_observer.py"
+_EQUITY_OBSERVER = _ROOT / "extensions" / "research" / "equity_observer.py"
 
 
 @spec_claim(

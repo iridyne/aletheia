@@ -9,7 +9,7 @@ import pytest
 
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
-    for name in ("research_agent", "risk_critic"):
+    for name in ("research_agent", "risk_critic", "equity_observer"):
         assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
 
 
@@ -30,7 +30,7 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-for name in ("research_agent", "risk_critic"):
+for name in ("research_agent", "risk_critic", "equity_observer"):
     register_agent(name)(forbidden)
 
 attempted = []
@@ -47,7 +47,8 @@ try:
         from aletheia.main import _configure_runtime
         _configure_runtime()
         # Cached module imports must still replace a stale registration.
-        register_agent("research_agent")(forbidden)
+        for name in ("research_agent", "risk_critic", "equity_observer"):
+            register_agent(name)(forbidden)
         _configure_runtime()
     else:
         importlib.import_module("aletheia.server.app")
@@ -55,7 +56,7 @@ except ModuleNotFoundError as exc:
     assert missing == "broken_dependency" and exc.name == missing, exc
 else:
     assert missing != "broken_dependency", "internal import defects must propagate"
-    for name in ("research_agent", "risk_critic"):
+    for name in ("research_agent", "risk_critic", "equity_observer"):
         if missing:
             try:
                 get_agent_fn(name)
@@ -70,10 +71,20 @@ else:
     assert callable(get_agent_fn("portfolio_agent")), "Core snapshot agent remains available"
     from aletheia.server.routes.data import get_agents_catalog
     catalog = {row["name"]: row for row in get_agents_catalog()["agents"]}
-    for name in ("research_agent", "risk_critic"):
+    for name in ("research_agent", "risk_critic", "equity_observer"):
         if missing:
             assert catalog[name]["runnable"] is False
             assert catalog[name]["blocked_reason"] == "agent_unavailable"
+            from aletheia.agent_runtime import job_queue
+            manager = job_queue.AgentJobManager()
+            manager.start = forbidden
+            job_queue.queue_run = forbidden
+            try:
+                manager.enqueue(name)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("missing Research must not create an AgentRun")
         else:
             assert catalog[name].get("runnable", True)
 if missing:
