@@ -50,6 +50,24 @@ async def client(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("historical_status", [None, "completed", "running"])
+async def test_status_reports_absent_producer_without_hiding_history(client, monkeypatch, historical_status):
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_enqueue_research_run", None)
+    run = SerenityResearchRun(status=historical_status) if historical_status else None
+    if run:
+        repo.insert_serenity_research_run(run)
+    response = await client.get("/api/serenity/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["engineStatus"] == "unavailable"
+    assert (data["lastAttemptedRun"] or {}).get("id") == (run.id if run else None)
+    assert (data["lastSuccessfulRun"] or {}).get("id") == (run.id if historical_status == "completed" else None)
+    assert (data["currentRun"] or {}).get("id") == (run.id if historical_status == "running" else None)
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("action", ["create", "retry", "deep-dive"])
 async def test_absent_research_rejects_before_any_request_writes(client, monkeypatch, action):
     from aletheia.agent_runtime import scheduler

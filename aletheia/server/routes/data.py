@@ -2542,6 +2542,13 @@ def get_serenity_status():
     except Exception:
         pass
 
+    from aletheia.agent_runtime.scheduler import require_research_enqueue
+
+    try:
+        require_research_enqueue()
+    except ValueError:
+        engine_status = "unavailable"
+
     def _run_summary(r):
         if not r:
             return None
