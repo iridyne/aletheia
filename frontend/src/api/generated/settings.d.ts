@@ -1983,7 +1983,7 @@ export interface components {
             historical_data: components["schemas"]["HistoricalDataConfig"];
             learning: components["schemas"]["LearningConfig"];
             /** Learning Path Options */
-            learning_path_options: components["schemas"]["LearningPathOption"][];
+            learning_path_options: components["schemas"]["LearningPathOption"][] | null;
             live: components["schemas"]["LiveConfig"];
             market_data: components["schemas"]["MarketDataConfig"];
             models: components["schemas"]["SettingsModelsResponse"];

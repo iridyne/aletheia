@@ -22,6 +22,17 @@ function renderAgentTab(settings: Record<string, unknown> = {}) {
 }
 
 describe('AgentModelsTab', () => {
+  it('reports an unavailable Learning inventory without rejecting saved selections', () => {
+    const html = renderAgentTab({
+      learning_path_options: null,
+      learning: { paper_influence_paths: ['universe_family_calibration'] },
+    })
+    expect(html).toContain('Learning path inventory unavailable. Saved selections are unchanged.')
+    expect(html).not.toContain('Unsupported saved path:')
+    expect(html).toContain('Permission mode')
+    expect(renderAgentTab()).not.toContain('Learning path inventory unavailable.')
+  })
+
   it('preserves section order and deep-link anchors', () => {
     const html = renderAgentTab()
     const ids = ['permission-mode', 'learning', 'regime-detection', 'serenity-research', 'scheduler', 'ai-model-providers', 'inference-admission', 'llm-cost-usage']

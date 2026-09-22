@@ -886,6 +886,34 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("missing", ["aletheia.learning", "aletheia.learning.registry", "broken_dependency"])
+async def test_settings_survive_absent_learning_inventory(client, monkeypatch, missing):
+    import builtins
+    from aletheia.config.loader import load_config
+
+    before = load_config().learning.model_dump()
+    original_import = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name == "aletheia.learning.registry":
+            raise ModuleNotFoundError("optional inventory absent", name=missing)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+    if missing == "broken_dependency":
+        with pytest.raises(ModuleNotFoundError) as error:
+            await client.get("/api/settings")
+        assert error.value.name == missing
+    else:
+        response = await client.get("/api/settings")
+        assert response.status_code == 200
+        assert response.json()["learning_path_options"] is None
+        assert response.json()["learning"] == before
+        assert "risk" in response.json() and "exchange" in response.json()
+    assert load_config().learning.model_dump() == before
+
+
+@pytest.mark.anyio
 async def test_learning_settings_expose_only_measurable_paper_path_options(client):
     response = await client.get("/api/settings")
     assert response.status_code == 200

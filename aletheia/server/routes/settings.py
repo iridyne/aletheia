@@ -332,7 +332,7 @@ class SettingsResponse(BaseModel):
     learning: LearningConfig
     economics: EconomicsConfig
     trading_mandate: SettingsTradingMandateResponse | None = None
-    learning_path_options: list[LearningPathOption]
+    learning_path_options: list[LearningPathOption] | None
 
 
 def _trading_mandate_view(cfg) -> dict[str, Any] | None:
@@ -378,7 +378,14 @@ def _trading_mandate_view(cfg) -> dict[str, Any] | None:
 def get_settings() -> SettingsResponse:
     cfg = load_config()
     from aletheia.agent_runtime.pi_daemon import daemon_status
-    from aletheia.learning.registry import paper_influence_path_options
+    try:
+        from aletheia.learning.registry import paper_influence_path_options
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.learning", "aletheia.learning.registry"}:
+            raise
+        learning_path_options = None
+    else:
+        learning_path_options = list(paper_influence_path_options())
     from aletheia.trading.persona_rollout import persona_rollout_status
     from aletheia.notifications import webhook_delivery_status
     providers_safe = {}
@@ -452,7 +459,7 @@ def get_settings() -> SettingsResponse:
         # Read-only visibility keeps the config schema honest; unknown mandate
         # fields are intentionally omitted so this GET cannot echo credentials.
         "trading_mandate": _trading_mandate_view(cfg),
-        "learning_path_options": list(paper_influence_path_options()),
+        "learning_path_options": learning_path_options,
     }
 
 
