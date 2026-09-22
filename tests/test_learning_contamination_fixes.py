@@ -6,7 +6,7 @@
 
 
 def test_render_calibration_does_not_crash_on_numeric_ece():
-    from aletheia.analytics.confidence_calibration import render_calibration_for_pi
+    from extensions.analytics.confidence_calibration import render_calibration_for_pi
     out = render_calibration_for_pi({"ece": 0.123, "ece_grade": "B", "total_executed": 12})
     assert "Conviction Calibration" in out
     assert "0.123" in out                       # numeric ECE renders (previously raised ValueError)

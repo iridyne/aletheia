@@ -48,7 +48,7 @@ _MODULES_BY_LAYER = {
     ],
     "Learning Alpha": [
         "aletheia/learning/lessons.py",
-        "aletheia/analytics/memo_effectiveness.py",
+        "extensions/analytics/memo_effectiveness.py",
         "aletheia/knowledge/guards.py",
         "aletheia/analytics/guard_effectiveness.py",
     ],

@@ -147,8 +147,8 @@ def test_cost_summary_keeps_signed_funding_and_marks_incomplete_raw_costs(monkey
 
 
 def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
+    from extensions.analytics.routes import get_confidence_calibration
     from aletheia.server.routes.analytics import (
-        get_confidence_calibration,
         get_cost_summary,
         get_equity_curve,
         get_strategy_kpis,

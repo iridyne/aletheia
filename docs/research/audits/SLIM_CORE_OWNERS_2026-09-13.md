@@ -319,6 +319,20 @@ production. They do not classify all Analytics modules as optional or read-only.
 | Serenity opportunity repository → `causal_controls` | Namespaced `alpha_control_observations` inserts join an existing caller transaction and commit only when not already in one. This is an observation writer, not Candidate publication or Order/Position settlement. The row builder supports outcome seeding with exact venue/price evidence, but this Serenity caller passes no venue and therefore does not seed those outcomes. |
 | Core Risk / Candidate producers → `filter_evidence`; scheduled controller → Lab | Filter facts use canonical repository writers; required Risk evidence joins the authoritative decision transaction. Controller recommendation persistence is only part of its effect: it builds bounded replays, registers experiments and invokes the existing Lab window runner. Main/worker ownership and cycle exclusion remain with the existing scheduler/Lab owners. Lab evaluation can revoke paper manifests through its canonical safety disposition; it is not a second Core settlement owner. |
 
+The four namespaced report producers above now live together in
+`extensions/analytics/`, along with their two exclusive API handlers. CLI/Web
+composition binds their existing scheduler builders and Core scorecard readers;
+runtime job bodies do not import the concrete report implementation. Without
+that package, report cron jobs are not registered, startup catch-up marks the
+memo unavailable without advancing its watermark, and calibration contributes
+the existing fail-closed zero score. Explicit Ops remediation accepts the two
+deterministic builders from its CLI composition and reports unavailable rebuilds
+after canonical maintenance commits. Observer imports the optional memo owner;
+Doctor reads persisted history without loading the producer. Algorithms,
+six-hour throttles, logger identities, Knowledge writers, strict temporal rules,
+cohort eligibility and economic meanings are unchanged. This closes this finite
+report group, not all optional Analytics or Learning consumers.
+
 The report-facing `temporal`, `attribution`, `streaks` and performance-summary
 calculations do not themselves write trading state. The unused eager package
 re-exports are removed: Core accounting can import shared Outcome rules without

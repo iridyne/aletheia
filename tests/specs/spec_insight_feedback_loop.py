@@ -36,9 +36,9 @@ def _src(rel: str) -> str:
 
 
 _LEARNERS = [
-    "aletheia/analytics/insight_synthesizer.py",
-    "aletheia/analytics/confidence_calibration.py",
-    "aletheia/analytics/reasoning_feedback.py",
+    "extensions/analytics/insight_synthesizer.py",
+    "extensions/analytics/confidence_calibration.py",
+    "extensions/analytics/reasoning_feedback.py",
 ]
 
 
@@ -96,7 +96,7 @@ def test_clean_window_cutoff_behavior():
               "point so a later result can overturn/downweight an earlier judgment"),
 )
 def test_memo_effectiveness_module_exists():
-    mod = importlib.import_module("aletheia.analytics.memo_effectiveness")
+    mod = importlib.import_module("extensions.analytics.memo_effectiveness")
     assert hasattr(mod, "evaluate_prior_memo"), (
         "memo_effectiveness must expose evaluate_prior_memo()"
     )
@@ -122,7 +122,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
         insert_knowledge_item,
         list_knowledge_items,
     )
-    from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+    from extensions.analytics.memo_effectiveness import evaluate_prior_memo
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -200,7 +200,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
               "to the agent, not just stored"),
 )
 def test_prior_corrections_rendered_into_prompt():
-    from aletheia.analytics.insight_synthesizer import render_memo_for_observer
+    from extensions.analytics.insight_synthesizer import render_memo_for_observer
 
     memo = {
         "sample_size": 12, "data_window_days": 30, "direction_summary": {},
@@ -227,8 +227,8 @@ def test_prior_corrections_rendered_into_prompt():
 def test_memo_half_life_weight_rendered_into_prompt():
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.analytics.insight_synthesizer import render_memo_for_observer
-    from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+    from extensions.analytics.insight_synthesizer import render_memo_for_observer
+    from extensions.analytics.memo_effectiveness import memo_half_life_weight
 
     now = datetime.now(timezone.utc)
     generated_at = (now - timedelta(days=7)).isoformat()
@@ -301,7 +301,7 @@ def test_position_regime_reads_market_regime(tmp_path, monkeypatch):
               "memo never reinforces the over-concentrated side (positive-feedback-trap guard)"),
 )
 def test_direction_bias_cap_is_enforced():
-    from aletheia.analytics.insight_synthesizer import _compute_direction_summary
+    from extensions.analytics.insight_synthesizer import _compute_direction_summary
 
     # 9 short / 1 long = 90% one-sided, mirroring Round 1's short 17/23 concentration.
     # Shorts "win" and longs "lose" so the naive avg-PnL rule would scream short_preferred.

@@ -140,6 +140,12 @@ binding 均可解析；Research 或所需 Data adapter 缺失时省略该 job，
 已组合时保留每 30 分钟的 Observer-then-Divergence 顺序、240 秒 Observer timeout 与 120 秒 misfire grace。
 任务总数随配置、已组合 producer 和实际职责变化，不设源码调用数量下限。
 
+`insight_synthesizer` 与 `confidence_calibration` 仅在 CLI/Web composition 已绑定
+`extensions/analytics` 的对应 builder 时注册；已组合时保留原 cadence、executor、timeout
+和 misfire 参数。缺失报告包时，启动 catch-up 将 memo 子项标为 `unavailable`，不执行、
+不推进成功 watermark，也不为该缺失子项排重试。直接调用缺失的报告 job 仍明确记录
+`analytics_reports_unavailable`，不得伪造成功。Core 结算任务和其他 catch-up 子项不受影响。
+
 ### 3.1 Observation Lab experiment scheduling
 
 Observation Lab is the sole online Experiment authority. The existing Lab runner and
