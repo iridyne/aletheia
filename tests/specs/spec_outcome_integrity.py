@@ -30,11 +30,11 @@ ROOT = Path(__file__).resolve().parents[2]
 # OI-C04 instead of being silently treated as judgement consumers.
 
 ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
-    "aletheia/analytics/factor_feedback.py",
+    "core/aletheia/analytics/factor_feedback.py",
     "extensions/analytics/guard_promotion.py",
     "extensions/analytics/guard_effectiveness.py",
     "extensions/analytics/trade_case_builder.py",
-    "aletheia/analytics/trade_path.py",
+    "core/aletheia/analytics/trade_path.py",
 )
 
 
@@ -77,7 +77,7 @@ def test_existing_account_scope_regressions_remain_registered():
     )
 )
 def test_position_schema_has_additive_outcome_evidence_fields():
-    combined = _source("aletheia/storage/models.py") + _source("aletheia/storage/migrations.py")
+    combined = _source("core/aletheia/storage/models.py") + _source("core/aletheia/storage/migrations.py")
     required = {
         "close_category", "exit_price_source", "exit_fill_verified",
         "outcome_eligible", "outcome_exclusion_reason",
@@ -100,7 +100,7 @@ def test_position_schema_has_additive_outcome_evidence_fields():
 )
 def test_dependency_neutral_outcome_read_model_exists():
     assert importlib.util.find_spec("aletheia.analytics.outcome_integrity") is not None
-    source = _source("aletheia/analytics/outcome_integrity.py")
+    source = _source("core/aletheia/analytics/outcome_integrity.py")
     for token in (
         "ClosureSemantics", "OutcomeAssessment", "raw_account_events",
         "eligible_strategy_outcomes", "administrative_closures",
@@ -111,7 +111,7 @@ def test_dependency_neutral_outcome_read_model_exists():
         "aletheia.exchanges", "extensions.exchanges", "aletheia.agent_shell",
     ):
         assert forbidden not in source
-    assessment_source = _source("aletheia/analytics/outcome_semantics.py")
+    assessment_source = _source("core/aletheia/analytics/outcome_semantics.py")
     assert "assess_reportable_outcome" in assessment_source
     assert "SYNTHETIC_CLOSE_REASONS" not in assessment_source
 
@@ -126,8 +126,8 @@ def test_dependency_neutral_outcome_read_model_exists():
     )
 )
 def test_reconciler_declares_durable_disappearance_candidates():
-    confirmation = _source("aletheia/portfolio/disappearance_confirmation.py")
-    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    confirmation = _source("core/aletheia/portfolio/disappearance_confirmation.py")
+    reconciler = _source("core/aletheia/portfolio/position_reconciler.py")
     for token in (
         "PositionDisappearanceCandidate", "record_disappearance_observation",
         "MIN_INDEPENDENT_COMPLETE_OBSERVATIONS", "DIRECT_CONFIRMED_ABSENT",
@@ -138,7 +138,7 @@ def test_reconciler_declares_durable_disappearance_candidates():
     run_body = reconciler.split("def run_reconcile", 1)[1]
     assert "reconcile_close_orphan(item)" not in run_body
     production_calls = []
-    for path in (ROOT / "aletheia").rglob("*.py"):
+    for path in (ROOT / "core" / "aletheia").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
         call_count = source.count("reconcile_close_orphan(")
         if path.name == "position_reconciler.py":
@@ -146,7 +146,7 @@ def test_reconciler_declares_durable_disappearance_candidates():
         if call_count:
             production_calls.append(str(path.relative_to(ROOT)))
     assert production_calls == []
-    routes = _source("aletheia/server/routes/data.py")
+    routes = _source("core/aletheia/server/routes/data.py")
     assert "def run_positions_reconcile():" in routes
     assert "async def run_positions_reconcile():" not in routes
 
@@ -262,7 +262,7 @@ def test_portfolio_has_separate_verified_and_administrative_close_paths():
     assert stored["slippage_cost"] is None
     assert stored["outcome_eligible"] == 0
     assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
-    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    reconciler = _source("core/aletheia/portfolio/position_reconciler.py")
     assert "settle_ready_disappearance_candidates" in reconciler
     assert "def reconcile_close_orphan" not in reconciler
 
@@ -302,11 +302,11 @@ def test_reconcile_incident_detector_is_not_adopted_only():
     )
 )
 def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
-    source = _source("aletheia/risk/engine.py")
+    source = _source("core/aletheia/risk/engine.py")
     assert "today_realized_pnl" not in source
     assert "authoritative_account_realized_loss" in source
     assert "account_loss_unavailable" in source
-    account_source = _source("aletheia/portfolio/account_loss.py")
+    account_source = _source("core/aletheia/portfolio/account_loss.py")
     assert "eligible_strategy_outcomes" not in account_source
     assert "paper_account_events" in account_source
     assert "assess_position_closure" in account_source
@@ -326,13 +326,13 @@ def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
     )
 )
 def test_analytics_routes_expose_raw_and_genuine_cohorts():
-    source = _source("aletheia/analytics/outcome_integrity.py")
+    source = _source("core/aletheia/analytics/outcome_integrity.py")
     for token in (
         "raw_event_count", "eligible_outcome_count", "excluded_outcome_count",
         "outcome_exclusion_reasons", "outcome_semantics_version",
     ):
         assert token in source
-    routes = _source("aletheia/server/routes/analytics.py")
+    routes = _source("core/aletheia/server/routes/analytics.py")
     assert "raw_recorded_points" in routes
     assert "genuine_points" in routes
     assert '"points": genuine_points' in routes
@@ -389,7 +389,7 @@ def test_history_remediation_tool_declares_non_destructive_protocol():
     )
 )
 def test_clean_window_has_versioned_anchor_and_incident_exclusions():
-    source = _source("aletheia/analytics/learning_window.py")
+    source = _source("core/aletheia/analytics/learning_window.py")
     for token in (
         "CLEAN_WINDOW_ANCHOR_ID", "OUTCOME_SEMANTICS_VERSION",
         "incident_window", "unknown_semantics_version",

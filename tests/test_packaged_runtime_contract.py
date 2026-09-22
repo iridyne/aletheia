@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import json
@@ -9,6 +10,7 @@ import sys
 import tarfile
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -214,8 +216,34 @@ def test_pyinstaller_contract_is_one_folder_and_includes_dashboard():
     assert 'for package in ("aletheia", "extensions", "ops", "legacy"):' in source
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert set(project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]) == {
-        "aletheia", "extensions", "ops", "legacy",
+        "core/aletheia", "extensions", "ops", "legacy",
     }
+    assert 'pathex=[str(ROOT / "core"), str(ROOT)]' in source
+    assert '(str(ROOT / "core" / "aletheia" / "dashboard_static"), "aletheia/dashboard_static")' in source
+
+
+@pytest.mark.parametrize("frozen", [None, False, True])
+def test_loader_source_root_preserves_frozen_runtime_home_guard(tmp_path, frozen):
+    from aletheia.runtime_home_migration import RuntimeHomeMigrationError, assert_runtime_home_ready
+
+    source = ROOT / "core" / "aletheia" / "config" / "loader.py"
+    assignment = next(
+        node for node in ast.parse(source.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "_PROJECT_ROOT" for target in node.targets)
+    )
+    expected = tmp_path / ("payload/_internal" if frozen else "repo")
+    package_root = expected if frozen else expected / "core"
+    fake_sys = SimpleNamespace() if frozen is None else SimpleNamespace(frozen=frozen)
+    actual = eval(compile(ast.Expression(assignment.value), str(source), "eval"), {
+        "Path": Path, "sys": fake_sys,
+        "__file__": str(package_root / "aletheia/config/loader.py"),
+    })
+    assert actual == expected
+    (expected / "data").mkdir(parents=True)
+    (expected / "data/app.db").write_bytes(b"fixture")
+    with pytest.raises(RuntimeHomeMigrationError, match="Legacy runtime state exists"):
+        assert_runtime_home_ready(project_root=actual, target=tmp_path / "user-data", override_active=False)
 
 
 def test_frozen_child_commands_reenter_the_payload_instead_of_treating_it_as_python(tmp_path):

@@ -9,18 +9,18 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 ROOT = Path(__file__).resolve().parents[2]
-UTA_ROOT = ROOT / "aletheia" / "uta"
+UTA_ROOT = ROOT / "core" / "aletheia" / "uta"
 
 
 def _mutation_command_importers(root):
     owners = {
-        "aletheia/uta/contract.py", "aletheia/uta/models.py",
-        "aletheia/execution/coordinator.py", "aletheia/execution/gateway.py",
+        "core/aletheia/uta/contract.py", "core/aletheia/uta/models.py",
+        "core/aletheia/execution/coordinator.py", "core/aletheia/execution/gateway.py",
         "extensions/exchanges/ccxt/adapter.py",
     }
     commands = {"SubmitOrderCommand", "ModifyOrderCommand", "CancelOrderCommand"}
     command_importers = []
-    for directory in ("aletheia", "extensions"):
+    for directory in ("core/aletheia", "extensions"):
         for path in (root / directory).rglob("*.py"):
             relative = path.relative_to(root).as_posix()
             if relative in owners:
@@ -70,7 +70,7 @@ def test_uta_v1_protocol_surface_is_complete_and_singular():
         "cancel_order",
     }
     assert expected <= set(UTAAdapter.__protocol_attrs__)
-    assert not list((ROOT / "aletheia").rglob("*trading_venue*.py"))
+    assert not list((ROOT / "core" / "aletheia").rglob("*trading_venue*.py"))
 
 
 @spec_claim(
@@ -126,15 +126,15 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
         BitgetUTAV3Profile,
     )
 
-    coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
+    coordinator_path = ROOT / "core" / "aletheia" / "execution" / "coordinator.py"
     coordinator = coordinator_path.read_text(encoding="utf-8")
-    gateway = (ROOT / "aletheia" / "execution" / "gateway.py").read_text(
+    gateway = (ROOT / "core" / "aletheia" / "execution" / "gateway.py").read_text(
         encoding="utf-8"
     )
-    manager = (ROOT / "aletheia" / "portfolio" / "position_manager.py").read_text(
+    manager = (ROOT / "core" / "aletheia" / "portfolio" / "position_manager.py").read_text(
         encoding="utf-8"
     )
-    stops = (ROOT / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
+    stops = (ROOT / "core" / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
 
 
     assert _mutation_command_importers(ROOT) == []
@@ -211,12 +211,12 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
 )
 def test_phase_three_evidence_consumers_have_no_concrete_private_client_import():
     consumers = (
-        "aletheia/execution/reconciliation.py",
-        "aletheia/execution/stale_order_cleanup.py",
-        "aletheia/execution/pending_close_recovery.py",
-        "aletheia/portfolio/disappearance_settlement.py",
-        "aletheia/portfolio/broker_funding_settlement.py",
-        "aletheia/trust/live_unlock.py",
+        "core/aletheia/execution/reconciliation.py",
+        "core/aletheia/execution/stale_order_cleanup.py",
+        "core/aletheia/execution/pending_close_recovery.py",
+        "core/aletheia/portfolio/disappearance_settlement.py",
+        "core/aletheia/portfolio/broker_funding_settlement.py",
+        "core/aletheia/trust/live_unlock.py",
     )
     violations = []
     for relative in consumers:
@@ -256,9 +256,9 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
     # TPSL uses its normalized port; credential ingress belongs to Exchange.
     allowed = set()
     actual = set()
-    for path in (ROOT / "aletheia").rglob("*.py"):
+    for path in (ROOT / "core" / "aletheia").rglob("*.py"):
         if path.is_relative_to(UTA_ROOT) or path.is_relative_to(
-            ROOT / "aletheia" / "exchanges"
+            ROOT / "core" / "aletheia" / "exchanges"
         ):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

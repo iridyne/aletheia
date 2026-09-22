@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 
 # Allow running as a plain script from the repo root.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+root = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(root / "core"), str(root)]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("backfill_shadow_trades")

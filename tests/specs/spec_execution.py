@@ -431,7 +431,7 @@ def test_reconciliation_never_imports_place_order():
     import importlib.util
     from pathlib import Path
 
-    src = Path(__file__).parents[2] / "aletheia" / "execution" / "reconciliation.py"
+    src = Path(__file__).parents[2] / "core" / "aletheia" / "execution" / "reconciliation.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     for node in ast.walk(tree):
@@ -454,7 +454,7 @@ def test_reconciliation_never_inserts_fill():
     """AST-scan reconciliation.py for insert_fill calls or Fill( construction."""
     from pathlib import Path
 
-    src = Path(__file__).parents[2] / "aletheia" / "execution" / "reconciliation.py"
+    src = Path(__file__).parents[2] / "core" / "aletheia" / "execution" / "reconciliation.py"
     text = src.read_text(encoding="utf-8")
 
     forbidden = ["insert_fill", 'Fill(']
@@ -476,7 +476,7 @@ def test_is_live_defined_and_private():
     with a single leading underscore (contract §3: engine.py:35)."""
     from pathlib import Path
 
-    src = Path(__file__).parents[2] / "aletheia" / "risk" / "engine.py"
+    src = Path(__file__).parents[2] / "core" / "aletheia" / "risk" / "engine.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     function_names = [
@@ -688,7 +688,7 @@ def test_gateway_does_not_wire_guard_chain():
     (2026-09-07); this claim locks out any future re-introduction into the execution path."""
     from pathlib import Path
 
-    src = Path(__file__).parents[2] / "aletheia" / "execution" / "gateway.py"
+    src = Path(__file__).parents[2] / "core" / "aletheia" / "execution" / "gateway.py"
     text = src.read_text(encoding="utf-8")
     tree = ast.parse(text)
 

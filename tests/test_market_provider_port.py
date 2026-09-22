@@ -11,7 +11,7 @@ import pytest
 
 @pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "trading/market_data.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py", "universe/features.py", "data/price_feed.py", "data/history_downloader.py"])
 def test_standard_core_consumers_do_not_import_concrete_data(module):
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "core" / "aletheia" / module).read_text())
     assert not any(
         isinstance(node, ast.ImportFrom) and node.module == "extensions.data.ccxt_provider"
         for node in ast.walk(tree)
@@ -19,7 +19,7 @@ def test_standard_core_consumers_do_not_import_concrete_data(module):
 
 
 def test_feature_scans_do_not_bootstrap_raw_exchange_clients():
-    source = (Path(__file__).resolve().parents[1] / "aletheia" / "universe" / "features.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "core" / "aletheia" / "universe" / "features.py").read_text()
     assert "_ensure_primary" not in source
     assert ".load_markets" not in source
 

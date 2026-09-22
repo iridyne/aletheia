@@ -124,10 +124,10 @@ stateDiagram-v2
     }
 ```
 
-Evidence: [`EntryPlanRecord.status`](../../../aletheia/storage/models.py#L1830),
-[`ENTRY_PLAN_TRANSITIONS`](../../../aletheia/trading/entry_plan.py#L24),
-[`transition_entry_plan`](../../../aletheia/storage/repositories.py#L11032), and
-[`entry_plans_v66` DDL](../../../aletheia/storage/migrations.py#L3475).
+Evidence: [`EntryPlanRecord.status`](../../../core/aletheia/storage/models.py#L1830),
+[`ENTRY_PLAN_TRANSITIONS`](../../../core/aletheia/trading/entry_plan.py#L24),
+[`transition_entry_plan`](../../../core/aletheia/storage/repositories.py#L11032), and
+[`entry_plans_v66` DDL](../../../core/aletheia/storage/migrations.py#L3475).
 
 ### 1.2 Critical-entity ownership inventory
 
@@ -173,10 +173,10 @@ sequenceDiagram
     DB-->>S: run S and run M both finalized
 ```
 
-Evidence: [`_ensure_agent_run_ended`](../../../aletheia/agent_runtime/scheduler.py#L705),
-[`_run_async_with_timeout`](../../../aletheia/agent_runtime/scheduler.py#L728),
-[`run_logger.end_run`](../../../aletheia/agent_runtime/run_logger.py#L101), and
-[`update_agent_run`](../../../aletheia/storage/repositories.py#L709).
+Evidence: [`_ensure_agent_run_ended`](../../../core/aletheia/agent_runtime/scheduler.py#L705),
+[`_run_async_with_timeout`](../../../core/aletheia/agent_runtime/scheduler.py#L728),
+[`run_logger.end_run`](../../../core/aletheia/agent_runtime/run_logger.py#L101), and
+[`update_agent_run`](../../../core/aletheia/storage/repositories.py#L709).
 
 ### 1.4 Manual de-duplication is not an authority boundary
 
@@ -193,10 +193,10 @@ the minimal complete ownership boundary must be shared by both trigger types and
 multiple gateway processes are possible, enforced by SQLite rather than only Python
 memory.
 
-Evidence: [`AgentJobManager.enqueue`](../../../aletheia/agent_runtime/job_queue.py#L87),
-[`AgentJobManager._worker_main`](../../../aletheia/agent_runtime/job_queue.py#L132),
-[`_async_run`](../../../aletheia/agent_runtime/scheduler.py#L4457),
-[`/agent-runs/start`](../../../aletheia/server/routes/data.py#L432), and
+Evidence: [`AgentJobManager.enqueue`](../../../core/aletheia/agent_runtime/job_queue.py#L87),
+[`AgentJobManager._worker_main`](../../../core/aletheia/agent_runtime/job_queue.py#L132),
+[`_async_run`](../../../core/aletheia/agent_runtime/scheduler.py#L4457),
+[`/agent-runs/start`](../../../core/aletheia/server/routes/data.py#L432), and
 [`test_agent_job_queue.py`](../../../tests/test_agent_job_queue.py#L1).
 
 A related symptom confirms the cost of multiple manual entry points: the general route
@@ -204,8 +204,8 @@ maps `AgentJobAlreadyQueued` to HTTP 409, but the prediction-specific route does
 import or catch it. A duplicate refresh can therefore escape as an unhandled server
 error instead of the declared “refresh in progress” response.
 
-Evidence: [`data.start_agent_run`](../../../aletheia/server/routes/data.py#L432) versus
-[`prediction.trigger_prediction_refresh`](../../../aletheia/server/routes/prediction.py#L225).
+Evidence: [`data.start_agent_run`](../../../core/aletheia/server/routes/data.py#L432) versus
+[`prediction.trigger_prediction_refresh`](../../../core/aletheia/server/routes/prediction.py#L225).
 
 ### 1.5 Generic update APIs convert schema flexibility into lifecycle authority
 
@@ -227,10 +227,10 @@ Order/Position identity, checks the expected current Order state, and updates th
 coupled close claim atomically. The fix should expand this command style and shrink the
 generic updater, not introduce a generic state-machine framework.
 
-Evidence: [`_update`](../../../aletheia/storage/repositories.py#L339),
-[`update_order`](../../../aletheia/storage/repositories.py#L3297),
-[`finalize_exchange_acknowledgement`](../../../aletheia/storage/repositories.py#L3325),
-and [`update_position`](../../../aletheia/storage/repositories.py#L3732).
+Evidence: [`_update`](../../../core/aletheia/storage/repositories.py#L339),
+[`update_order`](../../../core/aletheia/storage/repositories.py#L3297),
+[`finalize_exchange_acknowledgement`](../../../core/aletheia/storage/repositories.py#L3325),
+and [`update_position`](../../../core/aletheia/storage/repositories.py#L3732).
 
 ## 2. Authority is a fact source, not yet code ownership
 
@@ -284,10 +284,10 @@ After cutover evidence shows no Legacy writer is needed, delete the Legacy mutat
 port and retain only historical decoding where required.
 
 Evidence: [`get_authority_source`](../../../aletheia/observation_lab/canonical.py#L919),
-[`repositories._canonical_lab_authority`](../../../aletheia/storage/repositories.py#L80),
-[`scheduler._observation_lab_owns_experiment_cycle`](../../../aletheia/agent_runtime/scheduler.py#L1202),
-[`analytics._lab_experiment_authority`](../../../aletheia/server/routes/analytics.py#L33),
-and [`settings._lab_experiment_authority`](../../../aletheia/server/routes/settings.py#L1309).
+[`repositories._canonical_lab_authority`](../../../core/aletheia/storage/repositories.py#L80),
+[`scheduler._observation_lab_owns_experiment_cycle`](../../../core/aletheia/agent_runtime/scheduler.py#L1202),
+[`analytics._lab_experiment_authority`](../../../core/aletheia/server/routes/analytics.py#L33),
+and [`settings._lab_experiment_authority`](../../../core/aletheia/server/routes/settings.py#L1309).
 
 ### 2.3 UTA / legacy broker
 
@@ -310,10 +310,10 @@ one resolver returns the qualified read/mutation implementation for an exact
 selected port; they do not interpret `legacy/shadow_read/uta_v1` themselves. Read-only
 shadow comparison remains separate and carries no mutation methods.
 
-Evidence: [`uta_read_boundary_for`](../../../aletheia/config/schema.py#L339),
-[`gateway._qualified_uta_mutation_selected`](../../../aletheia/execution/gateway.py#L900),
-[`risk.engine`](../../../aletheia/risk/engine.py#L779),
-[`exchange_sync.get_cached_state`](../../../aletheia/portfolio/exchange_sync.py#L159), and
+Evidence: [`uta_read_boundary_for`](../../../core/aletheia/config/schema.py#L339),
+[`gateway._qualified_uta_mutation_selected`](../../../core/aletheia/execution/gateway.py#L900),
+[`risk.engine`](../../../core/aletheia/risk/engine.py#L779),
+[`exchange_sync.get_cached_state`](../../../core/aletheia/portfolio/exchange_sync.py#L159), and
 [`require_uta_mutation_qualification`](../../../aletheia/trust/uta_qualification.py#L1).
 
 ### 2.4 Scheduled / manual is provenance, not admission authority
@@ -342,9 +342,9 @@ coordination owner, and avoids a new distributed job framework.
 | Golden Path | Uses deterministic public/LLM boundaries, but starts Observer admission with `admit_observer_instrument()` and proves the older Opportunity -> PI decision -> Proposal -> Order/Position path. | Current architecture adds Universe Candidate planning and EntryPlan lifecycle before execution. | Strong causal integrity for the covered older chain. | It cannot prove Candidate generation or EntryPlan production scheduling merely because downstream execution passes. |
 | Coverage gate | `.coveragerc` defines ten trust-boundary modules and `coverage_floors.py` can enforce them. | N/A | The primary CI runs all pytest files in batches. | The workflow invokes pytest without `--cov` and does not call `coverage_floors.py`; current floors are not enforced there. |
 
-Evidence: [`_apply_production_migrations`](../../../aletheia/storage/migrations.py#L8220),
-[`_apply_pytest_migrations`](../../../aletheia/storage/migrations.py#L8340),
-[`run_write`](../../../aletheia/storage/sqlite.py#L549),
+Evidence: [`_apply_production_migrations`](../../../core/aletheia/storage/migrations.py#L8220),
+[`_apply_pytest_migrations`](../../../core/aletheia/storage/migrations.py#L8340),
+[`run_write`](../../../core/aletheia/storage/sqlite.py#L549),
 [`tests/conftest.py`](../../../tests/conftest.py#L523),
 [`test_fresh_production_schema_retires_legacy_experiment_tables`](../../../tests/test_migration_fast_path.py#L78),
 [`test_active_mainline_golden_path`](../../../tests/e2e/test_active_mainline_golden_path.py#L28),

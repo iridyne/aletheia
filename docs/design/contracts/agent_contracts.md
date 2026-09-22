@@ -2,7 +2,7 @@
 
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
-> Source of truth: `aletheia/agent_runtime/scheduler.py`, `aletheia/agents/*.py` and optional `extensions/research/*.py`
+> Source of truth: `core/aletheia/agent_runtime/scheduler.py`, `core/aletheia/agents/*.py` and optional `extensions/research/*.py`
 > Last updated: 2026-09-13 (D2 canonical entry; other domains unchanged)
 
 ---
@@ -240,7 +240,7 @@ an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 
 #### portfolio_agent
 
-- **Owner**: Core `aletheia/agents/portfolio_agent.py`, a delegate of the canonical
+- **Owner**: Core `core/aletheia/agents/portfolio_agent.py`, a delegate of the canonical
   `portfolio.pnl.compute_and_store_snapshot`, not an optional Research producer.
 - **Trigger**: manual and the scheduled `portfolio_snapshot` job
 - **Inputs**: configured execution identity and current open Positions

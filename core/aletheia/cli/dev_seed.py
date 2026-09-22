@@ -20,12 +20,13 @@ from typing import Iterable
 import typer
 
 from aletheia.runtime_paths import preview_instance_dir
+from aletheia.config.loader import _PROJECT_ROOT
 
 dev_seed_app = typer.Typer(no_args_is_help=False)
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _PROJECT_ROOT
 
 
 # The preview universe. Keep grouped so the seed also drives rail groups and

@@ -2,7 +2,7 @@
 
 **Contract path**: `docs/design/contracts/scheduler_contract.md`
 **Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
-**Impl**: `aletheia/agent_runtime/scheduler.py`
+**Impl**: `core/aletheia/agent_runtime/scheduler.py`
 **Related**: `docs/design/contracts/agent_contracts.md` (§8 区别)
 
 ---
@@ -18,7 +18,7 @@
 | `pause_scheduler()` | `scheduler.py:501` | APScheduler `pause()`；job 不再派发，但不销毁注册表 |
 | `resume_scheduler()` | `scheduler.py:508` | 若 `_scheduler is None` 则按需重建；否则 `_scheduler.resume()` |
 
-**调用路径**：`aletheia/server/app.py:301` 的 FastAPI lifespan 在 `run_migrations()` + `init_tool_registry()` 之后调用 `init_scheduler()`；shutdown 阶段 `app.py:387` 调用 `stop_scheduler()`。
+**调用路径**：`core/aletheia/server/app.py:301` 的 FastAPI lifespan 在 `run_migrations()` + `init_tool_registry()` 之后调用 `init_scheduler()`；shutdown 阶段 `app.py:387` 调用 `stop_scheduler()`。
 
 **APScheduler 版本**：`3.11.2`（`pyproject.toml:15`，`uv.lock:259`），使用 `BackgroundScheduler`（`apscheduler.schedulers.background`）。
 
@@ -227,7 +227,7 @@ def _record_job_failure(job_id, error):  # scheduler.py:67
                          code=f"job_consecutive_failure:{job_id}", ...)
 ```
 
-当某 job 连续失败 ≥3 次，调用 `emit_infra_event`（`aletheia/infra/events.py`），事件去重窗口 300s。`_record_job_success()` 将计数器归零。每次 `_run_job_guarded()` 开始时会把本轮 `failure_recorded` 置为假；生产函数若捕获异常或看到错误返回值，必须调用 `_record_job_failure()` 将它置真。包装层只有在本轮没有失败记录时才清零计数，因此“异常已吞掉”“部分工作已完成”都不能再被外层伪装成成功。
+当某 job 连续失败 ≥3 次，调用 `emit_infra_event`（`core/aletheia/infra/events.py`），事件去重窗口 300s。`_record_job_success()` 将计数器归零。每次 `_run_job_guarded()` 开始时会把本轮 `failure_recorded` 置为假；生产函数若捕获异常或看到错误返回值，必须调用 `_record_job_failure()` 将它置真。包装层只有在本轮没有失败记录时才清零计数，因此“异常已吞掉”“部分工作已完成”都不能再被外层伪装成成功。
 
 System Operator 使用两个互不覆盖的健康身份：
 
@@ -300,14 +300,14 @@ outstanding 容量都固定为 16，不再为每次调用创建 executor
 
 四支柱均在本调度器中落实：
 
-**支柱 1 — 进程级写锁 `_WRITE_LOCK`**（`aletheia/storage/sqlite.py`，`repositories.py:transaction()`）
+**支柱 1 — 进程级写锁 `_WRITE_LOCK`**（`core/aletheia/storage/sqlite.py`，`repositories.py:transaction()`）
 
 `_WRITE_LOCK = threading.Lock()`（`sqlite.py`）是所有写事务的序列化点。`transaction()` 在每次
 `BEGIN` 之前获取应用级 writer permit（6 秒超时），在 `COMMIT`/`ROLLBACK` 之后释放。所有写线程
 在 Python 层排队，**`database is locked` 在正常运营下不可能出现**。应用级 6 秒超时专门用于
 暴露"在事务内做了 I/O"这类 bug（会抛 `write_lock_timeout` `OperationalError`，而非无声重试）。
 
-**支柱 2 — WAL + busy_timeout（最后防线）**（`aletheia/storage/sqlite.py::_open_connection`）
+**支柱 2 — WAL + busy_timeout（最后防线）**（`core/aletheia/storage/sqlite.py::_open_connection`）
 
 每个新连接在首次打开时执行：
 ```sql

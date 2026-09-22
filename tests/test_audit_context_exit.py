@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -15,6 +16,24 @@ _COMMANDS = (
         "--fixture", "/tmp/fixture.json", "--modality", "news", "--review-output", "/tmp/review.json",
     ]),
 )
+
+
+@pytest.mark.parametrize("command, runner_name, command_args", _COMMANDS[:2])
+def test_default_pair_fixture_uses_repository_root(monkeypatch, command, runner_name, command_args):
+    from extensions.research import context_effectiveness
+
+    seen = []
+
+    async def stub(**kwargs):
+        seen.append(kwargs["fixture_path"])
+        return {"status": "awaiting_owner_review"}
+
+    monkeypatch.setattr(context_effectiveness, runner_name, stub)
+    result = CliRunner().invoke(audit_app, [command, *command_args])
+    assert result.exit_code == 0
+    fixture_root = Path(__file__).resolve().parents[1] / "docs/research/llm_harness/fixtures"
+    assert seen[0].parent == fixture_root
+    assert seen[0].is_file()
 
 
 @pytest.mark.parametrize("command, runner_name, command_args", _COMMANDS)

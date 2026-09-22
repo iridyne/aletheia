@@ -36,7 +36,7 @@ def _grep_for_field(field: str, path: Path) -> list[str]:
 
 def test_pi_agent_files_glob_exists_or_skipped():
     """pi_agent_* is a glob; skip if no files match (the layout has moved before)."""
-    pi_files = list((ROOT / "aletheia" / "agents").glob("pi_agent*.py"))
+    pi_files = list((ROOT / "core" / "aletheia" / "agents").glob("pi_agent*.py"))
     if not pi_files:
         pytest.skip("no pi_agent_* files — module may have been renamed")
 
@@ -45,7 +45,7 @@ def test_pi_agent_files_glob_exists_or_skipped():
 
 def test_new_fields_not_in_pi_agent():
     """pi_agent_* modules — must NOT consume new fields by name."""
-    pi_files = list((ROOT / "aletheia" / "agents").glob("pi_agent*.py"))
+    pi_files = list((ROOT / "core" / "aletheia" / "agents").glob("pi_agent*.py"))
     if not pi_files:
         pytest.skip("no pi_agent_* files")
     leaks: dict[str, list[str]] = {}
@@ -65,7 +65,7 @@ def test_new_fields_not_in_learning_dreaming_research():
     """The three downstream consumers Round 1 was killed for poisoning."""
     leaks: dict[str, list[str]] = {}
     for subdir in ("learning", "dreaming", "research"):
-        target = ROOT / "aletheia" / subdir
+        target = ROOT / "core" / "aletheia" / subdir
         if not target.exists():
             continue
         for field in NEW_FIELDS:
@@ -83,7 +83,7 @@ def test_opportunity_table_has_no_new_field_columns():
     """The Opportunity table schema must NOT have grown a long_short_ratio /
     fng_value / top_movers_summary column. If a future refactor adds one, the
     feedback loops will quietly start reading it from opportunity rows."""
-    migrations = (ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
+    migrations = (ROOT / "core/aletheia/storage/migrations.py").read_text(encoding="utf-8")
     # Locate the CREATE TABLE block for opportunities.
     m = re.search(
         r"CREATE TABLE IF NOT EXISTS opportunities\s*\((.*?)\);",

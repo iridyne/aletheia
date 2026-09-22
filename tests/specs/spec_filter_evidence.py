@@ -421,7 +421,7 @@ def test_alpha_attribution_uses_canonical_fixed_horizon_net_outcomes():
     from pathlib import Path
 
     source = (
-        Path(__file__).parents[2] / "aletheia" / "analytics" / "alpha_attribution.py"
+        Path(__file__).parents[2] / "core" / "aletheia" / "analytics" / "alpha_attribution.py"
     ).read_text(encoding="utf-8")
     assert "JOIN filter_candidate_outcomes fo" in source
     assert "fo.horizon='24h'" in source
@@ -441,10 +441,10 @@ def test_alpha_controls_require_shared_net_outcomes():
     from pathlib import Path
 
     causal_source = (
-        Path(__file__).parents[2] / "aletheia" / "analytics" / "causal_controls.py"
+        Path(__file__).parents[2] / "core" / "aletheia" / "analytics" / "causal_controls.py"
     ).read_text(encoding="utf-8")
     alpha_source = (
-        Path(__file__).parents[2] / "aletheia" / "analytics" / "alpha_attribution.py"
+        Path(__file__).parents[2] / "core" / "aletheia" / "analytics" / "alpha_attribution.py"
     ).read_text(encoding="utf-8")
     assert "outcome_candidate_key" in causal_source
     assert "SELECT * FROM filter_candidate_outcomes" in alpha_source
@@ -753,7 +753,7 @@ def test_risk_evidence_is_atomic_after_authoritative_decision():
     from extensions.analytics.filter_registry import filter_by_name
 
     source = (
-        Path(__file__).parents[2] / "aletheia" / "risk" / "engine.py"
+        Path(__file__).parents[2] / "core" / "aletheia" / "risk" / "engine.py"
     ).read_text(encoding="utf-8")
     assert source.index("insert_risk_decision(decision)") < source.index(
         "record_risk_filter_decision"

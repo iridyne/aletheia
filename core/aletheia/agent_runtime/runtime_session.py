@@ -24,10 +24,12 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from aletheia.config.loader import _PROJECT_ROOT
+
 logger = logging.getLogger("aletheia.runtime_session")
 
 _SCOPE_PATH = (
-    Path(__file__).resolve().parents[2]
+    _PROJECT_ROOT
     / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
 )
 

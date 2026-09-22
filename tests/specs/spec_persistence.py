@@ -40,14 +40,14 @@ def test_legacy_gateway_write_graph_is_removed():
         "serenity_opportunities", "ps_lessons", "ps_skills",
     }
     retired = {"state_machine", "state_store", "recovery", "reconciliation", "session", "locks", "exchange_adapter"}
-    assert not [name for name in retired if (_ROOT / "aletheia" / "gateway" / f"{name}.py").exists()]
+    assert not [name for name in retired if (_ROOT / "core" / "aletheia" / "gateway" / f"{name}.py").exists()]
     tables = {"ps_execution_intents", "ps_order_intents", "ps_orders", "ps_fills", "ps_positions",
               "ps_gateway_sessions", "ps_gateway_locks", "ps_reconciliation_reports"}
     writes = re.compile(r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+(?:"
                         + "|".join(sorted(tables)) + r")\b", re.IGNORECASE)
     violations = []
-    for path in (_ROOT / "aletheia").rglob("*.py"):
-        relative = path.relative_to(_ROOT / "aletheia").as_posix()
+    for path in (_ROOT / "core" / "aletheia").rglob("*.py"):
+        relative = path.relative_to(_ROOT / "core" / "aletheia").as_posix()
         if relative == "storage/migrations.py":
             continue  # Historical schema migration is not runtime authority.
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -115,7 +115,7 @@ def test_event_and_artifact_stores_exist():
 )
 def test_legacy_recovery_does_not_control_startup():
     for relative in ("gateway/lifecycle.py", "agent_runtime/startup_behavior_gate.py"):
-        text = (_ROOT / "aletheia" / relative).read_text(encoding="utf-8")
+        text = (_ROOT / "core" / "aletheia" / relative).read_text(encoding="utf-8")
         assert not any(marker in text for marker in (
             "GatewayRecoveryService", "GatewayStateMachine", "GatewayStateStore",
             "ps_order_intents", "ps_orders", "ps_positions",

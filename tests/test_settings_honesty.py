@@ -201,7 +201,7 @@ def test_strategy_factory_shell_is_gone():
     )
 
     root = pathlib.Path(__file__).parent.parent
-    for relative in ("aletheia/config/schema.py", "aletheia/server/routes/settings.py"):
+    for relative in ("core/aletheia/config/schema.py", "core/aletheia/server/routes/settings.py"):
         source = (root / relative).read_text(encoding="utf-8")
         assert "StrategyFactory" not in source, (
             f"{relative} references the removed Strategy Factory shell"
@@ -211,7 +211,7 @@ def test_strategy_factory_shell_is_gone():
         )
 
     # And the route itself must not come back under any decorator form.
-    settings_src = (root / "aletheia/server/routes/settings.py").read_text(encoding="utf-8")
+    settings_src = (root / "core/aletheia/server/routes/settings.py").read_text(encoding="utf-8")
     tree = ast.parse(settings_src)
     routes = {
         arg.value

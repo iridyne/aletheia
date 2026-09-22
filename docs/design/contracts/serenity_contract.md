@@ -3,8 +3,8 @@
 > 契约级别: L2 — 规范性文档,实现依据。
 > 改动信任不变量前必须 change control (see trust_and_change_control.md §6)。
 > Source files:
-> - `aletheia/trading/serenity_evidence.py` (确定性证据评估器 D2)
-> - `aletheia/trading/serenity_scoring.py` (评分卡 + bucket)
+> - `core/aletheia/trading/serenity_evidence.py` (确定性证据评估器 D2)
+> - `core/aletheia/trading/serenity_scoring.py` (评分卡 + bucket)
 > - `extensions/research/research_worker.py` (可选多镜头研究 pipeline + 符号过滤 + 委托晋升)
 > - 决策/执行/持仓层的 trade_school 穿透 (见 §8–§10)
 > Cross-references: decision_lifecycle_contract.md · knowledge_contract.md · risk_engine_contract.md · live_unlock_contract.md · data_model.md

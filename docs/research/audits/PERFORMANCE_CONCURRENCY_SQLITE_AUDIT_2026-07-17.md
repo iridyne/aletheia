@@ -34,13 +34,13 @@
 
 - SQLite 使用 thread-local connection、WAL、`synchronous=NORMAL`、30 秒
   `busy_timeout` 和有界自动 checkpoint；见
-  [`storage/sqlite.py`](../../../aletheia/storage/sqlite.py)。
+  [`storage/sqlite.py`](../../../core/aletheia/storage/sqlite.py)。
 - Scheduler 将 IO、Observer 和 Agent 分到小线程池，Agent executor 为 1，任务默认
   `coalesce=True`、`max_instances=1`；见
-  [`agent_runtime/scheduler.py`](../../../aletheia/agent_runtime/scheduler.py)。
+  [`agent_runtime/scheduler.py`](../../../core/aletheia/agent_runtime/scheduler.py)。
 - Market Observer 的 LLM 主循环是串行的，并有全局 wall-clock budget 和公平轮转。
 - Universe OHLCV 外部请求使用并发上限 10；见
-  [`universe/features.py`](../../../aletheia/universe/features.py)。
+  [`universe/features.py`](../../../core/aletheia/universe/features.py)。
 - CoinGecko 等少数 writer 已经使用单事务批量写入，证明仓库内已有可复用模式。
 - Universe publication 的原子性保障了 snapshot、member 和 Opportunity 的状态一致性；
   后续只能缩短锁持有时间，不能直接拆掉原子边界。
@@ -52,14 +52,14 @@
 - **等级**：高
 - **静态确定性**：已确认
 - **位置**：
-  - [`model_provider/fallback.py`](../../../aletheia/model_provider/fallback.py)：
+  - [`model_provider/fallback.py`](../../../core/aletheia/model_provider/fallback.py)：
     `_candidate_models()` 每次执行 `provider.list_models()`；
     `complete_with_fallback()` 每次推理都进入该路径。
   - [`model_provider/openai_compatible.py`](../../../aletheia/model_provider/openai_compatible.py)
     和
     [`model_provider/anthropic_compatible.py`](../../../aletheia/model_provider/anthropic_compatible.py)：
     `/models` 与 completion 都使用新的 `async with httpx_client(...)`。
-  - [`net.py`](../../../aletheia/net.py)：`httpx_client()` 每次构建新的 transport 和
+  - [`net.py`](../../../core/aletheia/net.py)：`httpx_client()` 每次构建新的 transport 和
     `AsyncClient`。
 - **影响**：模型目录控制面请求和真实 inference 请求一一耦合；DNS、TLS、代理连接与
   connection pool 无法跨调用复用，增加延迟、网络唤醒、CPU 和功耗。
@@ -78,9 +78,9 @@
   - [`frontend/src/pages/Overview.tsx`](../../../frontend/src/pages/Overview.tsx) 和
     [`frontend/src/pages/Settings.tsx`](../../../frontend/src/pages/Settings.tsx)：
     `model-health` 的 `refetchInterval` 为 5000 ms。
-  - [`server/routes/model.py`](../../../aletheia/server/routes/model.py)：每次请求直接调用
+  - [`server/routes/model.py`](../../../core/aletheia/server/routes/model.py)：每次请求直接调用
     `healthcheck_all()`。
-  - [`model_provider/router.py`](../../../aletheia/model_provider/router.py)：并发 fan-out
+  - [`model_provider/router.py`](../../../core/aletheia/model_provider/router.py)：并发 fan-out
     全部 enabled Provider，没有 TTL、single-flight 或 Semaphore。
   - [`model_provider/openai_compatible.py`](../../../aletheia/model_provider/openai_compatible.py)：
     成功路径重复请求 `/models`；不支持 `/models` 时退化成一次真实 “Say OK” inference。
@@ -97,13 +97,13 @@
 - **等级**：高
 - **静态确定性**：架构缺口已确认；实际饱和点待压测
 - **位置**：
-  - [`agent_runtime/scheduler.py`](../../../aletheia/agent_runtime/scheduler.py)：只约束
+  - [`agent_runtime/scheduler.py`](../../../core/aletheia/agent_runtime/scheduler.py)：只约束
     Scheduler 内部任务，Agent executor 为 1。
-  - [`server/routes/data.py`](../../../aletheia/server/routes/data.py)：
+  - [`server/routes/data.py`](../../../core/aletheia/server/routes/data.py)：
     `POST /agent-runs/start` 在 HTTP request 内直接 `await run_agent()`。
-  - [`agent_runtime/orchestrator.py`](../../../aletheia/agent_runtime/orchestrator.py)：直接运行
+  - [`agent_runtime/orchestrator.py`](../../../core/aletheia/agent_runtime/orchestrator.py)：直接运行
     Agent，没有全局 lease、queue 或 Provider quota。
-  - [`model_provider/router.py`](../../../aletheia/model_provider/router.py)：Provider cache
+  - [`model_provider/router.py`](../../../core/aletheia/model_provider/router.py)：Provider cache
     没有并发锁，也不存在统一 `Semaphore`、RPM/TPM 或 bounded queue。
 - **影响**：手工 Agent、Scheduler Agent、PI daemon、健康探测和研究任务可以在 Provider
   层重叠；Scheduler 的 `max_instances=1` 不能保护其他入口。大量 Agent 到来时会出现
@@ -117,11 +117,11 @@
 - **等级**：高
 - **静态确定性**：已确认
 - **位置**：
-  - [`universe/registry.py`](../../../aletheia/universe/registry.py)：遍历所有 market，逐个调用
+  - [`universe/registry.py`](../../../core/aletheia/universe/registry.py)：遍历所有 market，逐个调用
     `repo.upsert_universe_asset()`。
-  - [`storage/repositories.py`](../../../aletheia/storage/repositories.py)：每个资产执行一次
+  - [`storage/repositories.py`](../../../core/aletheia/storage/repositories.py)：每个资产执行一次
     `SELECT` 和一次 `UPDATE/INSERT`，未包在外层 transaction。
-  - [`storage/sqlite.py`](../../../aletheia/storage/sqlite.py)：connection 使用
+  - [`storage/sqlite.py`](../../../core/aletheia/storage/sqlite.py)：connection 使用
     `isolation_level=None`，每条 DML 在无显式 transaction 时独立提交。
 - **影响**：一次 registry refresh 可形成数百至上千次 SELECT 和 WAL commit，是确定性的
   SQLite 写放大和磁盘唤醒热点。
@@ -134,14 +134,14 @@
 - **等级**：高
 - **静态确定性**：已确认
 - **位置**：
-  - [`universe/service.py`](../../../aletheia/universe/service.py)：
+  - [`universe/service.py`](../../../core/aletheia/universe/service.py)：
     `_atomic_universe_publication()` 使用 `transaction(immediate=True)`；事务内逐成员构造、
     JSON 序列化、写 member、forward outcome、全部 scored candidate outcome、因果观测、
     Opportunity 和 snapshot 过期。
-  - [`universe/outcome_recorder.py`](../../../aletheia/universe/outcome_recorder.py) 和
-    [`analytics/filter_evidence.py`](../../../aletheia/analytics/filter_evidence.py)：每个候选
+  - [`universe/outcome_recorder.py`](../../../core/aletheia/universe/outcome_recorder.py) 和
+    [`analytics/filter_evidence.py`](../../../core/aletheia/analytics/filter_evidence.py)：每个候选
     构造四个 horizon outcome。
-  - [`storage/repositories.py`](../../../aletheia/storage/repositories.py)：所谓 batch writer
+  - [`storage/repositories.py`](../../../core/aletheia/storage/repositories.py)：所谓 batch writer
     仍在 transaction 内逐行 `execute()`。
 - **影响**：虽然只有一次 commit，但 SQLite 唯一 writer slot 的占用时间随 member 和
   candidate 数量线性增长，阻塞 collector、Agent telemetry 和 API write。
@@ -154,10 +154,10 @@
 
 - **等级**：高
 - **静态确定性**：已确认
-- **位置**：[`server/routes/data.py`](../../../aletheia/server/routes/data.py) 中多个
+- **位置**：[`server/routes/data.py`](../../../core/aletheia/server/routes/data.py) 中多个
   `async def` 直接调用 repository/get_db，包括 agent runs、steps、tool calls、proposals、
   portfolio history、account-equity history 和手工 Agent start；
-  [`server/routes/model.py`](../../../aletheia/server/routes/model.py) 也在 async handler 中
+  [`server/routes/model.py`](../../../core/aletheia/server/routes/model.py) 也在 async handler 中
   读取同步配置/secret 状态。
 - **影响**：SQLite `busy_timeout=30000`。一旦出现 writer contention，同步 DB 调用可能在
   Uvicorn event-loop thread 上等待，拖慢同进程全部 HTTP 和异步任务。
@@ -169,11 +169,11 @@
 - **等级**：中高
 - **静态确定性**：已确认
 - **位置**：
-  - [`agent_runtime/scheduler.py`](../../../aletheia/agent_runtime/scheduler.py)：网络 gather
+  - [`agent_runtime/scheduler.py`](../../../core/aletheia/agent_runtime/scheduler.py)：网络 gather
     完成后逐行写 orderbook、funding、OI 和 liquidation。
-  - [`universe/features.py`](../../../aletheia/universe/features.py)：feature coroutine 内直接
+  - [`universe/features.py`](../../../core/aletheia/universe/features.py)：feature coroutine 内直接
     同步插入 snapshot。
-  - [`agents/helpers.py`](../../../aletheia/agents/helpers.py)：每个 tool call 和 reasoning
+  - [`agents/helpers.py`](../../../core/aletheia/agents/helpers.py)：每个 tool call 和 reasoning
     step 立即写一条 telemetry。
 - **影响**：大量小事务与 Universe publication 竞争唯一 writer slot；Agent 数量增大时，
   telemetry 本身会成为负载放大器。
@@ -184,8 +184,8 @@
 
 - **等级**：中
 - **静态确定性**：索引缺口已确认；收益需 `EXPLAIN QUERY PLAN` 和代表性 DB 验证
-- **位置**：[`storage/migrations.py`](../../../aletheia/storage/migrations.py) 与
-  [`storage/repositories.py`](../../../aletheia/storage/repositories.py)。
+- **位置**：[`storage/migrations.py`](../../../core/aletheia/storage/migrations.py) 与
+  [`storage/repositories.py`](../../../core/aletheia/storage/repositories.py)。
 - **已见缺口**：
   - `agent_run_steps(run_id, created_at)` 和 `agent_tool_calls(run_id, created_at)` 无索引；
   - `agent_runs.started_at` retention 无索引；
@@ -203,9 +203,9 @@
 - **等级**：中
 - **静态确定性**：SQL 形态已确认；峰值大小待测量
 - **位置**：
-  - [`agent_runtime/scheduler.py`](../../../aletheia/agent_runtime/scheduler.py)：daily cleanup
+  - [`agent_runtime/scheduler.py`](../../../core/aletheia/agent_runtime/scheduler.py)：daily cleanup
     连续调用数十个 prune。
-  - [`storage/repositories.py`](../../../aletheia/storage/repositories.py)：通用 prune 使用单条
+  - [`storage/repositories.py`](../../../core/aletheia/storage/repositories.py)：通用 prune 使用单条
     无分块 `DELETE`；OHLCV 每次 upsert 后都执行 rolling-window DELETE。
 - **影响**：数据库增长后会形成周期性 CPU、磁盘、WAL、checkpoint 和长 write transaction
   峰值。即使 OHLCV 尚未接近 50,000 行窗口，也会重复运行窗口保留查询。
@@ -216,7 +216,7 @@
 
 - **等级**：中高
 - **静态确定性**：机制已确认；实际残留规模待监控
-- **位置**：[`agent_runtime/scheduler.py`](../../../aletheia/agent_runtime/scheduler.py) 中
+- **位置**：[`agent_runtime/scheduler.py`](../../../core/aletheia/agent_runtime/scheduler.py) 中
   `_run_sync_with_timeout()` 和 `_run_async_with_timeout()`。
 - **影响**：每次任务创建新 executor、线程和 event loop；超时后
   `shutdown(wait=False)` 无法杀死仍在运行的 Python thread。Provider 拥塞、连接 teardown

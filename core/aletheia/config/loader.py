@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -25,7 +26,7 @@ except ImportError:  # pragma: no cover - POSIX
 from aletheia.config.schema import AletheiaConfig, WebhookConfig
 from aletheia.runtime_paths import preview_root, runtime_home
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2 if getattr(sys, "frozen", False) else 3]
 _PREVIEW_MODE_ENV = "ALETHEIA_PREVIEW_MODE"
 _PREVIEW_DATA_DIR_ENV = "ALETHEIA_PREVIEW_DATA_DIR"
 

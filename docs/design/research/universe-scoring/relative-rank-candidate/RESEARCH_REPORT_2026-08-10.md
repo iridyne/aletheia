@@ -207,12 +207,12 @@ This research does not establish that:
 
 ### Aletheia sources
 
-- [`aletheia/universe/scanners.py`](../../../../../aletheia/universe/scanners.py) — frozen Step-v1 family scoring.
-- [`aletheia/universe/continuous_scoring.py`](../../../../../aletheia/universe/continuous_scoring.py) — point/pessimistic curves, feature groups, and current total-score composition.
-- [`aletheia/universe/twin_scoring.py`](../../../../../aletheia/universe/twin_scoring.py) and [`twin_allocation.py`](../../../../../aletheia/universe/twin_allocation.py) — diagnostic score/allocation replay.
-- [`aletheia/universe/twin_experiment.py`](../../../../../aletheia/universe/twin_experiment.py), [`twin_persistence.py`](../../../../../aletheia/universe/twin_persistence.py), and [`twin_evaluation.py`](../../../../../aletheia/universe/twin_evaluation.py) — prospective identity, evidence, and evaluation.
-- [`aletheia/universe/features.py`](../../../../../aletheia/universe/features.py) — Universe feature construction.
-- [`aletheia/data/data_coverage.py`](../../../../../aletheia/data/data_coverage.py) and [`aletheia/data/collectors/derivatives.py`](../../../../../aletheia/data/collectors/derivatives.py) — source freshness and derivative collection.
+- [`aletheia/universe/scanners.py`](../../../../../core/aletheia/universe/scanners.py) — frozen Step-v1 family scoring.
+- [`aletheia/universe/continuous_scoring.py`](../../../../../core/aletheia/universe/continuous_scoring.py) — point/pessimistic curves, feature groups, and current total-score composition.
+- [`aletheia/universe/twin_scoring.py`](../../../../../core/aletheia/universe/twin_scoring.py) and [`twin_allocation.py`](../../../../../core/aletheia/universe/twin_allocation.py) — diagnostic score/allocation replay.
+- [`aletheia/universe/twin_experiment.py`](../../../../../aletheia/universe/twin_experiment.py), [`twin_persistence.py`](../../../../../core/aletheia/universe/twin_persistence.py), and [`twin_evaluation.py`](../../../../../aletheia/universe/twin_evaluation.py) — prospective identity, evidence, and evaluation.
+- [`aletheia/universe/features.py`](../../../../../core/aletheia/universe/features.py) — Universe feature construction.
+- [`aletheia/data/data_coverage.py`](../../../../../core/aletheia/data/data_coverage.py) and [`aletheia/data/collectors/derivatives.py`](../../../../../aletheia/data/collectors/derivatives.py) — source freshness and derivative collection.
 - [Continuous curve specification](../02_continuous_curve_specification_2026-08-07.md), [adversarial review](../03_adversarial_review_2026-08-07.md), and [reference notes](../04_references_and_practical_notes.md).
 - [Continuous scoring safety Proposal](../../../proposals/universe_continuous_scoring_safety.md) and [Twin Shadow contract](../../../contracts/universe_twin_shadow_contract.md).
 

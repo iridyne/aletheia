@@ -7,7 +7,7 @@ import pytest
 
 
 def test_features_do_not_call_orderbook_endpoint_or_collector_parser():
-    source = (Path(__file__).resolve().parents[1] / "aletheia/universe/features.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "core/aletheia/universe/features.py").read_text()
     tree = ast.parse(source)
     assert "data.collectors.microstructure" not in source
     assert not any(
@@ -17,7 +17,7 @@ def test_features_do_not_call_orderbook_endpoint_or_collector_parser():
 
 
 def test_planner_uses_normalized_provider_not_optional_collector():
-    source = (Path(__file__).resolve().parents[1] / "aletheia/agent_shell/entry_planner.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "core/aletheia/agent_shell/entry_planner.py").read_text()
     tree = ast.parse(source)
     assert "data.collectors.microstructure" not in source
     assert not any(

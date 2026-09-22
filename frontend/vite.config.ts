@@ -49,7 +49,7 @@ export default defineConfig(() => {
   // The updater builds into a sibling staging directory, then activates that
   // complete output only after Python smoke checks pass.
   const outputDir = process.env.VITE_BUILD_OUT_DIR?.trim()
-    || path.resolve(__dirname, '../aletheia/dashboard_static')
+    || path.resolve(__dirname, '../core/aletheia/dashboard_static')
   return {
     plugins: [react(), tailwindcss(), readonlyMasterApi(apiTarget)],
     build: {

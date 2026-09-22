@@ -16,8 +16,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _ROOT = Path(__file__).parent.parent.parent
 _EQUITY_OBS = _ROOT / "extensions" / "research" / "equity_observer.py"
 _PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
-_SYMBOLS = _ROOT / "aletheia" / "data" / "symbols.py"
-_SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
+_SYMBOLS = _ROOT / "core" / "aletheia" / "data" / "symbols.py"
+_SCHEDULER = _ROOT / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ boundary; no pre-pull config/model object is ever serialized into target state.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -28,6 +29,18 @@ def _run_json_script(
     python_executable: str,
     timeout: int,
 ) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    source_roots = [str(project_root / "core"), str(project_root)]
+    env = {**env, "PYTHONPATH": os.pathsep.join((*source_roots, env.get("PYTHONPATH", ""))).rstrip(os.pathsep)}
+    script = (
+        "import sys\nfrom pathlib import Path\n"
+        f"sys.path[:0] = {source_roots!r}\n"
+        f"if not Path({str(project_root / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('target_core_source_mismatch')\n"
+        f"if not Path({str(project_root / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('target_ops_source_mismatch')\n"
+        "import aletheia, ops\n"
+        f"if Path(aletheia.__file__).resolve() != Path({str(project_root / 'core/aletheia/__init__.py')!r}): raise RuntimeError('target_core_source_mismatch')\n"
+        f"if Path(ops.__file__).resolve() != Path({str(project_root / 'ops/__init__.py')!r}): raise RuntimeError('target_ops_source_mismatch')\n"
+    ) + script
     try:
         result = subprocess.run(
             [python_executable, "-c", script],

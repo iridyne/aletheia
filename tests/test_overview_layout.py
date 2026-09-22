@@ -29,7 +29,7 @@ def test_overview_rail_uses_canonical_responsive_breakpoints() -> None:
 
 def test_overview_entry_summary_reads_candidate_attention_and_entry_plan_projection() -> None:
     overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
-    backend = (ROOT / "aletheia/server/routes/ui.py").read_text(encoding="utf-8")
+    backend = (ROOT / "core/aletheia/server/routes/ui.py").read_text(encoding="utf-8")
     assert "EntrySummaryStrip" in overview
     assert "active_entry_plans" in overview
     assert "needs_planning" in overview

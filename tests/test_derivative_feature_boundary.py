@@ -9,7 +9,7 @@ import pytest
 
 def test_features_do_not_call_derivative_endpoints():
     tree = ast.parse(
-        (Path(__file__).resolve().parents[1] / "aletheia/universe/features.py").read_text()
+        (Path(__file__).resolve().parents[1] / "core/aletheia/universe/features.py").read_text()
     )
     native = {"fetch_funding_rate", "fetch_open_interest"}
     assert not any(

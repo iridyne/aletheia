@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+from aletheia.config.loader import _PROJECT_ROOT
 
 logger = logging.getLogger("aletheia.startup_behavior_gate")
 
@@ -48,7 +49,7 @@ _KNOWN_EXECUTION_MODES = DEMO_EXECUTION_MODES
 
 _IMMEDIATE_CORE_ENTRY_ORDER_STATES = {"submission_unknown", "materialization_missing"}
 
-_SCOPE_PATH = Path(__file__).resolve().parents[2] / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
+_SCOPE_PATH = _PROJECT_ROOT / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
 
 # Recheck loop task + persistent event loop captured at startup (mirrors the
 # connectivity monitor's #145 handling so the resume task survives job loops).

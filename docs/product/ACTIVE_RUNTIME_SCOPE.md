@@ -27,7 +27,7 @@ execution_entrypoint: aletheia.execution.gateway.submit_proposal
 outcome_entrypoint: aletheia.portfolio.outcome_closure.close_position_verified
 learning_measurement: enabled
 learning_influence_default: enabled_owner_gated
-learning_authority_gate: aletheia.learning.experiments.apply_numeric_treatment
+learning_authority_gate: extensions.learning.experiments.apply_numeric_treatment
 causal_chain:
   - opportunity
   - system_operator_decision
@@ -102,7 +102,7 @@ pre-risk candidate filter and cannot replace Risk Engine approval.
 risk-decision ancestry. A close counts as a genuine outcome only when Outcome
 Integrity has verified its economic evidence.
 - Paper-candidate blockers must be declared in
-`aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
+`core/aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
 historical auto-guard, or inline historical ranker condition has no block authority.
 
 The executable checks live in `tests/specs/spec_active_runtime_scope.py`, the

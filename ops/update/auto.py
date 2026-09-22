@@ -225,7 +225,15 @@ def _evaluate_runtime_diagnostics(report: dict[str, Any], migrations: dict[str, 
 def _doctor_healthy() -> dict[str, Any]:
     """Run deployment-critical diagnostics in a fresh source-bound interpreter."""
     try:
+        source_roots = [str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)]
         code = (
+            "import sys\nfrom pathlib import Path\n"
+            f"sys.path[:0] = {source_roots!r}\n"
+            f"if not Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('target_core_source_mismatch')\n"
+            f"if not Path({str(_PROJECT_ROOT / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('target_ops_source_mismatch')\n"
+            "import aletheia, ops\n"
+            f"if Path(aletheia.__file__).resolve() != Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}): raise RuntimeError('target_core_source_mismatch')\n"
+            f"if Path(ops.__file__).resolve() != Path({str(_PROJECT_ROOT / 'ops/__init__.py')!r}): raise RuntimeError('target_ops_source_mismatch')\n"
             "import json; "
             "from aletheia.main import _configure_runtime; "
             "_configure_runtime(); "
@@ -425,7 +433,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
     """Restore into a temporary root and migrate it using the pinned candidate."""
     root = _paths()["root"]
     root.mkdir(parents=True, exist_ok=True)
-    worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=root))
+    worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=root)).resolve()
     added = git_facts._git("worktree", "add", "--detach", str(worktree), target)  # noqa: SLF001
     if added.returncode:
         shutil.rmtree(worktree, ignore_errors=True)
@@ -438,8 +446,16 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
         env = _safe_env()
         env["ALETHEIA_DATA_DIR"] = str(data_copy)
         env["ALETHEIA_BACKUP_PATH"] = str(backup.resolve())
-        env["PYTHONPATH"] = f"{worktree}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
+        source_roots = [str(worktree / "core"), str(worktree)]
+        env["PYTHONPATH"] = os.pathsep.join((*source_roots, env.get("PYTHONPATH", ""))).rstrip(os.pathsep)
         check = (
+            "import sys\nfrom pathlib import Path\n"
+            f"sys.path[:0] = {source_roots!r}\n"
+            f"if not Path({str(worktree / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('candidate_core_source_mismatch')\n"
+            f"if not Path({str(worktree / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('candidate_ops_source_mismatch')\n"
+            "import aletheia, ops\n"
+            f"if Path(aletheia.__file__).resolve() != Path({str(worktree / 'core/aletheia/__init__.py')!r}): raise RuntimeError('candidate_core_source_mismatch')\n"
+            f"if Path(ops.__file__).resolve() != Path({str(worktree / 'ops/__init__.py')!r}): raise RuntimeError('candidate_ops_source_mismatch')\n"
             "def _require(value, detail):\n"
             "    if value is not True:\n"
             "        raise RuntimeError(detail)\n"

@@ -11,7 +11,19 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SRC = PROJECT_ROOT / "aletheia"
+SRC = PROJECT_ROOT / "core/aletheia"
+
+
+def test_writer_scan_visits_current_core_and_rejects_relative_star(tmp_path):
+    from tests.authority_writer_checks import assert_writer_boundary
+
+    assert SRC.is_dir()
+    assert list(SRC.rglob("*.py")), "Core authority scan must not be empty"
+    target = tmp_path / "core/aletheia/storage/other.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("from .repositories import *\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        assert_writer_boundary(tmp_path, table="orders", owners={}, raw_owners=set())
 
 
 def _get_imports(path: Path) -> set[str]:
@@ -45,7 +57,7 @@ def _assert_risk_writer_boundary(root: Path):
         raw_owners={"insert_risk_decision"},
         delegations={("insert_authoritative_risk_decision", "insert_risk_decision")},
     )
-    repository = root / "aletheia/storage/repositories.py"
+    repository = root / "core/aletheia/storage/repositories.py"
     if repository.exists():
         tree = ast.parse(repository.read_text(encoding="utf-8"))
         authority = next((node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "insert_authoritative_risk_decision"), None)
@@ -61,7 +73,7 @@ def test_risk_decisions_have_one_application_writer():
     _assert_risk_writer_boundary(PROJECT_ROOT)
 
 
-@pytest.mark.parametrize("directory", ["aletheia", "extensions", "legacy", "ops", "scripts"])
+@pytest.mark.parametrize("directory", ["core/aletheia", "extensions", "legacy", "ops", "scripts"])
 @pytest.mark.parametrize("source", [
     "from aletheia.storage.repositories import insert_risk_decision as write",
     "repo.insert_authoritative_risk_decision(decision)",
@@ -80,26 +92,26 @@ def test_risk_decisions_have_one_application_writer():
 ])
 def test_risk_writer_guard_rejects_non_owner(tmp_path, directory, source):
     path = tmp_path / directory / "other.py"
-    path.parent.mkdir()
+    path.parent.mkdir(parents=True)
     path.write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError):
         _assert_risk_writer_boundary(tmp_path)
 
 
 @pytest.mark.parametrize("path,source", [
-    ("aletheia/other/module.py", "from ..storage.repositories import insert_risk_decision as persist\npersist(row)"),
-    ("aletheia/storage/repositories.py", "def rewrite(row):\n    _update('risk_decisions', row['id'], row)"),
-    ("aletheia/storage/repositories.py", "def rewrite(row):\n    db.execute('DELETE FROM risk_decisions')"),
-    ("aletheia/storage/repositories.py", "def rewrite(row):\n    insert_risk_decision(row)"),
+    ("core/aletheia/other/module.py", "from ..storage.repositories import insert_risk_decision as persist\npersist(row)"),
+    ("core/aletheia/storage/repositories.py", "def rewrite(row):\n    _update('risk_decisions', row['id'], row)"),
+    ("core/aletheia/storage/repositories.py", "def rewrite(row):\n    db.execute('DELETE FROM risk_decisions')"),
+    ("core/aletheia/storage/repositories.py", "def rewrite(row):\n    insert_risk_decision(row)"),
     ("extensions/other.py", "db.execute('INSERT /* hidden */ INTO risk_decisions VALUES (?)')"),
     ("extensions/other.py", "db.execute('UPDATE OR IGNORE risk_decisions SET approved=1')"),
-    ("aletheia/risk/engine.py", "db.execute('DROP TABLE risk_decisions')"),
+    ("core/aletheia/risk/engine.py", "db.execute('DROP TABLE risk_decisions')"),
     ("extensions/other.py", "from aletheia.storage.repositories import _insert as save\nsave('risk_decisions', row)"),
-    ("aletheia/storage/repositories.py", "def outer():\n    def insert_risk_decision(row):\n        _insert('risk_decisions', row)"),
-    ("aletheia/storage/repositories.py", "def insert_risk_decision(row):\n    pass\n@decorate(_insert('risk_decisions', row))\ndef unrelated():\n    pass"),
+    ("core/aletheia/storage/repositories.py", "def outer():\n    def insert_risk_decision(row):\n        _insert('risk_decisions', row)"),
+    ("core/aletheia/storage/repositories.py", "def insert_risk_decision(row):\n    pass\n@decorate(_insert('risk_decisions', row))\ndef unrelated():\n    pass"),
     ("extensions/other.py", "from aletheia.storage.repositories import *\ninsert_risk_decision(row)"),
-    ("aletheia/risk/engine.py", "from aletheia.storage.repositories import insert_risk_decision as exported_writer"),
-    ("aletheia/storage/repositories.py", "@decorate(_insert('risk_decisions', row))\ndef insert_risk_decision(row):\n    pass"),
+    ("core/aletheia/risk/engine.py", "from aletheia.storage.repositories import insert_risk_decision as exported_writer"),
+    ("core/aletheia/storage/repositories.py", "@decorate(_insert('risk_decisions', row))\ndef insert_risk_decision(row):\n    pass"),
     ("extensions/other.py", "repo._delete_by_rowid_batches('risk_decisions', '1=1')"),
     ("extensions/other.py", "from aletheia.storage.repositories import _delete_by_rowid_batches as erase\nerase(table='risk_decisions', where='1=1')"),
     ("extensions/other.py", "db.execute('CREATE TABLE risk_decisions (id TEXT)')"),
@@ -117,9 +129,9 @@ def test_risk_writer_guard_rejects_relative_alias_and_new_storage_owner(tmp_path
 
 def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
     sources = {
-        "aletheia/risk/engine.py": "def evaluate(row):\n    from ..storage.repositories import insert_risk_decision as persist\n    persist(row)",
-        "aletheia/storage/repositories.py": "def insert_risk_decision(row):\n    _insert(table='risk_decisions', data=row)\ndef insert_authoritative_risk_decision(row):\n    insert_risk_decision(row)",
-        "aletheia/storage/migrations.py": "db.execute('UPDATE [risk_decisions] SET approved=0')",
+        "core/aletheia/risk/engine.py": "def evaluate(row):\n    from ..storage.repositories import insert_risk_decision as persist\n    persist(row)",
+        "core/aletheia/storage/repositories.py": "def insert_risk_decision(row):\n    _insert(table='risk_decisions', data=row)\ndef insert_authoritative_risk_decision(row):\n    insert_risk_decision(row)",
+        "core/aletheia/storage/migrations.py": "db.execute('UPDATE [risk_decisions] SET approved=0')",
     }
     for path, source in sources.items():
         target = tmp_path / path
@@ -130,7 +142,7 @@ def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
 
 @pytest.mark.parametrize("calls", [0, 2])
 def test_risk_writer_guard_requires_one_direct_delegation(tmp_path, calls):
-    target = tmp_path / "aletheia/storage/repositories.py"
+    target = tmp_path / "core/aletheia/storage/repositories.py"
     target.parent.mkdir(parents=True)
     body = "\n".join(["    insert_risk_decision(row)"] * calls) or "    pass"
     target.write_text(
@@ -173,19 +185,19 @@ def test_fill_writes_stay_with_exchange_materialization():
 
 
 @pytest.mark.parametrize("path,source", [
-    ("aletheia/other.py", "from .storage.repositories import insert_fill as persist"),
+    ("core/aletheia/other.py", "from .storage.repositories import insert_fill as persist"),
     ("extensions/other.py", "repo._insert(table='fills', data=row)"),
     ("extensions/other.py", "db.execute('INSERT /* hidden */ INTO main.\"fills\" VALUES (?)')"),
     ("extensions/other.py", "db.execute('DROP TABLE fills')"),
-    ("aletheia/storage/repositories.py", "def other(row):\n    _insert('fills', row)"),
-    ("aletheia/execution/exchange_materialization.py", "def other():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
-    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('UPDATE fills SET fee=? WHERE id=?')"),
-    ("aletheia/execution/exchange_materialization.py", "def outer():\n    def _verify_durable_fills():\n        db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
-    ("aletheia/execution/exchange_materialization.py", "@decorate('UPDATE fills SET fee_source=? WHERE id=?')\ndef _verify_durable_fills():\n    pass"),
-    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    _update('fills', row['id'], row)"),
-    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    return lambda: db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
-    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    repo._delete_by_rowid_batches('fills', '1=1')"),
-    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('CREATE TEMP TABLE fills (id TEXT)')"),
+    ("core/aletheia/storage/repositories.py", "def other(row):\n    _insert('fills', row)"),
+    ("core/aletheia/execution/exchange_materialization.py", "def other():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("core/aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('UPDATE fills SET fee=? WHERE id=?')"),
+    ("core/aletheia/execution/exchange_materialization.py", "def outer():\n    def _verify_durable_fills():\n        db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("core/aletheia/execution/exchange_materialization.py", "@decorate('UPDATE fills SET fee_source=? WHERE id=?')\ndef _verify_durable_fills():\n    pass"),
+    ("core/aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    _update('fills', row['id'], row)"),
+    ("core/aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    return lambda: db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("core/aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    repo._delete_by_rowid_batches('fills', '1=1')"),
+    ("core/aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('CREATE TEMP TABLE fills (id TEXT)')"),
 ])
 def test_fill_writer_guard_rejects_extra_authority(tmp_path, path, source):
     target = tmp_path / path
@@ -197,9 +209,9 @@ def test_fill_writer_guard_rejects_extra_authority(tmp_path, path, source):
 
 def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
     sources = {
-        "aletheia/storage/repositories.py": "def insert_fill(row):\n    _insert('fills', row)",
-        "aletheia/execution/exchange_materialization.py": "from aletheia.storage.repositories import insert_fill\ndef _verify_durable_fills():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')\ndef materialize(row):\n    insert_fill(row)",
-        "aletheia/storage/migrations.py": "db.execute('ALTER TABLE fills ADD COLUMN historical TEXT')",
+        "core/aletheia/storage/repositories.py": "def insert_fill(row):\n    _insert('fills', row)",
+        "core/aletheia/execution/exchange_materialization.py": "from aletheia.storage.repositories import insert_fill\ndef _verify_durable_fills():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')\ndef materialize(row):\n    insert_fill(row)",
+        "core/aletheia/storage/migrations.py": "db.execute('ALTER TABLE fills ADD COLUMN historical TEXT')",
     }
     for path, source in sources.items():
         target = tmp_path / path
@@ -211,7 +223,7 @@ def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
 def _assert_candidate_writer_boundary(root):
     from tests.authority_writer_checks import assert_writer_boundary
 
-    repository = root / "aletheia/storage/repositories.py"
+    repository = root / "core/aletheia/storage/repositories.py"
     literal_writes = {
         ("storage/repositories.py", "expire_universe_snapshots"): {
             "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND source_kind='universe' AND market_type = ? AND id != ?",
@@ -282,44 +294,44 @@ def test_candidate_snapshot_creation_has_one_core_owner():
 
 @pytest.mark.parametrize("path,source", [
     ("extensions/other.py", "repo.publish_candidate_snapshot(snapshot, members)"),
-    ("aletheia/other.py", "from .storage.repositories import publish_candidate_snapshot as persist\npersist(snapshot, members)"),
-    ("aletheia/other.py", "from aletheia.storage.repositories import _insert_many as save\nsave(table='universe_members', rows=rows)"),
-    ("aletheia/other.py", "db.execute('INSERT /* hidden */ INTO main.\"universe_snapshots\" VALUES (?)')"),
-    ("aletheia/other.py", "db.execute('UPDATE OR IGNORE [universe_members] SET rank=1')"),
+    ("core/aletheia/other.py", "from .storage.repositories import publish_candidate_snapshot as persist\npersist(snapshot, members)"),
+    ("core/aletheia/other.py", "from aletheia.storage.repositories import _insert_many as save\nsave(table='universe_members', rows=rows)"),
+    ("core/aletheia/other.py", "db.execute('INSERT /* hidden */ INTO main.\"universe_snapshots\" VALUES (?)')"),
+    ("core/aletheia/other.py", "db.execute('UPDATE OR IGNORE [universe_members] SET rank=1')"),
     ("legacy/other.py", "repo._delete_by_rowid_batches('universe_members', '1=1')"),
     ("ops/other.py", "db.execute('CREATE TEMP TABLE universe_snapshots (id TEXT)')"),
     ("scripts/other.py", "db.execute('DROP TABLE universe_members')"),
-    ("aletheia/storage/repositories.py", "def other():\n    db.execute('DELETE FROM universe_snapshots')"),
-    ("aletheia/storage/repositories.py", "def outer():\n    def publish_candidate_snapshot(snap, members):\n        _insert('universe_snapshots', snap)\n        _insert_many('universe_members', members)"),
-    ("aletheia/storage/repositories.py", "def expire_universe_snapshots():\n    _insert('universe_snapshots', row)"),
-    ("aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET rank=1')"),
-    ("aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    _delete_by_rowid_batches('universe_members', '1=1')"),
-    ("aletheia/storage/repositories.py", "def outer():\n    def prune_universe_snapshots():\n        db.execute('DELETE FROM universe_members WHERE snapshot_id IN (')"),
-    ("aletheia/universe/service.py", "from aletheia.storage.repositories import publish_candidate_snapshot as exported_writer"),
-    ("aletheia/other.py", "writer = repo.publish_candidate_snapshot"),
-    ("aletheia/storage/repositories.py", "    repo._insert('universe_snapshots', snap)"),
-    ("aletheia/storage/repositories.py", "    repo._insert_many(table='universe_members', rows=members)"),
-    ("aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    db.execute(f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})' + ' OR 1=1')"),
-    ("aletheia/storage/migrations.py", "db.execute('INSERT INTO universe_members VALUES (?)')"),
-    ("aletheia/storage/migrations.py", "db.execute('UPDATE universe_snapshots SET status=1')"),
-    ("aletheia/storage/migrations.py", "db.execute('DELETE FROM universe_members')"),
+    ("core/aletheia/storage/repositories.py", "def other():\n    db.execute('DELETE FROM universe_snapshots')"),
+    ("core/aletheia/storage/repositories.py", "def outer():\n    def publish_candidate_snapshot(snap, members):\n        _insert('universe_snapshots', snap)\n        _insert_many('universe_members', members)"),
+    ("core/aletheia/storage/repositories.py", "def expire_universe_snapshots():\n    _insert('universe_snapshots', row)"),
+    ("core/aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET rank=1')"),
+    ("core/aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    _delete_by_rowid_batches('universe_members', '1=1')"),
+    ("core/aletheia/storage/repositories.py", "def outer():\n    def prune_universe_snapshots():\n        db.execute('DELETE FROM universe_members WHERE snapshot_id IN (')"),
+    ("core/aletheia/universe/service.py", "from aletheia.storage.repositories import publish_candidate_snapshot as exported_writer"),
+    ("core/aletheia/other.py", "writer = repo.publish_candidate_snapshot"),
+    ("core/aletheia/storage/repositories.py", "    repo._insert('universe_snapshots', snap)"),
+    ("core/aletheia/storage/repositories.py", "    repo._insert_many(table='universe_members', rows=members)"),
+    ("core/aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    db.execute(f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})' + ' OR 1=1')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('INSERT INTO universe_members VALUES (?)')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('UPDATE universe_snapshots SET status=1')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('DELETE FROM universe_members')"),
     ("extensions/export.py", "save = repo._insert_many"),
     ("extensions/export.py", "from aletheia.storage.repositories import _insert_many as save"),
     ("extensions/export.py", "from aletheia.storage.repositories import _insert_many"),
     ("extensions/other.py", "db.execute('DELETE FROM ' + 'universe_members')"),
-    ("aletheia/storage/migrations.py", "db.execute('DELETE FROM ' + 'universe_members')"),
-    ("aletheia/storage/repositories.py", "    _delete_by_rowid_batches('universe_members', '1=1')"),
-    ("aletheia/storage/repositories.py", "    _update('universe_snapshots', 'id', fields)"),
-    ("aletheia/storage/repositories.py", "    db.execute('DELETE FROM universe_members')"),
-    ("aletheia/storage/migrations.py", "db.execute('DROP TABLE universe_members')"),
-    ("aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_snapshots RENAME TO old_snapshots')"),
-    ("aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_members DROP COLUMN rank')"),
-    ("aletheia/storage/repositories.py", "from aletheia.trading import serenity_publication"),
-    ("aletheia/storage/repositories.py", "from ..trading import serenity_publication"),
-    ("aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)' + ' OR 1=1')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('DELETE FROM ' + 'universe_members')"),
+    ("core/aletheia/storage/repositories.py", "    _delete_by_rowid_batches('universe_members', '1=1')"),
+    ("core/aletheia/storage/repositories.py", "    _update('universe_snapshots', 'id', fields)"),
+    ("core/aletheia/storage/repositories.py", "    db.execute('DELETE FROM universe_members')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('DROP TABLE universe_members')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_snapshots RENAME TO old_snapshots')"),
+    ("core/aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_members DROP COLUMN rank')"),
+    ("core/aletheia/storage/repositories.py", "from aletheia.trading import serenity_publication"),
+    ("core/aletheia/storage/repositories.py", "from ..trading import serenity_publication"),
+    ("core/aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)' + ' OR 1=1')"),
 ])
 def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source):
-    repository = tmp_path / "aletheia/storage/repositories.py"
+    repository = tmp_path / "core/aletheia/storage/repositories.py"
     repository.parent.mkdir(parents=True)
     repository.write_text(
         "def publish_candidate_snapshot(snap, members):\n"
@@ -343,7 +355,7 @@ def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source
 
 def test_candidate_writer_guard_accepts_publication_and_distinct_maintenance(tmp_path):
     sources = {
-        "aletheia/storage/repositories.py": (
+        "core/aletheia/storage/repositories.py": (
             "def publish_candidate_snapshot(snap, members):\n"
             "    _insert('universe_snapshots', snap)\n"
             "    _insert_many('universe_members', members)\n"
@@ -353,10 +365,10 @@ def test_candidate_writer_guard_accepts_publication_and_distinct_maintenance(tmp
             "    db.execute(f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})')\n"
             "    db.execute(f'DELETE FROM universe_snapshots WHERE id IN ({placeholders})')\n"
         ),
-        "aletheia/universe/service.py": "repo.publish_candidate_snapshot(snap, members)",
-        "aletheia/trading/serenity_publication.py": "repo.publish_candidate_snapshot(snap, members)",
-        "aletheia/cli/dev_seed.py": "repo.publish_candidate_snapshot(snap, members)",
-        "aletheia/storage/migrations.py": "db.execute('ALTER TABLE universe_members ADD COLUMN historical TEXT')",
+        "core/aletheia/universe/service.py": "repo.publish_candidate_snapshot(snap, members)",
+        "core/aletheia/trading/serenity_publication.py": "repo.publish_candidate_snapshot(snap, members)",
+        "core/aletheia/cli/dev_seed.py": "repo.publish_candidate_snapshot(snap, members)",
+        "core/aletheia/storage/migrations.py": "db.execute('ALTER TABLE universe_members ADD COLUMN historical TEXT')",
     }
     for path, source in sources.items():
         target = tmp_path / path
@@ -703,17 +715,17 @@ def test_trust_boundary_files_are_registered_in_coveragerc():
     # trust boundary and must be registered. Patterns are anchored on
     # ``aletheia/...``.
     patterns = (
-        "aletheia/analytics/profit_gradient*.py",
-        "aletheia/execution/reconciliation.py",
-        "aletheia/economics/context_artifacts.py",
+        "core/aletheia/analytics/profit_gradient*.py",
+        "core/aletheia/execution/reconciliation.py",
+        "core/aletheia/economics/context_artifacts.py",
         "extensions/learning/*epoch*.py",
         "extensions/learning/policy_epochs.py",
         # Replay lives under two subpackages today; both count.
-        "aletheia/analytics/*replay*.py",
+        "core/aletheia/analytics/*replay*.py",
         "extensions/counterfactual/*replay*.py",
     )
 
-    aletheia_root = repo_root / "aletheia"
+    aletheia_root = repo_root / "core/aletheia"
     unregistered: list[str] = []
     for path in (*aletheia_root.rglob("*.py"), *(repo_root / "extensions").rglob("*.py")):
         if path.name == "__init__.py":
@@ -761,6 +773,8 @@ def test_coverage_floors_match_coveragerc_registry():
         sys.path.pop(0)
 
     floors = set(coverage_floors.FLOORS.keys())
+    assert floors
+    assert all((repo_root / path).is_file() for path in floors), "coverage floor source missing"
     missing_floor = registered - floors
     orphan_floor = floors - registered
     assert not missing_floor and not orphan_floor, (

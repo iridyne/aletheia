@@ -157,9 +157,9 @@ def _surfaces(paths: list[str]) -> tuple[list[str], list[str]]:
             surfaces.add("ci_control")
         if path in {"pyproject.toml", "uv.lock", "tests/conftest.py"}:
             surfaces.add("test_dependency_infra")
-        if path.startswith("aletheia/execution/"):
+        if path.startswith(("aletheia/execution/", "core/aletheia/execution/")):
             surfaces.add("execution")
-        if path.startswith("aletheia/risk/"):
+        if path.startswith(("aletheia/risk/", "core/aletheia/risk/")):
             surfaces.add("risk")
         if any(token in path for token in ("economics", "outcome", "profit")):
             surfaces.add("outcome_economics")
@@ -169,7 +169,7 @@ def _surfaces(paths: list[str]) -> tuple[list[str], list[str]]:
             surfaces.add("runtime")
         if path.startswith("extensions/learning/"):
             surfaces.add("learning")
-        if path.startswith(("aletheia/data/", "aletheia/market_data/")):
+        if path.startswith(("aletheia/data/", "aletheia/market_data/", "extensions/data/")):
             surfaces.add("market_data")
         if path.startswith(("dashboard/", "operator-shell/")):
             surfaces.add("frontend_operator")

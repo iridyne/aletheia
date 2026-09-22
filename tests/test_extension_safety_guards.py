@@ -5,6 +5,12 @@ import pytest
 from tests.specs import spec_network_egress, spec_uta_boundary
 
 
+def test_network_guard_scans_current_core_and_extensions():
+    paths = set(spec_network_egress._iter_py_files())
+    assert spec_network_egress._PKG / "net.py" in paths
+    assert spec_network_egress._PKG.parent.parent / "extensions/exchanges/ccxt/adapter.py" in paths
+
+
 @pytest.mark.parametrize("relative", [
     "extensions/exchanges/ccxt/adapter.py", "extensions/net.py",
 ])
@@ -12,12 +18,12 @@ def test_network_guard_rejects_extension_constructor(tmp_path, monkeypatch, rela
     path = tmp_path / relative
     path.parent.mkdir(parents=True)
     path.write_text("import ccxt\nclient = ccxt.bitget()\n")
-    monkeypatch.setattr(spec_network_egress, "_PKG", tmp_path / "aletheia")
+    monkeypatch.setattr(spec_network_egress, "_PKG", tmp_path / "core" / "aletheia")
     assert spec_network_egress._find_bare_ccxt_constructors() == [f"{relative}:2"]
 
 
 @pytest.mark.parametrize("relative", [
-    "extensions/exchanges/other.py", "aletheia/uta/other.py",
+    "extensions/exchanges/other.py", "core/aletheia/uta/other.py",
 ])
 @pytest.mark.parametrize("source", [
     "from aletheia.uta.models import SubmitOrderCommand as Command\n",
@@ -33,8 +39,8 @@ def test_mutation_guard_rejects_non_owner(tmp_path, relative, source):
 
 def test_mutation_guard_keeps_exact_owners_and_ignores_prose(tmp_path):
     for relative in (
-        "aletheia/uta/contract.py", "aletheia/uta/models.py",
-        "aletheia/execution/coordinator.py", "aletheia/execution/gateway.py",
+        "core/aletheia/uta/contract.py", "core/aletheia/uta/models.py",
+        "core/aletheia/execution/coordinator.py", "core/aletheia/execution/gateway.py",
         "extensions/exchanges/ccxt/adapter.py",
     ):
         path = tmp_path / relative

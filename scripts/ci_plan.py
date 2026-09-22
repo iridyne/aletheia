@@ -101,13 +101,13 @@ FULL_TEST_FILES = (
     "tests/specs/spec_codex_shepherd.py",
 )
 CRITICAL_PREFIXES = (
-    "aletheia/execution/",
-    "aletheia/gateway/",
-    "aletheia/portfolio/",
-    "aletheia/risk/",
-    "aletheia/runtime",
-    "aletheia/server/routes/risk.py",
-    "aletheia/storage/",
+    "core/aletheia/execution/",
+    "core/aletheia/gateway/",
+    "core/aletheia/portfolio/",
+    "core/aletheia/risk/",
+    "core/aletheia/runtime",
+    "core/aletheia/server/routes/risk.py",
+    "core/aletheia/storage/",
 )
 CRITICAL_TOKENS = (
     "account",
@@ -149,19 +149,19 @@ INTEGRATION_TEST_TOKENS = (
     "workbench",
 )
 PYTHON_CONTRACT_PREFIXES = (
-    "aletheia/config/",
-    "aletheia/server/routes/settings.py",
-    "aletheia/server/routes/ui.py",
-    "aletheia/data/models.py",
+    "core/aletheia/config/",
+    "core/aletheia/server/routes/settings.py",
+    "core/aletheia/server/routes/ui.py",
+    "core/aletheia/data/models.py",
 )
 COVERAGE_PATHS = (
-    "aletheia/analytics/profit_gradient.py",
-    "aletheia/analytics/profit_gradient_estimators.py",
-    "aletheia/analytics/profit_gradient_evidence.py",
-    "aletheia/analytics/position_replay.py",
+    "core/aletheia/analytics/profit_gradient.py",
+    "core/aletheia/analytics/profit_gradient_estimators.py",
+    "core/aletheia/analytics/profit_gradient_evidence.py",
+    "core/aletheia/analytics/position_replay.py",
     "extensions/counterfactual/filter_replay.py",
-    "aletheia/economics/context_artifacts.py",
-    "aletheia/execution/reconciliation.py",
+    "core/aletheia/economics/context_artifacts.py",
+    "core/aletheia/execution/reconciliation.py",
     "extensions/learning/evidence_epoch.py",
     "extensions/learning/policy_epochs.py",
     "scripts/coverage_floors.py",
@@ -319,7 +319,7 @@ def _full_path(path: str) -> bool:
 def _critical_path(path: str) -> bool:
     if path.startswith(CRITICAL_PREFIXES):
         return True
-    return path.startswith(("aletheia/", "extensions/")) and any(token in path for token in CRITICAL_TOKENS)
+    return path.startswith(("core/aletheia/", "extensions/")) and any(token in path for token in CRITICAL_TOKENS)
 
 
 def _coverage_path(path: str) -> bool:
@@ -340,7 +340,7 @@ def _unknown_executable_path(path: str) -> bool:
     known_prefixes = (
         "AGENTS.md",
         "README.md",
-        "aletheia/",
+        "core/aletheia/",
         "docs/",
         "frontend/",
         "native/",
@@ -362,15 +362,15 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("operator")
     if path.startswith("native/"):
         surfaces.add("native")
-    if path.startswith(("aletheia/", "tests/")) or path.endswith(".py"):
+    if path.startswith(("core/aletheia/", "tests/")) or path.endswith(".py"):
         surfaces.add("python")
     if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/export_openapi_schema.py"):
         surfaces.add("frontend_contract")
-    if path.startswith("aletheia/storage/"):
+    if path.startswith("core/aletheia/storage/"):
         surfaces.add("storage")
-    if path.startswith("aletheia/execution/"):
+    if path.startswith("core/aletheia/execution/"):
         surfaces.add("execution")
-    if path.startswith("aletheia/risk/"):
+    if path.startswith("core/aletheia/risk/"):
         surfaces.add("risk")
     if _coverage_path(path):
         surfaces.add("coverage")
@@ -458,6 +458,10 @@ def plan(
         if change.status == "removed":
             reason_codes.add("DELETION_REVIEWED")
         for path in change.all_paths():
+            # Deleted/renamed pre-layout paths retain their original check lanes.
+            # This is diff classification only, not a second source/import owner.
+            if path.startswith("aletheia/"):
+                path = "core/" + path
             surfaces.update(_path_surfaces(path))
             if _safe_docs_path(path) and not _agents_path(path):
                 reason_codes.add("ZERO_CI_DOCS")
@@ -495,7 +499,7 @@ def plan(
                 mode = _mode_at_least(mode, "deep")
                 reason_codes.add("CRITICAL_TRADING_AUTHORITY")
                 continue
-            if path.startswith(("frontend/", "operator-shell/", "native/", "aletheia/", "tests/")) or path.endswith(".py"):
+            if path.startswith(("frontend/", "operator-shell/", "native/", "core/aletheia/", "tests/")) or path.endswith(".py"):
                 mode = _mode_at_least(mode, "affected")
                 reason_codes.add("AFFECTED_COMPONENT")
                 continue

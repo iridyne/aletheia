@@ -37,10 +37,10 @@ def _sql_text(node):
 def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), literal_writes=None, expression_writes=None, allow_migration_dml=True, raw_operations=None, additive_migration_ddl=False):
     """Bounded named-reference/literal-write proof, not arbitrary dynamic SQL."""
     sql_pattern = re.compile(rf'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
-    repository = root / "aletheia/storage/repositories.py"
-    migrations = root / "aletheia/storage/migrations.py"
+    repository = root / "core/aletheia/storage/repositories.py"
+    migrations = root / "core/aletheia/storage/migrations.py"
     ddl_pattern = re.compile(rf'''\b(?:CREATE\s+(?:(?:TEMP|TEMPORARY|VIRTUAL)\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
-    for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
+    for directory in ("core/aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -48,12 +48,12 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
             allowed_literals = {
                 function: statements
                 for (owner_path, function), statements in (literal_writes or {}).items()
-                if path == root / "aletheia" / owner_path
+                if path == root / "core/aletheia" / owner_path
             }
             allowed_expressions = {
                 function: {ast.dump(ast.parse(expression, mode="eval").body) for expression in expressions}
                 for (owner_path, function), expressions in (expression_writes or {}).items()
-                if path == root / "aletheia" / owner_path
+                if path == root / "core/aletheia" / owner_path
             }
             canonical_names = set(allowed_literals) | set(allowed_expressions)
             if path == repository:
@@ -86,7 +86,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                 def check_writer(name):
                     if name not in owners:
                         return
-                    permitted = {root / "aletheia" / owner for owner in owners[name]}
+                    permitted = {root / "core/aletheia" / owner for owner in owners[name]}
                     delegation = canonical_function and (function, name) in delegations
                     assert path in permitted or delegation, (path, node.lineno, name)
 
@@ -95,7 +95,8 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                 if isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     if node.level:
-                        module = resolve_name("." * node.level + module, ".".join(path.relative_to(root).parent.parts))
+                        import_root = root / "core" if directory == "core/aletheia" else root
+                        module = resolve_name("." * node.level + module, ".".join(path.relative_to(import_root).parent.parts))
                     if module == "aletheia.storage.repositories":
                         assert all(alias.name != "*" for alias in node.names), (path, node.lineno)
                     for alias in node.names:

@@ -468,11 +468,12 @@ def learning_context_b1(
     from pathlib import Path
 
     from extensions.research.context_effectiveness import run_learning_b_pair
+    from aletheia.config.loader import _PROJECT_ROOT
 
     fixture_path = (
         Path(fixture)
         if fixture
-        else Path(__file__).resolve().parents[2]
+        else _PROJECT_ROOT
         / "docs"
         / "research"
         / "llm_harness"
@@ -507,11 +508,12 @@ def technical_context_check(
     from pathlib import Path
 
     from extensions.research.context_effectiveness import run_technical_context_pair
+    from aletheia.config.loader import _PROJECT_ROOT
 
     fixture_path = (
         Path(fixture)
         if fixture
-        else Path(__file__).resolve().parents[2]
+        else _PROJECT_ROOT
         / "docs"
         / "research"
         / "llm_harness"

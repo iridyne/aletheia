@@ -3,6 +3,83 @@ import sqlite3
 
 import pytest
 
+
+@pytest.mark.parametrize("migration_path", ["aletheia/storage/migrations.py", "core/aletheia/storage/migrations.py"])
+def test_layout_transition_and_new_schema_path_retain_backup_gate(tmp_path, monkeypatch, migration_path):
+    from types import SimpleNamespace
+    from ops.update import applier, auto, git_ops as mutations
+    from ops.backup import service
+    from aletheia.update import git_ops
+    setup_env(tmp_path, monkeypatch)
+    _stub_pull_to_smoke(monkeypatch)
+    monkeypatch.setattr(git_ops, "changed_files", lambda *a: [migration_path])
+    monkeypatch.setattr(mutations, "reset_hard", lambda *a: {"ok": True})
+    calls = []
+    monkeypatch.setattr(service, "BackupService", lambda *a: SimpleNamespace(create_backup=lambda **kw: calls.append(kw["label"]) or tmp_path / "fake.tar"))
+
+    def stop_at_candidate(*args):
+        raise auto.AutoUpdateError("fixture_candidate_stop", "no actual update")
+
+    monkeypatch.setattr(auto, "_candidate_preflight", stop_at_candidate)
+    monkeypatch.setattr(auto, "_remove_candidate", lambda *a: None)
+    assert applier.apply_update(restart=True)["reason"] == "fixture_candidate_stop"
+    assert calls == ["interactive_schema_preflight"]
+
+
+def test_dashboard_layout_activation_and_rollback(tmp_path, monkeypatch):
+    from ops.update import applier
+    for attr, name in (("_DASHBOARD_STATIC", "dashboard_static"), ("_STAGED_DASHBOARD_STATIC", ".dashboard_static-next"), ("_PREVIOUS_DASHBOARD_STATIC", ".dashboard_static-previous")):
+        assert getattr(applier, attr) == applier._PROJECT_ROOT / "core/aletheia" / name
+        monkeypatch.setattr(applier, attr, tmp_path / "core/aletheia" / name)
+    active, staged = applier._DASHBOARD_STATIC, applier._STAGED_DASHBOARD_STATIC
+    for path, text in ((active, "old"), (staged, "new"), (tmp_path / "aletheia/dashboard_static", "untouched")):
+        path.mkdir(parents=True)
+        (path / "index.html").write_text(text)
+    def fake_build(command, *, env):
+        from types import SimpleNamespace
+        assert env["VITE_BUILD_OUT_DIR"] == str(staged)
+        staged.mkdir()
+        (staged / "index.html").write_text("new")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(applier, "_run_npm", fake_build)
+    monkeypatch.setattr(applier.target_fresh, "validate_dashboard_artifacts", lambda *a, **kw: {"ok": True})
+    assert applier._build_frontend("fixture-tree")["ok"]
+    previous = applier._activate_frontend_build()
+    assert (active / "index.html").read_text() == "new"
+    applier._restore_frontend_build(previous)
+    assert (active / "index.html").read_text() == "old"
+    assert (tmp_path / "aletheia/dashboard_static/index.html").read_text() == "untouched"
+
+
+def test_ordinary_core_change_does_not_enter_schema_gate(tmp_path, monkeypatch):
+    from ops.update import applier
+    from aletheia.update import git_ops
+    setup_env(tmp_path, monkeypatch)
+    _stub_pull_to_smoke(monkeypatch)
+    monkeypatch.setattr(git_ops, "changed_files", lambda *a: ["core/aletheia/analytics/trade_stats.py"])
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": False, "stage": "fixture", "detail": "stop"})
+    monkeypatch.setattr(applier, "_rollback_update", lambda *a, **kw: {"reason": kw["failure_reason"]})
+    assert applier.apply_update()["reason"] == "smoke_failed"
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_lifecycle_child_selects_target_core_without_starting_services(tmp_path, monkeypatch, missing):
+    from ops.update import applier
+    target = tmp_path / "target"
+    target.mkdir()
+    if not missing:
+        package = target / "core/aletheia/gateway"
+        package.mkdir(parents=True)
+        (package.parent / "__init__.py").write_text("")
+        (package / "__init__.py").write_text("")
+        (package / "lifecycle.py").write_text("def do_stop(): pass\ndef do_start(**kwargs): return True\n")
+    monkeypatch.setattr(applier, "_PROJECT_ROOT", target)
+    # Existing healthy service must not turn a missing target source into success.
+    monkeypatch.setattr(applier, "_gateway_ready_after_restart_error", lambda: True)
+    assert applier._stop_gateway()["ok"] is (not missing)
+    assert applier._restart_gateway()["ok"] is (not missing)
+
 @pytest.fixture(autouse=True)
 def _development_checkout(monkeypatch):
     import sys

@@ -3,9 +3,52 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import sys
 from types import SimpleNamespace
 
 import pytest
+
+
+@pytest.mark.parametrize("missing", [None, "core", "ops"])
+def test_target_children_use_actual_target_sources(tmp_path, monkeypatch, missing):
+    from ops.update import target_fresh, continuity
+    from aletheia.config import loader
+
+    target = tmp_path / "target"
+    active = tmp_path / "active"
+    for root, core_prefix in ((target, "core/"), (active, "")):
+        files = {
+            core_prefix + "aletheia/__init__.py": "",
+            core_prefix + "aletheia/gateway/__init__.py": "",
+            core_prefix + "aletheia/gateway/preflight.py": "def dashboard_artifact_errors(path): return []\n",
+            "ops/__init__.py": "",
+            "ops/update/__init__.py": "",
+            "ops/update/smoke.py": "def run_smoke_check(): return {'ok': True, 'source': __file__}\n",
+            "ops/update/continuity.py": "def capture_update_continuity(): return {'source': __file__}\n",
+        }
+        for name, content in files.items():
+            if root == target and missing and (name.startswith("core/") if missing == "core" else name.startswith("ops/")):
+                continue
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+    target.mkdir(exist_ok=True)
+    env = {**os.environ, "PYTHONPATH": str(active)}
+    smoke = target_fresh.run_smoke_check(project_root=target, env=env, python_executable=sys.executable)
+    dashboard = target_fresh.validate_dashboard_artifacts(target, project_root=target, env=env, python_executable=sys.executable)
+    monkeypatch.setattr(loader, "_PROJECT_ROOT", target)
+    monkeypatch.setattr(continuity, "safe_env", lambda: env.copy())
+    snapshot = continuity.capture_update_continuity_fresh()
+    if missing:
+        assert smoke["ok"] is False
+        assert dashboard["ok"] is False
+        assert snapshot["capture_available"] is False
+    else:
+        assert smoke["ok"] is True
+        assert Path(smoke["source"]) == target / "ops/update/smoke.py"
+        assert dashboard == {"ok": True, "errors": []}
+        assert Path(snapshot["source"]) == target / "ops/update/continuity.py"
 
 
 @pytest.fixture(autouse=True)

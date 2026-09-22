@@ -55,7 +55,7 @@ def test_public_data_has_one_physical_implementation():
         "collectors/options_structure.py",
         "news_collector.py", "news_analyzer.py",
     ):
-        assert not (root / "aletheia/data" / relative).exists()
+        assert not (root / "core/aletheia/data" / relative).exists()
         assert (root / "extensions/data" / relative).is_file()
     assert not (root / "aletheia/server/routes/news.py").exists()
     assert (root / "extensions/data/news_routes.py").is_file()

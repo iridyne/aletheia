@@ -22,7 +22,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _HL = _ROOT / "extensions" / "data" / "collectors" / "hyperliquid.py"
-_REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
+_REPOSITORIES = _ROOT / "core" / "aletheia" / "storage" / "repositories.py"
 
 # Path to real-data fixture captured from live API
 _FIXTURE_META = _ROOT / "tests" / "fixtures" / "hl_meta_and_asset_ctxs.json"

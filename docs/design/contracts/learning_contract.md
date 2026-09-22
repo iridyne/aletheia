@@ -842,8 +842,8 @@ profitability.
 
 ## 11. Outcome Integrity Handoff
 
-Core `aletheia/analytics/outcome_semantics.py` composes the dependency-neutral
-`aletheia/analytics/outcome_integrity.py` assessment and applies the existing clean-window rules.
+Core `core/aletheia/analytics/outcome_semantics.py` composes the dependency-neutral
+`core/aletheia/analytics/outcome_integrity.py` assessment and applies the existing clean-window rules.
 Learning, Universe and operator read models consume this same implementation;
 the former `learning/outcomes.py` is deleted without a forwarding alias. Candidate
 temporal validation, cost completeness, clean-window boundaries and realized

@@ -14,6 +14,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from aletheia.config.loader import _PROJECT_ROOT
+
 _HOOK_NAMES = ("post-merge", "post-checkout", "post-rewrite")
 _MARKER_PREFIX = "# >>> aletheia-auto-restart"
 _END = "# <<< aletheia-auto-restart <<<"
@@ -37,7 +39,7 @@ def _git(repo_dir: Path, *args: str) -> str | None:
 
 
 def _repo_dir() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _PROJECT_ROOT
 
 
 def _hooks_dir(repo_dir: Path) -> Path | None:

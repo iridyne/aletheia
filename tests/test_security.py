@@ -504,7 +504,7 @@ def test_all_model_providers_use_shared_credential_scrubber():
     raise_for_status_without_secrets (error-leak 2.7 — unified)."""
     import pathlib
 
-    provider_dirs = (pathlib.Path("aletheia/model_provider"), pathlib.Path("extensions/model_endpoints"))
+    provider_dirs = (pathlib.Path("core/aletheia/model_provider"), pathlib.Path("extensions/model_endpoints"))
     offenders = []
     for provider_dir in provider_dirs:
         assert provider_dir.is_dir(), f"missing model source tree: {provider_dir}"

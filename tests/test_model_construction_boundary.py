@@ -16,7 +16,7 @@ def test_http_extension_has_one_physical_implementation():
         "openai_compatible", "anthropic_compatible",
     ):
         assert (root / "extensions" / "model_endpoints" / f"{module}.py").is_file()
-        assert not (root / "aletheia" / "model_provider" / f"{module}.py").exists()
+        assert not (root / "core" / "aletheia" / "model_provider" / f"{module}.py").exists()
     build = tomllib.loads((root / "pyproject.toml").read_text())
     assert "extensions" in build["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
 

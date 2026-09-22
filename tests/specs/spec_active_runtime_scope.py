@@ -51,7 +51,8 @@ def test_learning_has_no_execution_or_risk_authority():
     "System Operator and frontend sources cannot call exchange order adapters directly.",
 ))
 def test_operator_and_frontend_have_no_direct_exchange_order_path():
-    operator_paths = sorted((ROOT / "aletheia" / "agent_shell").glob("*.py"))
+    operator_paths = sorted((ROOT / "core" / "aletheia" / "agent_shell").glob("*.py"))
+    assert operator_paths, "Core operator authority scan must visit source files"
     operator_violations = {
         str(path.relative_to(ROOT)): sorted(
             module for module in _imports(str(path.relative_to(ROOT)))

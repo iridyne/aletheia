@@ -40,8 +40,8 @@ def test_settings_schema_changes_remain_known_to_local_planner() -> None:
     planner = (ROOT / "scripts" / "ci_plan.py").read_text(encoding="utf-8")
 
     for path in (
-        "aletheia/server/routes/settings.py",
-        "aletheia/config/",
+        "core/aletheia/server/routes/settings.py",
+        "core/aletheia/config/",
         "scripts/export_openapi_schema.py",
     ):
         assert path in planner

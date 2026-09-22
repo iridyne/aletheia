@@ -5,6 +5,7 @@ too many restarts in a window. We inject a fake spawn so no real port is bound.
 Pidfile semantics must be preserved (written once, read_pid/is_running still work).
 """
 
+import os
 import sqlite3
 
 import pytest
@@ -29,6 +30,59 @@ class _FakeNotifySocket:
 
     def sendall(self, payload):
         self.payload = payload
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+@pytest.mark.parametrize("child", ["frontdoor", "server", "collector"])
+def test_child_source_roots_preserve_frozen_launch_contract(tmp_path, monkeypatch, frozen, child):
+    from types import SimpleNamespace
+    from aletheia import _gateway_runner as runner
+
+    root = tmp_path / "checkout"
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", root)
+    monkeypatch.setattr(runner, "get_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(runner.sys, "frozen", frozen, raising=False)
+    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python-real", {"PYTHON_PATCH": "1"}))
+    monkeypatch.setenv("PYTHONPATH", "inherited-path")
+    monkeypatch.setenv("ALETHEIA_COLLECTOR_PROCESS", "1")
+    monkeypatch.setattr(runner, "_publish_frontdoor_route", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "kill_pid_tree", lambda _pid: None)
+    captured = {}
+    proc = SimpleNamespace(pid=1234, poll=lambda: 0)
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda command, **kwargs: captured.update(command=command, **kwargs) or proc)
+    cfg = SimpleNamespace(app=SimpleNamespace(dashboard_port=8787))
+    if child == "frontdoor":
+        runner._spawn_frontdoor(cfg, 8788)
+        assert captured["command"] == ["python-real", "-m", "aletheia.gateway.frontdoor_runner"]
+    elif child == "collector":
+        runner._spawn_collector_process(cfg)
+        assert captured["command"] == ["python-real", "-m", "aletheia.data.collector_runner"]
+    else:
+        assert runner._spawn_server(cfg, port=8788) == 0
+        assert captured["command"][:4] == ["python-real", "-m", "uvicorn", "aletheia.server.app:app"]
+        assert captured["env"]["ALETHEIA_RUNTIME_PORT"] == "8788"
+    assert captured["cwd"] == str(root)
+    assert captured["env"]["PYTHON_PATCH"] == "1"
+    assert ("ALETHEIA_COLLECTOR_PROCESS" in captured["env"]) is (child != "collector")
+    expected = str(root) if child == "server" else "inherited-path"
+    if not frozen:
+        expected = os.pathsep.join((str(root / "core"), str(root)))
+    assert captured["env"]["PYTHONPATH"] == expected
+
+
+def test_repository_locators_share_config_root():
+    from pathlib import Path
+    from aletheia.config.loader import _PROJECT_ROOT
+    from aletheia.agent_runtime import runtime_session, startup_behavior_gate
+    from aletheia.gateway import git_hooks, operator_shell
+    from aletheia.cli import dev, dev_seed, install
+
+    assert _PROJECT_ROOT == Path(__file__).resolve().parents[1]
+    scope = _PROJECT_ROOT / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
+    assert scope.is_file()
+    assert runtime_session._SCOPE_PATH == startup_behavior_gate._SCOPE_PATH == scope
+    assert git_hooks._repo_dir() == dev.project_root() == dev_seed._project_root() == install.project_root() == _PROJECT_ROOT
+    assert operator_shell.operator_shell_root() == _PROJECT_ROOT / "operator-shell"
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -273,7 +327,7 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "debug"
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
     assert captured["kwargs"]["cwd"] == str(runner._PROJECT_ROOT)
-    assert captured["kwargs"]["env"]["PYTHONPATH"] == str(runner._PROJECT_ROOT)
+    assert captured["kwargs"]["env"]["PYTHONPATH"].split(os.pathsep) == [str(runner._PROJECT_ROOT / "core"), str(runner._PROJECT_ROOT)]
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_ID"] == "process-runtime"
     from aletheia.gateway.frontdoor_route import read_frontdoor_route
 
@@ -486,6 +540,7 @@ def test_inner_uvicorn_no_creationflags_on_posix(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(runner.platform, "system", lambda: "Linux", raising=False)
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", tmp_path)
 
     runner._spawn_server(load_config())
 

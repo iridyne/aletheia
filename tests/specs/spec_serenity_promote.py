@@ -46,9 +46,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_promote"
 _ROOT = Path(__file__).parent.parent.parent
-_SCHEMA = _ROOT / "aletheia" / "config" / "schema.py"
-_DATA_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "data.py"
-_SETTINGS_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "settings.py"
+_SCHEMA = _ROOT / "core" / "aletheia" / "config" / "schema.py"
+_DATA_ROUTES = _ROOT / "core" / "aletheia" / "server" / "routes" / "data.py"
+_SETTINGS_ROUTES = _ROOT / "core" / "aletheia" / "server" / "routes" / "settings.py"
 _API_REF = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
 
@@ -547,7 +547,7 @@ _RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 def test_research_worker_auto_promote_block_exists():
     src = _RESEARCH_WORKER.read_text(encoding="utf-8")
     publication_src = (
-        _ROOT / "aletheia" / "trading" / "serenity_publication.py"
+        _ROOT / "core" / "aletheia" / "trading" / "serenity_publication.py"
     ).read_text(encoding="utf-8")
     assert "auto_promote" in src, (
         "research_worker.py has no auto_promote reference — the D5 switch is dead"

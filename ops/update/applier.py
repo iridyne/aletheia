@@ -175,9 +175,9 @@ def _reinstall_deps() -> dict:
 
 
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
-_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / "dashboard_static"
-_STAGED_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-next"
-_PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-previous"
+_DASHBOARD_STATIC = _PROJECT_ROOT / "core" / "aletheia" / "dashboard_static"
+_STAGED_DASHBOARD_STATIC = _PROJECT_ROOT / "core" / "aletheia" / ".dashboard_static-next"
+_PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "core" / "aletheia" / ".dashboard_static-previous"
 _DASHBOARD_FRONTEND_TREE = ".aletheia-frontend-tree"
 
 
@@ -306,11 +306,17 @@ def _restore_frontend_build(had_previous: bool) -> None:
 
 def _restart_gateway() -> dict:
     """Restart from a fresh interpreter so pulled migrations are visible."""
+    source_roots = [str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)]
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 "-c",
+                "import sys; from pathlib import Path; "
+                f"sys.path[:0] = {source_roots!r}; "
+                f"\nif not Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('target_core_source_mismatch')\n"
+                "import aletheia\n"
+                f"if Path(aletheia.__file__).resolve() != Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}): raise RuntimeError('target_core_source_mismatch')\n"
                 "from aletheia.gateway.lifecycle import do_start, do_stop; "
                 "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)",
             ],
@@ -329,6 +335,8 @@ def _restart_gateway() -> dict:
     except Exception as exc:
         return {"ok": False, "reason": type(exc).__name__}
     if result.returncode not in {0, 2}:
+        if "target_core_source_mismatch" in (result.stderr or ""):
+            return {"ok": False, "reason": "target_core_source_mismatch"}
         # exit 1 (or other non-zero): genuine failure — preflight blocked, port conflict,
         # spawn died. exit 2 means do_start returned False (slow start: alive but readiness
         # not confirmed within the 15s deadline) — gateway is up, not a rollback condition.
@@ -344,9 +352,18 @@ def _restart_gateway() -> dict:
 
 def _stop_gateway() -> dict:
     """Stop receipt producers before the final Observation continuity cut."""
+    source_roots = [str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)]
+    script = (
+        "import sys\nfrom pathlib import Path\n"
+        f"sys.path[:0] = {source_roots!r}\n"
+        f"if not Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('target_core_source_mismatch')\n"
+        "import aletheia\n"
+        f"if Path(aletheia.__file__).resolve() != Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}): raise RuntimeError('target_core_source_mismatch')\n"
+        "from aletheia.gateway.lifecycle import do_stop; do_stop()"
+    )
     try:
         result = subprocess.run(
-            [sys.executable, "-c", "from aletheia.gateway.lifecycle import do_stop; do_stop()"],
+            [sys.executable, "-c", script],
             cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=90,
             **_no_window_kwargs(),
         )
@@ -755,7 +772,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
     frontend_changed = any(path.startswith("frontend/") for path in changed_files)
     deps_reinstalled = False
 
-    schema_changed = "aletheia/storage/migrations.py" in changed_files
+    schema_changed = bool({"aletheia/storage/migrations.py", "core/aletheia/storage/migrations.py"}.intersection(changed_files))
     schema_backup = ""
     if schema_changed:
         if not restart:

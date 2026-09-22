@@ -60,7 +60,7 @@ done
 release_root="$(cd "$release_root" && pwd -P)"
 [[ -f "$release_root/release-manifest.json" ]] || fail "release-manifest.json is required"
 [[ ! -d "$release_root/.git" ]] || fail "stable runtime refuses a Git checkout"
-[[ -f "$release_root/aletheia/dashboard_static/index.html" ]] || fail "compiled dashboard is missing"
+[[ -f "$release_root/core/aletheia/dashboard_static/index.html" ]] || fail "compiled dashboard is missing"
 
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 command -v uv >/dev/null 2>&1 || fail "uv is required"
