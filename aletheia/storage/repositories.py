@@ -9,8 +9,8 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Literal, cast
 
@@ -89,19 +89,33 @@ _retention_metrics_lock = threading.Lock()
 _retention_metrics: dict[str, dict[str, float | int]] = {}
 
 
-def _canonical_lab_authority() -> bool:
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
+_lab_authority: Callable[[], bool] | None = None
+_lab_retention_floor: Callable[[str], str | None] | None = None
+_lab_retention_refs: Callable[[str], tuple[str, ...]] | None = None
+_lab_priority_keys: Callable[..., tuple[set[str], set[str]]] | None = None
+_lab_active_benchmark: Callable[[], dict | None] | None = None
+_lab_outcome_guard: Callable[[str], AbstractContextManager[bool]] | None = None
 
-        return get_authority_source().source == "lab"
-    except sqlite3.OperationalError as exc:
-        if "no such table: observation_authority_state" in str(exc):
-            return False
-        raise ExperimentStateReadError("experiment authority state unavailable") from exc
-    except FileNotFoundError:
-        return False
-    except RuntimeError as exc:
-        raise ExperimentStateReadError("experiment authority state invalid") from exc
+
+def configure_observation_readers(
+    *, authority=None, retention_floor=None, retention_refs=None,
+    priority_keys=None, active_benchmark=None, outcome_guard=None,
+) -> None:
+    """Compose optional Lab operations without querying runtime state."""
+    global _lab_authority, _lab_retention_floor, _lab_retention_refs
+    global _lab_priority_keys, _lab_active_benchmark, _lab_outcome_guard
+    _lab_authority = authority
+    _lab_retention_floor = retention_floor
+    _lab_retention_refs = retention_refs
+    _lab_priority_keys = priority_keys
+    _lab_active_benchmark = active_benchmark
+    _lab_outcome_guard = outcome_guard
+
+
+def _canonical_lab_authority() -> bool:
+    if _lab_authority is None:
+        raise ExperimentStateReadError("Observation reader unavailable")
+    return _lab_authority()
 
 _PHYSICAL_PROTECTION_MARKETS = {
     "spot": "spot",
@@ -347,19 +361,6 @@ def _update(table: str, id_val: str, data: dict):
         [*data.values(), id_val],
     )
 
-
-def _benchmark_outcome_write_allowed(window_id: str) -> bool:
-    legacy = get_db().execute(
-        "SELECT status FROM universe_discovery_benchmarks WHERE id=?", (window_id,)
-    ).fetchone()
-    if legacy is not None:
-        return str(legacy["status"]) == "active"
-    try:
-        from aletheia.observation_lab.kernel import status_window
-
-        return str(status_window(window_id)["status"]) == "active"
-    except KeyError:
-        return False
 
 
 def _update_pending(table: str, id_val: str, data: dict) -> bool:
@@ -5745,56 +5746,15 @@ def _resolve_experiment_floor(value: str | None | object) -> str | None:
     return cast(str | None, value)
 
 def _observation_retention_floor(domain: str) -> str | None:
-    try:
-        from aletheia.observation_lab.kernel import active_retention_claims
-
-        state = active_retention_claims()
-    except Exception as exc:
-        raise ExperimentStateReadError(f"Failed to query Observation retention: {exc}") from exc
-    if not state["available"]:
-        raise ExperimentStateReadError("Observation retention claims unavailable")
-    return state["claims"].get(domain)
+    if _lab_retention_floor is None:
+        raise ExperimentStateReadError("Observation reader unavailable")
+    return _lab_retention_floor(domain)
 
 
 def _active_observation_claim_refs(domain: str) -> tuple[str, ...]:
-    """Return exact protected source identities for Lab-authoritative cleanup."""
-    from aletheia.observation_lab.db import readonly_lab_db
-    from aletheia.observation_lab.canonical import _validate_retention_claim_source
-
-    refs: list[str] = []
-    try:
-        with readonly_lab_db() as lab:
-            aliases = {domain}
-            if domain.endswith("outcomes"):
-                aliases.update({"outcome", "outcomes"})
-            aliases = tuple(sorted(aliases))
-            placeholders = ",".join("?" for _ in aliases)
-            rows = lab.execute(
-                "SELECT * FROM observation_retention_claims WHERE status='active' "
-                f"AND (claim_domain IN ({placeholders}) OR source_kind IN ({placeholders})) ORDER BY source_ref",
-                (*aliases, *aliases),
-            ).fetchall()
-            for row in rows:
-                try:
-                    _validate_retention_claim_source(
-                        lab,
-                        observation_id=str(row["observation_id"]),
-                        generation=int(row["generation"]),
-                        source_kind=str(row["source_kind"]),
-                        source_ref=str(row["source_ref"]),
-                        source_hash=str(row["source_hash"]),
-                    )
-                except (ValueError, sqlite3.Error) as exc:
-                    raise ExperimentStateReadError(
-                        f"Observation retention claim unavailable: {exc}"
-                    ) from exc
-                if row["source_ref"]:
-                    refs.append(str(row["source_ref"]))
-    except Exception as exc:
-        raise ExperimentStateReadError(
-            f"Failed to query exact Observation retention claims: {exc}"
-        ) from exc
-    return tuple(refs)
+    if _lab_retention_refs is None:
+        raise ExperimentStateReadError("Observation reader unavailable")
+    return _lab_retention_refs(domain)
 
 
 def _protected_universe_outcome_ids(
@@ -9644,7 +9604,7 @@ def _settle_outcome_with_exact_venue(
     *,
     kind: str,
 ) -> bool:
-    guard = nullcontext()
+    guard = nullcontext(True)
     initial = _select_one(table, outcome_id)
     window_id = (
         str(initial.get("benchmark_window_id"))
@@ -9652,11 +9612,11 @@ def _settle_outcome_with_exact_venue(
         else None
     )
     if window_id:
-        from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
-
-        guard = worker_cycle_exclusion()
-    with guard:
-        if window_id and not _benchmark_outcome_write_allowed(window_id):
+        if _lab_outcome_guard is None:
+            raise ExperimentStateReadError("Observation outcome guard unavailable")
+        guard = _lab_outcome_guard(window_id)
+    with guard as write_allowed:
+        if not write_allowed:
             return False
         with transaction(immediate=True):
             row = _select_one(table, outcome_id)
@@ -10154,9 +10114,7 @@ def list_pending_universe_discovery_outcomes(before_ts: str, limit: int = 200) -
     if limit <= 0:
         return []
     try:
-        from aletheia.observation_lab.kernel import active_window
-
-        active = active_window(kind="universe_discovery")
+        active = _lab_active_benchmark() if _lab_active_benchmark is not None else None
     except Exception:
         active = None
     if active is None:
@@ -10234,40 +10192,9 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
 
 
 def list_observation_filter_outcome_priority_keys(*, deadline: float) -> tuple[set[str], set[str]]:
-    """Prioritize frozen active Lab evidence, then proven retained historical keys."""
-    from aletheia.observation_lab.canonical import _validate_retention_claim_source
-    from aletheia.observation_lab.db import readonly_lab_db
-
-    current: set[str] = set()
-    retained: set[str] = set()
-    with readonly_lab_db() as lab:
-        lab.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-        try:
-            for row in lab.execute(
-                "SELECT DISTINCT e.outcome_candidate_key FROM observation_exposures e "
-                "JOIN observation_windows w USING(observation_id,generation) "
-                "JOIN observation_generation_contracts c USING(observation_id,generation) "
-                "WHERE w.status='active' AND e.outcome_source='fixed_horizon_candidate' "
-                "AND e.behavior_contract_hash=c.behavior_contract_hash "
-                "AND e.outcome_candidate_key IS NOT NULL"
-            ):
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("observation_priority_deadline")
-                current.add(str(row[0]))
-            for row in lab.execute(
-                "SELECT * FROM observation_retention_claims WHERE status='active' "
-                "AND claim_domain='filter_candidate_outcomes' AND source_kind='outcome_candidate_key'"
-            ):
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("observation_priority_deadline")
-                _validate_retention_claim_source(
-                    lab, observation_id=row["observation_id"], generation=row["generation"],
-                    source_kind=row["source_kind"], source_ref=row["source_ref"], source_hash=row["source_hash"],
-                )
-                retained.add(str(row["source_ref"]))
-        finally:
-            lab.set_progress_handler(None, 0)
-    return current, retained - current
+    if _lab_priority_keys is None:
+        raise OSError("Observation reader unavailable")
+    return _lab_priority_keys(deadline=deadline)
 
 
 def list_open_universe_twin_outcome_candidate_keys() -> set[str]:

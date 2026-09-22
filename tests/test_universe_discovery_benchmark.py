@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("observation_readers")
 from typer.testing import CliRunner
 
 from aletheia.analytics.filter_evidence import decode_filter_decision_batch
@@ -592,6 +594,12 @@ def test_cli_start_uses_verified_current_runtime_among_stale_open_sessions(
             started_at=current_started + timedelta(days=index + 1),
         )
     _mock_gateway_process(monkeypatch, started_at=current_started)
+    from aletheia.agent_runtime import runtime_session
+    monkeypatch.setattr(runtime_session, "_read_process_binding", lambda: {
+        "backend_pid": 5678,
+        "process_started_at": current_started.timestamp(),
+        "session_id": "current-session",
+    })
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: None)
     monkeypatch.setattr(benchmark, "_current_commit", _REAL_CURRENT_COMMIT)
 

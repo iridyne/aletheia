@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("observation_readers")
+
 
 def _utc(day: int = 1) -> datetime:
     return datetime(2026, 1, day, tzinfo=timezone.utc)

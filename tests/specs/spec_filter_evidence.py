@@ -5,6 +5,8 @@ from datetime import datetime
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("observation_readers")
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "filter_evidence_contract"

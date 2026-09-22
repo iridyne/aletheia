@@ -19,6 +19,26 @@ non-fatal shadow ordering are unchanged. No aliases, Equity algorithm, Risk,
 economic, credential, schema or runtime changes are included. This is bounded
 ownership/absence proof, not deployed or economic qualification.
 
+## Lab storage-consumer boundary
+
+Under accepted #3134, Main repositories consume six explicitly composed Lab
+operations: authority, retention floor, validated retention refs, frozen priority
+keys, active benchmark selection and the window outcome-write guard. Their sole
+Lab implementations live in `observation_lab/main_readers.py`; CLI, Web and the
+standalone retention-backfill entry compose them without reading runtime state.
+Main retains its SQL writers and transactions; Lab retains claim validation,
+window status and cycle exclusion. Missing authority/claims cannot widen deletion
+or reopen legacy writers; unavailable priority evidence leaves ordinary settlement
+available. The cycle guard spans status resolution, the Main transaction, pending
+CAS and linked shadow update. Active-window reads remain Lab-first with the
+existing legacy fallback; write permission remains legacy-row-first.
+
+Focused proof covers absent/installed/broken-dependency composition, exact claims,
+retention, window lock contention and Main settlement. The standalone Ops entry
+uses the same bindings, not an implicit fallback. No schema, window, Risk,
+economics, credential or deployment change is included. Physical Scheme A and
+runtime qualification remain separate gates.
+
 Current package census and mixed-owner corrections: source
 `851aed04171b3943b1b11039a747ac930e663976` plus the Data cutover below, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). Original inventory

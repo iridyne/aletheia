@@ -54,6 +54,27 @@ app = typer.Typer(
 def _configure_runtime() -> None:
     from aletheia.agents import register_agent, unregister_agent
 
+    from aletheia.storage.repositories import configure_observation_readers
+
+    try:
+        from aletheia.observation_lab.main_readers import (
+            _canonical_lab_authority, _observation_retention_floor,
+            _active_observation_claim_refs, list_observation_filter_outcome_priority_keys,
+            active_benchmark, outcome_write_guard,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.observation_lab", "aletheia.observation_lab.main_readers"}:
+            raise
+        configure_observation_readers()
+    else:
+        configure_observation_readers(
+            authority=_canonical_lab_authority, retention_floor=_observation_retention_floor,
+            retention_refs=_active_observation_claim_refs,
+            priority_keys=list_observation_filter_outcome_priority_keys,
+            active_benchmark=active_benchmark, outcome_guard=outcome_write_guard,
+        )
+
+
     try:
         from extensions.research.equity_observer import run_equity_observer
         from extensions.research.research_agent import run_research_agent
