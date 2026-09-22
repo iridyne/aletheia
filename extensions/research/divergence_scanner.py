@@ -1,8 +1,8 @@
-"""Divergence Scanner — detects Polymarket/crypto price divergences.
+"""Optional Research Divergence Scanner — detects Polymarket/crypto divergences.
 
 When a prediction market probability moves sharply but the correlated crypto
-asset's price has NOT moved proportionally, this module generates a tradeable
-crypto-class Opportunity (execution_eligible=True).
+asset's price has NOT moved proportionally, this module generates an
+observation-only crypto-class Opportunity (execution_eligible=False).
 
 Called by the scheduler immediately after prediction_observer completes.
 """

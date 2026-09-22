@@ -9,12 +9,15 @@ import pytest
 
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
-    for name in ("research_agent", "risk_critic", "equity_observer"):
+    for name in ("research_agent", "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner"):
         assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
-@pytest.mark.parametrize("missing", [None, "extensions", "extensions.research", "broken_dependency"])
+@pytest.mark.parametrize("missing", [
+    None, "extensions", "extensions.research", "extensions.data",
+    "extensions.data.ccxt_provider", "broken_dependency", "broken_data_dependency",
+])
 def test_advisory_agent_composition(entrypoint, missing):
     script = f"entrypoint = {entrypoint!r}\nmissing = {missing!r}\n" + '''
 import importlib
@@ -30,13 +33,20 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-for name in ("research_agent", "risk_critic", "equity_observer"):
+advisory = ("research_agent", "risk_critic", "equity_observer")
+pipeline = ("prediction_observer", "divergence_scanner")
+names = advisory + pipeline
+broken = missing in {"broken_dependency", "broken_data_dependency"}
+unavailable = names if missing in {"extensions", "extensions.research"} else pipeline if missing else ()
+for name in names:
     register_agent(name)(forbidden)
 
 attempted = []
 class MissingResearch:
     def find_spec(self, fullname, path=None, target=None):
         target_name = "extensions.research" if missing == "broken_dependency" else missing
+        if missing == "broken_data_dependency":
+            target_name = "extensions.data.ccxt_provider"
         if fullname == target_name:
             attempted.append(fullname)
             raise ModuleNotFoundError("isolated missing dependency", name=missing)
@@ -47,17 +57,17 @@ try:
         from aletheia.main import _configure_runtime
         _configure_runtime()
         # Cached module imports must still replace a stale registration.
-        for name in ("research_agent", "risk_critic", "equity_observer"):
+        for name in names:
             register_agent(name)(forbidden)
         _configure_runtime()
     else:
         importlib.import_module("aletheia.server.app")
 except ModuleNotFoundError as exc:
-    assert missing == "broken_dependency" and exc.name == missing, exc
+    assert broken and exc.name == missing, exc
 else:
-    assert missing != "broken_dependency", "internal import defects must propagate"
-    for name in ("research_agent", "risk_critic", "equity_observer"):
-        if missing:
+    assert not broken, "internal import defects must propagate"
+    for name in names:
+        if name in unavailable:
             try:
                 get_agent_fn(name)
             except ValueError:
@@ -69,10 +79,15 @@ else:
             assert fn.__module__ == "extensions.research." + name
             assert fn is not forbidden
     assert callable(get_agent_fn("portfolio_agent")), "Core snapshot agent remains available"
-    from aletheia.server.routes.data import get_agents_catalog
-    catalog = {row["name"]: row for row in get_agents_catalog()["agents"]}
-    for name in ("research_agent", "risk_critic", "equity_observer"):
-        if missing:
+    from aletheia.server.routes import data
+    from aletheia.config.schema import AletheiaConfig
+    cfg = AletheiaConfig()
+    cfg.market_data.prediction_enabled = True
+    cfg.market_data.observed_prediction_markets = ["crypto"]
+    data.load_config = lambda: cfg
+    catalog = {row["name"]: row for row in data.get_agents_catalog()["agents"]}
+    for name in names:
+        if name in unavailable:
             assert catalog[name]["runnable"] is False
             assert catalog[name]["blocked_reason"] == "agent_unavailable"
             from aletheia.agent_runtime import job_queue
