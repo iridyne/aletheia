@@ -11,13 +11,37 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _fast_network_timeout():
+    """Keep actual httpx timeouts for this loopback-only pool regression.
+
+    Override only the timeout shortcut, not the credential/exchange/network
+    guards bypassed by the broader real_network marker.
+    """
+
+
 @pytest.mark.anyio
 async def test_sse_pool_isolated_and_admission_reusable(tmp_path, monkeypatch):
+    import socket
+    from aletheia.config import secrets
     from aletheia.gateway import frontdoor
 
+    connect = socket.socket.connect
+
+    def loopback_only(sock, address):
+        assert isinstance(address, tuple) and address[0] == "127.0.0.1"
+        return connect(sock, address)
+
+    def no_credentials(*_args, **_kwargs):
+        raise AssertionError("pool regression must not read credentials")
+
+    monkeypatch.setattr(socket.socket, "connect", loopback_only)
+    monkeypatch.setattr(secrets, "get_secret", no_credentials)
     monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(frontdoor, "_STREAM_MAX_CONNECTIONS", 2)
     monkeypatch.setattr(frontdoor, "_PROXY_MAX_CONNECTIONS", 2)
+    monkeypatch.setattr(frontdoor, "_PROBE_TIMEOUT", 0.8)
+    monkeypatch.setattr(frontdoor, "_PROXY_CONNECT_TIMEOUT", 5.0)
     monkeypatch.setattr(frontdoor, "_stream_client", None)
     monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda _: None)
     monkeypatch.setattr(frontdoor, "emit_infra_event", lambda **_: None)
@@ -55,6 +79,7 @@ async def test_sse_pool_isolated_and_admission_reusable(tmp_path, monkeypatch):
     app = frontdoor.create_app(static_dir=tmp_path, backend_url=url)
     streams = []
     async with httpx.AsyncClient(limits=httpx.Limits(max_connections=2), timeout=1, trust_env=False) as finite, frontdoor._get_stream_client() as streaming:
+        assert streaming.timeout.read == 120.0
         monkeypatch.setattr(frontdoor, "_proxy_client", finite)
         monkeypatch.setattr(frontdoor, "_stream_client", streaming)
         try:
@@ -71,6 +96,9 @@ async def test_sse_pool_isolated_and_admission_reusable(tmp_path, monkeypatch):
                 for path in ("operator/events/stream", "dev/reload/events"):
                     streams.append(asyncio.create_task(client.get(f"/api/{path}", headers={"Authorization": "test-only"})))
                 await wait_streams(2)
+                # Streams must survive quiet intervals beyond the shared fixture's
+                # 50 ms shortcut; this test exercises production read timeouts.
+                await asyncio.sleep(0.1)
                 assert (await snapshot())["stream_admissions"] == 2
                 async with asyncio.timeout(0.5):
                     finite_response, ready, infra, excess = await asyncio.gather(

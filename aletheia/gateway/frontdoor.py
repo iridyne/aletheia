@@ -393,6 +393,7 @@ def create_app(
 
     async def proxy_http(request: Request, path: str, backend: str, target: httpx.URL):
         nonlocal request_sequence
+        body = await request.body()
         requested_sse = "text/event-stream" in request.headers.get("accept", "").lower()
         streaming = requested_sse or path.rstrip("/") in _SSE_PATHS
         request_sequence += 1
@@ -417,7 +418,6 @@ def create_app(
         }
         holders[request_id] = holder
         try:
-            body = await request.body()
             client = _get_stream_client() if streaming else _get_proxy_client()
             upstream = await client.send(
                 client.build_request(request.method, target, headers=_filtered_headers(request.headers.items()), content=body),

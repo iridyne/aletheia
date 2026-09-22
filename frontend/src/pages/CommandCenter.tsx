@@ -6,6 +6,7 @@ import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
 import { getOperatorDisplayStatus } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import { safeErrorText } from '../lib/mutationErrors'
+import { connectEventStream } from '../lib/eventStream'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, StatusText, SymbolLink, TableWrap, useConfirm, useToast } from '../components/ui'
 import type {
@@ -487,8 +488,6 @@ export default function CommandCenter() {
   })
 
   useEffect(() => {
-    const stream = new EventSource('/api/operator/events/stream?limit=100')
-
     const handleOperatorEvent = (event: MessageEvent<string>) => {
       if (!event.data || event.data.startsWith(':')) return
       try {
@@ -512,11 +511,9 @@ export default function CommandCenter() {
         // Ignore malformed chunks or SSE pings to prevent stream crash
       }
     }
-    stream.addEventListener('operator_event', handleOperatorEvent as EventListener)
-    return () => {
-      stream.removeEventListener('operator_event', handleOperatorEvent as EventListener)
-      stream.close()
-    }
+    return connectEventStream('/api/operator/events/stream?limit=100', stream => {
+      stream.addEventListener('operator_event', handleOperatorEvent as EventListener)
+    })
   }, [qc])
 
   const { toast } = useToast()
