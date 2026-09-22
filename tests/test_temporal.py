@@ -117,10 +117,12 @@ def test_report_wires_temporal_section(monkeypatch):
     assert "最佳时段: 09:00" in human
 
 
-def test_unified_init_exports():
-    import aletheia.analytics as A
+def test_report_functions_available_from_their_owners():
+    from aletheia.analytics.performance_summary import summarize
+    from aletheia.analytics.attribution import attribute
+    from aletheia.analytics.streaks import summarize_streaks
+    from aletheia.analytics.temporal import temporal_summary
 
-    assert hasattr(A, "summarize")
-    assert hasattr(A, "attribute")
-    assert hasattr(A, "summarize_streaks")
-    assert hasattr(A, "temporal_summary")
+    assert all(callable(fn) for fn in (
+        summarize, attribute, summarize_streaks, temporal_summary,
+    ))
