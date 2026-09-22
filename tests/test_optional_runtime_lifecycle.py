@@ -50,7 +50,7 @@ assert not credential_attempts
     run = common + """
 missing = (
     "extensions", "aletheia.learning", "aletheia.knowledge",
-    "aletheia.counterfactual", "aletheia.observation_lab", "aletheia.telegram",
+    "aletheia.counterfactual", "aletheia.observation_lab",
 )
 attempted = set()
 class MissingOptional(importlib.abc.MetaPathFinder):
@@ -82,7 +82,7 @@ async def check():
     assert loader.load_config(persist_migrations=False).runtime.paused is True
 
 asyncio.run(check())
-assert {"extensions", "aletheia.learning", "aletheia.knowledge", "aletheia.telegram"} <= attempted
+assert {"extensions", "aletheia.learning", "aletheia.knowledge"} <= attempted
 assert not any(name == root or name.startswith(root + ".") for name in sys.modules for root in missing)
 assert not credential_attempts
 """

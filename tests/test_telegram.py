@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-import aletheia.telegram.bot as bot_module
+import extensions.telegram.bot as bot_module
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.telegram.bot import TelegramBot
+from extensions.telegram.bot import TelegramBot
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -192,7 +192,7 @@ async def test_authorization_reads_config_off_event_loop(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     import threading
 
-    import aletheia.telegram.bot as telegram
+    import extensions.telegram.bot as telegram
 
     event_loop_thread = threading.get_ident()
     reads = []

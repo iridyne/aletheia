@@ -284,8 +284,11 @@ async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
         async def send_message(self, chat_id, text, *, parse_mode="HTML"):
             sent.append((chat_id, text))
 
-    import aletheia.telegram.bot as bot_mod
+    import extensions.telegram.bot as bot_mod
     monkeypatch.setattr(bot_mod, "TelegramBot", FakeBot)
+    from aletheia import notifications
+    from extensions.telegram.delivery import send_telegram_alert
+    monkeypatch.setattr(notifications, "_telegram_sender", send_telegram_alert)
 
     from aletheia.agent_runtime import health
     # We are inside a running loop (async test). This previously scheduled an

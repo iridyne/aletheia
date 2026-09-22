@@ -157,7 +157,6 @@ open gate where stated.
 | `server` (29) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. Telegram routes now belong to the optional Telegram package. |
 | `storage` (12) | SQLite/transactions, models, repositories, migrations, event/artifact stores | Mixed canonical operational persistence and namespaced optional schemas; table use must determine ownership. |
 | `sync` (4) | Bundle export/import and conflict handling | Import is restricted to six namespaced research tables; Core Proposal and retired PS runtime rows are rejected before mutation. Artifact-category and whole-payload preflight remain separate restore/atomicity boundaries. |
-| `telegram` (3) | Configured notification/polling endpoint and optional routes | Optional external adapter; no independent execution authority. |
 | `trading` (35) | Typed Entry contracts/compiler/capture/activation plus source publication | Mixed Core Entry semantics and Serenity source orchestration; Candidate creation uses Core publication. Typed Entry Learning context belongs to Core, its optional evidence producer does not. |
 | `trust` (4) | Behavior authority, Learning safety and Live unlock | Core safety boundary. Unchanged autonomous-job classification is available without Learning; unavailable control cannot authorize those jobs. No authority expansion in #3134. |
 | `universe` (37) | Candidate selection/publication, attention and market/scanner consumers | Core Candidate semantics mixed with optional source/scanner implementations. |
@@ -168,6 +167,7 @@ open gate where stated.
 | `extensions/data` (20) | CCXT public Data, fallback chain, public sources, nine context/native collectors, IV derivation and news acquisition/analysis/API | Existing normalized Data provider and request-local acquisition; no Exchange mutation. Macro/FRED and Coinalyze retain the approved own-reference credential exception. Core caches/facts and repository owners remain unchanged. |
 | `extensions/exchanges` (18) | Generic CCXT adapter, profiles, Bitget native reads/protection, scoped auth and composition/credential ingress | Concrete Exchange boundary; normal orders remain Core Risk/Gateway/UTA commands. Retired alternate native trading clients are not retained. |
 | `extensions/model_endpoints` (6) | Official HTTP SDK transports and scoped endpoint credential/probe composition | Concrete Model boundary; Core keeps selection, task tiers, inference identity and explicit fallback. |
+| `extensions/telegram` (4) | Scoped bot token, polling, health route, delivery/DND/recipient deduplication | Optional external adapter, bound at existing CLI/Web composition roots. Web lifespan alone owns polling start/stop; commands delegate canonical Core controls. Core notifications retain local audit/error facts and inert absent-adapter dispatch, not bot construction or credential access. No former `aletheia.telegram` forwarding package. |
 | `extensions/regime` (3) | Detection, collection and cache | Optional market context; Core Universe retains persistence/publication and Risk retains verdicts. |
 
 ### Current mixed-owner evidence and remaining gates
