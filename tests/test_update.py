@@ -1297,7 +1297,7 @@ def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, 
 
     source = tmp_path / "source"
     source.mkdir()
-    for directory in ("aletheia", "tests"):
+    for directory in ("aletheia", "extensions", "tests"):
         shutil.copytree(git_ops.REPO_ROOT / directory, source / directory,
                         ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
     for filename in ("pyproject.toml", "uv.lock", "README.md"):
