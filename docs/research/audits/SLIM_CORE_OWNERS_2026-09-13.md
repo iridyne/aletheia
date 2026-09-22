@@ -11,6 +11,17 @@ follows from classification here.
 
 ## Advisory Research compartment follow-up
 
+Prediction Observer and Divergence Scanner now also live in `extensions/research`
+without forwarding modules or producer-body changes. Their separate CLI/Web
+composition block binds both through the existing registry; missing Research or
+the existing Data adapter clears both bindings, not other Research agents. The
+scheduler requires both bindings and preserves observer-then-divergence order;
+manual Prediction refresh still enqueues only the Observer. Internal import
+defects propagate. The existing normalized prediction/claim/Opportunity writes,
+Serenity evidence and same-theme grade refresh, shared Learning policy-epoch
+check, source-version dedupe, terminal filter facts and transaction/savepoint
+boundaries are preserved. This is not whole-Research absence or runtime proof.
+
 Equity Observer now also lives in `extensions/research`, retaining its unchanged
 public-data/model algorithm and observation-only Opportunity writes. CLI/Web bind
 it in the existing registry; absent Research omits the equity scheduler job and

@@ -89,7 +89,7 @@ async def test_catalog_reports_prediction_admission_state(tmp_path, monkeypatch)
 async def test_prediction_agent_defensively_rejects_disabled_config(monkeypatch):
     from types import SimpleNamespace
 
-    import aletheia.agents.prediction_observer as module
+    import extensions.research.prediction_observer as module
 
     monkeypatch.setattr(module, "load_config", lambda: SimpleNamespace(
         market_data=SimpleNamespace(prediction_enabled=False, observed_prediction_markets=["crypto"]),

@@ -15,7 +15,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _EQUITY_OBS = _ROOT / "extensions" / "research" / "equity_observer.py"
-_PRED_OBS = _ROOT / "aletheia" / "agents" / "prediction_observer.py"
+_PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
 _SYMBOLS = _ROOT / "aletheia" / "data" / "symbols.py"
 _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 
@@ -41,12 +41,12 @@ def test_equity_observer_exists_and_callable():
 @spec_claim(
     SpecClaim(
         "OBS-S02", "agent_contracts", "§4 prediction_observer", "L2a",
-        "aletheia/agents/prediction_observer.py exists and exports a callable run_prediction_observer",
+        "extensions/research/prediction_observer.py exists and exports a callable run_prediction_observer",
     ),
 )
 def test_prediction_observer_exists_and_callable():
     assert _PRED_OBS.exists(), "prediction_observer.py not found"
-    from aletheia.agents import prediction_observer
+    from extensions.research import prediction_observer
 
     assert callable(prediction_observer.run_prediction_observer)
 
