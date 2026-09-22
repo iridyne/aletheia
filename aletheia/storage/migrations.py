@@ -6405,7 +6405,7 @@ def _apply_startup_dataset_boundary_v3(db: sqlite3.Connection) -> None:
         ).fetchone()
         if exists:
             db.execute(sql)
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
 
     reindex_all(db=db, strict=True)
     db.execute("PRAGMA optimize")

@@ -359,7 +359,7 @@ def _source_artifact_matches_t0(
 ) -> bool:
     if artifact_id == envelope.anchor_entity_id:
         return True
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
@@ -412,7 +412,7 @@ def _assemble_exact_context(
     artifact_ids: list[str], target_horizon: str,
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     from aletheia.analytics.trade_attribution import build_trade_attribution_for_position
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.storage import repositories as repo
 
     recorded: dict[str, list[dict[str, Any]]] = {}

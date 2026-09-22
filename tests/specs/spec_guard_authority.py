@@ -391,7 +391,7 @@ def test_promotion_never_auto_promotes_shadow_learned():
 )
 def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import audit_auto_guards, downgrade_learned_guards_to_shadow
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -461,7 +461,7 @@ def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     "and never touches manual candidates awaiting owner review."))
 def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -543,7 +543,7 @@ def test_auto_candidate_gets_ttl_stamps():
 def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import render_frontmatter
+    from aletheia.files.frontmatter import render_frontmatter
     from aletheia.knowledge.guards import load_trading_guards
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -622,7 +622,7 @@ def test_effective_expires_at_precedence():
 def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -690,7 +690,7 @@ def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
 def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -722,7 +722,7 @@ def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
 def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics import guard_promotion as gp
     from aletheia.agent_runtime import scheduler
 

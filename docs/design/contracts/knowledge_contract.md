@@ -3,6 +3,7 @@
 > 契约级别: L2 — 规范性文档,实现依据。
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
+> Core persistence/format owners: `aletheia/storage/knowledge_index.py` · `aletheia/files/knowledge_document.py` · `aletheia/files/frontmatter.py`
 > Cross-references: `docs/governance/policies/trust_and_change_control.md §4` · `docs/design/contracts/agent_contracts.md` · `docs/design/data/data_model.md §3.C`
 > Last updated: 2026-09-07 (entry consumer retirement)
 > 当前入场只走 Candidate → Planning Generation → Planner → Compiler → Entry Plan → Risk/Gateway。旧 Ranker、trading_context/trading_decision 与入场 reflection 注入已退役；下文标明历史的知识路径只解释存量证据，不自动转接到 Planner。
@@ -11,7 +12,7 @@
 
 ## §1 入口与对象
 
-知识子系统的公开接口全部位于 `aletheia/knowledge/manager.py`。每个写入函数对应一种 `item_type`，不存在通用的 `create_item()` 入口——类型由调用方在编译时固定。
+可选知识创作的公开入口位于 `aletheia/knowledge/manager.py`。每个写入函数对应一种 `item_type`，不存在通用的 `create_item()` 入口——类型由调用方在编译时固定。Core 文档格式、历史读取与 FTS 维护不依赖该可选创作/检索模块；Operator 审计写入和已有启动迁移使用同一个 Core persistence owner。
 
 ### 1.1 创建函数
 
@@ -117,14 +118,14 @@ sort descending → return top-k Lesson dataclass
 **关键质量门**: 只有 `confidence = "high_confidence"` + `status = "active"` 的条目才能被检索——
 噪声和推测性知识永远无法进入决策 prompt (`retrieval.py:31`, `retrieval.py:219-221`)。
 
-### 3.2 `index_knowledge_item()` (`retrieval.py:78`)
+### 3.2 `index_knowledge_item()` (`aletheia/storage/knowledge_index.py`)
 
 知识写入、归档和维护路径逐项更新 `knowledge_fts`。全量 `reindex_all()` 属于显式维护操作：schema v3 migration 在采用新账本时执行一次完整重建，此后 Gateway lifespan 不再按启动次数重建。运营侧需要主动修复覆盖率时使用 `uv run aletheia knowledge reindex`；未来需要强制重建的 schema 变更必须新增 versioned migration，不能把重建重新放回普通读取或启动路径。
 
 写入路径上的索引操作:
-- 仅 `_index()` (`manager.py:48`) 中被调用——`confidence == "high_confidence"` 时才触发
-- 幂等:先 DELETE 再 INSERT，允许重建索引 (`retrieval.py:88-89`)
-- `_clean_body()` (`retrieval.py:60`) 剥除 Markdown 头部/frontmatter，只索引正文
+- 普通写入经 Core `_index()`——`confidence == "high_confidence"` 时才触发；可选 manager 与 Core Operator assessment 共用该门。显式 `reindex_all()` 保持既有 high-confidence / active-or-null 过滤和 100000 行上限。
+- 幂等:先 DELETE 再 INSERT，允许重建索引；已有事务的提交/回滚权保持由调用方持有，strict migration failure 不得被吞掉
+- Core `_clean_body()` 剥除 Markdown 头部/frontmatter，只索引正文；可选 retrieval 继续拥有 BM25/recency 评分和 advisory prompt 投影
 
 ### 3.3 `format_memory_block()` (`retrieval.py:239`)
 
@@ -385,6 +386,8 @@ memo tags。
 ## §9 FTS 完整性不变量（2026-07-01 根因分析）
 
 ### 9.1 三个根因（已复盘）
+
+以下为历史复盘。#3134 后 `_index()` 与显式 rebuild 的唯一实现属于 `storage/knowledge_index.py`；原 manager 和 Operator 消费同一 Core owner，不保留旧实现。历史问题的 confidence、持久化与索引不变量不变。
 
 2026-07-01 审计发现 FTS 记录缺失/无效由三个独立缺陷叠加造成：
 

@@ -49,7 +49,7 @@ def _mock_llm_unavailable(monkeypatch):
 def _seed_trade_case_study(
     case_id: str = "case-1", created_at: str | None = None,
 ) -> None:
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.sqlite import get_db
 
     now = created_at or datetime.now(timezone.utc).isoformat()
@@ -392,7 +392,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     )
     db.commit()
     observed_deadlines = []
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
 
     stored_case = dict(
         db.execute("SELECT * FROM knowledge_items WHERE id='case-retry'").fetchone()

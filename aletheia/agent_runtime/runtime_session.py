@@ -200,7 +200,7 @@ def _boot_commit() -> str | None:
 
 def _active_scope_id() -> str | None:
     try:
-        from aletheia.knowledge.frontmatter import parse_frontmatter
+        from aletheia.files.frontmatter import parse_frontmatter
 
         meta, _ = parse_frontmatter(_SCOPE_PATH)
         return (meta or {}).get("scope_id")

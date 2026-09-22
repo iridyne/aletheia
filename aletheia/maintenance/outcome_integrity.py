@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any
-from aletheia.knowledge.document import canonicalize_inline_document
+from aletheia.files.knowledge_document import canonicalize_inline_document
 
 from aletheia.analytics.learning_window import (
     CLEAN_WINDOW_ANCHOR_ID,
@@ -162,7 +162,7 @@ def remediate_outcome_history(*, dry_run: bool = True) -> dict[str, Any]:
     result["classification"]["applied"] = len(classifications)
     result["archive"]["applied"] = len(archives)
     try:
-        from aletheia.knowledge.retrieval import reindex_all
+        from aletheia.storage.knowledge_index import reindex_all
         result["reindexed"] = reindex_all()
     except Exception:
         result["reindexed"] = None

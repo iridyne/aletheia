@@ -9,7 +9,7 @@ import math
 from numbers import Real
 from typing import Literal, Mapping
 
-from aletheia.analytics.temporal import parse_utc_instant
+from aletheia.utils.dt import parse_utc_instant
 from aletheia.config.schema import UniverseConfig
 
 

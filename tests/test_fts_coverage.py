@@ -9,7 +9,8 @@ from aletheia.knowledge.manager import (
     create_post_trade_review,
     create_trade_case_study,
 )
-from aletheia.knowledge.retrieval import reindex_all, retrieve_lessons
+from aletheia.storage.knowledge_index import reindex_all
+from aletheia.knowledge.retrieval import retrieve_lessons
 
 
 def setup_test_env(tmp_path, monkeypatch):

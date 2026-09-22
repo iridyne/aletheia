@@ -190,7 +190,7 @@ def _check_foreign_keys(cfg) -> tuple[bool, str]:
 
 def _load_scope() -> dict | None:
     try:
-        from aletheia.knowledge.frontmatter import parse_frontmatter
+        from aletheia.files.frontmatter import parse_frontmatter
 
         metadata, _ = parse_frontmatter(_SCOPE_PATH)
         return metadata or None

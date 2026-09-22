@@ -2367,7 +2367,7 @@ def get_learning_funnel():
     contradiction_inspected: int | None = None
     contradiction_truncated: bool | None = None
     try:
-        from aletheia.knowledge.document import read_knowledge_document
+        from aletheia.files.knowledge_document import read_knowledge_document
         from aletheia.knowledge.manager import detect_contradictions
 
         # COUNT(*) OVER() and the bounded rows come from one SQLite statement,
