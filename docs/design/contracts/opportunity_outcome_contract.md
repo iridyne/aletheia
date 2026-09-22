@@ -66,6 +66,12 @@ MFE/MAE 是毛路径指标，用来区分方向错误与出入场表达错误；
 
 ## 6. 结算状态与证据保全
 
+Position X 的 `perp_structure_shadow_outcomes` 是可选 Data 的独立观测 cohort。
+CLI/Web 将其异步结算器绑定到 Core Universe outcome recorder 的精确 callback；
+缺少该 producer 时跳过这项补充，不阻断 canonical forward/filter settlement，
+不把未测量 shadow 行改成失败。已安装时沿用原尾部调用次序、批量上限及非致命异常处理；
+这不是 Portfolio 真实持仓 Outcome 的投递/重试机制。
+
 `universe_forward_outcomes`、`filter_candidate_outcomes` 和
 `perp_structure_shadow_outcomes` 共用同一套 `status` 取值，其中只有一个是终态：
 

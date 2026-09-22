@@ -444,7 +444,7 @@ def test_owner_aggregate_import_seeds_observation_only_shadow_outcomes(tmp_path,
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
     from aletheia.storage.sqlite import get_db
 
     payload = {
@@ -486,7 +486,7 @@ def test_owner_aggregate_import_seeds_observation_only_shadow_outcomes(tmp_path,
 
 
 def test_structure_source_status_is_honest_without_owner_import():
-    from aletheia.data.collectors.vergex_structure import structure_source_status
+    from extensions.data.collectors.vergex_structure import structure_source_status
 
     status = structure_source_status()
     assert status["mode"] == "owner_aggregate_import"
@@ -500,7 +500,7 @@ def test_sanitized_holder_batch_persists_only_aggregate_evidence(tmp_path, monke
     from tests.test_position_structure_features import _position_x_markets
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
     from aletheia.storage.sqlite import get_db
 
     result = ingest_owner_aggregate({
@@ -532,7 +532,7 @@ def test_sanitized_holder_batch_validation_is_atomic(tmp_path, monkeypatch):
     from tests.test_position_structure_features import _position_x_markets
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
     from aletheia.storage.sqlite import get_db
 
     markets = _position_x_markets()
@@ -609,7 +609,7 @@ def test_position_x_p3_evaluator_compares_gross_baselines_without_authority(tmp_
 
     setup_env(tmp_path, monkeypatch)
     _insert_position_x_evaluation_fixture()
-    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    from extensions.data.perp_structure_shadow import evaluate_position_x_shadow
 
     result = evaluate_position_x_shadow(
         policy_epoch_id="p3-epoch",
@@ -634,7 +634,7 @@ def test_position_x_p3_evaluator_rejects_post_outcome_imports(tmp_path, monkeypa
 
     setup_env(tmp_path, monkeypatch)
     _insert_position_x_evaluation_fixture(retrospective=True)
-    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    from extensions.data.perp_structure_shadow import evaluate_position_x_shadow
 
     result = evaluate_position_x_shadow(
         policy_epoch_id="p3-epoch",
@@ -670,7 +670,7 @@ def test_position_x_p3_evaluator_rejects_post_outcome_imports(tmp_path, monkeypa
 def test_position_x_p3_requires_fixed_horizon_settlement_provenance(
     price_source, settlement_lag_sec, expected,
 ):
-    from aletheia.data.perp_structure_shadow import _prospective_exclusion
+    from extensions.data.perp_structure_shadow import _prospective_exclusion
 
     as_of = datetime(2026, 7, 20, tzinfo=timezone.utc)
     due = as_of + timedelta(hours=1)
@@ -699,7 +699,7 @@ def test_position_x_p3_invalid_settlement_provenance_cannot_make_readiness(
 
     setup_env(tmp_path, monkeypatch)
     _insert_position_x_evaluation_fixture()
-    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    from extensions.data.perp_structure_shadow import evaluate_position_x_shadow
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
@@ -724,7 +724,7 @@ def test_owner_aggregate_rejects_sensitive_account_fields(tmp_path, monkeypatch)
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
 
     with pytest.raises(ValueError, match="forbidden sensitive field"):
         ingest_owner_aggregate({
@@ -745,8 +745,8 @@ async def test_structure_shadow_outcome_settles_without_decision_influence(
 
     setup_env(tmp_path, monkeypatch)
     import aletheia.universe.outcome_recorder as outcome_recorder
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
-    from aletheia.data.perp_structure_shadow import (
+    from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
+    from extensions.data.perp_structure_shadow import (
         settle_due_perp_structure_outcomes,
         shadow_window_status,
     )

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from aletheia.data.context_builder import build_position_x_agent_context
-from aletheia.data.position_x import (
+from extensions.data.position_x import (
     compute_cross_sectional_percentiles,
     compute_position_x_batch,
     compute_position_x_composite_z,

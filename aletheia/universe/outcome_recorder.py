@@ -16,6 +16,7 @@ Self-evolution Tier 1:
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -24,6 +25,14 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import UniverseForwardOutcome
 
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
+
+_structure_shadow_settler: Callable[..., Awaitable[int]] | None = None
+
+
+def configure_structure_shadow_settler(settler: Callable[..., Awaitable[int]] | None) -> None:
+    """Bind the separate optional measurement cohort, never Position settlement."""
+    global _structure_shadow_settler
+    _structure_shadow_settler = settler
 
 # Tier 1: loss threshold for auto guard_candidate generation
 _GUARD_HORIZON = "4h"
@@ -548,10 +557,8 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
     # Position X rows are a separate, observation-only cohort. They reuse the
     # exact-instrument price path but never enter scanner or Operator ranking.
     try:
-        from aletheia.data.perp_structure_shadow import (
-            settle_due_perp_structure_outcomes,
-        )
-        total_settled += await settle_due_perp_structure_outcomes(limit=100)
+        if _structure_shadow_settler is not None:
+            total_settled += await _structure_shadow_settler(limit=100)
     except Exception as exc:
         logger.warning("perp structure shadow settlement failed (non-fatal): %s", exc)
 

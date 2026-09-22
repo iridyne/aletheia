@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from aletheia.data.position_x import (
+from extensions.data.position_x import (
     extract_position_x_knowledge_cards,
     extract_position_x_material_bundle,
     load_position_x_materials,

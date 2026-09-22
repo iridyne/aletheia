@@ -13,7 +13,6 @@ def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog
     import builtins
     from unittest.mock import AsyncMock
 
-    from aletheia.data import perp_structure_shadow
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseForwardOutcome
     from aletheia.storage.sqlite import get_db
@@ -36,7 +35,7 @@ def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog
         }},
     ))
     shadow = AsyncMock(return_value=2)
-    monkeypatch.setattr(perp_structure_shadow, "settle_due_perp_structure_outcomes", shadow)
+    monkeypatch.setattr(outcome_recorder, "_structure_shadow_settler", shadow)
     real_import = builtins.__import__
 
     def absent(name, *args, **kwargs):

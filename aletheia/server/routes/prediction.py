@@ -167,10 +167,11 @@ async def get_prediction_market_history(market_id: str, interval: str = "1h"):
             raise HTTPException(404, "Market not found")
         ext_id = market.get("external_market_id", "")
         if ext_id:
-            from aletheia.data.polymarket_provider import fetch_market_history
+            from aletheia.data.providers import read_prediction_history
             try:
-                history = await fetch_market_history(ext_id, interval=interval)
-                return {"source": "polymarket_api", "points": history}
+                history = await read_prediction_history(ext_id, interval=interval)
+                if history is not None:
+                    return {"source": "polymarket_api", "points": history}
             except Exception:
                 pass
         return {"source": "local", "points": []}
