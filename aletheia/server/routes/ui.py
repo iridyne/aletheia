@@ -322,7 +322,7 @@ def shell_bootstrap(response: Response):
     })
     alignment_value = alignment["value"]
     current_commit = _safe("current_commit", _cached_head_commit, None)
-    packaged = _safe("packaged_mode", lambda: __import__("aletheia.update.packaged_commands", fromlist=["is_packaged_mode"]).is_packaged_mode(), False)
+    packaged = _safe("packaged_mode", lambda: __import__("aletheia.update.packaged", fromlist=["is_packaged_mode"]).is_packaged_mode(), False)
     payload = {
         "schema_version": "ui-shell-v1",
         "generated_at": _now(),
@@ -343,7 +343,7 @@ def shell_bootstrap(response: Response):
         "operator": operator["value"],
         "connectivity": connectivity["value"] if connectivity["reason"] is None else {"state": "unknown", "reason": connectivity["reason"]},
         "health": {"status": health["value"].get("status", "not_available"), "issues": health["value"].get("issues", [])[:3], "availability": health["availability"], "reason": health["reason"]},
-        "runtime": {"version": __version__, "boot_commit": _safe("boot_commit", lambda: __import__("aletheia.agent_runtime.build_info", fromlist=["get_boot_commit"]).get_boot_commit(), None)["value"], "current_commit": current_commit["value"], "mode": "packaged" if packaged["value"] else "development", "update": _safe("update", lambda: __import__("aletheia.update.applier", fromlist=["update_progress"]).update_progress(), {})["value"]},
+        "runtime": {"version": __version__, "boot_commit": _safe("boot_commit", lambda: __import__("aletheia.agent_runtime.build_info", fromlist=["get_boot_commit"]).get_boot_commit(), None)["value"], "current_commit": current_commit["value"], "mode": "packaged" if packaged["value"] else "development", "update": _safe("update", lambda: __import__("ops.update.applier", fromlist=["update_progress"]).update_progress(), {})["value"]},
         "ticker": ticker["value"],
     }
     response.headers["Cache-Control"] = "no-store"

@@ -233,8 +233,9 @@ def doctor(
     fetch_outcome = None
     if fetch:
         from aletheia.update import git_ops
+        from ops.update.git_ops import fetch as fetch_source
         if git_ops.is_repo():
-            result = git_ops.fetch(git_ops.current_branch() or "master")
+            result = fetch_source(git_ops.current_branch() or "master")
             fetch_outcome = _fetch_outcome(attempted=True, result=result)
             if not json_out:
                 typer.echo("fetched origin." if result.get("ok") else f"fetch skipped: {result.get('reason')}")

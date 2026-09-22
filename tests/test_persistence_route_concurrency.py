@@ -31,7 +31,7 @@ def test_archive_handlers_use_fastapi_threadpool(handler_name: str) -> None:
 @pytest.mark.anyio
 async def test_backup_request_does_not_starve_event_loop(monkeypatch, tmp_path) -> None:
     """A slow backup must not freeze unrelated work on the API event loop."""
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     from aletheia.server.app import app
 
     started = threading.Event()

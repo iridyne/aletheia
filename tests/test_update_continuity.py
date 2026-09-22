@@ -7,7 +7,7 @@ def test_observation_ids_use_canonical_lab_generations(monkeypatch):
 
     from extensions.observation_lab import canonical
     from extensions.observation_lab.db import get_lab_db
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     monkeypatch.setattr(
         canonical,
@@ -81,7 +81,7 @@ TARGET = "abc111"
 
 
 def _compare(before, after, *, expected_target=TARGET, restart=True):
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
     return compare_update_continuity(before, after, expected_target=expected_target, restart=restart)
 
 

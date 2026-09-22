@@ -20,7 +20,7 @@ _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 _REQUIRED_ROOT_FILES = (Path("pyproject.toml"), Path("uv.lock"))
 _OPTIONAL_ROOT_FILES = (Path("README.md"), Path("LICENSE"), Path("LICENSE.md"))
-_REQUIRED_TREES = (Path("aletheia"), Path("extensions"), Path("scripts/runtime"))
+_REQUIRED_TREES = (Path("aletheia"), Path("extensions"), Path("ops"), Path("legacy"), Path("scripts/runtime"))
 _EXCLUDED_DIR_NAMES = {
     "__pycache__",
     ".pytest_cache",

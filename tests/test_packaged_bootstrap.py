@@ -8,7 +8,7 @@ import stat
 
 import pytest
 
-from aletheia.update import bootstrap, packaged
+from ops.update import bootstrap, packaged
 
 
 def _sha256(path: Path) -> str:

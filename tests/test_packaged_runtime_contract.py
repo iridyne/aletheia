@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -210,6 +211,11 @@ def test_pyinstaller_contract_is_one_folder_and_includes_dashboard():
     assert "dashboard_static" in source
     assert "console=True" in source
     assert "onefile" not in source.lower()
+    assert 'for package in ("aletheia", "extensions", "ops", "legacy"):' in source
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert set(project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]) == {
+        "aletheia", "extensions", "ops", "legacy",
+    }
 
 
 def test_frozen_child_commands_reenter_the_payload_instead_of_treating_it_as_python(tmp_path):
@@ -255,7 +261,7 @@ def test_gateway_runner_import_survives_frozen_popen_adapter(monkeypatch):
 
 
 def test_candidate_preflight_is_distinct_from_real_data_activation():
-    staging = (ROOT / "aletheia" / "update" / "packaged.py").read_text(encoding="utf-8")
+    staging = (ROOT / "ops" / "update" / "packaged.py").read_text(encoding="utf-8")
     entrypoint = (ROOT / "scripts" / "release" / "pyinstaller_entry.py").read_text(
         encoding="utf-8"
     )
@@ -271,10 +277,11 @@ def test_legacy_candidate_validation_is_preflight_only_until_request_exists(
     monkeypatch, tmp_path, capsys
 ):
     entrypoint = _entrypoint_module()
-    from aletheia.update import packaged, packaged_commands
+    from aletheia.update import packaged as packaged_facts
+    from ops.update import packaged, packaged_commands
 
     calls: list[str] = []
-    monkeypatch.setattr(packaged, "host_root", lambda: tmp_path)
+    monkeypatch.setattr(packaged_facts, "host_root", lambda: tmp_path)
     monkeypatch.setattr(
         packaged,
         "validate_current_data",

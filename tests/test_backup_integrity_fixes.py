@@ -38,7 +38,7 @@ def _make_valid_archive(tmp_path: Path, label: str = "test") -> Path:
         conn.commit()
         conn.close()
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     return BackupService(data_dir=tmp_path).create_backup(label=label)
 
 
@@ -175,7 +175,7 @@ def test_verify_valid_archive_still_passes(tmp_path):
 def test_create_backup_rejects_path_traversal_label(tmp_path):
     """#281: a label containing '..' must raise ValueError before any file is created."""
     (tmp_path / "backups").mkdir()
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     svc = BackupService(data_dir=tmp_path)
     with pytest.raises(ValueError, match="invalid"):
         svc.create_backup(label="../escape")
@@ -185,7 +185,7 @@ def test_create_backup_rejects_path_traversal_label(tmp_path):
 def test_create_backup_rejects_slash_in_label(tmp_path):
     """#281: a label with a path separator must be rejected."""
     (tmp_path / "backups").mkdir()
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     svc = BackupService(data_dir=tmp_path)
     with pytest.raises(ValueError, match="invalid"):
         svc.create_backup(label="sub/dir")
@@ -194,7 +194,7 @@ def test_create_backup_rejects_slash_in_label(tmp_path):
 def test_create_backup_rejects_whitespace_label(tmp_path):
     """#281: a label containing whitespace is not a valid filename component."""
     (tmp_path / "backups").mkdir()
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     svc = BackupService(data_dir=tmp_path)
     with pytest.raises(ValueError, match="invalid"):
         svc.create_backup(label="has space")
@@ -209,7 +209,7 @@ def test_create_backup_accepts_normal_label(tmp_path):
     conn.close()
     (tmp_path / "backups").mkdir()
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup(label="my-backup_01.v2")
     assert archive.exists()
     assert archive.parent == tmp_path / "backups"
@@ -242,10 +242,10 @@ def test_concurrent_backups_have_distinct_archive_paths(tmp_path):
         call_idx[0] += 1
         return v
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     svc = BackupService(data_dir=tmp_path)
 
-    with patch("aletheia.backup.service.uuid.uuid4", side_effect=_fixed_uuid4):
+    with patch("ops.backup.service.uuid.uuid4", side_effect=_fixed_uuid4):
         a1 = svc.create_backup(label="dup")
         a2 = svc.create_backup(label="dup")
 
@@ -279,7 +279,7 @@ def test_restore_uses_snapshot_replacing_source_has_no_effect(tmp_path):
     conn2.commit()
     conn2.close()
     (tmp_path / "backups2").mkdir()
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     evil_archive = BackupService(data_dir=tmp_path / "evil_data").create_backup.__func__
     # Simpler: build a replacement archive manually
     with tempfile.TemporaryDirectory() as staging2:
@@ -296,7 +296,7 @@ def test_restore_uses_snapshot_replacing_source_has_no_effect(tmp_path):
             tar.add(sp / "bundle", arcname="bundle")
 
     # Intercept _copy_to_snapshot to also replace the source archive mid-verify
-    from aletheia.backup.restore import RestoreService
+    from ops.backup.restore import RestoreService
     original_copy = RestoreService._copy_to_snapshot
 
     replaced = False
@@ -357,8 +357,8 @@ def test_restore_rollback_leaves_target_absent_on_failure(tmp_path):
             raise OSError("injected target copy failure")
         return original_copy2(src, dst, **kw)
 
-    from aletheia.backup.restore import RestoreService
-    with patch("aletheia.backup.restore.shutil.copy2", side_effect=_fail_on_second):
+    from ops.backup.restore import RestoreService
+    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_on_second):
         result = RestoreService().restore(archive, target)
 
     assert not result.success
@@ -399,8 +399,8 @@ def test_restore_rollback_restores_overwritten_file(tmp_path):
             raise OSError("injected target copy failure")
         return original_copy2(src, dst, **kw)
 
-    from aletheia.backup.restore import RestoreService
-    with patch("aletheia.backup.restore.shutil.copy2", side_effect=_fail_on_second):
+    from ops.backup.restore import RestoreService
+    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_on_second):
         result = RestoreService().restore(archive, target)
 
     assert not result.success
@@ -431,7 +431,7 @@ def test_restore_replaces_the_audit_generation_set(tmp_path, monkeypatch):
     (target_logs / "audit.jsonl.2").write_text("target-newer\n", encoding="utf-8")
     (target_logs / "audit.jsonl").write_text("target-current\n", encoding="utf-8")
 
-    from aletheia.backup.restore import RestoreService
+    from ops.backup.restore import RestoreService
 
     result = RestoreService().restore(archive, target)
 
@@ -464,9 +464,9 @@ def test_restore_rolls_back_removed_audit_generation(tmp_path):
             raise OSError("injected target copy failure")
         return original_copy2(src, dst, **kwargs)
 
-    from aletheia.backup.restore import RestoreService
+    from ops.backup.restore import RestoreService
 
-    with patch("aletheia.backup.restore.shutil.copy2", side_effect=_fail_target_db_copy):
+    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_target_db_copy):
         result = RestoreService().restore(archive, target)
 
     assert not result.success
@@ -487,7 +487,7 @@ def test_failed_backup_leaves_no_archive(tmp_path):
     conn.close()
     (tmp_path / "backups").mkdir()
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
 
     original_tarfile_open = tarfile.open
     call_count = [0]
@@ -507,7 +507,7 @@ def test_failed_backup_leaves_no_archive(tmp_path):
         return original_tarfile_open(path, mode, *args, **kwargs)
 
     svc = BackupService(data_dir=tmp_path)
-    with patch("aletheia.backup.service.tarfile.open", side_effect=_patched_open):
+    with patch("ops.backup.service.tarfile.open", side_effect=_patched_open):
         with pytest.raises(OSError, match="injected tar write failure"):
             svc.create_backup(label="partial-test")
 
@@ -527,7 +527,7 @@ def test_successful_backup_publishes_exactly_one_archive(tmp_path):
     conn.close()
     (tmp_path / "backups").mkdir()
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     svc = BackupService(data_dir=tmp_path)
     archive = svc.create_backup(label="atomic-ok")
     assert archive.exists()

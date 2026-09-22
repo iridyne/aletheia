@@ -193,7 +193,7 @@ def compact_database_command(
     """Reclaim pages and optimize eligible physical table layouts offline."""
     import time
 
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     started = time.perf_counter()
 
@@ -282,7 +282,7 @@ def requeue_unobserved_settlements(
     unmeasurable. Resets status and settled_at only; never touches economics,
     deletes history, or reopens a row that carries a real verdict.
     """
-    from aletheia.maintenance.settlement_requeue import (
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage.migrations import assert_migrations_current

@@ -369,8 +369,8 @@ def test_analytics_routes_expose_raw_and_genuine_cohorts():
     )
 )
 def test_history_remediation_tool_declares_non_destructive_protocol():
-    assert importlib.util.find_spec("aletheia.maintenance.outcome_integrity") is not None
-    source = _source("aletheia/maintenance/outcome_integrity.py")
+    assert importlib.util.find_spec("ops.maintenance.outcome_integrity") is not None
+    source = _source("ops/maintenance/outcome_integrity.py")
     for token in (
         "dry_run", "semantics_version", "superseded_by", "archive",
         "compensation_candidates", "owner_approval_required",

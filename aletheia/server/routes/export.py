@@ -255,7 +255,7 @@ def get_export_catalog():
         "managed_recovery": {
             "backup_api": "/api/persistence/backups",
             "verify_api": "/api/persistence/backups/verify",
-            "restore_service": "aletheia.backup.restore.RestoreService",
+            "restore_service": "ops.backup.restore.RestoreService",
         },
     }
 
@@ -375,7 +375,7 @@ def _build_zip(tables: list[str], include_config: bool, preset_name: str) -> Pat
                     "reason": "CSV diagnostic exports are not dependency-closed restore inputs.",
                     "backup_api": "/api/persistence/backups",
                     "verify_api": "/api/persistence/backups/verify",
-                    "restore_service": "aletheia.backup.restore.RestoreService",
+                    "restore_service": "ops.backup.restore.RestoreService",
                 },
                 "agent_trace": {
                     "sources": [

@@ -35,7 +35,7 @@ def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
         from aletheia.storage import repositories as repo
         repo.execute_write("UPDATE observation_delivery_outbox SET acknowledged_at='unproven' WHERE receipt_id='pending'")
     from extensions.observation_lab.update_settlement import prove_applied_delivery_suffix
-    from aletheia.update.continuity import _checkpoint_preflight_verdict
+    from ops.update.continuity import _checkpoint_preflight_verdict
     proof = prove_applied_delivery_suffix()
     assert proof["ok"] is (defect is None)
     verdict = _checkpoint_preflight_verdict({"verified": {"ok": False, "mismatch_components": ["lab_state"]}, "settleable": proof})
@@ -52,7 +52,7 @@ def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
 
 
 def test_recovery_preflight_cannot_skip_stopping_producers(monkeypatch):
-    from aletheia.update import continuity, applier
+    from ops.update import continuity, applier
     from tests.test_update_observer_continuity import _snapshot
     before = _snapshot()
     before["observation"]["checkpoint"] = {

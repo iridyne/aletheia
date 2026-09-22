@@ -1,7 +1,7 @@
 """Owner-approved #3111 recovery for one proven DOGE adoption/native overlap.
 
-Dry run: uv run python -m aletheia.maintenance.repair_doge_adoption_overlap --snapshot PATH
-Apply:   uv run python -m aletheia.maintenance.repair_doge_adoption_overlap --apply PATH
+Dry run: uv run python -m ops.maintenance.repair_doge_adoption_overlap --snapshot PATH
+Apply:   uv run python -m ops.maintenance.repair_doge_adoption_overlap --apply PATH
 
 No exchange mutations; no generic symbol/position recovery entry point.
 """

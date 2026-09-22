@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
     from extensions.observation_lab import runner
-    from aletheia.update import applier
+    from ops.update import applier
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
     monkeypatch.setattr(
@@ -24,7 +24,8 @@ def _settled_update_boundary(monkeypatch):
 def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch):
     from aletheia.config import loader
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     pre_pull = AletheiaConfig()
     pre_pull.update.branch = "master"
@@ -35,7 +36,7 @@ def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch
     latest.runtime.paused = True  # concurrent/unrelated durable change
 
     monkeypatch.setattr(applier, "load_config", lambda: pre_pull)
-    monkeypatch.setattr(git_ops, "fetch", lambda branch: {"ok": True})
+    monkeypatch.setattr(git_mutations, "fetch", lambda branch: {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
     monkeypatch.setattr(git_ops, "remote_commit", lambda branch: "new-sha")
     monkeypatch.setattr(git_ops, "behind_count", lambda branch: 1)
@@ -57,7 +58,7 @@ def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch
 
 
 def test_target_fresh_metadata_helper_passes_only_commit_and_data_root(monkeypatch, tmp_path):
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     calls = []
 
@@ -89,7 +90,7 @@ def test_target_fresh_metadata_helper_passes_only_commit_and_data_root(monkeypat
 
 
 def test_target_fresh_reanchors_checkpoint_with_target_modules(monkeypatch, tmp_path):
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     seen = {}
 
@@ -122,7 +123,7 @@ def test_target_fresh_reanchors_checkpoint_with_target_modules(monkeypatch, tmp_
 
 
 def test_target_checkpoint_delta_allows_only_migration_bound_lab_changes():
-    from aletheia.update.target_fresh import checkpoint_delta_allowed
+    from ops.update.target_fresh import checkpoint_delta_allowed
 
     last = SimpleNamespace(joint_fingerprint="trusted")
     assert checkpoint_delta_allowed(
@@ -154,7 +155,7 @@ def test_target_checkpoint_delta_allows_only_migration_bound_lab_changes():
 
 
 def test_target_fresh_smoke_loads_target_smoke_module(monkeypatch, tmp_path):
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     seen = {}
 
@@ -175,12 +176,12 @@ def test_target_fresh_smoke_loads_target_smoke_module(monkeypatch, tmp_path):
     )
 
     assert result["ok"] is True
-    assert "from aletheia.update.smoke import run_smoke_check" in seen["command"][2]
+    assert "from ops.update.smoke import run_smoke_check" in seen["command"][2]
     assert seen["kwargs"]["cwd"] == str(tmp_path)
 
 
 def test_target_fresh_dashboard_validation_loads_target_validator(monkeypatch, tmp_path):
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     seen = {}
 
@@ -208,7 +209,8 @@ def test_target_fresh_dashboard_validation_loads_target_validator(monkeypatch, t
 
 def test_apply_update_persists_target_commit_without_saving_prepull_config(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     pre_pull = AletheiaConfig()
     pre_pull.update.enabled = True
@@ -221,7 +223,7 @@ def test_apply_update_persists_target_commit_without_saving_prepull_config(monke
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "pull",
         lambda branch: {"ok": True, "remote_commit": "target-sha"},
     )
@@ -278,7 +280,7 @@ def _snapshot(*, disk_sha: str, health: str = "healthy") -> dict:
 
 
 def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
-    from aletheia.update import applier, continuity, target_fresh
+    from ops.update import applier, continuity, target_fresh
 
     before = _snapshot(disk_sha="old-sha")
     before["capture_source"] = "in_process"
@@ -326,7 +328,8 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
 
 def test_metadata_failure_does_not_turn_applied_update_into_false_rollback(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     cfg = AletheiaConfig()
     cfg.update.enabled = True
@@ -336,7 +339,7 @@ def test_metadata_failure_does_not_turn_applied_update_into_false_rollback(monke
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
-    monkeypatch.setattr(git_ops, "pull", lambda branch: {"ok": True, "remote_commit": "target-sha"})
+    monkeypatch.setattr(git_mutations, "pull", lambda branch: {"ok": True, "remote_commit": "target-sha"})
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/x.py"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     monkeypatch.setattr(applier, "write_audit", lambda *args, **kwargs: None)

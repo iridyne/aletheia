@@ -444,7 +444,7 @@ def test_core_account_environment_uses_registered_execution_identity():
         SRC / "server" / "routes" / "data.py",
         SRC / "portfolio" / "position_manager.py",
         SRC / "portfolio" / "pnl.py",
-        SRC / "maintenance" / "repair_administrative_close.py",
+        PROJECT_ROOT / "ops" / "maintenance" / "repair_administrative_close.py",
         SRC / "agent_runtime" / "scheduler.py",
         SRC / "risk" / "engine.py",
     )

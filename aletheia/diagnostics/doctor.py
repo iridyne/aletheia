@@ -2116,7 +2116,7 @@ def _probe_reconciled_ratio(report: Report) -> None:
 def _probe_outcome_history_integrity(report: Report) -> None:
     """Read-only cleanup readiness for classified history and derived artifacts."""
     try:
-        from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+        from ops.maintenance.outcome_integrity import remediate_outcome_history
 
         plan = remediate_outcome_history(dry_run=True)
         classifications = int(plan["classification"]["planned"])
@@ -3673,7 +3673,7 @@ def _probe_filter_evidence(report: Report) -> None:
         # that is still pending and will drain on its own; this one describes
         # evidence that is gone and stays gone until someone reclaims it, so it is
         # the one that has to be visible.
-        from aletheia.maintenance.settlement_requeue import (
+        from ops.maintenance.settlement_requeue import (
             count_unobserved_failed_outcomes,
         )
 

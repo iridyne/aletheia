@@ -58,7 +58,7 @@ def test_backup_captures_wal_committed_rows(tmp_path):
     if not (tmp_path / "app.db-wal").exists():
         pytest.skip("No WAL sidecar present — SQLite auto-checkpointed early")
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup(label="wal-canary")
 
     # Extract the archive and open the copied app.db in isolation.
@@ -89,7 +89,7 @@ def test_backup_fails_on_non_sqlite_app_db(tmp_path):
     (tmp_path / "app.db").write_bytes(b"not a sqlite file at all")
 
     import sqlite3
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
 
     svc = BackupService(data_dir=tmp_path)
     with pytest.raises(sqlite3.DatabaseError):

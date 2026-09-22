@@ -308,7 +308,7 @@ def viability_list(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """List persisted viability reports."""
-    from aletheia.economics.historical_viability import list_viability_reports
+    from legacy.historical_viability import list_viability_reports
 
     rows = list_viability_reports(scope=scope, limit=limit, offset=offset)
     if output_json:
@@ -335,7 +335,7 @@ def viability_show(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Show one persisted viability report."""
-    from aletheia.economics.historical_viability import get_viability_report, render_viability
+    from legacy.historical_viability import get_viability_report, render_viability
 
     row = get_viability_report(report_id)
     if row is None:

@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
-from aletheia.update import applier
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 _LOOPBACK_UI_ORIGINS = (
@@ -51,7 +50,7 @@ def _same_origin_dashboard_confirmation(request: Request) -> bool:
 
 
 def _is_packaged_update_mode() -> bool:
-    from aletheia.update.packaged_commands import is_packaged_mode
+    from aletheia.update.packaged import is_packaged_mode
 
     return is_packaged_mode()
 
@@ -59,6 +58,7 @@ def _is_packaged_update_mode() -> bool:
 @router.get("/status")
 def update_status():
     """Return local state only; network checks require an explicit human action."""
+    from ops.update import applier
 
     state = applier.update_progress()
     if state.get("mode") == "source_release":
@@ -68,12 +68,14 @@ def update_status():
 
 @router.post("/check")
 def update_check():
+    from ops.update import applier
     return applier.check_for_update()
 
 
 @router.get("/progress")
 def update_progress():
     """Read durable local update progress without repeating a network check."""
+    from ops.update import applier
 
     return applier.update_progress()
 
@@ -84,6 +86,7 @@ class ApplyBody(BaseModel):
 
 @router.post("/apply")
 def update_apply(request: Request, body: ApplyBody = ApplyBody()):
+    from ops.update import applier
     _reject_preview_update()
     if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {
@@ -138,6 +141,7 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
 
 @router.post("/rollback")
 def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
+    from ops.update import applier
     _reject_preview_update()
     if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {

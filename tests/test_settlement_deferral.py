@@ -651,7 +651,7 @@ def test_requeue_restores_only_the_rows_that_were_never_observed():
     write-off before any price arrived. A row that failed WITH an observation
     behind it (the 10x contamination guard) was a real verdict and must stay.
     """
-    from aletheia.maintenance.settlement_requeue import (
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage.sqlite import get_db
@@ -740,7 +740,7 @@ def test_doctor_reports_destroyed_evidence_and_how_to_reclaim_it():
 
 
 def test_requeue_dry_run_reports_without_writing():
-    from aletheia.maintenance.settlement_requeue import (
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage.sqlite import get_db

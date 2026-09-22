@@ -55,7 +55,7 @@ def test_connectivity_resume_defers_when_llm_down(monkeypatch):
 
 def test_safe_env_strips_all_credential_prefixes(monkeypatch):
     """#136: update subprocesses must not inherit any exchange/API credential env var."""
-    import aletheia.update.applier as applier
+    import ops.update.applier as applier
     for k in ("BITGET_X", "OKX_X", "BINANCE_X", "OPENAI_X", "ANTHROPIC_X", "LLM_X",
               "COINALYZE_API_KEY", "FRED_API_KEY", "TELEGRAM_BOT_TOKEN"):
         monkeypatch.setenv(k, "secret")

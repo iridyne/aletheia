@@ -100,7 +100,7 @@ def _setup_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
 
 
 def test_backfill_lab_authority_does_not_use_legacy_experiment_floor(monkeypatch):
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
     from extensions.observation_lab import canonical
 
     monkeypatch.setattr(
@@ -115,7 +115,7 @@ def test_backfill_lab_authority_does_not_use_legacy_experiment_floor(monkeypatch
 
 
 def test_backfill_authority_read_failure_is_not_treated_as_empty_floor(monkeypatch):
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
     from extensions.observation_lab import canonical
 
     def unavailable(*, db):
@@ -131,7 +131,7 @@ def test_backfill_authority_read_failure_is_not_treated_as_empty_floor(monkeypat
 def test_backup_created_before_first_mutation(tmp_path, monkeypatch):
     """#1383: run(apply=True) must create app.db.pre-retention-backup before any DELETE."""
     import aletheia.config.loader as loader
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     _db_file, _conn = _setup_db(tmp_path)
@@ -170,7 +170,7 @@ def test_backup_created_before_first_mutation(tmp_path, monkeypatch):
 def test_backup_is_sqlite_online_copy(tmp_path, monkeypatch):
     """The backup must be a valid independent SQLite database (not just bytes)."""
     import aletheia.config.loader as loader
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     _db_file, _conn = _setup_db(tmp_path)
@@ -201,7 +201,7 @@ def test_backup_is_sqlite_online_copy(tmp_path, monkeypatch):
 def test_postflight_failure_triggers_restore_attempt(tmp_path, monkeypatch):
     """#1383: when postflight verification fails, restore is attempted."""
     import aletheia.config.loader as loader
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     _db_file, _conn = _setup_db(tmp_path)
@@ -244,7 +244,7 @@ def test_postflight_failure_triggers_restore_attempt(tmp_path, monkeypatch):
 def test_postflight_failure_reports_correct_backup_path(tmp_path, monkeypatch):
     """#1383: error message must name the actual backup, not a different file."""
     import aletheia.config.loader as loader
-    from aletheia.maintenance import data_retention_backfill as drb
+    from ops.maintenance import data_retention_backfill as drb
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     _db_file, _conn = _setup_db(tmp_path)

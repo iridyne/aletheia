@@ -1,5 +1,23 @@
 # Slim Core production ownership inventory
 
+## Explicit Ops and inert Legacy owners
+
+Human-triggered update, backup/restore, compaction and bounded historical repair
+have unique implementations under `ops/`; the historical viability report lives
+under `legacy/`. Core keeps Git identity facts, packaged runtime identity and its
+single integrity error class, archive verification, capacity diagnostics and
+ordinary backup retention. Retention preserves directory creation, ordering,
+clamping and failure behavior without constructing an operational backup service.
+
+The Core update initializer is inert. CLI/Web import operational implementations
+only at their existing invocation boundaries; packaged feed pinning, activation,
+rollback, continuity locks and embedded subprocess entrypoints use their actual
+Ops owners. Existing source-package, bundle and frozen-entrypoint metadata includes
+these owners without introducing a new distribution product. No migration, Risk,
+economic, qualification or deployment semantics change. Focused cold-import proof
+and the existing update/backup/continuity regressions cover this physical cut;
+Core root relocation and Fedora deployment remain separate gates.
+
 ## Remaining optional-family physical owners
 
 Knowledge authoring/retrieval, Learning, Counterfactual, Policies, Sync and

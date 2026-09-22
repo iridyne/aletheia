@@ -18,7 +18,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from aletheia.update import applier, packaged, packaged_commands
+from ops.update import applier, packaged, packaged_commands
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -41,7 +41,8 @@ def _make_cfg(current_commit: str = "abc123", branch: str = "master"):
 
 def test_apply_update_uses_pull_sha_not_second_current_commit():
     """The persisted target commit must be pull()'s pinned remote_commit."""
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     old_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     fetched_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -66,7 +67,7 @@ def test_apply_update_uses_pull_sha_not_second_current_commit():
         patch.object(git_ops, "current_branch", return_value="master"),
         patch.object(git_ops, "is_worktree_dirty", return_value=False),
         patch.object(
-            git_ops,
+            git_mutations,
             "pull",
             return_value={
                 "ok": True,
@@ -75,12 +76,12 @@ def test_apply_update_uses_pull_sha_not_second_current_commit():
             },
         ),
         patch.object(git_ops, "changed_files", return_value=[]),
-        patch("aletheia.update.applier.load_config", return_value=cfg),
-        patch("aletheia.update.applier._persist_current_commit_fresh", side_effect=_persist),
-        patch("aletheia.update.applier.run_smoke_check", return_value={"ok": True}),
-        patch("aletheia.update.applier.write_audit"),
-        patch("aletheia.update.applier._is_packaged", return_value=False),
-        patch("aletheia.update.applier._is_managed_venv", return_value=True),
+        patch("ops.update.applier.load_config", return_value=cfg),
+        patch("ops.update.applier._persist_current_commit_fresh", side_effect=_persist),
+        patch("ops.update.applier.run_smoke_check", return_value={"ok": True}),
+        patch("ops.update.applier.write_audit"),
+        patch("ops.update.applier._is_packaged", return_value=False),
+        patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
 
@@ -98,7 +99,8 @@ def test_apply_update_uses_pull_sha_not_second_current_commit():
 
 def test_rollback_failure_records_actual_head_in_config():
     """When rollback fails, metadata must record the actual unverified HEAD."""
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     old_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     new_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -120,7 +122,7 @@ def test_rollback_failure_records_actual_head_in_config():
         patch.object(git_ops, "current_branch", return_value="master"),
         patch.object(git_ops, "is_worktree_dirty", return_value=False),
         patch.object(
-            git_ops,
+            git_mutations,
             "pull",
             return_value={
                 "ok": True,
@@ -130,19 +132,19 @@ def test_rollback_failure_records_actual_head_in_config():
         ),
         patch.object(git_ops, "changed_files", return_value=[]),
         patch.object(
-            git_ops,
+            git_mutations,
             "reset_hard",
             return_value={"ok": False, "reason": "reset_failed"},
         ),
-        patch("aletheia.update.applier.load_config", return_value=cfg),
-        patch("aletheia.update.applier._persist_current_commit_fresh", side_effect=_persist),
+        patch("ops.update.applier.load_config", return_value=cfg),
+        patch("ops.update.applier._persist_current_commit_fresh", side_effect=_persist),
         patch(
-            "aletheia.update.applier.run_smoke_check",
+            "ops.update.applier.run_smoke_check",
             return_value={"ok": False, "stage": "import", "detail": "ImportError"},
         ),
-        patch("aletheia.update.applier.write_audit"),
-        patch("aletheia.update.applier._is_packaged", return_value=False),
-        patch("aletheia.update.applier._is_managed_venv", return_value=True),
+        patch("ops.update.applier.write_audit"),
+        patch("ops.update.applier._is_packaged", return_value=False),
+        patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
 
@@ -162,7 +164,8 @@ def test_rollback_failure_records_actual_head_in_config():
 
 def test_gateway_restart_failure_records_rolled_back_sha_in_config():
     """When restart fails and rollback succeeds, metadata records old SHA."""
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     old_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     new_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -184,29 +187,29 @@ def test_gateway_restart_failure_records_rolled_back_sha_in_config():
         patch.object(git_ops, "current_branch", return_value="master"),
         patch.object(git_ops, "is_worktree_dirty", return_value=False),
         patch.object(
-            git_ops,
+            git_mutations,
             "pull",
             return_value={"ok": True, "output": "Fast-forward", "remote_commit": new_sha},
         ),
         patch.object(git_ops, "changed_files", return_value=[]),
         patch.object(
-            git_ops,
+            git_mutations,
             "reset_hard",
             return_value={"ok": True, "output": "HEAD is now..."},
         ),
-        patch("aletheia.update.applier.load_config", return_value=cfg),
-        patch("aletheia.update.applier._persist_current_commit_fresh", side_effect=_persist),
-        patch("aletheia.update.applier.run_smoke_check", return_value={"ok": True}),
-        patch("aletheia.update.applier._build_frontend", return_value={"ok": True}),
-        patch("aletheia.update.applier._activate_frontend_build", return_value=True),
-        patch("aletheia.update.applier._restore_frontend_build"),
+        patch("ops.update.applier.load_config", return_value=cfg),
+        patch("ops.update.applier._persist_current_commit_fresh", side_effect=_persist),
+        patch("ops.update.applier.run_smoke_check", return_value={"ok": True}),
+        patch("ops.update.applier._build_frontend", return_value={"ok": True}),
+        patch("ops.update.applier._activate_frontend_build", return_value=True),
+        patch("ops.update.applier._restore_frontend_build"),
         patch(
-            "aletheia.update.applier._restart_gateway",
+            "ops.update.applier._restart_gateway",
             return_value={"ok": False, "reason": "gateway_restart_failed"},
         ),
-        patch("aletheia.update.applier.write_audit"),
-        patch("aletheia.update.applier._is_packaged", return_value=False),
-        patch("aletheia.update.applier._is_managed_venv", return_value=True),
+        patch("ops.update.applier.write_audit"),
+        patch("ops.update.applier._is_packaged", return_value=False),
+        patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=True)
 
@@ -225,7 +228,7 @@ def test_gateway_restart_failure_records_rolled_back_sha_in_config():
 
 def test_preflight_candidate_uses_caller_provided_sha(tmp_path):
     """_preflight_candidate must use the feed-pinned SHA, not read it from the manifest."""
-    from aletheia.update import packaged
+    from ops.update import packaged
 
     candidate = tmp_path / "release"
     candidate.mkdir()

@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from aletheia.backup.service import BackupService
+from ops.backup.service import BackupService
 from aletheia.backup.verify import verify_backup
 from aletheia.storage import migrations
 

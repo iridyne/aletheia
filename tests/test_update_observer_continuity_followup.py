@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
     from extensions.observation_lab import runner
-    from aletheia.update import applier, target_fresh
+    from ops.update import applier, target_fresh
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
     monkeypatch.setattr(runner, "settle_observation_continuity", lambda: {"ok": True})
@@ -56,7 +56,7 @@ def _minimal_snapshot(*, checkpoint_reason: str = "fingerprint_match") -> dict:
 
 
 def test_preflight_allows_manifest_lifecycle_checkpoint_drift():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(
         checkpoint_reason=("fingerprint_mismatch: app_head(v35→v35) count(35→35) manifests(2→1)")
@@ -70,7 +70,7 @@ def test_preflight_allows_manifest_lifecycle_checkpoint_drift():
 
 
 def test_preflight_still_fails_closed_on_app_migration_checkpoint_drift():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(
         checkpoint_reason=("fingerprint_mismatch: app_head(v34→v35) count(34→35) manifests(2→2)")
@@ -83,7 +83,7 @@ def test_preflight_still_fails_closed_on_app_migration_checkpoint_drift():
 
 
 def test_preflight_classifies_structured_outbox_drift():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
     snapshot["observation"]["checkpoint"]["verified"]["mismatch_components"] = [
@@ -97,7 +97,7 @@ def test_preflight_classifies_structured_outbox_drift():
 
 
 def test_preflight_marks_proven_pending_suffix_for_settlement():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
     snapshot["observation"]["checkpoint"] = {
@@ -110,7 +110,7 @@ def test_preflight_marks_proven_pending_suffix_for_settlement():
 
 
 def test_preflight_classifies_six_field_lab_schema_drift():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(
         checkpoint_reason=(
@@ -127,7 +127,7 @@ def test_preflight_classifies_six_field_lab_schema_drift():
 
 
 def test_preflight_rejects_unknown_structured_mismatch_component():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
     snapshot["observation"]["checkpoint"]["verified"]["mismatch_components"] = [
@@ -141,7 +141,7 @@ def test_preflight_rejects_unknown_structured_mismatch_component():
 
 
 def test_worker_runtime_owner_proof_unavailable_is_preflight_proof_gap():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot()
     snapshot["gateway"]["observation_execution"] = {"available": False}
@@ -153,7 +153,7 @@ def test_worker_runtime_owner_proof_unavailable_is_preflight_proof_gap():
 
 
 def test_postflight_initializing_target_captures_without_sleep(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     initializing = _minimal_snapshot()
     initializing["control"]["disk_sha"] = "target-sha"
@@ -174,7 +174,7 @@ def test_postflight_initializing_target_captures_without_sleep(monkeypatch):
 
 
 def test_postflight_deadline_counts_wait_and_captures_once(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     now = [0.0]
     calls = {"gateway": 0, "capture": 0}
@@ -212,7 +212,7 @@ def test_postflight_deadline_counts_wait_and_captures_once(monkeypatch):
 
 
 def test_postflight_ready_uses_remaining_deadline_for_one_capture(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     now = [0.0]
     timeouts = []
@@ -238,7 +238,7 @@ def test_postflight_ready_uses_remaining_deadline_for_one_capture(monkeypatch):
 
 
 def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _minimal_snapshot()
     after = _minimal_snapshot()
@@ -287,7 +287,7 @@ def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch)
 
 def test_auto_worker_preflight_requires_complete_evidence(monkeypatch):
     from extensions.observation_lab import execution_owner
-    from aletheia.update import auto, continuity
+    from ops.update import auto, continuity
 
     before = _minimal_snapshot()
     monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: "worker")
@@ -311,7 +311,7 @@ def test_auto_worker_preflight_requires_complete_evidence(monkeypatch):
 
 
 def test_auto_postflight_reuses_preflight_gateway_port(monkeypatch):
-    from aletheia.update import auto, continuity
+    from ops.update import auto, continuity
 
     before = _minimal_snapshot()
     before["gateway"]["port"] = 8787
@@ -338,7 +338,7 @@ def test_auto_postflight_reuses_preflight_gateway_port(monkeypatch):
 
 def test_auto_main_owner_does_not_create_worker_coupling(monkeypatch):
     from extensions.observation_lab import execution_owner
-    from aletheia.update import auto, continuity
+    from ops.update import auto, continuity
 
     monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: "main")
     monkeypatch.setattr(
@@ -358,7 +358,7 @@ def test_auto_main_owner_does_not_create_worker_coupling(monkeypatch):
 
 
 def test_auto_refuses_cross_time_rollback_when_worker_advanced(monkeypatch):
-    from aletheia.update import auto, continuity
+    from ops.update import auto, continuity
 
     guard = {
         "required": True,
@@ -390,7 +390,7 @@ def test_auto_refuses_cross_time_rollback_when_worker_advanced(monkeypatch):
 
 
 def test_auto_allows_existing_rollback_when_worker_did_not_advance(monkeypatch):
-    from aletheia.update import auto, continuity
+    from ops.update import auto, continuity
 
     guard = {
         "required": True,

@@ -27,7 +27,7 @@ def test_worker_cycle_exclusion_preserves_persisted_signature(tmp_path, monkeypa
 
 def test_auto_rollback_guard_holds_exclusion_while_proving_signature(monkeypatch):
     from extensions.observation_lab import worker_lock
-    from aletheia.update import auto
+    from ops.update import auto
 
     held = {"value": False}
 
@@ -56,7 +56,7 @@ def test_auto_rollback_guard_holds_exclusion_while_proving_signature(monkeypatch
 
 def test_auto_rollback_guard_does_not_reinterpret_body_exception(monkeypatch):
     from extensions.observation_lab import worker_lock
-    from aletheia.update import auto
+    from ops.update import auto
 
     held = {"value": False}
 

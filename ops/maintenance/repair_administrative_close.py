@@ -10,8 +10,8 @@ audit_events) stays consistent.
 
 Usage (Fedora Paper runtime)::
 
-    uv run python -m aletheia.maintenance.repair_administrative_close --position-id d13674533c77
-    uv run python -m aletheia.maintenance.repair_administrative_close --position-id d13674533c77 --dry-run
+    uv run python -m ops.maintenance.repair_administrative_close --position-id d13674533c77
+    uv run python -m ops.maintenance.repair_administrative_close --position-id d13674533c77 --dry-run
 
 Idempotent: exits cleanly if the Position is already correctly closed.
 """

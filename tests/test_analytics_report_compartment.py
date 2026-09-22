@@ -61,7 +61,7 @@ else:
         from extensions.learning.control import get_learning_job_health
         assert get_learning_job_health("insight_synthesizer").input_watermark is None
         # Canonical maintenance already commits before optional rebuild.
-        from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+        from ops.maintenance.outcome_integrity import remediate_outcome_history
         result = remediate_outcome_history(dry_run=False)
         assert result["rebuild"] == {"calibration_report": "unavailable", "reasoning_feedback": "unavailable"}
         from aletheia.diagnostics.doctor import Report, _probe_content_memo_quality
@@ -125,7 +125,7 @@ else:
 
 
 def test_rebuild_preserves_per_report_failure_truth():
-    from aletheia.maintenance.outcome_integrity import _rebuild_allowed_reports
+    from ops.maintenance.outcome_integrity import _rebuild_allowed_reports
 
     def broken():
         raise RuntimeError("report write failed")
