@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
-from aletheia.agents.divergence_scanner import (
+from extensions.research.divergence_scanner import (
     _map_question_to_symbol,
     _compute_divergence_score,
     run_divergence_scanner,
@@ -99,7 +99,7 @@ class TestPredictionPolarity:
     def test_question_polarity_is_deterministic_and_ambiguous_fails_closed(
         self, question, expected,
     ):
-        from aletheia.agents.divergence_scanner import _prediction_polarity
+        from extensions.research.divergence_scanner import _prediction_polarity
 
         assert _prediction_polarity(question) == expected
 
@@ -175,7 +175,7 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     mock_provider.get_ticker = AsyncMock(return_value=mock_ticker)
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -262,7 +262,7 @@ async def test_divergence_scanner_short_requires_explicit_perp_fact(tmp_path, mo
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -304,7 +304,7 @@ async def test_negative_question_probability_drop_maps_to_long(tmp_path, monkeyp
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -340,7 +340,7 @@ async def test_ambiguous_prediction_question_fails_closed(tmp_path, monkeypatch)
     mock_provider = AsyncMock()
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -382,7 +382,7 @@ async def test_nonfinite_ticker_evidence_fails_closed(tmp_path, monkeypatch):
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -424,7 +424,7 @@ async def test_divergence_scanner_no_signal_when_price_moved(tmp_path, monkeypat
     mock_provider.get_ticker = AsyncMock(return_value=mock_ticker)
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -511,7 +511,7 @@ async def test_divergence_rejections_have_stable_terminal_evidence(tmp_path, mon
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
@@ -568,7 +568,7 @@ async def test_divergence_evidence_failure_cannot_report_success(tmp_path, monke
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ), patch(
         "aletheia.analytics.filter_evidence.record_filter_decision",
@@ -617,7 +617,7 @@ async def test_provider_closed_on_success(tmp_path, monkeypatch):
     ))
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         await run_divergence_scanner(permission_mode="Paper")
@@ -649,7 +649,7 @@ async def test_provider_closed_on_candidate_rejection(tmp_path, monkeypatch):
     mock_provider = AsyncMock()
 
     with patch(
-        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        "extensions.research.divergence_scanner.get_market_data_provider",
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")

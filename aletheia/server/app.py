@@ -1093,6 +1093,21 @@ else:
     register_agent("equity_observer")(run_equity_observer)
 
 
+try:
+    from extensions.research.prediction_observer import run_prediction_observer
+    from extensions.research.divergence_scanner import run_divergence_scanner
+except ModuleNotFoundError as exc:
+    if exc.name not in {
+        "extensions", "extensions.research", "extensions.data", "extensions.data.ccxt_provider",
+    }:
+        raise
+    unregister_agent("prediction_observer")
+    unregister_agent("divergence_scanner")
+else:
+    register_agent("prediction_observer")(run_prediction_observer)
+    register_agent("divergence_scanner")(run_divergence_scanner)
+
+
 from aletheia.trust.behavior_authority import configure_candidate_filter_path
 
 try:

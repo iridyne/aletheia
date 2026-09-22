@@ -537,8 +537,8 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
     # The retired wake sources must stay retired.
     retired = {
         "extensions/research/equity_observer.py": "equity_observer_opportunity",
-        "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
-        "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
+        "extensions/research/prediction_observer.py": "prediction_observer_opportunity",
+        "extensions/research/divergence_scanner.py": "divergence_scanner_opportunity",
         "aletheia/analytics/guard_promotion.py": "guard_set_changed",
         "aletheia/server/routes/settings.py": "ranker_config_changed",
     }
