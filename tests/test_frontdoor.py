@@ -50,6 +50,7 @@ async def test_proxy_capacity_failure_is_not_backend_outage(tmp_path, monkeypatc
         return {"ready": True}
 
     monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: FakeClient())
     monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
     monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
     app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
@@ -140,6 +141,7 @@ async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, mon
         return {"ready": True}
 
     monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: FakeClient())
     monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
     monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
     app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
@@ -165,6 +167,52 @@ async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, mon
                 await task
         assert closed == ([True] if cancel_at == "body" else [])
         assert (await client.get("/_infra/status")).json()["proxy_capacity"]["active_requests"] == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["headers", "body", "normal"])
+async def test_stream_admission_released_on_failure_and_completion(tmp_path, monkeypatch, failure):
+    import httpx
+    from aletheia.gateway import frontdoor
+
+    closed = []
+
+    class Response:
+        status_code = 200
+        headers = httpx.Headers({"content-type": "text/event-stream"})
+
+        async def aiter_raw(self):
+            yield b": ok\n\n"
+            if failure == "body":
+                raise httpx.ReadError("test")
+
+        async def aclose(self):
+            closed.append(True)
+
+    class Client:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, **kwargs):
+            if failure == "headers":
+                raise httpx.ConnectError("test")
+            return Response()
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(frontdoor, "_STREAM_MAX_CONNECTIONS", 1)
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: Client())
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda _: None)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://frontdoor") as client:
+        for _ in range(2):
+            response = await client.get("/api/operator/events/stream")
+            assert response.status_code == (503 if failure == "headers" else 200)
+            snapshot = (await client.get("/_infra/status")).json()["proxy_capacity"]
+            assert snapshot["active_requests"] == snapshot["stream_admissions"] == 0
+    assert len(closed) == (0 if failure == "headers" else 2)
 
 
 @pytest.mark.anyio
