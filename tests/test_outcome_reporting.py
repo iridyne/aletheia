@@ -20,7 +20,7 @@ def _external_account():
     save_config(cfg)
 
 
-def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypatch):
+def test_analytics_schemas_preserve_available_and_unavailable_payloads(api_only_runtime, monkeypatch):
     from fastapi.testclient import TestClient
     from pydantic import TypeAdapter
     from aletheia.server.app import app
