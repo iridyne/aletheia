@@ -1004,6 +1004,26 @@ def _vacuum_and_optimize(db: sqlite3.Connection) -> dict[str, Any]:
 # --- Entry point -----------------------------------------------------------
 
 def run(args: argparse.Namespace) -> int:
+    from aletheia.storage.repositories import configure_observation_readers
+
+    try:
+        from aletheia.observation_lab.main_readers import (
+            _canonical_lab_authority, _observation_retention_floor,
+            _active_observation_claim_refs, list_observation_filter_outcome_priority_keys,
+            active_benchmark, outcome_write_guard,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.observation_lab", "aletheia.observation_lab.main_readers"}:
+            raise
+        configure_observation_readers()
+    else:
+        configure_observation_readers(
+            authority=_canonical_lab_authority, retention_floor=_observation_retention_floor,
+            retention_refs=_active_observation_claim_refs,
+            priority_keys=list_observation_filter_outcome_priority_keys,
+            active_benchmark=active_benchmark, outcome_guard=outcome_write_guard,
+        )
+
     from aletheia.config.loader import get_data_dir
     from aletheia.storage.sqlite import db_path, get_db
 

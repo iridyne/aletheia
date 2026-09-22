@@ -15,6 +15,23 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture
+def observation_readers(monkeypatch):
+    """Explicit installed-Lab composition for repository/owner integration tests."""
+    from aletheia.storage import repositories as repo
+    from aletheia.observation_lab import main_readers as lab
+
+    for name, callback in (
+        ("_lab_authority", lab._canonical_lab_authority),
+        ("_lab_retention_floor", lab._observation_retention_floor),
+        ("_lab_retention_refs", lab._active_observation_claim_refs),
+        ("_lab_priority_keys", lab.list_observation_filter_outcome_priority_keys),
+        ("_lab_active_benchmark", lab.active_benchmark),
+        ("_lab_outcome_guard", lab.outcome_write_guard),
+    ):
+        monkeypatch.setattr(repo, name, callback)
+
 # ---------------------------------------------------------------------------
 # Windows event-loop policy (D17-1)
 # ---------------------------------------------------------------------------
