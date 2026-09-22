@@ -60,7 +60,7 @@ def _policy_cfg(*, demo_cap: float, live_cap: float, **kwargs):
 def _patch_cfg(monkeypatch, cfg):
     import aletheia.config.loader as loader
 
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
 
 
 def _insert_proposal(
@@ -147,6 +147,27 @@ def test_sizing_trace_empty_db_returns_insufficient_data(monkeypatch):
     assert report["summary"]["sample_size"] == 0
     assert report["main_sizing_bottleneck"]["severity"] == "insufficient_data"
     assert report["traces"] == []
+
+
+def test_sizing_trace_does_not_persist_config_migrations(monkeypatch):
+    from unittest.mock import Mock
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.config import loader
+    from aletheia.storage.sqlite import get_db
+
+    original = "strategy_factory: {}\n"
+    loader.CONFIG_PATH.write_text(original, encoding="utf-8")
+    loader._invalidate_config_cache()
+    save = Mock(wraps=loader.save_config)
+    monkeypatch.setattr(loader, "save_config", save)
+    _insert_proposal(get_db(), 1, notional=25.0)
+
+    report = build_sizing_trace_audit(hours=24, min_sample_size=1)
+
+    assert save.call_count == 0
+    assert loader.CONFIG_PATH.read_text(encoding="utf-8") == original
+    assert report["summary"]["sample_size"] == 1
+    assert report["traces"][0]["proposal_notional_usdt"] == 25.0
 
 
 @pytest.mark.parametrize("conviction, reason", [(70, "sample_evidence_unavailable"), (35, "low_conviction")])
