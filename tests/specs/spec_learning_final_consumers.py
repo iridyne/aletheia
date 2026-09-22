@@ -53,7 +53,7 @@ def _operator_prompt_context() -> dict:
         status="implemented",
     )
 )
-def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
+def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch, installed_learning_consumers):
     from aletheia.agent_shell import context
     from extensions.learning import lessons
 

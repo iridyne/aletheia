@@ -5,12 +5,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
 
-@pytest.mark.parametrize("missing", [
-    "extensions", "extensions.knowledge", "extensions.knowledge.manager", "broken_knowledge_dependency",
-])
-def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog, missing):
-    import builtins
+
+def test_optional_guard_absence_does_not_interrupt_settlement(monkeypatch, caplog):
     from unittest.mock import AsyncMock
 
     from aletheia.storage import repositories as repo
@@ -36,23 +34,10 @@ def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog
     ))
     shadow = AsyncMock(return_value=2)
     monkeypatch.setattr(outcome_recorder, "_structure_shadow_settler", shadow)
-    real_import = builtins.__import__
-
-    def absent(name, *args, **kwargs):
-        if name == "extensions.knowledge.manager":
-            raise ModuleNotFoundError(name=missing)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", absent)
-    if missing == "broken_knowledge_dependency":
-        with pytest.raises(ModuleNotFoundError) as exc:
-            asyncio.run(outcome_recorder.settle_due(max_rows=1))
-        assert exc.value.name == missing
-        shadow.assert_not_awaited()
-    else:
-        assert asyncio.run(outcome_recorder.settle_due(max_rows=1)) == 3
-        shadow.assert_awaited_once_with(limit=100)
-        assert "guard candidates unavailable" in caplog.text
+    monkeypatch.setattr(outcome_recorder, "_create_guard_candidate", None)
+    assert asyncio.run(outcome_recorder.settle_due(max_rows=1)) == 3
+    shadow.assert_awaited_once_with(limit=100)
+    assert "guard candidates unavailable" in caplog.text
 
     persisted = get_db().execute(
         "SELECT status, net_return_pct FROM universe_forward_outcomes WHERE id = ?", (row.id,),

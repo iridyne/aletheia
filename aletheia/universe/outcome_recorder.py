@@ -27,6 +27,13 @@ from aletheia.storage.models import UniverseForwardOutcome
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
 
 _structure_shadow_settler: Callable[..., Awaitable[int]] | None = None
+_create_guard_candidate = None
+
+
+def configure_guard_candidate_writer(writer=None) -> None:
+    """Bind optional Knowledge authoring without giving it settlement ownership."""
+    global _create_guard_candidate
+    _create_guard_candidate = writer
 
 
 def configure_structure_shadow_settler(settler: Callable[..., Awaitable[int]] | None) -> None:
@@ -1059,13 +1066,10 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     per symbol+family to avoid flooding the knowledge base.
 
     Optional Knowledge absence and candidate-write failures do not interrupt
-    settlement. Unrelated installed dependency defects still propagate.
+    settlement. Composition rejects unrelated installed dependency defects.
     """
-    try:
-        from extensions.knowledge.manager import create_guard_candidate
-    except ModuleNotFoundError as exc:
-        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
-            raise
+    create_guard_candidate = _create_guard_candidate
+    if create_guard_candidate is None:
         logger.warning("evolution:tier1 guard candidates unavailable: optional Knowledge absent")
         return
 

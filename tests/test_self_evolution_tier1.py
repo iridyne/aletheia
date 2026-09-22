@@ -6,6 +6,10 @@ for outcomes that breach the loss threshold, while respecting dedup and directio
 
 from unittest.mock import patch, MagicMock, AsyncMock
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 
 # ---------------------------------------------------------------------------
 # Unit tests for _maybe_generate_guard_candidates

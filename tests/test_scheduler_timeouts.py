@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 
 def test_stale_scanner_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler

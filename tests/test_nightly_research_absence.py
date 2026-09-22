@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 
 @pytest.fixture
 def absent(monkeypatch):

@@ -54,8 +54,27 @@ app = typer.Typer(
 def _configure_runtime() -> None:
     from aletheia.agents import register_agent, unregister_agent
 
-    from aletheia.agent_runtime.scheduler import configure_optional_evidence_jobs
+    from aletheia.agent_runtime.scheduler import configure_optional_evidence_jobs, configure_learning_job_lifecycle
     from aletheia.analytics.family_scorecard import configure_shadow_cohort_reader
+    from aletheia.agent_shell.context import configure_learning_context_reader
+    from aletheia.universe.outcome_recorder import configure_guard_candidate_writer
+
+    try:
+        from extensions.learning.lessons import LessonStore
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.lessons"}:
+            raise
+        configure_learning_context_reader(None)
+    else:
+        configure_learning_context_reader(LessonStore().list_all)
+    try:
+        from extensions.knowledge.manager import create_guard_candidate
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        configure_guard_candidate_writer(None)
+    else:
+        configure_guard_candidate_writer(create_guard_candidate)
 
     try:
         from extensions.counterfactual.trades import resolve_stale_shadows
@@ -77,11 +96,21 @@ def _configure_runtime() -> None:
             raise
         run_controller_observe = None
     try:
-        from extensions.learning.control import daily_catchup_due
+        from extensions.learning.control import (
+            daily_catchup_due, learning_job_gate_reason, record_learning_job_skipped,
+            record_learning_job_started, record_learning_job_success, record_learning_job_failure,
+        )
     except ModuleNotFoundError as exc:
         if exc.name not in {"extensions", "extensions.learning", "extensions.learning.control"}:
             raise
         daily_catchup_due = None
+        learning_job_gate_reason = record_learning_job_skipped = record_learning_job_started = None
+        record_learning_job_success = record_learning_job_failure = None
+    configure_learning_job_lifecycle(
+        gate=learning_job_gate_reason, skipped=record_learning_job_skipped,
+        started=record_learning_job_started, succeeded=record_learning_job_success,
+        failed=record_learning_job_failure,
+    )
     configure_optional_evidence_jobs(
         resolve_shadows=resolve_stale_shadows, expire_guards=_deprecate_expired_learned_guards,
         observe_filters=run_controller_observe, daily_catchup_due=daily_catchup_due,

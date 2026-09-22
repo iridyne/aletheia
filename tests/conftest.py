@@ -17,6 +17,27 @@ import pytest
 
 
 @pytest.fixture
+def installed_learning_consumers(monkeypatch):
+    """Explicit installed-extension composition for direct consumer tests only."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.agent_shell import context
+    from aletheia.universe import outcome_recorder
+    from extensions.learning import control, lessons
+    from extensions.knowledge import manager
+
+    for name, callback in (
+        ("_learning_job_gate", lambda *a, **kw: control.learning_job_gate_reason(*a, **kw)),
+        ("_learning_job_skipped", lambda *a, **kw: control.record_learning_job_skipped(*a, **kw)),
+        ("_learning_job_started", lambda *a, **kw: control.record_learning_job_started(*a, **kw)),
+        ("_learning_job_succeeded", lambda *a, **kw: control.record_learning_job_success(*a, **kw)),
+        ("_learning_job_failed", lambda *a, **kw: control.record_learning_job_failure(*a, **kw)),
+    ):
+        monkeypatch.setattr(scheduler, name, callback)
+    monkeypatch.setattr(context, "_list_learning_lessons", lambda **kw: lessons.LessonStore().list_all(**kw))
+    monkeypatch.setattr(outcome_recorder, "_create_guard_candidate", lambda **kw: manager.create_guard_candidate(**kw))
+
+
+@pytest.fixture
 def optional_evidence_jobs(monkeypatch):
     """Explicit installed-extension composition for direct Core consumer tests."""
     from aletheia.agent_runtime import scheduler

@@ -20,6 +20,15 @@ from aletheia.storage.repositories import (
     list_strategies,
 )
 
+_list_learning_lessons = None
+
+
+def configure_learning_context_reader(reader=None) -> None:
+    """Bind the optional Lesson facts reader; diagnostic projection remains Core."""
+    global _list_learning_lessons
+    _list_learning_lessons = reader
+
+
 ALL_SECTIONS = (
     "system",
     "market",
@@ -107,9 +116,7 @@ def _curated_learning_context() -> dict:
     Operator's read-only diagnosis path.
     """
     now = datetime.now(timezone.utc)
-    try:
-        from extensions.learning.lessons import LessonStore
-    except ImportError:
+    if _list_learning_lessons is None:
         return {
             "advisory_only": True,
             "lessons": [],
@@ -122,7 +129,7 @@ def _curated_learning_context() -> dict:
             },
         }
     lessons = []
-    for lesson in LessonStore().list_all(status="applied", limit=30):
+    for lesson in _list_learning_lessons(status="applied", limit=30):
         if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
             continue
         dry_run_until = getattr(lesson, "dry_run_until", None)

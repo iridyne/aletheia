@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 

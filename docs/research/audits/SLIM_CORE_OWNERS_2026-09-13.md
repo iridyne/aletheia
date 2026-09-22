@@ -21,6 +21,15 @@ Research producers; Equity/Market observers and Core boot remain available.
 No Risk policy, qualification, deployment, credential or execution authority is
 changed. The local absence probes do not prove runtime qualification.
 
+The same composition boundary binds Learning gate/start/skip/success/failure
+callbacks as one job-lifecycle group, the existing Lesson facts reader and
+Knowledge guard-candidate writer. Scheduler try/finally, attempt identity,
+failure-recorded ordering and database cleanup remain Core; optional telemetry
+cannot grant Learning execution when its gate is absent. Core diagnostic
+projection and canonical settlement no longer import concrete Learning or
+Knowledge implementations, even when installed. Focused structural guards cover
+these named consumers in addition to fresh-process absence proofs.
+
 ## Supplemental Data family compartment
 
 The unique yFinance macro, Polymarket, Position X material/features, positioning

@@ -51,6 +51,23 @@ _resolve_stale_shadows = None
 _expire_learned_guards = None
 _observe_filter_controller = None
 _learning_daily_catchup_due = None
+_learning_job_gate = None
+_learning_job_skipped = None
+_learning_job_started = None
+_learning_job_succeeded = None
+_learning_job_failed = None
+
+
+def configure_learning_job_lifecycle(*, gate=None, skipped=None, started=None,
+                                     succeeded=None, failed=None) -> None:
+    """Compose Learning policy/telemetry without transferring Core job ownership."""
+    global _learning_job_gate, _learning_job_skipped, _learning_job_started
+    global _learning_job_succeeded, _learning_job_failed
+    _learning_job_gate = gate
+    _learning_job_skipped = skipped
+    _learning_job_started = started
+    _learning_job_succeeded = succeeded
+    _learning_job_failed = failed
 
 
 def configure_optional_evidence_jobs(*, resolve_shadows=None, expire_guards=None,
@@ -550,10 +567,7 @@ def _record_job_success(job_id: str) -> None:
 def _record_job_failure(job_id: str, error: str, error_class: str | None = None) -> None:
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
-    try:
-        from extensions.learning.control import record_learning_job_failure
-    except ImportError:
-        record_learning_job_failure = None
+    record_learning_job_failure = _learning_job_failed
     if record_learning_job_failure is not None:
         if job_id == "lesson_reviewer":
             record_learning_job_failure(
@@ -651,22 +665,20 @@ def _run_job_guarded(job_id: str, fn):
     _JOB_RUN_STATE.job_id = job_id
     _JOB_RUN_STATE.failure_recorded = False
     try:
-        try:
-            from extensions.learning.control import (
-                learning_job_gate_reason,
-                record_learning_job_skipped,
-                record_learning_job_started,
-                record_learning_job_success,
-            )
-        except ImportError as exc:
+        if _learning_job_gate is None:
             # Learning is an optional evidence consumer. Its absence must not
             # grant Learning execution or prevent Core jobs from completing.
             if is_autonomous_learning_job(job_id):
-                raise RuntimeError("learning_control_unavailable") from exc
+                raise RuntimeError("learning_control_unavailable")
             learning_job_gate_reason = lambda _job_id: None
             record_learning_job_skipped = lambda *_args, **_kwargs: None
             record_learning_job_started = lambda *_args, **_kwargs: None
             record_learning_job_success = lambda *_args, **_kwargs: None
+        else:
+            learning_job_gate_reason = _learning_job_gate
+            record_learning_job_skipped = _learning_job_skipped
+            record_learning_job_started = _learning_job_started
+            record_learning_job_success = _learning_job_succeeded
         if is_autonomous_learning_job(job_id):
             gate_reason = learning_job_gate_reason(job_id)
             if gate_reason is not None:
