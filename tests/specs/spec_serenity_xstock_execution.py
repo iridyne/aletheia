@@ -21,7 +21,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_xstock_execution"
 _ROOT = Path(__file__).parent.parent.parent
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 _EQUITY_OBSERVER = _ROOT / "extensions" / "research" / "equity_observer.py"
 
 

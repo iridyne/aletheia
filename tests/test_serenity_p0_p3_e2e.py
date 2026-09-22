@@ -66,7 +66,7 @@ class TestP0AutoPromote:
     def test_auto_promote_publishes_candidate_when_score_sufficient(self):
         from aletheia.config.loader import load_config, save_config
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
-        from aletheia.agents.research_worker import _auto_promote_serenity_opportunities
+        from extensions.research.research_worker import _auto_promote_serenity_opportunities
         from aletheia.storage import repositories as repo
 
         cfg = load_config()
@@ -275,7 +275,7 @@ class TestP3FlowContextBlock:
     def test_flow_block_returns_formatted_data(self):
         """With OI + liquidation data in DB, the block returns formatted text."""
         self._seed_flow_data()
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.research.research_worker import _get_flow_context_block
 
         result = _get_flow_context_block()
         assert "Derivatives Flow Data" in result, f"Got: {result!r}"
@@ -287,7 +287,7 @@ class TestP3FlowContextBlock:
 
     def test_flow_block_empty_when_no_data(self):
         """Without recent data, returns empty string."""
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.research.research_worker import _get_flow_context_block
         # DB exists but no recent rows (all older than 4h or empty)
         # The autouse fixture gives us a clean DB, so this should be empty
         from aletheia.storage.sqlite import get_db
@@ -301,7 +301,7 @@ class TestP3FlowContextBlock:
         assert result == ""
 
     def test_flow_block_is_coinalyze_only_and_preserves_unavailable_delta(self):
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.research.research_worker import _get_flow_context_block
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -330,7 +330,7 @@ class TestP3FlowContextBlock:
         Full yfinance network call is NOT exercised in CI — we verify the code
         structure handles ImportError gracefully (yfinance not installed in test env).
         """
-        from aletheia.agents.research_worker import _get_equity_context_block
+        from extensions.research.research_worker import _get_equity_context_block
 
         # Should not crash even if yfinance is not installed
         # (the code has try/except ImportError)

@@ -9,7 +9,7 @@ import pytest
 
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
-    for name in ("research_agent", "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner"):
+    for name in ("research_agent", "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner", "dreaming_agent", "lesson_reviewer", "research_worker"):
         assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
 
 
@@ -17,6 +17,7 @@ def test_old_advisory_modules_are_removed():
 @pytest.mark.parametrize("missing", [
     None, "extensions", "extensions.research", "extensions.data",
     "extensions.data.ccxt_provider", "broken_dependency", "broken_data_dependency",
+    "broken_nightly_dependency", "extensions.research.dreaming_agent",
 ])
 def test_advisory_agent_composition(entrypoint, missing):
     script = f"entrypoint = {entrypoint!r}\nmissing = {missing!r}\n" + '''
@@ -33,13 +34,15 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-advisory = ("research_agent", "risk_critic", "equity_observer")
+advisory = ("research_agent", "risk_critic", "equity_observer", "dreaming_agent", "lesson_reviewer")
 pipeline = ("prediction_observer", "divergence_scanner")
 names = advisory + pipeline
-broken = missing in {"broken_dependency", "broken_data_dependency"}
+broken = missing in {"broken_dependency", "broken_data_dependency", "broken_nightly_dependency", "extensions.research.dreaming_agent"}
 unavailable = names if missing in {"extensions", "extensions.research"} else pipeline if missing else ()
 for name in names:
     register_agent(name)(forbidden)
+from aletheia.agent_runtime import scheduler
+scheduler.configure_research_producers(extract_lessons=forbidden, enqueue_run=forbidden)
 
 attempted = []
 class MissingResearch:
@@ -47,6 +50,8 @@ class MissingResearch:
         target_name = "extensions.research" if missing == "broken_dependency" else missing
         if missing == "broken_data_dependency":
             target_name = "extensions.data.ccxt_provider"
+        if missing == "broken_nightly_dependency":
+            target_name = "extensions.research.dreaming_agent"
         if fullname == target_name:
             attempted.append(fullname)
             raise ModuleNotFoundError("isolated missing dependency", name=missing)
@@ -66,6 +71,12 @@ except ModuleNotFoundError as exc:
     assert broken and exc.name == missing, exc
 else:
     assert not broken, "internal import defects must propagate"
+    if missing in {"extensions", "extensions.research"}:
+        assert scheduler._extract_research_lessons is None
+        assert scheduler._enqueue_research_run is None
+    else:
+        assert scheduler._extract_research_lessons.__module__ == "extensions.research.dreaming_agent"
+        assert scheduler.require_research_enqueue().__module__ == "extensions.research.research_worker"
     for name in names:
         if name in unavailable:
             try:

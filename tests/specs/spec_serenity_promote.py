@@ -533,7 +533,7 @@ def test_settings_serenity_endpoint_persists_and_bounds(tmp_path, monkeypatch):
 # L2a — Auto-promote pipeline integration
 # ---------------------------------------------------------------------------
 
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 
 
 @spec_claim(

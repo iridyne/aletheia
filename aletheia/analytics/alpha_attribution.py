@@ -53,7 +53,7 @@ _MODULES_BY_LAYER = {
         "aletheia/analytics/guard_effectiveness.py",
     ],
     "Serenity Alpha": [
-        "aletheia/agents/research_worker.py",
+        "extensions/research/research_worker.py",
         "aletheia/trading/serenity_scoring.py",
         "aletheia/trading/serenity_evidence.py",
     ],

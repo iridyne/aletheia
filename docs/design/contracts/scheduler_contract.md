@@ -75,7 +75,7 @@ _EXECUTOR_WORKERS = {
 |---|---|---|---|---|---|---|---|
 | 1 | `market_data` | 324 | interval | minutes=5 | io | 90 | 60 |
 | 2 | `market_observer` | 328 | interval | minutes=10 | observer | 500 | 60 |
-| 3 | `dreaming_daily` | 333 | cron | hour=2, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
+| 3 | `dreaming_daily` | — | cron | hour=2, minute=0, tz=Asia/Shanghai；至少一个 nightly Research callback 已组合 | agents | 300 | 300 |
 | 4 | `insight_synthesizer` | 337 | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
 | 5 | `confidence_calibration` | 341 | interval | hours=6 | io | 30 | 300 |
 | 9 | `reconciliation` | 357 | interval | minutes=2 | io | — | 60 |
@@ -104,6 +104,14 @@ _EXECUTOR_WORKERS = {
 | 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
 | 29 | `daily_summary` | 471 | cron | hour=cfg.telegram.daily_summary_hour_cst (default 8), minute=0, tz=Asia/Shanghai | io | 60 | 600 |
 | 30 | `pi_operator_loop` | 477 | cron | hour=0,4,8,12,16,20, minute=15, tz=Asia/Shanghai | agents | 120 | 600 |
+
+Nightly Research availability 不改变上述 cadence：`dreaming_daily` 仅在 lesson
+extraction 或 Serenity enqueue callback 至少一个已组合时注册；各自只执行可用子能力。
+`lesson_reviewer` 保留 03:00 CST、agents pool、300s misfire，只在 registry 已组合时注册；
+`serenity_startup_catchup` 保留启动后 4 分钟，仅在 enqueue callback 可用时注册。
+5 分钟 Learning startup catch-up 在进入各 child guard 前跳过缺失 producer，不写
+成功水位、失败 attempt 或为缺失 child 安排无限重试；独立 insight synthesis 不受影响。
+已有 Serenity interrupted-run recovery 不依赖 producer 安装状态。
 
 `universe_scanner_audit_reconciler` 是 essential、`max_instances=1`、`coalesce=True`
 的非行为型修复任务。它只在 DB-authoritative startup recovery 已完成且 JSONL mirror

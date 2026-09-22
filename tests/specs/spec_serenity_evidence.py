@@ -16,7 +16,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_evidence_quality"
 _ROOT = Path(__file__).parent.parent.parent
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 _PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
 
 
@@ -319,7 +319,7 @@ def test_research_worker_has_tradeable_symbol_filter():
     ),
 )
 def test_tradeable_symbol_filter_behavior():
-    from aletheia.agents.research_worker import _is_allowed_serenity_symbol
+    from extensions.research.research_worker import _is_allowed_serenity_symbol
 
     # Must reject hallucination symbols
     assert not _is_allowed_serenity_symbol("MSTR/USD"), "stock ticker should be rejected"

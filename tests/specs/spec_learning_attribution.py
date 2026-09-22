@@ -228,7 +228,7 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     )
     assert mismatched["reason"] == "research_scope_identity_mismatch"
     from pathlib import Path
-    dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
+    dreaming_source = Path("extensions/research/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source
 
     from aletheia.analytics import guard_effectiveness, guard_promotion, trade_attribution

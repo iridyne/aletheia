@@ -49,6 +49,46 @@ async def client(tmp_path, monkeypatch):
 # --- Status Endpoint ---
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("action", ["create", "retry", "deep-dive"])
+async def test_absent_research_rejects_before_any_request_writes(client, monkeypatch, action):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(scheduler, "_enqueue_research_run", None)
+    failed = SerenityResearchRun(status="failed")
+    repo.insert_serenity_research_run(failed)
+    theme = SerenityTheme(name="Existing evidence", status="active")
+    repo.insert_serenity_theme(theme)
+    tables = ("serenity_research_runs", "serenity_profile_snapshots", "serenity_user_profiles")
+    before = [get_db().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables]
+    paths = {
+        "create": "/api/serenity/runs",
+        "retry": f"/api/serenity/runs/{failed.id}/retry",
+        "deep-dive": f"/api/serenity/themes/{theme.id}/deep-dive",
+    }
+    response = await client.post(paths[action], json={"brief": "Research BTC", "saveToProfile": True})
+    assert response.status_code == 503
+    assert "producer unavailable" in response.json()["detail"]
+    after = [get_db().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables]
+    assert after == before
+    assert repo.get_serenity_research_retry(failed.id, 1) is None
+    assert (await client.get(f"/api/serenity/runs/{failed.id}")).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_absent_research_preserves_cancel_and_history(client, monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_enqueue_research_run", None)
+    queued = SerenityResearchRun(status="queued")
+    repo.insert_serenity_research_run(queued)
+    response = await client.post(f"/api/serenity/runs/{queued.id}/cancel")
+    assert response.status_code == 200
+    assert repo.get_serenity_research_run(queued.id)["status"] == "cancelled"
+    assert (await client.get("/api/serenity/runs")).status_code == 200
+
+
 @pytest.fixture
 def fast_tier(monkeypatch):
     from aletheia.config.schema import ModelSelection
@@ -102,7 +142,7 @@ async def test_status_rate_limited(client):
 
 @pytest.mark.anyio
 async def test_create_run_manual(client):
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post("/api/serenity/runs", json={
             "mode": "standard",
             "triggerType": "manual",
@@ -121,7 +161,7 @@ async def test_create_run_manual(client):
 
 @pytest.mark.anyio
 async def test_create_run_with_brief(client):
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post("/api/serenity/runs", json={
             "mode": "standard",
             "triggerType": "manual",
@@ -137,7 +177,7 @@ async def test_create_run_with_brief(client):
 
 @pytest.mark.anyio
 async def test_create_run_save_to_profile(client):
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post("/api/serenity/runs", json={
             "mode": "standard",
             "triggerType": "manual",
@@ -159,7 +199,7 @@ async def test_create_run_conflict(client):
     )
     repo.insert_serenity_research_run(existing)
 
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post("/api/serenity/runs", json={
             "mode": "standard", "triggerType": "manual",
         })
@@ -168,7 +208,7 @@ async def test_create_run_conflict(client):
 
 @pytest.mark.anyio
 async def test_create_run_idempotency(client):
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp1 = await client.post("/api/serenity/runs", json={
             "mode": "standard", "triggerType": "manual",
             "idempotencyKey": "test-key-123",
@@ -312,7 +352,7 @@ async def test_retry_failed_run(client):
     run = SerenityResearchRun(status="failed", error_type="provider_rate_limit")
     repo.insert_serenity_research_run(run)
 
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post(f"/api/serenity/runs/{run.id}/retry")
     assert resp.status_code == 200
     data = resp.json()
@@ -326,7 +366,7 @@ async def test_retry_failed_run_is_durable_and_idempotent(client):
     run = SerenityResearchRun(status="failed", error_type="provider_rate_limit")
     repo.insert_serenity_research_run(run)
 
-    with patch("aletheia.agents.research_worker.enqueue_research_run") as enqueue:
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run") as enqueue:
         first = await client.post(f"/api/serenity/runs/{run.id}/retry")
         second = await client.post(f"/api/serenity/runs/{run.id}/retry")
 
@@ -342,7 +382,7 @@ async def test_retry_completed_run_rejected(client):
     run = SerenityResearchRun(status="completed")
     repo.insert_serenity_research_run(run)
 
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post(f"/api/serenity/runs/{run.id}/retry")
     assert resp.status_code == 400
 
@@ -461,7 +501,7 @@ async def test_deep_dive(client):
     theme = SerenityTheme(name="Test Theme", status="active")
     repo.insert_serenity_theme(theme)
 
-    with patch("aletheia.agents.research_worker.enqueue_research_run"):
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run"):
         resp = await client.post(f"/api/serenity/themes/{theme.id}/deep-dive", json={
             "brief": "Focus on supply chain catalysts",
         })
@@ -518,7 +558,7 @@ async def test_research_worker_success(tmp_path, monkeypatch, fast_tier):
         return ("[]", None)
 
     with patch("aletheia.agents.helpers.llm_complete", mock_llm):
-        from aletheia.agents.research_worker import _process_research_run
+        from extensions.research.research_worker import _process_research_run
         await _process_research_run(run.id)
 
     updated = repo.get_serenity_research_run(run.id)
@@ -554,7 +594,7 @@ async def test_research_worker_rate_limit(tmp_path, monkeypatch, fast_tier):
         return (None, "429 Too Many Requests")
 
     with patch("aletheia.agents.helpers.llm_complete", mock_llm_429):
-        from aletheia.agents.research_worker import _process_research_run
+        from extensions.research.research_worker import _process_research_run
         await _process_research_run(run.id)
 
     updated = repo.get_serenity_research_run(run.id)
@@ -588,7 +628,7 @@ async def test_research_worker_generic_failure(tmp_path, monkeypatch, fast_tier)
         return (None, "Network connection lost")
 
     with patch("aletheia.agents.helpers.llm_complete", mock_llm_fail):
-        from aletheia.agents.research_worker import _process_research_run
+        from extensions.research.research_worker import _process_research_run
         await _process_research_run(run.id)
 
     updated = repo.get_serenity_research_run(run.id)
@@ -683,7 +723,7 @@ def test_unclaimed_worker_failure_does_not_strand_queued_run(db):
     run = SerenityResearchRun(status="queued")
     repo.insert_serenity_research_run(run)
 
-    from aletheia.agents.research_worker import _mark_failed
+    from extensions.research.research_worker import _mark_failed
 
     _mark_failed(run.id, "database_error", "claim failed", None, allow_queued=True)
 
@@ -1012,7 +1052,7 @@ async def test_cancel_running_run(client, monkeypatch):
     assert listed["stage"] == "extract_claims"
     assert listed["lastProgressAt"] == requested["updated_at"]
 
-    from aletheia.agents.research_worker import _acknowledge_cancellation
+    from extensions.research.research_worker import _acknowledge_cancellation
 
     assert _acknowledge_cancellation(run.id) is True
     cancelled = repo.get_serenity_research_run(run.id)
@@ -1220,7 +1260,7 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch, fast_tier):
         return ("[]", None)
 
     with patch("aletheia.agents.helpers.llm_complete", mock_llm_complete):
-        from aletheia.agents.research_worker import _run_pipeline_inner
+        from extensions.research.research_worker import _run_pipeline_inner
         await _run_pipeline_inner(run.id, dict(repo.get_serenity_research_run(run.id)))
 
     updated = repo.get_serenity_research_run(run.id)
@@ -1275,7 +1315,7 @@ async def test_research_worker_fails_run_on_required_theme_persistence_error(db,
 
     monkeypatch.setattr(repo, "insert_serenity_theme_with_claim_links", fail_theme_write)
     with patch("aletheia.agents.helpers.llm_complete", mock_llm_complete):
-        from aletheia.agents.research_worker import _process_research_run
+        from extensions.research.research_worker import _process_research_run
         await _process_research_run(run.id)
 
     updated = repo.get_serenity_research_run(run.id)
@@ -1307,7 +1347,7 @@ async def test_pipeline_cancellation(tmp_path, monkeypatch):
     run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running")
     repo.insert_serenity_research_run(run)
 
-    from aletheia.agents.research_worker import _should_cancel, _check_cancellation, _CancelledError
+    from extensions.research.research_worker import _should_cancel, _check_cancellation, _CancelledError
 
     assert _should_cancel(run.id) is False
 
@@ -1343,7 +1383,7 @@ async def test_pipeline_rate_limit_handling(tmp_path, monkeypatch):
     run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running", retry_count=0)
     repo.insert_serenity_research_run(run)
 
-    from aletheia.agents.research_worker import _handle_rate_limit
+    from extensions.research.research_worker import _handle_rate_limit
     _handle_rate_limit(run.id, dict(repo.get_serenity_research_run(run.id)), "429 Too Many Requests")
 
     updated = repo.get_serenity_research_run(run.id)
@@ -1373,7 +1413,7 @@ async def test_pipeline_rate_limit_retries_exhausted(tmp_path, monkeypatch):
     run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="running", retry_count=3)
     repo.insert_serenity_research_run(run)
 
-    from aletheia.agents.research_worker import _handle_rate_limit
+    from extensions.research.research_worker import _handle_rate_limit
     run_dict = dict(repo.get_serenity_research_run(run.id))
     run_dict["retry_count"] = 3
     _handle_rate_limit(run.id, run_dict, "429 again")
@@ -1388,7 +1428,7 @@ async def test_pipeline_rate_limit_retries_exhausted(tmp_path, monkeypatch):
 # --- Schema Validation / Parse Edge Cases ---
 
 def test_parse_json_array_markdown_wrapped():
-    from aletheia.agents.research_worker import _parse_json_array
+    from extensions.research.research_worker import _parse_json_array
     text = '```json\n[{"title": "test"}]\n```'
     result = _parse_json_array(text, "evidence")
     assert len(result) == 1
@@ -1396,14 +1436,14 @@ def test_parse_json_array_markdown_wrapped():
 
 
 def test_parse_json_array_empty():
-    from aletheia.agents.research_worker import _parse_json_array
+    from extensions.research.research_worker import _parse_json_array
     assert _parse_json_array(None, "x") == []
     assert _parse_json_array("", "x") == []
     assert _parse_json_array("not json at all", "x") == []
 
 
 def test_parse_json_array_nested_key():
-    from aletheia.agents.research_worker import _parse_json_array
+    from extensions.research.research_worker import _parse_json_array
     text = '{"evidence": [{"title": "nested"}]}'
     result = _parse_json_array(text, "evidence")
     assert len(result) == 1
@@ -1411,7 +1451,7 @@ def test_parse_json_array_nested_key():
 
 
 def test_classify_error_types():
-    from aletheia.agents.research_worker import _classify_error
+    from extensions.research.research_worker import _classify_error
     assert _classify_error(Exception("429 Too Many Requests")) == "provider_rate_limit"
     assert _classify_error(Exception("rate limit exceeded")) == "provider_rate_limit"
     assert _classify_error(Exception("Connection timeout")) == "provider_timeout"
@@ -1424,7 +1464,7 @@ def test_classify_error_types():
 
 def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     """The worker-thread boundary must not erase a provider timeout as unknown."""
-    import aletheia.agents.research_worker as worker
+    import extensions.research.research_worker as worker
 
     recorded = {}
 

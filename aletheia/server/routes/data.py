@@ -2570,6 +2570,15 @@ def get_serenity_status():
     }
 
 
+def _require_serenity_enqueue():
+    from aletheia.agent_runtime.scheduler import require_research_enqueue
+
+    try:
+        return require_research_enqueue()
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 @router.post("/serenity/runs", status_code=202)
 def create_serenity_run(body: dict):
     """Create a new research run. Returns 409 if one is already active."""
@@ -2589,6 +2598,7 @@ def create_serenity_run(body: dict):
     if active:
         raise HTTPException(409, "A research run is already active")
 
+    enqueue_research_run = _require_serenity_enqueue()
     profile_snapshot_id = None
     if brief:
         parsed = _parse_brief_to_profile(brief)
@@ -2633,8 +2643,6 @@ def create_serenity_run(body: dict):
         brief_snapshot=brief,
     )
     repo.insert_serenity_research_run(run)
-
-    from aletheia.agents.research_worker import enqueue_research_run
 
     enqueue_research_run(run.id)
 
@@ -2714,6 +2722,7 @@ def retry_serenity_run(run_id: str):
     if run["status"] not in ("failed", "rate_limited"):
         raise HTTPException(400, "Only failed or rate_limited runs can be retried")
 
+    enqueue_research_run = _require_serenity_enqueue()
     retry_count = (run.get("retry_count") or 0) + 1
     new_run = SerenityResearchRun(
         trigger_type=run.get("trigger_type", "manual"),
@@ -2729,8 +2738,6 @@ def retry_serenity_run(run_id: str):
     stored, deduplicated = repo.insert_serenity_research_retry(new_run)
 
     if not deduplicated:
-        from aletheia.agents.research_worker import enqueue_research_run
-
         enqueue_research_run(stored["id"])
 
     return {
@@ -2894,6 +2901,7 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
     if active:
         raise HTTPException(409, "A research run is already active")
 
+    enqueue_research_run = _require_serenity_enqueue()
     brief = body.get("brief", f"Deep dive into theme: {theme['name']}")
     run = SerenityResearchRun(
         trigger_type="focused",
@@ -2903,8 +2911,6 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
         brief_snapshot=brief,
     )
     repo.insert_serenity_research_run(run)
-
-    from aletheia.agents.research_worker import enqueue_research_run
 
     enqueue_research_run(run.id)
 

@@ -63,6 +63,10 @@ def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
 def test_daily_learning_catchup_is_once_per_successful_window(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
+    from aletheia.agents import _AGENTS
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+
+    monkeypatch.setitem(_AGENTS, "lesson_reviewer", run_lesson_reviewer)
 
     monkeypatch.setattr(
         control,
@@ -93,6 +97,10 @@ def test_daily_learning_catchup_is_once_per_successful_window(monkeypatch):
 def test_daily_learning_catchup_retries_only_failed_due_children(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
+    from aletheia.agents import _AGENTS
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+
+    monkeypatch.setitem(_AGENTS, "lesson_reviewer", run_lesson_reviewer)
 
     monkeypatch.setattr(
         control,

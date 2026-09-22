@@ -110,7 +110,15 @@ def test_lesson_chain_empty_is_info(db):
     assert _verdict(dx._probe_content_lesson_chain).severity == "info"
 
 
-def test_lesson_chain_recent_proposed_is_info(db):
+@pytest.fixture
+def reviewer_composed(monkeypatch):
+    from aletheia.agents import _AGENTS
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+
+    monkeypatch.setitem(_AGENTS, "lesson_reviewer", run_lesson_reviewer)
+
+
+def test_lesson_chain_recent_proposed_is_info(db, reviewer_composed):
     # lesson_reviewer machinery is now wired; recently-proposed lessons are honestly
     # awaiting the daily evidence-gated review (cron 03:00 CST), NOT a dead chain.
     # Reporting warn here would false-alarm forever the day after every new lesson.
@@ -120,7 +128,7 @@ def test_lesson_chain_recent_proposed_is_info(db):
     assert v.severity == "info" and "awaiting" in v.detail.lower()
 
 
-def test_lesson_chain_stale_backlog_warns(db):
+def test_lesson_chain_stale_backlog_warns(db, reviewer_composed):
     # proposed lessons older than the 48h review window that never drained → the
     # wired reviewer is failing (cron dead / LLM unavailable). The probe must still
     # warn here: this is the genuine dead-chain failure, just detected by staleness.
@@ -133,6 +141,16 @@ def test_lesson_chain_stale_backlog_warns(db):
 def test_lesson_chain_with_applied_is_ok(db):
     _ins_lesson(db, "l_ok", "accepted", applied="v1")
     assert _verdict(dx._probe_content_lesson_chain).severity == "ok"
+
+
+def test_lesson_chain_absent_reviewer_reports_unavailable(db, monkeypatch):
+    from aletheia.agents import _AGENTS
+
+    monkeypatch.delitem(_AGENTS, "lesson_reviewer", raising=False)
+    _ins_lesson(db, "unreviewed", "proposed")
+    verdict = _verdict(dx._probe_content_lesson_chain)
+    assert verdict.severity == "warn"
+    assert "chain not built" in verdict.detail
 
 
 # --- content.attribution -----------------------------------------------------

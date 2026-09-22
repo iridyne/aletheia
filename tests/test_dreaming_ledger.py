@@ -32,14 +32,14 @@ def setup_env(tmp_path, monkeypatch):
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
     from aletheia.config.schema import ModelSelection
-    monkeypatch.setattr("aletheia.agents.dreaming_agent.get_provider_for_tier",
+    monkeypatch.setattr("extensions.research.dreaming_agent.get_provider_for_tier",
                         lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
 
 
 def _mock_llm_unavailable(monkeypatch):
     """Force the LLM to be unavailable so the dreaming agent takes its
     deterministic fallback path (no network) but still writes the review."""
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
 
     async def _fail(*a, **k):
         return None, "llm_unavailable: test"
@@ -92,7 +92,7 @@ def _seed_trade_case_study(
 @pytest.mark.asyncio
 async def test_lesson_extraction_leaves_unavailable_cases_pending(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -130,7 +130,7 @@ async def test_lesson_extraction_leaves_unavailable_cases_pending(tmp_path, monk
 
 
 def test_lesson_extraction_declares_its_structured_transport_contract():
-    from aletheia.agents.dreaming_agent import _LessonExtractionResult
+    from extensions.research.dreaming_agent import _LessonExtractionResult
     from aletheia.model_provider.inference_contract import (
         OutputMode,
         build_inference_call,
@@ -153,7 +153,7 @@ async def test_lesson_extraction_reports_invalid_structured_output(
     """A transport-successful but unusable model response must not look healthy."""
     setup_env(tmp_path, monkeypatch)
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.learning.control import get_learning_job_health
     from aletheia.storage.repositories import pending_trade_case_studies_summary
     _seed_trade_case_study()
@@ -192,7 +192,7 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     setup_env(tmp_path, monkeypatch)
     _seed_trade_case_study()
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.storage.sqlite import get_db
 
     call_options = {}
@@ -239,7 +239,7 @@ async def test_lesson_extraction_drains_cases_with_durable_cursor(
     tmp_path, monkeypatch,
 ):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.learning.control import (
         get_learning_job_health,
         job_health_view,
@@ -274,7 +274,7 @@ async def test_reopened_prefix_does_not_starve_forward_cases(tmp_path, monkeypat
     setup_env(tmp_path, monkeypatch)
     from pathlib import Path
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.learning.control import get_learning_job_health
     from aletheia.learning.lessons import LessonStore
     from aletheia.storage.sqlite import get_db
@@ -361,7 +361,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from pathlib import Path
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.learning import guard_routing, hypotheses
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import pending_trade_case_studies_summary
@@ -454,7 +454,7 @@ async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(
     setup_env(tmp_path, monkeypatch)
     from pathlib import Path
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -523,7 +523,7 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     create_research_note("note B", "Evidence B: ETH funding rates turned negative on perpetuals, suggesting leveraged longs being squeezed out gradually.")
 
     captured = {}
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     orig = dreaming_agent.create_daily_review
 
     def _capture(title, content):
@@ -548,7 +548,7 @@ async def test_learning_ledger_failure_does_not_break_run(tmp_path, monkeypatch)
     _mock_llm_unavailable(monkeypatch)
 
     # Make the ledger builder blow up; the dreaming run must still succeed.
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     monkeypatch.setattr(dreaming_agent, "_build_learning_ledger",
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
@@ -577,7 +577,7 @@ async def test_dreaming_triggers_git_snapshot_when_enabled(tmp_path, monkeypatch
         return {"committed": True, "message": message}
     monkeypatch.setattr(git_mod, "commit_all", fake_commit_all)
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
 
     assert len(calls) == 1
@@ -593,7 +593,7 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
         raise RuntimeError("git exploded")
     monkeypatch.setattr(git_mod, "commit_all", boom)
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
     # Run still completes and wrote its review despite git failure.
     assert any(
@@ -634,7 +634,7 @@ async def test_dreaming_review_loss_day_verdict(tmp_path, monkeypatch):
     _seed_closed_position(realized_pnl=-25.0)
 
     captured = {}
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     orig = dreaming_agent.create_daily_review
 
     def _capture(title, content):
@@ -654,7 +654,7 @@ async def test_dreaming_review_not_available_when_no_trades(tmp_path, monkeypatc
     # No positions seeded — table is empty
 
     captured = {}
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     orig = dreaming_agent.create_daily_review
 
     def _capture(title, content):
@@ -669,7 +669,7 @@ async def test_dreaming_review_not_available_when_no_trades(tmp_path, monkeypatc
 
 async def test_unassigned_deep_keeps_deterministic_review_without_inference(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     from aletheia.model_provider.router import ProviderNotConfigured
 
     def unassigned(_tier):
@@ -695,7 +695,7 @@ async def test_dreaming_review_profit_day_verdict(tmp_path, monkeypatch):
     _seed_closed_position(realized_pnl=-2.0)  # net still positive
 
     captured = {}
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
     orig = dreaming_agent.create_daily_review
 
     def _capture(title, content):
@@ -712,7 +712,7 @@ async def test_dreaming_performance_block_precedes_llm_narrative(tmp_path, monke
     """Trading performance block must appear before the LLM narrative in the document."""
     setup_env(tmp_path, monkeypatch)
 
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
 
     async def _fake_llm(*a, **kw):
         return "## Narrative\nToday was uneventful.", None
@@ -742,7 +742,7 @@ async def test_dreaming_performance_block_precedes_llm_narrative(tmp_path, monke
 def test_dreaming_performance_ignores_excluded_positive_close(monkeypatch):
     """A positive raw close excluded by outcome integrity cannot create PROFIT_DAY."""
     from aletheia.analytics import outcome_integrity
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
 
     monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda **_: [])
     monkeypatch.setattr(

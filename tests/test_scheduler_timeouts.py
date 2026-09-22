@@ -393,7 +393,7 @@ def test_universe_refresh_reconciles_stale_runs_before_skip(monkeypatch):
 
 def test_dreaming_daily_marks_lesson_extraction_contract_failure(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.agents import dreaming_agent
+    from extensions.research import dreaming_agent
 
     async def invalid_extraction(_run_id, _outputs, errors):
         errors.append("lesson_extraction_invalid_output:structured_parse_error")
@@ -410,7 +410,7 @@ def test_dreaming_daily_marks_lesson_extraction_contract_failure(monkeypatch):
             serenity=SimpleNamespace(enabled=False),
         ),
     )
-    monkeypatch.setattr(dreaming_agent, "_extract_lessons", invalid_extraction)
+    monkeypatch.setattr(scheduler, "_extract_research_lessons", invalid_extraction)
     monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_async)
     monkeypatch.setattr(
         scheduler,

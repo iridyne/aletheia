@@ -149,7 +149,7 @@ def test_stability_does_not_require_retired_strategy_binding(tmp_path, monkeypat
 
 def test_ledger_quality_block_present(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.dreaming_agent import _build_learning_ledger
+    from extensions.research.dreaming_agent import _build_learning_ledger
     out = _build_learning_ledger()
     assert "Quality (stage-1 evidence)" in out
     assert "Activation ratio" in out
@@ -171,7 +171,7 @@ def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         update_strategy(s.id, state=target)
 
-    from aletheia.agents.dreaming_agent import _build_learning_ledger
+    from extensions.research.dreaming_agent import _build_learning_ledger
     out = _build_learning_ledger()
     # 1 of 1 strategy reached paper_running → 100%
     assert "Activation ratio: 100%" in out
@@ -192,7 +192,7 @@ def test_ledger_lessons_consulted_counts_only_hits(tmp_path, monkeypatch):
     log_tool("run-L", "load_playbooks", "read_tool", True)                         # separate metric
     log_tool("run-L", "get_market_snapshot", "read_tool", True)                    # not counted
 
-    from aletheia.agents.dreaming_agent import _build_learning_ledger
+    from extensions.research.dreaming_agent import _build_learning_ledger
     out = _build_learning_ledger()
     assert "Lessons consulted (24h): 1" in out   # only the lessons:3 hit, not lessons:0
     assert "Playbook reads (24h): 1" in out

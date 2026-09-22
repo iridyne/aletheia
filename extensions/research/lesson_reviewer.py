@@ -1,4 +1,4 @@
-"""Lesson Reviewer — evidence-gated, overturnable promotion of proposed lessons.
+"""Optional Research Lesson Reviewer — evidence-gated promotion of lessons.
 
 The dreaming_agent mines proposed lessons nightly (ps_lessons, status='proposed'),
 but nothing ever advanced them: `LessonStore.accept()` had no caller and
