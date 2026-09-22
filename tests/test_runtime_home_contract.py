@@ -33,8 +33,8 @@ def test_runtime_consumers_inherit_selected_home(tmp_path, monkeypatch):
 def test_production_python_has_no_repository_relative_runtime_writes():
     root = Path(__file__).resolve().parents[1]
     allowed = {
-        root / "aletheia" / "runtime_home_migration.py",
-        root / "aletheia" / "simulation" / "control_loop" / "runner.py",
+        root / "core" / "aletheia" / "runtime_home_migration.py",
+        root / "core" / "aletheia" / "simulation" / "control_loop" / "runner.py",
     }
     patterns = (
         re.compile(r"Path\([\"']data(?:[\"'/])"),
@@ -42,7 +42,7 @@ def test_production_python_has_no_repository_relative_runtime_writes():
         re.compile(r"sqlite3\.connect\([\"']data/app\.db[\"']"),
     )
     violations: list[str] = []
-    for base in (root / "aletheia", root / "scripts"):
+    for base in (root / "core" / "aletheia", root / "scripts"):
         for path in base.rglob("*.py"):
             if path in allowed:
                 continue

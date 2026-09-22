@@ -149,7 +149,7 @@ def _insert_proposal_chain(db: sqlite3.Connection, *, opp_id: str = "opp-flow-1"
 
 
 def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "opportunity_flow.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "opportunity_flow.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {

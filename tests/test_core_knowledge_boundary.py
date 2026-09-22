@@ -107,7 +107,7 @@ def test_optional_owners_have_no_core_codec_or_index_implementation():
     for path, names in (
         ("extensions/knowledge/retrieval.py", {"index_knowledge_item", "reindex_all", "remove_from_index"}),
         ("extensions/knowledge/manager.py", {"_index"}),
-        ("aletheia/analytics/temporal.py", {"parse_utc_instant"}),
+        ("core/aletheia/analytics/temporal.py", {"parse_utc_instant"}),
     ):
         tree = ast.parse((root / path).read_text())
         assert not {node.name for node in tree.body if isinstance(node, ast.FunctionDef)} & names

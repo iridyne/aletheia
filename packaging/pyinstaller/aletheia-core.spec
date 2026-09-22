@@ -7,10 +7,12 @@ without a console window on Windows, while terminal users keep normal stdout/std
 """
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parents[1]
+sys.path[:0] = [str(ROOT / "core"), str(ROOT)]
 
 hiddenimports = []
 for package in ("aletheia", "extensions", "ops", "legacy"):
@@ -22,14 +24,14 @@ for package in ("keyring.backends", "ccxt", "yfinance", "feedparser"):
     hiddenimports.extend(collect_submodules(package))
 
 _datas = [
-    (str(ROOT / "aletheia" / "dashboard_static"), "aletheia/dashboard_static"),
+    (str(ROOT / "core" / "aletheia" / "dashboard_static"), "aletheia/dashboard_static"),
 ]
 for package in ("certifi", "keyring", "ccxt"):
     _datas.extend(collect_data_files(package, include_py_files=False))
 
 analysis = Analysis(
     [str(ROOT / "scripts" / "release" / "pyinstaller_entry.py")],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT / "core"), str(ROOT)],
     binaries=[],
     datas=_datas,
     hiddenimports=sorted(set(hiddenimports)),

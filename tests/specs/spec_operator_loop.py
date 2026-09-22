@@ -400,7 +400,7 @@ def test_observers_do_not_insert_pi_decisions():
     ]
     # Optionally guard additional observers if they exist
     for optional_name in ("chain_observer.py", "macro_observer.py"):
-        candidate = _PROJECT_ROOT / "aletheia" / "agents" / optional_name
+        candidate = _PROJECT_ROOT / "core" / "aletheia" / "agents" / optional_name
         if candidate.exists():
             _OBSERVER_FILES.append(candidate)
 
@@ -579,7 +579,7 @@ def test_write_operator_report_root_is_data_dir():
 
     _PROJECT_ROOT = Path(__file__).resolve().parents[2]
     fa_src = (
-        _PROJECT_ROOT / "aletheia" / "agent_shell" / "file_artifacts.py"
+        _PROJECT_ROOT / "core" / "aletheia" / "agent_shell" / "file_artifacts.py"
     ).read_text(encoding="utf-8")
 
     # 1. The path-builder must reference get_data_dir(), not a hardcoded docs/ path.

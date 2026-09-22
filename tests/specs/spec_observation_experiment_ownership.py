@@ -12,7 +12,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "observation_experiment_ownership_v2"
 _CHECKPOINT_CONTRACT = "observation_lab_backup_contract"
 _ROOT = Path(__file__).resolve().parents[2]
-_SRC = _ROOT / "aletheia"
+_SRC = _ROOT / "core" / "aletheia"
 
 _LEGACY_TABLES = frozenset({
     "learning_experiments",
@@ -30,13 +30,13 @@ _LEGACY_TABLES = frozenset({
 # as debt growing; `unexpected` (discovered - allowed) is the half that guards the
 # invariant, and it was empty, so nothing lost protection here.
 _REFERENCE_ALLOWLIST = frozenset({
-    "aletheia/agent_runtime/scheduler.py",
-    "aletheia/analytics/profit_gradient_evidence.py",
+    "core/aletheia/agent_runtime/scheduler.py",
+    "core/aletheia/analytics/profit_gradient_evidence.py",
     # Backup verification must inspect legacy rows so an unproven cutover
     # cannot be presented as an authoritative recovery checkpoint.
-    "aletheia/backup/verify.py",
-    "aletheia/cli/observe_cmd.py",
-    "aletheia/config/schema.py",
+    "core/aletheia/backup/verify.py",
+    "core/aletheia/cli/observe_cmd.py",
+    "core/aletheia/config/schema.py",
     "extensions/counterfactual/__init__.py",
     "extensions/learning/ledger.py",
     "ops/maintenance/data_retention_backfill.py",
@@ -44,10 +44,10 @@ _REFERENCE_ALLOWLIST = frozenset({
     "extensions/observation_lab/db.py",
     "extensions/observation_lab/exposure.py",
     "extensions/observation_lab/migration.py",
-    "aletheia/server/routes/data.py",
-    "aletheia/server/routes/settings.py",
-    "aletheia/storage/migrations.py",
-    "aletheia/storage/repositories.py",
+    "core/aletheia/server/routes/data.py",
+    "core/aletheia/server/routes/settings.py",
+    "core/aletheia/storage/migrations.py",
+    "core/aletheia/storage/repositories.py",
     "ops/update/continuity.py",
 })
 
@@ -59,10 +59,10 @@ _REFERENCE_ALLOWLIST = frozenset({
 # ledger at all. learning/ledger.py stays out of this list while remaining in the
 # reference list above, because its two remaining touches are SELECTs.
 _WRITER_ALLOWLIST = frozenset({
-    "aletheia/agent_runtime/scheduler.py",
+    "core/aletheia/agent_runtime/scheduler.py",
     "ops/maintenance/data_retention_backfill.py",
-    "aletheia/storage/migrations.py",
-    "aletheia/storage/repositories.py",
+    "core/aletheia/storage/migrations.py",
+    "core/aletheia/storage/repositories.py",
 })
 
 

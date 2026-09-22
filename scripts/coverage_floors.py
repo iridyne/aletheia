@@ -32,14 +32,14 @@ import coverage
 # only in the same PR that adds the tests that make it stable; never lower
 # a floor to unblock a PR — fix the regression instead.
 FLOORS: dict[str, float] = {
-    "aletheia/analytics/profit_gradient.py": 90.0,
-    "aletheia/analytics/profit_gradient_estimators.py": 90.0,
-    "aletheia/analytics/profit_gradient_evidence.py": 50.0,
-    "aletheia/analytics/position_replay.py": 75.0,
-    "aletheia/analytics/momentum_geometry_replay.py": 75.0,
+    "core/aletheia/analytics/profit_gradient.py": 90.0,
+    "core/aletheia/analytics/profit_gradient_estimators.py": 90.0,
+    "core/aletheia/analytics/profit_gradient_evidence.py": 50.0,
+    "core/aletheia/analytics/position_replay.py": 75.0,
+    "core/aletheia/analytics/momentum_geometry_replay.py": 75.0,
     "extensions/counterfactual/filter_replay.py": 50.0,
-    "aletheia/economics/context_artifacts.py": 50.0,
-    "aletheia/execution/reconciliation.py": 25.0,
+    "core/aletheia/economics/context_artifacts.py": 50.0,
+    "core/aletheia/execution/reconciliation.py": 25.0,
     "extensions/learning/evidence_epoch.py": 85.0,
     "extensions/learning/policy_epochs.py": 70.0,
 }

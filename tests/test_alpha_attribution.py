@@ -572,7 +572,7 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                 "(id, layer, cohort_id, treatment_id, role, symbol, direction, horizon, "
                 "entry_price, entry_ts, score, module_path, metadata, outcome_candidate_key) "
                 "VALUES (?, 'universe', 'cohort-1', 'snap-1', ?, ?, 'long', '1h', 100, ?, 50, "
-                "'aletheia/universe/allocator.py', ?, ?)",
+                "'core/aletheia/universe/allocator.py', ?, ?)",
                 (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at}), outcome_key),
             )
             db.execute(

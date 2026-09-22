@@ -42,9 +42,9 @@ def test_learning_settings_endpoint_is_documented():
 
 # Repository root — all path lookups are relative to this.
 _ROOT = Path(__file__).resolve().parent.parent.parent
-_ROUTES = _ROOT / "aletheia" / "server" / "routes"
+_ROUTES = _ROOT / "core" / "aletheia" / "server" / "routes"
 _CREDENTIAL_ROUTES = _ROOT / "extensions" / "exchanges" / "credential_routes.py"
-_APP_PY = _ROOT / "aletheia" / "server" / "app.py"
+_APP_PY = _ROOT / "core" / "aletheia" / "server" / "app.py"
 
 
 @spec_claim(
@@ -78,7 +78,7 @@ def test_workbench_universe_state_is_config_first_and_stale_aware():
 )
 def test_workbench_current_candidates_are_snapshot_backed_and_optional_joined():
     route = (_ROUTES / "universe.py").read_text(encoding="utf-8")
-    repository = (_ROOT / "aletheia" / "storage" / "repositories.py").read_text(
+    repository = (_ROOT / "core" / "aletheia" / "storage" / "repositories.py").read_text(
         encoding="utf-8"
     )
     assert '"current_candidates": None' in route

@@ -47,7 +47,8 @@ def test_position_field_owners_reject_foreign_fields_and_stale_state():
 
 
 def test_production_has_no_generic_position_update_entrypoint():
-    root = Path(__file__).parents[1] / "aletheia"
+    root = Path(__file__).parents[1] / "core" / "aletheia"
+    assert (root / "storage/repositories.py").is_file()
     offenders = []
     for source in root.rglob("*.py"):
         if "update_position(" in source.read_text(encoding="utf-8"):
@@ -61,19 +62,19 @@ def test_production_has_no_generic_position_update_entrypoint():
 # there is, and banning the `update_position(` symbol alone left it open.
 _RAW_POSITION_UPDATE_ALLOWED = {
     # Owns the table definition and every migration that rewrites it.
-    "storage/migrations.py",
+    "core/aletheia/storage/migrations.py",
     # Hosts the owners themselves, including _update_owned_position_fields.
-    "storage/repositories.py",
+    "core/aletheia/storage/repositories.py",
     # One-shot remediation batch (REMEDIATION_BATCH_ID). Its idempotence key is
     # `outcome_semantics_version IS NULL`, not a status CAS, and routing it
     # through the settlement owner would mean permanently widening that owner's
     # whitelist by close_category + outcome_semantics_version to accommodate a
     # migration-shaped job. Keep the raw statement and the narrower authority.
-    "maintenance/outcome_integrity.py",
+    "ops/maintenance/outcome_integrity.py",
     # Owner-approved #3111 fixed-target recovery: exact before-state comparison,
     # private evidence validation and atomic audit idempotency; never a runtime caller.
     # Do not widen the ordinary Position field owners for this historical repair.
-    "maintenance/repair_doge_adoption_overlap.py",
+    "ops/maintenance/repair_doge_adoption_overlap.py",
 }
 
 
@@ -88,7 +89,7 @@ def _without_sql_comments(sql: str) -> str:
 
 def _assert_raw_position_writes(root: Path):
     """Literal SQL/helper guard, not a claim to resolve arbitrary dynamic SQL."""
-    allowed = {f"aletheia/{path}" for path in _RAW_POSITION_UPDATE_ALLOWED}
+    allowed = _RAW_POSITION_UPDATE_ALLOWED
     writes = re.compile(
         r'''\b(?:UPDATE(?:\s+OR\s+\w+)?|INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM)\s+'''
         r'''(?:(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?'''
@@ -130,7 +131,9 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
     CAS and PositionClaimConflict rowcount check. Current writes stay with
     the explicit owners below.
     """
-    _assert_raw_position_writes(Path(__file__).parents[1])
+    root = Path(__file__).parents[1]
+    assert (root / "core/aletheia/storage/repositories.py").is_file()
+    _assert_raw_position_writes(root)
 
 
 @pytest.mark.parametrize("directory", ["aletheia", "core", "extensions", "legacy", "ops", "scripts"])
@@ -194,7 +197,7 @@ def _assert_settlement_callers(root: Path):
                             expected_module = "aletheia.portfolio.pnl" if alias.name == "_commit_close_economics" else "aletheia.storage.repositories"
                             assert node.level == 0 and node.module == expected_module, (path, node.lineno)
                             assert any(
-                                path == root / "aletheia/portfolio" / key[0] and alias.name == key[2]
+                                path == root / "core/aletheia/portfolio" / key[0] and alias.name == key[2]
                                 for key in _SETTLEMENT_CALLERS
                             ), (path, node.lineno)
                             aliases[alias.asname or alias.name] = alias.name
@@ -208,7 +211,7 @@ def _assert_settlement_callers(root: Path):
                     assert isinstance(node.value, ast.Name) and node.value.id in repository_aliases and name != "_commit_close_economics", (path, node.lineno)
                 else:
                     assert node.id in aliases or (
-                        name == "_commit_close_economics" and path == root / "aletheia/portfolio/pnl.py"
+                        name == "_commit_close_economics" and path == root / "core/aletheia/portfolio/pnl.py"
                         and any(isinstance(item, ast.FunctionDef) and item.name == name for item in tree.body)
                     ), (path, node.lineno)
                 call = parents.get(node)
@@ -219,7 +222,7 @@ def _assert_settlement_callers(root: Path):
                     parent = parents.get(parent)
                 assert not isinstance(parent, ast.Lambda), (path, node.lineno)
                 key = (path.name, parent.name if parent else None, name)
-                assert path.parent == root / "aletheia/portfolio" and key in _SETTLEMENT_CALLERS, (path, node.lineno)
+                assert path.parent == root / "core/aletheia/portfolio" and key in _SETTLEMENT_CALLERS, (path, node.lineno)
                 fields = _SETTLEMENT_CALLERS[key]
                 if fields is not None:
                     assert len(call.args) <= 1 and not any(isinstance(arg, ast.Starred) for arg in call.args), (path, node.lineno)
@@ -234,14 +237,14 @@ def test_settlement_callers_match_the_audited_facts_and_field_scopes():
 
 @pytest.mark.parametrize("path,source", [
     ("extensions/other.py", "from aletheia.storage.repositories import finalize_position_close as close\nclose('id', fields)"),
-    ("aletheia/portfolio/other.py", "from ..storage.repositories import update_closed_position_settlement as update\nupdate('id', realized_pnl=1)"),
-    ("aletheia/portfolio/pnl.py", "def other():\n    repo.update_closed_position_settlement('id', realized_pnl=1)"),
-    ("aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    repo.update_closed_position_settlement('id', realized_pnl=1)"),
-    ("aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    repo.update_closed_position_settlement('id', **fields)"),
-    ("aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    callback = repo.update_closed_position_settlement"),
-    ("aletheia/portfolio/outcome_hooks.py", "from aletheia.storage import repositories as repo\ndef _load_eligible_position():\n    return lambda: repo.update_closed_position_settlement('id', outcome_eligible=False)"),
-    ("aletheia/portfolio/outcome_hooks.py", "from compatibility_layer import update_closed_position_settlement\ndef _load_eligible_position():\n    update_closed_position_settlement('id', outcome_eligible=False)"),
-    ("aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    other.update_closed_position_settlement('id', outcome_eligible=False)"),
+    ("core/aletheia/portfolio/other.py", "from ..storage.repositories import update_closed_position_settlement as update\nupdate('id', realized_pnl=1)"),
+    ("core/aletheia/portfolio/pnl.py", "def other():\n    repo.update_closed_position_settlement('id', realized_pnl=1)"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    repo.update_closed_position_settlement('id', realized_pnl=1)"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    repo.update_closed_position_settlement('id', **fields)"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    callback = repo.update_closed_position_settlement"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "from aletheia.storage import repositories as repo\ndef _load_eligible_position():\n    return lambda: repo.update_closed_position_settlement('id', outcome_eligible=False)"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "from compatibility_layer import update_closed_position_settlement\ndef _load_eligible_position():\n    update_closed_position_settlement('id', outcome_eligible=False)"),
+    ("core/aletheia/portfolio/outcome_hooks.py", "def _load_eligible_position():\n    other.update_closed_position_settlement('id', outcome_eligible=False)"),
 ])
 def test_settlement_guard_rejects_new_owner_or_expanded_field_authority(tmp_path, path, source):
     target = tmp_path / path
@@ -254,7 +257,8 @@ def test_settlement_guard_rejects_new_owner_or_expanded_field_authority(tmp_path
 def test_fixed_target_historical_repair_is_not_imported_by_production():
     import ast
 
-    root = Path(__file__).parents[1] / "aletheia"
+    root = Path(__file__).parents[1] / "core" / "aletheia"
+    assert (root / "storage/repositories.py").is_file()
     for source in root.rglob("*.py"):
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             if isinstance(node, (ast.Import, ast.ImportFrom)):

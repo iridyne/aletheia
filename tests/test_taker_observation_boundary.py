@@ -7,7 +7,7 @@ import pytest
 
 
 def test_core_features_do_not_call_native_taker_endpoints():
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia/universe/features.py").read_text())
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "core/aletheia/universe/features.py").read_text())
     native = {"fapipublic_get_takerlongshortratio", "public_get_rubik_stat_taker_volume"}
     assert not any(isinstance(node, ast.Attribute) and node.attr in native for node in ast.walk(tree))
 

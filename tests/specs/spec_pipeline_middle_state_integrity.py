@@ -995,7 +995,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
 
     emitter_seams = {"insert_universe_setup", "insert_opportunity_generation"}
     reintroduced = {}
-    for path in (ROOT / "aletheia").rglob("*.py"):
+    for path in (ROOT / "core" / "aletheia").rglob("*.py"):
         if path.name == "repositories.py":
             continue  # definition site; retired seams are deleted with their callers
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -1275,12 +1275,12 @@ def test_reservation_migration_preserves_normalized_evaluated_quantity(
 def test_safety_loops_do_not_use_the_truncated_open_position_reader():
     root = Path(__file__).resolve().parents[2]
     paths = (
-        "aletheia/risk/engine.py",
-        "aletheia/portfolio/position_manager.py",
-        "aletheia/portfolio/position_reconciler.py",
-        "aletheia/data/price_feed.py",
-        "aletheia/trading/market_data.py",
-        "aletheia/agent_runtime/scheduler.py",
+        "core/aletheia/risk/engine.py",
+        "core/aletheia/portfolio/position_manager.py",
+        "core/aletheia/portfolio/position_reconciler.py",
+        "core/aletheia/data/price_feed.py",
+        "core/aletheia/trading/market_data.py",
+        "core/aletheia/agent_runtime/scheduler.py",
     )
     for relative in paths:
         source = (root / relative).read_text(encoding="utf-8")

@@ -13,7 +13,7 @@ Execution, exchange, credential, hard-limit, or live-unlock behavior.
 ## Entry points
 
 Application inference enters through `llm_complete()`, `llm_structured()`, or
-`llm_stream()` in `aletheia/agents/helpers.py`. Startup and Provider Settings
+`llm_stream()` in `core/aletheia/agents/helpers.py`. Startup and Provider Settings
 connectivity probes enter the same logical-call contract before using the
 broker directly. Provider adapters remain the physical network boundary.
 

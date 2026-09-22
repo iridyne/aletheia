@@ -3,7 +3,7 @@
 > 契约级别: L2 — 规范性文档,实现依据。
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `extensions/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
-> Core persistence/format owners: `aletheia/storage/knowledge_index.py` · `aletheia/files/knowledge_document.py` · `aletheia/files/frontmatter.py`
+> Core persistence/format owners: `core/aletheia/storage/knowledge_index.py` · `core/aletheia/files/knowledge_document.py` · `core/aletheia/files/frontmatter.py`
 > Cross-references: `docs/governance/policies/trust_and_change_control.md §4` · `docs/design/contracts/agent_contracts.md` · `docs/design/data/data_model.md §3.C`
 > Last updated: 2026-09-07 (entry consumer retirement)
 > 当前入场只走 Candidate → Planning Generation → Planner → Compiler → Entry Plan → Risk/Gateway。旧 Ranker、trading_context/trading_decision 与入场 reflection 注入已退役；下文标明历史的知识路径只解释存量证据，不自动转接到 Planner。
@@ -118,7 +118,7 @@ sort descending → return top-k Lesson dataclass
 **关键质量门**: 只有 `confidence = "high_confidence"` + `status = "active"` 的条目才能被检索——
 噪声和推测性知识永远无法进入决策 prompt (`retrieval.py:31`, `retrieval.py:219-221`)。
 
-### 3.2 `index_knowledge_item()` (`aletheia/storage/knowledge_index.py`)
+### 3.2 `index_knowledge_item()` (`core/aletheia/storage/knowledge_index.py`)
 
 知识写入、归档和维护路径逐项更新 `knowledge_fts`。全量 `reindex_all()` 属于显式维护操作：schema v3 migration 在采用新账本时执行一次完整重建，此后 Gateway lifespan 不再按启动次数重建。运营侧需要主动修复覆盖率时使用 `uv run aletheia knowledge reindex`；未来需要强制重建的 schema 变更必须新增 versioned migration，不能把重建重新放回普通读取或启动路径。
 

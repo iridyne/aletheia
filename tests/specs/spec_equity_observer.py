@@ -186,7 +186,7 @@ def test_stock_token_market_type():
     assert stock_token_market_type("AAPLON/USDT") == MARKET_SPOT
 
     # _STOCK_TOKEN_NON_SPOT extension point exists in symbols.py
-    src = (_ROOT / "aletheia" / "data" / "symbols.py").read_text(encoding="utf-8")
+    src = (_ROOT / "core" / "aletheia" / "data" / "symbols.py").read_text(encoding="utf-8")
     assert "_STOCK_TOKEN_NON_SPOT" in src, (
         "symbols.py must define _STOCK_TOKEN_NON_SPOT dict for swap overrides"
     )

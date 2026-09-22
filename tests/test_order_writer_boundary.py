@@ -28,7 +28,7 @@ def test_order_writer_ownership():
     _assert_order_writer_boundary(Path(__file__).resolve().parents[1])
 
 
-@pytest.mark.parametrize("directory", ["aletheia", "extensions", "legacy", "ops", "scripts"])
+@pytest.mark.parametrize("directory", ["core/aletheia", "extensions", "legacy", "ops", "scripts"])
 @pytest.mark.parametrize("source", [
     "from aletheia.storage.repositories import insert_order as persist\npersist(row)",
     "persist = repo.transition_order\npersist(order_id, status='filled')",
@@ -53,7 +53,7 @@ def test_order_writer_ownership():
 ])
 def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     target = tmp_path / directory / "other.py"
-    target.parent.mkdir()
+    target.parent.mkdir(parents=True)
     target.write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError):
         _assert_order_writer_boundary(tmp_path)
@@ -71,7 +71,7 @@ def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     "def insert_order(row):\n    db.execute('DROP TABLE orders')",
 ])
 def test_new_repository_wrapper_is_not_an_order_owner(tmp_path, source):
-    target = tmp_path / "aletheia/storage/repositories.py"
+    target = tmp_path / "core/aletheia/storage/repositories.py"
     target.parent.mkdir(parents=True)
     target.write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError):
@@ -80,9 +80,9 @@ def test_new_repository_wrapper_is_not_an_order_owner(tmp_path, source):
 
 def test_order_guard_accepts_canonical_owner_and_delegation(tmp_path):
     sources = {
-        "aletheia/execution/coordinator.py": "def submit(row):\n    from ..storage.repositories import insert_order as persist\n    persist(row)",
-        "aletheia/storage/repositories.py": "def insert_order(row):\n    _insert('orders', row)\ndef finalize_exchange_acknowledgement(row):\n    transition_order(row['id'], status='submitted')",
-        "aletheia/storage/migrations.py": "db.execute('UPDATE [orders] SET status=?')\ndb.execute('ALTER TABLE orders ADD COLUMN example TEXT')\ndb.execute('DROP TABLE IF EXISTS orders')",
+        "core/aletheia/execution/coordinator.py": "def submit(row):\n    from ..storage.repositories import insert_order as persist\n    persist(row)",
+        "core/aletheia/storage/repositories.py": "def insert_order(row):\n    _insert('orders', row)\ndef finalize_exchange_acknowledgement(row):\n    transition_order(row['id'], status='submitted')",
+        "core/aletheia/storage/migrations.py": "db.execute('UPDATE [orders] SET status=?')\ndb.execute('ALTER TABLE orders ADD COLUMN example TEXT')\ndb.execute('DROP TABLE IF EXISTS orders')",
     }
     for path, source in sources.items():
         target = tmp_path / path

@@ -39,7 +39,7 @@
 意味着决策链已经僵死——数据在流动，但系统无法将机会转化为行动。
 
 **监测结构**（已实现）：
-- `_probe_profit_loop()` 在 `aletheia/diagnostics/doctor.py` 中检测 opportunities
+- `_probe_profit_loop()` 在 `core/aletheia/diagnostics/doctor.py` 中检测 opportunities
   流动而 proposals 为零的解耦状态，报告键 `loop.profit`（D8-S03 锁死，已实现）
 
 **当前机器保护**：

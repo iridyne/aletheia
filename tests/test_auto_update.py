@@ -581,7 +581,66 @@ def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, m
     assert command[0] == auto.sys.executable
     assert command[1] == "-c"
     assert kwargs["cwd"] == worktree
-    assert str(worktree) in kwargs["env"]["PYTHONPATH"]
+    assert kwargs["env"]["PYTHONPATH"].split(auto.os.pathsep)[:2] == [str(worktree / "core"), str(worktree)]
+
+
+@pytest.mark.parametrize(("missing", "linked"), [(None, False), ("core", False), ("ops", False), (None, True)])
+def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypatch, missing, linked):
+    import os
+    import subprocess
+    from types import SimpleNamespace
+    from aletheia.update import git_ops
+    from ops.update import auto
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    if linked:
+        alias = tmp_path / "candidate-alias"
+        alias.symlink_to(candidate, target_is_directory=True)
+        candidate = alias
+    active = tmp_path / "active"
+    for root, prefix in ((candidate, "core/"), (active, "")):
+        files = {
+            prefix + "aletheia/__init__.py": "",
+            prefix + "aletheia/storage/__init__.py": "",
+            prefix + "aletheia/storage/migrations.py": "def migration_status():\n    print(__file__)\n    return {'current': True}\ndef apply_migrations(): raise AssertionError('no migration')\n",
+            "ops/__init__.py": "",
+            "ops/update/__init__.py": "",
+            "ops/update/packaged.py": "def validate_current_data():\n    print(__file__)\n    return {'ok': True}\n",
+            "ops/update/smoke.py": "def run_smoke_check():\n    print(__file__)\n    return {'ok': True}\n",
+        }
+        for name, content in files.items():
+            if root == candidate and missing and (name.startswith("core/") if missing == "core" else name.startswith("ops/")):
+                continue
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+    monkeypatch.setattr(auto, "_paths", lambda: {"root": tmp_path / "candidates"})
+    monkeypatch.setattr(auto.tempfile, "mkdtemp", lambda **kw: str(candidate))
+    monkeypatch.setattr(git_ops, "_git", lambda *a: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(auto, "RestoreService", lambda: SimpleNamespace(restore=lambda *a: SimpleNamespace(success=True, errors=[])))
+    monkeypatch.setattr(auto, "_safe_env", lambda: {**os.environ, "PYTHONPATH": str(active)})
+    observed = []
+
+    def run(command, **kwargs):
+        # Run generated candidate code only against inert fixture modules, never actual migration/smoke.
+        result = subprocess.run(command, capture_output=True, text=True, **kwargs)
+        observed.append(result)
+        return result
+
+    monkeypatch.setattr(auto, "_run", run)
+    if missing:
+        with pytest.raises(auto.AutoUpdateError, match=f"candidate_{missing}_source_mismatch"):
+            auto._candidate_preflight("target", tmp_path / "backup.tar")
+    else:
+        assert auto._candidate_preflight("target", tmp_path / "backup.tar") == candidate.resolve()
+    assert len(observed) == 1
+    if not missing:
+        assert observed[0].stdout.splitlines() == [
+            str(candidate.resolve() / "core/aletheia/storage/migrations.py"),
+            str(candidate.resolve() / "ops/update/packaged.py"),
+            str(candidate.resolve() / "ops/update/smoke.py"),
+        ]
 
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     from ops.update import auto

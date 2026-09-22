@@ -21,10 +21,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_researchability"
 _ROOT = Path(__file__).parent.parent.parent
-_SERENITY_EVIDENCE = _ROOT / "aletheia" / "trading" / "serenity_evidence.py"
-_SERENITY_SCORING = _ROOT / "aletheia" / "trading" / "serenity_scoring.py"
-_MODELS = _ROOT / "aletheia" / "storage" / "models.py"
-_MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
+_SERENITY_EVIDENCE = _ROOT / "core" / "aletheia" / "trading" / "serenity_evidence.py"
+_SERENITY_SCORING = _ROOT / "core" / "aletheia" / "trading" / "serenity_scoring.py"
+_MODELS = _ROOT / "core" / "aletheia" / "storage" / "models.py"
+_MIGRATIONS = _ROOT / "core" / "aletheia" / "storage" / "migrations.py"
 _RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 
 

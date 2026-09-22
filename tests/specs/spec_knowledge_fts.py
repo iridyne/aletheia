@@ -41,8 +41,8 @@ _CONTRACT = "knowledge_fts_integrity"
 _ROOT = Path(__file__).parent.parent.parent
 _MANAGER = _ROOT / "extensions" / "knowledge" / "manager.py"
 _RETRIEVAL = _ROOT / "extensions" / "knowledge" / "retrieval.py"
-_INDEX = _ROOT / "aletheia" / "storage" / "knowledge_index.py"
-_OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
+_INDEX = _ROOT / "core" / "aletheia" / "storage" / "knowledge_index.py"
+_OPERATOR_LOOP = _ROOT / "core" / "aletheia" / "agent_shell" / "operator_loop.py"
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_index_is_sole_fts_write_gate():
     allowed = {
         str(_INDEX.resolve()),
     }
-    py_files = [fp for directory in ("aletheia", "extensions")
+    py_files = [fp for directory in ("core/aletheia", "extensions")
                 for fp in glob.glob(str(_ROOT / directory / "**" / "*.py"), recursive=True)]
     violations = []
     for fp in py_files:

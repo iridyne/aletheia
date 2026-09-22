@@ -41,7 +41,7 @@ def _src(rel: str) -> str:
               "to pi_daemon.heartbeat_sec (decoupling fix A5)"),
 )
 def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
-    src = _src("aletheia/agent_runtime/scheduler.py")
+    src = _src("core/aletheia/agent_runtime/scheduler.py")
     # The fallback interval must be a fixed ~15min, not derived from heartbeat_sec.
     assert "_pi_fallback_min = 15" in src, (
         "pi_trading_decision fallback interval is not the fixed ~15min safety-net (A5)"
@@ -68,7 +68,7 @@ def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
               "this claim exists to prevent."),
 )
 def test_operator_loop_converged_actions_not_emitted():
-    src = _src("aletheia/agent_shell/operator_loop.py")
+    src = _src("core/aletheia/agent_shell/operator_loop.py")
     tree = ast.parse(src)
     fn = next(
         (n for n in ast.walk(tree)
@@ -102,7 +102,7 @@ def test_operator_loop_converged_actions_not_emitted():
         "decide_actions emits a confidence action, but trading.min_confidence_to_trade "
         "is retired and stripped by config/loader.py — this is a dead write"
     )
-    loader_src = _src("aletheia/config/loader.py")
+    loader_src = _src("core/aletheia/config/loader.py")
     assert 'del trading["min_confidence_to_trade"]' in loader_src, (
         "the confidence-knob retirement migration is gone; if the key is live again, "
         "PI-S03 must be revisited rather than silently keeping both actions locked"
@@ -155,7 +155,7 @@ def test_observer_tools_registered_in_pi_tool_registry():
     任意一条（精确命名或等价命名）的 CommandDef 注册。
     """
     root = _project_root()
-    src = (root / "aletheia/agent_shell/registry.py").read_text(encoding="utf-8")
+    src = (root / "core/aletheia/agent_shell/registry.py").read_text(encoding="utf-8")
     observe_names = ("observe_market", "observe_chain", "observe_macro")
     found = [name for name in observe_names if name in src]
     assert found, (
@@ -197,7 +197,7 @@ def test_b_path_council_not_yet_implemented():
         "council", "bull_bear", "multi_expert", "CouncilSession", "BullBearCouncil",
     )
     found_in: list[str] = []
-    for search_dir in ("aletheia/agent_shell", "aletheia/agents"):
+    for search_dir in ("core/aletheia/agent_shell", "core/aletheia/agents"):
         dir_path = root / search_dir
         if not dir_path.exists():
             continue
@@ -244,7 +244,7 @@ def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatc
     from aletheia.storage.migrations import run_migrations
 
     # --- Part 1: 源码扫描 ---
-    src = _src("aletheia/risk/engine.py")
+    src = _src("core/aletheia/risk/engine.py")
     # engine.py 可读 cfg.agent.permission_mode（Worker 面，用于 Observe 拦截）
     # 但不得读 operator.permission_mode（Operator 面），后者不是风控输入
     assert "operator.permission_mode" not in src, (
@@ -328,7 +328,7 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
     预期失败（当前）：handlers 中无此守卫 → assert 断言失败 → xfail 正常。
     通过条件：handlers 中加入 docs/ 路径拒绝代码后，此 xfail 变 XPASS → CI 报错提醒升级为常规测试。
     """
-    src = _src("aletheia/agent_shell/commands.py")
+    src = _src("core/aletheia/agent_shell/commands.py")
     # 只需要在文件中存在与 docs/ 路径拒绝相关的字符串即可作为结构证据
     docs_guard_present = (
         "docs/" in src
@@ -410,7 +410,7 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
     from aletheia.agent_runtime import pi_daemon, scheduler
     from extensions.learning import control
 
-    src = _src("aletheia/agent_runtime/scheduler.py")
+    src = _src("core/aletheia/agent_runtime/scheduler.py")
     assert '_guarded("pi_trading_heartbeat", _run_pi_trading_decision)' in src
 
     monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)

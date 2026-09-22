@@ -155,7 +155,7 @@ def _insert_keyed_shadow_with_canonical(
 
 
 def test_guard_impact_read_model_has_no_llm_http_or_exchange_calls():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "guard_impact.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "guard_impact.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {

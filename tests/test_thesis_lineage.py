@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 
 def test_thesis_lineage_read_model_does_not_call_llm_or_agents():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "thesis_lineage.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "thesis_lineage.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {

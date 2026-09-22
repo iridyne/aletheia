@@ -64,7 +64,7 @@ def _git_sha() -> str:
 
 def _version() -> str:
     namespace: dict[str, object] = {}
-    init_file = ROOT / "aletheia" / "__init__.py"
+    init_file = ROOT / "core" / "aletheia" / "__init__.py"
     exec(compile(init_file.read_text(encoding="utf-8"), str(init_file), "exec"), namespace)
     return str(namespace.get("__version__", "0.0.0"))
 

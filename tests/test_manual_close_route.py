@@ -323,7 +323,7 @@ def test_protected_method_prefixes_includes_positions_post():
     import ast
     import pathlib
 
-    src = pathlib.Path("aletheia/server/app.py").read_text()
+    src = pathlib.Path("core/aletheia/server/app.py").read_text()
     tree = ast.parse(src)
     prefixes: list[str] = []
     for node in ast.walk(tree):

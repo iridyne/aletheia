@@ -10,6 +10,7 @@ from pathlib import Path
 import typer
 
 from aletheia.runtime_paths import preview_instance_dir
+from aletheia.config.loader import _PROJECT_ROOT
 
 dev_app = typer.Typer(no_args_is_help=True)
 from aletheia.cli.dev_seed import dev_seed_app
@@ -24,7 +25,7 @@ def dev() -> None:
 
 
 def project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _PROJECT_ROOT
 
 
 def _preview_data_dir(root: Path, port: int) -> Path:
@@ -42,6 +43,8 @@ def api(
     root = project_root()
     data_dir = _preview_data_dir(root, port)
     env = os.environ.copy()
+    if not getattr(sys, "frozen", False):
+        env["PYTHONPATH"] = os.pathsep.join((str(root / "core"), str(root)))
     env.update({
         "ALETHEIA_PREVIEW_MODE": "1",
         "ALETHEIA_PREVIEW_DATA_DIR": str(data_dir),
@@ -53,7 +56,7 @@ def api(
     command = [
         sys.executable, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", "127.0.0.1", "--port", str(port),
-        "--reload", "--reload-dir", str(root / "aletheia"),
+        "--reload", "--reload-dir", str(root / "core" / "aletheia"),
     ]
     if (root / "extensions").is_dir():
         command.extend(["--reload-dir", str(root / "extensions")])

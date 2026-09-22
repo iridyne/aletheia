@@ -71,8 +71,8 @@ def test_planning_writer_ownership():
     "count_pending_candidate_planning",
 ])
 def test_all_generation_lifecycle_callers_are_guarded(tmp_path, writer):
-    target = tmp_path / "aletheia/other.py"
-    target.parent.mkdir()
+    target = tmp_path / "core/aletheia/other.py"
+    target.parent.mkdir(parents=True)
     target.write_text(f"from aletheia.storage.repositories import {writer}\n{writer}(row)")
     with pytest.raises(AssertionError):
         _assert_planning_writer_boundary(tmp_path)
@@ -90,20 +90,20 @@ def test_all_generation_lifecycle_callers_are_guarded(tmp_path, writer):
     "(plan_state_writer := repo.transition_entry_plan)",
 ])
 def test_named_writer_alias_cannot_be_reexported(tmp_path, source):
-    owner = tmp_path / "aletheia/execution/gateway.py"
+    owner = tmp_path / "core/aletheia/execution/gateway.py"
     owner.parent.mkdir(parents=True)
     owner.write_text(source)
-    other = tmp_path / "aletheia/other.py"
+    other = tmp_path / "core/aletheia/other.py"
     other.write_text("from aletheia.execution.gateway import plan_state_writer\nplan_state_writer(row)")
     with pytest.raises(AssertionError):
         _assert_planning_writer_boundary(tmp_path)
 
 
 @pytest.mark.parametrize("writer", _OWNERS)
-@pytest.mark.parametrize("directory", ["aletheia", "extensions", "legacy", "ops", "scripts"])
+@pytest.mark.parametrize("directory", ["core/aletheia", "extensions", "legacy", "ops", "scripts"])
 def test_planning_guard_rejects_new_named_owner(tmp_path, writer, directory):
     target = tmp_path / directory / "other.py"
-    target.parent.mkdir()
+    target.parent.mkdir(parents=True)
     target.write_text(f"from aletheia.storage.repositories import {writer} as persist\npersist(row)")
     with pytest.raises(AssertionError):
         _assert_planning_writer_boundary(tmp_path)
@@ -120,7 +120,7 @@ def test_planning_guard_rejects_new_named_owner(tmp_path, writer, directory):
     "persist = _update\npersist('{table}', rid, row)",
 ])
 def test_planning_guard_rejects_raw_writer(tmp_path, table, source):
-    target = tmp_path / "aletheia/storage/repositories.py"
+    target = tmp_path / "core/aletheia/storage/repositories.py"
     target.parent.mkdir(parents=True)
     target.write_text(source.format(table=table))
     with pytest.raises(AssertionError):
@@ -132,7 +132,7 @@ def test_planning_guard_rejects_raw_writer(tmp_path, table, source):
     ("candidate_planning_generations", "transition_entry_plan"),
 ])
 def test_planning_raw_ownership_is_table_specific(tmp_path, table, writer):
-    target = tmp_path / "aletheia/storage/repositories.py"
+    target = tmp_path / "core/aletheia/storage/repositories.py"
     target.parent.mkdir(parents=True)
     target.write_text(f"def {writer}(row):\n    _insert('{table}', row)")
     with pytest.raises(AssertionError):
@@ -140,7 +140,7 @@ def test_planning_raw_ownership_is_table_specific(tmp_path, table, writer):
 
 
 def test_planning_guard_accepts_declared_writers(tmp_path):
-    repository = tmp_path / "aletheia/storage/repositories.py"
+    repository = tmp_path / "core/aletheia/storage/repositories.py"
     repository.parent.mkdir(parents=True)
     repository.write_text(
         "def complete_candidate_planning_with_plan(row):\n"
@@ -149,7 +149,7 @@ def test_planning_guard_accepts_declared_writers(tmp_path):
     )
     for writer, paths in _OWNERS.items():
         for path in paths:
-            target = tmp_path / "aletheia" / path
+            target = tmp_path / "core/aletheia" / path
             target.parent.mkdir(parents=True, exist_ok=True)
             source = target.read_text() if target.exists() else ""
             target.write_text(source + f"repo.{writer}(row)\n")

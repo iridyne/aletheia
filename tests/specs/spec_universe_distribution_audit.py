@@ -53,7 +53,7 @@ _ROOT = Path(__file__).resolve().parents[2]
     ),
 )
 def test_utility_owns_cross_market_selection():
-    service = (_ROOT / "aletheia/universe/service.py").read_text(encoding="utf-8")
+    service = (_ROOT / "core/aletheia/universe/service.py").read_text(encoding="utf-8")
 
     # The legacy quota allocator is not merely unused — refresh cannot reach it.
     assert "legacy_allocated = []" in service, (
@@ -91,7 +91,7 @@ def test_utility_owns_cross_market_selection():
 )
 def test_preferred_market_only_breaks_an_equal_rank():
     source = (
-        _ROOT / "aletheia/universe/candidate_selection_shadow.py"
+        _ROOT / "core/aletheia/universe/candidate_selection_shadow.py"
     ).read_text(encoding="utf-8")
     tree = ast.parse(source)
 

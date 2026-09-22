@@ -11,12 +11,14 @@ from pathlib import Path
 
 import typer
 
+from aletheia.config.loader import _PROJECT_ROOT
+
 app = typer.Typer(add_completion=False)
 _MARKER = "Aletheia uv project shim"
 
 
 def project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _PROJECT_ROOT
 
 
 def _path_contains(directory: Path, path_value: str) -> bool:

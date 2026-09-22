@@ -365,7 +365,7 @@ def test_learning_path_does_not_write_prompt_files():
     _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
     _SCAN_DIRS = [
         _PROJECT_ROOT / "extensions" / "learning",
-        _PROJECT_ROOT / "aletheia" / "analytics",
+        _PROJECT_ROOT / "core" / "aletheia" / "analytics",
     ]
 
     violations: list[str] = []

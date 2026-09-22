@@ -19,7 +19,7 @@ def bindings(monkeypatch):
     monkeypatch.setattr(outcome_recorder, "_structure_shadow_settler", None)
 
 
-@pytest.mark.parametrize("entry", ["aletheia/main.py", "aletheia/server/app.py"])
+@pytest.mark.parametrize("entry", ["core/aletheia/main.py", "core/aletheia/server/app.py"])
 @pytest.mark.parametrize("module,callback", [
     ("yfinance_provider", "_macro_reader"),
     ("polymarket_provider", "_prediction_history_reader"),

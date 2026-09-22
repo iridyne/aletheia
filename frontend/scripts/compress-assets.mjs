@@ -2,7 +2,7 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-const output = resolve(process.env.VITE_BUILD_OUT_DIR || '../aletheia/dashboard_static')
+const output = resolve(process.env.VITE_BUILD_OUT_DIR || '../core/aletheia/dashboard_static')
 const minimumBytes = 256
 const textExtensions = new Set(['.html', '.css', '.js', '.json', '.svg', '.txt', '.xml', '.webmanifest'])
 

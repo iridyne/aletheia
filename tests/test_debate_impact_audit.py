@@ -83,7 +83,7 @@ def _insert_forward(
 
 
 def test_debate_impact_read_model_has_no_llm_http_exchange_or_ranker_calls():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "debate_impact.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "debate_impact.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {

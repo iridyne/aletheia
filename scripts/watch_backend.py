@@ -19,7 +19,7 @@ import urllib.error
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ALETHEIA_DIR = PROJECT_ROOT / "aletheia"
+ALETHEIA_DIR = PROJECT_ROOT / "core" / "aletheia"
 GATEWAY_URL = "http://127.0.0.1:8787"
 
 DEBOUNCE_SEC = 2.0
@@ -35,7 +35,7 @@ def log(msg: str) -> None:
 
 def check_live_guard() -> bool:
     try:
-        sys.path.insert(0, str(PROJECT_ROOT))
+        sys.path[:0] = [str(PROJECT_ROOT / "core"), str(PROJECT_ROOT)]
         from aletheia.config.loader import load_config
         cfg = load_config()
         if cfg.live.state != "live_disabled":

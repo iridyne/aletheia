@@ -1,5 +1,20 @@
 # Slim Core production ownership inventory
 
+## Current source disposition
+
+The final physical batch is based on Ops cutover `c743d140cdc22e09b51977b80b12cb5e6bb648ca`.
+Remaining Core source is `core/aletheia/`, with the sole Python namespace
+`aletheia`; optional implementations, explicit operations and inert archive
+readers have their existing `extensions/`, `ops/` and `legacy/` owners. There is
+no old-root forwarding package. The package disposition table below is current;
+earlier dated census values (including 528/48) and historical “remaining/open”
+trace statements are not current counts, completion thresholds or a new queue.
+
+Physical acceptance requires exact-head source identity, preserved source/frozen
+resource roots, nonempty authority scans, optional-absence checks and unchanged
+canonical writer assertions. Local checks do not establish Fedora deployment,
+runtime qualification or economics; #1884/#3135/#2899 evidence remains separate.
+
 ## Explicit Ops and inert Legacy owners
 
 Human-triggered update, backup/restore, compaction and bounded historical repair
@@ -16,7 +31,7 @@ Ops owners. Existing source-package, bundle and frozen-entrypoint metadata inclu
 these owners without introducing a new distribution product. No migration, Risk,
 economic, qualification or deployment semantics change. Focused cold-import proof
 and the existing update/backup/continuity regressions cover this physical cut;
-Core root relocation and Fedora deployment remain separate gates.
+The final section above distinguishes Core root relocation from Fedora deployment.
 
 ## Remaining optional-family physical owners
 
@@ -249,7 +264,7 @@ bounded workers, pause/config gates, failure accounting, namespaced news writes
 and existing Learning policy-epoch effects retain their owners and semantics.
 Fresh-process route/history checks do not start a Gateway or qualify live feeds.
 
-The current tracked source contains 528 Python files under `aletheia`: 33
+At the dated census checkpoint, tracked source contained 528 Python files under `aletheia`: 33
 first-level packages and 12 root modules. `extensions` contains 48 Python files:
 18 Exchange, 6 Model Endpoint, 20 Data, 3 Regime and one root initializer. Counts include
 package initializers, exclude bytecode, and are dated observations rather than
@@ -277,54 +292,49 @@ the bundle importer is allowlisted and preflights all payloads before mutation.
 
 ## Package disposition map
 
-“Mixed” means moving the entire directory would misclassify current authority.
-Names are existing package paths, not proposed new abstractions. The map covers
-all first-level Python packages; detailed per-consumer independence remains an
-open gate where stated.
+This is the current physical-owner map after the accepted optional/Ops cutovers
+and final Core relocation. Python imports remain `aletheia.*` for Core; `core/`
+is only its source root. Counts and boundary-open commentary in the dated trace
+sections below are historical evidence, not a new implementation queue.
 
-| Current package (Python files) | Authority / side-effect surface | Target disposition / open seam |
-| --- | --- | --- |
-| Root modules (12) | CLI/bootstrap, paths, logging, networking, packaged process and runtime-home migration | Thin composition / Core utility / Ops; split by role, not a new application tier. |
-| `agent_runtime` (22) | Scheduler, job queue, runtime session, pause/resume, connectivity and daemon lifecycle | Core lifecycle schedules both required work and optional producers; optional producer implementations must not take over that lifecycle. |
-| `agent_shell` (23) | Entry Planner plus operator tools, permissions, context and recommendations | Mixed Core planning and optional operator capability; tools must retain Risk/Gateway boundaries. |
-| `agents` (14) | Shared registry/inference/telemetry, portfolio snapshot adapter, and observer/research/learning producers | Mixed, not wholesale optional enrichment. Registry and helpers serve Core runtime/planning/storage; Portfolio Agent delegates the canonical snapshot writer. Producer-specific reads, research writes and lifecycle reachability must be classified separately. |
-| `analytics` (60) | Shared realized Outcome eligibility plus attribution, read models and counterfactual measurements | Mixed Core eligibility and optional analytical writers; preserve separate economic meanings. |
-| `backup` (4) | Artifact creation, verification and explicit restore | Ops; whole-DB restoration is not ordinary table import. |
-| `cli` (33) | Operator commands, diagnostics and explicit maintenance entrypoints | Mixed minimum Core controls and optional/Ops commands. |
-| `config` (9) | Typed schema, locked atomic mutation, redaction, secret storage, and the execution-identity environment/venue registry | Core configuration/storage primitives; concrete Exchange/Model credential resolution and ingress are in their Extensions. Secret-store ownership does not itself authorize a consumer to read raw values; other operator/optional credential callers still need scoped classification. Generic Core callers consume the identity registry. |
-| `counterfactual` (8) | Replay, advisory, calibration and experiment measurements | Optional research state, never authoritative realized trading economics. |
-| `data` (29) | Public venue/network collectors, caches and market facts | Mixed market boundary and optional enrichment. Listing consumers and chart/technical-context/Outcome/Position-observation/registry provider creation use the existing `data.providers` contract, bound by CLI/Web/collector composition; `extensions.data.ccxt_provider` owns concrete fresh-provider policy and listing I/O. Exact-venue reads retain pinned native-provider selection without a Core CCXT flag; ordinary configured fallback remains unchanged. Position observation requires the documented optional no-history/no-venue-health-write capability. Registry consumes normalized `MarketInstrument` facts; Data owns raw market metadata/precision decoding and supplies normalized contract-size metadata for feature volume conversion, while Core retains demo whitelist, exclusions, product support, blacklists and atomic registry writes. Missing/error/wrong-identity facts cannot write registry. The same provider now owns normalized funding/OI and orderbook feature observations; Core retains freshness/reuse, diagnostics, Candidate proof stamping, feature snapshot and orderbook repository writes. Universe feature construction uses only the provider port. |
-| `diagnostics` (3) | Read-only reports/config checks and explicit Doctor infrastructure repair | Core operator reads / Ops repair; ordinary probe does not authorize fix. |
-| `economics` (11) | Logical inference calls, usage/budgets, pricing references and context measurements | Mixed Core inference provenance and optional reference/analysis work. |
-| `execution` (19) | Gateway/Coordinator, claims, reconciliation, materialization and broker helpers | Mixed Core semantics and concrete normalization; keep one Risk-gated command path. |
-| `files` (5) | JSONL/audit, Markdown, paths and Git filesystem operations | Core audit primitives / Ops or optional artifact work. |
-| `gateway` (22) | Frontdoor, process/PID/service/network control, explicit hook cleanup | Core operator plane / Ops composition. |
-| `infra` (4) | Events and bounded error projections | Core observability; event publication must not grant trading authority. |
-| `knowledge` (10) | Retrieval, guards, seeds, maintenance and recovery | Optional knowledge; learned safety influence remains separately gated. |
-| `learning` (34) | Cohorts, evidence windows, experiments, hypotheses and guarded consumers | Optional; shared Core Outcome eligibility and job classification remain outside this owner. |
-| `maintenance` (9) | Offline retention, accounting and fixed-target recovery | Explicit Ops/historical repair; not ordinary Core runtime writers. |
-| `model_provider` (8) | Model Port/DTOs, endpoint routing, inference broker, guardrails, explicit fallback and pure protocol metadata | Core inference semantics. Concrete official-SDK transport and scoped credential ingress are in `extensions/model_endpoints`; a protocol label in Core metadata is not a second transport owner. |
-| `observation_lab` (19) | Lab DB, windows, runner/checkpoints and ownership checks | Optional namespaced Observation; owner import absence is fail-closed and covered by startup/reconciliation tests. |
-| `policies` (3) | `PolicyStore` writes immutable `ps_policy_versions`; lesson reviewer is a current consumer | Optional policy history, not equivalent to retired PS execution tables; do not delete by `ps_` name. |
-| `portfolio` (17) | Position/close/funding reconciliation, PnL and Outcome hooks | Core lifecycle/economics with concrete account seams still to isolate. |
-| `risk` (5) | Canonical evaluation, policy/kill switch and quality gates | Core safety authority; independently persists preflight/authoritative decisions. |
-| `server` (29) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. Telegram routes now belong to the optional Telegram package. |
-| `storage` (12) | SQLite/transactions, models, repositories, migrations, event/artifact stores | Mixed canonical operational persistence and namespaced optional schemas; table use must determine ownership. |
-| `sync` (4) | Bundle export/import and conflict handling | Import is restricted to six namespaced research tables; Core Proposal and retired PS runtime rows are rejected before mutation. Artifact-category and whole-payload preflight remain separate restore/atomicity boundaries. |
-| `trading` (35) | Typed Entry contracts/compiler/capture/activation plus source publication | Mixed Core Entry semantics and Serenity source orchestration; Candidate creation uses Core publication. Typed Entry Learning context belongs to Core, its optional evidence producer does not. |
-| `trust` (4) | Behavior authority, Learning safety and Live unlock | Core safety boundary. Unchanged autonomous-job classification is available without Learning; unavailable control cannot authorize those jobs. No authority expansion in #3134. |
-| `universe` (37) | Candidate selection/publication, attention and market/scanner consumers | Core Candidate semantics mixed with optional source/scanner implementations. |
-| `update` (11) | Deployment identity/continuity, bootstrap, smoke and source/package update | Ops, explicit deployment authority; never inferred from green tests. |
-| `uta` (8) | Existing normalized contract/models/errors, funding facts, account manager and loop-owned registry | Core Exchange Port/lifecycle. `compat.py` normalizes local rows into typed query scopes; it is not a forwarding alias for a retired adapter. Concrete CCXT, venue profiles and credential composition have moved to Extensions. |
-| `utils` (2) | Datetime helper | Core utility; no new wrapper needed. |
-| `extensions` root (1) | Package initializer | No runtime authority. |
-| `extensions/data` (20) | CCXT public Data, fallback chain, public sources, nine context/native collectors, IV derivation and news acquisition/analysis/API | Existing normalized Data provider and request-local acquisition; no Exchange mutation. Macro/FRED and Coinalyze retain the approved own-reference credential exception. Core caches/facts and repository owners remain unchanged. |
-| `extensions/exchanges` (18) | Generic CCXT adapter, profiles, Bitget native reads/protection, scoped auth and composition/credential ingress | Concrete Exchange boundary; normal orders remain Core Risk/Gateway/UTA commands. Retired alternate native trading clients are not retained. |
-| `extensions/model_endpoints` (6) | Official HTTP SDK transports and scoped endpoint credential/probe composition | Concrete Model boundary; Core keeps selection, task tiers, inference identity and explicit fallback. |
-| `extensions/telegram` (4) | Scoped bot token, polling, health route, delivery/DND/recipient deduplication | Optional external adapter, bound at existing CLI/Web composition roots. Web lifespan alone owns polling start/stop; commands delegate canonical Core controls. Core notifications retain local audit/error facts and inert absent-adapter dispatch, not bot construction or credential access. No former `aletheia.telegram` forwarding package. |
-| `extensions/regime` (3) | Detection, collection and cache | Optional market context; Core Universe retains persistence/publication and Risk retains verdicts. |
+| Current physical package | Preserved authority / disposition |
+| --- | --- |
+| `core/aletheia` root modules | Thin CLI/bootstrap, shared paths/logging/networking and runtime-home guards. |
+| `core/aletheia/agent_runtime` | Scheduler, jobs, runtime session and pause/lifecycle authority. |
+| `core/aletheia/agent_shell` | Entry Planner, operator runtime and tools under existing permissions. |
+| `core/aletheia/agents` | Registry, shared inference helpers and canonical Portfolio snapshot delegate. |
+| `core/aletheia/analytics` | Shared Outcome eligibility/semantics, canonical filter evidence and operator read projections. Optional authors/controllers remain under Extensions. |
+| `core/aletheia/backup` | Archive verification used by registered migrations; no backup creation/restore service. |
+| `core/aletheia/cli` | Minimum controls and invocation-local optional/Ops command composition. |
+| `core/aletheia/config` | Schema, redaction/storage and normalized execution identity; credential consumers retain their scoped boundaries. |
+| `core/aletheia/data` | Provider port, cache/freshness, normalized DTOs/facts/geometry and collector process composition. |
+| `core/aletheia/diagnostics` | Operator read projections; explicit repairs invoke Ops without turning a probe into apply. |
+| `core/aletheia/economics` | Inference identity/cost provenance, budgets and pricing evidence. |
+| `core/aletheia/execution` | Canonical Risk-gated submission, claims/reconciliation and broker fact materialization. |
+| `core/aletheia/files` | Shared document codecs, paths and audit/artifact primitives. |
+| `core/aletheia/gateway` | Existing operator plane, process/service lifecycle and front door. |
+| `core/aletheia/infra` | Events and bounded error projections. |
+| `core/aletheia/maintenance` | Runtime capacity/checkpoint/planner/retention and inert historical-accounting read projection. |
+| `core/aletheia/model_provider` | Model port, routing/broker, guardrails and inference semantics; no concrete SDK transport. |
+| `core/aletheia/portfolio` | Position/close/funding/PnL and durable Outcome job authority. |
+| `core/aletheia/risk` | Canonical evaluation, policy/kill switch and separately persisted Risk decisions. |
+| `core/aletheia/server` | Minimum API/lifespan and conditional route composition. |
+| `core/aletheia/storage` | Canonical repositories/transactions/migrations, document index and persisted facts. |
+| `core/aletheia/trading` | Typed Entry/compiler/capture/activation and canonical source publication. |
+| `core/aletheia/trust` | Safety, Learning influence and Live authority; absence never grants permission. |
+| `core/aletheia/universe` | Canonical Candidate/Generation semantics, normalized observations and settlement. |
+| `core/aletheia/update` | Read-only Git/packaged identity, one integrity error type and shared process environment. |
+| `core/aletheia/uta` | Normalized Exchange port/account lifecycle; concrete transports are Extensions. |
+| `core/aletheia/utils` | Shared datetime primitive. |
+| `extensions/{analytics,research}` | Optional observers/reviewers, analytical controllers and explicit context evaluation. |
+| `extensions/{knowledge,learning,counterfactual,observation_lab,policies,sync}` | Unique optional authoring/measurement/history/bundle owners; canonical Core fields and approved permissions remain unchanged. |
+| `extensions/data` | Public acquisition/collectors and optional evidence producers; FRED/Coinalyze own-reference credential exception is unchanged. |
+| `extensions/{exchanges,model_endpoints}` | Concrete Exchange/Model transport and scoped credential composition. |
+| `extensions/{regime,telegram}` | Optional market context and notification adapters, bound by existing composition. |
+| `ops/{update,backup,maintenance}` | Explicit update/restore/compaction/repair operations; no autonomous authority added. |
+| `legacy/historical_viability.py` | Inert archived report list/get/render only; no generation, revaluation or write. |
 
-### Current mixed-owner evidence and remaining gates
+### Historical mixed-owner evidence and gate traces
 
 The census covers every tracked first-level Python package, not every dynamic
 runtime path. Current source traces establish the following distinctions:

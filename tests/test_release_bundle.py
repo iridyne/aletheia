@@ -29,8 +29,8 @@ requires-python = ">=3.12"
     )
     _write(root / "uv.lock", "version = 1\n")
     _write(root / "README.md", "release fixture\n")
-    _write(root / "aletheia" / "__init__.py", '__version__ = "9.9.9"\n')
-    _write(root / "aletheia" / "app.py", "VALUE = 1\n")
+    _write(root / "core" / "aletheia" / "__init__.py", '__version__ = "9.9.9"\n')
+    _write(root / "core" / "aletheia" / "app.py", "VALUE = 1\n")
     _write(root / "extensions" / "__init__.py", "")
     _write(root / "extensions" / "model_endpoints" / "__init__.py", "")
     _write(root / "extensions" / "model_endpoints" / "openai_compatible.py", "VALUE = 2\n")
@@ -39,10 +39,10 @@ requires-python = ">=3.12"
     _write(root / "ops" / "update" / "bootstrap.py", "VALUE = 3\n")
     _write(root / "legacy" / "__init__.py", "")
     _write(root / "legacy" / "historical_viability.py", "VALUE = 4\n")
-    _write(root / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
-    _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js", "console.log('ok')\n")
-    _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js.map", "ignored\n")
-    _write(root / "aletheia" / "__pycache__" / "app.pyc", b"ignored")
+    _write(root / "core" / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
+    _write(root / "core" / "aletheia" / "dashboard_static" / "assets" / "app.js", "console.log('ok')\n")
+    _write(root / "core" / "aletheia" / "dashboard_static" / "assets" / "app.js.map", "ignored\n")
+    _write(root / "core" / "aletheia" / "__pycache__" / "app.pyc", b"ignored")
     _write(root / "scripts" / "runtime" / "start-release.ps1", "Write-Output ok\n")
     _write(root / "scripts" / "runtime" / "install-release.sh", "#!/usr/bin/env bash\necho ok\n")
     _write(root / "scripts" / "runtime" / "start-release.sh", "#!/usr/bin/env bash\necho ok\n")
@@ -69,18 +69,18 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
         names = set(archive.namelist())
         manifest = json.loads(archive.read("release-manifest.json"))
         shell_mode = (archive.getinfo("scripts/runtime/start-release.sh").external_attr >> 16) & 0o777
-        python_mode = (archive.getinfo("aletheia/app.py").external_attr >> 16) & 0o777
+        python_mode = (archive.getinfo("core/aletheia/app.py").external_attr >> 16) & 0o777
 
     assert result.archive_path.name == f"aletheia-dogfood-{'a' * 12}.zip"
-    assert "aletheia/app.py" in names
+    assert "core/aletheia/app.py" in names
     assert "extensions/__init__.py" in names
     assert "extensions/model_endpoints/openai_compatible.py" in names
     assert "extensions/model_endpoints/openai_compatible.py" in {item["path"] for item in manifest["files"]}
     for path in ("ops/update/bootstrap.py", "legacy/historical_viability.py"):
         assert path in names
         assert path in {item["path"] for item in manifest["files"]}
-    assert "aletheia/dashboard_static/index.html" in names
-    assert "aletheia/dashboard_static/assets/app.js" in names
+    assert "core/aletheia/dashboard_static/index.html" in names
+    assert "core/aletheia/dashboard_static/assets/app.js" in names
     assert "scripts/runtime/start-release.ps1" in names
     assert "scripts/runtime/install-release.sh" in names
     assert "scripts/runtime/start-release.sh" in names
@@ -90,8 +90,8 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
     assert "VERSION" in names
     assert "release-manifest.json" in names
 
-    assert "aletheia/dashboard_static/assets/app.js.map" not in names
-    assert "aletheia/__pycache__/app.pyc" not in names
+    assert "core/aletheia/dashboard_static/assets/app.js.map" not in names
+    assert "core/aletheia/__pycache__/app.pyc" not in names
     assert "tests/ignored.py" not in names
     assert "frontend/src/ignored.tsx" not in names
     assert "data/app.db" not in names
@@ -157,7 +157,7 @@ def test_bundle_requires_moved_owner_roots(tmp_path: Path, package: str) -> None
 def test_bundle_requires_prebuilt_dashboard(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     _fake_repository(root)
-    (root / "aletheia" / "dashboard_static" / "index.html").unlink()
+    (root / "core" / "aletheia" / "dashboard_static" / "index.html").unlink()
 
     with pytest.raises(BundleBuildError, match="build the dashboard"):
         build_bundle(
@@ -173,7 +173,7 @@ def test_bundle_hard_limit_fails_closed_and_keeps_size_report(tmp_path: Path) ->
     root = tmp_path / "repo"
     output = tmp_path / "dist"
     _fake_repository(root)
-    _write(root / "aletheia" / "random.bin", os.urandom(32 * 1024))
+    _write(root / "core" / "aletheia" / "random.bin", os.urandom(32 * 1024))
 
     with pytest.raises(BundleTooLarge, match="hard limit"):
         build_bundle(

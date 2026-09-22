@@ -142,9 +142,11 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
     env["ALETHEIA_BACKEND_PORT"] = str(backend_port)
     env["ALETHEIA_BACKEND_BASE_URL"] = backend_base_url
     env["ALETHEIA_FRONTDOOR_ROUTE_PATH"] = str(frontdoor_route_path())
+    if not getattr(sys, "frozen", False):
+        env["PYTHONPATH"] = os.pathsep.join((str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)))
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
-        "cwd": str(Path(__file__).resolve().parent.parent),
+        "cwd": str(_PROJECT_ROOT),
         "env": env,
     }
     if platform.system() == "Windows":
@@ -241,7 +243,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     ]
     env = os.environ.copy()
     env.update(env_patch)
-    env["PYTHONPATH"] = str(_PROJECT_ROOT)
+    env["PYTHONPATH"] = str(_PROJECT_ROOT) if getattr(sys, "frozen", False) else os.pathsep.join((str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)))
     env["ALETHEIA_RUNTIME_ID"] = runtime_context["runtime_id"]
     env["ALETHEIA_RUNTIME_MODE"] = "current"
     env["ALETHEIA_RUNTIME_STATE"] = "current"
@@ -408,10 +410,12 @@ def _spawn_collector_process(cfg) -> subprocess.Popen:
     # inherits it and skips those APScheduler jobs.  The collector process itself
     # must NOT see this flag — it is the one doing the actual work.
     env.pop("ALETHEIA_COLLECTOR_PROCESS", None)
+    if not getattr(sys, "frozen", False):
+        env["PYTHONPATH"] = os.pathsep.join((str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)))
     cmd = [real_python, "-m", "aletheia.data.collector_runner"]
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
-        "cwd": str(Path(__file__).resolve().parent.parent),
+        "cwd": str(_PROJECT_ROOT),
         "env": env,
     }
     if platform.system() == "Windows":

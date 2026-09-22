@@ -103,7 +103,7 @@ def test_pending_selection_keeps_active_lab_first_and_legacy_fallback(monkeypatc
     assert repo.list_pending_universe_discovery_outcomes("now")[0] == "legacy"
 
 
-@pytest.mark.parametrize("entry", ["aletheia/main.py", "aletheia/server/app.py", "ops/maintenance/data_retention_backfill.py"])
+@pytest.mark.parametrize("entry", ["core/aletheia/main.py", "core/aletheia/server/app.py", "ops/maintenance/data_retention_backfill.py"])
 @pytest.mark.parametrize("missing", [None, "extensions.observation_lab", "broken_lab_dependency"])
 def test_exact_composition_blocks_are_cold_and_clear_stale_bindings(tmp_path, entry, missing):
     import os

@@ -10,7 +10,7 @@ def test_operator_routes_no_blocking_async():
     Routes with zero awaits block the event loop when declared `async def`.
     FastAPI runs `def` routes in a thread pool, unblocking the event loop.
     """
-    operator_py = Path(__file__).parent.parent / "aletheia" / "server" / "routes" / "operator.py"
+    operator_py = Path(__file__).parent.parent / "core" / "aletheia" / "server" / "routes" / "operator.py"
     source = operator_py.read_text()
     tree = ast.parse(source)
     

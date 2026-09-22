@@ -11,10 +11,10 @@ import pytest
 def test_families_have_one_physical_owner_and_core_facts_remain():
     root = Path(__file__).resolve().parents[1]
     for family in ("knowledge", "learning", "counterfactual", "observation_lab", "policies", "sync"):
-        assert not (root / "aletheia" / family).exists()
+        assert not (root / "core" / "aletheia" / family).exists()
         assert (root / "extensions" / family / "__init__.py").is_file()
     for name in ("filter_evidence", "outcome_integrity", "outcome_semantics"):
-        assert (root / "aletheia" / "analytics" / (name + ".py")).is_file()
+        assert (root / "core" / "aletheia" / "analytics" / (name + ".py")).is_file()
         assert not (root / "extensions" / "analytics" / (name + ".py")).exists()
 
 
@@ -22,7 +22,7 @@ def test_named_core_consumers_do_not_import_concrete_learning_or_knowledge():
     import ast
     root = Path(__file__).resolve().parents[1]
     for path in ("agent_runtime/scheduler.py", "agent_shell/context.py", "universe/outcome_recorder.py"):
-        tree = ast.parse((root / "aletheia" / path).read_text())
+        tree = ast.parse((root / "core" / "aletheia" / path).read_text())
         imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

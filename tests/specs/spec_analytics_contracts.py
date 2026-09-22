@@ -240,7 +240,7 @@ def test_alpha_attribution_contract_shape_on_empty_db():
         "delta": -1.0,
         "contribution_verdict": "negative",
         "measurement_status": "measured_contribution",
-        "suspected_modules": ["aletheia/universe/allocator.py"],
+        "suspected_modules": ["core/aletheia/universe/allocator.py"],
         "reason": "prospective control",
     }
     assert _main_bottleneck({"ranker": weak_negative})["layer"] == "insufficient_data"
@@ -442,7 +442,7 @@ def test_capital_events_ui_distinguishes_raw_adjusted_and_trading_series():
         root / "frontend/src/features/settings/tabs/ExecutionTab.tsx"
     ).read_text(encoding="utf-8")
     capital_route = (
-        root / "aletheia/server/routes/capital.py"
+        root / "core/aletheia/server/routes/capital.py"
     ).read_text(encoding="utf-8")
 
     assert "renders a separate cash-flow-adjusted series" in settings

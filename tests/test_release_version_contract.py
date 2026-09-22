@@ -18,7 +18,7 @@ def test_product_version_has_one_source_and_all_build_readers_agree() -> None:
     packaged_runtime = runpy.run_path(str(ROOT / "scripts/release/build_packaged_runtime.py"))
 
     assert pyproject["project"]["dynamic"] == ["version"]
-    assert pyproject["tool"]["hatch"]["version"]["path"] == "aletheia/__init__.py"
+    assert pyproject["tool"]["hatch"]["version"]["path"] == "core/aletheia/__init__.py"
     assert installed_version("aletheia-trading-os") == __version__
     assert _project_metadata(ROOT)[0] == __version__
     assert packaged_runtime["_version"]() == __version__
@@ -37,13 +37,13 @@ def test_release_automation_tracks_the_product_without_component_versions() -> N
     assert config["draft-pull-request"] is False
     assert config["label"] == "autorelease: pending"
     assert config["packages"]["."]["extra-files"] == [
-        {"type": "generic", "path": "aletheia/__init__.py"}
+        {"type": "generic", "path": "core/aletheia/__init__.py"}
     ]
     assert manifest == {".": __version__}
 
     assert pyproject["tool"]["uv"]["cache-keys"] == [
         {"file": "pyproject.toml"},
-        {"file": "aletheia/__init__.py"},
+        {"file": "core/aletheia/__init__.py"},
     ]
 
     configured_paths = json.dumps(config)

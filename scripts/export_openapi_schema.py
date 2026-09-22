@@ -17,7 +17,8 @@ DEFAULT_OUTPUT = Path("docs/_generated/openapi.json")
 
 def export_openapi_schema(output: Path) -> dict:
     # Direct script execution otherwise resolves an editable install from another worktree.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:0] = [str(root / "core"), str(root)]
     from aletheia.server.app import app
 
     schema = app.openapi()

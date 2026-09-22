@@ -68,7 +68,7 @@ def test_retired_model_transports_have_no_active_entrypoint():
     assert retired.isdisjoint(PROVIDER_TYPES)
     assert retired.isdisjoint(API_PROVIDER_TYPES)
     for module in retired | {"cli_harness", "codex_auth", "oauth", "openai_oauth", "claude_oauth"}:
-        assert not (_ROOT / "aletheia" / "model_provider" / f"{module}.py").exists()
+        assert not (_ROOT / "core" / "aletheia" / "model_provider" / f"{module}.py").exists()
     retired_paths = (
         "/api/model/codex/", "/api/model/openai-oauth/", "/api/model/claude-oauth/",
         "/api/settings/model-integrations/",
@@ -79,8 +79,8 @@ def test_retired_model_transports_have_no_active_entrypoint():
 
 def _production_helper_calls() -> list[tuple[Path, ast.Call]]:
     calls: list[tuple[Path, ast.Call]] = []
-    for path in (_ROOT / "aletheia").rglob("*.py"):
-        if path == _ROOT / "aletheia" / "agents" / "helpers.py":
+    for path in (_ROOT / "core" / "aletheia").rglob("*.py"):
+        if path == _ROOT / "core" / "aletheia" / "agents" / "helpers.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
@@ -144,7 +144,7 @@ def test_contract_caller_matrix_matches_registry():
     ),
 )
 def test_logical_storage_is_content_free_and_linked():
-    schema = (_ROOT / "aletheia" / "economics" / "schema.py").read_text(
+    schema = (_ROOT / "core" / "aletheia" / "economics" / "schema.py").read_text(
         encoding="utf-8"
     )
     logical = schema.split("CREATE TABLE IF NOT EXISTS llm_inference_calls", 1)[1]
@@ -169,10 +169,10 @@ def test_logical_storage_is_content_free_and_linked():
     ),
 )
 def test_tool_ledgers_carry_inference_origin_and_keep_permission_checks():
-    migrations = (_ROOT / "aletheia" / "storage" / "migrations.py").read_text(
+    migrations = (_ROOT / "core" / "aletheia" / "storage" / "migrations.py").read_text(
         encoding="utf-8"
     )
-    executor = (_ROOT / "aletheia" / "agent_shell" / "executor.py").read_text(
+    executor = (_ROOT / "core" / "aletheia" / "agent_shell" / "executor.py").read_text(
         encoding="utf-8"
     )
     assert '("inference_call_id", "agent_tool_calls", "TEXT")' in migrations
@@ -196,12 +196,12 @@ def test_tool_ledgers_carry_inference_origin_and_keep_permission_checks():
 def test_application_model_requests_carry_inference_envelope():
     failures: list[str] = []
     application_roots = (
-        _ROOT / "aletheia" / "agents",
-        _ROOT / "aletheia" / "agent_runtime",
-        _ROOT / "aletheia" / "agent_shell",
-        _ROOT / "aletheia" / "analytics",
-        _ROOT / "aletheia" / "data",
-        _ROOT / "aletheia" / "server",
+        _ROOT / "core" / "aletheia" / "agents",
+        _ROOT / "core" / "aletheia" / "agent_runtime",
+        _ROOT / "core" / "aletheia" / "agent_shell",
+        _ROOT / "core" / "aletheia" / "analytics",
+        _ROOT / "core" / "aletheia" / "data",
+        _ROOT / "core" / "aletheia" / "server",
     )
     for root in application_roots:
         for path in root.rglob("*.py"):

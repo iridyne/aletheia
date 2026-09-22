@@ -10,7 +10,7 @@ import pytest
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
     for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer", "prediction_observer", "divergence_scanner", "dreaming_agent", "lesson_reviewer", "research_worker"):
-        assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
+        assert not (root / "core" / "aletheia" / "agents" / f"{name}.py").exists()
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])

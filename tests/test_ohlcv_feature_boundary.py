@@ -12,7 +12,7 @@ from aletheia.data.symbols import InstrumentId
 
 
 def test_universe_features_does_not_call_native_ohlcv() -> None:
-    source = Path(__file__).resolve().parents[1] / "aletheia/universe/features.py"
+    source = Path(__file__).resolve().parents[1] / "core/aletheia/universe/features.py"
     tree = ast.parse(source.read_text())
     assert not any(
         isinstance(node, ast.Attribute) and node.attr == "fetch_ohlcv"

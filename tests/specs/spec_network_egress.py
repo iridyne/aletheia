@@ -39,7 +39,7 @@ from pathlib import Path
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "network_egress_contract"
-_PKG = Path(__file__).resolve().parents[2] / "aletheia"
+_PKG = Path(__file__).resolve().parents[2] / "core" / "aletheia"
 
 # ccxt exchange ids we construct anywhere in the tree. The choke-point invariant
 # (NET-S04) is that `ccxt.<id>(...)` appears ONLY inside net.py (via make_ccxt).
@@ -47,7 +47,7 @@ _CCXT_EXCHANGE_IDS = {"okx", "binance", "binanceusdm", "binancecoinm", "bitget"}
 
 
 def _iter_py_files():
-    for root in (_PKG, _PKG.parent / "extensions"):
+    for root in (_PKG, _PKG.parent.parent / "extensions"):
         yield from root.rglob("*.py")
 
 
@@ -72,7 +72,7 @@ def _find_bare_ccxt_constructors() -> list[str]:
                 and fn.value.id == "ccxt"
                 and fn.attr in _CCXT_EXCHANGE_IDS
             ):
-                offenders.append(f"{path.relative_to(_PKG.parent)}:{node.lineno}")
+                offenders.append(f"{path.relative_to(_PKG.parent.parent)}:{node.lineno}")
     return offenders
 
 

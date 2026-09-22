@@ -217,7 +217,7 @@ def test_lesson_reviewer_registered_and_overturnable():
     assert callable(run_lesson_reviewer)
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     assert '"lesson_reviewer"' in sched_src, (
         "scheduler.py does not register a lesson_reviewer job — the promotion step "
         "never runs. See content-probe fixes FIX 2 (LP-S09)."
@@ -660,7 +660,7 @@ def test_two_track_learning_triggers_independent():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
 
     # (a) 个例 review job 已注册
     assert '"post_trade_reviewer"' in sched_src, (
@@ -744,7 +744,7 @@ def test_risk_engine_no_learning_override_interface():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
+    engine_src = (root / "core/aletheia/risk/engine.py").read_text(encoding="utf-8")
     tree = ast.parse(engine_src)
 
     forbidden_patterns = (
@@ -790,7 +790,7 @@ def test_batch_synthesis_jobs_all_registered():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
 
     missing: list[str] = []
     for job_id in ("insight_synthesizer", "confidence_calibration", "dreaming_daily"):
@@ -839,7 +839,7 @@ def test_insight_synthesizer_has_startup_catchup():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     tree = ast.parse(sched_src)
 
     target = None
@@ -886,7 +886,7 @@ def test_serenity_daily_has_durable_startup_catchup():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     tree = ast.parse(sched_src)
     jobs: dict[str, ast.Call] = {}
     for node in ast.walk(tree):
@@ -946,7 +946,7 @@ def test_time_decay_overturn_path_exists():
 
     # 通过 AST 扫描函数名（FunctionDef/AsyncFunctionDef），不扫字符串字面量
     found_fns: list[str] = []
-    for search_dir in ("aletheia/analytics", "extensions/analytics", "extensions/learning", "extensions/knowledge"):
+    for search_dir in ("core/aletheia/analytics", "extensions/analytics", "extensions/learning", "extensions/knowledge"):
         d = root / search_dir
         if not d.exists():
             continue

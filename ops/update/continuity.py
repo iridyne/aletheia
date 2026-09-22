@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -289,7 +290,17 @@ def capture_update_continuity_fresh(*, timeout_sec: float = 20.0) -> dict[str, A
     """Capture postflight from a fresh interpreter loaded from the target checkout."""
     from aletheia.config.loader import _PROJECT_ROOT
 
+    source_roots = [str(_PROJECT_ROOT / "core"), str(_PROJECT_ROOT)]
+    env = safe_env()
+    env["PYTHONPATH"] = os.pathsep.join((*source_roots, env.get("PYTHONPATH", ""))).rstrip(os.pathsep)
     script = (
+        "import sys\nfrom pathlib import Path\n"
+        f"sys.path[:0] = {source_roots!r}\n"
+        f"if not Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('target_core_source_mismatch')\n"
+        f"if not Path({str(_PROJECT_ROOT / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('target_ops_source_mismatch')\n"
+        "import aletheia, ops\n"
+        f"if Path(aletheia.__file__).resolve() != Path({str(_PROJECT_ROOT / 'core/aletheia/__init__.py')!r}): raise RuntimeError('target_core_source_mismatch')\n"
+        f"if Path(ops.__file__).resolve() != Path({str(_PROJECT_ROOT / 'ops/__init__.py')!r}): raise RuntimeError('target_ops_source_mismatch')\n"
         "import json\n"
         "from ops.update.continuity import capture_update_continuity\n"
         "snapshot = capture_update_continuity()\n"
@@ -303,7 +314,7 @@ def capture_update_continuity_fresh(*, timeout_sec: float = 20.0) -> dict[str, A
             capture_output=True,
             text=True,
             timeout=max(0.001, float(timeout_sec)),
-            env=safe_env(),
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return _unavailable_fresh_snapshot("target_postflight_projection_unavailable", detail="TimeoutExpired")

@@ -22,8 +22,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _DL = _ROOT / "extensions" / "data" / "collectors" / "defillama.py"
-_MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
+_MIGRATIONS = _ROOT / "core" / "aletheia" / "storage" / "migrations.py"
+_REPOSITORIES = _ROOT / "core" / "aletheia" / "storage" / "repositories.py"
 
 _FIXTURE_STABLE = _ROOT / "tests" / "fixtures" / "dl_stablecoins.json"
 _FIXTURE_CHAINS = _ROOT / "tests" / "fixtures" / "dl_chains.json"

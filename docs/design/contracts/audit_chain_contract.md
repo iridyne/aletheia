@@ -4,7 +4,7 @@
 >
 > **层级**: L2 信任边界契约（Trust Boundary — change control required）
 >
-> **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
+> **权威实现**: `core/aletheia/files/jsonl.py`（文件链）、`core/aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
 >
 > **最后更新**: 2026-08-07
 
@@ -334,9 +334,9 @@ uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
 
 ## §8 改动控制
 
-`aletheia/files/jsonl.py` 已列入信任边界受控模块（`trust_and_change_control.md §6.1`）：
+`core/aletheia/files/jsonl.py` 已列入信任边界受控模块（`trust_and_change_control.md §6.1`）：
 
-> `aletheia/files/jsonl.py`: the append-only JSONL writer backing runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or file-path routing directly affects the §1.4 audit chain invariant.
+> `core/aletheia/files/jsonl.py`: the append-only JSONL writer backing runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or file-path routing directly affects the §1.4 audit chain invariant.
 
 **变更前必须声明**（按 `trust_and_change_control.md §6.2`）:
 

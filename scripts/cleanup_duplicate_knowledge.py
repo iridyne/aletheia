@@ -25,7 +25,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+root = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(root / "core"), str(root)]
 
 from aletheia.storage.sqlite import get_db
 

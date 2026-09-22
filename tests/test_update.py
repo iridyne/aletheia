@@ -513,7 +513,7 @@ def test_schema_candidate_failure_is_durably_audited(tmp_path, monkeypatch):
     from aletheia.update import git_ops
     from ops.update import applier, auto, git_ops as git_mutations
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     monkeypatch.setattr(git_mutations, "reset_hard", lambda _commit: {"ok": True})
     monkeypatch.setattr(
         backup_service,
@@ -547,7 +547,7 @@ def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_pat
     from aletheia.update import git_ops
     from ops.update import applier, git_ops as git_mutations
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     heads = iter(["old111", "new222", "unverified333"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(heads))
     resets = []
@@ -1242,7 +1242,7 @@ def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
 
     _stub_clean_pull(
         monkeypatch,
-        changed_files=["aletheia/storage/migrations.py"],
+        changed_files=["core/aletheia/storage/migrations.py"],
     )
     calls = []
     monkeypatch.setattr(
@@ -1270,7 +1270,7 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     from aletheia.update import git_ops
     from ops.update import applier, auto, git_ops as git_mutations
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: False)
     calls = []
     backups = iter([tmp_path / "preflight.tar", tmp_path / "activation.tar"])

@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Ensure project root is on sys.path
 root = Path(__file__).parent.parent
-sys.path.insert(0, str(root))
+sys.path[:0] = [str(root / "core"), str(root)]
 
 from aletheia.config.loader import get_data_dir
 from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter

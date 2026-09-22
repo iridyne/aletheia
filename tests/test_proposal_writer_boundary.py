@@ -29,13 +29,13 @@ def test_proposal_writer_owners():
 
 @pytest.mark.parametrize("path,source", [
     ("extensions/other.py", "repo.insert_trade_proposal(proposal)"),
-    ("aletheia/other.py", "from .storage.repositories import update_trade_proposal as update\nupdate('id', status='executed')"),
-    ("aletheia/other.py", "writer = repo.insert_trade_proposal"),
+    ("core/aletheia/other.py", "from .storage.repositories import update_trade_proposal as update\nupdate('id', status='executed')"),
+    ("core/aletheia/other.py", "writer = repo.insert_trade_proposal"),
     ("legacy/other.py", "repo._insert(table='trade_proposals', data=row)"),
     ("ops/other.py", "db.execute('UPDATE /* hidden */ main.[trade_proposals] SET quantity=2')"),
     ("scripts/other.py", "db.execute('DROP TABLE trade_proposals')"),
-    ("aletheia/storage/repositories.py", "def other():\n    _update('trade_proposals', 'id', row)"),
-    ("aletheia/storage/repositories.py", "def outer():\n    def insert_trade_proposal(row):\n        _insert('trade_proposals', row)"),
+    ("core/aletheia/storage/repositories.py", "def other():\n    _update('trade_proposals', 'id', row)"),
+    ("core/aletheia/storage/repositories.py", "def outer():\n    def insert_trade_proposal(row):\n        _insert('trade_proposals', row)"),
 ])
 def test_proposal_guard_rejects_undeclared_writes(tmp_path, path, source):
     target = tmp_path / path

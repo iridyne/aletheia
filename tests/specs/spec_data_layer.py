@@ -15,7 +15,7 @@ from pathlib import Path
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_DATA_PKG = _ROOT / "aletheia" / "data"
+_DATA_PKG = _ROOT / "core" / "aletheia" / "data"
 _DATA_EXTENSION = _ROOT / "extensions" / "data"
 
 
@@ -208,8 +208,8 @@ def test_no_bitget_client_for_market_data():
 
     violations: list[str] = []
     scan_dirs = [
-        _ROOT / "aletheia" / "agents",
-        _ROOT / "aletheia" / "server" / "routes",
+        _ROOT / "core" / "aletheia" / "agents",
+        _ROOT / "core" / "aletheia" / "server" / "routes",
     ]
     for scan_dir in scan_dirs:
         if not scan_dir.exists():
@@ -281,9 +281,9 @@ def test_ohlcv_cache_module_exists():
     )
 )
 def test_ohlcv_storage_uses_full_instrument_identity():
-    migrations = (_ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
-    repositories = (_ROOT / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
-    downloader = (_ROOT / "aletheia/data/history_downloader.py").read_text(encoding="utf-8")
+    migrations = (_ROOT / "core/aletheia/storage/migrations.py").read_text(encoding="utf-8")
+    repositories = (_ROOT / "core/aletheia/storage/repositories.py").read_text(encoding="utf-8")
+    downloader = (_ROOT / "core/aletheia/data/history_downloader.py").read_text(encoding="utf-8")
 
     assert "PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)" in migrations
     assert "market_type" in repositories
@@ -304,9 +304,9 @@ def test_ohlcv_storage_uses_full_instrument_identity():
     )
 )
 def test_active_universe_ohlcv_catchup_is_bounded_and_durable():
-    migrations = (_ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
-    scheduler = (_ROOT / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
-    module = (_ROOT / "aletheia/data/active_ohlcv_backfill.py")
+    migrations = (_ROOT / "core/aletheia/storage/migrations.py").read_text(encoding="utf-8")
+    scheduler = (_ROOT / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    module = (_ROOT / "core/aletheia/data/active_ohlcv_backfill.py")
     source = module.read_text(encoding="utf-8")
 
     assert module.exists()

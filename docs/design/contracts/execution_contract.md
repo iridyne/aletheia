@@ -11,7 +11,7 @@
 
 | 项 | 值 | 位置 |
 |----|----|----|
-| 入口 | `submit_proposal(...) -> dict` | `aletheia/execution/gateway.py:16` |
+| 入口 | `submit_proposal(...) -> dict` | `core/aletheia/execution/gateway.py:16` |
 | 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:52` |
 
 **开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
@@ -307,7 +307,7 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 
 ## 8. 已交付
 
-- ✅ **审计链 `_prev_hash` hash 链**:每条 audit 记录写入前追加前一行的 SHA-256(`_prev_hash`),验证逻辑在同文件。实现位置:`aletheia/files/jsonl.py:182-200`(写入)、`jsonl.py:259-320`(校验)。历史 ⚠️ 注记已失效,此条目已交付。
+- ✅ **审计链 `_prev_hash` hash 链**:每条 audit 记录写入前追加前一行的 SHA-256(`_prev_hash`),验证逻辑在同文件。实现位置:`core/aletheia/files/jsonl.py:182-200`(写入)、`jsonl.py:259-320`(校验)。历史 ⚠️ 注记已失效,此条目已交付。
 
 ## 9. 目标态差距 — 当前活跃
 
@@ -561,7 +561,7 @@ PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strate
 
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
 
-`aletheia/analytics/outcome_integrity.py` 是不依赖 Learning、Risk、Execution、exchange 或 agent shell
+`core/aletheia/analytics/outcome_integrity.py` 是不依赖 Learning、Risk、Execution、exchange 或 agent shell
 的中央语义层，版本为 `oi-v1`。它提供三个不可互换的入口：
 
 - `raw_account_events()`：所有 closed 状态事件，只用于账本、审计、诊断和明确标注的 raw 展示；

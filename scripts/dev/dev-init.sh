@@ -13,7 +13,7 @@ cd "$REPO_ROOT"
 
 DATA_DIR="${ALETHEIA_DATA_DIR:-$HOME/.aletheia}"
 FRONTEND_DIR="$REPO_ROOT/frontend"
-STATIC_DIR="$REPO_ROOT/aletheia/dashboard_static"
+STATIC_DIR="$REPO_ROOT/core/aletheia/dashboard_static"
 
 log()  { printf '[dev-init] %s\n' "$*"; }
 warn() { printf '[dev-init] WARN: %s\n' "$*" >&2; }

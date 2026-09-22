@@ -15,7 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from aletheia.utils.dt import parse_utc
-from aletheia.config.loader import get_data_dir
+from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.network import local_frontdoor_host
 from aletheia.operator_service_identity import (
     OPERATOR_SERVICE_ENV,
@@ -34,7 +34,7 @@ def operator_shell_root() -> Path:
     configured = os.environ.get("ALETHEIA_OPERATOR_SHELL_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return Path(__file__).resolve().parents[2] / "operator-shell"
+    return _PROJECT_ROOT / "operator-shell"
 
 
 def resolve_node_executable() -> str:

@@ -26,20 +26,20 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _MARKET_OBS = _ROOT / "extensions" / "research" / "market_observer.py"
-_CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
-_DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
-_LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
-_PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
+_CONTEXT_BUILDER = _ROOT / "core" / "aletheia" / "data" / "context_builder.py"
+_DOCTOR = _ROOT / "core" / "aletheia" / "diagnostics" / "doctor.py"
+_LOCAL_FUNDING = _ROOT / "core" / "aletheia" / "portfolio" / "local_funding.py"
+_PAPER_ACCOUNT = _ROOT / "core" / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "extensions" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "extensions" / "data" / "position_x.py"
 _DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
-_RELATIVE_RANK = _ROOT / "aletheia" / "universe" / "relative_rank_shadow.py"
-_UNIVERSE_FEATURES = _ROOT / "aletheia" / "universe" / "features.py"
-_MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
+_RELATIVE_RANK = _ROOT / "core" / "aletheia" / "universe" / "relative_rank_shadow.py"
+_UNIVERSE_FEATURES = _ROOT / "core" / "aletheia" / "universe" / "features.py"
+_MARKET_DATA = _ROOT / "core" / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
-_INFERENCE_SCHEMA = _ROOT / "aletheia" / "economics" / "schema.py"
-_PRICING_SYNC = _ROOT / "aletheia" / "economics" / "pricing_sync.py"
+_INFERENCE_SCHEMA = _ROOT / "core" / "aletheia" / "economics" / "schema.py"
+_PRICING_SYNC = _ROOT / "core" / "aletheia" / "economics" / "pricing_sync.py"
 _INFERENCE_CONTRACT = (
     _ROOT / "docs" / "design" / "contracts" / "llm_inference_harness_contract.md"
 )
@@ -112,7 +112,7 @@ def test_derivatives_comparison_is_observation_only(monkeypatch):
 )
 def test_binance_public_fast_market_facts_are_registered_to_fast_monitoring_only():
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    stream = (_ROOT / "aletheia" / "universe" / "fast_stream.py").read_text(encoding="utf-8")
+    stream = (_ROOT / "core" / "aletheia" / "universe" / "fast_stream.py").read_text(encoding="utf-8")
 
     assert "DU-S28" in doc and "Binance public fast-market" in doc
     assert "class BinanceFastMarketStream" in stream
@@ -135,11 +135,11 @@ def test_binance_public_fast_market_facts_are_registered_to_fast_monitoring_only
 def test_litellm_pricing_source_is_registered_and_estimated_only():
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     sync = _PRICING_SYNC.read_text(encoding="utf-8")
-    tracing = (_ROOT / "aletheia" / "economics" / "tracing.py").read_text(
+    tracing = (_ROOT / "core" / "aletheia" / "economics" / "tracing.py").read_text(
         encoding="utf-8"
     )
-    app = (_ROOT / "aletheia" / "server" / "app.py").read_text(encoding="utf-8")
-    routes = (_ROOT / "aletheia" / "server" / "routes" / "economics.py").read_text(
+    app = (_ROOT / "core" / "aletheia" / "server" / "app.py").read_text(encoding="utf-8")
+    routes = (_ROOT / "core" / "aletheia" / "server" / "routes" / "economics.py").read_text(
         encoding="utf-8"
     )
 
@@ -367,10 +367,10 @@ def test_onchain_routed_to_decision_context():
     ),
 )
 def test_enriched_decision_consumers_share_freshness_policy():
-    freshness = (_ROOT / "aletheia" / "data" / "freshness.py").read_text(encoding="utf-8")
+    freshness = (_ROOT / "core" / "aletheia" / "data" / "freshness.py").read_text(encoding="utf-8")
     observer = _MARKET_OBS.read_text(encoding="utf-8")
     context = _CONTEXT_BUILDER.read_text(encoding="utf-8")
-    features = (_ROOT / "aletheia" / "universe" / "features.py").read_text(encoding="utf-8")
+    features = (_ROOT / "core" / "aletheia" / "universe" / "features.py").read_text(encoding="utf-8")
 
     for domain in ("orderbook", "funding", "open_interest", "macro", "onchain"):
         assert f'"{domain}"' in freshness
@@ -388,7 +388,7 @@ def test_enriched_decision_consumers_share_freshness_policy():
     ),
 )
 def test_market_data_visibility_surfaces_are_wired():
-    routes = (_ROOT / "aletheia" / "server" / "routes" / "data.py").read_text(encoding="utf-8")
+    routes = (_ROOT / "core" / "aletheia" / "server" / "routes" / "data.py").read_text(encoding="utf-8")
     client = (_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
     overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
     api_doc = _API_REFERENCE_DOC.read_text(encoding="utf-8")
@@ -409,8 +409,8 @@ def test_market_data_visibility_surfaces_are_wired():
     ),
 )
 def test_exchange_source_divergence_is_guarded_and_visible():
-    settings_route = (_ROOT / "aletheia" / "server" / "routes" / "settings.py").read_text(encoding="utf-8")
-    health_route = (_ROOT / "aletheia" / "server" / "routes" / "health.py").read_text(encoding="utf-8")
+    settings_route = (_ROOT / "core" / "aletheia" / "server" / "routes" / "settings.py").read_text(encoding="utf-8")
+    health_route = (_ROOT / "core" / "aletheia" / "server" / "routes" / "health.py").read_text(encoding="utf-8")
     overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
     settings_ui = "\n".join(
         (
@@ -453,7 +453,7 @@ async def test_verified_exit_private_history_is_registered_and_bounded(monkeypat
     doc = _DATA_UTILIZATION_DOC.read_text(
         encoding="utf-8"
     )
-    protocol = (_ROOT / "aletheia" / "execution" / "verified_exit.py").read_text(
+    protocol = (_ROOT / "core" / "aletheia" / "execution" / "verified_exit.py").read_text(
         encoding="utf-8"
     )
     assert "Broker 私有仓位/成交历史" in doc
@@ -619,7 +619,7 @@ def test_yfinance_provider_declared_in_utilization_doc():
     yf_provider = _ROOT / "extensions" / "data" / "yfinance_provider.py"
     assert yf_provider.exists(), "yfinance_provider.py must exist"
 
-    market_ctx = _ROOT / "aletheia" / "trading" / "market_context.py"
+    market_ctx = _ROOT / "core" / "aletheia" / "trading" / "market_context.py"
     src = market_ctx.read_text(encoding="utf-8")
     assert "read_macro_context" in src, (
         "market_context.py must consume the composed macro reader"
@@ -649,7 +649,7 @@ def test_yfinance_provider_declared_in_utilization_doc():
 )
 def test_regime_is_inline_not_separate_collector():
     """Macro labels share one projection; no standalone RegimeCollector class."""
-    collectors_dir = _ROOT / "aletheia" / "data" / "collectors"
+    collectors_dir = _ROOT / "core" / "aletheia" / "data" / "collectors"
     extension_collectors = _ROOT / "extensions" / "data" / "collectors"
     regime_files = list(collectors_dir.glob("*regime*")) + list(extension_collectors.glob("*regime*"))
     assert not regime_files, (
@@ -670,7 +670,7 @@ def test_regime_is_inline_not_separate_collector():
     assert projected["risk_regime"] == "risk_off"
 
     for py_file in (
-        *(_ROOT / "aletheia").rglob("*.py"),
+        *(_ROOT / "core" / "aletheia").rglob("*.py"),
         *(_ROOT / "extensions").rglob("*.py"),
     ):
         text = py_file.read_text(encoding="utf-8", errors="ignore")
@@ -700,7 +700,7 @@ def test_coinalyze_registered_in_scheduler_and_config():
     from aletheia.config import schema as schema_mod
 
     # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 context lane）
-    scheduler_py = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
+    scheduler_py = _ROOT / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     scheduler_src = scheduler_py.read_text(encoding="utf-8")
     assert "CoinalyzeCollector" in scheduler_src, (
         "scheduler.py must reference CoinalyzeCollector "
@@ -730,7 +730,7 @@ def test_coinalyze_registered_in_scheduler_and_config():
     ),
 )
 def test_market_context_timeframes_cover_all_three_periods():
-    market_ctx_py = _ROOT / "aletheia" / "trading" / "market_context.py"
+    market_ctx_py = _ROOT / "core" / "aletheia" / "trading" / "market_context.py"
     src = market_ctx_py.read_text(encoding="utf-8")
     assert "_TIMEFRAMES" in src, (
         "market_context.py must define _TIMEFRAMES constant (DU-S07)"
@@ -1064,11 +1064,11 @@ def test_scheduler_persists_coinalyze_outputs(monkeypatch):
 )
 def test_orderbook_identity_reaches_storage_and_consumers():
     root = _ROOT
-    model = (root / "aletheia/data/models.py").read_text(encoding="utf-8")
+    model = (root / "core/aletheia/data/models.py").read_text(encoding="utf-8")
     collector = (root / "extensions/data/collectors/microstructure.py").read_text(encoding="utf-8")
-    repo = (root / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
+    repo = (root / "core/aletheia/storage/repositories.py").read_text(encoding="utf-8")
     observer = (root / "extensions/research/market_observer.py").read_text(encoding="utf-8")
-    features = (root / "aletheia/universe/features.py").read_text(encoding="utf-8")
+    features = (root / "core/aletheia/universe/features.py").read_text(encoding="utf-8")
 
     assert "market_type: str" in model
     assert "market_type=market_type" in collector

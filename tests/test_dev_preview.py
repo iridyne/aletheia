@@ -1,5 +1,6 @@
 """Contracts for the explicitly opt-in, isolated development API."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,9 @@ def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_p
     assert Path(captured["env"]["ALETHEIA_PREVIEW_DATA_DIR"]) == expected
     command = captured["command"]
     watched = [command[index + 1] for index, value in enumerate(command) if value == "--reload-dir"]
-    assert watched == [str(tmp_path / "aletheia")] + ([str(tmp_path / "extensions")] if extensions_present else [])
+    assert watched == [str(tmp_path / "core" / "aletheia")] + ([str(tmp_path / "extensions")] if extensions_present else [])
+    assert captured["cwd"] == tmp_path
+    assert captured["env"]["PYTHONPATH"].split(os.pathsep) == [str(tmp_path / "core"), str(tmp_path)]
 
 
 def test_preview_data_dir_requires_the_worktree_preview_root(monkeypatch, tmp_path):

@@ -1705,7 +1705,7 @@ def test_migration_progress_display_explains_eta_as_a_range():
 
 
 def test_production_code_has_no_legacy_implicit_run_migrations_callers():
-    package_root = Path(__file__).resolve().parents[1] / "aletheia"
+    package_root = Path(__file__).resolve().parents[1] / "core" / "aletheia"
     offenders: list[str] = []
     for path in package_root.rglob("*.py"):
         if path.name == "migrations.py":

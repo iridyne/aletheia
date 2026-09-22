@@ -137,7 +137,7 @@ EX-04 / GitHub #418 跟踪。
 
 ### §4b-1 risk_engine 不依赖 operator.permission_mode（L2c 不变式）
 
-`aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。
+`core/aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。
 
 **原因**：Operator 面的 `permission_mode`（ReadOnly/Research/PaperAuto/AllowEditing/Auto）控制 System Operator 可以调用哪些命令，不影响 risk_engine 的判断逻辑。若 Auto 模式能豁免任何关卡，System Operator 可借助权限提升绕过资金安全约束。
 
@@ -187,6 +187,6 @@ FORBIDDEN_INTENTS = frozenset([
 
 检查实现 `agent_shell/permissions.py:42-72`:命中 `FORBIDDEN_INTENTS` 立即拒("permanently forbidden");未注册命令拒;权限等级不足拒。
 
-> ⚠️ **路径偏差**:[trust §6.1](../../governance/policies/trust_and_change_control.md) 列控制模块为 `aletheia/agent_runtime/permissions.py`,实际代码在 `aletheia/agent_shell/permissions.py`。批次5核实并统一(以代码为准修文档,或确认 trust 文档需更新)。
+> ⚠️ **路径偏差**:[trust §6.1](../../governance/policies/trust_and_change_control.md) 列控制模块为 `core/aletheia/agent_runtime/permissions.py`,实际代码在 `core/aletheia/agent_shell/permissions.py`。批次5核实并统一(以代码为准修文档,或确认 trust 文档需更新)。
 
 **不变式([trust §6.3](../../governance/policies/trust_and_change_control.md)):** 受限工具对 LLM-driven agent 不可调用;权限扩展必须显式 + 测试;agent **不得**经注册表失误获得 live 解锁/凭证变更/风控变更/执行网关变更能力。
