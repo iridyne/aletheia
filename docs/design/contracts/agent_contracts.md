@@ -191,20 +191,31 @@ or writable legacy control remains.
 
 #### prediction_observer
 
+- **Owner**: `extensions/research/prediction_observer.py`. CLI/Web composition
+  binds the Prediction/Divergence pipeline separately from other Research agents;
+  absent Research or its Data adapter makes both unavailable before manual queue
+  writes and omits the scheduler job. Internal dependency defects propagate.
 - **Trigger**: scheduler every 30min
 - **Inputs**: prediction market APIs (Polymarket/Kalshi), existing prediction_markets table
 - **LLM**: Yes (structured event interpretation; the chained divergence scanner is deterministic)
 - **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots,
   and observation-only prediction Opportunities
-- **Side effects**: Chains divergence_scanner on completion; research Opportunities do not wake a retired entry queue.
+- **Side effects**: Scheduler chains divergence_scanner after the observer;
+  manual Prediction refresh runs only this observer. Research Opportunities do
+  not wake a retired entry queue. Existing Serenity evidence insertion also
+  refreshes same-theme active research opportunity grades; it does not publish Candidates.
 
 #### divergence_scanner (chained from prediction_observer)
 
+- **Owner**: `extensions/research/divergence_scanner.py`, composed with the
+  Prediction Observer. Core retains the existing registry and scheduler lifecycle.
 - **Trigger**: runs after prediction_observer completes
 - **Inputs**: prediction market prices vs spot prices
 - **LLM**: No
 - **Outputs**: divergence alerts → opportunities table
-- **Side effects**: Persists research evidence only; a divergence Opportunity is not a Candidate entry owner.
+- **Side effects**: Retains the shared information-policy epoch check and terminal
+  filter facts. A created observation-only Opportunity and its terminal fact share
+  the existing transaction/savepoint; a divergence Opportunity is not a Candidate entry owner.
 - **Direction contract**: YES probability change is combined with deterministic
   bullish/bearish question polarity. Unknown, negated, or mixed polarity fails closed;
   probability direction alone never decides crypto direction.

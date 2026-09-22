@@ -19,12 +19,16 @@ def setup_env(tmp_path, monkeypatch):
     from extensions.research.risk_critic import run_risk_critic
     from extensions.research.market_observer import run_market_observer
     from extensions.research.post_trade_reviewer import run_post_trade_reviewer
+    from extensions.research.prediction_observer import run_prediction_observer
+    from extensions.research.divergence_scanner import run_divergence_scanner
 
     register_agent("research_agent")(run_research_agent)
     register_agent("risk_critic")(run_risk_critic)
     register_agent("equity_observer")(run_equity_observer)
     register_agent("market_observer")(run_market_observer)
     register_agent("post_trade_reviewer")(run_post_trade_reviewer)
+    register_agent("prediction_observer")(run_prediction_observer)
+    register_agent("divergence_scanner")(run_divergence_scanner)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -59,7 +63,10 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 # --- Scheduler ---
 
-@pytest.mark.parametrize("agent_name", ["risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"])
+@pytest.mark.parametrize("agent_name", [
+    "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner",
+    "market_observer", "post_trade_reviewer",
+])
 def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_name):
     setup_env(tmp_path, monkeypatch)
     import aletheia.agents as agents
@@ -70,6 +77,10 @@ def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_n
     try:
         scheduler = sched.init_scheduler()
         assert scheduler.get_job(agent_name) is None
+        if agent_name in {"prediction_observer", "divergence_scanner"}:
+            assert scheduler.get_job("prediction_observer") is None
+            assert scheduler.get_job("equity_observer") is not None
+            assert scheduler.get_job("risk_critic") is not None
         assert scheduler.get_job("position_manager") is not None
         assert scheduler.get_job("portfolio_snapshot") is not None
     finally:
@@ -111,7 +122,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
-        "guard_promotion", "post_trade_reviewer", "risk_critic", "equity_observer",
+        "guard_promotion", "post_trade_reviewer", "risk_critic", "equity_observer", "prediction_observer",
         "universe_refresh", "pi_operator_loop", "filter_controller_observe",
     }
     missing = required - job_ids
@@ -137,11 +148,33 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert equity_job.executor == "agents"
     assert equity_job.misfire_grace_time == 300
     assert str(equity_job.trigger) == str(sched._equity_observer_trigger())
+    prediction_job = s.get_job("prediction_observer")
+    assert prediction_job.executor == "agents"
+    assert prediction_job.misfire_grace_time == 120
+    assert prediction_job.trigger.interval == timedelta(minutes=30)
     post_trade_job = s.get_job("post_trade_reviewer")
     assert post_trade_job is not None
     assert post_trade_job.executor == "agents"
     sched.stop_scheduler()
     reset_db()
+
+
+def test_prediction_scheduler_preserves_pipeline_order(monkeypatch):
+    from types import SimpleNamespace
+    import aletheia.agent_runtime.scheduler as sched
+
+    monkeypatch.setattr(sched, "load_config", lambda: SimpleNamespace(
+        runtime=SimpleNamespace(paused=False),
+        market_data=SimpleNamespace(prediction_enabled=True, observed_prediction_markets=["crypto"]),
+    ))
+    calls = []
+    monkeypatch.setattr(sched, "_async_run", lambda name: name)
+    monkeypatch.setattr(sched, "_run_async_with_timeout", lambda name, task: calls.append((name, task)))
+    sched._run_prediction_observer()
+    assert calls == [
+        ("prediction_observer", "prediction_observer"),
+        ("divergence_scanner", "divergence_scanner"),
+    ]
 
 
 @pytest.mark.parametrize(

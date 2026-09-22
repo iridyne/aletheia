@@ -1,4 +1,4 @@
-"""Prediction Observer agent — monitors Polymarket prediction markets.
+"""Optional Research Prediction Observer — monitors Polymarket prediction markets.
 
 Fetches active markets from Polymarket's public Gamma API (no auth needed),
 asks the LLM to identify notable probability trends, and creates

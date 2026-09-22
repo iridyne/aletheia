@@ -123,6 +123,24 @@ async def test_refresh_returns_202_queued(tmp_path, monkeypatch):
     assert enqueue_called_with == ["prediction_observer"]
 
 
+async def test_refresh_absent_observer_does_not_queue_run(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _make_config(tmp_path)
+    from aletheia import agents
+    from aletheia.agent_runtime import job_queue
+
+    monkeypatch.delitem(agents._AGENTS, "prediction_observer")
+    manager = AgentJobManager()
+    monkeypatch.setattr(manager, "start", lambda: pytest.fail("absent observer started worker"))
+    monkeypatch.setattr(job_queue, "queue_run", lambda **kwargs: pytest.fail("absent observer queued run"))
+    monkeypatch.setattr(job_queue, "get_agent_job_manager", lambda: manager)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/prediction/refresh")
+    assert response.status_code == 400
+    assert "Unknown agent: prediction_observer" in str(response.json())
+    reset_db()
+
+
 # ---------------------------------------------------------------------------
 # Test 3 — durable AgentRun record created in the database
 # ---------------------------------------------------------------------------

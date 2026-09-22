@@ -91,7 +91,7 @@ _EXECUTOR_WORKERS = {
 | 18 | `cleanup` | 399 | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
 | 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |
 | 20 | `equity_observer` | — | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟；仅注册已组合的 producer | agents | 240 | 300 |
-| 21 | `prediction_observer` | 417 | interval | minutes=30 | agents | 240 | 120 |
+| 21 | `prediction_observer` | — | interval | minutes=30；仅当 Prediction Observer 与 Divergence Scanner 均已组合时注册 | agents | 240 | 120 |
 | 22 | `post_trade_reviewer` | — | interval | hours=4；仅注册已组合的 producer | agents | 300 | 300 |
 | 23 | `risk_critic` | — | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
@@ -135,6 +135,9 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 `extensions/research` producer 绑定到既有 agent registry、`get_agent_fn()` 可解析时注册。
 Research 缺失时省略对应 job，不创建失败 AgentRun 或调度失败健康记录；Core 任务保持注册。
 Equity 的 `_equity_observer_trigger()` 保留 Eastern-time DST 与 misfire 语义。
+`prediction_observer` job 要求 `prediction_observer` 与 `divergence_scanner` 两个 registry
+binding 均可解析；Research 或所需 Data adapter 缺失时省略该 job，不创建失败运行。
+已组合时保留每 30 分钟的 Observer-then-Divergence 顺序、240 秒 Observer timeout 与 120 秒 misfire grace。
 任务总数随配置、已组合 producer 和实际职责变化，不设源码调用数量下限。
 
 ### 3.1 Observation Lab experiment scheduling

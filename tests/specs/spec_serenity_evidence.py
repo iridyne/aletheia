@@ -17,7 +17,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "serenity_evidence_quality"
 _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
-_PRED_OBS = _ROOT / "aletheia" / "agents" / "prediction_observer.py"
+_PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
 
 
 # ---------------------------------------------------------------------------

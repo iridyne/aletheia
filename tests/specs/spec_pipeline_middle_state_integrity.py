@@ -1073,7 +1073,7 @@ def test_divergence_source_version_identity_claim_is_atomic(tmp_path, monkeypatc
     assert len({owner for owner, _created in results}) == 1
     assert [row["id"] for row in rows] == [results[0][0]]
     import inspect
-    from aletheia.agents import divergence_scanner
+    from extensions.research import divergence_scanner
 
     assert "insert_divergence_opportunity_once(" in inspect.getsource(
         divergence_scanner

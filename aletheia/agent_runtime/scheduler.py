@@ -1426,10 +1426,16 @@ def init_scheduler() -> BackgroundScheduler | None:
             id="equity_observer", misfire_grace_time=300, executor="agents",
         )
     # Prediction market observer — runs every 30 min around the clock.
-    _scheduler.add_job(
-        _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
-        id="prediction_observer", misfire_grace_time=120, executor="agents",
-    )
+    try:
+        get_agent_fn("prediction_observer")
+        get_agent_fn("divergence_scanner")
+    except ValueError:
+        logger.info("Prediction pipeline not scheduled: optional Research/Data unavailable")
+    else:
+        _scheduler.add_job(
+            _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
+            id="prediction_observer", misfire_grace_time=120, executor="agents",
+        )
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
