@@ -15,8 +15,6 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable
 
-import httpx
-
 from aletheia.config.loader import get_data_dir
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_catalog_pricing_snapshot
@@ -29,6 +27,13 @@ _SOURCE_PREFIX = "litellm_public_median:"
 _MATCH_VERSION = "catalog-model-family-v2"
 _FAMILY_SUFFIXES = ("instruct", "chat")
 _REFRESH_INTERVAL_SECONDS = 6 * 60 * 60
+_catalog_fetcher: Callable[[], tuple[dict[str, Any], bytes]] | None = None
+
+
+def configure_pricing_fetcher(fetcher: Callable[[], tuple[dict[str, Any], bytes]] | None) -> None:
+    """Bind optional public Data acquisition; Core retains pricing evidence authority."""
+    global _catalog_fetcher
+    _catalog_fetcher = fetcher
 
 
 @dataclass(frozen=True)
@@ -283,17 +288,14 @@ def capture_catalog_observation() -> CatalogObservation | None:
         return _active_catalog
 
 
-def _fetch_price_map() -> tuple[dict[str, Any], bytes]:
-    response = httpx.get(LITELLM_PRICE_MAP_URL, timeout=5, follow_redirects=True)
-    response.raise_for_status()
-    content = response.content
-    parsed = response.json()
+def _validate_price_map(parsed: dict[str, Any], content: bytes) -> None:
+    if json.loads(content) != parsed:
+        raise ValueError("LiteLLM parsed price map does not match cached bytes")
     if not isinstance(parsed, dict) or len(parsed) < _MIN_MODEL_COUNT:
         raise ValueError("LiteLLM price map is missing or unexpectedly small")
     cached_count = _load_cached_count()
     if cached_count and len(parsed) < cached_count * _MIN_RELATIVE_SIZE:
         raise ValueError("LiteLLM price map shrank unexpectedly")
-    return parsed, content
 
 
 def _rate(value: object) -> float | None:
@@ -488,7 +490,7 @@ def _may_write_catalog_snapshot(provider: str, model: str, version: str) -> bool
 
 
 def refresh_pricing(
-    fetcher: Callable[[], tuple[dict[str, Any], bytes]] = _fetch_price_map,
+    fetcher: Callable[[], tuple[dict[str, Any], bytes]] | None = None,
 ) -> dict[str, Any]:
     """Fetch public prices and append forward-only estimated snapshots.
 
@@ -497,9 +499,11 @@ def refresh_pricing(
     handles deployment suffixes. Multiple provider listings are aggregated as
     a public-market median and never labelled provider-billed or known cost.
     """
+    fetcher = fetcher if fetcher is not None else _catalog_fetcher
+    if fetcher is None:
+        raise RuntimeError("pricing_catalog_unavailable")
     price_map, content = fetcher()
-    if json.loads(content) != price_map:
-        raise ValueError("LiteLLM parsed price map does not match cached bytes")
+    _validate_price_map(price_map, content)
     effective_from = _utcnow()
     observation = _save_cache(content) or _observation(content, effective_from)
     effective_from = observation.observed_at
