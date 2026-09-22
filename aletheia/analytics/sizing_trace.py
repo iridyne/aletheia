@@ -224,7 +224,8 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             executed_notional=executed_notional,
         )
         notes.append("reconstructed_from_current_config")
-        notes.append("current_policy_projection_not_historical_intent")
+        if sizing["intended_position_size_usdt"] is not None:
+            notes.append("current_policy_projection_not_historical_intent")
         traces.append({
             "proposal_id": proposal["id"],
             "position_id": position.get("id") if position else None,
@@ -284,7 +285,9 @@ def _conviction_for_proposal(db, proposal: dict) -> int | None:
     return int(row["conviction"]) if row and row["conviction"] is not None else None
 
 
-def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> int:
+def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> int | None:
+    if not _table_exists(db, "fills"):
+        return None
     if not strategy_id or not _table_exists(db, "positions"):
         return 0
     from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
@@ -313,12 +316,20 @@ def _reconstruct_current_config_size(
     *,
     symbol: str | None,
     conviction: int | None,
-    paper_trade_count: int,
+    paper_trade_count: int | None,
     atr_pct: float | None,
 ) -> dict:
     from aletheia.trading.sizing import compute_position_size
 
     base = _effective_base_notional(cfg, symbol)
+    if paper_trade_count is None:
+        return {
+            "base_notional_usdt": _round(base),
+            "effective_kelly": None,
+            "raw_vol_size": None,
+            "kelly_cap": None,
+            "intended_position_size_usdt": None,
+        }
     base_kelly = _effective_kelly_base(cfg, symbol)
     effective_kelly = _effective_kelly(base_kelly, paper_trade_count)
     conviction_i = int(conviction if conviction is not None else 70)
@@ -464,7 +475,7 @@ def _reason(
     conviction: int | None,
     base_notional: float | None,
     effective_kelly: float | None,
-    paper_trade_count: int,
+    paper_trade_count: int | None,
     atr_pct: float | None,
     raw_vol_size: float | None,
     risk_cap_hit: bool | None,
@@ -481,6 +492,8 @@ def _reason(
     if conviction is not None and conviction < _LOW_CONVICTION:
         notes.append(f"System Operator conviction is {conviction}.")
         return "low_conviction", notes
+    if paper_trade_count is None:
+        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if paper_trade_count < 10 and effective_kelly == 0.1:
         notes.append("Fewer than 10 closed paper samples compress the legacy scaling factor to 0.1.")
         return "sample_aware_scaling", notes
@@ -564,13 +577,19 @@ def _main_sizing_bottleneck(report: dict, min_sample_size: int) -> dict:
     tiny = median_exec is not None and median_exec <= _TINY_EXECUTED_NOTIONAL_USDT
     if top["reason"] == "unknown" and not tiny:
         severity = "ok"
+    projection_available = summary.get("median_current_policy_projection_usdt") is not None
+    projection_note = (
+        "Current config projection only, not historical intent."
+        if projection_available
+        else "Sample-dependent sizing projection is unavailable."
+    )
     return _bottleneck(
         top["reason"],
         severity,
-        f"Current config projection only, not historical intent. {top['evidence']} "
+        f"{projection_note} {top['evidence']} "
         f"Median executed notional={_fmt_usdt(median_exec)}.",
         _next_action(top["reason"]),
-        evidence_basis="current_config_projection",
+        evidence_basis="current_config_projection" if projection_available else "sample_evidence_unavailable",
     )
 
 
