@@ -80,7 +80,7 @@ def _configure_runtime() -> None:
         from extensions.research.divergence_scanner import run_divergence_scanner
     except ModuleNotFoundError as exc:
         if exc.name not in {
-            "extensions", "extensions.research", "extensions.data", "extensions.data.ccxt_provider",
+            "extensions", "extensions.research", "extensions.data", "extensions.data.ccxt_provider", "extensions.data.polymarket_provider",
         }:
             raise
         unregister_agent("prediction_observer")
@@ -127,6 +127,36 @@ def _configure_runtime() -> None:
         configure_telegram_sender(send_telegram_alert)
 
     from aletheia.model_provider.router import configure_model_provider
+    from aletheia.data.providers import configure_macro_reader, configure_prediction_history_reader
+    from aletheia.universe.outcome_recorder import configure_structure_shadow_settler
+
+    try:
+        from extensions.data.yfinance_provider import fetch_macro_context
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.yfinance_provider"}:
+            raise
+        configure_macro_reader(None)
+    else:
+        configure_macro_reader(fetch_macro_context)
+
+    try:
+        from extensions.data.polymarket_provider import fetch_market_history
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.polymarket_provider"}:
+            raise
+        configure_prediction_history_reader(None)
+    else:
+        configure_prediction_history_reader(fetch_market_history)
+
+    try:
+        from extensions.data.perp_structure_shadow import settle_due_perp_structure_outcomes
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.perp_structure_shadow"}:
+            raise
+        configure_structure_shadow_settler(None)
+    else:
+        configure_structure_shadow_settler(settle_due_perp_structure_outcomes)
+
     from aletheia.data.providers import configure_listing_reader, configure_market_data_factory
 
     try:

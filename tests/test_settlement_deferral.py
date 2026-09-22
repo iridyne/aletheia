@@ -521,7 +521,7 @@ def test_identity_deferrals_do_not_block_later_exact_venue_rows(monkeypatch):
         no_rows,
     )
     monkeypatch.setattr(
-        "aletheia.data.perp_structure_shadow.settle_due_perp_structure_outcomes",
+        "aletheia.universe.outcome_recorder._structure_shadow_settler",
         no_rows,
     )
 
@@ -569,7 +569,7 @@ def test_the_forward_loop_does_not_reselect_a_row_it_deferred(monkeypatch):
 
 
 def test_perp_structure_row_stays_due_when_the_venue_is_unreachable(monkeypatch):
-    from aletheia.data.perp_structure_shadow import (
+    from extensions.data.perp_structure_shadow import (
         settle_due_perp_structure_outcomes,
     )
     from aletheia.storage.sqlite import get_db

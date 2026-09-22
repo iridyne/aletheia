@@ -1,5 +1,24 @@
 # Slim Core production ownership inventory
 
+## Supplemental Data family compartment
+
+The unique yFinance macro, Polymarket, Position X material/features, positioning
+evidence, structure shadow and Vergex aggregate implementations now belong to
+`extensions/data`. Core retains shared DTOs, canonical derivatives facts, stored
+context projection, repositories and canonical forward settlement. CLI/Web bind
+only the exact macro/history readers and separate async structure-shadow settler;
+missing supplements do not disable CCXT or canonical settlement. Prediction
+composition checks its Data producer before any manual queue or prediction-run
+write. Local prediction history remains available without the public fallback.
+
+Explicit positioning/import/evaluation commands reject missing producers before
+producer work; Doctor still reads stored structure facts independently. Vergex
+remains owner aggregate import, not an automatic feed. Existing producer bodies,
+policy epoch, whitelist, snapshot/shadow/audit transaction, return algorithms and
+non-fatal shadow ordering are unchanged. No aliases, Equity algorithm, Risk,
+economic, credential, schema or runtime changes are included. This is bounded
+ownership/absence proof, not deployed or economic qualification.
+
 Current package census and mixed-owner corrections: source
 `851aed04171b3943b1b11039a747ac930e663976` plus the Data cutover below, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). Original inventory

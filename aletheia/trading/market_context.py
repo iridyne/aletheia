@@ -572,8 +572,8 @@ async def build_market_context(
     macro_block = ""
     if md_cfg.enable_yfinance_macro:
         try:
-            from aletheia.data.yfinance_provider import fetch_macro_context
-            macro_block = await fetch_macro_context()
+            from aletheia.data.providers import read_macro_context
+            macro_block = await read_macro_context()
         except Exception as e:
             logger.warning("Macro context fetch failed: %s", e)
 

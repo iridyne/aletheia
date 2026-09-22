@@ -29,7 +29,13 @@ def positioning_evidence(
     venue: list[str] = typer.Option(["binance", "okx", "bitget", "hyperliquid"], "--venue"),
 ):
     """Export research-only positioning evidence from existing durable facts."""
-    from aletheia.data.positioning_evidence import read_positioning_evidence
+    try:
+        from extensions.data.positioning_evidence import read_positioning_evidence
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.positioning_evidence"}:
+            raise
+        typer.echo("Positioning evidence unavailable: optional Data not installed", err=True)
+        raise typer.Exit(1) from exc
 
     try:
         result = read_positioning_evidence(symbol, cutoff, venues=venue)
@@ -217,7 +223,14 @@ def ingest_perp_structure(
     path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),
 ):
     """Import aggregate rows or a sanitized holder batch (observation-only)."""
-    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    try:
+        from extensions.data.collectors.vergex_structure import ingest_owner_aggregate
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.collectors",
+                            "extensions.data.collectors.vergex_structure", "extensions.data.position_x"}:
+            raise
+        typer.echo("Perp structure import unavailable: optional Data not installed", err=True)
+        raise typer.Exit(1) from exc
     from aletheia.storage.migrations import assert_migrations_current
 
     assert_migrations_current()
@@ -233,7 +246,13 @@ def evaluate_perp_structure(
     minimum_samples: int = typer.Option(30, "--minimum-samples", min=1),
 ):
     """Evaluate settled Position X shadows without changing decision authority."""
-    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    try:
+        from extensions.data.perp_structure_shadow import evaluate_position_x_shadow
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.data", "extensions.data.perp_structure_shadow"}:
+            raise
+        typer.echo("Perp structure evaluation unavailable: optional Data not installed", err=True)
+        raise typer.Exit(1) from exc
     from aletheia.storage.migrations import assert_migrations_current
 
     assert_migrations_current()

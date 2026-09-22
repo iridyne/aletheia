@@ -151,7 +151,7 @@ import sys
 attempted = []
 class MissingPositionX:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.data.position_x":
+        if fullname == "extensions.data.position_x":
             attempted.append(fullname)
             raise ModuleNotFoundError(fullname, name=fullname)
 sys.meta_path.insert(0, MissingPositionX())

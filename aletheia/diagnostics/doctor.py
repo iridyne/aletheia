@@ -1339,7 +1339,14 @@ def _probe_perp_structure(report: Report) -> None:
         return
 
     if not row:
-        from aletheia.data.collectors.vergex_structure import structure_source_status
+        try:
+            from extensions.data.collectors.vergex_structure import structure_source_status
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"extensions", "extensions.data", "extensions.data.collectors",
+                                "extensions.data.collectors.vergex_structure", "extensions.data.position_x"}:
+                raise
+            report.add("data.perp_structure", "info", "unavailable: optional structure producer not installed")
+            return
         source_status = structure_source_status()
         report.add(
             "data.perp_structure",

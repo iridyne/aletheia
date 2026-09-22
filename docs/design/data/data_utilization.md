@@ -50,7 +50,7 @@
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
 | 衍生品仓位比（DU-S26） | DerivativesCollector (Binance public fapi global account ratio + top-trader position ratio) | `open_interest_snapshots.long_short_ratio/top_trader_position_ratio` → `universe_feature_snapshots` | normalizer→crowding_score→leverage→LLM；Relative Rank Shadow 的 perp 准入和 positioning rank | ✅ 两种 ratio 保持独立语义；缺 funding/OI/OI delta/任一 ratio 的 perp 候选在新 Shadow 中 fail closed，不读取本地私有账户仓位 |
 | 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |
-| 美股宏观代理(S&P500/VIX/DXY/Gold) | yfinance_provider (enable_yfinance_macro 门控) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM | ✅ |
+| 美股宏观代理(S&P500/VIX/DXY/Gold) | extensions.data.yfinance_provider (enable_yfinance_macro 门控，CLI/Web 绑定可选 reader) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM；缺 reader 不添加宏观块 | ✅ |
 | 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | macro 块→LLM | ✅ |
 | 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | macro 块(top_movers_summary)→LLM | ✅ |
 | 成交量排名 | VolumeScannerCollector（精确 venue+market InstrumentId） | 内存 `_latest_volume_ranking` + `volume_ranking_snapshots` | universe/service→按原 market_type 排序已登记资产（不创建新资产） | ✅；单标的不支持不再打断整批 |

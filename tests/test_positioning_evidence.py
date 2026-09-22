@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.data.derivatives_facts import project_snapshot, project_price_snapshot, price_snapshot
-from aletheia.data.positioning_evidence import derive_positioning_evidence, read_positioning_evidence
+from extensions.data.positioning_evidence import derive_positioning_evidence, read_positioning_evidence
 from tests.test_derivatives_readiness import store, NOW
 from aletheia.storage import repositories as repo
 

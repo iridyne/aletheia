@@ -16,7 +16,7 @@ def test_old_advisory_modules_are_removed():
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
 @pytest.mark.parametrize("missing", [
     None, "extensions", "extensions.research", "extensions.data",
-    "extensions.data.ccxt_provider", "broken_dependency", "broken_data_dependency",
+    "extensions.data.ccxt_provider", "extensions.data.polymarket_provider", "broken_dependency", "broken_data_dependency",
     "broken_nightly_dependency", "extensions.research.dreaming_agent",
 ])
 def test_advisory_agent_composition(entrypoint, missing):

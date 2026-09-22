@@ -30,8 +30,8 @@ _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
 _LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
-_VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
-_POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
+_VERGEX_STRUCTURE = _ROOT / "extensions" / "data" / "collectors" / "vergex_structure.py"
+_POSITION_X = _ROOT / "extensions" / "data" / "position_x.py"
 _DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
 _RELATIVE_RANK = _ROOT / "aletheia" / "universe" / "relative_rank_shadow.py"
 _UNIVERSE_FEATURES = _ROOT / "aletheia" / "universe" / "features.py"
@@ -330,7 +330,7 @@ def test_hyperliquid_routed_to_decision_context():
 )
 def test_owner_aggregate_structure_path_is_shadow_only():
     collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
-    shadow = (_ROOT / "aletheia" / "data" / "perp_structure_shadow.py").read_text(
+    shadow = (_ROOT / "extensions" / "data" / "perp_structure_shadow.py").read_text(
         encoding="utf-8"
     )
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
@@ -616,13 +616,13 @@ def test_ccxt_liquidation_dead_code_removed():
 )
 def test_yfinance_provider_declared_in_utilization_doc():
     """yfinance_provider.py exists, is gated in market_context, and doc §3 lists it."""
-    yf_provider = _ROOT / "aletheia" / "data" / "yfinance_provider.py"
+    yf_provider = _ROOT / "extensions" / "data" / "yfinance_provider.py"
     assert yf_provider.exists(), "yfinance_provider.py must exist"
 
     market_ctx = _ROOT / "aletheia" / "trading" / "market_context.py"
     src = market_ctx.read_text(encoding="utf-8")
-    assert "yfinance_provider" in src, (
-        "market_context.py must import yfinance_provider (consumer linkage)"
+    assert "read_macro_context" in src, (
+        "market_context.py must consume the composed macro reader"
     )
     assert "enable_yfinance_macro" in src, (
         "yfinance path must be gated by enable_yfinance_macro config flag"

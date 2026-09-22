@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.data.models import PerpStructureSnapshot
-from aletheia.data.position_x import compute_position_x_batch, extract_position_x_snapshot
+from extensions.data.position_x import compute_position_x_batch, extract_position_x_snapshot
 
 
 _ALLOWED_FIELDS = {

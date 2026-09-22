@@ -759,7 +759,7 @@ def test_render_enriched_context_md_with_perp_structure():
 
 @pytest.mark.asyncio
 async def test_vergex_structure_collector_filters_rejected_fields():
-    from aletheia.data.collectors.vergex_structure import VergexStructureCollector
+    from extensions.data.collectors.vergex_structure import VergexStructureCollector
 
     collector = VergexStructureCollector(fixture_payloads=[{
         "symbol": "BTC/USDT",
@@ -799,7 +799,7 @@ async def test_vergex_structure_collector_filters_rejected_fields():
 
 @pytest.mark.asyncio
 async def test_vergex_structure_fixture_persists_btc_eth_sol():
-    from aletheia.data.collectors.vergex_structure import VergexStructureCollector
+    from extensions.data.collectors.vergex_structure import VergexStructureCollector
     from aletheia.storage import repositories as repo
 
     collector = VergexStructureCollector(
@@ -884,7 +884,7 @@ def test_perp_structure_repository_roundtrip_and_prune():
 
 
 def test_extract_position_x_signal_payload_into_snapshot():
-    from aletheia.data.position_x import extract_position_x_snapshot
+    from extensions.data.position_x import extract_position_x_snapshot
 
     snap = extract_position_x_snapshot(
         {

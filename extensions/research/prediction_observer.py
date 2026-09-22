@@ -40,6 +40,7 @@ from aletheia.storage.repositories import (
     list_serenity_themes,
 )
 from aletheia.config.loader import load_config
+from extensions.data.polymarket_provider import fetch_active_markets, format_prediction_context
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -256,7 +257,6 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     insert_prediction_run(obs_run_id, categories)
 
     # Fetch markets from Polymarket
-    from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
 
     try:
         started_at = time.monotonic()
