@@ -1051,9 +1051,16 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     Only processes complete 4h net outcomes below -3%. Deduplicates within 7 days
     per symbol+family to avoid flooding the knowledge base.
 
-    Never raises — failures are logged and ignored so settle_due() is unaffected.
+    Optional Knowledge absence and candidate-write failures do not interrupt
+    settlement. Unrelated installed dependency defects still propagate.
     """
-    from aletheia.knowledge.manager import create_guard_candidate
+    try:
+        from aletheia.knowledge.manager import create_guard_candidate
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.knowledge", "aletheia.knowledge.manager"}:
+            raise
+        logger.warning("evolution:tier1 guard candidates unavailable: optional Knowledge absent")
+        return
 
     candidates = [
         r for r in settled_rows
