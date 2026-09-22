@@ -9,6 +9,8 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("observation_readers")
 from pydantic import ValidationError
 
 from aletheia.storage.sqlite import reset_db

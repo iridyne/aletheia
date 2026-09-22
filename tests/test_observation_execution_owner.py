@@ -28,6 +28,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("observation_readers")
+
 
 # ─── (1) worker owner means Main Scheduler skips the job ─────────────────────
 

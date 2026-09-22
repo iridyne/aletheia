@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("observation_readers")
+
 
 @dataclass
 class _Adapter:
