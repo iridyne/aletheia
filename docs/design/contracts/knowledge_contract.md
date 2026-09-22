@@ -74,7 +74,7 @@
 ### 2.1 类型→生产者映射细节
 
 `risk_critic` 使用 `create_research_note()` 写入，但在 metadata 中携带 `subtype: risk_lesson`
-(`agents/risk_critic.py`)。此条目在 `trust_and_change_control.md §4.1` 表中未单独列出——
+(`extensions/research/risk_critic.py`)。此条目在 `trust_and_change_control.md §4.1` 表中未单独列出——
 `risk_lesson` 是 metadata 子类型，存储 `item_type` 实为 `research_note`。
 `agent_contracts.md` 也使用同一 producer / subtype 表述；它不是独立 `item_type`。
 
@@ -304,7 +304,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 | Agent | 写入的 item_type | 代码锚点 |
 |-------|----------------|---------|
 | `post_trade_reviewer` | `post_trade_review` | `agent_contracts.md:177` |
-| `risk_critic` | `research_note`（metadata.subtype=risk_lesson） | `agents/risk_critic.py:42` |
+| `risk_critic` | `research_note`（metadata.subtype=risk_lesson） | `extensions/research/risk_critic.py` |
 | `dreaming_daily` | `dreaming_log` | `agent_contracts.md:193` |
 | `insight_synthesizer` | `trading_memo` / `reasoning_feedback` piggyback | `agent_contracts.md:201` |
 | `confidence_calibration` | `calibration_report` | `agent_contracts.md:208` |

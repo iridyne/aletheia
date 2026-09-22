@@ -13,6 +13,11 @@ def register_agent(name: str):
     return decorator
 
 
+def unregister_agent(name: str) -> None:
+    """Clear an unavailable optional producer at the composition boundary."""
+    _AGENTS.pop(name, None)
+
+
 def get_agent_fn(name: str) -> Callable[..., Awaitable[dict]]:
     if name not in _AGENTS:
         # Try importing the module to trigger registration

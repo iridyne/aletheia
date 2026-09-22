@@ -390,15 +390,22 @@ _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
 @router.get("/agents/catalog")
 def get_agents_catalog():
     """Read-only catalog of agents that may be triggered manually from the Dashboard."""
+    from aletheia.agents import get_agent_fn
+
     agents = []
     for name, meta in _MANUAL_AGENT_ALLOWLIST.items():
         entry = {"name": name, **meta}
-        if name == "prediction_observer":
-            try:
-                reason = prediction_observer_blocked_reason(load_config())
-            except Exception:
-                reason = "prediction_observer_config_unavailable"
-            entry.update({"runnable": reason is None, "blocked_reason": reason})
+        try:
+            get_agent_fn(name)
+        except ValueError:
+            entry.update({"runnable": False, "blocked_reason": "agent_unavailable"})
+        else:
+            if name == "prediction_observer":
+                try:
+                    reason = prediction_observer_blocked_reason(load_config())
+                except Exception:
+                    reason = "prediction_observer_config_unavailable"
+                entry.update({"runnable": reason is None, "blocked_reason": reason})
         agents.append(entry)
     return {"agents": agents}
 

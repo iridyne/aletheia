@@ -9,6 +9,18 @@ wording is not the current work queue. This inventory is not a declaration that
 compartmentalization or all single writers are proven. No runtime/data migration
 follows from classification here.
 
+## Advisory Research compartment follow-up
+
+The unchanged Research Agent and Risk Critic implementations now live in
+`extensions/research`; their former modules are deleted without forwarding
+facades. Core retains the existing agent registry, inference helpers and execution
+lifecycle. CLI/Web composition registers the two functions without running them;
+an absent Research package clears stale registrations, while internal import
+defects propagate. The manual catalog reports unavailable implementations rather
+than implying they can run. Model calls, note confidence/admission, permissions,
+scheduled cadence and Risk authority are unchanged. This bounded cutover does
+not move the other observers/reviewers or prove whole-Research absence safety.
+
 ## Exchange compartment follow-up
 
 Rechecked against base `c2bdd7f62e71c10432f2ee3296fb99e01fa92905`:

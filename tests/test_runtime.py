@@ -13,6 +13,12 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 
 def setup_env(tmp_path, monkeypatch):
+    from aletheia.agents import register_agent
+    from extensions.research.research_agent import run_research_agent
+    from extensions.research.risk_critic import run_risk_critic
+
+    register_agent("research_agent")(run_research_agent)
+    register_agent("risk_critic")(run_risk_critic)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -46,6 +52,23 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 
 # --- Scheduler ---
+
+def test_scheduler_omits_absent_risk_critic(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.agents as agents
+    import aletheia.agent_runtime.scheduler as sched
+
+    monkeypatch.delitem(agents._AGENTS, "risk_critic")
+    sched._scheduler = None
+    try:
+        scheduler = sched.init_scheduler()
+        assert scheduler.get_job("risk_critic") is None
+        assert scheduler.get_job("position_manager") is not None
+        assert scheduler.get_job("portfolio_snapshot") is not None
+    finally:
+        sched.stop_scheduler()
+        reset_db()
+
 
 def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
@@ -441,7 +464,7 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
         return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
                 "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
 
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", fake_complete)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", fake_complete)
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] == "completed"
     notes = repo.list_knowledge_items(item_type="research_note")

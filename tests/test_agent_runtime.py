@@ -17,6 +17,10 @@ from aletheia.storage import repositories as repo
 
 def setup_test_env(tmp_path, monkeypatch):
     """Set up test db and config."""
+    from aletheia.agents import register_agent
+    from extensions.research.research_agent import run_research_agent
+
+    register_agent("research_agent")(run_research_agent)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -178,7 +182,7 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
     async def _fake_llm(system, user, max_tokens=800, **_kwargs):
         return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
 
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] in _OK
@@ -218,10 +222,7 @@ async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    setup_test_env(tmp_path, monkeypatch)
 
     # Save config with ReadOnly mode
     from aletheia.config.schema import AletheiaConfig
@@ -230,19 +231,10 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Observe"
     save_config(cfg)
 
-    import aletheia.storage.sqlite as sq
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-    init_tool_registry()
-
     result = await run_agent("research_agent", trigger_type="manual")
     # In Observe mode, research notes ARE permitted (observe tool class)
     assert result["status"] in _OK
+    assert not any("Unknown agent" in error for error in result["errors"])
     reset_db()
 
 

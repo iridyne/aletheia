@@ -295,14 +295,14 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
 
     provider = object()
     monkeypatch.setattr(
-        "aletheia.agents.risk_critic.get_provider_for_tier",
+        "extensions.research.risk_critic.get_provider_for_tier",
         lambda tier: {"deep": provider}[tier],
     )
 
     async def ok_llm(*a, **k):
         assert k["provider"] is provider
         return ("Position sizing crept up after wins; cap risk per trade to limit drawdown clustering.", None)
-    monkeypatch.setattr("aletheia.agents.risk_critic.llm_complete", ok_llm)
+    monkeypatch.setattr("extensions.research.risk_critic.llm_complete", ok_llm)
 
     result = await run_agent("risk_critic", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")

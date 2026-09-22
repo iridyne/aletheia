@@ -52,6 +52,20 @@ app = typer.Typer(
 
 @app.callback()
 def _configure_runtime() -> None:
+    from aletheia.agents import register_agent, unregister_agent
+
+    try:
+        from extensions.research.research_agent import run_research_agent
+        from extensions.research.risk_critic import run_risk_critic
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.research"}:
+            raise
+        unregister_agent("research_agent")
+        unregister_agent("risk_critic")
+    else:
+        register_agent("research_agent")(run_research_agent)
+        register_agent("risk_critic")(run_risk_critic)
+
     from aletheia.notifications import configure_telegram_sender
 
     try:

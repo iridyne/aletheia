@@ -21,7 +21,7 @@ def missing_learning_control(monkeypatch):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_learning_gate_controls_real_producer(monkeypatch, request, missing_control, enabled):
     from aletheia.agent_runtime import scheduler
-    from aletheia.agents import risk_critic
+    from extensions.research import risk_critic
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories, sqlite
 
