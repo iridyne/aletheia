@@ -109,6 +109,7 @@ def _insert_mandate_proposal(
     *,
     configured: AletheiaConfig,
     created_at: str | None = None,
+    execution_mode: str = "paper_internal",
 ):
     from aletheia.storage.models import Opportunity, TradeProposal
 
@@ -123,7 +124,7 @@ def _insert_mandate_proposal(
     )
     proposal = TradeProposal(
         id=proposal_id,
-        execution_mode="paper_internal",
+        execution_mode=execution_mode,
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
         market_type="spot",
@@ -608,11 +609,16 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
     from aletheia.storage.models import Fill, Order, Position
 
     repo, sqlite_store, db, configured = _setup_mandate_db(tmp_path, monkeypatch)
-    valid = _insert_mandate_proposal(repo, "proposal-valid", configured=configured)
+    # Frozen external history exercises Outcome admission; retired simulator
+    # history is no longer eligible. This does not enable current mandate use.
+    valid = _insert_mandate_proposal(
+        repo, "proposal-valid", configured=configured, execution_mode="bitget_demo",
+    )
     tampered = _insert_mandate_proposal(
         repo,
         "proposal-tampered",
         configured=configured,
+        execution_mode="bitget_demo",
     )
     for proposal in (valid, tampered):
         position_id = f"{proposal.id}-position"
@@ -628,7 +634,7 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
                 order_type="market",
                 quantity=1.0,
                 price=100.0,
-                execution_mode="paper_internal",
+                execution_mode=proposal.execution_mode,
                 status="filled",
                 source="adopted",
             ).model_dump()
@@ -646,12 +652,12 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
                 entry_price=100.0,
                 current_price=110.0,
                 realized_pnl=10.0,
-                execution_mode="paper_internal",
+                execution_mode=proposal.execution_mode,
                 status="closed",
                 close_category="strategy",
-                entry_price_source="local_fill",
+                entry_price_source="broker_fill",
                 entry_fill_verified=True,
-                exit_price_source="local_fill",
+                exit_price_source="broker_fill",
                 exit_fill_verified=True,
                 outcome_eligible=True,
                 outcome_exclusion_reason="eligible",
@@ -665,7 +671,7 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
         )
         repo._insert("fills", Fill(
             id=f"{order_id}-fill", order_id=order_id, fill_price=100.0,
-            fill_quantity=1.0, fee=0.0, paper_fill_model_version="paper-order-fill/v1",
+            fill_quantity=1.0, fee=0.0, fee_source="reconciled",
         ).model_dump())
     _tamper_mandate_snapshot(db, tampered.id)
 
