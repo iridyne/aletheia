@@ -199,7 +199,7 @@ def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows():
 
 
 def test_calibration_build_uses_only_verified_current_semantics_outcomes():
-    from aletheia.analytics.confidence_calibration import build_calibration_report
+    from extensions.analytics.confidence_calibration import build_calibration_report
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -230,7 +230,7 @@ def test_calibration_build_uses_only_verified_current_semantics_outcomes():
 
 
 def test_old_or_stale_calibration_report_is_rejected_before_pi_consumption():
-    from aletheia.analytics.confidence_calibration import get_latest_calibration_report
+    from extensions.analytics.confidence_calibration import get_latest_calibration_report
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
@@ -249,7 +249,7 @@ def test_old_or_stale_calibration_report_is_rejected_before_pi_consumption():
 
 
 def test_current_fresh_calibration_report_is_accepted():
-    from aletheia.analytics.confidence_calibration import get_latest_calibration_report
+    from extensions.analytics.confidence_calibration import get_latest_calibration_report
     from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
     from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
     from aletheia.storage.models import KnowledgeItem
@@ -277,8 +277,8 @@ def test_current_fresh_calibration_report_is_accepted():
 
 
 def test_old_memo_and_reasoning_feedback_are_rejected():
-    from aletheia.analytics.insight_synthesizer import get_latest_memo
-    from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
+    from extensions.analytics.insight_synthesizer import get_latest_memo
+    from extensions.analytics.reasoning_feedback import get_latest_reasoning_feedback
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
@@ -298,7 +298,7 @@ def test_old_memo_and_reasoning_feedback_are_rejected():
 
 
 def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeypatch):
-    from aletheia.analytics import insight_synthesizer
+    from extensions.analytics import insight_synthesizer
 
     monkeypatch.setattr(
         insight_synthesizer,
@@ -311,7 +311,7 @@ def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeyp
 
 
 def test_reasoning_feedback_does_not_persist_an_unavailable_cohort(monkeypatch):
-    from aletheia.analytics import reasoning_feedback
+    from extensions.analytics import reasoning_feedback
 
     db = MagicMock()
     db.execute.return_value.fetchall.return_value = [{"proposal_id": "proposal-1"}]

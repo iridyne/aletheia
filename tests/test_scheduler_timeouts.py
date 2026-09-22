@@ -742,7 +742,7 @@ def test_async_timeout_worker_bounds_noncooperative_executor_shutdown(monkeypatc
 def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     """The memo job must not create and close a disposable event loop."""
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+    from extensions.analytics import insight_synthesizer, reasoning_feedback
 
     submitted = []
     successes = []
@@ -759,6 +759,8 @@ def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
     monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
     monkeypatch.setattr(reasoning_feedback, "build_reasoning_feedback", lambda **_: None)
+    monkeypatch.setattr(scheduler, "_synthesize_trading_memo", insight_synthesizer.synthesize_trading_memo)
+    monkeypatch.setattr(scheduler, "_build_reasoning_feedback", reasoning_feedback.build_reasoning_feedback)
 
     scheduler._run_insight_synthesizer()
 
@@ -768,7 +770,7 @@ def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
 
 def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+    from extensions.analytics import insight_synthesizer, reasoning_feedback
 
     failures = []
     feedback_runs = []
@@ -795,6 +797,8 @@ def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch)
         "build_reasoning_feedback",
         lambda **_: feedback_runs.append("ran"),
     )
+    monkeypatch.setattr(scheduler, "_synthesize_trading_memo", insight_synthesizer.synthesize_trading_memo)
+    monkeypatch.setattr(scheduler, "_build_reasoning_feedback", reasoning_feedback.build_reasoning_feedback)
 
     scheduler._run_insight_synthesizer()
 

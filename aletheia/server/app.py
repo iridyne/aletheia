@@ -1214,6 +1214,31 @@ else:
     configure_pricing_fetcher(fetch_price_map)
 
 
+from aletheia.agent_runtime.scheduler import configure_analytics_reports
+from aletheia.analytics.go_live_scorecard import configure_calibration_readers
+
+try:
+    from extensions.analytics.insight_synthesizer import synthesize_trading_memo
+    from extensions.analytics.reasoning_feedback import build_reasoning_feedback
+    from extensions.analytics.confidence_calibration import (
+        build_calibration_report, compute_calibration_score, get_latest_calibration_report,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.analytics"}:
+        raise
+    configure_analytics_reports()
+    configure_calibration_readers()
+else:
+    configure_analytics_reports(
+        synthesize_memo=synthesize_trading_memo,
+        build_feedback=build_reasoning_feedback,
+        build_calibration=build_calibration_report,
+    )
+    configure_calibration_readers(
+        score_reader=compute_calibration_score,
+        report_reader=get_latest_calibration_report,
+    )
+
 from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch, configure_regime_reader
 from aletheia.universe.service import configure_regime_refresh
 
@@ -1334,6 +1359,14 @@ except ModuleNotFoundError as exc:
     logger.warning("news_routes_unavailable")
 else:
     app.include_router(news_router)
+try:
+    from extensions.analytics.routes import router as analytics_reports_router
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.analytics"}:
+        raise
+    logger.warning("analytics_report_routes_unavailable")
+else:
+    app.include_router(analytics_reports_router)
 app.include_router(command_router)
 app.include_router(operator_router)
 app.include_router(persistence_router)

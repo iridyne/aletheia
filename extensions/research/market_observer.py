@@ -1973,7 +1973,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
 
     # Trading Memo — historical performance insights (soft guidance for direction calibration)
     try:
-        from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
+        from extensions.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
 
         memo = get_latest_memo()
         if memo:

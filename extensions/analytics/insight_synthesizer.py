@@ -186,7 +186,7 @@ async def synthesize_trading_memo(
     # new memo can carry forward "this earlier judgment was overturned".
     prior_corrections: list[dict] = []
     try:
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        from extensions.analytics.memo_effectiveness import evaluate_prior_memo
         prior_eval = evaluate_prior_memo(for_rotation=True)
         if prior_eval and prior_eval.get("overturned_rules"):
             prior_corrections = prior_eval["overturned_rules"][:5]
@@ -589,7 +589,7 @@ def render_memo_for_observer(
     dropping timing windows, prior corrections, metadata, and key insight. Use when the
     memo is sent per-symbol in a multi-symbol loop to reduce repeated token cost.
     """
-    from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+    from extensions.analytics.memo_effectiveness import memo_half_life_weight
 
     memo_weight = memo_half_life_weight(memo.get("generated_at"))
     lines = ["\n## Historical Performance Context (Trading Memo)"]
