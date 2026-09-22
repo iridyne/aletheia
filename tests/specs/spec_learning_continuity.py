@@ -128,6 +128,7 @@ def test_daily_learning_catchup_retries_only_failed_due_children(monkeypatch):
 
     fake_scheduler = FakeScheduler()
     monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
+    monkeypatch.setattr(scheduler, "_synthesize_trading_memo", lambda: None)
 
     calls: list[str] = []
 

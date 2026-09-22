@@ -190,5 +190,3 @@ def _index(item, content: str) -> None:
         index_knowledge_item(item, item.content or content, outcome=item.outcome or "")
     except Exception as e:
         logging.getLogger("aletheia.knowledge.manager").warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
-
-

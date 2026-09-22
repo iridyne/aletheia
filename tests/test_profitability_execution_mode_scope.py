@@ -387,7 +387,7 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
         content=json.dumps(okx_report),
     ))
 
-    from aletheia.analytics.confidence_calibration import (
+    from extensions.analytics.confidence_calibration import (
         get_latest_calibration_report,
     )
 
@@ -428,7 +428,7 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
         title="okx fb",
         content=json.dumps(okx_fb),
     ))
-    from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
+    from extensions.analytics.reasoning_feedback import get_latest_reasoning_feedback
     assert get_latest_reasoning_feedback(execution_mode="bitget_demo") is None
     got_fb = get_latest_reasoning_feedback(execution_mode="okx_demo")
     assert got_fb is not None
@@ -442,16 +442,16 @@ def test_learning_builders_fail_closed_without_mode(monkeypatch):
     import aletheia.analytics.execution_mode as em
     monkeypatch.setattr(em, "resolve_selected_execution_mode", lambda: None)
 
-    from aletheia.analytics.confidence_calibration import build_calibration_report
-    from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
+    from extensions.analytics.confidence_calibration import build_calibration_report
+    from extensions.analytics.reasoning_feedback import build_reasoning_feedback
 
     assert build_calibration_report() is None
     assert build_reasoning_feedback() is None
 
 
 def test_learning_persistence_rate_limits_against_artifact_mode(monkeypatch):
-    from aletheia.analytics import confidence_calibration as calibration
-    from aletheia.analytics import reasoning_feedback as feedback
+    from extensions.analytics import confidence_calibration as calibration
+    from extensions.analytics import reasoning_feedback as feedback
 
     generated_at = datetime.now(timezone.utc).isoformat()
     calibration_seen: dict = {}

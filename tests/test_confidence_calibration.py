@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_perfect_calibration_zero_ece_keeps_full_score(monkeypatch):
-    import aletheia.analytics.confidence_calibration as calibration
+    import extensions.analytics.confidence_calibration as calibration
 
     monkeypatch.setattr(
         calibration,
@@ -21,7 +21,7 @@ def test_perfect_calibration_zero_ece_keeps_full_score(monkeypatch):
 
 
 def test_unavailable_calibration_never_grants_readiness_score(monkeypatch):
-    import aletheia.analytics.confidence_calibration as calibration
+    import extensions.analytics.confidence_calibration as calibration
 
     monkeypatch.setattr(
         calibration,
@@ -38,7 +38,7 @@ def test_unavailable_calibration_never_grants_readiness_score(monkeypatch):
 
 
 def test_legacy_zero_ece_is_treated_as_ambiguous(monkeypatch):
-    import aletheia.analytics.confidence_calibration as calibration
+    import extensions.analytics.confidence_calibration as calibration
 
     monkeypatch.setattr(
         calibration,
@@ -50,7 +50,7 @@ def test_legacy_zero_ece_is_treated_as_ambiguous(monkeypatch):
 
 
 def test_go_live_calibration_keeps_zero_ece_as_a_pass(monkeypatch):
-    import aletheia.analytics.confidence_calibration as calibration
+    import extensions.analytics.confidence_calibration as calibration
     from aletheia.analytics.go_live_scorecard import _check_calibration
 
     report = {
@@ -61,6 +61,9 @@ def test_go_live_calibration_keeps_zero_ece_as_a_pass(monkeypatch):
     }
     monkeypatch.setattr(calibration, "get_latest_calibration_report", lambda: report)
     monkeypatch.setattr(calibration, "compute_calibration_score", lambda: 100.0)
+    from aletheia.analytics import go_live_scorecard
+    monkeypatch.setattr(go_live_scorecard, "_compute_calibration_score", calibration.compute_calibration_score)
+    monkeypatch.setattr(go_live_scorecard, "_get_calibration_report", calibration.get_latest_calibration_report)
 
     result = _check_calibration()
 

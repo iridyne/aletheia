@@ -411,6 +411,7 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
 
 #### insight_synthesizer
 
+- **Owner**: optional `extensions/analytics/insight_synthesizer.py`; CLI/Web binds the existing scheduler callback. Without this report package, no report cron is registered and startup catch-up records unavailable without advancing a success watermark.
 - **Trigger**: daily 02:30 CST (= 18:30 UTC previous day) + durable shared startup catch-up after 5min
 - **Inputs**: knowledge_items, opportunities, positions, strategy performance
 - **LLM**: Yes
@@ -419,6 +420,7 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
 
 #### confidence_calibration
 
+- **Owner**: optional `extensions/analytics/confidence_calibration.py`; CLI/Web binds the scheduler builder and Core go-live scorecard readers. Missing reports retain the existing zero-score readiness blocker; score thresholds and economic eligibility are unchanged. The two report API handlers belong to the same optional package.
 - **Trigger**: every 6h
 - **Inputs**: PI decisions with conviction scores + actual outcomes (position P&L)
 - **LLM**: No (pure statistical computation)

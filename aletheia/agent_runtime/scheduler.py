@@ -26,6 +26,18 @@ from aletheia.trust.learning_safety import is_autonomous_learning_job
 
 logger = logging.getLogger("aletheia.scheduler")
 
+_synthesize_trading_memo: Callable[[], Awaitable[dict | None]] | None = None
+_build_reasoning_feedback: Callable[[], dict | None] | None = None
+_build_calibration_report: Callable[[], dict | None] | None = None
+
+
+def configure_analytics_reports(*, synthesize_memo=None, build_feedback=None, build_calibration=None) -> None:
+    """Bind optional report producers at CLI/Web composition without running them."""
+    global _synthesize_trading_memo, _build_reasoning_feedback, _build_calibration_report
+    _synthesize_trading_memo = synthesize_memo
+    _build_reasoning_feedback = build_feedback
+    _build_calibration_report = build_calibration
+
 _scheduler: BackgroundScheduler | None = None
 _scheduler_last_tick: str | None = None
 _universe_scanner_startup_cutoff: str | None = None
@@ -1278,10 +1290,11 @@ def init_scheduler() -> BackgroundScheduler | None:
             _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
             id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
         )
-    _scheduler.add_job(
-        _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
-        id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
-    )
+    if _synthesize_trading_memo is not None:
+        _scheduler.add_job(
+            _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
+            id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
+        )
     # Repair at most the latest missed daily Learning window. Successful window
     # keys live in learning_job_health, so ordinary restarts do not duplicate work.
     _scheduler.add_job(
@@ -1289,10 +1302,11 @@ def init_scheduler() -> BackgroundScheduler | None:
         "date", run_date=datetime.now() + timedelta(minutes=5),
         id="learning_startup_catchup", misfire_grace_time=None, executor="agents",
     )
-    _scheduler.add_job(
-        _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
-        id="confidence_calibration", misfire_grace_time=300, executor="io",
-    )
+    if _build_calibration_report is not None:
+        _scheduler.add_job(
+            _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
+            id="confidence_calibration", misfire_grace_time=300, executor="io",
+        )
     _scheduler.add_job(
         _guarded(
             "pricing_reference_refresh",
@@ -3526,13 +3540,14 @@ def _run_risk_critic():
 
 
 def _run_insight_synthesizer():
+    if _synthesize_trading_memo is None:
+        _record_job_failure("insight_synthesizer", "analytics_reports_unavailable")
+        return {"status": "unavailable", "reason": "analytics_reports_unavailable"}
     cfg = load_config()
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.analytics.insight_synthesizer import synthesize_trading_memo
-
-        memo = _run_async_with_timeout("insight_synthesizer", synthesize_trading_memo())
+        memo = _run_async_with_timeout("insight_synthesizer", _synthesize_trading_memo())
         if memo:
             _record_job_success("insight_synthesizer")
             logger.info("insight_synthesizer produced memo: %d trades", memo.get("sample_size", 0))
@@ -3547,8 +3562,7 @@ def _run_insight_synthesizer():
 
     # Piggyback: reasoning feedback aggregation (no LLM, cheap)
     try:
-        from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
-        fb = build_reasoning_feedback()
+        fb = _build_reasoning_feedback() if _build_reasoning_feedback is not None else None
         if fb:
             logger.info("reasoning_feedback built: %d proposals, %d executed",
                         fb.get("sample_proposals", 0), fb.get("sample_executed", 0))
@@ -3557,9 +3571,11 @@ def _run_insight_synthesizer():
 
 
 def _run_confidence_calibration():
+    if _build_calibration_report is None:
+        _record_job_failure("confidence_calibration", "analytics_reports_unavailable")
+        return {"status": "unavailable", "reason": "analytics_reports_unavailable"}
     try:
-        from aletheia.analytics.confidence_calibration import build_calibration_report
-        report = build_calibration_report()
+        report = _build_calibration_report()
         if report:
             _record_job_success("confidence_calibration")
             logger.info("confidence_calibration: ECE=%.3f (%s), %d trades",
@@ -3624,7 +3640,9 @@ def _run_learning_startup_catchup():
         remaining_due: list[str] = []
 
         for job_id, fn in _DAILY_LEARNING_CATCHUP_JOBS:
-            if not _nightly_research_available(job_id):
+            if not _nightly_research_available(job_id) or (
+                job_id == "insight_synthesizer" and _synthesize_trading_memo is None
+            ):
                 results.append({"job_id": job_id, "status": "unavailable"})
                 continue
             if not daily_catchup_due(job_id):

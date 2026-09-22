@@ -5,9 +5,21 @@ Aggregates 10 criteria into a composite score (0-100) with traffic light status.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
+
+
+_compute_calibration_score: Callable[[], float | None] | None = None
+_get_calibration_report: Callable[[], dict | None] | None = None
+
+
+def configure_calibration_readers(*, score_reader=None, report_reader=None) -> None:
+    """Bind optional Analytics readers; absence remains a zero-score blocker."""
+    global _compute_calibration_score, _get_calibration_report
+    _compute_calibration_score = score_reader
+    _get_calibration_report = report_reader
 
 
 def _scorecard_outcomes() -> list[dict]:
@@ -412,9 +424,10 @@ def _check_reconciliation() -> dict:
 
 def _check_calibration() -> dict:
     try:
-        from aletheia.analytics.confidence_calibration import compute_calibration_score, get_latest_calibration_report
-        score = compute_calibration_score()
-        report = get_latest_calibration_report()
+        if _compute_calibration_score is None or _get_calibration_report is None:
+            return _criterion("calibration", "Conviction Calibration (ECE<0.10)", 0, 0.10, "unavailable")
+        score = _compute_calibration_score()
+        report = _get_calibration_report()
         if not report:
             return _criterion(
                 "calibration", "Conviction Calibration (ECE<0.10)",

@@ -22,7 +22,22 @@ def remediate_outcomes(
     from aletheia.maintenance.outcome_integrity import remediate_outcome_history
 
     assert_migrations_current()
-    result = remediate_outcome_history(dry_run=not apply)
+    build_calibration = build_feedback = None
+    if apply:
+        try:
+            from extensions.analytics.confidence_calibration import build_calibration_report
+            from extensions.analytics.reasoning_feedback import build_reasoning_feedback
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"extensions", "extensions.analytics"}:
+                raise
+        else:
+            build_calibration = build_calibration_report
+            build_feedback = build_reasoning_feedback
+    result = remediate_outcome_history(
+        dry_run=not apply,
+        build_calibration=build_calibration,
+        build_feedback=build_feedback,
+    )
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
 

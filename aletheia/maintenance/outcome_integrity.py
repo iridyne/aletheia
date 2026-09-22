@@ -8,6 +8,7 @@ history, changes stored economics, or applies a paper-cash compensation candidat
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -36,7 +37,11 @@ _DERIVED_ITEM_TYPES = frozenset({
 })
 
 
-def remediate_outcome_history(*, dry_run: bool = True) -> dict[str, Any]:
+def remediate_outcome_history(
+    *, dry_run: bool = True,
+    build_calibration: Callable[[], dict | None] | None = None,
+    build_feedback: Callable[[], dict | None] | None = None,
+) -> dict[str, Any]:
     """Plan or apply one deterministic remediation batch.
 
     ``compensation_candidates`` are report output only. There is intentionally no
@@ -166,7 +171,7 @@ def remediate_outcome_history(*, dry_run: bool = True) -> dict[str, Any]:
         result["reindexed"] = reindex_all()
     except Exception:
         result["reindexed"] = None
-    result["rebuild"] = _rebuild_allowed_reports()
+    result["rebuild"] = _rebuild_allowed_reports(build_calibration, build_feedback)
     return result
 
 
@@ -232,16 +237,16 @@ def _derived_archive_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _rebuild_allowed_reports() -> dict[str, str]:
+def _rebuild_allowed_reports(build_calibration=None, build_feedback=None) -> dict[str, str]:
     """Rebuild deterministic reports only; no LLM/network derived content."""
     builders = {}
-    from aletheia.analytics.confidence_calibration import build_calibration_report
-    from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
-
     for name, builder in (
-        ("calibration_report", build_calibration_report),
-        ("reasoning_feedback", build_reasoning_feedback),
+        ("calibration_report", build_calibration),
+        ("reasoning_feedback", build_feedback),
     ):
+        if builder is None:
+            builders[name] = "unavailable"
+            continue
         try:
             builders[name] = "generated" if builder() is not None else "insufficient"
         except Exception:
