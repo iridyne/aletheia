@@ -87,6 +87,23 @@ def _seed_two_mode_ledger() -> None:
     )
 
 
+def test_selected_execution_mode_does_not_persist_config_migrations(monkeypatch):
+    from unittest.mock import Mock
+
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    from aletheia.config import loader
+
+    original = "strategy_factory: {}\nexchange:\n  paper_execution_mode: bitget_demo\n"
+    loader.CONFIG_PATH.write_text(original, encoding="utf-8")
+    loader._invalidate_config_cache()
+    save = Mock(wraps=loader.save_config)
+    monkeypatch.setattr(loader, "save_config", save)
+
+    assert resolve_selected_execution_mode() == "bitget_demo"
+    assert save.call_count == 0
+    assert loader.CONFIG_PATH.read_text(encoding="utf-8") == original
+
+
 def test_selected_execution_mode_uses_authorized_live_identity(monkeypatch):
     import aletheia.analytics.execution_mode as execution_mode
     import aletheia.config.loader as loader
