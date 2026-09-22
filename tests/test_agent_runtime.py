@@ -178,7 +178,7 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
     async def _fake_llm(system, user, max_tokens=800, **_kwargs):
         return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
 
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] in _OK

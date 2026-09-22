@@ -1,4 +1,4 @@
-"""Research Agent — creates research notes and strategy hypotheses."""
+"""Optional Research Agent — creates research notes and strategy hypotheses."""
 
 import time
 from datetime import datetime, timedelta, timezone

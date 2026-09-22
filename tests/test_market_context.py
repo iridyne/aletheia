@@ -645,7 +645,7 @@ def test_prediction_market_lines_require_fresh_rows(tmp_path, monkeypatch):
 def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path, monkeypatch):
     """Research agent should not reuse stale prediction-market claims when the module is off."""
     _setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.research_agent import _prediction_context_block
+    from extensions.research.research_agent import _prediction_context_block
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage.repositories import _insert
 

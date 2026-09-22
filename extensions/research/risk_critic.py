@@ -1,4 +1,4 @@
-"""Risk Critic agent — reviews recent proposals/strategies and writes risk lessons."""
+"""Optional Risk Critic — reviews recent proposals/strategies and writes risk lessons."""
 
 import time
 

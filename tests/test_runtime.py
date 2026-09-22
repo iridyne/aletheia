@@ -441,7 +441,7 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
         return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
                 "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
 
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", fake_complete)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", fake_complete)
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] == "completed"
     notes = repo.list_knowledge_items(item_type="research_note")
