@@ -794,7 +794,7 @@ def test_official_news_feeds_registered_and_consumed():
     ),
 )
 def test_research_worker_injects_yfinance():
-    rw = _ROOT / "aletheia" / "agents" / "research_worker.py"
+    rw = _ROOT / "extensions" / "research" / "research_worker.py"
     src = rw.read_text(encoding="utf-8")
     assert "yfinance" in src, (
         "research_worker does not reference yfinance — equity_chain lens has no "
@@ -817,7 +817,7 @@ def test_research_worker_injects_yfinance():
     ),
 )
 def test_research_worker_injects_coinalyze_flow():
-    rw = _ROOT / "aletheia" / "agents" / "research_worker.py"
+    rw = _ROOT / "extensions" / "research" / "research_worker.py"
     src = rw.read_text(encoding="utf-8")
     assert "_get_flow_context_block" in src, (
         "research_worker has no _get_flow_context_block — Coinalyze data collected "

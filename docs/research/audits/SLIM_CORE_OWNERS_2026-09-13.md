@@ -11,6 +11,15 @@ follows from classification here.
 
 ## Advisory Research compartment follow-up
 
+Dreaming, Lesson Reviewer and the Serenity research worker now have their unique
+implementations in `extensions/research`. Manual agents use the existing registry;
+the existing Scheduler owns only the exact async extraction and sync enqueue
+callbacks. Missing producers are omitted before cron/catch-up guards and before
+create/retry/deep-dive durable writes. History, cancellation and startup interrupted
+recovery remain Core-accessible. Producer bodies, shared policy epochs, cursor/CAS,
+immutable lesson-policy history, draft skills and Core Candidate publication are
+unchanged; this cutover does not claim runtime or whole-Learning absence proof.
+
 Market Observer, Post-trade Reviewer and their sole shared durable round-robin
 helper now live in `extensions/research`. Producer behavior is unchanged apart
 from the helper import path: existing epoch/exposure/filter facts, exact admitted
@@ -224,7 +233,7 @@ runtime path. Current source traces establish the following distinctions:
   it does not introduce another accounting algorithm. That Core operation also
   persists open-Position marks through the canonical observation-field writer,
   before filtering the portfolio snapshot to the configured execution mode.
-- `agents.research_worker` owns namespaced Serenity runs/evidence. It claims a
+- `extensions.research.research_worker` owns namespaced Serenity runs/evidence. It claims a
   queued run and acquires/releases the existing research lock; its bounded
   retry registers on the existing Core scheduler, not another APScheduler.
   The daily `dreaming_daily` cron, startup catch-up and explicit
@@ -372,7 +381,7 @@ research and archive access. The package name is not an ownership boundary.
 | `economics.pricing_sync` → composed `extensions.data.public_pricing` fetcher | Only public catalog HTTP acquisition belongs to Data. CLI/Web bind the optional fetcher; absent Data reports `pricing_catalog_unavailable` while verified cache/history remain usable. Core retains parsed-byte equality, minimum-size and shrink validation, cache trust/publication, immutable event-time resolution, and the one bounded refresh worker. Web startup, scheduler, explicit API refresh and unmatched-model resolution trigger that same worker with the existing per-catalog negative cache. API/worker audit events and the single pricing snapshot writer remain unchanged. Whole-module movement would invert Core accounting dependencies; the public LiteLLM catalog is not an embedded LiteLLM transport SDK. |
 | `economics.budgets` / `usage_insights` | Explicit audit CLI commands declare/enable/remove budget policies. Shared Model fallback computes would-block metadata and owns conditional admission in `_enforce_budget_if_configured`: enabled economics, an exceeded observed budget and a non-`warn_only` mode can raise `BudgetExceededError` before inference. Safety callers `pi_trading_decision`, `risk_critic` and `agent_shell/trading_decision` remain exempt. Usage v2 projects logical/physical ledgers through `readonly_db`, including missing-evidence states, without persisting its display calculations. Neither is a second trading settlement owner. |
 | `economics.context_effectiveness` | Explicit CLI paired evaluations call the shared Model path and write blinded packets outside the repository; score commands persist aggregate owner reviews. This is optional research, not automatic effectiveness/policy promotion. Its inference ledger dependencies remain shared Core provenance. |
-| `agents.research_worker` | Optional Serenity producer writes namespaced runs/evidence/claims/themes/opportunities and invokes the Learning information-policy epoch helper. CAS claims and guarded terminal transitions preserve cancellation truth. The research lock is a fixed, non-renewed 1,800-second lease: an expired lease can be acquired while the prior thread is still running, so it does not prove whole-pipeline mutual exclusion. Manual and automatic retries share durable retry identity; automatic retry uses the existing scheduler, not another scheduler instance. |
+| `extensions.research.research_worker` | Optional Serenity producer writes namespaced runs/evidence/claims/themes/opportunities and invokes the Learning information-policy epoch helper. CAS claims and guarded terminal transitions preserve cancellation truth. The research lock is a fixed, non-renewed 1,800-second lease: an expired lease can be acquired while the prior thread is still running, so it does not prove whole-pipeline mutual exclusion. Manual and automatic retries share durable retry identity; automatic retry uses the existing scheduler, not another scheduler instance. |
 | Serenity publication | Manual API promotion and worker auto-promotion both call `trading.serenity_publication`; exact source/PA preparation precedes a short transaction that revalidates evidence and calls canonical `publish_candidate_snapshot` / current Generation owners. Research does not create a second Candidate writer, execute a Proposal, or bypass Risk/Gateway. |
 
 Serenity worker threads are daemon-owned, with cancellation checkpoints between

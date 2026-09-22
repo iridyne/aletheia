@@ -1,4 +1,4 @@
-"""Research Worker — background execution of Serenity Research Runs.
+"""Optional Research Worker — background execution of Serenity Research Runs.
 
 Multi-stage pipeline with partial persistence:
   1. load_context — profile, market state, existing themes

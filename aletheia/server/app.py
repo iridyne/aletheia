@@ -1114,6 +1114,32 @@ else:
     register_agent("divergence_scanner")(run_divergence_scanner)
 
 
+from aletheia.agent_runtime.scheduler import configure_research_producers
+
+try:
+    from extensions.research.dreaming_agent import _extract_lessons, run_dreaming_agent
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.research", "aletheia.learning", "aletheia.learning.control"}:
+        raise
+    unregister_agent("dreaming_agent")
+    unregister_agent("lesson_reviewer")
+    _extract_lessons = None
+else:
+    register_agent("dreaming_agent")(run_dreaming_agent)
+    register_agent("lesson_reviewer")(run_lesson_reviewer)
+
+try:
+    from extensions.research.research_worker import enqueue_research_run
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.research"}:
+        raise
+    enqueue_research_run = None
+
+configure_research_producers(
+    extract_lessons=_extract_lessons, enqueue_run=enqueue_research_run,
+)
+
 from aletheia.trust.behavior_authority import configure_candidate_filter_path
 
 try:

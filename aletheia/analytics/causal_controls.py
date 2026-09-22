@@ -54,7 +54,7 @@ def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) ->
         regime_tag=None,
         entry_spread_bps=None,
         funding_rate_at_entry=None,
-        module_path="aletheia/agents/research_worker.py",
+        module_path="extensions/research/research_worker.py",
         metadata={
             "theme_id": opportunity.get("theme_id"),
             "asset_class": opportunity.get("asset_class"),
@@ -83,7 +83,7 @@ def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) ->
             regime_tag=None,
             entry_spread_bps=None,
             funding_rate_at_entry=None,
-            module_path="aletheia/agents/research_worker.py",
+            module_path="extensions/research/research_worker.py",
             metadata={"control_source": "active_universe_registry"},
         ))
     return _insert_rows(rows)

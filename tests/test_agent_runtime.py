@@ -197,6 +197,15 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from aletheia.agents import register_agent
+    from extensions.research.dreaming_agent import run_dreaming_agent
+    from aletheia.config.schema import ModelSelection
+
+    register_agent("dreaming_agent")(run_dreaming_agent)
+    monkeypatch.setattr(
+        "extensions.research.dreaming_agent.get_provider_for_tier",
+        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"),
+    )
     # Mock LLM: accept **kwargs so provider= arg doesn't cause TypeError.
     # The mock returns plain text for dreaming_log calls and an empty JSON array
     # for lesson extraction calls (which expect a JSON array).
@@ -212,7 +221,7 @@ async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
             "Focus for tomorrow: validate SOL breakout thesis with volume confirmation.",
             None,
         )
-    monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
+    monkeypatch.setattr("extensions.research.dreaming_agent.llm_complete", _fake_llm)
 
     # Use cron trigger so both dreaming_log and daily_review paths are exercised.
     result = await run_agent("dreaming_agent", trigger_type="cron")

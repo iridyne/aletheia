@@ -150,7 +150,7 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
     ),
 )
 async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
-    from aletheia.agents import lesson_reviewer
+    from extensions.research import lesson_reviewer
     from aletheia.learning.lessons import LessonStore
     from aletheia.storage.sqlite import get_db
 

@@ -50,7 +50,7 @@ def test_case_builder_windows_on_close_time():
 
 def test_evidence_block_includes_scanner_family():
     """#99: block_scanner lessons must surface a scanner-family evidence slice to the judge."""
-    from aletheia.agents.lesson_reviewer import _evidence_block
+    from extensions.research.lesson_reviewer import _evidence_block
     ev = {
         "aggregate": {"total": 100, "win_rate": 45.0, "avg_return": 0.1},
         "symbol": None,
@@ -64,7 +64,7 @@ def test_evidence_block_includes_scanner_family():
 
 def test_lesson_reviewer_zero_win_rate_demotes_exact_scope():
     """A literal 0% win rate must not be mistaken for a missing value."""
-    from aletheia.agents.lesson_reviewer import _deterministic_demote
+    from extensions.research.lesson_reviewer import _deterministic_demote
 
     assert _deterministic_demote({
         "exact_scope": {"total": 10, "win_rate": 0.0, "avg_return": -2.0},
@@ -98,7 +98,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     """
     import asyncio
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
     from aletheia.learning.lessons import LessonStore
 
     store = LessonStore()
@@ -136,7 +136,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
 def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
     """Legacy price moves without costs must not promote or overturn lessons."""
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from extensions.research.lesson_reviewer import _fetch_evidence
     from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create(
@@ -173,7 +173,7 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
 
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from extensions.research.lesson_reviewer import _fetch_evidence
     from aletheia.analytics import outcome_semantics as outcomes
     from aletheia.learning.lessons import LessonStore
 

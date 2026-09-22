@@ -863,7 +863,7 @@ def test_join_timed_out_async_worker_fails_closed_without_replacement(monkeypatc
 
 def test_research_news_revalidates_historical_entity_tags(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.research_worker import _get_recent_news_for_research
+    from extensions.research.research_worker import _get_recent_news_for_research
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
