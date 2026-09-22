@@ -20,7 +20,7 @@ def _configure_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request:
 def test_normal_activation_runs_migrations_without_restoring_backup(monkeypatch, tmp_path):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import execution_owner, runner
+    from extensions.observation_lab import execution_owner, runner
 
     _configure_request(
         monkeypatch,
@@ -109,7 +109,7 @@ def test_manual_rollback_restores_exact_checkpoint_before_validation(monkeypatch
 
 
 def test_packaged_activation_rejects_unquiesced_worker_owner(monkeypatch, tmp_path):
-    from aletheia.observation_lab import execution_owner, runner
+    from extensions.observation_lab import execution_owner, runner
 
     _configure_request(
         monkeypatch,
@@ -159,7 +159,7 @@ def test_restore_invalidates_unproven_observation_continuity_under_cycle_lock(mo
     from contextlib import contextmanager
     from types import SimpleNamespace
 
-    from aletheia.observation_lab import kernel, worker_lock
+    from extensions.observation_lab import kernel, worker_lock
 
     calls: list[str] = []
 

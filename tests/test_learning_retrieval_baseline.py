@@ -21,8 +21,8 @@ class _Scenario:
 def test_learning_a_fts_baseline(tmp_path, monkeypatch):
     """Current FTS baseline is relevant, excludes stale items, and stays quiet on misses."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import archive_item, create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import archive_item, create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import reset_db
 
     def add_item(title: str, content: str):

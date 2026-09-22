@@ -2026,7 +2026,7 @@ class ControllerConfig(BaseModel):
     appends them to `controller_recommendations`, and can preregister/evaluate
     prospective observe-only experiments for replay-ready monotonic thresholds.
     It NEVER writes trading config. Full closed-loop actuation remains out of scope.
-    See aletheia/analytics/filter_controller.py + filter_registry.py.
+    See extensions/analytics/filter_controller.py + filter_registry.py.
     """
     # Opt-in switch for a diagnostic observe job with no trading consumer.
     shadow_enabled: bool = False

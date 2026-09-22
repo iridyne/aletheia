@@ -34,7 +34,7 @@ def _window(start: str | None, end: str | None) -> tuple[str, str]:
 @nominations_app.command("list")
 def list_nominations(limit: int = typer.Option(100, min=1, max=1000)):
     """List append-only hypothesis generation attempts."""
-    from aletheia.learning.ledger import list_nominations
+    from extensions.learning.ledger import list_nominations
 
     _echo({"contract_version": "hypothesis-nomination/v1", "items": list_nominations(limit=limit)})
 
@@ -42,7 +42,7 @@ def list_nominations(limit: int = typer.Option(100, min=1, max=1000)):
 @nominations_app.command("inspect")
 def inspect_nomination(nomination_id: str):
     """Inspect one exact generation attempt and publication result."""
-    from aletheia.learning.ledger import get_nomination
+    from extensions.learning.ledger import get_nomination
 
     item = get_nomination(nomination_id)
     _echo({
@@ -55,7 +55,7 @@ def inspect_nomination(nomination_id: str):
 @economic_knowledge_app.command("list")
 def list_economic_knowledge():
     """List current read-only Economic Knowledge qualifications."""
-    from aletheia.learning.economic_knowledge import assess_economic_knowledge
+    from extensions.learning.economic_knowledge import assess_economic_knowledge
 
     assessment = assess_economic_knowledge("")
     _echo({
@@ -72,7 +72,7 @@ def list_economic_knowledge():
 @economic_knowledge_app.command("inspect")
 def inspect_economic_knowledge(hypothesis_id: str):
     """Inspect current and historical qualification for one hypothesis."""
-    from aletheia.learning.economic_knowledge import assess_economic_knowledge
+    from extensions.learning.economic_knowledge import assess_economic_knowledge
 
     assessment = assess_economic_knowledge("")
     _echo({
@@ -91,7 +91,7 @@ def yield_report(
     path_id: str | None = typer.Option(None),
 ):
     """Report version-compatible Knowledge Yield and explicit missing coverage."""
-    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
+    from extensions.learning.knowledge_yield import build_knowledge_yield_report
 
     window_start, window_end = _window(start, end)
     _echo(build_knowledge_yield_report(
@@ -108,8 +108,8 @@ def meta_recommendations(
     path_id: str | None = typer.Option(None),
 ):
     """Return deterministic advisory #1093 research actions."""
-    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
-    from aletheia.learning.meta_evolution import recommend_meta_evolution
+    from extensions.learning.knowledge_yield import build_knowledge_yield_report
+    from extensions.learning.meta_evolution import recommend_meta_evolution
 
     window_start, window_end = _window(start, end)
     report = build_knowledge_yield_report(

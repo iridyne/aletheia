@@ -104,7 +104,7 @@ def test_effective_sizing_params_flag_gated():
 )
 def test_vol_target_size_uses_persona_base(monkeypatch):
     import aletheia.config.loader as loader
-    import aletheia.learning.experiments as learning_experiments
+    import extensions.learning.experiments as learning_experiments
     from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import sizing
 

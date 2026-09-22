@@ -46,7 +46,7 @@ def _mixed_hold_rows() -> list[dict]:
     ]
 
 
-def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch):
+def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch, optional_evidence_jobs):
     import aletheia.analytics.family_scorecard as family_scorecard
     import aletheia.analytics.trade_stats as trade_stats
     import aletheia.storage.repositories as repo
@@ -88,7 +88,7 @@ def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch):
     assert sum(b["count"] for b in result["hold_distribution"]) == 1
 
 
-def test_trade_stats_even_hold_samples_use_conventional_median(monkeypatch):
+def test_trade_stats_even_hold_samples_use_conventional_median(monkeypatch, optional_evidence_jobs):
     import aletheia.analytics.family_scorecard as family_scorecard
     import aletheia.analytics.trade_stats as trade_stats
     import aletheia.storage.repositories as repo
@@ -153,9 +153,9 @@ def test_trade_insights_direction_hold_averages_use_measurable_denominator():
     assert sum(b["trade_count"] for b in _hold_duration_buckets(rows)) == 1
 
 
-def test_family_scorecard_hold_averages_use_measurable_denominator(monkeypatch):
+def test_family_scorecard_hold_averages_use_measurable_denominator(monkeypatch, optional_evidence_jobs):
     import aletheia.analytics.family_scorecard as family_scorecard
-    import aletheia.counterfactual.trades as shadow_trades
+    import extensions.counterfactual.trades as shadow_trades
     import aletheia.storage.sqlite as sqlite
 
     class DummyDb:

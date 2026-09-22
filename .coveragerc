@@ -22,11 +22,11 @@ include =
     */aletheia/analytics/profit_gradient_evidence.py
     */aletheia/analytics/position_replay.py
     */aletheia/analytics/momentum_geometry_replay.py
-    */aletheia/counterfactual/filter_replay.py
+    */extensions/counterfactual/filter_replay.py
     */aletheia/economics/context_artifacts.py
     */aletheia/execution/reconciliation.py
-    */aletheia/learning/evidence_epoch.py
-    */aletheia/learning/policy_epochs.py
+    */extensions/learning/evidence_epoch.py
+    */extensions/learning/policy_epochs.py
 
 [report]
 # Fail closed on missing data so a misconfigured job cannot pass silently.
@@ -43,3 +43,6 @@ exclude_also =
 source =
     aletheia/
     */site-packages/aletheia/
+extensions =
+    extensions/
+    */site-packages/extensions/

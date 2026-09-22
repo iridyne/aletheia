@@ -14,7 +14,7 @@ _CONTRACT = "learning_contract"
     status="implemented",
 ))
 def test_only_declared_closed_loops_are_measurement_supported():
-    from aletheia.learning.registry import LEARNING_PATHS
+    from extensions.learning.registry import LEARNING_PATHS
 
     supported = {
         path.path_id
@@ -40,7 +40,7 @@ def test_only_declared_closed_loops_are_measurement_supported():
     status="implemented",
 ))
 def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch):
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
     from aletheia.storage.sqlite import get_db
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
@@ -88,7 +88,7 @@ def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch
 def test_entry_learning_projection_is_read_only_and_full_denominator():
     import inspect
 
-    from aletheia.learning.entry_context import (
+    from extensions.learning.entry_context import (
         ENTRY_LEARNING_INTERFERENCE_KEY,
         EntryLearningTreatmentAdapter,
         _filled_unit_outcome,

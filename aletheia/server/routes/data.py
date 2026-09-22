@@ -2010,7 +2010,7 @@ def get_strategy_memory():
 
 def _guard_experiments_by_id() -> dict[str, dict]:
     """Return the latest experiment metadata per learned Guard without mutating state."""
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.registry import get_learning_path
 
     if not get_learning_path("ranker_learned_guard").measurement_supported:
         return {}
@@ -2049,8 +2049,8 @@ def _guard_response(
     evaluation_enabled: bool = True,
 ) -> dict:
     """Project storage state separately from authority and effective baseline behavior."""
-    from aletheia.knowledge.guards import guard_origin
-    from aletheia.learning.registry import get_learning_path
+    from extensions.knowledge.guards import guard_origin
+    from extensions.learning.registry import get_learning_path
 
     row = guard.model_dump()
     origin = guard_origin(guard)
@@ -2132,7 +2132,7 @@ def _guard_response(
 def get_guards():
     """List active guards with lifecycle and authority projected separately."""
     try:
-        from aletheia.knowledge.guards import load_trading_guards
+        from extensions.knowledge.guards import load_trading_guards
 
         guards = load_trading_guards(status="active")
         experiments = _guard_experiments_by_id()
@@ -2154,7 +2154,7 @@ def get_guards():
 def get_guard_candidates():
     """List guard candidates with proposed effects and no implied authority."""
     try:
-        from aletheia.knowledge.guards import load_trading_guards
+        from extensions.knowledge.guards import load_trading_guards
 
         guards = load_trading_guards(status="candidate")
         experiments = _guard_experiments_by_id()
@@ -2166,8 +2166,8 @@ def get_guard_candidates():
 @router.post("/knowledge/guard-candidates/{guard_id}/promote")
 def promote_guard_candidate(guard_id: str):
     """Manually promote a candidate guard to an active trading guard."""
-    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
-    from aletheia.knowledge.guards import load_trading_guards
+    from extensions.analytics.guard_promotion import promote_guard_candidate_to_active
+    from extensions.knowledge.guards import load_trading_guards
 
     if not any(g.guard_id == guard_id for g in load_trading_guards(status="candidate")):
         raise HTTPException(404, "Guard candidate not found")
@@ -2195,7 +2195,7 @@ def promote_guard_candidate(guard_id: str):
 def get_guard_stats():
     """Guard effectiveness statistics."""
     try:
-        from aletheia.analytics.guard_effectiveness import compute_guard_stats
+        from extensions.analytics.guard_effectiveness import compute_guard_stats
 
         return compute_guard_stats()
     except Exception as e:
@@ -2391,7 +2391,7 @@ def get_dreaming_summary():
             (run["id"],),
         ).fetchall()]
     try:
-        from aletheia.learning.control import get_learning_job_health, job_health_view
+        from extensions.learning.control import get_learning_job_health, job_health_view
 
         dreaming_job = job_health_view(get_learning_job_health("dreaming_daily"))
         dreaming_job.pop("last_error", None)
@@ -3120,7 +3120,7 @@ def get_shadow_trades(
 ):
     """List authority-aware shadow trade diagnostics for counterfactual analysis."""
     _ensure_db()
-    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+    from extensions.counterfactual.trades import list_shadow_trade_diagnostics
 
     return list_shadow_trade_diagnostics(
         batch_id=batch_id,

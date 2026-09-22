@@ -2,7 +2,7 @@
 
 from unittest.mock import patch, MagicMock
 
-from aletheia.analytics.trade_case_builder import (
+from extensions.analytics.trade_case_builder import (
     _build_case_from_row,
     _render_case_body,
     _build_tags,
@@ -167,17 +167,17 @@ class TestOpenedAfter:
 
 
 class TestDetectGuardCandidates:
-    @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder._get_existing_guard_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_no_rows_no_candidates(self, mock_rows, mock_guards):
         mock_rows.return_value = []
         mock_guards.return_value = set()
         result = detect_guard_candidates()
         assert result == []
 
-    @patch("aletheia.analytics.trade_case_builder.create_guard_candidate")
-    @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder.create_guard_candidate")
+    @patch("extensions.analytics.trade_case_builder._get_existing_guard_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_generates_candidate_on_repeated_loss(self, mock_rows, mock_guards, mock_create):
         mock_guards.return_value = set()
         mock_create.return_value = MagicMock(id="gc-1")
@@ -197,8 +197,8 @@ class TestDetectGuardCandidates:
         assert len(result) >= 1
         assert result[0]["guard_candidate_id"] == "gc-1"
 
-    @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder._get_existing_guard_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_skips_existing_guard(self, mock_rows, mock_guards):
         rows = [
             _make_row(position_id=f"pos-{i}", realized_pnl=-5.0, realized_pnl_pct=-2.5)
@@ -214,9 +214,9 @@ class TestDetectGuardCandidates:
         result = detect_guard_candidates(min_losses=3)
         assert result == []
 
-    @patch("aletheia.analytics.trade_case_builder.create_guard_candidate")
-    @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder.create_guard_candidate")
+    @patch("extensions.analytics.trade_case_builder._get_existing_guard_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_excludes_synthetic_closure(self, mock_rows, mock_guards, mock_create):
         """LP-S08: a guard built from synthetic closures would penalise a factor pattern
         on the basis of a fabricated (non-)loss. Synthetic-closure rows are filtered out
@@ -261,16 +261,16 @@ class TestIsSyntheticClosure:
 
 
 class TestBuildCaseStudies:
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_no_rows_empty(self, mock_rows, mock_existing):
         mock_rows.return_value = []
         mock_existing.return_value = set()
         assert build_case_studies() == {"created": [], "failed": []}
 
-    @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder.create_trade_case_study")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_creates_case_study(self, mock_rows, mock_existing, mock_create):
         mock_existing.return_value = set()
         mock_create.return_value = MagicMock(id="cs-1")
@@ -281,8 +281,8 @@ class TestBuildCaseStudies:
         assert result["created"][0]["case_study_id"] == "cs-1"
         assert result["created"][0]["outcome"] == "loss"
 
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_skips_existing_position(self, mock_rows, mock_existing):
         mock_existing.return_value = {"pos-1"}
         mock_rows.return_value = [_make_row(position_id="pos-1")]
@@ -290,8 +290,8 @@ class TestBuildCaseStudies:
         result = build_case_studies(since_hours=9999)
         assert result == {"created": [], "failed": []}
 
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_missing_position_id_is_failed_not_silently_skipped(self, mock_rows, mock_existing):
         mock_existing.return_value = set()
         mock_rows.return_value = [_make_row(position_id="")]
@@ -299,9 +299,9 @@ class TestBuildCaseStudies:
         result = build_case_studies(since_hours=9999)
         assert result == {"created": [], "failed": [{"position_id": None, "error": "missing_position_id"}]}
 
-    @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder.create_trade_case_study")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_skips_synthetic_closure(self, mock_rows, mock_existing, mock_create):
         """LP-S08: administrative/synthetic closures (orphan reconciliation, demo
         cleanup) have a fabricated exit price — they must NOT enter the learning
@@ -316,9 +316,9 @@ class TestBuildCaseStudies:
         assert result == {"created": [], "failed": []}
         mock_create.assert_not_called()
 
-    @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
-    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
-    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    @patch("extensions.analytics.trade_case_builder.create_trade_case_study")
+    @patch("extensions.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
     def test_genuine_tpsl_close_not_skipped(self, mock_rows, mock_existing, mock_create):
         """A reconciler close that recovered a REAL exchange TPSL fill keeps its genuine
         close_reason (take_profit/stop_loss) — that is a real outcome and IS kept. The
@@ -349,9 +349,9 @@ def test_case_carries_market_type_for_perp_vs_spot():
     assert _build_case_from_row(row2)["market_type"] == "spot"
 
 
-@patch("aletheia.analytics.trade_case_builder.create_guard_candidate")
-@patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
-@patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+@patch("extensions.analytics.trade_case_builder.create_guard_candidate")
+@patch("extensions.analytics.trade_case_builder._get_existing_guard_ids")
+@patch("extensions.analytics.trade_case_builder.build_trade_attribution_rows")
 def test_factor_guard_candidate_scoped_to_symbol_not_crypto(mock_rows, mock_guards, mock_create):
     """Regression test for #193: _create_factor_guard_candidate must scope the
     guard candidate to (symbol, scanner_family, direction), not asset_class=crypto.

@@ -10,7 +10,7 @@ def missing_learning_control(monkeypatch):
     real_import = builtins.__import__
 
     def absent(name, *args, **kwargs):
-        if name == "aletheia.learning.control":
+        if name == "extensions.learning.control":
             raise ModuleNotFoundError(name=name)
         return real_import(name, *args, **kwargs)
 

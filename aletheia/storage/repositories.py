@@ -10575,7 +10575,7 @@ def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
 
 
 # Observation Lab v1 (Issue #1072): ``filter_shadow_frozen_units`` lives in the
-# Lab's own SQLite file. See ``aletheia.observation_lab.units`` for its writer
+# Lab's own SQLite file. See ``extensions.observation_lab.units`` for its writer
 # helpers — this module intentionally does not touch it, keeping ``app.db``
 # repositories unaware of Lab state.
 

@@ -158,7 +158,7 @@ def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls(
         "aletheia.exchanges",
         "extensions.exchanges",
         "aletheia.execution",
-        "aletheia.knowledge.guards",
+        "extensions.knowledge.guards",
         "aletheia.model_provider",
         "openai",
         "anthropic",

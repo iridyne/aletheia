@@ -204,7 +204,7 @@ def ingest_owner_aggregate(payload: dict[str, Any]) -> dict[str, Any]:
     Holder batches are reduced to the aggregate whitelist before persistence.
     The import adds immutable source provenance and never changes execution.
     """
-    from aletheia.agent_shell.vergex_policy import ensure_vergex_utilization_policy_epoch
+    from extensions.learning.vergex_policy import ensure_vergex_utilization_policy_epoch
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent, new_id
 

@@ -126,7 +126,7 @@ def test_selected_execution_mode_uses_authorized_live_identity(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monkeypatch):
+def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monkeypatch, optional_evidence_jobs):
     _setup_env(tmp_path, monkeypatch)
     _seed_two_mode_ledger()
 
@@ -173,7 +173,7 @@ def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monke
         assert v["execution_mode"] == "bitget_demo"
 
 
-def test_family_scorecard_isolates_by_execution_mode(tmp_path, monkeypatch):
+def test_family_scorecard_isolates_by_execution_mode(tmp_path, monkeypatch, optional_evidence_jobs):
     _setup_env(tmp_path, monkeypatch)
     _seed_two_mode_ledger()
 

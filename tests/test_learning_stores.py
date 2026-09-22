@@ -19,8 +19,8 @@ import pytest
 import aletheia.config.loader as loader
 import aletheia.storage.sqlite as sq
 from aletheia.storage.migrations import run_migrations
-from aletheia.learning.lessons import LessonStore
-from aletheia.learning.skills import SkillStore, SkillPermissionError
+from extensions.learning.lessons import LessonStore
+from extensions.learning.skills import SkillStore, SkillPermissionError
 
 
 def _setup_test_db(tmp_path, monkeypatch):

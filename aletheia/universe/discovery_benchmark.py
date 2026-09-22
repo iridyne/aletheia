@@ -195,7 +195,7 @@ def _as_benchmark_window(window: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def start_benchmark(*, now: str | datetime | None = None, code_commit: str | None = None, cfg=None) -> dict[str, Any]:
-    from aletheia.observation_lab.kernel import invalidate_window, start_window
+    from extensions.observation_lab.kernel import invalidate_window, start_window
 
     cfg = cfg or load_config()
     if not cfg.universe.enabled:
@@ -237,7 +237,7 @@ def start_benchmark(*, now: str | datetime | None = None, code_commit: str | Non
 
 
 def abort_benchmark(window_id: str, *, reason: str, now: str | datetime | None = None) -> dict[str, Any]:
-    from aletheia.observation_lab.kernel import abort_window
+    from extensions.observation_lab.kernel import abort_window
 
     del now
     status = status_benchmark(window_id)
@@ -246,7 +246,7 @@ def abort_benchmark(window_id: str, *, reason: str, now: str | datetime | None =
 
 
 def status_benchmark(window_id: str | None = None, *, now: str | datetime | None = None) -> dict[str, Any]:
-    from aletheia.observation_lab.kernel import status_window
+    from extensions.observation_lab.kernel import status_window
 
     raw = status_window(window_id, slot_key=_SLOT_KEY if window_id is None else None, now=now)
     window = _as_benchmark_window(raw)
@@ -566,7 +566,7 @@ def capture_completed_run(
     cfg=None,
 ) -> dict[str, Any]:
     """Capture the published run, then append its immutable Lab unit identities."""
-    from aletheia.observation_lab.kernel import capture_event, invalidate_window
+    from extensions.observation_lab.kernel import capture_event, invalidate_window
 
     try:
         window = status_benchmark()
@@ -624,7 +624,7 @@ def capture_completed_run(
             and row.get("producer_runtime_session_id")
         }
         if result.get("idempotent"):
-            from aletheia.observation_lab.db import get_lab_db
+            from extensions.observation_lab.db import get_lab_db
 
             counts = dict(get_lab_db().execute(
                 "SELECT source_kind,COUNT(*) FROM observation_units "
@@ -1009,7 +1009,7 @@ def analyze_benchmark(
 
 
 def _handler_capture(window: dict[str, Any], event: dict[str, Any]):
-    from aletheia.observation_lab.kernel import ObservationProgress
+    from extensions.observation_lab.kernel import ObservationProgress
 
     batch_id = str(event["batch_id"])
     units = [{
@@ -1039,7 +1039,7 @@ def _handler_capture(window: dict[str, Any], event: dict[str, Any]):
 
 def _admitted_snapshot(window: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Return only app evidence whose complete cohort was admitted by lab.db."""
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     window_id = str(window["observation_id"] if "observation_id" in window else window["id"])
     generation = int(window["generation"])
@@ -1077,7 +1077,7 @@ def _admitted_snapshot(window: Mapping[str, Any]) -> tuple[list[dict[str, Any]],
 
 
 def _handler_advance(window: dict[str, Any]):
-    from aletheia.observation_lab.kernel import ObservationProgress
+    from extensions.observation_lab.kernel import ObservationProgress
 
     benchmark_window = _as_benchmark_window(window)
     batches, outcomes, orphan_batch_count = _admitted_snapshot(window)
@@ -1145,7 +1145,7 @@ def _handler_finalize(window: dict[str, Any]) -> dict[str, Any]:
         "analysis": analysis,
     }
 def _retention_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     row = get_lab_db().execute(
         "SELECT MIN(known_at) FROM observation_units WHERE observation_id=? AND generation=?",
@@ -1160,7 +1160,7 @@ def _retention_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 
 def register_observation_handler() -> None:
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.kernel import (
         ObservationHandler,
         register_handler,
         registered_handlers,
@@ -1180,7 +1180,7 @@ def register_observation_handler() -> None:
 
 
 def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetime | None = None) -> dict[str, Any]:
-    from aletheia.observation_lab.kernel import finalize_window, invalidate_window
+    from extensions.observation_lab.kernel import finalize_window, invalidate_window
 
     window = status_benchmark(window_id, now=now)
     if _hash(build_contract()) != str(window["contract_hash"]):

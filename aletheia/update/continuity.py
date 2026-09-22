@@ -88,7 +88,7 @@ def _gateway_status(*, timeout_sec: float = 2.0, port: int | None = None) -> dic
 def _worker_signature() -> dict[str, Any]:
     """Read the persistent Worker pass signature maintained by worker_lock."""
     try:
-        from aletheia.observation_lab.worker_lock import _lock_path
+        from extensions.observation_lab.worker_lock import _lock_path
 
         path = Path(_lock_path())
         if not path.exists():
@@ -130,10 +130,10 @@ def _worker_signature() -> dict[str, Any]:
 def _observation_ids() -> dict[str, Any]:
     """Read durable Observation identities; statuses may progress independently."""
     try:
-        from aletheia.observation_lab.canonical import get_authority_source
+        from extensions.observation_lab.canonical import get_authority_source
 
         if get_authority_source().source == "lab":
-            from aletheia.observation_lab.db import readonly_lab_db
+            from extensions.observation_lab.db import readonly_lab_db
 
             with readonly_lab_db() as lab:
                 rows = lab.execute(
@@ -192,7 +192,7 @@ def capture_update_continuity() -> dict[str, Any]:
 
     try:
         from aletheia.config.loader import read_only_config
-        from aletheia.observation_lab.execution_owner import get_execution_owner
+        from extensions.observation_lab.execution_owner import get_execution_owner
 
         with read_only_config():
             owner = get_execution_owner()
@@ -205,9 +205,9 @@ def capture_update_continuity() -> dict[str, Any]:
     observation_available = False
     observation_error = None
     try:
-        from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
-        from aletheia.observation_lab.db import readonly_lab_db
-        from aletheia.observation_lab.manifest import load_active_manifests
+        from extensions.observation_lab.checkpoint import verify_joint_checkpoint
+        from extensions.observation_lab.db import readonly_lab_db
+        from extensions.observation_lab.manifest import load_active_manifests
         from aletheia.storage.sqlite import readonly_db
 
         with readonly_db(), readonly_lab_db():
@@ -231,7 +231,7 @@ def capture_update_continuity() -> dict[str, Any]:
                 "settleable": {"ok": settleable.ok, "reason": settleable.reason},
             }
             if not settleable.ok:
-                from aletheia.observation_lab.update_settlement import prove_applied_delivery_suffix
+                from extensions.observation_lab.update_settlement import prove_applied_delivery_suffix
                 checkpoint["settleable"] = prove_applied_delivery_suffix()
         observation_available = identities.get("available") is True
     except Exception as exc:
@@ -1024,7 +1024,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             }
         gateway_quiesced = True
         mark_phase("Settling Observation data")
-        from aletheia.observation_lab.runner import observation_settlement_barrier
+        from extensions.observation_lab.runner import observation_settlement_barrier
         try:
             barrier = observation_settlement_barrier()
             settlement = barrier.__enter__()

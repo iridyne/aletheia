@@ -13,7 +13,7 @@ import pytest
 @pytest.fixture
 def clean_registry():
     """Isolate each test from the module-level default window registry."""
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         _WINDOWS,
         registered_windows,
     )
@@ -26,7 +26,7 @@ def clean_registry():
 
 
 def test_run_lab_windows_runs_every_registered_window_in_alphabetical_order(clean_registry):
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         LabWindow,
         register_window,
         run_lab_windows,
@@ -54,7 +54,7 @@ def test_run_lab_windows_runs_every_registered_window_in_alphabetical_order(clea
 
 
 def test_run_lab_windows_isolates_per_window_exceptions(clean_registry):
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         LabWindow,
         register_window,
         run_lab_windows,
@@ -87,7 +87,7 @@ def test_run_lab_windows_isolates_per_window_exceptions(clean_registry):
 
 
 def test_run_lab_windows_bounds_pass_to_max_windows(clean_registry):
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         LabWindow,
         register_window,
         run_lab_windows,
@@ -114,7 +114,7 @@ def test_run_lab_windows_bounds_pass_to_max_windows(clean_registry):
 
 
 def test_register_window_rejects_duplicate_names(clean_registry):
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         LabWindow,
         register_window,
     )
@@ -125,7 +125,7 @@ def test_register_window_rejects_duplicate_names(clean_registry):
 
 
 def test_run_lab_windows_normalises_non_dict_return(clean_registry):
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab.runner import (
         LabWindow,
         register_window,
         run_lab_windows,
@@ -137,8 +137,8 @@ def test_run_lab_windows_normalises_non_dict_return(clean_registry):
 
     assert summary["results"]["scalar"] == {"status": "ok", "value": 7}
 def test_standalone_runner_bootstraps_builtin_universe_handler(clean_registry, monkeypatch):
-    from aletheia.observation_lab import kernel
-    from aletheia.observation_lab.runner import (
+    from extensions.observation_lab import kernel
+    from extensions.observation_lab.runner import (
         LabWindow,
         _durable_observation_windows,
         register_window,

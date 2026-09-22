@@ -13,7 +13,7 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
-from aletheia.knowledge.manager import create_post_trade_review
+from extensions.knowledge.manager import create_post_trade_review
 
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
 
@@ -242,7 +242,7 @@ def _closed_strategy_prefix_page(
 @register_agent("post_trade_reviewer")
 async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Review centrally eligible closed outcomes grouped by strategy."""
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 
@@ -545,7 +545,7 @@ def _run_case_builder_safe(run_id: str | None) -> tuple[list, list, list[str]]:
     candidates = []
 
     try:
-        from aletheia.analytics.trade_case_builder import build_case_studies
+        from extensions.analytics.trade_case_builder import build_case_studies
 
         started_at = time.monotonic()
         result = build_case_studies(since_hours=168, skip_existing=True)
@@ -574,7 +574,7 @@ def _run_case_builder_safe(run_id: str | None) -> tuple[list, list, list[str]]:
         )
 
     try:
-        from aletheia.analytics.trade_case_builder import detect_guard_candidates
+        from extensions.analytics.trade_case_builder import detect_guard_candidates
 
         started_at = time.monotonic()
         candidates = detect_guard_candidates()

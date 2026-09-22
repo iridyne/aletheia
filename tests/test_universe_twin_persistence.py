@@ -292,16 +292,9 @@ def test_candidate_selection_fixed_look_evidence_is_not_pruned() -> None:
 
     old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
     feature = _feature()
-    legacy = [{
-        **feature,
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "total_score": 50.0,
-    }]
     bundle = build_candidate_selection_shadow_bundle(
         [feature], scanner_run_id="candidate-selection-retained", captured_at=old,
-        universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
-        legacy_allocated=legacy,
+        universe_config=UniverseConfig(max_candidates=1),
         action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
         historical_outcomes=(),
     )
@@ -329,16 +322,9 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
     admitted_at = (datetime.now(timezone.utc) - timedelta(days=50)).isoformat()
     post_admission = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
     feature = _feature()
-    legacy = [{
-        **feature,
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "total_score": 50.0,
-    }]
     bundle = build_candidate_selection_shadow_bundle(
         [feature], scanner_run_id="candidate-selection-audit-retained", captured_at=pre_admission,
-        universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
-        legacy_allocated=legacy,
+        universe_config=UniverseConfig(max_candidates=1),
         action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
         historical_outcomes=(),
     )
@@ -347,8 +333,7 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
     )
     post_bundle = build_candidate_selection_shadow_bundle(
         [feature], scanner_run_id="candidate-selection-post-admission", captured_at=post_admission,
-        universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
-        legacy_allocated=legacy,
+        universe_config=UniverseConfig(max_candidates=1),
         action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
         historical_outcomes=(),
     )

@@ -9,8 +9,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     status="implemented",
 ))
 def test_learning_contribution_route_returns_lab_verdict_counts():
-    from aletheia.observation_lab.canonical import register_observation_spec, record_observation_result
-    from aletheia.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.canonical import register_observation_spec, record_observation_result
+    from extensions.observation_lab.db import reset_lab_db
     from aletheia.server.routes.analytics import get_learning_contribution
     from aletheia.storage.sqlite import get_db
 
@@ -43,7 +43,7 @@ def test_learning_contribution_route_returns_lab_verdict_counts():
     status="implemented",
 ))
 def test_learning_contribution_route_error_is_not_silent_zero():
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
     from aletheia.server.routes.analytics import get_learning_contribution
     from aletheia.storage.sqlite import get_db
 

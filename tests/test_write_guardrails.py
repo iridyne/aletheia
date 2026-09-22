@@ -88,9 +88,9 @@ def test_filter_controller_skips_both_insufficient(monkeypatch):
     controller must NOT persist a per-cell row — it should coalesce into a
     single summary row per run.
     """
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="controller fixture")
 
     class _R:

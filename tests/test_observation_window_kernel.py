@@ -36,7 +36,7 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
     tmp_path, monkeypatch
 ):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.kernel import (
         ObservationHandler,
         ObservationProgress,
         active_retention_claims,
@@ -46,7 +46,7 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
         start_window,
         status_window,
     )
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
@@ -200,8 +200,8 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
 
 def test_missing_handler_fails_closed_for_runner_status_and_retention(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.kernel as kernel
-    from aletheia.observation_lab.db import reset_lab_db
+    import extensions.observation_lab.kernel as kernel
+    from extensions.observation_lab.db import reset_lab_db
     from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -251,8 +251,8 @@ def test_missing_handler_fails_closed_for_runner_status_and_retention(tmp_path, 
 
 def test_finalization_publishes_immutable_lab_result_with_source_cut(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler,
         ObservationProgress,
         finalize_window,
@@ -297,13 +297,13 @@ def test_finalization_publishes_immutable_lab_result_with_source_cut(tmp_path, m
 
 
 def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
-    from aletheia.observation_lab.checkpoint import CheckpointVerification
+    from extensions.observation_lab.checkpoint import CheckpointVerification
 
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.checkpoint as checkpoint
-    import aletheia.observation_lab.runner as runner
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.kernel import (
+    import extensions.observation_lab.checkpoint as checkpoint
+    import extensions.observation_lab.runner as runner
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, register_handler, start_window, status_window,
     )
 
@@ -337,8 +337,8 @@ def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
 
 def test_explicit_unproven_restore_invalidates_active_windows(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, invalidate_active_for_restore,
         register_handler, start_window, status_window,
     )
@@ -364,8 +364,8 @@ def test_explicit_unproven_restore_invalidates_active_windows(tmp_path, monkeypa
     reset_lab_db()
 def test_proven_joint_cut_preserves_active_windows(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, invalidate_active_for_restore,
         register_handler, start_window, status_window,
     )
@@ -393,8 +393,8 @@ def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_pat
     from contextlib import contextmanager
 
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.kernel as kernel
-    from aletheia.observation_lab.db import reset_lab_db
+    import extensions.observation_lab.kernel as kernel
+    from extensions.observation_lab.db import reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     domain_result = {"result": "first-attempt"}
@@ -478,8 +478,8 @@ def test_real_smc_shape_uses_causal_v1_unavailable_no_trigger_and_external_autho
     assert unavailable["reason"] == "candle_gap"
 
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler,
         ObservationProgress,
         capture_event,
@@ -619,8 +619,8 @@ def test_finalize_capture_interleavings_are_fail_closed_without_io_transaction(t
     from threading import Event, Thread, current_thread
 
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.kernel as kernel
-    from aletheia.observation_lab.db import reset_lab_db
+    import extensions.observation_lab.kernel as kernel
+    from extensions.observation_lab.db import reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()

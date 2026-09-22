@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
 def test_numeric_treatment_rejects_non_finite_values(invalid):
-    from aletheia.learning.experiments import apply_numeric_treatment
+    from extensions.learning.experiments import apply_numeric_treatment
 
     with pytest.raises(ValueError, match="must be finite"):
         apply_numeric_treatment(

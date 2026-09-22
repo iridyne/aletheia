@@ -17,7 +17,7 @@ def audit():
     Flags which ones are still enforcing (blocking or scoring, not shadow-only) —
     i.e. changing the ranker's behavior without an experiment authorizing them.
     """
-    from aletheia.analytics.guard_promotion import audit_auto_guards
+    from extensions.analytics.guard_promotion import audit_auto_guards
 
     rows = audit_auto_guards()
     enforcing = [r for r in rows if r.get("still_enforcing")]
@@ -41,7 +41,7 @@ def shadow_downgrade(
     ``pre_shadow_*`` frontmatter, a GUARD_DOWNGRADED_TO_SHADOW event is recorded, and
     files are kept. Seed/manual safety guards are never touched. Default is dry-run.
     """
-    from aletheia.analytics.guard_promotion import downgrade_learned_guards_to_shadow
+    from extensions.analytics.guard_promotion import downgrade_learned_guards_to_shadow
 
     result = downgrade_learned_guards_to_shadow(dry_run=not apply)
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
@@ -61,7 +61,7 @@ def prune_candidates(
     records an event. Owner-authored (manual) candidates are never touched. Default
     is dry-run.
     """
-    from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
+    from extensions.analytics.guard_promotion import prune_learned_guard_candidates
 
     result = prune_learned_guard_candidates(dry_run=not apply)
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))

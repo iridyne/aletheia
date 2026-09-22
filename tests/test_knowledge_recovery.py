@@ -35,9 +35,9 @@ def _seed_row(item_type: str, title: str, file_path: str) -> None:
 
 def test_read_body_migrates_windows_legacy_path(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.retrieval import _read_body
+    from extensions.knowledge.retrieval import _read_body
 
-    # New layout: body lives at ~/.aletheia/knowledge/research_notes/<file>.md.
+    # New layout: body lives at ~/.extensions/knowledge/research_notes/<file>.md.
     subdir = tmp_path / "knowledge" / "research_notes"
     subdir.mkdir(parents=True, exist_ok=True)
     body = "Recovered Windows legacy body."
@@ -53,7 +53,7 @@ def test_read_body_migrates_windows_legacy_path(tmp_path, monkeypatch):
 
 def test_read_body_migrates_posix_legacy_path(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.retrieval import _read_body
+    from extensions.knowledge.retrieval import _read_body
 
     subdir = tmp_path / "knowledge" / "dreaming_logs"
     subdir.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ def test_read_body_migrates_posix_legacy_path(tmp_path, monkeypatch):
 
 def test_scan_orphan_bodies_reports_recoverable_and_lost(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.recovery import scan_orphan_bodies
+    from extensions.knowledge.recovery import scan_orphan_bodies
 
     # Recoverable: file exists on disk at the current data root.
     recoverable_dir = tmp_path / "knowledge" / "research_notes"

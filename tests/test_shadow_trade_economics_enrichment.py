@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
+from extensions.counterfactual.trades import _compute_shadow_economics, _current_price
 from aletheia.storage.models import ShadowTrade
 from aletheia.storage.repositories import (
     anchor_shadow_trade_exit_price_if_pending,
@@ -250,7 +250,7 @@ def test_exact_shadow_price_does_not_fall_back_for_unknown_market(monkeypatch):
 
 
 def test_shadow_registration_does_not_invent_spot_identity(monkeypatch):
-    from aletheia.counterfactual import trades
+    from extensions.counterfactual import trades
 
     monkeypatch.setattr(trades, "_current_regime", lambda: "normal")
     monkeypatch.setattr(trades, "_current_policy_epoch", lambda: "epoch-test")

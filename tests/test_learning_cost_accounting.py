@@ -4,12 +4,12 @@ from tests.test_learning_hypothesis_nominations import _envelope
 
 
 def test_nomination_manifest_cost_is_reported_without_fabricated_runtime_cost():
-    from aletheia.learning.hypothesis_compiler import (
+    from extensions.learning.hypothesis_compiler import (
         admit_nomination_to_shadow,
         assess_experimentability,
     )
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
-    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.knowledge_yield import build_knowledge_yield_report
 
     nomination = publish_hypothesis_nomination(_envelope("cost-bundle"))
     hypothesis_id = nomination.hypothesis_id or "missing"

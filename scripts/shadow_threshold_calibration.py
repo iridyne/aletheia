@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """shadow_threshold_calibration — thin CLI wrapper.
 
-The report logic lives in ``aletheia.counterfactual.calibration``; this script
+The report logic lives in ``extensions.counterfactual.calibration``; this script
 only parses arguments and prints. Read-only; no writes to DB, filesystem, or
 configuration; no LLM / exchange calls.
 
@@ -21,7 +21,7 @@ import argparse
 import json
 import sys
 
-from aletheia.counterfactual.calibration import build_calibration, render_text
+from extensions.counterfactual.calibration import build_calibration, render_text
 
 
 def main(argv: list[str] | None = None) -> int:

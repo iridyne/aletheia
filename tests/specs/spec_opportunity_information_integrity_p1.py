@@ -28,7 +28,7 @@ _CONTRACT = "opportunity_information_integrity"
 )
 def test_information_integrity_policy_epoch_is_durable_and_idempotent():
     from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
         opportunity_information_policy_context,
     )
@@ -57,11 +57,11 @@ def test_information_integrity_policy_epoch_is_durable_and_idempotent():
 
 
 def test_structured_trade_motivation_rotates_information_policy_epoch():
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         _AFFECTED_PATHS,
         opportunity_information_policy_context,
     )
-    from aletheia.learning.policy_epochs import build_policy_epoch
+    from extensions.learning.policy_epochs import build_policy_epoch
 
     current_values = opportunity_information_policy_context()
     legacy_values = dict(current_values)
@@ -87,7 +87,7 @@ def test_information_policy_epoch_has_one_open_row_under_concurrency(
     tmp_path, monkeypatch,
 ):
     import aletheia.config.loader as loader
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
     from aletheia.storage import sqlite
@@ -119,7 +119,7 @@ def test_policy_epoch_concurrent_rotation_leaves_only_one_open_row(
     tmp_path, monkeypatch,
 ):
     import aletheia.config.loader as loader
-    from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+    from extensions.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
     from aletheia.storage import sqlite
     from aletheia.storage.migrations import run_migrations
 
@@ -152,9 +152,9 @@ def test_policy_epoch_concurrent_rotation_leaves_only_one_open_row(
 @pytest.mark.real_db
 def test_policy_epoch_rotation_uses_one_monotonic_boundary(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    import aletheia.learning.policy_epochs as policy_epochs
-    from aletheia.learning.ledger import insert_record
-    from aletheia.learning.models import LearningPolicyEpoch
+    import extensions.learning.policy_epochs as policy_epochs
+    from extensions.learning.ledger import insert_record
+    from extensions.learning.models import LearningPolicyEpoch
     from aletheia.storage import sqlite
     from aletheia.storage.migrations import run_migrations
 

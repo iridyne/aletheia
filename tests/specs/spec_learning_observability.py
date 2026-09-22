@@ -23,7 +23,7 @@ _CONTRACT = "learning_observability"
 ))
 def test_lco_projection_is_indexed_and_get_only(tmp_path, monkeypatch):
 
-    from aletheia.learning.read_models import build_learning_contribution_projection
+    from extensions.learning.read_models import build_learning_contribution_projection
     from aletheia.server.app import app
 
     routes = [

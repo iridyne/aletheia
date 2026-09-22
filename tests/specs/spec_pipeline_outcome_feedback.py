@@ -104,7 +104,7 @@ def test_unverified_exchange_close_is_explicitly_excluded_from_feedback(
     )
     repo.insert_position(position)
     feedback_calls: list[tuple] = []
-    from aletheia.learning import outcome_feedback
+    from extensions.learning import outcome_feedback
 
     monkeypatch.setattr(
         outcome_feedback,
@@ -345,7 +345,7 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
         assess_reportable_outcome,
         raw_account_events,
     )
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio.pnl import close_position
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
@@ -491,7 +491,7 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -550,7 +550,7 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
 )
 def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -602,7 +602,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
         AttributionReadError,
         assess_position_closure,
     )
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -689,7 +689,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
     _setup_db(tmp_path, monkeypatch)
     import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics.outcome_integrity import AttributionReadError
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -737,7 +737,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
 
 def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -786,7 +786,7 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -993,7 +993,7 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
+    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import ShadowTrade
@@ -1064,7 +1064,7 @@ def test_legacy_position_close_does_not_resolve_keyed_batch_sibling(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual.trades import resolve_shadow_trades_for_position
+    from extensions.counterfactual.trades import resolve_shadow_trades_for_position
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import ShadowTrade
 
@@ -1093,7 +1093,7 @@ def test_legacy_position_close_does_not_resolve_keyed_batch_sibling(
     repo.insert_shadow_trade(selected)
     repo.insert_shadow_trade(keyed)
     monkeypatch.setattr(
-        "aletheia.counterfactual.trades._current_price",
+        "extensions.counterfactual.trades._current_price",
         lambda *_args, **_kwargs: 110.0,
     )
 

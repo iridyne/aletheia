@@ -9,15 +9,15 @@ from tests.specs.spec_learning_attribution import _ready_research
 
 
 def _envelope(source_bundle_hash: str, *, status: str = "ready"):
-    from aletheia.learning.hypotheses import (
+    from extensions.learning.hypotheses import (
         HypothesisDraftV1,
         HypothesisGenerationManifestV1,
         HypothesisNominationEnvelopeV1,
         HypothesisResearchEvidenceV1,
         hypothesis_fingerprint,
     )
-    from aletheia.learning.registry import get_learning_path
-    from aletheia.learning.t0_context import T0FoundationAssessmentV1
+    from extensions.learning.registry import get_learning_path
+    from extensions.learning.t0_context import T0FoundationAssessmentV1
 
     research = _ready_research("case-1")
     research["research_status"] = status
@@ -82,8 +82,8 @@ def _envelope(source_bundle_hash: str, *, status: str = "ready"):
 
 
 def test_exact_retry_is_idempotent_and_new_evidence_reuses_behavior_identity():
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
-    from aletheia.learning.ledger import list_nominations
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.ledger import list_nominations
 
     first = publish_hypothesis_nomination(_envelope("bundle-a"))
     retry = publish_hypothesis_nomination(_envelope("bundle-a"))
@@ -98,7 +98,7 @@ def test_exact_retry_is_idempotent_and_new_evidence_reuses_behavior_identity():
 
 
 def test_rejected_attempt_is_retained_without_hypothesis_or_experiment():
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
     from aletheia.storage.sqlite import get_db
 
     nomination = publish_hypothesis_nomination(_envelope("bundle-rejected", status="rejected"))
@@ -110,7 +110,7 @@ def test_rejected_attempt_is_retained_without_hypothesis_or_experiment():
 
 
 def test_nomination_history_rejects_update_and_delete():
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
     from aletheia.storage.sqlite import get_db
 
     nomination = publish_hypothesis_nomination(_envelope("bundle-immutable"))

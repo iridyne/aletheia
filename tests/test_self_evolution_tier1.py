@@ -45,7 +45,7 @@ def test_generates_for_long_loss():
     row = _make_row(forward_return=-5.0, direction="long")
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -67,7 +67,7 @@ def test_generates_for_short_loss():
     row = _make_row(forward_return=+4.5, direction="short")
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -81,7 +81,7 @@ def test_no_candidate_for_long_profit():
     row = _make_row(forward_return=+2.0, direction="long")
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -95,7 +95,7 @@ def test_no_candidate_for_small_long_loss():
     row = _make_row(forward_return=-1.5, direction="long")
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -113,7 +113,7 @@ def test_skips_non_4h_horizon():
     ]
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -127,7 +127,7 @@ def test_dedup_blocks_generation():
     row = _make_row(forward_return=-5.0)
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = True  # already exists
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -142,7 +142,7 @@ def test_skips_row_without_scanner_family():
     row["scanner_family"] = None
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -155,7 +155,7 @@ def test_skips_row_without_known_market_identity():
     row = _make_row(forward_return=-5.0, market_type="crypto")
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
         _maybe_generate_guard_candidates([row])
 
@@ -168,7 +168,7 @@ def test_create_failure_does_not_raise():
     row = _make_row(forward_return=-5.0)
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate", side_effect=RuntimeError("db error")):
+         patch("extensions.knowledge.manager.create_guard_candidate", side_effect=RuntimeError("db error")):
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
@@ -197,7 +197,7 @@ def test_multiple_rows_separate_candidates():
     ]
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+         patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates

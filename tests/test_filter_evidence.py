@@ -198,7 +198,7 @@ def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(mo
     from aletheia.storage import repositories as repo
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
 
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
     repo.get_db().execute("DROP TABLE IF EXISTS learning_exposures")
@@ -1136,7 +1136,7 @@ def test_filter_decision_batch_compacts_repeated_candidate_keys():
 
 
 def test_batch_controller_reads_only_referenced_outcome_keys():
-    from aletheia.analytics.filter_controller import (
+    from extensions.analytics.filter_controller import (
         _batch_scanner_weights_quota_stats,
     )
     from aletheia.analytics.filter_evidence import record_filter_decision_batch
@@ -1268,7 +1268,7 @@ def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
 
 
 def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
     common = {
         "filter_name": "family_ttl",
@@ -1354,7 +1354,7 @@ def test_filter_feedback_stats_respects_decision_time_window():
 
 
 def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
-    from aletheia.analytics.filter_controller import compute_filter_feedback
+    from extensions.analytics.filter_controller import compute_filter_feedback
     from aletheia.analytics.filter_evidence import (
         filter_feedback_stats,
         record_filter_decision,
@@ -1482,7 +1482,7 @@ def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
     Uses family_ttl with a custom stage (not the registry's 'ttl_expired') to
     prove the controller preserves what the evidence recorded.
     """
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
     common = {
         "filter_name": "family_ttl",
@@ -1515,11 +1515,11 @@ def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
 
 
 def test_controller_persists_new_observational_verdict_through_legacy_schema(monkeypatch):
-    from aletheia.analytics import filter_controller
-    from aletheia.analytics.filter_controller import FilterRecommendation
+    from extensions.analytics import filter_controller
+    from extensions.analytics.filter_controller import FilterRecommendation
     from aletheia.storage.sqlite import get_db
 
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="controller fixture")
     recommendation = FilterRecommendation(
         filter_name="family_ttl",
@@ -1565,7 +1565,7 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
 
 
 def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):
-    from aletheia.counterfactual.trades import persist_shadow_batch
+    from extensions.counterfactual.trades import persist_shadow_batch
     from aletheia.storage import repositories as repo
 
     candidates = [
@@ -1579,7 +1579,7 @@ def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):
         for index in range(6)
     ]
     monkeypatch.setattr(
-        "aletheia.counterfactual.trades._current_price",
+        "extensions.counterfactual.trades._current_price",
         lambda *args, **kwargs: 100.0,
     )
 

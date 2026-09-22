@@ -49,7 +49,7 @@ def _write_manifest_yaml(tmp_path: Path, **overrides) -> Path:
 
 
 def test_publish_manifest_writes_row_and_reports_hash(runner: CliRunner, tmp_path: Path):
-    from aletheia.observation_lab.manifest import load_active_manifests
+    from extensions.observation_lab.manifest import load_active_manifests
 
     spec_path = _write_manifest_yaml(tmp_path)
     result = runner.invoke(observe_app, ["publish-manifest", str(spec_path), "--json"])
@@ -128,7 +128,7 @@ def test_publish_manifest_rejects_invalid_field_values(runner: CliRunner, tmp_pa
 def test_publish_manifest_rejects_invalid_effective_interval_without_write(
     runner: CliRunner, tmp_path: Path, effective_from: str, effective_until: str | None,
 ):
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     spec_path = _write_manifest_yaml(
         tmp_path,

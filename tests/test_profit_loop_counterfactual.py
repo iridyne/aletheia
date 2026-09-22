@@ -95,7 +95,7 @@ def _registered_test_cohort(tmp_path, monkeypatch):
         "stopping_rule": counterfactual._STOPPING_RULE,
     }
     import json
-    from aletheia.learning.policy_epochs import build_policy_epoch
+    from extensions.learning.policy_epochs import build_policy_epoch
 
     epoch = build_policy_epoch(
         "evidence_anchor:profit_loop_observability",
@@ -352,7 +352,7 @@ def test_registry_rejects_mismatched_behavior_fingerprint():
 
 def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
     import json
-    from aletheia.learning.policy_epochs import build_policy_epoch
+    from extensions.learning.policy_epochs import build_policy_epoch
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -420,7 +420,7 @@ def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
 
 def test_registry_rejects_tampered_epoch_hash_path_and_safety():
     import json
-    from aletheia.learning.policy_epochs import build_policy_epoch
+    from extensions.learning.policy_epochs import build_policy_epoch
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

@@ -70,7 +70,7 @@ async def test_unavailable_projection_preserves_configured_freshness_threshold(
 ):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
     from aletheia.storage.sqlite import get_db
 
     cfg = load_config()

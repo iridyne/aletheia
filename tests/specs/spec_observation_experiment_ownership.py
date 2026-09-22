@@ -37,13 +37,13 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/backup/verify.py",
     "aletheia/cli/observe_cmd.py",
     "aletheia/config/schema.py",
-    "aletheia/counterfactual/__init__.py",
-    "aletheia/learning/ledger.py",
+    "extensions/counterfactual/__init__.py",
+    "extensions/learning/ledger.py",
     "aletheia/maintenance/data_retention_backfill.py",
-    "aletheia/observation_lab/checkpoint.py",
-    "aletheia/observation_lab/db.py",
-    "aletheia/observation_lab/exposure.py",
-    "aletheia/observation_lab/migration.py",
+    "extensions/observation_lab/checkpoint.py",
+    "extensions/observation_lab/db.py",
+    "extensions/observation_lab/exposure.py",
+    "extensions/observation_lab/migration.py",
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
     "aletheia/storage/migrations.py",
@@ -90,7 +90,7 @@ _NAMED_LEGACY_WRITE_CALLS = frozenset({
 def _production_sources() -> dict[str, str]:
     return {
         path.relative_to(_ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in _SRC.rglob("*.py")
+        for path in (*_SRC.rglob("*.py"), *(_ROOT / "extensions").rglob("*.py"))
     }
 
 
@@ -196,9 +196,9 @@ def test_no_new_legacy_experiment_writer():
 ))
 def test_lab_runner_does_not_import_legacy_experiment_runtime():
     for module in ("runner.py", "evaluator.py"):
-        source = (_SRC / "observation_lab" / module).read_text(encoding="utf-8")
-        assert "aletheia.learning.experiments" not in source
-        assert "aletheia.learning.ledger" not in source
+        source = (_ROOT / "extensions" / "observation_lab" / module).read_text(encoding="utf-8")
+        assert "extensions.learning.experiments" not in source
+        assert "extensions.learning.ledger" not in source
 
 
 @spec_claim(SpecClaim(
@@ -212,7 +212,7 @@ def test_only_settlement_and_update_diagnostic_accept_main_outbox_progress():
         if "allow_main_outbox_progress=True" in source
     }
     assert callers == {
-        "aletheia/observation_lab/runner.py",
+        "extensions/observation_lab/runner.py",
         "aletheia/update/continuity.py",
     }
 
@@ -222,11 +222,11 @@ def test_only_settlement_and_update_diagnostic_accept_main_outbox_progress():
     "Checkpoint identity excludes acknowledged retention rows while preserving the logical Main watermark.",
 ))
 def test_checkpoint_outbox_identity_is_the_pending_frontier():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         prune_observation_delivery_outbox,
     )
-    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
+    from extensions.observation_lab.checkpoint import compute_joint_checkpoint
     from aletheia.storage.sqlite import get_db
 
     receipt_id = append_delivery_receipt(
@@ -255,14 +255,14 @@ def test_checkpoint_outbox_identity_is_the_pending_frontier():
     "Mechanism-aware Entry Learning is one Lab adapter with empty control and an explicit interference key.",
 ))
 def test_entry_learning_uses_the_canonical_lab_adapter_boundary():
-    from aletheia.learning.entry_context import (
+    from extensions.learning.entry_context import (
         ENTRY_LEARNING_ADAPTER_ID,
         ENTRY_LEARNING_ADAPTER_VERSION,
         ENTRY_LEARNING_INTERFERENCE_KEY,
         EntryLearningTreatmentAdapter,
     )
-    from aletheia.observation_lab.canonical import registered_treatment_adapters
-    from aletheia.observation_lab.runner import register_builtin_handlers
+    from extensions.observation_lab.canonical import registered_treatment_adapters
+    from extensions.observation_lab.runner import register_builtin_handlers
 
     register_builtin_handlers()
     assert (ENTRY_LEARNING_ADAPTER_ID, ENTRY_LEARNING_ADAPTER_VERSION) in (

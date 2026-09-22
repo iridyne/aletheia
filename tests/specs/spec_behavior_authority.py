@@ -72,7 +72,7 @@ def test_candidate_block_authority_fails_closed_by_source_and_path():
     "Even an authored blocking Guard has no effect when the final behavior inventory denies it.",
 ))
 def test_guard_consumer_cannot_bypass_final_behavior_gate(monkeypatch):
-    from aletheia.knowledge.guards import (
+    from extensions.knowledge.guards import (
         GuardAppliesTo,
         GuardPredicate,
         TradingGuard,

@@ -1,0 +1,527 @@
+"""Guard Promotion Pipeline.
+
+Owner review promotes candidates; TTL maintenance expires learned guards.
+
+Manual promotion and explicit maintenance only. Scheduled work expires learned guards;
+legacy loss-rate promotion/deprecation is not a current authority.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import tempfile
+from pathlib import Path
+
+from aletheia.config.loader import get_data_dir
+from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
+from aletheia.files.knowledge_document import (
+    canonicalize_inline_document,
+    canonicalize_written_document,
+    relative_knowledge_path,
+)
+from extensions.knowledge.guards import load_trading_guards, guard_origin
+
+logger = logging.getLogger("aletheia.analytics.guard_promotion")
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Publish one guard projection without exposing a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+
+
+def _deprecate_expired_learned_guards() -> int:
+    """Soft-deprecate learned guards (candidate + active) past their expires_at (#195).
+
+    Only learned guards are touched. Seed and manual guards remain persistent.
+    Returns the count of guards deprecated in this pass.
+    """
+    from extensions.knowledge.guards import guard_origin, _learned_guard_is_expired
+
+    deprecated = 0
+    for guards_dir in [
+        get_data_dir() / "knowledge" / "guards",
+        get_data_dir() / "knowledge" / "guard_candidates",
+    ]:
+        if not guards_dir.exists():
+            continue
+        for path in sorted(guards_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta:
+                    continue
+                if meta.get("status") == "deprecated":
+                    continue
+                if guard_origin(meta) != "learned":
+                    continue
+                if not _learned_guard_is_expired(meta):
+                    continue
+                gid = str(meta.get("guard_id") or path.stem)
+                new_meta = dict(meta)
+                new_meta["status"] = "deprecated"
+                new_meta.setdefault("deprecated_reason", "ttl_expired")
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(
+                    path,
+                    item_type=(
+                        "trading_guard"
+                        if guards_dir.name == "guards"
+                        else "guard_candidate"
+                    ),
+                )
+                _record_guard_candidate_deprecated_event(gid, str(path))
+                deprecated += 1
+                logger.info(
+                    "_deprecate_expired_learned_guards: deprecated expired guard %s", gid
+                )
+            except Exception as e:
+                logger.warning("Failed to deprecate expired guard at %s: %s", path, e)
+    return deprecated
+
+
+def promote_guard_candidate_to_active(
+    guard_id: str,
+    *,
+    actor_type: str = "system",
+    actor_id: str = "guard_promotion",
+    loss_rate: float | None = None,
+    reason: str = "evidence_threshold",
+) -> bool:
+    """Promote a candidate guard to active without deleting the candidate record.
+
+    Preserve manual configured effects and learned shadow-only observation.
+
+    Refuses promotion of expired learned candidates (#195).
+    """
+    from extensions.knowledge.guards import guard_origin, _learned_guard_is_expired
+
+    guards_dir = get_data_dir() / "knowledge" / "guards"
+    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+    active_existing = any(g.guard_id == guard_id for g in load_trading_guards(status="active"))
+    for search_dir in [guards_dir, candidates_dir]:
+        if not search_dir.exists():
+            continue
+        for path in search_dir.glob("*.md"):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("guard_id") != guard_id:
+                    continue
+                # Refuse promotion of expired learned candidates (#195).
+                if guard_origin(meta) == "learned" and _learned_guard_is_expired(meta):
+                    logger.info(
+                        "promote_guard_candidate_to_active: refusing expired learned guard %s",
+                        guard_id,
+                    )
+                    return False
+
+                source_meta = dict(meta)
+                active_meta = dict(meta)
+                active_meta["status"] = "active"
+                # Fix 3 (P0 2026-07-12): a shadow-only candidate stays observe-only even
+                # when promoted — never strip shadow_only / the "shadow-only" tag and
+                # never force it into a block. Only non-shadow (owner/manual) guards get
+                # the blocking defaults that make evaluate_guards enforce.
+                is_shadow = bool(meta.get("shadow_only")) or "shadow-only" in set(meta.get("tags") or [])
+                if not is_shadow:
+                    if not active_meta.get("score_penalty"):
+                        active_meta["score_penalty"] = 10.0
+                    if not active_meta.get("enforcement"):
+                        active_meta["enforcement"] = "blocking"
+                    if not active_meta.get("block_candidate"):
+                        active_meta["block_candidate"] = True
+
+                active_path = guards_dir / path.name
+                active_content = render_frontmatter(active_meta, body)
+                _persist_guard_promotion(
+                    guard_id=guard_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    loss_rate=loss_rate,
+                    reason=reason,
+                    source_path=str(path),
+                    active_path=active_path,
+                    active_meta=active_meta,
+                    body=body,
+                    source_path_is_candidate=search_dir == candidates_dir,
+                    active_existing=active_existing,
+                )
+
+                # EventStore's SQLite row is authoritative.  Calling the same
+                # idempotent append after the transaction commits only performs its
+                # existing JSONL mirror; a mirror outage leaves the durable event
+                # available for reconciliation and never rolls back guard state.
+                _record_guard_promotion_event(
+                    guard_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    loss_rate=loss_rate,
+                    reason=reason,
+                    source_path=str(path),
+                )
+
+                if search_dir == candidates_dir:
+                    if not active_existing:
+                        _atomic_write(active_path, active_content)
+                    source_meta["status"] = "deprecated"
+                    source_meta["promoted_to"] = guard_id
+                    source_meta["promotion_reason"] = reason
+                    _atomic_write(path, render_frontmatter(source_meta, body))
+                    _update_candidate_row_status(path)
+                else:
+                    _atomic_write(path, active_content)
+                return True
+            except Exception as e:
+                logger.warning("Failed to promote guard %s: %s", guard_id, e)
+                continue
+
+    return False
+
+
+def _persist_guard_promotion(
+    *,
+    guard_id: str,
+    actor_type: str,
+    actor_id: str,
+    loss_rate: float | None,
+    reason: str,
+    source_path: str,
+    active_path: Path,
+    active_meta: dict,
+    body: str,
+    source_path_is_candidate: bool,
+    active_existing: bool,
+) -> None:
+    """Persist the durable guard row and promotion event in one commit."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.knowledge_index import _index
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import transaction
+
+    active_document = {
+        "file_path": relative_knowledge_path(active_path),
+        **canonicalize_inline_document(render_frontmatter(active_meta, body)),
+    }
+    source_file_path = relative_knowledge_path(Path(source_path))
+    with transaction(immediate=True):
+        active_item_id = None
+        active_rows = repo._select_all(
+            "knowledge_items",
+            where="item_type = ? AND file_path = ?",
+            params=("trading_guard", active_document["file_path"]),
+            limit=1,
+        )
+        if active_rows:
+            active_item_id = active_rows[0]["id"]
+            repo.update_knowledge_item(
+                active_item_id,
+                status="active",
+                title=active_meta.get("title") or active_path.stem,
+                **active_document,
+            )
+        elif not active_existing:
+            active_item = KnowledgeItem(
+                item_type="trading_guard",
+                title=active_meta.get("title") or active_path.stem,
+                confidence="high_confidence",
+                status="active",
+                **active_document,
+            )
+            repo.insert_knowledge_item(active_item)
+            active_item_id = active_item.id
+
+        if active_item_id is not None:
+            active_item = KnowledgeItem.model_validate(
+                repo.get_knowledge_item(active_item_id)
+            )
+            _index(active_item, active_item.content or body)
+
+        if source_path_is_candidate:
+            candidate_rows = repo._select_all(
+                "knowledge_items",
+                where="item_type = ? AND file_path = ?",
+                params=("guard_candidate", source_file_path),
+                limit=10,
+            )
+            for row in candidate_rows:
+                repo.update_knowledge_item(
+                    row["id"], status="deprecated", confidence="deprecated"
+                )
+
+        _record_guard_promotion_event(
+            guard_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            loss_rate=loss_rate,
+            reason=reason,
+            source_path=source_path,
+        )
+
+
+def _update_candidate_row_status(
+    path,
+    *,
+    item_type: str = "guard_candidate",
+    status: str | None = "deprecated",
+    confidence: str | None = "deprecated",
+) -> None:
+    """Synchronize a rewritten guard document with its retained database row."""
+    try:
+        from aletheia.storage import repositories as repo
+
+        file_path = relative_knowledge_path(Path(path))
+        rows = repo._select_all(
+            "knowledge_items",
+            where="file_path = ? AND item_type = ?",
+            params=(file_path, item_type),
+            limit=1,
+        )
+        canonical = canonicalize_written_document(Path(path))
+        for row in rows:
+            updates = dict(canonical)
+            if status is not None:
+                updates["status"] = status
+            if confidence is not None:
+                updates["confidence"] = confidence
+            repo.update_knowledge_item(row["id"], **updates)
+    except Exception:
+        logger.debug("Failed to update promoted guard candidate DB row", exc_info=True)
+
+
+def _record_guard_promotion_event(
+    guard_id: str,
+    *,
+    actor_type: str,
+    actor_id: str,
+    loss_rate: float | None,
+    reason: str,
+    source_path: str,
+) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="TRADING_GUARD_PROMOTED",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            idempotency_key=f"guard-promotion:{guard_id}",
+            payload_json=json.dumps({
+                "guard_id": guard_id,
+                "loss_rate": loss_rate,
+                "reason": reason,
+                "source_path": source_path,
+            }, sort_keys=True),
+        ))
+    except Exception:
+        # #1239: propagate event-store failures — a file change without a durable event
+        # leaves authority without reconstructable provenance. Log at WARNING and re-raise.
+        logger.warning("Failed to record guard promotion event", exc_info=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Fix 7: audit + reversible shadow-downgrade of learned active guards
+# ---------------------------------------------------------------------------
+
+def audit_auto_guards() -> list[dict]:
+    """READ-ONLY audit of learned (auto-generated) guards that are active.
+
+    Reports which learned guards the old auto-promotion chain turned into blockers
+    or scorers. Mutates nothing. Use ``downgrade_learned_guards_to_shadow`` to fix.
+    """
+    out: list[dict] = []
+    for guard in load_trading_guards(status="active"):
+        if guard_origin(guard) != "learned":
+            continue
+        out.append({
+            "guard_id": guard.guard_id,
+            "title": guard.title,
+            "enforcement": guard.enforcement,
+            "block_candidate": guard.block_candidate,
+            "score_penalty": guard.score_penalty,
+            "shadow_only": guard.shadow_only,
+            "tags": list(guard.tags or []),
+            # A learned guard is a live behavior-changer only if it still blocks or
+            # scores AND is not already shadow-only.
+            "still_enforcing": (guard.block_candidate or guard.score_penalty > 0) and not guard.shadow_only,
+        })
+    return out
+
+
+def _record_guard_downgrade_event(guard_id: str, before: dict) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="GUARD_DOWNGRADED_TO_SHADOW",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type="human",
+            actor_id="guard_shadow_downgrade",
+            payload_json=json.dumps({"guard_id": guard_id, "before": before}, sort_keys=True),
+        ))
+    except Exception:
+        logger.warning("Failed to record guard downgrade event", exc_info=True)
+        raise
+
+
+def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
+    """Downgrade every learned active guard to shadow-only (observe-only).
+
+    Reversible and auditable: original enforcement/block/penalty are stored in
+    ``pre_shadow_*`` frontmatter keys, an event is recorded, and the file is kept
+    (never deleted). Owner-controlled seed/manual guards are never touched.
+
+    dry_run=True (default) reports what would change without writing.
+    """
+    guards_dir = get_data_dir() / "knowledge" / "guards"
+    changed: list[dict] = []
+    scanned = 0
+    if guards_dir.exists():
+        for path in sorted(guards_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("status") != "active":
+                    continue
+                if guard_origin(meta) != "learned":
+                    continue
+                scanned += 1
+                # Fully observe-only = shadow + advisory + no block + no penalty. Zeroing
+                # the penalty too means even the pre-restart gateway (which applies
+                # score_penalty regardless of shadow_only) stops changing behavior; the
+                # new evaluate_guards seam enforces the same thing post-restart.
+                fully_observe = (
+                    bool(meta.get("shadow_only"))
+                    and not bool(meta.get("block_candidate"))
+                    and str(meta.get("enforcement")) == "advisory"
+                    and float(meta.get("score_penalty") or 0) == 0
+                )
+                if fully_observe:
+                    continue
+                before = {
+                    "enforcement": meta.get("enforcement"),
+                    "block_candidate": meta.get("block_candidate"),
+                    "score_penalty": meta.get("score_penalty"),
+                    "shadow_only": meta.get("shadow_only"),
+                }
+                changed.append({"guard_id": meta.get("guard_id"), "path": str(path), "before": before})
+                if dry_run:
+                    continue
+                new_meta = dict(meta)
+                # Preserve originals once (idempotent) for rollback.
+                new_meta.setdefault("pre_shadow_enforcement", meta.get("enforcement"))
+                new_meta.setdefault("pre_shadow_block_candidate", meta.get("block_candidate"))
+                new_meta.setdefault("pre_shadow_score_penalty", meta.get("score_penalty"))
+                new_meta["shadow_only"] = True
+                new_meta["enforcement"] = "advisory"
+                new_meta["block_candidate"] = False
+                new_meta["score_penalty"] = 0
+                tags = list(new_meta.get("tags") or [])
+                if "shadow-only" not in tags:
+                    tags.append("shadow-only")
+                new_meta["tags"] = tags
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(
+                    path,
+                    item_type="trading_guard",
+                    status=None,
+                    confidence=None,
+                )
+                _record_guard_downgrade_event(str(meta.get("guard_id")), before)
+            except Exception as e:
+                logger.warning("Failed to downgrade guard at %s: %s", path, e)
+                continue
+
+
+    return {
+        "dry_run": dry_run,
+        "scanned_learned_active": scanned,
+        ("would_downgrade" if dry_run else "downgraded"): len(changed),
+        "guards": changed,
+    }
+
+
+def _record_guard_candidate_deprecated_event(guard_id: str, path: str) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="GUARD_CANDIDATE_DEPRECATED",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type="human",
+            actor_id="guard_prune_candidates",
+            payload_json=json.dumps(
+                {"guard_id": guard_id, "path": path, "reason": "stale_shadow_candidate_cleanup"},
+                sort_keys=True,
+            ),
+        ))
+    except Exception:
+        logger.warning("Failed to record guard candidate deprecation event", exc_info=True)
+        raise
+
+
+def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:
+    """Deprecate stale LEARNED guard candidates (soft, reversible, audited).
+
+    Learned candidates are observe-only and can never auto-promote, so a large
+    backlog is pure noise. This marks each ``status=deprecated`` (KB rule: never
+    hard-delete — the file and DB row are kept for audit) and records an event.
+    Owner-authored (manual) candidates awaiting review are NEVER touched. To undo,
+    flip a file's status back to ``candidate``.
+
+    dry_run=True (default) reports what would change without writing.
+    """
+    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+    changed: list[dict] = []
+    scanned = 0
+    if candidates_dir.exists():
+        for path in sorted(candidates_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("status") != "candidate":
+                    continue
+                # Only learned candidates — never deprecate a manual candidate the
+                # owner may be reviewing.
+                if guard_origin(meta) != "learned":
+                    continue
+                scanned += 1
+                # Old pre-fix candidates (L-Bug-D) lack guard_id — fall back to the
+                # file stem so the audit trail still identifies each one.
+                gid = str(meta.get("guard_id") or path.stem)
+                changed.append({"guard_id": gid, "path": str(path)})
+                if dry_run:
+                    continue
+                new_meta = dict(meta)
+                new_meta["status"] = "deprecated"
+                new_meta.setdefault("deprecated_reason", "stale_shadow_candidate_cleanup")
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(path)
+                _record_guard_candidate_deprecated_event(gid, str(path))
+            except Exception as e:
+                logger.warning("Failed to prune guard candidate at %s: %s", path, e)
+                continue
+
+    return {
+        "dry_run": dry_run,
+        "scanned_learned_candidates": scanned,
+        ("would_deprecate" if dry_run else "deprecated"): len(changed),
+        "guard_ids": [c["guard_id"] for c in changed],
+    }

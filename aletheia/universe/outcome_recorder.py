@@ -1062,9 +1062,9 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     settlement. Unrelated installed dependency defects still propagate.
     """
     try:
-        from aletheia.knowledge.manager import create_guard_candidate
+        from extensions.knowledge.manager import create_guard_candidate
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.knowledge", "aletheia.knowledge.manager"}:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
             raise
         logger.warning("evolution:tier1 guard candidates unavailable: optional Knowledge absent")
         return

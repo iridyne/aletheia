@@ -347,7 +347,7 @@ async def test_lesson_constraint_category_gate_is_risk_only():
     )
     # Verify guard routing ensures dreaming_agent block_* never reaches ps_lessons
     # as a block_* recommendation (they become guard_shadow_candidate instead).
-    from aletheia.learning.guard_routing import route_automatic_block_recommendation
+    from extensions.learning.guard_routing import route_automatic_block_recommendation
     from tests.specs.spec_learning_attribution import _ready_research
     from unittest.mock import patch
 
@@ -356,7 +356,7 @@ async def test_lesson_constraint_category_gate_is_risk_only():
         "scanner_families": ["momentum"],
         "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
     }
-    with patch("aletheia.learning.guard_routing.create_guard_candidate") as mock_create:
+    with patch("extensions.learning.guard_routing.create_guard_candidate") as mock_create:
         mock_create.return_value = type("Item", (), {"id": "g-1"})()
         result = await route_automatic_block_recommendation(
             {"action": "block_symbol", "symbol": "BTC/USDT"},

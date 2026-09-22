@@ -191,7 +191,7 @@ def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
 def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     conn.execute("UPDATE observation_authority_state SET authority_source='legacy'")
-    from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
+    from extensions.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 
     hypothesis = LearningHypothesis(
         hypothesis_id="retention-hypothesis",

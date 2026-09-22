@@ -86,7 +86,7 @@ async def _direct_complete(request, *, provider=None, provider_name=None):
 @pytest.mark.asyncio
 async def test_learning_b_pair_is_blinded_linked_and_aggregate_only(tmp_path, monkeypatch):
     from aletheia.agents import helpers
-    from aletheia.economics import context_effectiveness as effectiveness
+    from extensions.research import context_effectiveness as effectiveness
 
     provider = _PairProvider()
     review_path = tmp_path / "blind-review.json"
@@ -172,7 +172,7 @@ async def test_learning_b_pair_is_blinded_linked_and_aggregate_only(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_learning_b_reports_provider_block_without_fake_conclusion(tmp_path, monkeypatch):
-    from aletheia.economics import context_effectiveness as effectiveness
+    from extensions.research import context_effectiveness as effectiveness
 
     monkeypatch.setattr(
         effectiveness,
@@ -194,7 +194,7 @@ async def test_learning_b_reports_provider_block_without_fake_conclusion(tmp_pat
 
 
 def test_learning_b_refuses_raw_review_packet_inside_repository():
-    from aletheia.economics.context_effectiveness import _review_path
+    from extensions.research.context_effectiveness import _review_path
 
     with pytest.raises(ValueError, match="outside the repository"):
         _review_path(_FIXTURE.parent / "raw-output.json")
@@ -204,7 +204,7 @@ def test_learning_b_refuses_raw_review_packet_inside_repository():
 @pytest.mark.parametrize("missing", ["extensions", "extensions.research", "broken_dependency"])
 async def test_context_pair_requires_optional_observer_before_provider(tmp_path, monkeypatch, missing):
     import builtins
-    from aletheia.economics import context_effectiveness as effectiveness
+    from extensions.research import context_effectiveness as effectiveness
 
     real_import = builtins.__import__
     def absent(name, *args, **kwargs):
@@ -233,7 +233,7 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
     tmp_path, monkeypatch
 ):
     from aletheia.agents import helpers
-    from aletheia.economics import context_effectiveness as effectiveness
+    from extensions.research import context_effectiveness as effectiveness
 
     provider = _PairProvider()
     review_path = tmp_path / "technical-review.json"
@@ -345,7 +345,7 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
 @pytest.mark.asyncio
 async def test_context_ablation_omits_only_named_modality(tmp_path, monkeypatch):
     from aletheia.agents import helpers
-    from aletheia.economics import context_effectiveness as effectiveness
+    from extensions.research import context_effectiveness as effectiveness
 
     fixture_path = tmp_path / "ablation.json"
     fixture_path.write_text(

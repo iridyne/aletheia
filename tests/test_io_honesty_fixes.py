@@ -97,7 +97,7 @@ def test_config_only_export_fails_without_safe_config(tmp_path, payload, reason)
     if payload is not None:
         (tmp_path / "config.yaml").write_bytes(payload)
 
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
     with pytest.raises(RuntimeError, match=reason):
         ExportService(data_dir=tmp_path).export_bundle(mode="config-only")
 
@@ -106,7 +106,7 @@ def test_config_only_export_fails_without_safe_config(tmp_path, payload, reason)
 
 def test_research_export_reports_omitted_config_as_degraded(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_bytes(b"\xff\xfe invalid")
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
     service = ExportService(data_dir=tmp_path)
     monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
     archive = service.export_bundle(mode="research-pack")
@@ -117,7 +117,7 @@ def test_research_export_reports_omitted_config_as_degraded(tmp_path, monkeypatc
         assert not any(member.name.endswith("/config/config.yaml") for member in tar.getmembers())
 
     from aletheia.server.routes import persistence
-    monkeypatch.setattr("aletheia.sync.exporter.ExportService", lambda: service)
+    monkeypatch.setattr("extensions.sync.exporter.ExportService", lambda: service)
     result = persistence.create_export(persistence.ExportRequest(mode="research-pack"))
     assert result["status"] == "degraded"
     assert result["config_status"] == "omitted"
@@ -126,7 +126,7 @@ def test_research_export_reports_omitted_config_as_degraded(tmp_path, monkeypatc
 def test_export_rejects_unknown_mode_before_creating_or_cleaning_staging(
     tmp_path, monkeypatch,
 ):
-    import aletheia.sync.exporter as exporter
+    import extensions.sync.exporter as exporter
 
     removed = []
     monkeypatch.setattr(exporter.shutil, "rmtree", lambda path, **_kwargs: removed.append(path))
@@ -141,7 +141,7 @@ def test_export_rejects_unknown_mode_before_creating_or_cleaning_staging(
 def test_config_only_rejects_non_mapping_yaml(tmp_path):
     (tmp_path / "config.yaml").write_text("- not\n- a mapping\n", encoding="utf-8")
 
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     with pytest.raises(RuntimeError, match="config_export_failed"):
         ExportService(data_dir=tmp_path).export_bundle(mode="config-only")
@@ -151,7 +151,7 @@ def test_config_only_rejects_non_mapping_yaml(tmp_path):
 
 def test_reused_export_service_resets_config_status(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_bytes(b"\xff\xfe invalid")
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     service = ExportService(data_dir=tmp_path)
     monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
@@ -165,7 +165,7 @@ def test_reused_export_service_resets_config_status(tmp_path, monkeypatch):
 
 
 def test_config_stat_failure_degrades_composite_export(tmp_path, monkeypatch):
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     config_path = tmp_path / "config.yaml"
     original_exists = Path.exists
@@ -186,7 +186,7 @@ def test_config_stat_failure_degrades_composite_export(tmp_path, monkeypatch):
 
 def test_partial_config_write_is_not_published(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("app:\n  dashboard_port: 8787\n", encoding="utf-8")
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     original_write_text = Path.write_text
 
@@ -211,7 +211,7 @@ def test_proposal_pack_exports_only_the_named_proposal(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     p1_id, p2_id = _seed_two_proposals()
 
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
     archive = ExportService(data_dir=tmp_path).export_bundle(
         mode="proposal-pack", proposal_id=p1_id,
     )
@@ -231,7 +231,7 @@ def test_proposal_pack_omits_serenity_when_proposal_has_no_opportunity(tmp_path,
     _setup_env(tmp_path, monkeypatch)
     p1_id, _ = _seed_two_proposals()
 
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
     archive = ExportService(data_dir=tmp_path).export_bundle(
         mode="proposal-pack", proposal_id=p1_id,
     )
@@ -253,7 +253,7 @@ def test_proposal_pack_rejects_unknown_proposal(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _seed_two_proposals()
 
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
     with pytest.raises(ValueError, match="not found"):
         ExportService(data_dir=tmp_path).export_bundle(
             mode="proposal-pack", proposal_id="proposal-that-does-not-exist",
@@ -261,7 +261,7 @@ def test_proposal_pack_rejects_unknown_proposal(tmp_path, monkeypatch):
 
 
 def test_table_export_streams_jsonl_without_fetchall(tmp_path, monkeypatch):
-    import aletheia.sync.exporter as exporter
+    import extensions.sync.exporter as exporter
 
     class Cursor:
         def __init__(self):
@@ -296,7 +296,7 @@ def test_table_export_streams_jsonl_without_fetchall(tmp_path, monkeypatch):
 
 
 def test_full_backup_uses_the_service_database_path(tmp_path):
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     source = sqlite3.connect(tmp_path / "app.db")
     source.execute("CREATE TABLE exact_source (value TEXT)")
@@ -351,7 +351,7 @@ def test_import_dry_run_flags_missing_files_from_checksums(tmp_path, monkeypatch
     _setup_env(tmp_path, monkeypatch)
     archive = _build_bundle_with_missing_file(tmp_path)
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).dry_run(archive)
 
     assert any("missing file" in e.lower() for e in result.errors), (
@@ -416,7 +416,7 @@ def test_import_diverged_row_recorded_as_conflict_not_skipped_duplicate(tmp_path
     }
     archive = _build_bundle_with_row(tmp_path, "ps_lessons", remote_row)
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).dry_run(archive)
 
     assert result.skipped_duplicates == 0, (
@@ -459,7 +459,7 @@ def test_import_identical_duplicate_still_counted_as_skipped(tmp_path, monkeypat
     }
     archive = _build_bundle_with_row(tmp_path, "ps_lessons", identical_row)
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).dry_run(archive)
 
     assert result.conflicts == []
@@ -544,7 +544,7 @@ def test_import_missing_checksums_aborts_without_mutation(tmp_path, monkeypatch)
     archive = _build_bundle_with_db_row_and_checksums(
         tmp_path, "no_checksums", include_checksums=False
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert result.errors, "missing checksums.txt must report an error"
@@ -561,7 +561,7 @@ def test_import_checksum_mismatch_aborts_without_mutation(tmp_path, monkeypatch)
     archive = _build_bundle_with_db_row_and_checksums(
         tmp_path, "bad_hash", checksums_content=bad_checksums
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert any("mismatch" in e.lower() for e in result.errors), (
@@ -606,7 +606,7 @@ def test_import_unlisted_payload_aborts_without_mutation(tmp_path, monkeypatch):
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="unlisted")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert any("unlisted" in e.lower() for e in result.errors), (
@@ -623,7 +623,7 @@ def test_import_malformed_checksum_line_aborts_without_mutation(tmp_path, monkey
     archive = _build_bundle_with_db_row_and_checksums(
         tmp_path, "malformed", checksums_content="not-a-valid-checksum-line\n"
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert result.errors, "malformed checksum line must produce an error"
@@ -665,7 +665,7 @@ def test_import_rejects_unauthorized_table(tmp_path, monkeypatch):
         tmp_path, "unauth", "risk_decisions",
         {"id": "rd-1", "decision": "kill", "created_at": "2026-01-01T00:00:00Z"},
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert any("authorized" in e.lower() or "rejected" in e.lower() for e in result.errors), (
@@ -690,7 +690,7 @@ def test_import_rejects_core_and_retired_runtime_tables(tmp_path, monkeypatch, t
             "artifacts/evidence/rejected.txt": "must not be copied",
         },
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     service = ImportService(data_dir=tmp_path)
     result = service.merge(archive) if commit else service.dry_run(archive)
     assert any(table in error and "authorized" in error for error in result.errors)
@@ -715,7 +715,7 @@ def test_import_rejects_non_research_payload_before_mutation(tmp_path, monkeypat
             "artifacts/evidence/current.txt": "replacement",
         },
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     service = ImportService(data_dir=tmp_path)
     result = service.merge(archive) if commit else service.dry_run(archive)
     assert any("rejected" in error.lower() for error in result.errors)
@@ -762,7 +762,7 @@ def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monk
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="mixed")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert result.errors, "mixed bundle with unauthorized table must report errors"
@@ -786,7 +786,7 @@ def test_import_rejects_row_with_unknown_column(tmp_path, monkeypatch):
     archive = _build_bundle_with_arbitrary_table(
         tmp_path, "badcol", "ps_lessons", row_with_extra
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert any("schema" in e.lower() or "column" in e.lower() for e in result.errors), (
@@ -846,7 +846,7 @@ def test_import_transaction_rolls_back_on_constraint_failure(tmp_path, monkeypat
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="tx_rollback")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert result.errors, (
@@ -890,7 +890,7 @@ def test_import_valid_bundle_commits_all_rows(tmp_path, monkeypatch):
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="valid_commit")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert not result.errors, f"valid bundle must not error; got {result.errors}"
@@ -949,7 +949,7 @@ def test_import_row_values_bound_by_column_name_not_order(tmp_path, monkeypatch)
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="bind_order")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert not result.errors, f"unexpected errors: {result.errors}"
@@ -1019,7 +1019,7 @@ def test_import_binds_each_row_using_its_own_columns(
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="row_shapes")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert not result.errors, f"unexpected errors: {result.errors}"
@@ -1057,7 +1057,7 @@ def test_import_rejects_missing_or_empty_primary_key(tmp_path, monkeypatch, pk_c
     archive = _build_bundle_with_arbitrary_table(
         tmp_path, f"invalid_pk_{pk_case}", "ps_lessons", row
     )
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     result = ImportService(data_dir=tmp_path).merge(archive)
 
     assert any(
@@ -1085,7 +1085,7 @@ def test_concurrent_imports_use_distinct_staging_dirs(tmp_path, monkeypatch):
 
     archive = _build_bundle_with_db_row_and_checksums(tmp_path, "dist277")
 
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
     staging_dirs: list[Path] = []
     original_open = tarfile.open
 

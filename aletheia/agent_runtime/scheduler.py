@@ -47,6 +47,21 @@ _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 _extract_research_lessons: Callable[[str | None, list[str], list[str]], Awaitable[list[dict[str, str]]]] | None = None
 _enqueue_research_run: Callable[[str], None] | None = None
+_resolve_stale_shadows = None
+_expire_learned_guards = None
+_observe_filter_controller = None
+_learning_daily_catchup_due = None
+
+
+def configure_optional_evidence_jobs(*, resolve_shadows=None, expire_guards=None,
+                                     observe_filters=None, daily_catchup_due=None) -> None:
+    """Bind optional producers; scheduling, pause and job lifecycle remain Core."""
+    global _resolve_stale_shadows, _expire_learned_guards
+    global _observe_filter_controller, _learning_daily_catchup_due
+    _resolve_stale_shadows = resolve_shadows
+    _expire_learned_guards = expire_guards
+    _observe_filter_controller = observe_filters
+    _learning_daily_catchup_due = daily_catchup_due
 
 
 def configure_research_producers(*, extract_lessons=None, enqueue_run=None) -> None:
@@ -87,7 +102,7 @@ def _publish_scheduler(candidate: BackgroundScheduler) -> None:
 def _observation_execution_owner() -> str:
     """Read the optional Observation owner without blocking Core startup."""
     try:
-        from aletheia.observation_lab.execution_owner import get_execution_owner
+        from extensions.observation_lab.execution_owner import get_execution_owner
     except ImportError as exc:
         logger.info(
             "Observation Lab owner unavailable; optional cycle disabled (%s)",
@@ -131,7 +146,7 @@ _ESSENTIAL_JOBS: set[str] = {
 
 # Market snapshot collection cadence. Exposed as a module constant so consumers
 # whose semantics depend on the freshness bound of a snapshot (e.g. the
-# counterfactual close-time price lookup in aletheia.counterfactual.trades)
+# counterfactual close-time price lookup in extensions.counterfactual.trades)
 # can reference the same source of truth and stay in sync when the interval
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
@@ -536,7 +551,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     try:
-        from aletheia.learning.control import record_learning_job_failure
+        from extensions.learning.control import record_learning_job_failure
     except ImportError:
         record_learning_job_failure = None
     if record_learning_job_failure is not None:
@@ -637,7 +652,7 @@ def _run_job_guarded(job_id: str, fn):
     _JOB_RUN_STATE.failure_recorded = False
     try:
         try:
-            from aletheia.learning.control import (
+            from extensions.learning.control import (
                 learning_job_gate_reason,
                 record_learning_job_skipped,
                 record_learning_job_started,
@@ -2297,8 +2312,9 @@ def _run_shadow_resolver():
     slipped through, using each shadow's own 24h forward horizon (historical OHLCV).
     """
     try:
-        from aletheia.counterfactual.trades import resolve_stale_shadows
-        counts = resolve_stale_shadows()
+        if _resolve_stale_shadows is None:
+            raise RuntimeError("counterfactual_extension_unavailable")
+        counts = _resolve_stale_shadows()
         if counts.get("resolved"):
             logger.info(
                 "shadow_resolver: resolved=%d skipped_no_ohlcv=%d skipped_bad_entry=%d",
@@ -2964,7 +2980,7 @@ def _run_cleanup():
         experiment_floor_read_ok = False
         min_open_exp_at = None
         try:
-            from aletheia.observation_lab.canonical import get_authority_source
+            from extensions.observation_lab.canonical import get_authority_source
 
             lab_authority = get_authority_source().source == "lab"
         except Exception as exc:
@@ -3394,7 +3410,7 @@ def _run_filter_controller_observe():
     reaches the runner directly.
     """
     try:
-        from aletheia.observation_lab.execution_owner import (
+        from extensions.observation_lab.execution_owner import (
             ObservationOwnerError,
             require_main_or_absent,
         )
@@ -3409,18 +3425,18 @@ def _run_filter_controller_observe():
         from aletheia.config.loader import load_config
         cfg = load_config()
         ctrl = getattr(cfg, "controller", None)
-        from aletheia.observation_lab.worker_lock import (
+        from extensions.observation_lab.worker_lock import (
             WorkerCycleLockError,
             worker_cycle_exclusion,
         )
         try:
             with worker_cycle_exclusion():
                 if ctrl and ctrl.shadow_enabled:
-                    from aletheia.analytics.filter_controller import run_controller_observe
-
-                    summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
+                    if _observe_filter_controller is None:
+                        raise RuntimeError("filter_controller_extension_unavailable")
+                    summary = _observe_filter_controller(min_samples=int(ctrl.min_samples_gate))
                 else:
-                    from aletheia.observation_lab.runner import run_lab_windows
+                    from extensions.observation_lab.runner import run_lab_windows
 
                     summary = {
                         "pass_status": "success",
@@ -3470,7 +3486,7 @@ def _run_observation_lab_bridge() -> None:
             # The compatibility scheduler must not create a Lab database on a
             # legacy-only install merely by running its health job.
             return
-        from aletheia.observation_lab.runner import settle_observation_continuity
+        from extensions.observation_lab.runner import settle_observation_continuity
 
         settled = settle_observation_continuity()
         if not settled.get("ok"):
@@ -3634,7 +3650,9 @@ def _clear_learning_startup_catchup_retry() -> None:
 def _run_learning_startup_catchup():
     """Run each latest missed daily Learning window and retry incomplete work."""
     try:
-        from aletheia.learning.control import daily_catchup_due
+        daily_catchup_due = _learning_daily_catchup_due
+        if daily_catchup_due is None:
+            raise RuntimeError("learning_control_unavailable")
 
         results = []
         remaining_due: list[str] = []
@@ -3868,8 +3886,9 @@ def _run_guard_promotion():
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
-        expired = _deprecate_expired_learned_guards()
+        if _expire_learned_guards is None:
+            raise RuntimeError("knowledge_extension_unavailable")
+        expired = _expire_learned_guards()
         logger.info("guard_promotion: expired_deprecated=%s", expired)
     except Exception as e:
         logger.warning("guard_promotion job failed: %s", e)

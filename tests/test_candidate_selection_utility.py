@@ -68,7 +68,7 @@ def test_legacy_learning_cannot_veto_current_candidate_publication(tmp_path, mon
             raise RuntimeError("legacy ledger unavailable")
         return [{"stage": "paper_active", "experiment_id": "historical-experiment"}]
 
-    monkeypatch.setattr("aletheia.learning.ledger.list_open_experiments", legacy_rows)
+    monkeypatch.setattr("extensions.learning.ledger.list_open_experiments", legacy_rows)
     test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
 
 

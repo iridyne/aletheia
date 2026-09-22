@@ -44,7 +44,7 @@ def test_scheduler_starts_when_observation_package_is_missing(monkeypatch):
     real_import = builtins.__import__
 
     def missing_owner(name, *args, **kwargs):
-        if name == "aletheia.observation_lab.execution_owner":
+        if name == "extensions.observation_lab.execution_owner":
             raise ModuleNotFoundError(name=name)
         return real_import(name, *args, **kwargs)
 
@@ -59,7 +59,7 @@ def test_scheduler_starts_when_observation_package_is_missing(monkeypatch):
 
 
 def _health(**updates):
-    from aletheia.learning.models import LearningJobHealth
+    from extensions.learning.models import LearningJobHealth
 
     return LearningJobHealth(**{
         "job_id": "learning_contribution_evaluator",
@@ -73,7 +73,7 @@ def test_job_health_view_derives_overdue_from_next_due_at():
     """A job that stops firing keeps its stored status, so overdue must be derived."""
     from datetime import datetime, timezone
 
-    from aletheia.learning.control import job_health_view
+    from extensions.learning.control import job_health_view
 
     now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
     late = job_health_view(
@@ -88,7 +88,7 @@ def test_job_health_view_derives_overdue_from_next_due_at():
 def test_job_health_view_tolerates_scheduler_jitter_and_missing_due_time():
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.learning.control import JOB_OVERDUE_GRACE_SECONDS, job_health_view
+    from extensions.learning.control import JOB_OVERDUE_GRACE_SECONDS, job_health_view
 
     now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
     jitter = (now - timedelta(seconds=JOB_OVERDUE_GRACE_SECONDS - 5)).isoformat()
@@ -107,7 +107,7 @@ def test_job_health_view_never_downgrades_a_stored_failure_to_overdue():
     """``failed`` is more severe than ``overdue`` and must survive the projection."""
     from datetime import datetime, timezone
 
-    from aletheia.learning.control import job_health_view
+    from extensions.learning.control import job_health_view
 
     now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
     view = job_health_view(

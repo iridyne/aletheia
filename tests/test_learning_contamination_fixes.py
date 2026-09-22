@@ -15,7 +15,7 @@ def test_render_calibration_does_not_crash_on_numeric_ece():
 
 
 def test_guard_clean_rows_drops_synthetic_and_pre_floor():
-    from aletheia.analytics.guard_effectiveness import _clean_rows
+    from extensions.analytics.guard_effectiveness import _clean_rows
     rows = [
         {"close_reason": "stop_loss", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": -5},      # genuine, post-floor
         {"close_reason": "reconciled_gone", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": 0}, # synthetic → drop
@@ -36,7 +36,7 @@ def test_case_builder_windows_on_close_time():
     """#16: the case-builder window filters on CLOSE time, not open time."""
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.analytics.trade_case_builder import _closed_after
+    from extensions.analytics.trade_case_builder import _closed_after
 
     cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600  # last 24h
     recent_close = {"opened_at": "2026-06-01T00:00:00+00:00",
@@ -99,7 +99,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     import asyncio
     sq = _reviewer_db(tmp_path, monkeypatch)
     from extensions.research.lesson_reviewer import run_lesson_reviewer
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     les = store.create("block BTC/USDT longs", source_type="test", source_id="t",
@@ -137,7 +137,7 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
     """Legacy price moves without costs must not promote or overturn lessons."""
     sq = _reviewer_db(tmp_path, monkeypatch)
     from extensions.research.lesson_reviewer import _fetch_evidence
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     lesson = LessonStore().create(
         "BTC/USDT gross-only history",
@@ -175,7 +175,7 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     sq = _reviewer_db(tmp_path, monkeypatch)
     from extensions.research.lesson_reviewer import _fetch_evidence
     from aletheia.analytics import outcome_semantics as outcomes
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     lesson = LessonStore().create(
         "BTC/USDT momentum longs",

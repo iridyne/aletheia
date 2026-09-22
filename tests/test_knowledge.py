@@ -7,7 +7,7 @@ import pytest
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
-from aletheia.knowledge.manager import (
+from extensions.knowledge.manager import (
     create_daily_review, create_post_trade_review, create_research_note,
     create_dreaming_log, create_strategy_memory, create_trade_case_study,
     archive_item, deprecate_item, delete_item, detect_contradictions,
@@ -431,7 +431,7 @@ def test_concurrent_content_hash_dedup_removes_loser_artifact(
 ):
     import concurrent.futures
     import threading
-    import aletheia.knowledge.manager as manager
+    import extensions.knowledge.manager as manager
     from aletheia.storage.sqlite import get_db
 
     setup_test_env(tmp_path, monkeypatch)
@@ -469,7 +469,7 @@ def test_concurrent_content_hash_dedup_removes_loser_artifact(
 def test_concurrent_dreaming_title_window_removes_loser_artifact(tmp_path, monkeypatch):
     import concurrent.futures
     import threading
-    import aletheia.knowledge.manager as manager
+    import extensions.knowledge.manager as manager
     from aletheia.storage.sqlite import get_db
 
     setup_test_env(tmp_path, monkeypatch)

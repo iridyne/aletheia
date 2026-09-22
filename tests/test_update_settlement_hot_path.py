@@ -30,7 +30,7 @@ def _checkpoint(*, ok: bool, reason: str, fingerprint: str = "trusted"):
 def test_caught_up_update_settlement_is_a_true_read_only_fast_path(
     tmp_path, monkeypatch,
 ):
-    from aletheia.observation_lab import canonical, runner, update_settlement
+    from extensions.observation_lab import canonical, runner, update_settlement
 
     _install_lab_root(tmp_path, monkeypatch)
     checkpoint = {
@@ -76,7 +76,7 @@ def test_caught_up_update_settlement_is_a_true_read_only_fast_path(
 def test_update_settlement_drains_only_delivery_then_strictly_verifies(
     tmp_path, monkeypatch,
 ):
-    from aletheia.observation_lab import canonical, checkpoint, runner, update_settlement
+    from extensions.observation_lab import canonical, checkpoint, runner, update_settlement
 
     _install_lab_root(tmp_path, monkeypatch)
     states = iter((
@@ -154,7 +154,7 @@ def test_update_settlement_drains_only_delivery_then_strictly_verifies(
 
 
 def test_update_settlement_refuses_retry_before_import(tmp_path, monkeypatch):
-    from aletheia.observation_lab import canonical, runner, update_settlement
+    from extensions.observation_lab import canonical, runner, update_settlement
 
     _install_lab_root(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -192,7 +192,7 @@ def test_update_settlement_refuses_retry_before_import(tmp_path, monkeypatch):
 
 
 def test_update_barrier_keeps_cycle_lock_around_minimal_cut(monkeypatch):
-    from aletheia.observation_lab import runner, update_settlement, worker_lock
+    from extensions.observation_lab import runner, update_settlement, worker_lock
 
     events: list[str] = []
 
@@ -221,7 +221,7 @@ def test_update_barrier_keeps_cycle_lock_around_minimal_cut(monkeypatch):
 def _stub_capture_dependencies(monkeypatch, verdicts) -> None:
     from aletheia.cli import control_cmd
     from aletheia.config import loader
-    from aletheia.observation_lab import checkpoint, db as lab_db, execution_owner, manifest
+    from extensions.observation_lab import checkpoint, db as lab_db, execution_owner, manifest
     from aletheia.storage import sqlite as storage_sqlite
     from aletheia.update import continuity, git_ops
 
@@ -321,7 +321,7 @@ def test_update_progress_separates_stop_settlement_and_keeps_lock(
     tmp_path, monkeypatch,
 ):
     from aletheia.backup import service as backup_service
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier, continuity, target_fresh
 
     old = "old-sha"

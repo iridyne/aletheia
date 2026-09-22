@@ -1,6 +1,6 @@
 """Property-based invariants for policy-epoch identity.
 
-``aletheia/learning/policy_epochs.py`` produces the deterministic hash that
+``extensions/learning/policy_epochs.py`` produces the deterministic hash that
 every downstream evidence-cutoff / attribution query relies on. If two
 semantically equal policies produce different hashes, epochs churn on
 restart and observation windows fragment. If two semantically different
@@ -32,7 +32,7 @@ import json
 from hypothesis import given, settings, strategies as st
 
 from aletheia.config.secrets import is_secret_key, normalize_secret_key
-from aletheia.learning.policy_epochs import (
+from extensions.learning.policy_epochs import (
     PolicyEpoch,
     _SECRET_FRAGMENTS,
     build_policy_epoch,

@@ -6,12 +6,13 @@ import pytest
 
 
 @pytest.mark.parametrize("legacy_enabled", [False, True])
-def test_guard_job_only_runs_existing_expiry(monkeypatch, legacy_enabled):
+def test_guard_job_only_runs_existing_expiry(monkeypatch, legacy_enabled, optional_evidence_jobs):
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import guard_promotion as gp, trade_attribution
+    from extensions.analytics import guard_promotion as gp
+    from aletheia.analytics import trade_attribution
     from aletheia.config.loader import load_config, save_config
-    from aletheia.knowledge.guards import TradingGuard
-    from aletheia.learning import control
+    from extensions.knowledge.guards import TradingGuard
+    from extensions.learning import control
 
     cfg = load_config()
     cfg.runtime.paused = False
@@ -32,9 +33,9 @@ def test_guard_job_only_runs_existing_expiry(monkeypatch, legacy_enabled):
     expiry.assert_called_once_with()
 
 
-def test_paused_guard_job_does_not_run_expiry(monkeypatch):
+def test_paused_guard_job_does_not_run_expiry(monkeypatch, optional_evidence_jobs):
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import guard_promotion as gp
+    from extensions.analytics import guard_promotion as gp
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()

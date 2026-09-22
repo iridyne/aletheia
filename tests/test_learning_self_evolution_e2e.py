@@ -3,22 +3,22 @@
 
 
 def test_contrastive_memory_publishes_nomination_without_experiment_authority():
-    from aletheia.learning.contrastive_evidence import (
+    from extensions.learning.contrastive_evidence import (
         ContrastiveEvidenceItemV1,
         build_contrastive_bundle,
     )
-    from aletheia.learning.hypothesis_compiler import (
+    from extensions.learning.hypothesis_compiler import (
         assess_experimentability,
         compile_hypothesis_draft,
     )
-    from aletheia.learning.hypotheses import (
+    from extensions.learning.hypotheses import (
         HypothesisGenerationManifestV1,
         HypothesisNominationEnvelopeV1,
         publish_hypothesis_nomination,
     )
     from aletheia.storage.sqlite import get_db
     from tests.test_learning_hypothesis_nominations import _envelope
-    from aletheia.learning.memory_assets import MemoryAssetRefV1
+    from extensions.learning.memory_assets import MemoryAssetRefV1
     base = _envelope("e2e-foundation")
     discovery = MemoryAssetRefV1(
         asset_id="case-1",

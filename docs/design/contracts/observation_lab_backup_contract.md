@@ -2,7 +2,7 @@
 
 > Status: Issue #1072 Cluster 5 addition to the Observation Lab contract.
 > Referenced from `observation_lab_contract.md` §5.
-> Enforced by `aletheia/observation_lab/checkpoint.py`.
+> Enforced by `extensions/observation_lab/checkpoint.py`.
 
 New #1072 §"Storage and runtime boundary" (verbatim):
 

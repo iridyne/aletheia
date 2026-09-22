@@ -408,7 +408,7 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import pi_daemon, scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
 
     src = _src("aletheia/agent_runtime/scheduler.py")
     assert '_guarded("pi_trading_heartbeat", _run_pi_trading_decision)' in src

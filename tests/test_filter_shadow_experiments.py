@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def lab_authority():
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
 
     set_authority_source("lab", actor="test", reason="filter-shadow fixture")
 
@@ -134,8 +134,8 @@ def _record_ttl_candidate(
 
 
 def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
     first = register_replay_ready_experiments([_ready_replay(filter_version="fixed-v1")], now=started_at)
@@ -153,11 +153,11 @@ def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
 
 
 def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_config(monkeypatch):
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
     version = _record_ttl_candidate(
@@ -205,13 +205,13 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
 
 
 def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         build_filter_shadow_experiment_report,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.evaluator import evaluate_observation
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.evaluator import evaluate_observation
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()
@@ -291,7 +291,7 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
         root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
     )
     assert repeated["evaluations"][0]["evaluation_id"] == evaluated["evaluations"][0]["evaluation_id"]
-    from aletheia.counterfactual.filter_experiments import evaluate_active_shadow_experiments
+    from extensions.counterfactual.filter_experiments import evaluate_active_shadow_experiments
 
     assert evaluate_active_shadow_experiments(
         now=start + timedelta(hours=2),
@@ -324,7 +324,7 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
     # The scheduled Lab pass must evaluate the canonical root too; a Lab
     # authority branch that merely reports "skipped" would leave the active
     # filter-shadow generation without a lifecycle/evidence advance.
-    from aletheia.observation_lab.runner import run_lab_windows
+    from extensions.observation_lab.runner import run_lab_windows
 
     runner_result = run_lab_windows()
     filter_window = runner_result["results"]["filter_shadow_evaluate"]
@@ -334,9 +334,9 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
 
 
 def test_lab_filter_shadow_registration_reports_idempotent_repeat():
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import reset_lab_db
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import reset_lab_db
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-registration-test")
@@ -358,10 +358,10 @@ def test_lab_filter_shadow_registration_reports_idempotent_repeat():
 
 
 def test_lab_filter_shadow_respects_half_open_collect_interval():
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.canonical import register_observation_spec
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-half-open-test")
@@ -406,9 +406,9 @@ def test_lab_filter_shadow_respects_half_open_collect_interval():
 
 
 def test_lab_filter_shadow_rejects_malformed_source_time():
-    from aletheia.observation_lab.canonical import register_observation_spec, set_authority_source
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from extensions.observation_lab.canonical import register_observation_spec, set_authority_source
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()
@@ -452,7 +452,7 @@ def test_lab_filter_shadow_rejects_malformed_source_time():
 
 
 def test_lab_filter_shadow_rejects_malformed_observation_start():
-    from aletheia.observation_lab import filter_shadow
+    from extensions.observation_lab import filter_shadow
 
     with pytest.raises(ValueError, match="observation_started_at_unavailable"):
         filter_shadow._source_rows(
@@ -472,7 +472,7 @@ def test_lab_filter_shadow_rejects_malformed_observation_start():
 
 
 def test_lab_filter_shadow_rejects_empty_active_observation_interval():
-    from aletheia.observation_lab import filter_shadow
+    from extensions.observation_lab import filter_shadow
 
     with pytest.raises(ValueError, match="observation_interval_unavailable"):
         filter_shadow._source_rows(
@@ -494,10 +494,10 @@ def test_lab_filter_shadow_rejects_empty_active_observation_interval():
 
 def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
     from aletheia.analytics.filter_evidence import record_filter_decision
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.evaluator import evaluate_observation
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.evaluator import evaluate_observation
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
@@ -617,10 +617,10 @@ def _ready_observer_replay(*, filter_version: str) -> dict:
 
 
 def test_observer_pre_filter_replay_registers_least_permissive_winner():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
     replay = _ready_observer_replay(filter_version="obs-fixed-v1")
@@ -645,10 +645,10 @@ def test_observer_pre_filter_replay_registers_least_permissive_winner():
 
 
 def test_observer_replay_without_ready_alternatives_is_skipped():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
     replay = _ready_observer_replay(filter_version="obs-empty-v1")
@@ -663,8 +663,8 @@ def test_observer_replay_without_ready_alternatives_is_skipped():
 
 
 def test_ranker_confidence_replay_selects_least_permissive_threshold():
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     replay = _ready_ranker_replay()
     replay["alternatives"].append({"minimum_confidence": "speculative", "readiness": "ready_for_controlled_experiment"})
@@ -676,11 +676,11 @@ def test_ranker_confidence_replay_selects_least_permissive_threshold():
 
 
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
     version = _record_ttl_candidate(
@@ -795,11 +795,11 @@ def _record_ranker_candidate(
 
 
 def test_frozen_units_use_exact_first_exposure_within_same_second():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     started_at = datetime(2026, 8, 30, 10, 0, 0, 50_000, tzinfo=timezone.utc)
@@ -866,11 +866,11 @@ def _seed_ranker_cohort(
 
 
 def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
@@ -903,12 +903,12 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
 
 
 def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze():
-    from aletheia.counterfactual.filter_experiments import (
+    from extensions.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from extensions.observation_lab.db import get_lab_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
@@ -947,8 +947,8 @@ def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze()
 
 
 def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
-    from aletheia.counterfactual import filter_experiments as fe
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.counterfactual import filter_experiments as fe
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
     from aletheia.storage.sqlite import get_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
@@ -975,8 +975,8 @@ def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
 
 
 def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
-    from aletheia.counterfactual import filter_experiments as fe
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from extensions.counterfactual import filter_experiments as fe
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
@@ -1003,9 +1003,9 @@ def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
 
 
 def test_two_ranker_experiments_collect_independently():
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from extensions.observation_lab.db import get_lab_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     for family in ("mean_reversion", "momentum"):
@@ -1025,9 +1025,9 @@ def test_two_ranker_experiments_collect_independently():
 
 
 def test_controller_lab_pass_advances_canonical_observation():
-    from aletheia.analytics.filter_controller import run_controller_observe
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.analytics.filter_controller import run_controller_observe
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.db import get_lab_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     version = _seed_ranker_cohort(start, count=20)
@@ -1046,7 +1046,7 @@ def test_controller_lab_pass_advances_canonical_observation():
 
 
 def test_controller_legacy_authority_refuses_without_recommendation_writes():
-    from aletheia.analytics.filter_controller import run_controller_observe
+    from extensions.analytics.filter_controller import run_controller_observe
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -1099,8 +1099,8 @@ def test_lab_db_is_physically_isolated_from_app_db(monkeypatch, tmp_path):
     Production migrations cannot silently rewrite frozen units.
     """
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import lab_db_path, reset_lab_db
-    from aletheia.observation_lab.units import count_frozen_units, insert_frozen_units
+    from extensions.observation_lab.db import lab_db_path, reset_lab_db
+    from extensions.observation_lab.units import count_frozen_units, insert_frozen_units
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
@@ -1138,8 +1138,8 @@ def test_lab_db_open_readonly_snapshot_rejects_writes(monkeypatch, tmp_path):
     import sqlite3
 
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import lab_db_path, reset_lab_db
-    from aletheia.observation_lab.units import insert_frozen_units
+    from extensions.observation_lab.db import lab_db_path, reset_lab_db
+    from extensions.observation_lab.units import insert_frozen_units
     from aletheia.storage.sqlite import open_readonly_snapshot
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

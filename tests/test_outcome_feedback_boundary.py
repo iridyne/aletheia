@@ -11,7 +11,7 @@ import pytest
     ('core', False), ('web', False), ('cli', False), ('web', True), ('cli', True),
 ])
 def test_core_outcome_import_and_lazy_bootstrap_binding(entrypoint, available):
-    blocked = set() if available else {'aletheia.learning.outcome_feedback', 'aletheia.counterfactual.trades'}
+    blocked = set() if available else {'extensions.learning.outcome_feedback', 'extensions.counterfactual.trades'}
     script = f'blocked = {blocked!r}\n' + """
 import sys
 class MissingFeedback:
@@ -34,10 +34,10 @@ else:
     elif entrypoint == 'cli':
         script += '\nfrom aletheia import main\nmain._configure_runtime()\n'
     if available:
-        script += '\nfrom aletheia.learning.outcome_feedback import execute_outcome_feedback\nassert outcome_hooks._feedback_executor is execute_outcome_feedback\n'
+        script += '\nfrom extensions.learning.outcome_feedback import execute_outcome_feedback\nassert outcome_hooks._feedback_executor is execute_outcome_feedback\n'
     else:
         script += '\nassert outcome_hooks._feedback_executor is None\n'
-    script += '\nassert "aletheia.counterfactual.trades" not in sys.modules\n'
+    script += '\nassert "extensions.counterfactual.trades" not in sys.modules\n'
     result = subprocess.run(
         [sys.executable, '-c', script], cwd=Path(__file__).resolve().parents[1],
         capture_output=True, text=True, timeout=20,

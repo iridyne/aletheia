@@ -16,7 +16,7 @@ def _domain(
     state: str = "available",
     source_class: str = "observed_fact",
 ):
-    from aletheia.learning.t0_context import T0ContextDomainV1
+    from extensions.learning.t0_context import T0ContextDomainV1
 
     return T0ContextDomainV1(
         domain=name,
@@ -35,7 +35,7 @@ def _domain(
 
 
 def _ranker_envelope(*, domains=None, population_identity: str | None = "population-1"):
-    from aletheia.learning.t0_context import T0ContextEnvelopeV1
+    from extensions.learning.t0_context import T0ContextEnvelopeV1
 
     required = [
         "candidate", "population", "features", "market_identity",
@@ -70,7 +70,7 @@ def _ranker_envelope(*, domains=None, population_identity: str | None = "populat
     status="implemented",
 ))
 def test_operator_reasoning_cannot_enter_ranker_t0():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope(domains=[
         *[_domain(name) for name in _ranker_envelope().required_domains],
@@ -88,7 +88,7 @@ def test_operator_reasoning_cannot_enter_ranker_t0():
     status="implemented",
 ))
 def test_received_after_boundary_is_future_information():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     domains = [_domain(name) for name in _ranker_envelope().required_domains]
     domains[0] = _domain("candidate", received_at="2026-01-01T00:00:01+00:00")
@@ -104,7 +104,7 @@ def test_received_after_boundary_is_future_information():
     status="implemented",
 ))
 def test_position_artifacts_deduplicate_to_one_root_observation():
-    from aletheia.learning.memory_assets import MemoryAssetRefV1, unique_root_observations
+    from extensions.learning.memory_assets import MemoryAssetRefV1, unique_root_observations
 
     assets = [
         MemoryAssetRefV1(
@@ -127,7 +127,7 @@ def test_position_artifacts_deduplicate_to_one_root_observation():
     status="implemented",
 ))
 def test_ranker_without_population_context_is_advisory_only():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     assessment = assess_t0_foundation(_ranker_envelope(population_identity=None))
     assert assessment.population_context_ok is False
@@ -141,7 +141,7 @@ def test_ranker_without_population_context_is_advisory_only():
     status="implemented",
 ))
 def test_knowledge_artifact_cannot_be_causal_anchor():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope().model_copy(update={"t0_anchor_kind": "knowledge_item"})
     assessment = assess_t0_foundation(envelope)
@@ -155,7 +155,7 @@ def test_knowledge_artifact_cannot_be_causal_anchor():
     status="implemented",
 ))
 def test_retention_replay_uses_captured_projection_or_reports_pruned():
-    from aletheia.learning.t0_context import replay_t0_envelope
+    from extensions.learning.t0_context import replay_t0_envelope
 
     captured = _ranker_envelope()
     assert replay_t0_envelope(
@@ -176,7 +176,7 @@ def test_retention_replay_uses_captured_projection_or_reports_pruned():
     status="implemented",
 ))
 def test_narrative_belief_cannot_satisfy_required_fact():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     domains = [_domain(name) for name in _ranker_envelope().required_domains]
     domains[0] = _domain("candidate", source_class="model_belief")
@@ -191,7 +191,7 @@ def test_narrative_belief_cannot_satisfy_required_fact():
     status="implemented",
 ))
 def test_not_applicable_domain_satisfies_declared_contract():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope().model_copy(update={
         "required_domains": [*_ranker_envelope().required_domains, "funding"],
@@ -209,7 +209,7 @@ def test_not_applicable_domain_satisfies_declared_contract():
     status="implemented",
 ))
 def test_duplicate_root_blocks_automatic_research_readiness():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     assessment = assess_t0_foundation(
         _ranker_envelope(),
@@ -226,7 +226,7 @@ def test_duplicate_root_blocks_automatic_research_readiness():
     status="implemented",
 ))
 def test_material_scope_over_budget_is_advisory():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     assessment = assess_t0_foundation(
         _ranker_envelope(),
@@ -242,7 +242,7 @@ def test_material_scope_over_budget_is_advisory():
     status="implemented",
 ))
 def test_exit_trajectory_excludes_later_path_facts():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope(domains=[
         _domain(
@@ -268,7 +268,7 @@ def test_exit_trajectory_excludes_later_path_facts():
     status="implemented",
 ))
 def test_reconstructed_partial_cannot_auto_nominate():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope().model_copy(update={
         "capture_mode": "reconstructed_partial",
@@ -284,7 +284,7 @@ def test_reconstructed_partial_cannot_auto_nominate():
     status="implemented",
 ))
 def test_observed_after_boundary_is_future_information():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     domains = [_domain(name) for name in _ranker_envelope().required_domains]
     domains[0] = _domain(
@@ -338,7 +338,7 @@ def test_unprovable_available_domain_time_is_advisory(
     reason: str,
     domain_name: str,
 ):
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     envelope = _ranker_envelope()
     replacement = _domain(domain_name, **{field: value})
@@ -356,7 +356,7 @@ def test_unprovable_available_domain_time_is_advisory(
 
 
 def test_offset_equivalent_boundary_times_remain_eligible():
-    from aletheia.learning.t0_context import assess_t0_foundation
+    from extensions.learning.t0_context import assess_t0_foundation
 
     domains = [
         _domain(

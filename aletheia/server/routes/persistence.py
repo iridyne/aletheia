@@ -279,7 +279,7 @@ class ExportRequest(BaseModel):
 @router.post("/export")
 def create_export(req: ExportRequest):
     """Create an export bundle."""
-    from aletheia.sync.exporter import ExportService
+    from extensions.sync.exporter import ExportService
 
     svc = ExportService()
     path = svc.export_bundle(mode=req.mode, since=req.since, proposal_id=req.proposal_id)
@@ -302,7 +302,7 @@ def import_bundle(req: ImportRequest):
     Only accepts paths inside the managed archive roots (data_dir/backups or
     data_dir/exports) — see #66 fix in `_resolve_archive_path`.
     """
-    from aletheia.sync.importer import ImportService
+    from extensions.sync.importer import ImportService
 
     archive = _resolve_archive_path(req.path)
     svc = ImportService()
@@ -319,7 +319,7 @@ def import_bundle(req: ImportRequest):
 @router.get("/lessons")
 def list_lessons(status: str | None = None, limit: int = Query(default=50, le=200)):
     """List lessons."""
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lessons = store.list_all(status=status, limit=limit)
@@ -329,7 +329,7 @@ def list_lessons(status: str | None = None, limit: int = Query(default=50, le=20
 @router.get("/lessons/{lesson_id}")
 def get_lesson(lesson_id: str):
     """Get a single lesson."""
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lesson = store.get(lesson_id)
@@ -361,7 +361,7 @@ def _lesson_transition_result(store, lesson_id: str, target_status: str):
 @router.post("/lessons/{lesson_id}/accept")
 def accept_lesson(lesson_id: str):
     """Accept a proposed lesson into dry-run review."""
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     _lesson_or_404(store, lesson_id)
@@ -372,7 +372,7 @@ def accept_lesson(lesson_id: str):
 @router.post("/lessons/{lesson_id}/reject")
 def reject_lesson(lesson_id: str):
     """Reject a lesson so it no longer enters the promotion path."""
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lesson = _lesson_or_404(store, lesson_id)
@@ -383,7 +383,7 @@ def reject_lesson(lesson_id: str):
 @router.post("/lessons/{lesson_id}/archive")
 def archive_lesson(lesson_id: str):
     """Archive a superseded lesson without deleting its record."""
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lesson = _lesson_or_404(store, lesson_id)
@@ -397,7 +397,7 @@ def archive_lesson(lesson_id: str):
 @router.get("/skills")
 def list_skills(scope: str | None = None, status: str | None = None, limit: int = Query(default=50, le=200)):
     """List skills."""
-    from aletheia.learning.skills import SkillStore
+    from extensions.learning.skills import SkillStore
 
     store = SkillStore()
     skills = store.list_all(scope=scope, status=status, limit=limit)
@@ -410,7 +410,7 @@ def list_skills(scope: str | None = None, status: str | None = None, limit: int 
 @router.get("/policies")
 def list_policies():
     """List all policy types."""
-    from aletheia.policies.store import PolicyStore
+    from extensions.policies.store import PolicyStore
 
     store = PolicyStore()
     return {"policy_types": store.list_policy_types()}
@@ -419,7 +419,7 @@ def list_policies():
 @router.get("/policies/diff")
 def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
     """Diff two policy versions by their IDs."""
-    from aletheia.policies.diff import diff_policy_versions
+    from extensions.policies.diff import diff_policy_versions
 
     try:
         return diff_policy_versions(from_id, to_id)
@@ -430,7 +430,7 @@ def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
 @router.get("/policies/{policy_type}")
 def get_policy(policy_type: str):
     """Get current version of a policy type."""
-    from aletheia.policies.store import PolicyStore
+    from extensions.policies.store import PolicyStore
 
     store = PolicyStore()
     current = store.get_current(policy_type)
@@ -442,7 +442,7 @@ def get_policy(policy_type: str):
 @router.get("/policies/{policy_type}/versions")
 def list_policy_versions(policy_type: str):
     """List all versions of a policy type."""
-    from aletheia.policies.store import PolicyStore
+    from extensions.policies.store import PolicyStore
 
     store = PolicyStore()
     versions = store.list_versions(policy_type)

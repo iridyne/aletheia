@@ -4,12 +4,12 @@ from __future__ import annotations
 
 
 def test_fresh_cursor_with_pending_receipt_is_importable_then_settled():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
     )
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.update_settlement import (
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.update_settlement import (
         _delivery_transport_state,
     )
 

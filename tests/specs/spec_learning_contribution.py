@@ -31,7 +31,7 @@ def _fresh_ranker_mark(_opp: dict) -> dict:
     )
 )
 def test_contribution_aggregation_deduplicates_outcome_identity():
-    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+    from extensions.learning.contribution import ContributionObservation, aggregate_observations
 
     rows = [
         ContributionObservation(
@@ -64,7 +64,7 @@ def test_contribution_aggregation_deduplicates_outcome_identity():
     )
 )
 def test_distinct_outcomes_remain_distinct_but_overlap_is_one_sample():
-    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+    from extensions.learning.contribution import ContributionObservation, aggregate_observations
 
     rows = [
         ContributionObservation("ranker_memo_score", "ranker", "candidate:a", "4h", "treatment", 1.0, "memo"),
@@ -88,8 +88,8 @@ def test_distinct_outcomes_remain_distinct_but_overlap_is_one_sample():
     )
 )
 def test_ineligible_contribution_evidence_requests_refreeze():
-    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
-    from aletheia.learning.evidence import EvidenceClass
+    from extensions.learning.contribution import ContributionObservation, aggregate_observations
+    from extensions.learning.evidence import EvidenceClass
 
     report = aggregate_observations([
         ContributionObservation(
@@ -239,8 +239,8 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     )
 )
 def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(monkeypatch):
-    from aletheia.analytics.guard_effectiveness import compute_guard_stats
-    from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
+    from extensions.analytics.guard_effectiveness import compute_guard_stats
+    from extensions.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
     from aletheia.storage.sqlite import get_db
 
     guard = TradingGuard(
@@ -252,10 +252,10 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
         applies_to=GuardAppliesTo(asset_class=["crypto"]),
     )
     monkeypatch.setattr(
-        "aletheia.analytics.guard_effectiveness.load_trading_guards", lambda **_: [guard]
+        "extensions.analytics.guard_effectiveness.load_trading_guards", lambda **_: [guard]
     )
     monkeypatch.setattr(
-        "aletheia.analytics.guard_effectiveness.build_trade_attribution_rows", lambda **_: []
+        "extensions.analytics.guard_effectiveness.build_trade_attribution_rows", lambda **_: []
     )
 
     db = get_db()
@@ -421,7 +421,7 @@ def _insert_trade(idx: int, pnl_pct: float, closed_at: str) -> None:
     ),
 )
 def test_shadow_cohort_is_not_causally_eligible():
-    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+    from extensions.learning.contribution import ContributionObservation, aggregate_observations
 
     # Shadow: both arms ran baseline (authority_applied False everywhere). Even with a
     # clean treatment/control return spread, this must NOT be read as causal.
@@ -458,7 +458,7 @@ def test_shadow_cohort_is_not_causally_eligible():
 ))
 def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
     """Paths without exact cohort adapters must remain out of SUPPORTED_PATH_IDS."""
-    from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
+    from extensions.learning.cohorts import SUPPORTED_PATH_IDS
 
     _PATHS_WITHOUT_ADAPTERS = {
         "operator_learning_bundle",
@@ -474,7 +474,7 @@ def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
 def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
     from datetime import datetime, timezone
 
-    from aletheia.learning.cohorts import _load_ranker_case_outcomes
+    from extensions.learning.cohorts import _load_ranker_case_outcomes
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -514,7 +514,7 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
     status="implemented",
 ))
 def test_conflicting_outcome_values_fail_closed():
-    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+    from extensions.learning.contribution import ContributionObservation, aggregate_observations
 
     conflict = aggregate_observations([
         ContributionObservation("ranker_case_score", "ranker", "candidate:x", "4h",

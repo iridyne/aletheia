@@ -1,6 +1,6 @@
 """Tests for the Round-1 anti-hallucination knowledge-store cleanup.
 
-Locks reclassify_legacy_reviews (aletheia.knowledge.maintenance): a legacy
+Locks reclassify_legacy_reviews (extensions.knowledge.maintenance): a legacy
 high_confidence post_trade_review must be downgraded to medium_confidence and thereby
 fall out of the high_confidence retrieval gate / FTS index, without being deleted, and
 the operation must be idempotent.
@@ -11,9 +11,9 @@ from tests.test_experience_loop import setup_env
 
 def test_reclassify_legacy_reviews_downgrades_and_deindexes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_post_trade_review
-    from aletheia.knowledge.retrieval import retrieve_lessons
-    from aletheia.knowledge.maintenance import reclassify_legacy_reviews
+    from extensions.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.maintenance import reclassify_legacy_reviews
     from aletheia.storage.sqlite import get_db
 
     # Seed a review in the LEGACY state (pre-C1 reviewer stamped high_confidence).
@@ -50,8 +50,8 @@ def test_reclassify_legacy_reviews_downgrades_and_deindexes(tmp_path, monkeypatc
 
 def test_reclassify_legacy_reviews_idempotent_and_dry_run(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_post_trade_review
-    from aletheia.knowledge.maintenance import reclassify_legacy_reviews
+    from extensions.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.maintenance import reclassify_legacy_reviews
 
     create_post_trade_review(
         title="Post-Trade Review: ETH short",
@@ -74,9 +74,9 @@ def test_reclassify_legacy_reviews_idempotent_and_dry_run(tmp_path, monkeypatch)
 
 def test_archive_synthetic_trade_case_studies_archives_and_deindexes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_trade_case_study
-    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_trade_case_study
+    from extensions.knowledge.maintenance import archive_synthetic_trade_case_studies
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import get_db
 
     synthetic = create_trade_case_study(
@@ -118,8 +118,8 @@ def test_archive_synthetic_trade_case_studies_archives_and_deindexes(tmp_path, m
 
 def test_archive_synthetic_trade_case_studies_dry_run_and_idempotent(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_trade_case_study
-    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+    from extensions.knowledge.manager import create_trade_case_study
+    from extensions.knowledge.maintenance import archive_synthetic_trade_case_studies
 
     create_trade_case_study(
         title="Case: SOL/USDT short (demo_validation_cleanup)",
@@ -147,8 +147,8 @@ def test_archive_synthetic_trade_case_studies_dry_run_and_idempotent(tmp_path, m
 
 def test_archive_synthetic_trade_case_studies_uses_shared_close_reason_list(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_trade_case_study
-    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+    from extensions.knowledge.manager import create_trade_case_study
+    from extensions.knowledge.maintenance import archive_synthetic_trade_case_studies
 
     for reason in ("units_bug_cleanup", "retry_after_fix"):
         create_trade_case_study(
@@ -168,7 +168,7 @@ def test_archive_synthetic_trade_case_studies_uses_shared_close_reason_list(tmp_
 
 def test_downgrade_unindexable_high_confidence_items(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.maintenance import downgrade_unindexable_high_confidence_items
+    from extensions.knowledge.maintenance import downgrade_unindexable_high_confidence_items
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
     from aletheia.storage.sqlite import get_db
@@ -214,9 +214,9 @@ def test_downgrade_unindexable_high_confidence_items(tmp_path, monkeypatch):
 
 def test_downgrade_unattributed_trade_case_studies(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_trade_case_study
-    from aletheia.knowledge.maintenance import downgrade_unattributed_trade_case_studies
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_trade_case_study
+    from extensions.knowledge.maintenance import downgrade_unattributed_trade_case_studies
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import get_db
 
     missing = create_trade_case_study(

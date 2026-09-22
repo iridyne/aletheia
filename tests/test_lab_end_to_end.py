@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 
 def test_lab_runner_captures_once_and_keeps_checkpoint_and_legacy_evidence():
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.runner import run_lab_windows
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.runner import run_lab_windows
     from aletheia.storage.sqlite import get_db
     from tests.test_filter_shadow_experiments import _ready_ranker_replay, _seed_ranker_cohort
 
@@ -39,8 +39,8 @@ def test_lab_runner_captures_once_and_keeps_checkpoint_and_legacy_evidence():
 
 
 def test_lab_runner_rejects_legacy_authority_without_advancing_old_experiment():
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.runner import run_lab_windows
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.runner import run_lab_windows
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

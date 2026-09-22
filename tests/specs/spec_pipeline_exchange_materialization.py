@@ -1323,7 +1323,7 @@ def test_complete_private_close_fill_closes_linked_position_once(tmp_path, monke
             close_reason=close_reason,
         )
 
-    from aletheia.learning import outcome_feedback
+    from extensions.learning import outcome_feedback
     monkeypatch.setattr(outcome_feedback, "_close_serenity_feedback", _capture_feedback)
 
     first = reconcile()

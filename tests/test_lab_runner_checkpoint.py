@@ -13,7 +13,7 @@ import pytest
 
 @pytest.fixture
 def clean_registry():
-    from aletheia.observation_lab.runner import _WINDOWS, registered_windows
+    from extensions.observation_lab.runner import _WINDOWS, registered_windows
 
     snapshot = list(registered_windows())
     _WINDOWS.clear()
@@ -23,8 +23,8 @@ def clean_registry():
 
 
 def test_runner_saves_and_reports_joint_checkpoint(clean_registry):
-    from aletheia.observation_lab.checkpoint import latest_joint_checkpoint
-    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+    from extensions.observation_lab.checkpoint import latest_joint_checkpoint
+    from extensions.observation_lab.runner import LabWindow, register_window, run_lab_windows
 
     register_window(LabWindow(name="noop", kind="test", fn=lambda: {"status": "ok"}))
     summary = run_lab_windows()
@@ -43,8 +43,8 @@ def test_runner_saves_and_reports_joint_checkpoint(clean_registry):
 
 def test_runner_reports_mismatch_on_manifest_change(clean_registry):
     """Publishing a new active manifest between passes surfaces as ``ok=False``."""
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
-    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.observation_lab.runner import LabWindow, register_window, run_lab_windows
 
     register_window(LabWindow(name="noop", kind="test", fn=lambda: {"status": "ok"}))
 
@@ -90,7 +90,7 @@ def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
     """A raise inside the checkpoint step must not stop windows from running."""
     from unittest.mock import patch
 
-    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+    from extensions.observation_lab.runner import LabWindow, register_window, run_lab_windows
 
     ran = {"count": 0}
 
@@ -101,7 +101,7 @@ def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
     register_window(LabWindow(name="alpha", kind="test", fn=_fn))
 
     with patch(
-        "aletheia.observation_lab.checkpoint.verify_joint_checkpoint",
+        "extensions.observation_lab.checkpoint.verify_joint_checkpoint",
         side_effect=RuntimeError("simulated checkpoint failure"),
     ):
         summary = run_lab_windows()
@@ -114,8 +114,8 @@ def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
 
 
 def test_runner_checkpoints_expected_append_only_window_writes(clean_registry):
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.runner import LabWindow, register_window, run_lab_windows
 
     counter = {"n": 0}
 
@@ -142,11 +142,11 @@ def test_runner_checkpoints_expected_append_only_window_writes(clean_registry):
 
 
 def test_runner_imports_receipts_appended_after_previous_checkpoint(clean_registry):
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
     )
-    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+    from extensions.observation_lab.runner import LabWindow, register_window, run_lab_windows
 
     run_lab_windows()
     append_delivery_receipt(
@@ -167,13 +167,13 @@ def test_runner_imports_receipts_appended_after_previous_checkpoint(clean_regist
 
 def test_main_bridge_checkpoints_imported_receipts_and_refuses_existing_drift():
     from aletheia.agent_runtime import scheduler
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     save_joint_checkpoint(compute_joint_checkpoint())
@@ -215,8 +215,8 @@ def test_main_bridge_checkpoints_imported_receipts_and_refuses_existing_drift():
 
 
 def test_settlement_drains_batches_and_refuses_poison(monkeypatch):
-    from aletheia.observation_lab import canonical, checkpoint, runner
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import canonical, checkpoint, runner
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
 
@@ -245,7 +245,7 @@ def test_settlement_drains_batches_and_refuses_poison(monkeypatch):
 
 
 def test_checkpoint_save_refuses_unavailable_outbox(monkeypatch):
-    from aletheia.observation_lab import checkpoint, runner
+    from extensions.observation_lab import checkpoint, runner
 
     current = checkpoint.JointCheckpoint(
         checkpoint_id="bad", recorded_at="2026-09-04T00:00:00+00:00",
@@ -268,8 +268,8 @@ def test_checkpoint_save_refuses_unavailable_outbox(monkeypatch):
 def test_settlement_reports_cycle_lock_contention_without_mutation(monkeypatch):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import canonical, runner, worker_lock
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import canonical, runner, worker_lock
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
 
@@ -292,8 +292,8 @@ def test_settlement_reports_cycle_lock_contention_without_mutation(monkeypatch):
 
 
 def test_settlement_preserves_poison_reason_before_checkpoint_rejection(monkeypatch):
-    from aletheia.observation_lab import canonical, runner
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import canonical, runner
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
 
@@ -332,8 +332,8 @@ def test_settlement_preserves_poison_reason_before_checkpoint_rejection(monkeypa
 
 
 def _checkpointed_capture(receipt_id: str) -> None:
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
 
     save_joint_checkpoint(compute_joint_checkpoint())
     append_delivery_receipt(
@@ -347,7 +347,7 @@ def _checkpointed_capture(receipt_id: str) -> None:
 def test_settlement_retry_after_lab_transaction_rolls_back(monkeypatch):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import canonical, runner
+    from extensions.observation_lab import canonical, runner
 
     _checkpointed_capture("crash-before-lab-commit")
     real_transaction = canonical.lab_transaction
@@ -369,7 +369,7 @@ def test_settlement_retry_after_lab_transaction_rolls_back(monkeypatch):
 def test_settlement_fails_closed_after_lab_commit_before_main_ack(monkeypatch):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.storage import repositories
 
     _checkpointed_capture("crash-before-main-ack")
@@ -392,7 +392,7 @@ def test_settlement_fails_closed_after_lab_commit_before_main_ack(monkeypatch):
 
 
 def test_settlement_fails_closed_after_main_ack_before_checkpoint(monkeypatch):
-    from aletheia.observation_lab import checkpoint, runner
+    from extensions.observation_lab import checkpoint, runner
 
     _checkpointed_capture("crash-before-checkpoint")
     trusted = checkpoint.latest_joint_checkpoint()
@@ -420,7 +420,7 @@ def test_settlement_fails_closed_after_main_ack_before_checkpoint(monkeypatch):
 def test_settlement_retry_converges_after_save_before_postverify(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.observation_lab import checkpoint, runner
+    from extensions.observation_lab import checkpoint, runner
 
     _checkpointed_capture("crash-after-checkpoint-save")
     real_verify = checkpoint.verify_joint_checkpoint
@@ -441,9 +441,9 @@ def test_settlement_retry_converges_after_save_before_postverify(monkeypatch):
 
 
 def test_settlement_never_rebaselines_unrelated_lab_drift():
-    from aletheia.observation_lab import runner
-    from aletheia.observation_lab.checkpoint import latest_joint_checkpoint
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import runner
+    from extensions.observation_lab.checkpoint import latest_joint_checkpoint
+    from extensions.observation_lab.db import get_lab_db
 
     _checkpointed_capture("acked-before-unrelated-drift")
     assert runner.settle_observation_continuity()["ok"] is True

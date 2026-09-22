@@ -124,8 +124,8 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     "lessons and are never promoted while carrying the shadow-only tag (#197).",
     status="implemented",
 ))
-async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
-    from aletheia.learning import guard_routing
+async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch, optional_evidence_jobs):
+    from extensions.learning import guard_routing
 
     captured = {}
     created_ids = iter(("candidate-item", "candidate-item-2"))
@@ -154,7 +154,7 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert routed["hypothesis_status"] == "proposed"
     assert routed["hypothesis_id"]
     assert routed["guard_candidate_id"] == "candidate-item"
-    from aletheia.learning.ledger import get_record, list_records
+    from extensions.learning.ledger import get_record, list_records
     hypothesis_row = get_record("learning_hypotheses", routed["hypothesis_id"])
     assert hypothesis_row is not None
     assert hypothesis_row["path_id"] == "ranker_learned_guard"
@@ -231,9 +231,11 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     dreaming_source = Path("extensions/research/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source
 
-    from aletheia.analytics import guard_effectiveness, guard_promotion, trade_attribution
-    from aletheia.knowledge.guards import TradingGuard
-    from aletheia.learning import control
+    from extensions.analytics import guard_effectiveness
+    from extensions.analytics import guard_promotion
+    from aletheia.analytics import trade_attribution
+    from extensions.knowledge.guards import TradingGuard
+    from extensions.learning import control
     from aletheia.agent_runtime import scheduler
     monkeypatch.setattr(scheduler, "load_config", lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)))
     monkeypatch.setattr(control, "promotion_refreeze_reason", lambda: None)
@@ -260,8 +262,8 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     status="implemented",
 ))
 async def test_automatic_block_recommendation_compensates_nomination_failure(monkeypatch):
-    from aletheia.knowledge import manager
-    from aletheia.learning import guard_routing, hypotheses
+    from extensions.knowledge import manager
+    from extensions.learning import guard_routing, hypotheses
 
     monkeypatch.setattr(
         guard_routing,
@@ -300,7 +302,7 @@ async def test_automatic_block_recommendation_compensates_nomination_failure(mon
     status="implemented",
 ))
 async def test_automatic_block_recommendation_fails_closed_without_scope(monkeypatch):
-    from aletheia.learning import guard_routing
+    from extensions.learning import guard_routing
 
     create_called = []
 
@@ -328,7 +330,7 @@ async def test_automatic_block_recommendation_fails_closed_without_scope(monkeyp
     status="implemented",
 ))
 def test_disabled_learning_removes_operator_bundle_only():
-    from aletheia.learning.prompt_bundles import gate_operator_learning_context
+    from extensions.learning.prompt_bundles import gate_operator_learning_context
 
     ctx = {
         "layer1": {"positions": [{"id": "p1"}], "risk": {"kill_switch": False}},

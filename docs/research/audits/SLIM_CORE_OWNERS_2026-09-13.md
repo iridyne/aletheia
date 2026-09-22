@@ -1,5 +1,26 @@
 # Slim Core production ownership inventory
 
+## Remaining optional-family physical owners
+
+Knowledge authoring/retrieval, Learning, Counterfactual, Policies, Sync and
+Observation Lab now have unique implementations under `extensions/`; their old
+`aletheia/` package paths are removed, without forwarding aliases. The four
+policy-epoch helpers formerly under Agent Shell belong to Learning. Optional
+filter controller/registry, learned-guard maintenance/reports and twin/relative
+experiment analysis belong to `extensions/analytics`; explicit context-pair
+evaluation belongs to Research. Existing Lab state paths, worker ownership,
+cycle locks, event identities and logger names remain unchanged.
+
+Core retains canonical Knowledge formats/index/persistence, the complete
+`analytics/filter_evidence.py` fact/admission implementation, OutcomeEligibility,
+verified economics and job lifecycle. CLI/Web bind the existing optional job
+producers and one Counterfactual scorecard enrichment reader. Missing shadow
+enrichment leaves real trade statistics available with `shadow_count=null` and
+an explicit unavailable reason. Missing Knowledge disables only dependent
+Research producers; Equity/Market observers and Core boot remain available.
+No Risk policy, qualification, deployment, credential or execution authority is
+changed. The local absence probes do not prove runtime qualification.
+
 ## Supplemental Data family compartment
 
 The unique yFinance macro, Polymarket, Position X material/features, positioning

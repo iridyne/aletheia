@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aletheia.agent_shell.skip_policy import (
+from extensions.learning.skip_policy import (
     NEUTRAL_SKIP_DEFER_REASON,
     STALE_SNAPSHOT_DEFER_REASON,
     defer_window_minutes_for_reason,
@@ -14,7 +14,7 @@ from aletheia.agent_shell.skip_policy import (
 
 
 def test_b19_skip_policy_does_not_life_support_stale_or_shrug():
-    from aletheia.agent_shell.skip_policy import defer_extends_carrier_valid_until
+    from extensions.learning.skip_policy import defer_extends_carrier_valid_until
 
     values = skip_policy_context()
     assert values["version"] == "b1.9"

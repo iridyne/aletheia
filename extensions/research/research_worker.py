@@ -583,7 +583,7 @@ async def _process_research_run(run_id: str) -> None:
     _emit_event(run_id, "run.started", message="Research run started")
 
     try:
-        from aletheia.learning.opportunity_information_policy import (
+        from extensions.learning.opportunity_information_policy import (
             ensure_opportunity_information_policy_epoch,
         )
 

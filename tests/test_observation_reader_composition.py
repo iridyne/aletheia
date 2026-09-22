@@ -70,7 +70,7 @@ def test_guard_spans_status_transaction_cas_and_linked_shadow(monkeypatch, windo
 
 
 def test_window_guard_preserves_legacy_first_and_unknown_denial(monkeypatch):
-    from aletheia.observation_lab import main_readers as lab, kernel, worker_lock
+    from extensions.observation_lab import main_readers as lab, kernel, worker_lock
 
     events = []
     @contextmanager
@@ -104,7 +104,7 @@ def test_pending_selection_keeps_active_lab_first_and_legacy_fallback(monkeypatc
 
 
 @pytest.mark.parametrize("entry", ["aletheia/main.py", "aletheia/server/app.py", "aletheia/maintenance/data_retention_backfill.py"])
-@pytest.mark.parametrize("missing", [None, "aletheia.observation_lab", "broken_lab_dependency"])
+@pytest.mark.parametrize("missing", [None, "extensions.observation_lab", "broken_lab_dependency"])
 def test_exact_composition_blocks_are_cold_and_clear_stale_bindings(tmp_path, entry, missing):
     import os
     from pathlib import Path
@@ -128,7 +128,7 @@ secrets.get_secret = forbidden
 entry, missing = sys.argv[1:]
 class Absent(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.observation_lab.main_readers" and missing:
+        if fullname == "extensions.observation_lab.main_readers" and missing:
             raise ModuleNotFoundError("bounded failure", name=missing)
 sys.meta_path.insert(0, Absent())
 repo.configure_observation_readers(authority=lambda: True)

@@ -3,7 +3,7 @@
 
 
 def test_unqualified_inheritance_keeps_baseline():
-    from aletheia.learning.economic_knowledge import inherit_behavioral_economic_knowledge
+    from extensions.learning.economic_knowledge import inherit_behavioral_economic_knowledge
 
     result = inherit_behavioral_economic_knowledge(
         verdict_id="archived-positive", candidate_key="opportunity-1",
@@ -14,7 +14,7 @@ def test_unqualified_inheritance_keeps_baseline():
 
 
 def test_cognitive_inheritance_is_labeled_scoped_and_not_broadcast():
-    from aletheia.learning.economic_knowledge import (
+    from extensions.learning.economic_knowledge import (
         retrieve_cognitive_economic_knowledge,
     )
 

@@ -23,7 +23,7 @@ _CONTRACT = "learning_evolution"
     )
 )
 def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
-    from aletheia.learning.registry import (
+    from extensions.learning.registry import (
         LEARNING_PATHS,
         supported_paper_influence_path_ids,
     )
@@ -88,7 +88,7 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
 
 
 def test_ranker_case_declares_candidate_measurement_contract():
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.registry import get_learning_path
 
     path = get_learning_path("ranker_case_score")
     assert path.measurement_supported is True
@@ -99,8 +99,8 @@ def test_ranker_case_declares_candidate_measurement_contract():
 
 
 def test_paper_influence_support_requires_every_capability(monkeypatch):
-    from aletheia.learning import registry
-    from aletheia.learning.registry import LearningPath
+    from extensions.learning import registry
+    from extensions.learning.registry import LearningPath
 
     supported = LearningPath(
         path_id="supported",
@@ -162,7 +162,7 @@ def test_learning_settings_uses_registry_backed_path_checkboxes():
     )
 )
 def test_narrative_and_diagnostic_evidence_cannot_add_samples():
-    from aletheia.learning.evidence import EvidenceClass, quantitative_sample_weight
+    from extensions.learning.evidence import EvidenceClass, quantitative_sample_weight
 
     assert quantitative_sample_weight(EvidenceClass.SETTLED_QUANTITATIVE) == 1
     assert quantitative_sample_weight(EvidenceClass.DETERMINISTIC_DERIVED) == 0
@@ -224,7 +224,7 @@ def test_exit_policy_advisor_has_no_mutation_consumer():
     ),
 )
 def test_policy_epochs_invalidate_affected_learning_without_withholding_safety():
-    from aletheia.learning.policy_epochs import build_policy_epoch, compare_policy_epochs
+    from extensions.learning.policy_epochs import build_policy_epoch, compare_policy_epochs
 
     before = build_policy_epoch(
         "operator_config",

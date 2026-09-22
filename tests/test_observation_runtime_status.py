@@ -14,7 +14,7 @@ class _FakeScheduler:
 
 def test_worker_owner_without_main_job_is_exclusive(monkeypatch):
     from aletheia.agent_runtime import scheduler as scheduler_mod
-    from aletheia.observation_lab import runtime_status
+    from extensions.observation_lab import runtime_status
 
     monkeypatch.setattr(runtime_status, "get_execution_owner", lambda: "worker")
     monkeypatch.setattr(scheduler_mod, "_scheduler", _FakeScheduler(registered=False))
@@ -29,7 +29,7 @@ def test_worker_owner_without_main_job_is_exclusive(monkeypatch):
 
 def test_worker_owner_with_main_job_is_conflict(monkeypatch):
     from aletheia.agent_runtime import scheduler as scheduler_mod
-    from aletheia.observation_lab import runtime_status
+    from extensions.observation_lab import runtime_status
 
     monkeypatch.setattr(runtime_status, "get_execution_owner", lambda: "worker")
     monkeypatch.setattr(scheduler_mod, "_scheduler", _FakeScheduler(registered=True))
@@ -43,7 +43,7 @@ def test_worker_owner_with_main_job_is_conflict(monkeypatch):
 
 def test_absent_main_scheduler_is_positive_exclusivity_proof(monkeypatch):
     from aletheia.agent_runtime import scheduler as scheduler_mod
-    from aletheia.observation_lab import runtime_status
+    from extensions.observation_lab import runtime_status
 
     monkeypatch.setattr(runtime_status, "get_execution_owner", lambda: "worker")
     monkeypatch.setattr(scheduler_mod, "_scheduler", None)
@@ -57,7 +57,7 @@ def test_absent_main_scheduler_is_positive_exclusivity_proof(monkeypatch):
 
 def test_main_owner_registration_is_not_duplicate_ownership(monkeypatch):
     from aletheia.agent_runtime import scheduler as scheduler_mod
-    from aletheia.observation_lab import runtime_status
+    from extensions.observation_lab import runtime_status
 
     monkeypatch.setattr(runtime_status, "get_execution_owner", lambda: "main")
     monkeypatch.setattr(scheduler_mod, "_scheduler", _FakeScheduler(registered=True))

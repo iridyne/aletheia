@@ -2,7 +2,7 @@
 
 import yaml
 
-from aletheia.sync.exporter import ExportService
+from extensions.sync.exporter import ExportService
 
 
 def test_export_config_redacts_credentials(tmp_path):

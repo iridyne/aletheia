@@ -256,11 +256,11 @@ def test_run_reconcile_fails_closed_when_incident_detector_is_unavailable(monkey
 
 
 def test_active_incident_refreezes_jobs_treatments_prompts_and_survives_reload(monkeypatch):
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="incident fixture")
 
     from aletheia.portfolio import reconciliation_integrity as integrity
-    from aletheia.learning import control
+    from extensions.learning import control
 
     incident, _ = integrity.record_reconciliation_integrity_incident({
         "is_thrashing": True, "window_minutes": 30, "churn_count": 2,
@@ -285,7 +285,7 @@ def test_active_incident_refreezes_jobs_treatments_prompts_and_survives_reload(m
     monkeypatch.setattr(reloaded, "load_config", lambda: cfg)
     assert reloaded.global_learning_refreeze_reason().endswith(incident["id"])
 
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
 
     decision = experiments.apply_numeric_treatment(
         path_id="ranker_case_score", scope={}, action={}, source_cohort="test",

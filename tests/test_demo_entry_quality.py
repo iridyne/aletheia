@@ -71,7 +71,7 @@ def test_evaluate_fail_open_when_regime_unpublished():
 
 
 def test_collect_keeps_honest_empty_evidence_fail_open(monkeypatch):
-    import aletheia.learning.demo_entry_quality as policy
+    import extensions.learning.demo_entry_quality as policy
     import aletheia.risk.demo_entry_quality as quality
     import aletheia.risk.engine as engine
 
@@ -90,7 +90,7 @@ def test_collect_keeps_honest_empty_evidence_fail_open(monkeypatch):
 
 
 def test_collect_marks_each_unreadable_authority_source(monkeypatch):
-    import aletheia.learning.demo_entry_quality as policy
+    import extensions.learning.demo_entry_quality as policy
     import aletheia.risk.demo_entry_quality as quality
     import aletheia.risk.engine as engine
 
@@ -422,7 +422,7 @@ def test_risk_unpublished_regime_does_not_invent_standdown(tmp_path, monkeypatch
 
 
 def test_risk_read_failure_blocks_new_demo_entry(tmp_path, monkeypatch):
-    import aletheia.learning.demo_entry_quality as policy
+    import extensions.learning.demo_entry_quality as policy
     import aletheia.risk.demo_entry_quality as quality
     import aletheia.risk.engine as engine
     from aletheia.risk.engine import evaluate_proposal
@@ -564,8 +564,8 @@ def test_flat_demo_aliases_write_nested_eligibility():
 
 def test_retired_scope_rotates_epoch_without_rewriting_history():
     import json
-    from aletheia.learning import demo_entry_quality as policy
-    from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+    from extensions.learning import demo_entry_quality as policy
+    from extensions.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
     from aletheia.storage.sqlite import get_db
 
     # The previous persisted policy included a promise about the local simulator.

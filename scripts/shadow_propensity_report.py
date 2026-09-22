@@ -34,7 +34,7 @@ def main() -> None:
                         help="Print full report as JSON")
     args = parser.parse_args()
 
-    from aletheia.counterfactual.propensity import build_propensity_report
+    from extensions.counterfactual.propensity import build_propensity_report
 
     report = build_propensity_report(
         days=args.days,

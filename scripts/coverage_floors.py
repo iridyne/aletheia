@@ -37,11 +37,11 @@ FLOORS: dict[str, float] = {
     "aletheia/analytics/profit_gradient_evidence.py": 50.0,
     "aletheia/analytics/position_replay.py": 75.0,
     "aletheia/analytics/momentum_geometry_replay.py": 75.0,
-    "aletheia/counterfactual/filter_replay.py": 50.0,
+    "extensions/counterfactual/filter_replay.py": 50.0,
     "aletheia/economics/context_artifacts.py": 50.0,
     "aletheia/execution/reconciliation.py": 25.0,
-    "aletheia/learning/evidence_epoch.py": 85.0,
-    "aletheia/learning/policy_epochs.py": 70.0,
+    "extensions/learning/evidence_epoch.py": 85.0,
+    "extensions/learning/policy_epochs.py": 70.0,
 }
 
 def _measured_percentages(data_file: Path) -> dict[str, float]:

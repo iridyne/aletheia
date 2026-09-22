@@ -167,7 +167,7 @@ def _surfaces(paths: list[str]) -> tuple[list[str], list[str]]:
             surfaces.add("identity_reconciliation")
         if any(token in path for token in ("runtime", "gateway", "scheduler")):
             surfaces.add("runtime")
-        if path.startswith("aletheia/learning/"):
+        if path.startswith("extensions/learning/"):
             surfaces.add("learning")
         if path.startswith(("aletheia/data/", "aletheia/market_data/")):
             surfaces.add("market_data")

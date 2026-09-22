@@ -14,8 +14,8 @@ from aletheia.risk import demo_entry_quality as quality
 def test_quality_has_no_concrete_learning_import():
     tree = ast.parse(Path(quality.__file__).read_text())
     assert not any(
-        isinstance(node, ast.ImportFrom) and (node.module or "").startswith("aletheia.learning")
-        or isinstance(node, ast.Import) and any(alias.name.startswith("aletheia.learning") for alias in node.names)
+        isinstance(node, ast.ImportFrom) and (node.module or "").startswith("extensions.learning")
+        or isinstance(node, ast.Import) and any(alias.name.startswith("extensions.learning") for alias in node.names)
         for node in ast.walk(tree)
     )
 
@@ -42,13 +42,13 @@ def test_bootstrap_binds_without_persisting_epoch(entrypoint, available):
 import sys
 class MissingEpoch:
     def find_spec(self, fullname, path=None, target=None):
-        if not available and fullname == "aletheia.learning.demo_entry_quality":
+        if not available and fullname == "extensions.learning.demo_entry_quality":
             raise ModuleNotFoundError("optional epoch absent", name=fullname)
 sys.meta_path.insert(0, MissingEpoch())
 from aletheia.risk import demo_entry_quality as quality
 assert quality._policy_epoch_writer is None
 if available:
-    from aletheia.learning import demo_entry_quality as policy
+    from extensions.learning import demo_entry_quality as policy
     def forbidden_write():
         raise AssertionError("bootstrap persisted an epoch")
     policy.ensure_demo_entry_quality_policy_epoch = forbidden_write

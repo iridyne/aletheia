@@ -702,7 +702,7 @@ def test_injected_connection_query_only_state_is_restored():
 def test_production_shadow_and_canonical_outcome_writers_become_audit_eligible(monkeypatch):
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
-    from aletheia.counterfactual import trades
+    from extensions.counterfactual import trades
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.outcome_economics import estimate_outcome_economics

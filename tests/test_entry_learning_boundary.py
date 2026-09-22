@@ -15,7 +15,7 @@ def test_entry_contracts_do_not_import_concrete_learning():
 
     tree = ast.parse(Path(entry_analysis.__file__).read_text())
     assert not any(
-        isinstance(node, ast.ImportFrom) and (node.module or "").startswith("aletheia.learning")
+        isinstance(node, ast.ImportFrom) and (node.module or "").startswith("extensions.learning")
         for node in ast.walk(tree)
     )
 
@@ -62,13 +62,13 @@ def test_entry_bootstrap_is_absence_safe_and_does_not_resolve_treatment(entrypoi
 import sys
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if not available and fullname == "aletheia.learning.entry_context":
+        if not available and fullname == "extensions.learning.entry_context":
             raise ModuleNotFoundError("optional Learning absent", name=fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.trading import entry_learning, entry_analysis
 assert entry_learning._context_loader is None
 if available:
-    from aletheia.learning import entry_context
+    from extensions.learning import entry_context
     assert not hasattr(entry_context, "EntryLearningContext")
     assert not hasattr(entry_context, "empty_entry_learning_context")
     def forbidden(**kwargs):

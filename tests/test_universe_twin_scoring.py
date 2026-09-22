@@ -327,7 +327,7 @@ def test_twin_module_has_no_authority_consumer_or_persistence_imports() -> None:
     imported.update(node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom))
     forbidden = (
         "aletheia.storage",
-        "aletheia.learning",
+        "extensions.learning",
         "aletheia.risk",
         "aletheia.execution",
         "aletheia.universe.allocator",

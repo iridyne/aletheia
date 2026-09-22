@@ -69,7 +69,7 @@ def _linux_source(monkeypatch):
 
 
 def _successful_activation_boundary(monkeypatch, events: list[str] | None = None):
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import target_fresh
 
     events = events if events is not None else []
@@ -372,7 +372,7 @@ def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monk
 
 
 def test_settlement_failure_keeps_old_source_and_release_retryable(tmp_path, monkeypatch):
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     events: list[str] = []
     auto, _, service = _configured_candidate_run(tmp_path, monkeypatch, events)
 
@@ -970,7 +970,7 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
     from contextlib import contextmanager
     from types import SimpleNamespace
 
-    from aletheia.observation_lab import kernel, worker_lock
+    from extensions.observation_lab import kernel, worker_lock
     from aletheia.update import auto, git_ops
 
     calls: list[str] = []

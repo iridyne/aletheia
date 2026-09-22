@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier, target_fresh
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
@@ -286,7 +286,7 @@ def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch)
 
 
 def test_auto_worker_preflight_requires_complete_evidence(monkeypatch):
-    from aletheia.observation_lab import execution_owner
+    from extensions.observation_lab import execution_owner
     from aletheia.update import auto, continuity
 
     before = _minimal_snapshot()
@@ -337,7 +337,7 @@ def test_auto_postflight_reuses_preflight_gateway_port(monkeypatch):
 
 
 def test_auto_main_owner_does_not_create_worker_coupling(monkeypatch):
-    from aletheia.observation_lab import execution_owner
+    from extensions.observation_lab import execution_owner
     from aletheia.update import auto, continuity
 
     monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: "main")

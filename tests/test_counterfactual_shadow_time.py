@@ -20,12 +20,12 @@ def _candidate(opportunity_id: str) -> dict:
 
 
 def _persist_shadow(opportunity_id: str, *, epoch: str | None = "epoch-test") -> str:
-    from aletheia.counterfactual.trades import persist_shadow_batch
+    from extensions.counterfactual.trades import persist_shadow_batch
 
     candidate = _candidate(opportunity_id)
     with (
-        patch("aletheia.counterfactual.trades._current_price", return_value=100.0),
-        patch("aletheia.counterfactual.trades._current_policy_epoch", return_value=epoch),
+        patch("extensions.counterfactual.trades._current_price", return_value=100.0),
+        patch("extensions.counterfactual.trades._current_policy_epoch", return_value=epoch),
     ):
         return persist_shadow_batch([candidate], candidate, top_n=1)[0]
 
@@ -56,7 +56,7 @@ def _settle_shadow(shadow_id: str) -> None:
 
 
 def test_rolling_window_uses_utc_instants_for_space_and_timestamps():
-    from aletheia.counterfactual.trades import list_deduped_shadows
+    from extensions.counterfactual.trades import list_deduped_shadows
     from aletheia.storage.sqlite import get_db
 
     before_id = _persist_shadow("rolling-before")
@@ -74,7 +74,7 @@ def test_rolling_window_uses_utc_instants_for_space_and_timestamps():
 
 
 def test_absolute_window_is_half_open_and_normalizes_offsets():
-    from aletheia.counterfactual.trades import list_deduped_shadows
+    from extensions.counterfactual.trades import list_deduped_shadows
 
     lower_space_id = _persist_shadow("absolute-lower-space")
     lower_offset_id = _persist_shadow("absolute-lower-offset")
@@ -109,7 +109,7 @@ def test_absolute_window_is_half_open_and_normalizes_offsets():
 
 
 def test_epoch_detector_and_reader_share_the_same_temporal_population():
-    from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
+    from extensions.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
 
     inside_id = _persist_shadow("epoch-inside", epoch="epoch-inside")
     outside_id = _persist_shadow("epoch-outside", epoch="epoch-outside")
@@ -133,7 +133,7 @@ def test_epoch_detector_and_reader_share_the_same_temporal_population():
 
 
 def test_deduplication_orders_mixed_encodings_by_fractional_utc_instant():
-    from aletheia.counterfactual.trades import list_deduped_shadows
+    from extensions.counterfactual.trades import list_deduped_shadows
 
     older_id = _persist_shadow("dedup-mixed")
     newer_id = _persist_shadow("dedup-mixed")
@@ -152,7 +152,7 @@ def test_deduplication_orders_mixed_encodings_by_fractional_utc_instant():
 
 
 def test_malformed_timestamps_fail_closed_are_counted_and_do_not_mix_epochs(caplog):
-    from aletheia.counterfactual.trades import (
+    from extensions.counterfactual.trades import (
         _detect_window_epochs,
         _shadow_time_window_sql,
         list_deduped_shadows,

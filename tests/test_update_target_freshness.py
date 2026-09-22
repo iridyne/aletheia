@@ -10,7 +10,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})

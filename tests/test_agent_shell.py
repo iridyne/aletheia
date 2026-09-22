@@ -1654,7 +1654,7 @@ def test_context_summary_text():
 
 
 @patch("aletheia.agent_shell.context.load_config")
-@patch("aletheia.learning.lessons.LessonStore")
+@patch("extensions.learning.lessons.LessonStore")
 def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, mock_cfg):
     """The live Operator receives reviewed Learning facts, never raw proposals."""
     from types import SimpleNamespace
@@ -1709,7 +1709,7 @@ def test_learning_context_is_unavailable_when_learning_extension_is_missing(monk
     real_import = builtins.__import__
 
     def missing_learning(name, *args, **kwargs):
-        if name == "aletheia.learning.lessons":
+        if name == "extensions.learning.lessons":
             raise ModuleNotFoundError(name=name)
         return real_import(name, *args, **kwargs)
 

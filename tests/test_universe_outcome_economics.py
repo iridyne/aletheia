@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.parametrize("missing", [
-    "aletheia.knowledge", "aletheia.knowledge.manager", "broken_knowledge_dependency",
+    "extensions", "extensions.knowledge", "extensions.knowledge.manager", "broken_knowledge_dependency",
 ])
 def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog, missing):
     import builtins
@@ -39,7 +39,7 @@ def test_optional_guard_import_does_not_interrupt_settlement(monkeypatch, caplog
     real_import = builtins.__import__
 
     def absent(name, *args, **kwargs):
-        if name == "aletheia.knowledge.manager":
+        if name == "extensions.knowledge.manager":
             raise ModuleNotFoundError(name=missing)
         return real_import(name, *args, **kwargs)
 

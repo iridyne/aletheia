@@ -108,7 +108,7 @@ def _curated_learning_context() -> dict:
     """
     now = datetime.now(timezone.utc)
     try:
-        from aletheia.learning.lessons import LessonStore
+        from extensions.learning.lessons import LessonStore
     except ImportError:
         return {
             "advisory_only": True,

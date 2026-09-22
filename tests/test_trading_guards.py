@@ -1,6 +1,6 @@
 """Tests for the deterministic trading guard engine."""
 
-from aletheia.knowledge.guards import (
+from extensions.knowledge.guards import (
     TradingGuard,
     GuardPredicate,
     GuardAppliesTo,

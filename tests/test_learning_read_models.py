@@ -4,9 +4,9 @@ import pytest
 
 
 def test_lab_projection_is_read_only_and_never_grants_treatment_authority():
-    from aletheia.learning.read_models import build_learning_contribution_projection
-    from aletheia.observation_lab.canonical import register_observation_spec
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.learning.read_models import build_learning_contribution_projection
+    from extensions.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()
@@ -39,7 +39,7 @@ def test_lab_projection_is_read_only_and_never_grants_treatment_authority():
 
 @pytest.mark.parametrize("authority", ["legacy", "missing"])
 def test_missing_current_authority_never_projects_legacy_experiments(authority):
-    from aletheia.learning.read_models import build_learning_contribution_projection
+    from extensions.learning.read_models import build_learning_contribution_projection
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -56,7 +56,7 @@ def test_missing_current_authority_never_projects_legacy_experiments(authority):
 
 
 def test_unavailable_lco_envelope_does_not_invent_empty_success():
-    from aletheia.learning.read_models import unavailable_learning_contribution_projection
+    from extensions.learning.read_models import unavailable_learning_contribution_projection
 
     result = unavailable_learning_contribution_projection("projection_read_failed")
     assert result["availability"] == "unavailable"

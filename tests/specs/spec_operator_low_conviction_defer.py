@@ -39,7 +39,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 def _bypass_b2_evidence(monkeypatch) -> None:
-    from aletheia.agent_shell import b2_evidence_policy
+    from extensions.learning import b2_evidence_policy
 
     def _noop(ctx, *, policy_epoch_id):
         return

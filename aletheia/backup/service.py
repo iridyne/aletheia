@@ -255,7 +255,7 @@ class BackupService:
                     lab_root = self._data_dir / "observation-lab"
                     lab_db = lab_root / "lab.db"
                     if lab_db.exists():
-                        from aletheia.observation_lab.db import lab_writer_lock
+                        from extensions.observation_lab.db import lab_writer_lock
 
                         with lab_writer_lock():
                             dst_lab = staging / "observation-lab" / "lab.db"
@@ -324,7 +324,7 @@ class BackupService:
                     # replay the same terminal result instead of relying on Main.
                     archives_dir = lab_root / "archives"
                     if archives_dir.exists():
-                        from aletheia.observation_lab.db import lab_writer_lock
+                        from extensions.observation_lab.db import lab_writer_lock
 
                         with lab_writer_lock():
                             dst_archives = staging / "observation-lab" / "archives"
@@ -348,7 +348,7 @@ class BackupService:
                 if lab_checkpoint_identity is None:
                     raise RuntimeError("authoritative_lab_backup_requires_joint_checkpoint")
                 try:
-                    from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
+                    from extensions.observation_lab.checkpoint import verify_joint_checkpoint
 
                     checkpoint = verify_joint_checkpoint(create_lab=False)
                 except Exception as exc:

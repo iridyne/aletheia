@@ -4,13 +4,13 @@ import sqlite3
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.knowledge.manager import (
+from extensions.knowledge.manager import (
     create_research_note,
     create_post_trade_review,
     create_trade_case_study,
 )
 from aletheia.storage.knowledge_index import reindex_all
-from aletheia.knowledge.retrieval import retrieve_lessons
+from extensions.knowledge.retrieval import retrieve_lessons
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ def test_reindex_all_backfills_missing(tmp_path, monkeypatch):
 
 def test_read_body_relocates_restored_windows_data_path(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.retrieval import _read_body
+    from extensions.knowledge.retrieval import _read_body
 
     target = tmp_path / "knowledge" / "research_notes" / "legacy.md"
     target.write_text("restored knowledge body", encoding="utf-8")

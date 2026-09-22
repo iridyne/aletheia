@@ -242,11 +242,11 @@ def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
         "aletheia/analytics/profit_gradient_estimators.py",
         "aletheia/analytics/profit_gradient_evidence.py",
         "aletheia/analytics/position_replay.py",
-        "aletheia/counterfactual/filter_replay.py",
+        "extensions/counterfactual/filter_replay.py",
         "aletheia/economics/context_artifacts.py",
         "aletheia/execution/reconciliation.py",
-        "aletheia/learning/evidence_epoch.py",
-        "aletheia/learning/policy_epochs.py",
+        "extensions/learning/evidence_epoch.py",
+        "extensions/learning/policy_epochs.py",
         "tests/test_reconciliation.py",
     ):
         report = _plan([path])

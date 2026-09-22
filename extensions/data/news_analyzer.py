@@ -205,7 +205,7 @@ async def analyze_one_item(item_id: str) -> dict:
 
 async def analyze_pending_news(batch_size: int = 3) -> dict[str, int | list[str]]:
     """Analyze a fair mix of oldest new items and retries due after 30 minutes."""
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 

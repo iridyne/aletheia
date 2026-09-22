@@ -58,7 +58,7 @@ class TestAntiHallucinationChain:
         assert eth_row["outcome_exclusion_reason"] == "incomplete_realized_economics"
 
         # ── Build case studies from the real closed positions ──
-        from aletheia.analytics.trade_case_builder import build_case_studies
+        from extensions.analytics.trade_case_builder import build_case_studies
         result = build_case_studies()
         by_pos = {c["position_id"]: c["case_study_id"] for c in result["created"]}
         assert btc_pos in by_pos, "full-chain closed trade must produce a case study"
@@ -71,7 +71,7 @@ class TestAntiHallucinationChain:
         )
 
         # ── The pool: only the real, attributable case can surface ──
-        from aletheia.knowledge.retrieval import retrieve_lessons
+        from extensions.knowledge.retrieval import retrieve_lessons
         lessons = retrieve_lessons("momentum win take_profit", k=10,
                                    item_types=["trade_case_study"])
         titles = " | ".join(l.title for l in lessons)

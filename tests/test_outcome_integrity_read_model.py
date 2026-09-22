@@ -424,7 +424,7 @@ def test_close_reason_consumers_use_central_registry_without_facade():
         SYNTHETIC_CLOSE_REASONS,
         is_synthetic_close,
     )
-    from aletheia.analytics.trade_case_builder import _SYNTHETIC_CLOSE_REASONS
+    from extensions.analytics.trade_case_builder import _SYNTHETIC_CLOSE_REASONS
 
     assert find_spec("aletheia.analytics.close_reasons") is None
     assert _SYNTHETIC_CLOSE_REASONS is SYNTHETIC_CLOSE_REASONS

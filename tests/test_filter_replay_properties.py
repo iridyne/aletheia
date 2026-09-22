@@ -1,6 +1,6 @@
 """Property-based invariants for filter-replay pure kernels.
 
-``aletheia/counterfactual/filter_replay.py`` synthesises gate-only verdicts
+``extensions/counterfactual/filter_replay.py`` synthesises gate-only verdicts
 that gate promotion decisions. A verdict that is non-deterministic, or
 that changes when the input candidate list is merely reordered, quietly
 corrupts the downstream promotion register.
@@ -30,7 +30,7 @@ import math
 
 from hypothesis import HealthCheck, given, settings, strategies as st
 
-from aletheia.counterfactual.filter_replay import (
+from extensions.counterfactual.filter_replay import (
     _MAX_ALTERNATIVES,
     _bootstrap_delta_lcb,
     _bounded_alternatives,

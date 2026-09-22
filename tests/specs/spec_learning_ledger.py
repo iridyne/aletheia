@@ -14,7 +14,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     status="implemented",
 ))
 def test_hypothesis_fingerprint_is_stable_and_excludes_prose():
-    from aletheia.learning.hypotheses import hypothesis_fingerprint
+    from extensions.learning.hypotheses import hypothesis_fingerprint
 
     common = dict(path_id="ranker_factor_filter", target_horizon="4H", source_cohort="Trade_Case:v2")
     first = hypothesis_fingerprint(
@@ -36,8 +36,8 @@ def test_hypothesis_fingerprint_is_stable_and_excludes_prose():
 
 
 def _registered_experiment(token: str):
-    from aletheia.learning.ledger import insert_hypothesis
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from extensions.learning.ledger import insert_hypothesis
+    from extensions.learning.models import LearningExperiment, LearningHypothesis
 
     hypothesis = LearningHypothesis(
         hypothesis_id=f"hypothesis-{token}",
@@ -64,7 +64,7 @@ def _registered_experiment(token: str):
 
 
 def _exposure(hypothesis, experiment, *, token: str, exposed_at: str):
-    from aletheia.learning.models import LearningExposure
+    from extensions.learning.models import LearningExposure
 
     return LearningExposure(
         exposure_id=f"exposure-{token}",
@@ -86,7 +86,7 @@ def _exposure(hypothesis, experiment, *, token: str, exposed_at: str):
 
 
 def test_migration_repair_activates_legacy_registered_experiment_with_exposure():
-    from aletheia.learning.ledger import get_record
+    from extensions.learning.ledger import get_record
     from aletheia.storage.migrations import _repair_learning_experiment_activation
     from aletheia.storage.sqlite import get_db
 
@@ -107,7 +107,7 @@ def test_migration_repair_activates_legacy_registered_experiment_with_exposure()
 
 
 def test_previous_schema_upgrades_additively_and_idempotently():
-    from aletheia.learning.ledger import get_record
+    from extensions.learning.ledger import get_record
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import get_db
 
@@ -161,9 +161,9 @@ def test_previous_schema_upgrades_additively_and_idempotently():
 
 
 def test_hypothesis_inserts_are_idempotent():
-    from aletheia.learning.hypotheses import hypothesis_fingerprint
-    from aletheia.learning.ledger import insert_hypothesis
-    from aletheia.learning.models import LearningHypothesis
+    from extensions.learning.hypotheses import hypothesis_fingerprint
+    from extensions.learning.ledger import insert_hypothesis
+    from extensions.learning.models import LearningHypothesis
     from aletheia.storage.sqlite import get_db
 
     fingerprint = hypothesis_fingerprint(

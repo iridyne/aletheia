@@ -108,7 +108,7 @@ async def test_knowledge_route_rejects_unknown_item_type(client):
 
 @pytest.mark.anyio
 async def test_lesson_management_actions(client):
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lesson = store.create(
@@ -150,7 +150,7 @@ async def test_lesson_management_action_rejects_unknown_lesson(client):
 
 @pytest.mark.anyio
 async def test_lesson_management_rejects_stale_opposite_transition(client):
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     lesson = store.create("Owner rejected", "trade_case_study", "case-stale")
@@ -168,7 +168,7 @@ async def test_lesson_management_rejects_stale_opposite_transition(client):
 async def test_tunnel_guard_protects_lesson_management_actions(client):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.secrets import set_secret
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     store = LessonStore()
     cfg = load_config()
@@ -217,8 +217,8 @@ async def test_tunnel_guard_protects_lesson_management_actions(client):
 
 @pytest.mark.anyio
 async def test_guard_candidate_can_be_listed_and_manually_promoted(client):
-    from aletheia.knowledge.manager import create_guard_candidate
-    from aletheia.knowledge.guards import load_trading_guards
+    from extensions.knowledge.manager import create_guard_candidate
+    from extensions.knowledge.guards import load_trading_guards
     from aletheia.storage import repositories as repo
     from aletheia.storage.event_store import get_event_store
 
@@ -277,8 +277,8 @@ async def test_guard_candidate_promote_rejects_missing_guard(client):
 
 @pytest.mark.anyio
 async def test_guard_reads_fail_with_stable_unavailable_response(client, monkeypatch):
-    import aletheia.knowledge.guards as guards
-    import aletheia.analytics.guard_effectiveness as guard_effectiveness
+    import extensions.knowledge.guards as guards
+    import extensions.analytics.guard_effectiveness as guard_effectiveness
 
     monkeypatch.setattr(
         guards,
@@ -407,7 +407,7 @@ async def test_learning_funnel_missing_inline_provenance_is_unavailable(client):
 
 @pytest.mark.anyio
 async def test_learning_funnel_detection_failure_clears_coverage(client, monkeypatch):
-    from aletheia.knowledge import manager as knowledge_manager
+    from extensions.knowledge import manager as knowledge_manager
 
     monkeypatch.setattr(
         knowledge_manager,
@@ -492,7 +492,7 @@ async def test_learning_funnel_contradiction_input_is_db_only(client, monkeypatc
     from aletheia.files.knowledge_document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
-    from aletheia.knowledge import guards as guards_module
+    from extensions.knowledge import guards as guards_module
 
     # Guarantee load_trading_guards is never invoked from the contradiction path.
     def _must_not_call(**_kwargs):
@@ -565,7 +565,7 @@ async def test_learning_funnel_optional_read_failures_are_not_zero(client, monke
 
 @pytest.mark.anyio
 async def test_learning_filter_card_uses_persisted_signal_path(client, monkeypatch):
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
     monkeypatch.setattr(
         filter_controller,
@@ -590,7 +590,7 @@ async def test_learning_filter_card_uses_persisted_signal_path(client, monkeypat
 
 @pytest.mark.anyio
 async def test_learning_filter_card_does_not_present_config_defaults_as_facts(client, monkeypatch):
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
     from aletheia.config import loader
 
     monkeypatch.setattr(loader, "load_config", lambda: (_ for _ in ()).throw(ValueError("private config failure")))

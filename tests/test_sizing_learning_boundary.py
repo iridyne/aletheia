@@ -12,7 +12,7 @@ def test_sizing_evidence_falls_back_without_learning():
 import sys
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.learning" or fullname.startswith("aletheia.learning."):
+        if fullname == "extensions.learning" or fullname.startswith("extensions.learning."):
             raise ModuleNotFoundError("Learning absent", name=fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.trading.sizing_policy import resolve_learned_notional
@@ -71,13 +71,13 @@ def test_sizing_bootstrap_binds_without_resolving_evidence(entrypoint, available
 import sys
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if not available and fullname == "aletheia.learning.sizing_evidence":
+        if not available and fullname == "extensions.learning.sizing_evidence":
             raise ModuleNotFoundError("optional Learning absent", name=fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.trading import sizing_policy
 assert sizing_policy._learned_notional_resolver is None
 if available:
-    from aletheia.learning import sizing_evidence
+    from extensions.learning import sizing_evidence
     def forbidden(**kwargs):
         raise AssertionError("bootstrap resolved sizing evidence")
     sizing_evidence.resolve_sizing_evidence = forbidden

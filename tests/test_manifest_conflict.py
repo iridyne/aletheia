@@ -11,7 +11,7 @@ import pytest
 
 
 def _make_manifest(**overrides):
-    from aletheia.observation_lab.manifest import build_manifest
+    from extensions.observation_lab.manifest import build_manifest
 
     kwargs = dict(
         observation_id="obs-x",
@@ -38,7 +38,7 @@ def _make_manifest(**overrides):
 
 
 def test_no_active_manifest_yields_no_manifest_outcome():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     r = resolve_manifest_conflict([])
     assert r.outcome == "no_manifest"
@@ -46,7 +46,7 @@ def test_no_active_manifest_yields_no_manifest_outcome():
 
 
 def test_single_manifest_is_admitted():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m = _make_manifest(observation_id="only-one")
     r = resolve_manifest_conflict([m])
@@ -57,7 +57,7 @@ def test_single_manifest_is_admitted():
 
 def test_two_exclusive_manifests_fail_closed():
     """Load-bearing invariant: exclusive vs. anything = undeclared conflict."""
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(observation_id="obs-a", assignment_salt="a")
     m2 = _make_manifest(observation_id="obs-b", assignment_salt="b")
@@ -70,7 +70,7 @@ def test_two_exclusive_manifests_fail_closed():
 
 def test_mixed_composability_fails_closed():
     """Heterogeneous contract set is undeclared — no arbitrary priority."""
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(
         observation_id="obs-a",
@@ -89,7 +89,7 @@ def test_mixed_composability_fails_closed():
 
 
 def test_disjoint_populations_with_distinct_keys_are_admitted():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(
         observation_id="obs-a",
@@ -110,7 +110,7 @@ def test_disjoint_populations_with_distinct_keys_are_admitted():
 
 
 def test_disjoint_declared_but_population_key_collides_fails_closed():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(
         observation_id="obs-a",
@@ -130,7 +130,7 @@ def test_disjoint_declared_but_population_key_collides_fails_closed():
 
 
 def test_disjoint_declared_but_missing_population_key_fails_closed():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(
         observation_id="obs-a",
@@ -149,7 +149,7 @@ def test_disjoint_declared_but_missing_population_key_fails_closed():
 
 
 def test_factorial_manifests_are_admitted():
-    from aletheia.observation_lab.conflict import resolve_manifest_conflict
+    from extensions.observation_lab.conflict import resolve_manifest_conflict
 
     m1 = _make_manifest(
         observation_id="obs-a",
@@ -170,12 +170,12 @@ def test_record_lab_exposure_persists_row_and_rejects_update():
     """Append-only trigger fires on UPDATE."""
     import sqlite3
 
-    from aletheia.observation_lab.exposure import (
+    from extensions.observation_lab.exposure import (
         LabExposureFact,
         list_lab_exposures,
         record_lab_exposure,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     fact = LabExposureFact(
         observation_id="obs-a",
@@ -208,7 +208,7 @@ def test_record_lab_exposure_persists_row_and_rejects_update():
 
 def test_fact_from_conflict_builds_a_rejected_exposure_shape():
     """Cluster 4 wiring helper: one rejected-exposure row per affected window."""
-    from aletheia.observation_lab.exposure import fact_from_conflict
+    from extensions.observation_lab.exposure import fact_from_conflict
 
     m1 = _make_manifest(observation_id="obs-a", assignment_salt="a")
     m2 = _make_manifest(observation_id="obs-b", assignment_salt="b")

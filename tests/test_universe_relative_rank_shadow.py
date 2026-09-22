@@ -83,7 +83,7 @@ def test_perp_requires_public_positioning_inputs():
 
 def test_relative_rank_persists_isolated_cluster_and_outcome():
     from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
-    from aletheia.universe.relative_rank_experiment import (
+    from extensions.analytics.relative_rank_experiment import (
         build_prospective_relative_rank_bundle,
     )
     from aletheia.universe.relative_rank_shadow import build_relative_rank_batch
@@ -159,7 +159,7 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
 
 def test_relative_rank_excludes_temporally_invalid_settled_outcomes():
     from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
-    from aletheia.universe.relative_rank_experiment import (
+    from extensions.analytics.relative_rank_experiment import (
         build_prospective_relative_rank_bundle,
     )
     from aletheia.universe.relative_rank_shadow import build_relative_rank_batch

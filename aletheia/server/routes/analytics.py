@@ -929,7 +929,7 @@ def get_filter_controller():
 
     Exact-version pass/reject net-outcome findings with sample/coverage gates.
     Observational only; never mutates config."""
-    from aletheia.analytics.filter_controller import build_filter_controller_report
+    from extensions.analytics.filter_controller import build_filter_controller_report
     return build_filter_controller_report()
 
 
@@ -938,7 +938,7 @@ def get_persistent_filter_controller():
     """Fast persisted signal used by the Learning page; never recomputes replays."""
     from dataclasses import asdict
 
-    from aletheia.analytics.filter_controller import compute_persistent_recommendations
+    from extensions.analytics.filter_controller import compute_persistent_recommendations
     from aletheia.config.loader import load_config
     from aletheia.storage.sqlite import get_db
 
@@ -2315,7 +2315,7 @@ def get_learning_funnel():
     contradiction_truncated: bool | None = None
     try:
         from aletheia.files.knowledge_document import read_knowledge_document
-        from aletheia.knowledge.manager import detect_contradictions
+        from extensions.knowledge.manager import detect_contradictions
 
         # COUNT(*) OVER() and the bounded rows come from one SQLite statement,
         # so concurrent writers cannot make coverage disagree with the slice.
@@ -2389,8 +2389,8 @@ def get_learning_funnel():
 
 def _compute_learning_contribution():
     """Read current contribution exclusively from canonical Lab evidence."""
-    from aletheia.learning.read_models import build_learning_contribution_projection
-    from aletheia.observation_lab.canonical import observation_bridge_health
+    from extensions.learning.read_models import build_learning_contribution_projection
+    from extensions.observation_lab.canonical import observation_bridge_health
 
     projection = build_learning_contribution_projection(limit=100)
     items = projection.get("items", []) if projection.get("availability") != "unavailable" else []

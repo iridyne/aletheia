@@ -37,7 +37,7 @@ class TestQualityGate:
     """
 
     def setup_method(self):
-        from aletheia.knowledge.manager import _is_quality_pass, _MIN_CONTENT_LENGTH, _PLACEHOLDER_PATTERNS
+        from extensions.knowledge.manager import _is_quality_pass, _MIN_CONTENT_LENGTH, _PLACEHOLDER_PATTERNS
         self._gate = _is_quality_pass
         self._min_len = _MIN_CONTENT_LENGTH
         self._placeholders = _PLACEHOLDER_PATTERNS
@@ -173,7 +173,7 @@ class TestContentHash:
     """
 
     def setup_method(self):
-        from aletheia.knowledge.manager import _content_hash
+        from extensions.knowledge.manager import _content_hash
         self._hash = _content_hash
 
     @given(_nonempty_text)

@@ -341,7 +341,7 @@ def test_direction_bias_cap_is_enforced():
         "PCI-G02", "insight_feedback_loop",
         "§pi_constitution learning_db_only_writes",
         "L2a",
-        "Learning modules (aletheia/learning/, aletheia/analytics/) do not call "
+        "Learning modules (extensions/learning/, aletheia/analytics/) do not call "
         "open(..., 'w') or pathlib.Path.write_text/write_bytes on any path under "
         "agent_shell/prompts/ or containing SYSTEM_PROMPT — learning can only "
         "append trading_memo/lesson records to the database, never overwrite "
@@ -364,7 +364,7 @@ def test_learning_path_does_not_write_prompt_files():
 
     _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
     _SCAN_DIRS = [
-        _PROJECT_ROOT / "aletheia" / "learning",
+        _PROJECT_ROOT / "extensions" / "learning",
         _PROJECT_ROOT / "aletheia" / "analytics",
     ]
 

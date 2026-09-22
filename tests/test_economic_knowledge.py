@@ -2,7 +2,7 @@
 
 
 def test_legacy_positive_verdict_is_preserved_without_current_authority():
-    from aletheia.learning.economic_knowledge import (
+    from extensions.learning.economic_knowledge import (
         assess_economic_knowledge, project_current_economic_knowledge,
         project_economic_knowledge_as_of,
     )

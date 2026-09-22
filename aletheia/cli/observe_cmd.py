@@ -94,8 +94,8 @@ def _render_observation_list(payload: list[dict], *, json_output: bool) -> None:
 
 def _list_lab_observations(*, status: str | None, limit: int) -> list[dict] | None:
     """Project Lab roots into the historical CLI list shape."""
-    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
-    from aletheia.observation_lab.db import readonly_lab_db
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
+    from extensions.observation_lab.db import readonly_lab_db
 
     try:
         filter_rows = list_filter_shadow_observations(limit=1000)
@@ -158,9 +158,9 @@ def observation_status(
 ) -> None:
     """Show a durable canonical Observation Window."""
     from aletheia.config.loader import get_data_dir
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.kernel import status_window
-    from aletheia.observation_lab.runner import register_builtin_handlers
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.kernel import status_window
+    from extensions.observation_lab.runner import register_builtin_handlers
 
     _require_experiment_authority()
     if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
@@ -334,7 +334,7 @@ def observation_checkpoint(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run one joint app.db + lab.db + manifest checkpoint pass."""
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -536,12 +536,12 @@ def run_worker_pass(
     Operator shell, Risk, Execution, exchange adapters, or trading
     authority.
     """
-    from aletheia.observation_lab.execution_owner import (
+    from extensions.observation_lab.execution_owner import (
         ObservationOwnerError,
         get_execution_owner,
         require_worker_owner,
     )
-    from aletheia.observation_lab.worker_lock import (
+    from extensions.observation_lab.worker_lock import (
         WorkerCycleLockError,
         worker_pass_lock,
     )
@@ -562,7 +562,7 @@ def run_worker_pass(
 
     try:
         with worker_pass_lock(source_commit=source_commit):
-            from aletheia.analytics.filter_controller import run_controller_observe
+            from extensions.analytics.filter_controller import run_controller_observe
 
             summary = run_controller_observe(min_samples=int(min_samples))
     except WorkerCycleLockError as exc:
@@ -631,7 +631,7 @@ def sync_all(
     an operator wants an immediate refresh without waiting for the next cycle.
     """
     _require_experiment_authority()
-    from aletheia.observation_lab.runner import settle_observation_continuity
+    from extensions.observation_lab.runner import settle_observation_continuity
 
     settled = settle_observation_continuity(advance_windows=True)
     payload = {
@@ -681,7 +681,7 @@ def migrate_learning_ledger(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Plan or apply the idempotent legacy Learning→Lab import."""
-    from aletheia.observation_lab.migration import (
+    from extensions.observation_lab.migration import (
         apply_legacy_learning_migration,
         plan_legacy_learning_migration,
     )
@@ -741,7 +741,7 @@ def set_experiment_authority(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Atomically cut over to the sole Lab Experiment authority."""
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         build_authority_cutover_proof,
         set_authority_source,
     )
@@ -782,7 +782,7 @@ def evaluate_observation(
 ) -> None:
     """Run one evaluation pass for a specific Observation."""
     _require_experiment_authority()
-    from aletheia.observation_lab.evaluator import evaluate_observation as evaluate_lab
+    from extensions.observation_lab.evaluator import evaluate_observation as evaluate_lab
 
     lookup_generation = None
     lookup_id = observation_id
@@ -806,7 +806,7 @@ def evaluate_observation(
 
 
 def _latest_lab_evaluation(observation_id: str) -> dict | None:
-    from aletheia.observation_lab.db import readonly_lab_db
+    from extensions.observation_lab.db import readonly_lab_db
 
     try:
         with readonly_lab_db(allow_missing=True) as db:
@@ -862,7 +862,7 @@ def register(
     import yaml  # local — CLI-only path, keeps import cost off hot startup
 
     _require_experiment_authority()
-    from aletheia.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.canonical import register_observation_spec
 
     try:
         spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
@@ -903,7 +903,7 @@ def publish_manifest_cmd(
 ) -> None:
     """Publish one ExecutionManifest to lab.db (Packet 2 admission entry).
 
-    Required YAML keys mirror ``aletheia.observation_lab.manifest.build_manifest``:
+    Required YAML keys mirror ``extensions.observation_lab.manifest.build_manifest``:
 
     - ``observation_id``, ``generation``, ``spec_hash``
     - ``treatment_adapter_id``, ``treatment_adapter_version``
@@ -931,7 +931,7 @@ def publish_manifest_cmd(
     """
     import yaml
 
-    from aletheia.observation_lab.manifest import (
+    from extensions.observation_lab.manifest import (
         ManifestGenerationConflict,
         build_manifest,
         publish_manifest,
@@ -961,8 +961,8 @@ def publish_manifest_cmd(
 
     try:
         _require_experiment_authority()
-        from aletheia.observation_lab.canonical import publish_manifest_with_lifecycle
-        from aletheia.observation_lab.runner import register_builtin_handlers
+        from extensions.observation_lab.canonical import publish_manifest_with_lifecycle
+        from extensions.observation_lab.runner import register_builtin_handlers
 
         register_builtin_handlers()
         publication = publish_manifest_with_lifecycle(
@@ -1017,7 +1017,7 @@ def close_observation(
     only halts further collection. Historical evaluations remain queryable.
     """
     _require_experiment_authority()
-    from aletheia.observation_lab.canonical import record_owner_action
+    from extensions.observation_lab.canonical import record_owner_action
 
     target = _find_lab_generation(observation_id)
     if target is None:
@@ -1049,7 +1049,7 @@ def close_observation(
 
 
 def _find_lab_generation(observation_id: str) -> dict | None:
-    from aletheia.observation_lab.db import readonly_lab_db
+    from extensions.observation_lab.db import readonly_lab_db
 
     observation_id, generation = _split_lab_observation_ref(observation_id)
     try:
@@ -1188,17 +1188,17 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
     from contextlib import ExitStack
 
     from aletheia.config.loader import get_data_dir, read_only_config
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         latest_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.canonical import observation_bridge_health
-    from aletheia.observation_lab.db import readonly_lab_db
-    from aletheia.observation_lab.execution_owner import get_execution_owner
-    from aletheia.observation_lab.kernel import status_window
-    from aletheia.observation_lab.manifest import load_active_manifests
-    from aletheia.observation_lab.runner import register_builtin_handlers
-    from aletheia.observation_lab.ufc_shadow import decode_equivalence_result
+    from extensions.observation_lab.canonical import observation_bridge_health
+    from extensions.observation_lab.db import readonly_lab_db
+    from extensions.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.kernel import status_window
+    from extensions.observation_lab.manifest import load_active_manifests
+    from extensions.observation_lab.runner import register_builtin_handlers
+    from extensions.observation_lab.ufc_shadow import decode_equivalence_result
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import db_path, readonly_db
 

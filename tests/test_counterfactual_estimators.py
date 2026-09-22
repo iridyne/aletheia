@@ -1,16 +1,16 @@
-"""Tests for aletheia.counterfactual.estimators and DR-mode calibration."""
+"""Tests for extensions.counterfactual.estimators and DR-mode calibration."""
 from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
-from aletheia.counterfactual.calibration import build_calibration
-from aletheia.counterfactual.estimators import (
+from extensions.counterfactual.calibration import build_calibration
+from extensions.counterfactual.estimators import (
     compute_ope_scores,
     dr_estimate,
     ips_estimate,
 )
-from aletheia.counterfactual.propensity import build_propensity_report
-from aletheia.counterfactual.trades import persist_shadow_batch
+from extensions.counterfactual.propensity import build_propensity_report
+from extensions.counterfactual.trades import persist_shadow_batch
 from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ def _insert_batch(
     top_n: int = 50,
     net_pnl_pct: float = 0.3,
 ) -> None:
-    with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
+    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
         persist_shadow_batch(candidates, selected, top_n=top_n)
     settle_pending_keyed_shadows(net_pnl_pct)
 
@@ -238,8 +238,8 @@ def test_calibration_dr_numeric_values():
 
 def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 0.3) -> None:
     """Insert one resolved shadow row with the given policy_epoch_id."""
-    with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
-        with patch("aletheia.counterfactual.trades._current_policy_epoch", return_value=epoch):
+    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
+        with patch("extensions.counterfactual.trades._current_policy_epoch", return_value=epoch):
             persist_shadow_batch(
                 [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
                   "market_type": "spot", "direction": "long",
@@ -299,7 +299,7 @@ def test_mixed_epoch_propensity_returns_error():
 
 
 def test_epoch_detection_failure_calibration_does_not_use_legacy_aggregate(monkeypatch):
-    import aletheia.counterfactual.calibration as calibration
+    import extensions.counterfactual.calibration as calibration
 
     def fail_detector(**_kwargs):
         raise RuntimeError("temporary database lock")
@@ -319,7 +319,7 @@ def test_epoch_detection_failure_calibration_does_not_use_legacy_aggregate(monke
 
 
 def test_epoch_detection_failure_propensity_does_not_use_legacy_aggregate(monkeypatch):
-    import aletheia.counterfactual.propensity as propensity
+    import extensions.counterfactual.propensity as propensity
 
     def fail_detector(**_kwargs):
         raise RuntimeError("temporary database lock")
@@ -338,9 +338,9 @@ def test_epoch_detection_failure_propensity_does_not_use_legacy_aggregate(monkey
     reader.assert_not_called()
 
 
-def test_epoch_detection_failure_scorecard_does_not_use_legacy_aggregate(monkeypatch):
+def test_epoch_detection_failure_scorecard_does_not_use_legacy_aggregate(monkeypatch, optional_evidence_jobs):
     import aletheia.analytics.family_scorecard as family_scorecard
-    import aletheia.counterfactual.trades as shadow_trades
+    import extensions.counterfactual.trades as shadow_trades
 
     def fail_detector(**_kwargs):
         raise RuntimeError("temporary database lock")
@@ -360,7 +360,7 @@ def test_epoch_detection_failure_scorecard_does_not_use_legacy_aggregate(monkeyp
 
 
 def test_successful_all_null_epoch_detection_keeps_legacy_reader(monkeypatch):
-    import aletheia.counterfactual.calibration as calibration
+    import extensions.counterfactual.calibration as calibration
 
     seen = []
 

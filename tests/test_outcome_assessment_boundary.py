@@ -10,7 +10,7 @@ def test_outcome_assessment_is_core_owned_without_learning():
 import sys
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.learning" or fullname.startswith("aletheia.learning."):
+        if fullname == "extensions.learning" or fullname.startswith("extensions.learning."):
             raise ModuleNotFoundError("Learning absent", name=fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.analytics import outcome_semantics, skip_diagnosis
@@ -24,4 +24,4 @@ assert outcome_semantics.candidate_outcome_temporal_reason({}, as_of_at="2026-09
         capture_output=True, text=True, timeout=20,
     )
     assert result.returncode == 0, result.stderr
-    assert not (Path(__file__).resolve().parents[1] / "aletheia/learning/outcomes.py").exists()
+    assert not (Path(__file__).resolve().parents[1] / "extensions/learning/outcomes.py").exists()

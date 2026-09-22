@@ -53,7 +53,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 def test_knowledge_router_lists_only_wired_roles():
     """#177: unreachable role entries misled readers about what's actually wired.
     Only market_observer is a live caller of build_advisory_context."""
-    from aletheia.knowledge.router import _ITEM_TYPES_BY_ROLE
+    from extensions.knowledge.router import _ITEM_TYPES_BY_ROLE
 
     assert set(_ITEM_TYPES_BY_ROLE.keys()) == {"market_observer"}, (
         f"router should only carry wired roles; got {sorted(_ITEM_TYPES_BY_ROLE.keys())}"

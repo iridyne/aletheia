@@ -4,7 +4,7 @@ from tests.test_learning_hypothesis_nominations import _envelope
 
 
 def _preflight(path_id: str, hypothesis_id: str, **overrides):
-    from aletheia.learning.hypothesis_compiler import assess_experimentability
+    from extensions.learning.hypothesis_compiler import assess_experimentability
 
     values = {
         "path_id": path_id,
@@ -28,9 +28,9 @@ def test_unsupported_and_nonviable_preflight_open_no_experiment():
     single-mainline cutover (Observation Lab is the only Experiment authority).
     Preflight still classifies feasibility; nothing may open an experiment.
     """
-    import aletheia.learning.hypothesis_compiler as compiler
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
-    from aletheia.learning.ledger import list_records
+    import extensions.learning.hypothesis_compiler as compiler
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.ledger import list_records
 
     assert not hasattr(compiler, "admit_nomination_to_shadow"), (
         "admit_nomination_to_shadow was retired; a reinstated shadow-admission "
@@ -58,8 +58,8 @@ def test_viable_preflight_does_not_open_an_experiment():
     """Retired-capability guard: a `ready` preflight is feasibility evidence only.
     Without shadow admission no experiment may be opened by this path.
     """
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
-    from aletheia.learning.ledger import list_records
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.ledger import list_records
 
     envelope = _envelope("preflight-ready")
     nomination = publish_hypothesis_nomination(envelope)

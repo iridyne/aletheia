@@ -4531,7 +4531,7 @@ def retire_legacy_experiment_tables(
         if not lab_path.is_file():
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
         try:
-            from aletheia.observation_lab.migration import plan_legacy_learning_migration
+            from extensions.observation_lab.migration import plan_legacy_learning_migration
 
             plan = plan_legacy_learning_migration()
             if not plan.get("available"):
@@ -4605,7 +4605,7 @@ def retire_legacy_experiment_tables(
         # before dropping the only legacy copy so a corrupt file cannot be
         # mistaken for recoverable historical evidence.
         try:
-            from aletheia.observation_lab.canonical import verify_generation_archive
+            from extensions.observation_lab.canonical import verify_generation_archive
 
             for archive_id in archive_ids:
                 verdict = verify_generation_archive(archive_id)
@@ -6043,7 +6043,7 @@ _EXCHANGE_UPNL_IDENTITY_CHECKSUM = hashlib.sha256(
 
 # Observation Lab v1 (Issue #1072). The frozen-unit table lives in the Lab's
 # own SQLite file (``~/.aletheia/observation-lab/lab.db``, initialized by
-# ``aletheia.observation_lab.db``) — physical isolation from ``app.db`` is what
+# ``extensions.observation_lab.db``) — physical isolation from ``app.db`` is what
 # lets unrelated production schema changes miss the Lab entirely. This app.db
 # migration only adds the ``adapter_identity_hash`` column on the spec row so
 # the identity-vector invalidation check (owner review §4) has a place to
@@ -6821,7 +6821,7 @@ def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
     """Add the Observation Lab identity-vector hash column on the spec row.
 
     The frozen-unit table itself lives in ``lab.db`` (see
-    ``aletheia.observation_lab.db``); only the column addition touches
+    ``extensions.observation_lab.db``); only the column addition touches
     ``app.db`` because the spec is the identity anchor operators query.
     """
     for column, table, column_type in _OBSERVATION_LAB_FROZEN_UNITS_COLUMNS:
@@ -8991,7 +8991,7 @@ def _apply_production_migrations(
         # Resolve fresh-install initialization before recording schema progress.
         # Otherwise a missing dependency leaves a current ledger with legacy
         # authority, and the next attempt no longer recognizes a fresh install.
-        from aletheia.observation_lab.canonical import set_authority_source
+        from extensions.observation_lab.canonical import set_authority_source
 
     acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
     try:

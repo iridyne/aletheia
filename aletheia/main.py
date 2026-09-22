@@ -54,16 +54,50 @@ app = typer.Typer(
 def _configure_runtime() -> None:
     from aletheia.agents import register_agent, unregister_agent
 
+    from aletheia.agent_runtime.scheduler import configure_optional_evidence_jobs
+    from aletheia.analytics.family_scorecard import configure_shadow_cohort_reader
+
+    try:
+        from extensions.counterfactual.trades import resolve_stale_shadows
+        from extensions.counterfactual.family_scorecard import read_shadow_cohort
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.counterfactual"}:
+            raise
+        resolve_stale_shadows = read_shadow_cohort = None
+    try:
+        from extensions.analytics.guard_promotion import _deprecate_expired_learned_guards
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.analytics", "extensions.analytics.guard_promotion", "extensions.knowledge"}:
+            raise
+        _deprecate_expired_learned_guards = None
+    try:
+        from extensions.analytics.filter_controller import run_controller_observe
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.analytics", "extensions.analytics.filter_controller"}:
+            raise
+        run_controller_observe = None
+    try:
+        from extensions.learning.control import daily_catchup_due
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.control"}:
+            raise
+        daily_catchup_due = None
+    configure_optional_evidence_jobs(
+        resolve_shadows=resolve_stale_shadows, expire_guards=_deprecate_expired_learned_guards,
+        observe_filters=run_controller_observe, daily_catchup_due=daily_catchup_due,
+    )
+    configure_shadow_cohort_reader(read_shadow_cohort)
+
     from aletheia.storage.repositories import configure_observation_readers
 
     try:
-        from aletheia.observation_lab.main_readers import (
+        from extensions.observation_lab.main_readers import (
             _canonical_lab_authority, _observation_retention_floor,
             _active_observation_claim_refs, list_observation_filter_outcome_priority_keys,
             active_benchmark, outcome_write_guard,
         )
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.observation_lab", "aletheia.observation_lab.main_readers"}:
+        if exc.name not in {"extensions", "extensions.observation_lab", "extensions.observation_lab.main_readers"}:
             raise
         configure_observation_readers()
     else:
@@ -77,23 +111,29 @@ def _configure_runtime() -> None:
 
     try:
         from extensions.research.equity_observer import run_equity_observer
-        from extensions.research.research_agent import run_research_agent
-        from extensions.research.risk_critic import run_risk_critic
         from extensions.research.market_observer import run_market_observer
-        from extensions.research.post_trade_reviewer import run_post_trade_reviewer
     except ModuleNotFoundError as exc:
         if exc.name not in {"extensions", "extensions.research"}:
             raise
-        unregister_agent("research_agent")
-        unregister_agent("risk_critic")
         unregister_agent("equity_observer")
         unregister_agent("market_observer")
+    else:
+        register_agent("equity_observer")(run_equity_observer)
+        register_agent("market_observer")(run_market_observer)
+
+    try:
+        from extensions.research.research_agent import run_research_agent
+        from extensions.research.risk_critic import run_risk_critic
+        from extensions.research.post_trade_reviewer import run_post_trade_reviewer
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.research", "extensions.knowledge"}:
+            raise
+        unregister_agent("research_agent")
+        unregister_agent("risk_critic")
         unregister_agent("post_trade_reviewer")
     else:
         register_agent("research_agent")(run_research_agent)
         register_agent("risk_critic")(run_risk_critic)
-        register_agent("equity_observer")(run_equity_observer)
-        register_agent("market_observer")(run_market_observer)
         register_agent("post_trade_reviewer")(run_post_trade_reviewer)
 
     try:
@@ -116,7 +156,7 @@ def _configure_runtime() -> None:
         from extensions.research.dreaming_agent import _extract_lessons, run_dreaming_agent
         from extensions.research.lesson_reviewer import run_lesson_reviewer
     except ModuleNotFoundError as exc:
-        if exc.name not in {"extensions", "extensions.research", "aletheia.learning", "aletheia.learning.control"}:
+        if exc.name not in {"extensions", "extensions.research", "extensions.knowledge", "extensions.learning", "extensions.learning.control"}:
             raise
         unregister_agent("dreaming_agent")
         unregister_agent("lesson_reviewer")
@@ -261,9 +301,9 @@ def _configure_runtime() -> None:
     from aletheia.trust.behavior_authority import configure_candidate_filter_path
 
     try:
-        from aletheia.learning.registry import candidate_filter_path_declared
+        from extensions.learning.registry import candidate_filter_path_declared
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.registry"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.registry"}:
             raise
         configure_candidate_filter_path(None)
     else:
@@ -272,9 +312,9 @@ def _configure_runtime() -> None:
     from aletheia.trust.learning_safety import configure_learning_safety
 
     try:
-        from aletheia.learning.control import learning_influence_gate_reason, global_learning_refreeze_reason
+        from extensions.learning.control import learning_influence_gate_reason, global_learning_refreeze_reason
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.control"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.control"}:
             raise
         configure_learning_safety()
     else:
@@ -283,9 +323,9 @@ def _configure_runtime() -> None:
     from aletheia.trading.sizing_policy import configure_sizing_evidence
 
     try:
-        from aletheia.learning.sizing_evidence import resolve_sizing_evidence
+        from extensions.learning.sizing_evidence import resolve_sizing_evidence
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.sizing_evidence"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.sizing_evidence"}:
             raise
         configure_sizing_evidence(None)
     else:
@@ -294,9 +334,9 @@ def _configure_runtime() -> None:
     from aletheia.trading.entry_learning import configure_entry_learning
 
     try:
-        from aletheia.learning.entry_context import load_entry_learning_context
+        from extensions.learning.entry_context import load_entry_learning_context
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.entry_context"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.entry_context"}:
             raise
         configure_entry_learning(None)
     else:
@@ -305,9 +345,9 @@ def _configure_runtime() -> None:
     from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch
 
     try:
-        from aletheia.learning.demo_entry_quality import ensure_demo_entry_quality_policy_epoch
+        from extensions.learning.demo_entry_quality import ensure_demo_entry_quality_policy_epoch
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.demo_entry_quality"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.demo_entry_quality"}:
             raise
         configure_demo_quality_epoch(None)
     else:
@@ -316,9 +356,9 @@ def _configure_runtime() -> None:
     from aletheia.risk.engine import configure_risk_lesson_treatment
 
     try:
-        from aletheia.learning.risk_evidence import authorize_lesson_treatment
+        from extensions.learning.risk_evidence import authorize_lesson_treatment
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.risk_evidence"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.risk_evidence"}:
             raise
         configure_risk_lesson_treatment(None)
     else:
@@ -327,9 +367,9 @@ def _configure_runtime() -> None:
     from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
 
     try:
-        from aletheia.learning.outcome_feedback import execute_outcome_feedback
+        from extensions.learning.outcome_feedback import execute_outcome_feedback
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.outcome_feedback"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.outcome_feedback"}:
             raise
         configure_outcome_feedback(None)
     else:

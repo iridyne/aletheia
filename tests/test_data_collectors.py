@@ -229,7 +229,7 @@ def test_coinalyze_loads_only_its_credential_reference(monkeypatch):
 @pytest.mark.asyncio
 async def test_coinalyze_without_key_has_no_policy_side_effect(monkeypatch):
     import extensions.data.collectors.coinalyze as mod
-    import aletheia.learning.opportunity_information_policy as policy
+    import extensions.learning.opportunity_information_policy as policy
 
     monkeypatch.setattr(mod, "_load_api_key", lambda: None)
     ensure_policy = MagicMock()
@@ -250,7 +250,7 @@ async def test_coinalyze_without_key_has_no_policy_side_effect(monkeypatch):
 @pytest.mark.asyncio
 async def test_coinalyze_errors_do_not_expose_credentials(monkeypatch, caplog):
     import extensions.data.collectors.coinalyze as mod
-    import aletheia.learning.opportunity_information_policy as policy
+    import extensions.learning.opportunity_information_policy as policy
 
     secret = "coinalyze-secret"
 
@@ -468,7 +468,7 @@ async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred
     monkeypatch,
 ):
     import extensions.data.collectors.coinalyze as mod
-    import aletheia.learning.opportunity_information_policy as policy
+    import extensions.learning.opportunity_information_policy as policy
     from aletheia.data.collector_health import classify_collector_result
 
     unique_requested = [f"s{i:02d}/usdt" for i in range(30)]

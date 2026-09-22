@@ -173,7 +173,7 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
     fingerprint = fingerprints[0]
 
     try:
-        from aletheia.learning.policy_epochs import build_policy_epoch
+        from extensions.learning.policy_epochs import build_policy_epoch
         from aletheia.storage.sqlite import get_db
 
         rows = (

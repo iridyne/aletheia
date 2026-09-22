@@ -12,8 +12,8 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
-from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
-from aletheia.learning.control import (
+from extensions.knowledge.manager import create_daily_review, create_dreaming_log
+from extensions.learning.control import (
     advance_learning_job_cursor,
     get_learning_job_health,
 )
@@ -329,7 +329,7 @@ async def _extract_lessons(
     reclassified to medium_confidence and contained LLM-generated narrative, not signal.
     """
     from aletheia.storage.repositories import list_pending_trade_case_studies
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     if deadline is None:
         deadline = time.monotonic() + _LESSON_EXTRACTION_BUDGET_SECONDS
@@ -527,7 +527,7 @@ async def _extract_lessons(
         source_id = supporting_source_ids[0]
         covered_case_ids.update(set(supporting_source_ids) & batch_case_ids)
         if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
-            from aletheia.learning.guard_routing import route_automatic_block_recommendation
+            from extensions.learning.guard_routing import route_automatic_block_recommendation
             rec = await route_automatic_block_recommendation(
                 rec, evidence=evidence, source_id=source_id, deadline=deadline,
             )

@@ -34,7 +34,7 @@ def test_pslesson_has_guard_fields():
 def test_accept_stamps_guard_timestamps(tmp_path, monkeypatch):
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.migrations import run_migrations
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     run_migrations()
     store = LessonStore()
@@ -63,7 +63,7 @@ def test_lesson_block_in_dry_run_window_is_advisory(tmp_path, monkeypatch):
     """A just-accepted lesson (within 24h dry-run window) must NOT add violations."""
     from unittest.mock import MagicMock
     from aletheia.storage.migrations import run_migrations
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.risk import engine as eng
 
     run_migrations()
@@ -97,7 +97,7 @@ def test_expired_lesson_does_not_block(tmp_path, monkeypatch):
     from datetime import datetime, timezone, timedelta
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.migrations import run_migrations
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.risk import engine as eng
 
     run_migrations()
@@ -210,12 +210,12 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
     status="implemented",
 ))
 def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monkeypatch):
-    from aletheia.learning.risk_evidence import authorize_lesson_treatment
+    from extensions.learning.risk_evidence import authorize_lesson_treatment
     monkeypatch.setattr("aletheia.risk.engine._lesson_treatment", authorize_lesson_treatment)
     from datetime import datetime, timedelta, timezone
     from unittest.mock import MagicMock
 
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.risk import engine as eng
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import get_db
@@ -246,7 +246,7 @@ def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monk
     ).fetchone()
     assert exposure is None
 
-    from aletheia.learning.experiments import InfluenceDecision
+    from extensions.learning.experiments import InfluenceDecision
     captured = []
 
     def control(**kwargs):
@@ -256,7 +256,7 @@ def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monk
             hypothesis_id="hyp-risk", experiment_id="exp-risk", exposure_id="x-control",
         )
 
-    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
+    monkeypatch.setattr("extensions.learning.experiments.apply_boolean_treatment", control)
     assert not any("lesson_block_symbol" in row for row in eng._check_lesson_constraints(proposal))
     assert captured[-1]["path_id"] == "risk_lesson_constraint"
     assert captured[-1]["outcome_candidate_key"] == f"proposal:{proposal.id}:4h"
@@ -267,15 +267,15 @@ def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monk
             hypothesis_id="hyp-risk", experiment_id="exp-risk", exposure_id="x-treatment",
         )
 
-    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", treatment)
+    monkeypatch.setattr("extensions.learning.experiments.apply_boolean_treatment", treatment)
     assert f"lesson_block_symbol:{auto.lesson_id}:BTC/USDT" in eng._check_lesson_constraints(proposal)
 
     monkeypatch.setattr(
-        "aletheia.learning.experiments.apply_boolean_treatment",
+        "extensions.learning.experiments.apply_boolean_treatment",
         lambda **_: (_ for _ in ()).throw(RuntimeError("authority unavailable")),
     )
     assert "lesson_check_error:internal_failure" in eng._check_lesson_constraints(proposal)
-    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
+    monkeypatch.setattr("extensions.learning.experiments.apply_boolean_treatment", control)
 
     manual = store.create(
         "owner BTC block", source_type="owner", source_id="owner-1",

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 
 def test_no_positive_band_emits_info_advisory():
-    from aletheia.counterfactual.advisories import build_rotation_advisories
+    from extensions.counterfactual.advisories import build_rotation_advisories
 
     report = {
         "window_days": 8,
@@ -46,7 +46,7 @@ def test_no_positive_band_emits_info_advisory():
 
 
 def test_positive_band_present_emits_no_advisory():
-    from aletheia.counterfactual.advisories import build_rotation_advisories
+    from extensions.counterfactual.advisories import build_rotation_advisories
 
     report = {
         "window_days": 8,
@@ -70,7 +70,7 @@ def test_positive_band_present_emits_no_advisory():
 
 
 def test_report_with_errors_does_not_produce_advisories():
-    from aletheia.counterfactual.advisories import build_rotation_advisories
+    from extensions.counterfactual.advisories import build_rotation_advisories
 
     report = {"errors": ["Database is not initialized."], "bands": []}
     assert (
@@ -84,7 +84,7 @@ def test_report_with_errors_does_not_produce_advisories():
 
 def test_empty_bands_do_not_produce_advisory():
     """No bands = no evidence at all; the advisory would be noise."""
-    from aletheia.counterfactual.advisories import build_rotation_advisories
+    from extensions.counterfactual.advisories import build_rotation_advisories
 
     report = {
         "window_days": 8,
@@ -99,7 +99,7 @@ def test_empty_bands_do_not_produce_advisory():
 
 def test_advisory_observe_only_invariant():
     """The advisories module must not import or call any mutation path."""
-    from aletheia.counterfactual import advisories
+    from extensions.counterfactual import advisories
 
     src = inspect.getsource(advisories)
 
@@ -119,8 +119,8 @@ def test_advisory_observe_only_invariant():
     # No mutation-flavoured import
     forbidden_imports = (
         "from aletheia.config.loader import save_config",
-        "from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch",
-        "from aletheia.agent_shell.skip_policy import persist_policy_epoch",
+        "from extensions.learning.skip_policy import ensure_skip_remediation_policy_epoch",
+        "from extensions.learning.skip_policy import persist_policy_epoch",
     )
     for line in forbidden_imports:
         assert line not in code, f"advisories module must not import {line}"
@@ -145,7 +145,7 @@ def test_advisory_observe_only_invariant():
 
 def test_calibration_report_attaches_advisories_field_even_when_empty(monkeypatch):
     """The report always carries rotation_advisories (possibly empty list)."""
-    from aletheia.counterfactual import calibration
+    from extensions.counterfactual import calibration
 
     # Stub list_deduped_shadows so we control the report contents deterministically.
     monkeypatch.setattr(
@@ -167,8 +167,8 @@ def test_calibration_report_attaches_advisories_field_even_when_empty(monkeypatc
 
 
 def test_calibration_report_advisory_when_no_positive_band(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
-    from aletheia.counterfactual import calibration
+    from extensions.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import calibration
 
     monkeypatch.setattr(
         calibration,
@@ -221,7 +221,7 @@ def _stub_deduped(mapping):
 
 
 def test_harm_signal_emits_concern_on_moderate_drop(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)  # 45 days into the epoch
@@ -267,7 +267,7 @@ def test_harm_signal_emits_concern_on_moderate_drop(monkeypatch):
 
 
 def test_harm_signal_emits_strong_concern_on_large_drop_with_sample_size(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -306,7 +306,7 @@ def test_harm_signal_emits_strong_concern_on_large_drop_with_sample_size(monkeyp
 
 def test_harm_signal_stays_concern_when_large_drop_but_insufficient_strong_n(monkeypatch):
     """Delta qualifies for strong_concern but n is below the strong threshold."""
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -336,7 +336,7 @@ def test_harm_signal_stays_concern_when_large_drop_but_insufficient_strong_n(mon
 
 
 def test_harm_signal_silent_when_drop_below_concern_threshold(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -364,7 +364,7 @@ def test_harm_signal_silent_when_drop_below_concern_threshold(monkeypatch):
 
 
 def test_harm_signal_silent_when_baseline_sample_too_small(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -392,7 +392,7 @@ def test_harm_signal_silent_when_baseline_sample_too_small(monkeypatch):
 
 
 def test_harm_signal_silent_when_epoch_too_young(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 6, 10, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)  # 5 days into the epoch
@@ -414,7 +414,7 @@ def test_harm_signal_silent_when_epoch_too_young(monkeypatch):
 
 
 def test_harm_signal_silent_when_epoch_start_unknown(monkeypatch):
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     monkeypatch.setattr(advisories_mod, "_epoch_start", lambda epoch_id: None)
     monkeypatch.setattr(
@@ -433,7 +433,7 @@ def test_harm_signal_silent_when_epoch_start_unknown(monkeypatch):
 
 def test_harm_signal_failure_does_not_break_report(monkeypatch):
     """If list_deduped_shadows raises, the advisory is silently dropped."""
-    from aletheia.counterfactual import advisories as advisories_mod
+    from extensions.counterfactual import advisories as advisories_mod
 
     epoch_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
     now = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -455,7 +455,7 @@ def test_list_deduped_shadows_rejects_ambiguous_window():
     """Window intent must be explicit — days= and since_iso= are mutually exclusive."""
     import pytest
 
-    from aletheia.counterfactual.trades import list_deduped_shadows
+    from extensions.counterfactual.trades import list_deduped_shadows
 
     with pytest.raises(ValueError):
         list_deduped_shadows()  # neither specified

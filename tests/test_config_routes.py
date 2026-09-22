@@ -100,7 +100,7 @@ async def test_guard_settings_keep_current_fields_and_historical_decode(client):
 def test_doctor_does_not_suggest_changing_retired_guard_flag(monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.diagnostics.doctor import Report, _probe_learning_retrieval
-    from aletheia.knowledge import guards
+    from extensions.knowledge import guards
 
     cfg = load_config()
     cfg.guard.auto_promote_enabled = True
@@ -886,7 +886,7 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("missing", ["aletheia.learning", "aletheia.learning.registry", "broken_dependency"])
+@pytest.mark.parametrize("missing", ["extensions.learning", "extensions.learning.registry", "broken_dependency"])
 async def test_settings_survive_absent_learning_inventory(client, monkeypatch, missing):
     import builtins
     from aletheia.config.loader import load_config
@@ -895,7 +895,7 @@ async def test_settings_survive_absent_learning_inventory(client, monkeypatch, m
     original_import = builtins.__import__
 
     def absent(name, *args, **kwargs):
-        if name == "aletheia.learning.registry":
+        if name == "extensions.learning.registry":
             raise ModuleNotFoundError("optional inventory absent", name=missing)
         return original_import(name, *args, **kwargs)
 

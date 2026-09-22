@@ -293,8 +293,8 @@ async def run_lesson_reviewer(
     **kwargs,
 ) -> dict:
     """Evidence-gated, overturnable review of proposed lessons (daily)."""
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.policies.store import PolicyStore
+    from extensions.learning.lessons import LessonStore
+    from extensions.policies.store import PolicyStore
 
     outputs: list[str] = []
     errors: list[str] = []
@@ -486,7 +486,7 @@ async def run_lesson_reviewer(
             errors.append(f"policy_version_create_failed:{e}")
             pv = None
         if pv is not None:
-            from aletheia.learning.skills import SkillStore
+            from extensions.learning.skills import SkillStore
 
             skill_store = SkillStore()
             for lid in applied_ids:
@@ -520,7 +520,7 @@ async def run_lesson_reviewer(
                     errors.append(f"skill_create_failed:{lid}:{e}")
                     continue
 
-    from aletheia.learning.skills import SkillStore
+    from extensions.learning.skills import SkillStore
 
     if skill_store is None:
         skill_store = SkillStore()

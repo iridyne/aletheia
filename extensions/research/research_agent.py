@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.knowledge.manager import create_research_note
+from extensions.knowledge.manager import create_research_note
 
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 

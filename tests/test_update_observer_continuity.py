@@ -10,7 +10,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier, target_fresh
     monkeypatch.setattr(applier.sys, "platform", "darwin")
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
@@ -642,7 +642,7 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     re-anchored so the next preflight doesn't see stale migration state."""
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier, continuity
 
     before = _snapshot()
@@ -712,7 +712,7 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
 def test_wrapper_rolls_back_before_barrier_exit_when_reanchor_fails(monkeypatch):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
     from aletheia.update import applier, continuity
 
     before = _snapshot()

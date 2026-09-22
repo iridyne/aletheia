@@ -17,7 +17,7 @@ This Contract describes current behavior only. It does not contain a future impl
 
 ## V2 migration boundary
 
-The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the #2737 ownership boundary, while its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) records the target architecture. The executable bridge is compatibility-safe while the durable authority row is `legacy`: legacy Experiment truth remains the production resolver, and Lab receives only immutable receipts/imported evidence. Selecting `lab` is a separate, owner-attributable cutover that requires exact-head equivalence, retention, archive, recovery and rollback proof. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
+The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) defines the #2737 single-authority boundary, with its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) recording the architecture. Lab is the sole online Experiment authority; legacy ledgers remain only for explicit proof-gated import and historical reads. Missing or legacy authority cannot reactivate retired writers or treatments. Exact-head retention, archive, recovery and rollback proof remain required for migration. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
 
 ## Related authorities
 
@@ -94,7 +94,7 @@ The Worker must not start or own Gateway, Risk, Execution, exchange credentials,
 
 `run_lab_windows()` executes registered observation windows with bounded, deterministic and exception-isolated behavior.
 
-Current windows include filter-shadow evaluation and UFC equivalence observation. Additional windows may register through the same descriptor/runner contract when independently authorized.
+Current default windows are filter-shadow evaluation and durable Observation windows. Historical UFC equivalence rows remain readable without recomputation; the retired UFC equivalence pass is not an online window. Additional windows may register through the same descriptor/runner contract when independently authorized.
 
 One window failure must not prevent other Lab windows or ordinary Paper operation from continuing. Failures remain visible in the returned/durable status rather than being projected as success.
 

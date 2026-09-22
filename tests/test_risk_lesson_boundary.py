@@ -27,7 +27,7 @@ def test_static_rules_survive_missing_learning(monkeypatch, source_type):
     original_import = builtins.__import__
 
     def no_learning(name, *args, **kwargs):
-        if name.startswith("aletheia.learning"):
+        if name.startswith("extensions.learning"):
             raise ModuleNotFoundError("optional Learning absent", name=name)
         return original_import(name, *args, **kwargs)
 
@@ -65,7 +65,7 @@ def test_bootstrap_binds_optional_treatment_without_loading_experiments(entrypoi
 import sys
 class MissingTreatment:
     def find_spec(self, fullname, path=None, target=None):
-        if not available and fullname == "aletheia.learning.risk_evidence":
+        if not available and fullname == "extensions.learning.risk_evidence":
             raise ModuleNotFoundError("optional treatment absent", name=fullname)
 sys.meta_path.insert(0, MissingTreatment())
 from aletheia.risk import engine
@@ -74,11 +74,11 @@ assert engine._lesson_treatment is None
     script += '\nfrom aletheia.server.app import app\n' if entrypoint == "web" else '\nfrom aletheia import main\nmain._configure_runtime()\n'
     script += '''
 if available:
-    from aletheia.learning.risk_evidence import authorize_lesson_treatment
+    from extensions.learning.risk_evidence import authorize_lesson_treatment
     assert engine._lesson_treatment is authorize_lesson_treatment
 else:
     assert engine._lesson_treatment is None
-assert "aletheia.learning.experiments" not in sys.modules
+assert "extensions.learning.experiments" not in sys.modules
 '''
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],

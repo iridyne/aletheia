@@ -143,7 +143,7 @@ def register_epoch(
     deploys. Profit-loop identity always comes from the durable Runtime Session;
     ``--commit`` cannot override it. Idempotent on the same identity.
     """
-    from aletheia.learning.evidence_epoch import (
+    from extensions.learning.evidence_epoch import (
         EXPECTED_EVIDENCE_PATH_IDS,
         ensure_evidence_epochs,
         evidence_epoch_summary,
@@ -195,7 +195,7 @@ def epoch_status(
     json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
 ):
     """Show current evidence epoch anchoring status."""
-    from aletheia.learning.evidence_epoch import evidence_epoch_summary
+    from extensions.learning.evidence_epoch import evidence_epoch_summary
 
     summary = evidence_epoch_summary()
     if json_output:

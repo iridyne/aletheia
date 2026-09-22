@@ -87,7 +87,7 @@ def _record_confidence_decision(
 
 
 def test_family_ttl_replay_is_fixed_version_incremental_and_bounded():
-    from aletheia.counterfactual.filter_replay import build_family_ttl_replay
+    from extensions.counterfactual.filter_replay import build_family_ttl_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)
@@ -140,7 +140,7 @@ def test_family_ttl_replay_uses_first_exposure_and_rejects_invalid_scope():
     import pytest
 
     from aletheia.analytics.filter_evidence import record_filter_decision
-    from aletheia.counterfactual.filter_replay import build_family_ttl_replay
+    from extensions.counterfactual.filter_replay import build_family_ttl_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)
@@ -200,7 +200,7 @@ def test_family_ttl_replay_uses_first_exposure_and_rejects_invalid_scope():
 
 
 def test_ranker_confidence_replay_uses_existing_controller_path():
-    from aletheia.counterfactual.filter_replay import (
+    from extensions.counterfactual.filter_replay import (
         build_bounded_filter_replays,
         build_ranker_confidence_replay,
     )
@@ -264,7 +264,7 @@ def test_ranker_confidence_replay_uses_existing_controller_path():
 
 
 def test_ranker_replay_does_not_make_future_settlements_ready():
-    from aletheia.counterfactual.filter_replay import build_ranker_confidence_replay
+    from extensions.counterfactual.filter_replay import build_ranker_confidence_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)

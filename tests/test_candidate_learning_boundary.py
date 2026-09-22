@@ -10,7 +10,7 @@ def test_candidate_evidence_imports_without_learning():
 import sys
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.learning" or fullname.startswith("aletheia.learning."):
+        if fullname == "extensions.learning" or fullname.startswith("extensions.learning."):
             raise ModuleNotFoundError("Learning absent", name=fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.analytics import candidate_facts, filter_evidence

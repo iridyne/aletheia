@@ -1,0 +1,204 @@
+"""Pure policy-epoch helpers for Learning attribution.
+
+Phase 0 does not intercept operator/risk actions. It defines the deterministic,
+secret-free epoch semantics that later adapters persist around those existing
+controls. Safety-required changes always continue and invalidate affected
+comparisons instead of being withheld for experimental cleanliness.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
+
+# Backwards-compatible module alias for the shared trust-boundary contract.
+_SECRET_FRAGMENTS = SECRET_KEY_FRAGMENTS
+
+
+@dataclass(frozen=True)
+class PolicyEpoch:
+    epoch_kind: str
+    epoch_hash: str
+    effective_values: dict[str, Any]
+    affected_path_ids: tuple[str, ...]
+    safety_required: bool
+    is_learning_treatment: bool = False
+
+
+@dataclass(frozen=True)
+class EpochComparison:
+    experiment_action: str
+    safety_action: str
+    reason: str
+
+
+def build_policy_epoch(
+    epoch_kind: str,
+    effective_values: dict[str, Any],
+    *,
+    affected_path_ids: tuple[str, ...],
+    safety_required: bool = False,
+) -> PolicyEpoch:
+    safe_values = _without_secrets(effective_values)
+    # Strip ``code_commit`` from the hashing payload: a rebuild of the same
+    # policy must not rotate the epoch (that churned learning_policy_epochs
+    # every restart with no policy delta).  The commit still reaches the Lab
+    # delivery receipt as ``producer_commit`` for downstream attribution, so no
+    # measurement replay is lost.
+    hash_values = _without_code_commit(safe_values)
+    payload = {
+        "epoch_kind": str(epoch_kind),
+        "effective_values": hash_values,
+        "affected_path_ids": sorted(set(affected_path_ids)),
+        "safety_required": bool(safety_required),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return PolicyEpoch(
+        epoch_kind=str(epoch_kind),
+        epoch_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        effective_values=hash_values,
+        affected_path_ids=tuple(payload["affected_path_ids"]),
+        safety_required=bool(safety_required),
+    )
+
+
+def compare_policy_epochs(
+    before: PolicyEpoch,
+    after: PolicyEpoch,
+    path_id: str,
+) -> EpochComparison:
+    if before.epoch_hash == after.epoch_hash:
+        return EpochComparison("continue", "unchanged", "same_effective_policy")
+    affected = path_id in set(before.affected_path_ids) | set(after.affected_path_ids)
+    if not affected:
+        return EpochComparison("continue", "unchanged", "path_not_affected")
+    if after.safety_required:
+        return EpochComparison(
+            "invalidate",
+            "apply_immediately",
+            "safety_change_must_continue_and_cannot_be_credited_to_learning",
+        )
+    return EpochComparison("new_epoch", "apply_normally", "effective_policy_changed")
+
+
+def _rotation_boundary(db, epoch_kind: str) -> str:
+    boundary = datetime.now(timezone.utc)
+    latest_started = None
+    rows = db.execute(
+        "SELECT started_at FROM learning_policy_epochs WHERE epoch_kind=?",
+        (epoch_kind,),
+    ).fetchall()
+    for row in rows:
+        started_at = row["started_at"]
+        try:
+            started = datetime.fromisoformat(started_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid started_at for learning policy epoch {epoch_kind!r}"
+            ) from exc
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        started = started.astimezone(timezone.utc)
+        if latest_started is None or started > latest_started:
+            latest_started = started
+    if latest_started is not None:
+        boundary = max(boundary, latest_started + timedelta(microseconds=1))
+    return boundary.isoformat()
+
+
+def persist_policy_epoch(epoch: PolicyEpoch) -> str:
+    """Return one durable open epoch id, rotating atomically on policy changes."""
+    from extensions.learning.ledger import insert_record
+    from extensions.learning.models import LearningPolicyEpoch
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    with transaction(immediate=True):
+        db = get_db()
+        open_rows = db.execute(
+            "SELECT * FROM learning_policy_epochs "
+            "WHERE epoch_kind=? AND ended_at IS NULL "
+            "ORDER BY started_at DESC, rowid DESC",
+            (epoch.epoch_kind,),
+        ).fetchall()
+        matching = next(
+            (
+                row for row in open_rows
+                if row["effective_values_hash"] == epoch.epoch_hash
+            ),
+            None,
+        )
+        boundary = _rotation_boundary(db, epoch.epoch_kind)
+        if matching is not None:
+            db.execute(
+                "UPDATE learning_policy_epochs SET ended_at=? "
+                "WHERE epoch_kind=? AND ended_at IS NULL AND epoch_id!=?",
+                (boundary, epoch.epoch_kind, matching["epoch_id"]),
+            )
+            return str(matching["epoch_id"])
+
+        db.execute(
+            "UPDATE learning_policy_epochs SET ended_at=? "
+            "WHERE epoch_kind=? AND ended_at IS NULL",
+            (boundary, epoch.epoch_kind),
+        )
+        record = LearningPolicyEpoch(
+            epoch_kind=epoch.epoch_kind,
+            effective_values_hash=epoch.epoch_hash,
+            effective_values_json=json.dumps(
+                epoch.effective_values, sort_keys=True, default=str
+            ),
+            affected_path_ids_json=json.dumps(epoch.affected_path_ids, sort_keys=True),
+            safety_required=epoch.safety_required,
+            started_at=boundary,
+        )
+        insert_record("learning_policy_epochs", record)
+        return record.epoch_id
+
+
+def find_open_policy_epoch(epoch: PolicyEpoch) -> str | None:
+    """Return the matching open epoch id without mutating epoch state."""
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT epoch_id FROM learning_policy_epochs "
+        "WHERE epoch_kind=? AND effective_values_hash=? AND ended_at IS NULL "
+        "ORDER BY started_at DESC, rowid DESC LIMIT 1",
+        (epoch.epoch_kind, epoch.epoch_hash),
+    ).fetchone()
+    return str(row["epoch_id"]) if row else None
+
+
+def _without_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _without_secrets(item)
+            for key, item in value.items()
+            if not _is_secret_key(str(key))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_without_secrets(item) for item in value]
+    return value
+
+
+def _is_secret_key(key: str) -> bool:
+    return is_secret_key(key)
+
+
+def _without_code_commit(value: Any) -> Any:
+    """Drop any ``code_commit`` key at the top level of the effective_values dict.
+
+    Only strips the top-level key that the epoch caller feeds in — nested
+    dicts (for example ``learning.model_dump()``) are left alone so a knob
+    literally named ``code_commit`` inside another config section is
+    preserved.  The caller in ``experiments._policy_epoch`` also stops
+    populating this key, so this is defense-in-depth.
+    """
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items() if str(key) != "code_commit"}
+    return value

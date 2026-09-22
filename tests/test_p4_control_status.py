@@ -368,7 +368,7 @@ def test_ufc_status_projects_fixed_look_units_and_coverage(monkeypatch):
         "path_states": [],
         "operations": {"evaluator": {"status": "running"}},
     }
-    from aletheia.learning import read_models
+    from extensions.learning import read_models
 
     monkeypatch.setattr(read_models, "build_learning_contribution_projection", lambda limit=100: projection)
     result = cmd_mod._ufc_status()
@@ -410,7 +410,7 @@ def test_ufc_evaluator_failure_is_partial(monkeypatch):
             "evaluator": None,
         },
     }
-    from aletheia.learning import read_models
+    from extensions.learning import read_models
 
     monkeypatch.setattr(
         read_models,
@@ -431,7 +431,7 @@ def test_ufc_empty_projection_failure_is_unavailable(monkeypatch):
         "items": [],
         "path_states": [],
     }
-    from aletheia.learning import read_models
+    from extensions.learning import read_models
 
     monkeypatch.setattr(
         read_models,

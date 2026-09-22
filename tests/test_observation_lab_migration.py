@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from aletheia.learning.ledger import insert_hypothesis
-from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
+from extensions.learning.ledger import insert_hypothesis
+from extensions.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 
 
 def _seed_legacy_row(table, record):
@@ -23,11 +23,11 @@ def _seed_legacy_row(table, record):
 
 def test_plan_is_read_only_and_apply_is_idempotent():
     from aletheia.config.loader import get_data_dir
-    from aletheia.observation_lab.migration import (
+    from extensions.observation_lab.migration import (
         apply_legacy_learning_migration,
         plan_legacy_learning_migration,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     hypothesis = LearningHypothesis(
         hypothesis_id="legacy-hypothesis",
@@ -94,8 +94,8 @@ def test_plan_is_read_only_and_apply_is_idempotent():
 
 
 def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     hypothesis = LearningHypothesis(
@@ -135,7 +135,7 @@ def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
         "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
         "WHERE source_name='legacy_learning'"
     ).fetchone()[0] == old_fingerprint
-    from aletheia.observation_lab.canonical import get_authority_source, set_authority_source
+    from extensions.observation_lab.canonical import get_authority_source, set_authority_source
 
     with pytest.raises(RuntimeError, match="authority_cutover_legacy_import_checkpoint_missing"):
         set_authority_source("lab", actor="owner", reason="changed source")
@@ -143,9 +143,9 @@ def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
 
 
 def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path):
-    from aletheia.observation_lab.canonical import verify_generation_archive
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.canonical import verify_generation_archive
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
@@ -181,9 +181,9 @@ def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path
 
 
 def test_legacy_retirement_rejects_corrupt_generation_archive(tmp_path):
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
     from aletheia.storage.migrations import MigrationStateError, retire_legacy_experiment_tables
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     hypothesis = LearningHypothesis(
@@ -224,8 +224,8 @@ def test_legacy_retirement_rejects_corrupt_generation_archive(tmp_path):
 
 
 def test_explicit_retirement_requires_import_proof_and_drops_legacy_tables():
-    from aletheia.observation_lab.canonical import get_authority_source
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.canonical import get_authority_source
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
     from aletheia.storage.sqlite import get_db
 
     hypothesis = LearningHypothesis(
@@ -263,8 +263,8 @@ def test_explicit_retirement_requires_import_proof_and_drops_legacy_tables():
 
 
 def test_legacy_exposure_import_preserves_explicit_manifest_effect_identity():
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
 
     hypothesis = LearningHypothesis(
         hypothesis_id="manifest-hypothesis",
@@ -327,8 +327,8 @@ def test_legacy_exposure_import_preserves_explicit_manifest_effect_identity():
 
 
 def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
     from aletheia.storage.sqlite import get_db
 
     hypothesis = LearningHypothesis(
@@ -378,9 +378,9 @@ def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
 
 
 def test_lab_cutover_refuses_unimported_legacy_rows():
-    from aletheia.learning.ledger import insert_hypothesis
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.learning.ledger import insert_hypothesis
+    from extensions.learning.models import LearningExperiment, LearningHypothesis
+    from extensions.observation_lab.canonical import set_authority_source
 
     hypothesis = LearningHypothesis(
         hypothesis_id="cutover-block-hypothesis",
@@ -408,7 +408,7 @@ def test_lab_cutover_refuses_unimported_legacy_rows():
 
 
 def test_explicit_lab_retirement_drops_legacy_runtime_and_restores_foreign_keys():
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     from aletheia.storage.migrations import (
         _LEGACY_EXPERIMENT_DROP_ORDER,
         retire_legacy_experiment_tables,
@@ -429,15 +429,15 @@ def test_explicit_lab_retirement_drops_legacy_runtime_and_restores_foreign_keys(
 
 
 def test_nonempty_lab_cutover_requires_and_records_complete_proof():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         build_authority_cutover_proof,
         set_authority_source,
     )
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
     )
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
     from aletheia.storage.sqlite import get_db
 
     hypothesis = LearningHypothesis(
@@ -490,16 +490,16 @@ def test_authority_cli_refuses_legacy_even_with_the_recorded_cutover_proof():
     from typer.testing import CliRunner
 
     from aletheia.cli.observe_cmd import observe_app
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         build_authority_cutover_proof,
         get_authority_source,
         set_authority_source,
     )
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
     )
-    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from extensions.observation_lab.migration import apply_legacy_learning_migration
 
     hypothesis = LearningHypothesis(
         hypothesis_id="cli-rollback-hypothesis",
