@@ -28,7 +28,7 @@ from aletheia.economics.tracing import (
     add_catalog_pricing_snapshot,
     list_pricing_snapshots,
 )
-from aletheia.economics.historical_viability import (
+from legacy.historical_viability import (
     get_viability_report,
     list_viability_reports,
 )
@@ -213,7 +213,7 @@ def test_absent_viability_history_does_not_create_database_or_schema(tmp_path, e
     script = f"empty_database = {empty_database!r}\n" + '''
 import sqlite3
 from aletheia.storage.sqlite import db_path
-from aletheia.economics.historical_viability import list_viability_reports, get_viability_report
+from legacy.historical_viability import list_viability_reports, get_viability_report
 from aletheia.server.routes.economics import viability_reports
 path = db_path()
 if empty_database:

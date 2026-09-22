@@ -41,7 +41,6 @@ def migrate_home(
         typer.echo("Dry-run only. Stop the gateway and repeat with --apply to migrate.")
 
 
-
 @runtime_app.command("retire-experiment-schema")
 def retire_experiment_schema(
     backup: Path = typer.Option(..., "--backup", exists=True, dir_okay=False, resolve_path=True),
@@ -50,7 +49,7 @@ def retire_experiment_schema(
     from aletheia.gateway.pidfile import find_gateway_orphans, is_running
     from aletheia.storage.migrations import MigrationStateError, retire_runtime_continuity_tables
     from aletheia.storage.sqlite import acquire_write_lock, get_db, release_write_lock
-    from aletheia.update.auto import _deployment_lock
+    from ops.update.auto import _deployment_lock
 
     with _deployment_lock() as acquired:
         if not acquired or is_running() or find_gateway_orphans():

@@ -108,7 +108,7 @@ over the wire. At 1000 sessions/day this saves ~7.5 MiB/day of network
 - Land a follow-up Python PR that raises a warning if `context` key
   appears in the request body (surfaces stragglers).
 - Delete the retro-strip logic in
-  `aletheia/maintenance/data_retention_backfill.py:_retro_strip_message_context`
+  `ops/maintenance/data_retention_backfill.py:_retro_strip_message_context`
   once the field has been absent for 3+ days.
 
 **Code touchpoints (external).**

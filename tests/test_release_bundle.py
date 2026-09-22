@@ -34,6 +34,11 @@ requires-python = ">=3.12"
     _write(root / "extensions" / "__init__.py", "")
     _write(root / "extensions" / "model_endpoints" / "__init__.py", "")
     _write(root / "extensions" / "model_endpoints" / "openai_compatible.py", "VALUE = 2\n")
+    _write(root / "ops" / "__init__.py", "")
+    _write(root / "ops" / "update" / "__init__.py", "")
+    _write(root / "ops" / "update" / "bootstrap.py", "VALUE = 3\n")
+    _write(root / "legacy" / "__init__.py", "")
+    _write(root / "legacy" / "historical_viability.py", "VALUE = 4\n")
     _write(root / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js", "console.log('ok')\n")
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js.map", "ignored\n")
@@ -71,6 +76,9 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
     assert "extensions/__init__.py" in names
     assert "extensions/model_endpoints/openai_compatible.py" in names
     assert "extensions/model_endpoints/openai_compatible.py" in {item["path"] for item in manifest["files"]}
+    for path in ("ops/update/bootstrap.py", "legacy/historical_viability.py"):
+        assert path in names
+        assert path in {item["path"] for item in manifest["files"]}
     assert "aletheia/dashboard_static/index.html" in names
     assert "aletheia/dashboard_static/assets/app.js" in names
     assert "scripts/runtime/start-release.ps1" in names
@@ -134,6 +142,16 @@ def test_bundle_is_reproducible_for_same_inputs(tmp_path: Path) -> None:
     assert first.sha256_path.read_text(encoding="utf-8").split()[0] == second.sha256_path.read_text(
         encoding="utf-8"
     ).split()[0]
+
+
+@pytest.mark.parametrize("package", ["ops", "legacy"])
+def test_bundle_requires_moved_owner_roots(tmp_path: Path, package: str) -> None:
+    root = tmp_path / "repo"
+    _fake_repository(root)
+    (root / package).rename(tmp_path / package)
+
+    with pytest.raises(BundleBuildError, match=f"required release tree is missing: {package}"):
+        build_bundle(root=root, output_dir=tmp_path / "dist", git_sha="b" * 40)
 
 
 def test_bundle_requires_prebuilt_dashboard(tmp_path: Path) -> None:

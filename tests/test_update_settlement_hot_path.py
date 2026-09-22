@@ -223,7 +223,8 @@ def _stub_capture_dependencies(monkeypatch, verdicts) -> None:
     from aletheia.config import loader
     from extensions.observation_lab import checkpoint, db as lab_db, execution_owner, manifest
     from aletheia.storage import sqlite as storage_sqlite
-    from aletheia.update import continuity, git_ops
+    from aletheia.update import git_ops
+    from ops.update import continuity, git_ops as git_mutations
 
     @contextmanager
     def read_only(*_args, **_kwargs):
@@ -273,7 +274,7 @@ def _stub_capture_dependencies(monkeypatch, verdicts) -> None:
 def test_preflight_skips_redundant_settleable_checkpoint_when_strict_matches(
     monkeypatch,
 ):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     calls: list[bool] = []
 
@@ -292,7 +293,7 @@ def test_preflight_skips_redundant_settleable_checkpoint_when_strict_matches(
 
 
 def test_preflight_computes_settleability_only_after_strict_mismatch(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     calls: list[bool] = []
 
@@ -320,9 +321,9 @@ def test_preflight_computes_settleability_only_after_strict_mismatch(monkeypatch
 def test_update_progress_separates_stop_settlement_and_keeps_lock(
     tmp_path, monkeypatch,
 ):
-    from aletheia.backup import service as backup_service
+    from ops.backup import service as backup_service
     from extensions.observation_lab import runner
-    from aletheia.update import applier, continuity, target_fresh
+    from ops.update import applier, continuity, target_fresh
 
     old = "old-sha"
     target = "target-sha"

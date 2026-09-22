@@ -40,13 +40,13 @@ def test_export_copytree_uses_symlink_protection():
 
 def test_restore_security_error_class_exists():
     """RestoreSecurityError must be defined in restore module."""
-    from aletheia.backup.restore import RestoreSecurityError
+    from ops.backup.restore import RestoreSecurityError
     assert issubclass(RestoreSecurityError, RuntimeError)
 
 
 def test_restore_rejects_symlink_at_destination(tmp_path):
     """RestoreService must raise RestoreSecurityError when destination is a symlink."""
-    from aletheia.backup.restore import RestoreService, RestoreSecurityError
+    from ops.backup.restore import RestoreService, RestoreSecurityError
     import shutil
 
     # Create a fake bundle with one file

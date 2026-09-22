@@ -75,7 +75,7 @@ def run_smoke_check(
     """Run the target checkout's smoke policy, not the updater process's copy."""
     script = (
         "import json\n"
-        "from aletheia.update.smoke import run_smoke_check\n"
+        "from ops.update.smoke import run_smoke_check\n"
         "payload = run_smoke_check()\n"
         f"print({_RESULT_PREFIX!r} + json.dumps(payload, sort_keys=True))\n"
     )
@@ -208,7 +208,7 @@ def reanchor_joint_checkpoint(
         "from extensions.observation_lab.checkpoint import (\n"
         "    compute_joint_checkpoint, save_joint_checkpoint, verify_joint_checkpoint,\n"
         ")\n"
-        "from aletheia.update.target_fresh import checkpoint_delta_allowed\n"
+        "from ops.update.target_fresh import checkpoint_delta_allowed\n"
         "before = verify_joint_checkpoint(create_lab=False)\n"
         f"expected = {expected}\n"
         "components = set(before.mismatch_components)\n"

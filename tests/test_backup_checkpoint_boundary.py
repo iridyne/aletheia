@@ -264,7 +264,7 @@ def _manifest(archive: Path) -> dict:
 def test_online_backup_is_explicitly_non_recovery(tmp_path):
     _seed_workspace(tmp_path)
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     from aletheia.backup.verify import verify_backup
 
     archive = BackupService(data_dir=tmp_path).create_backup(label="online")
@@ -293,7 +293,7 @@ def test_authoritative_backup_records_lab_and_audit_identity(tmp_path):
     archive_root.mkdir()
     (archive_root / "generation.json").write_text('{"generation":1}\n', encoding="utf-8")
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     from aletheia.backup.verify import verify_backup
 
     archive = BackupService(data_dir=tmp_path).create_backup(
@@ -345,7 +345,7 @@ def test_lab_authoritative_backup_requires_verified_joint_checkpoint(tmp_path):
     connection.commit()
     connection.close()
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
 
     with pytest.raises(RuntimeError, match="joint_checkpoint"):
         BackupService(data_dir=tmp_path).create_backup(
@@ -356,8 +356,8 @@ def test_lab_authoritative_backup_requires_verified_joint_checkpoint(tmp_path):
 def test_restore_requires_authoritative_profile(tmp_path):
     _seed_workspace(tmp_path)
 
-    from aletheia.backup.restore import RestoreService
-    from aletheia.backup.service import BackupService
+    from ops.backup.restore import RestoreService
+    from ops.backup.service import BackupService
 
     archive = BackupService(data_dir=tmp_path).create_backup(label="online")
     result = RestoreService().restore(

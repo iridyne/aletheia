@@ -210,7 +210,7 @@ def test_incremental_reclaim_is_bounded_and_writer_serialized(tmp_path, monkeypa
 
 
 def test_compaction_defaults_to_read_only_plan(tmp_path):
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     path = tmp_path / "app.db"
     db = sqlite3.connect(path)
@@ -226,7 +226,7 @@ def test_compaction_defaults_to_read_only_plan(tmp_path):
 
 
 def test_compaction_reclaims_pages_and_preserves_rows(tmp_path, monkeypatch):
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     path = tmp_path / "app.db"
     db = sqlite3.connect(path)
@@ -255,7 +255,7 @@ def test_compaction_reclaims_pages_and_preserves_rows(tmp_path, monkeypatch):
 
 
 def test_compaction_refuses_running_gateway(tmp_path, monkeypatch):
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     path = tmp_path / "app.db"
     sqlite3.connect(path).close()
@@ -266,7 +266,7 @@ def test_compaction_refuses_running_gateway(tmp_path, monkeypatch):
 
 
 def test_compaction_converts_ohlcv_layout_and_restores_wal(tmp_path, monkeypatch):
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     path = tmp_path / "app.db"
     db = sqlite3.connect(path, isolation_level=None)
@@ -317,7 +317,7 @@ def test_compaction_converts_ohlcv_layout_and_restores_wal(tmp_path, monkeypatch
 
 
 def test_compaction_refusal_restores_original_wal_mode(tmp_path, monkeypatch):
-    from aletheia.maintenance.database_capacity import compact_database
+    from ops.maintenance.database_capacity import compact_database
 
     path = tmp_path / "app.db"
     db = sqlite3.connect(path, isolation_level=None)

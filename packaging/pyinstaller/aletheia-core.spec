@@ -12,7 +12,9 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parents[1]
 
-hiddenimports = collect_submodules("aletheia")
+hiddenimports = []
+for package in ("aletheia", "extensions", "ops", "legacy"):
+    hiddenimports.extend(collect_submodules(package))
 # These packages contain runtime-selected backends/plugins which static import analysis
 # does not always discover. Keep the list narrow and validate the real frozen payload in
 # CI instead of collecting every installed development package.

@@ -17,7 +17,8 @@ import time
 from typing import Any, Iterator
 from uuid import uuid4
 
-from aletheia.update import packaged
+from aletheia.update.packaged import PackagedUpdateError, is_packaged_mode, read_update_state
+from ops.update import packaged
 
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _SAFE_STAGE_LOCK = threading.Lock()
@@ -33,9 +34,6 @@ _SWITCH_PHASES = {
     "rolling_back",
 }
 
-PackagedUpdateError = packaged.PackagedUpdateError
-is_packaged_mode = packaged.is_packaged_mode
-read_update_state = packaged.read_update_state
 restore_update_backup = packaged.restore_update_backup
 
 
@@ -280,7 +278,7 @@ def prepare_activation_data() -> dict[str, Any]:
             checked = verify_backup(backup)
             checkpoint_valid = checked.valid and checked.recovery_eligible
         if not checkpoint_valid:
-            from aletheia.backup.service import BackupService
+            from ops.backup.service import BackupService
 
             authoritative = BackupService(packaged.get_data_dir()).create_backup(
                 label=f"pre_update_authoritative_{str(request.get('operation_id') or '')[:12]}",

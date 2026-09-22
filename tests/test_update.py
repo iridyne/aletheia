@@ -14,7 +14,6 @@ import pytest
 from typer.testing import CliRunner
 
 
-
 @pytest.fixture(autouse=True)
 def _development_checkout(monkeypatch):
     import sys
@@ -31,6 +30,7 @@ def setup_env(tmp_path, monkeypatch):
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     from aletheia.storage.migrations import run_migrations
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     sq.reset_db()
     sq._db_conn = None
@@ -39,7 +39,7 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
-    from aletheia.update import applier
+    from ops.update import applier
 
     monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
 
@@ -53,7 +53,7 @@ class _FakeProc:
 
 def test_update_verbose_prints_phase_and_total_timings(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
@@ -82,7 +82,7 @@ def test_update_verbose_prints_phase_and_total_timings(monkeypatch):
 
 
 def test_run_npm_uses_windows_cmd_shim(tmp_path, monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     calls = []
     monkeypatch.setattr(applier.os, "name", "nt")
@@ -101,6 +101,7 @@ def test_run_npm_uses_windows_cmd_shim(tmp_path, monkeypatch):
 def test_behind_count_parses_rev_list(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "_git", lambda *a, **k: _FakeProc(stdout="3\n"))
     assert git_ops.behind_count("master") == 3
@@ -110,6 +111,7 @@ def test_behind_count_parses_rev_list(tmp_path, monkeypatch):
 
 def test_changed_files_returns_unknown_on_git_failure(monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "_git", lambda *a, **k: _FakeProc(returncode=1, stderr="bad revision"))
 
@@ -118,6 +120,7 @@ def test_changed_files_returns_unknown_on_git_failure(monkeypatch):
 
 def test_git_timeout_is_reported_as_unknown_state(monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
     import subprocess
 
     def timeout(*_args, **_kwargs):
@@ -131,6 +134,7 @@ def test_git_timeout_is_reported_as_unknown_state(monkeypatch):
 
 def _stub_timed_out_git_mutation(monkeypatch, tmp_path, *, mutation, heads):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     head_values = iter(heads)
 
@@ -163,6 +167,7 @@ def _stub_timed_out_git_mutation(monkeypatch, tmp_path, *, mutation, heads):
 
 def test_merge_timeout_reconciles_when_target_head_is_clean(tmp_path, monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     _stub_timed_out_git_mutation(
         monkeypatch,
@@ -171,7 +176,7 @@ def test_merge_timeout_reconciles_when_target_head_is_clean(tmp_path, monkeypatc
         heads=["old111", "new222"],
     )
 
-    result = git_ops.merge_fast_forward("new222")
+    result = git_mutations.merge_fast_forward("new222")
 
     assert result["ok"] is True
     assert result["reason"] == "git_mutation_timeout_reconciled"
@@ -180,6 +185,7 @@ def test_merge_timeout_reconciles_when_target_head_is_clean(tmp_path, monkeypatc
 
 def test_merge_timeout_with_active_git_operation_stays_unknown(tmp_path, monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     (tmp_path / "MERGE_HEAD").write_text("unresolved\n", encoding="utf-8")
     _stub_timed_out_git_mutation(
@@ -189,7 +195,7 @@ def test_merge_timeout_with_active_git_operation_stays_unknown(tmp_path, monkeyp
         heads=["old111", "new222"],
     )
 
-    result = git_ops.merge_fast_forward("new222")
+    result = git_mutations.merge_fast_forward("new222")
 
     assert result["ok"] is False
     assert result["reason"] == "git_mutation_state_unknown"
@@ -198,6 +204,7 @@ def test_merge_timeout_with_active_git_operation_stays_unknown(tmp_path, monkeyp
 
 def test_pull_timeout_reports_unknown_when_target_head_did_not_land(tmp_path, monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     _stub_timed_out_git_mutation(
         monkeypatch,
@@ -207,7 +214,7 @@ def test_pull_timeout_reports_unknown_when_target_head_did_not_land(tmp_path, mo
     )
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
 
-    result = git_ops.pull("master")
+    result = git_mutations.pull("master")
 
     assert result["ok"] is False
     assert result["reason"] == "git_mutation_state_unknown"
@@ -216,6 +223,7 @@ def test_pull_timeout_reports_unknown_when_target_head_did_not_land(tmp_path, mo
 
 def test_reset_timeout_reconciles_when_rollback_head_is_clean(tmp_path, monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     _stub_timed_out_git_mutation(
         monkeypatch,
@@ -224,7 +232,7 @@ def test_reset_timeout_reconciles_when_rollback_head_is_clean(tmp_path, monkeypa
         heads=["old111"],
     )
 
-    result = git_ops.reset_hard("old111")
+    result = git_mutations.reset_hard("old111")
 
     assert result["ok"] is True
     assert result["reason"] == "git_mutation_timeout_reconciled"
@@ -233,6 +241,7 @@ def test_reset_timeout_reconciles_when_rollback_head_is_clean(tmp_path, monkeypa
 
 def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     calls = []
 
@@ -254,7 +263,7 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "_git", fake_git)
 
-    result = git_ops.pull("master")
+    result = git_mutations.pull("master")
 
     assert result == {"ok": False, "reason": "local_ahead", "ahead_count": 1}
     assert not any(call[0] == "merge" for call in calls)
@@ -263,6 +272,7 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
 def test_pull_merges_to_operation_owned_ref_sha(monkeypatch):
     """The fetch target must not share FETCH_HEAD or origin/<branch> state."""
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     calls = []
 
@@ -288,7 +298,7 @@ def test_pull_merges_to_operation_owned_ref_sha(monkeypatch):
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "_git", fake_git)
 
-    result = git_ops.pull("master")
+    result = git_mutations.pull("master")
 
     assert result["ok"] is True
     assert result["remote_commit"] == "fetched_sha"
@@ -299,9 +309,10 @@ def test_pull_merges_to_operation_owned_ref_sha(monkeypatch):
 
 def test_check_for_update_writes_last_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
-    monkeypatch.setattr(git_ops, "fetch", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_mutations, "fetch", lambda branch="master": {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "aaaa111")
     monkeypatch.setattr(git_ops, "remote_commit", lambda branch="master": "bbbb222")
     monkeypatch.setattr(git_ops, "behind_count", lambda branch="master": 2)
@@ -326,7 +337,7 @@ def test_check_disabled_returns_reason(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.update.enabled = False
     save_config(cfg)
-    from aletheia.update import applier
+    from ops.update import applier
 
     result = applier.check_for_update()
     assert result["ok"] is False
@@ -335,9 +346,10 @@ def test_check_disabled_returns_reason(tmp_path, monkeypatch):
 
 def test_check_rejects_unknown_remote_state(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
-    monkeypatch.setattr(git_ops, "fetch", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_mutations, "fetch", lambda branch="master": {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
     monkeypatch.setattr(git_ops, "remote_commit", lambda branch="master": "")
     monkeypatch.setattr(git_ops, "behind_count", lambda branch="master": -1)
@@ -369,11 +381,12 @@ def test_update_child_env_strips_provider_and_updater_credentials(monkeypatch):
 
 def test_apply_refuses_dirty_worktree(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: True)
     pulled = {"called": False}
-    monkeypatch.setattr(git_ops, "pull", lambda branch="master": pulled.__setitem__("called", True))
+    monkeypatch.setattr(git_mutations, "pull", lambda branch="master": pulled.__setitem__("called", True))
 
     result = applier.apply_update()
     assert result["applied"] is False
@@ -387,12 +400,13 @@ def test_apply_refuses_dirty_worktree(tmp_path, monkeypatch):
 
 def test_apply_refuses_source_checkout_on_wrong_branch(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "feature/experiment")
     pulled = {"called": False}
-    monkeypatch.setattr(git_ops, "pull", lambda branch="master": pulled.__setitem__("called", True))
+    monkeypatch.setattr(git_mutations, "pull", lambda branch="master": pulled.__setitem__("called", True))
 
     result = applier.apply_update()
 
@@ -403,11 +417,12 @@ def test_apply_refuses_source_checkout_on_wrong_branch(tmp_path, monkeypatch):
 
 def test_apply_skips_deps_when_pyproject_unchanged(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
-    monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_mutations, "pull", lambda branch="master": {"ok": True})
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/foo.py"])
     # current_commit is called twice (before+after); make the second return new
     commits = iter(["old111", "new222"])
@@ -425,12 +440,13 @@ def test_apply_skips_deps_when_pyproject_unchanged(tmp_path, monkeypatch):
 
 def test_apply_reinstalls_deps_when_pyproject_changed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     commits = iter(["old111", "new222"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
-    monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_mutations, "pull", lambda branch="master": {"ok": True})
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["pyproject.toml", "aletheia/x.py"])
     installed = {"called": 0}
     monkeypatch.setattr(
@@ -446,12 +462,13 @@ def test_apply_reinstalls_deps_when_pyproject_changed(tmp_path, monkeypatch):
 
 def test_apply_pull_failure_graceful(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
     monkeypatch.setattr(
-        git_ops, "pull", lambda branch="master": {"ok": False, "reason": "pull_failed", "stderr": "conflict"}
+        git_mutations, "pull", lambda branch="master": {"ok": False, "reason": "pull_failed", "stderr": "conflict"}
     )
 
     result = applier.apply_update()
@@ -465,12 +482,13 @@ def test_apply_pull_failure_graceful(tmp_path, monkeypatch):
 
 def test_apply_fails_closed_when_changed_files_cannot_be_classified(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(git_ops, "changed_files", lambda *_args: None)
     reset_calls = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
     monkeypatch.setattr(applier, "_persist_current_commit_fresh", lambda _commit: {"ok": True})
     monkeypatch.setattr(applier, "run_smoke_check", lambda: pytest.fail("unknown diff must not reach smoke"))
 
@@ -491,11 +509,12 @@ def test_apply_fails_closed_when_changed_files_cannot_be_classified(tmp_path, mo
 
 def test_schema_candidate_failure_is_durably_audited(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.backup import service as backup_service
-    from aletheia.update import applier, auto, git_ops
+    from ops.backup import service as backup_service
+    from aletheia.update import git_ops
+    from ops.update import applier, auto, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
-    monkeypatch.setattr(git_ops, "reset_hard", lambda _commit: {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda _commit: {"ok": True})
     monkeypatch.setattr(
         backup_service,
         "BackupService",
@@ -525,14 +544,15 @@ def test_schema_candidate_failure_is_durably_audited(tmp_path, monkeypatch):
 
 def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
     heads = iter(["old111", "new222", "unverified333"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(heads))
     resets = []
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "reset_hard",
         lambda commit: resets.append(commit) or {"ok": False, "reason": "reset_failed", "stderr": "index locked"},
     )
@@ -555,7 +575,7 @@ def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_pat
 
 def test_cli_update_runs_full_source_deployment_without_subcommand(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     seen = {}
@@ -585,7 +605,7 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(monkeypatch):
 
 def test_cli_update_same_source_commit_reports_noop(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
@@ -612,7 +632,7 @@ def test_cli_update_same_source_commit_reports_noop(monkeypatch):
 
 def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
@@ -641,7 +661,7 @@ def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
 
 def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
@@ -669,7 +689,7 @@ def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatc
 
 def test_cli_update_unproven_continuity_exits_nonzero(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
@@ -701,7 +721,7 @@ def test_cli_update_unproven_continuity_exits_nonzero(monkeypatch):
 
 def test_cli_update_no_restart_pending_restart_is_not_verified(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import continuity
+    from ops.update import continuity
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
@@ -732,7 +752,7 @@ def test_cli_update_no_restart_pending_restart_is_not_verified(monkeypatch):
 
 def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import packaged_commands
+    from ops.update import packaged_commands
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
@@ -757,7 +777,7 @@ def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
 
 def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
     from aletheia.cli import update_cmd
-    from aletheia.update import packaged_commands
+    from ops.update import packaged_commands
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
@@ -786,7 +806,7 @@ def test_top_level_update_help_has_no_apply_subcommand():
 
 def test_cli_update_check_smoke(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     monkeypatch.setattr(
         applier,
@@ -809,7 +829,7 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
 
 
 def test_cli_update_check_unavailable_exits_nonzero(monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
     from typer.testing import CliRunner
     from aletheia.cli.update_cmd import update_app
 
@@ -827,7 +847,7 @@ def test_cli_update_check_unavailable_exits_nonzero(monkeypatch):
 
 async def test_api_update_status_is_local_until_explicit_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     checks = 0
 
@@ -859,7 +879,7 @@ async def test_api_update_status_is_local_until_explicit_check(tmp_path, monkeyp
 
 async def test_api_update_check_does_not_block_the_event_loop(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     check_started = threading.Event()
     release_check = threading.Event()
@@ -905,19 +925,19 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
     assert forbidden.isdisjoint(permissions.TOOL_REGISTRY.keys())
 
 
-
 # --- Component 4: smoke verification + controlled rollback ---
 
 
 def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     """Stub git_ops so apply_update reaches the smoke stage with a clean pull."""
-    from aletheia.update import git_ops, applier
+    from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations, applier
 
     commits = iter(["old111", "new222", "old111"])
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
-    monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_mutations, "pull", lambda branch="master": {"ok": True})
     changed = (
         changed_files if changed_files is not None else (["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"])
     )
@@ -928,11 +948,12 @@ def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
 
 def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations, applier
 
     _stub_clean_pull(monkeypatch)
     reset_calls = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": False, "stage": "import", "detail": "boom"})
 
     result = applier.apply_update()
@@ -950,11 +971,12 @@ def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
 
 def test_apply_succeeds_when_smoke_passes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations, applier
 
     _stub_clean_pull(monkeypatch)
     reset_calls = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit))
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: reset_calls.append(commit))
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
 
     result = applier.apply_update()
@@ -965,7 +987,7 @@ def test_apply_succeeds_when_smoke_passes(tmp_path, monkeypatch):
 
 def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
@@ -983,7 +1005,7 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
 
 
 def test_dashboard_build_required_for_matching_tree_and_complete_artifact(tmp_path, monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     static = tmp_path / "dashboard_static"
     (static / ".vite").mkdir(parents=True)
@@ -1005,7 +1027,7 @@ def test_dashboard_build_required_for_matching_tree_and_complete_artifact(tmp_pa
 
 
 def test_build_frontend_records_validated_tree_fingerprint(tmp_path, monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     staged = tmp_path / "dashboard-next"
     monkeypatch.setattr(applier, "_STAGED_DASHBOARD_STATIC", staged)
@@ -1028,7 +1050,7 @@ def test_build_frontend_records_validated_tree_fingerprint(tmp_path, monkeypatch
 
 def test_apply_restart_installs_changed_frontend_deps_before_build(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/package-lock.json"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
@@ -1046,7 +1068,7 @@ def test_apply_restart_installs_changed_frontend_deps_before_build(tmp_path, mon
 
 
 def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     seen = {}
 
@@ -1073,7 +1095,7 @@ def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
 
 
 def test_restart_gateway_accepts_recovered_systemd_start(monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     monkeypatch.setattr(
         applier.subprocess,
@@ -1089,7 +1111,7 @@ def test_restart_gateway_accepts_recovered_systemd_start(monkeypatch):
 
 
 def test_restart_gateway_rejects_unrecovered_start_error(monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     monkeypatch.setattr(
         applier.subprocess,
@@ -1105,7 +1127,7 @@ def test_restart_gateway_rejects_unrecovered_start_error(monkeypatch):
 
 
 def test_gateway_restart_error_probe_has_bounded_deadline(monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
 
     now = [0.0]
 
@@ -1125,7 +1147,7 @@ def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
     monkeypatch,
 ):
     from aletheia.gateway import service_control
-    from aletheia.update import applier
+    from ops.update import applier
 
     monkeypatch.setattr(
         service_control,
@@ -1167,7 +1189,7 @@ def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
 
 def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/App.tsx"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
@@ -1188,7 +1210,8 @@ def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch)
 
 def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
@@ -1198,7 +1221,7 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     restored = []
     monkeypatch.setattr(applier, "_restore_frontend_build", lambda had_previous: restored.append(had_previous))
     resets = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
     starts = iter([{"ok": False}, {"ok": True}])
     monkeypatch.setattr(applier, "_restart_gateway", lambda: next(starts))
 
@@ -1214,7 +1237,8 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
 
 def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     _stub_clean_pull(
         monkeypatch,
@@ -1222,7 +1246,7 @@ def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
     )
     calls = []
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "reset_hard",
         lambda commit: calls.append(("reset", commit)) or {"ok": True},
     )
@@ -1242,8 +1266,9 @@ def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
 
 def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.backup import service as backup_service
-    from aletheia.update import applier, auto, git_ops
+    from ops.backup import service as backup_service
+    from aletheia.update import git_ops
+    from ops.update import applier, auto, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: False)
@@ -1260,8 +1285,8 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
             return path
 
     monkeypatch.setattr(backup_service, "BackupService", FakeBackupService)
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
-    monkeypatch.setattr(git_ops, "merge_fast_forward", lambda commit: calls.append(("advance", commit)) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "merge_fast_forward", lambda commit: calls.append(("advance", commit)) or {"ok": True})
     monkeypatch.setattr(
         auto,
         "_candidate_preflight",
@@ -1290,14 +1315,15 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
 @pytest.mark.integration
 def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.backup.service import BackupService
-    from aletheia.update import auto, git_ops
+    from ops.backup.service import BackupService
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
     import shutil
     import subprocess
 
     source = tmp_path / "source"
     source.mkdir()
-    for directory in ("aletheia", "extensions", "tests"):
+    for directory in ("aletheia", "extensions", "ops", "legacy", "tests"):
         shutil.copytree(git_ops.REPO_ROOT / directory, source / directory,
                         ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
     for filename in ("pyproject.toml", "uv.lock", "README.md"):
@@ -1319,10 +1345,11 @@ def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, 
 
 
 def test_rollback_applied_update_restores_source_metadata_and_gateway(monkeypatch):
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     calls = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
     monkeypatch.setattr(
         applier,
@@ -1345,7 +1372,8 @@ def test_rollback_applied_update_restores_source_metadata_and_gateway(monkeypatc
 
 
 def test_rollback_applied_schema_update_restores_transaction_backup(tmp_path, monkeypatch):
-    from aletheia.update import applier, auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, auto, git_ops as git_mutations
 
     calls = []
     monkeypatch.setattr(
@@ -1379,9 +1407,10 @@ def test_rollback_applied_schema_update_restores_transaction_backup(tmp_path, mo
 
 
 def test_rollback_applied_update_reports_unproven_metadata_restore(monkeypatch):
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
-    monkeypatch.setattr(git_ops, "reset_hard", lambda _commit: {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda _commit: {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
     monkeypatch.setattr(
         applier,
@@ -1401,7 +1430,7 @@ def test_rollback_applied_update_reports_unproven_metadata_restore(monkeypatch):
 
 def test_apply_restart_skips_valid_frontend_without_source_changes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
@@ -1423,7 +1452,7 @@ def test_apply_restart_skips_valid_frontend_without_source_changes(tmp_path, mon
 
 def test_apply_restart_rebuilds_after_deferred_frontend_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
 
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
@@ -1441,12 +1470,13 @@ def test_apply_restart_rebuilds_after_deferred_frontend_restart(tmp_path, monkey
 
 def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier, git_ops
+    from aletheia.update import git_ops
+    from ops.update import applier, git_ops as git_mutations
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     resets = []
-    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
     monkeypatch.setattr(
         applier,
         "_build_frontend",
@@ -1464,7 +1494,7 @@ def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatc
 
 def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import smoke
+    from ops.update import smoke
 
     # Force the import subprocess to fail.
     import subprocess
@@ -1483,7 +1513,8 @@ def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
 def test_apply_no_auto_restart(tmp_path, monkeypatch):
     """Neither success nor rollback may restart the gateway (user requirement)."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations, applier
 
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
@@ -1505,6 +1536,7 @@ def test_apply_no_auto_restart(tmp_path, monkeypatch):
 def test_git_ops_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
     from aletheia.gateway import pidfile
 
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
@@ -1524,6 +1556,7 @@ def test_git_ops_passes_create_no_window_on_windows(tmp_path, monkeypatch):
 def test_git_ops_no_creationflags_on_posix(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
     from aletheia.gateway import pidfile
 
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
@@ -1541,7 +1574,7 @@ def test_git_ops_no_creationflags_on_posix(tmp_path, monkeypatch):
 
 def test_reinstall_deps_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
+    from ops.update import applier
     from aletheia.gateway import pidfile
 
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
@@ -1559,7 +1592,7 @@ def test_reinstall_deps_passes_create_no_window_on_windows(tmp_path, monkeypatch
 
 def test_smoke_import_gate_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import smoke
+    from ops.update import smoke
     from aletheia.gateway import pidfile
 
     # Force the helper's platform check to Windows even though the test runs on

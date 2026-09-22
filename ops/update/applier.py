@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
-from aletheia.update import git_ops, target_fresh
+from aletheia.update import git_ops as git_facts
+from ops.update import git_ops, target_fresh
 from aletheia.update.process_env import safe_env
 
 logger = logging.getLogger("aletheia.update.applier")
@@ -29,7 +30,7 @@ _NPM_COMMAND_TIMEOUT_SEC = 300
 
 
 def _packaged_module():
-    from aletheia.update import packaged_commands
+    from ops.update import packaged_commands
 
     return packaged_commands
 
@@ -46,7 +47,7 @@ def update_progress() -> dict:
     if _is_packaged():
         return _packaged_module().read_update_state()
     if sys.platform == "linux":
-        from aletheia.update import auto
+        from ops.update import auto
 
         return {**auto.status(), "mode": "source_release"}
     cfg = load_config()
@@ -67,13 +68,13 @@ def check_for_update() -> dict:
         return _packaged_module().check_for_update()
 
     if sys.platform == "linux":
-        from aletheia.update import auto
+        from ops.update import auto
 
         return auto.check()
     cfg = load_config()
     if not cfg.update.enabled:
         return {"ok": False, "reason": "update_disabled", "mode": "development"}
-    if not git_ops.git_available():
+    if not git_facts.git_available():
         return {"ok": False, "reason": "git_unavailable", "mode": "development"}
 
     branch = cfg.update.branch
@@ -85,9 +86,9 @@ def check_for_update() -> dict:
             "mode": "development",
         }
 
-    cur = git_ops.current_commit()
-    remote = git_ops.remote_commit(branch)
-    behind = git_ops.behind_count(branch)
+    cur = git_facts.current_commit()
+    remote = git_facts.remote_commit(branch)
+    behind = git_facts.behind_count(branch)
     if not cur or not remote or not isinstance(behind, int) or behind < 0:
         return {
             "ok": False,
@@ -471,7 +472,7 @@ def _rollback_update(
     if restart and frontend_deps_changed:
         _install_frontend_deps()
     if not rollback.get("ok"):
-        actual_head = git_ops.current_commit() or ""
+        actual_head = git_facts.current_commit() or ""
         metadata = _persist_current_commit_fresh(actual_head)
         _record_metadata_failure(actual_head, metadata)
         write_audit(
@@ -535,7 +536,7 @@ def rollback_applied_update(result: dict) -> dict:
         backup = str(result.get("schema_backup") or "")
         if not backup:
             return {"rolled_back": False, "reason": "rollback_context_unavailable"}
-        from aletheia.update.auto import _rollback_to_old_runtime
+        from ops.update.auto import _rollback_to_old_runtime
 
         recovery = _rollback_to_old_runtime(
             old,
@@ -545,7 +546,7 @@ def rollback_applied_update(result: dict) -> dict:
         )
         metadata = _persist_current_commit_fresh(old)
         _record_metadata_failure(old, metadata)
-        actual_head = git_ops.current_commit() or ""
+        actual_head = git_facts.current_commit() or ""
         rolled_back = bool(recovery.get("ok")) and metadata.get("ok") is True and actual_head == old
         write_audit(
             {
@@ -573,7 +574,7 @@ def rollback_applied_update(result: dict) -> dict:
         return {
             "rolled_back": False,
             "reason": "rollback_failed",
-            "actual_head": git_ops.current_commit() or "",
+            "actual_head": git_facts.current_commit() or "",
         }
 
     recovery_errors: list[str] = []
@@ -582,7 +583,7 @@ def rollback_applied_update(result: dict) -> dict:
     if result.get("frontend_deps_changed") and not _install_frontend_deps().get("ok"):
         recovery_errors.append("frontend_dependency_restore_failed")
     if result.get("frontend_changed"):
-        old_tree = git_ops.tree_hash(old, "frontend")
+        old_tree = git_facts.tree_hash(old, "frontend")
         build = _build_frontend(old_tree)
         if build.get("ok"):
             _activate_frontend_build()
@@ -597,7 +598,7 @@ def rollback_applied_update(result: dict) -> dict:
     restarted = _restart_gateway()
     if not restarted.get("ok"):
         recovery_errors.append("gateway_recovery_failed")
-    actual_head = git_ops.current_commit() or ""
+    actual_head = git_facts.current_commit() or ""
     rolled_back = actual_head == old and not recovery_errors
     write_audit(
         {
@@ -655,18 +656,18 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
     # #1206: refuse updates when not inside the project-managed venv
     if not _is_managed_venv():
         return {"applied": False, "reason": "update_wrong_interpreter", "mode": "development"}
-    if not git_ops.git_available():
+    if not git_facts.git_available():
         return {"applied": False, "reason": "git_unavailable", "mode": "development"}
     branch = cfg.update.branch
 
-    if git_ops.is_worktree_dirty():
+    if git_facts.is_worktree_dirty():
         write_audit(
             {
                 "actor": "human",
                 "source": "api",
                 "event_type": "update_blocked",
                 "entity_type": "system_update",
-                "entity_id": git_ops.current_commit(),
+                "entity_id": git_facts.current_commit(),
                 "message": "Update blocked: uncommitted local changes in source worktree",
             }
         )
@@ -677,7 +678,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             "message": "Refusing to pull: the source worktree has uncommitted changes.",
         }
 
-    current_branch = git_ops.current_branch()
+    current_branch = git_facts.current_branch()
     if current_branch != branch:
         write_audit(
             {
@@ -685,7 +686,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
                 "source": "api",
                 "event_type": "update_blocked",
                 "entity_type": "system_update",
-                "entity_id": git_ops.current_commit(),
+                "entity_id": git_facts.current_commit(),
                 "message": (
                     "Update blocked: source checkout branch "
                     f"{current_branch or 'detached'} does not match configured branch {branch}"
@@ -703,7 +704,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
 
     if progress:
         progress("Fetching latest commits")
-    old = git_ops.current_commit()
+    old = git_facts.current_commit()
     if not old:
         _record_update_failure("", "current_commit_unavailable")
         return {
@@ -727,12 +728,12 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             "mode": "development",
         }
 
-    new = pulled.get("remote_commit") or git_ops.current_commit()
+    new = pulled.get("remote_commit") or git_facts.current_commit()
     if not new:
         _record_update_failure(old, "new_commit_unavailable")
         return {"applied": False, "reason": "new_commit_unavailable", "mode": "development"}
     try:
-        changed_files = git_ops.changed_files(old, new)
+        changed_files = git_facts.changed_files(old, new)
     except Exception as exc:
         changed_files = None
         changed_files_error = f"{type(exc).__name__}: {exc}"
@@ -768,8 +769,8 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             )
         if progress:
             progress("Preflighting schema migration")
-        from aletheia.backup.service import BackupService
-        from aletheia.update.auto import AutoUpdateError, _candidate_preflight, _remove_candidate
+        from ops.backup.service import BackupService
+        from ops.update.auto import AutoUpdateError, _candidate_preflight, _remove_candidate
 
         reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
@@ -777,7 +778,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             # post-pull checkout unclassified indefinitely.
             reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
-            actual_head = git_ops.current_commit() or ""
+            actual_head = git_facts.current_commit() or ""
             detail = reset.get("stderr") or reset.get("reason") or "hard reset failed"
             _record_update_failure(
                 old,
@@ -863,7 +864,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
                 failure_reason=install["reason"],
                 failure_detail=install.get("detail"),
             )
-    frontend_tree = git_ops.tree_hash(new, "frontend") if restart else ""
+    frontend_tree = git_facts.tree_hash(new, "frontend") if restart else ""
     dashboard_build_required = restart and _dashboard_build_required(frontend_tree)
     if dashboard_build_required:
         if progress:
@@ -899,7 +900,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
     had_previous_static = False
     if restart:
         if schema_changed:
-            from aletheia.backup.service import BackupService
+            from ops.backup.service import BackupService
 
             schema_backup = preactivation_backup
             if not schema_backup:
@@ -951,7 +952,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
                 _reinstall_deps()
             if frontend_deps_changed:
                 _install_frontend_deps()
-            actual_head_after_rollback = git_ops.current_commit() or ""
+            actual_head_after_rollback = git_facts.current_commit() or ""
             metadata = _persist_current_commit_fresh(actual_head_after_rollback)
             _record_metadata_failure(actual_head_after_rollback, metadata)
             recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}

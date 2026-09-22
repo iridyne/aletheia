@@ -27,12 +27,13 @@ try:  # Windows supports the rest of the update CLI, but not Fedora auto deploym
 except ImportError:  # pragma: no cover - exercised only on Windows
     fcntl = None
 
-from aletheia.backup.restore import RestoreService
-from aletheia.backup.service import BackupService
+from ops.backup.restore import RestoreService
+from ops.backup.service import BackupService
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
-from aletheia.update import git_ops
-from aletheia.update.applier import (
+from aletheia.update import git_ops as git_facts
+from ops.update import git_ops
+from ops.update.applier import (
     _PREVIOUS_DASHBOARD_STATIC,
     _STAGED_DASHBOARD_STATIC,
     _activate_frontend_build,
@@ -129,13 +130,13 @@ def _semver(value: str) -> tuple[int, int, int] | None:
 
 
 def _version_from_ref(ref: str) -> str:
-    match = _VERSION.search(git_ops.version_at_ref(ref))
+    match = _VERSION.search(git_facts.version_at_ref(ref))
     return match.group(1) if match else ""
 
 
 def _stable_tags(remote_tags: set[str]) -> dict[str, dict[str, Any]] | None:
     values: dict[str, dict[str, Any]] = {}
-    local_tags = git_ops.tag_names()
+    local_tags = git_facts.tag_names()
     if local_tags is None:
         return None
     if remote_tags and not set(local_tags).intersection(remote_tags):
@@ -144,7 +145,7 @@ def _stable_tags(remote_tags: set[str]) -> dict[str, dict[str, Any]] | None:
         if tag not in remote_tags:
             continue
         version = _semver(tag)
-        commit = git_ops.tag_commit(tag)
+        commit = git_facts.tag_commit(tag)
         if version and not commit:
             return None
         if version:
@@ -230,7 +231,7 @@ def _doctor_healthy() -> dict[str, Any]:
             "_configure_runtime(); "
             "from aletheia.diagnostics.doctor import build_report; "
             "from aletheia.storage.migrations import migration_status; "
-            "from aletheia.update.auto import _evaluate_runtime_diagnostics; "
+            "from ops.update.auto import _evaluate_runtime_diagnostics; "
             "print(json.dumps(_evaluate_runtime_diagnostics(build_report().to_dict(), migration_status())))"
         )
         result = _run([sys.executable, "-c", code], cwd=_PROJECT_ROOT, env=_safe_env(), timeout=120)
@@ -263,7 +264,7 @@ def _observer_auto_preflight() -> dict[str, Any]:
     if get_execution_owner() != "worker":
         return {"required": False, "ok": True, "before": None, "preflight": None}
 
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     before = continuity.capture_update_continuity()
     preflight = continuity.evaluate_preflight(before)
@@ -285,7 +286,7 @@ def _observer_auto_postflight(guard: dict[str, Any], target: str) -> dict[str, A
     if not guard.get("required"):
         return {"required": False, "ok": True, "comparison": None, "after": None}
 
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     before = guard.get("before") or {}
     after = continuity.capture_update_continuity_until_settled(
@@ -317,7 +318,7 @@ def _observer_rollback_safe(guard: dict[str, Any]) -> bool:
     if not before_acquired:
         return False
     try:
-        from aletheia.update import continuity
+        from ops.update import continuity
 
         current = continuity.capture_update_continuity()
     except Exception:
@@ -425,7 +426,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
     root = _paths()["root"]
     root.mkdir(parents=True, exist_ok=True)
     worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=root))
-    added = git_ops._git("worktree", "add", "--detach", str(worktree), target)  # noqa: SLF001
+    added = git_facts._git("worktree", "add", "--detach", str(worktree), target)  # noqa: SLF001
     if added.returncode:
         shutil.rmtree(worktree, ignore_errors=True)
         raise AutoUpdateError("candidate_worktree_failed", added.stderr[-500:])
@@ -446,10 +447,10 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             "status=migration_status()\n"
             "if status.get('current') is not True:\n"
             "    apply_migrations()\n"
-            "from aletheia.update.packaged import validate_current_data\n"
+            "from ops.update.packaged import validate_current_data\n"
             "validated=validate_current_data()\n"
             "_require(validated.get('ok'), f'data_validation={validated!r}')\n"
-            "from aletheia.update.smoke import run_smoke_check\n"
+            "from ops.update.smoke import run_smoke_check\n"
             "smoke=run_smoke_check()\n"
             "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
         )
@@ -459,7 +460,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
         return worktree
     except Exception:
-        git_ops._git("worktree", "remove", "--force", str(worktree))  # noqa: SLF001
+        git_facts._git("worktree", "remove", "--force", str(worktree))  # noqa: SLF001
         shutil.rmtree(worktree, ignore_errors=True)
         raise
 
@@ -467,7 +468,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
 def _remove_candidate(worktree: Path | None) -> None:
     if worktree is None:
         return
-    git_ops._git("worktree", "remove", "--force", str(worktree))  # noqa: SLF001
+    git_facts._git("worktree", "remove", "--force", str(worktree))  # noqa: SLF001
     shutil.rmtree(worktree, ignore_errors=True)
 
 
@@ -561,7 +562,7 @@ def _validate_candidate(tag: str, target: str, current_version: tuple[int, int, 
     tag_version = _semver(tag)
     if tag_version is None or tag_version <= current_version:
         raise AutoUpdateError("tag_not_newer")
-    if not git_ops.is_ancestor(target, "origin/master"):
+    if not git_facts.is_ancestor(target, "origin/master"):
         raise AutoUpdateError("tag_not_on_master")
     version = _version_from_ref(target)
     if version != tag[1:]:
@@ -613,7 +614,7 @@ def _release_transaction(*, deploy: bool) -> dict[str, Any]:
     """Resolve the same pinned release for explicit checks and deployments."""
     if sys.platform != "linux":
         return {"ok": False, "reason": "linux_source_checkout_required"}
-    if not git_ops.is_repo():
+    if not git_facts.is_repo():
         return {"ok": False, "reason": "source_checkout_required"}
     if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
         return {"ok": True, "reason": "qualification_runtime_pinned", "detail": _ROLE_MIGRATION_DETAIL}
@@ -632,10 +633,10 @@ def _release_transaction(*, deploy: bool) -> dict[str, Any]:
         fetched = git_ops.fetch_release_tags()
         if not fetched.get("ok"):
             return _failed(state, tag=None, sha=None, reason=fetched.get("reason", "fetch_failed"), detail=fetched.get("stderr", ""))
-        if git_ops.is_worktree_dirty() or git_ops.current_branch() != "master":
+        if git_facts.is_worktree_dirty() or git_facts.current_branch() != "master":
             return _failed(state, tag=None, sha=None, reason="source_not_clean_master")
-        head = git_ops.current_commit()
-        if not head or not git_ops.is_ancestor(head, "origin/master"):
+        head = git_facts.current_commit()
+        if not head or not git_facts.is_ancestor(head, "origin/master"):
             return _failed(state, tag=None, sha=None, reason="source_not_fast_forward")
 
         remote_tags = git_ops.remote_tag_names()
@@ -746,7 +747,7 @@ def _release_transaction(*, deploy: bool) -> dict[str, Any]:
             verified = _wait_for_runtime(target, version)
             if not verified.get("ok"):
                 raise AutoUpdateError(verified.get("reason", "runtime_verification_failed"), str(verified.get("detail", "")))
-            from aletheia.update import target_fresh
+            from ops.update import target_fresh
 
             reanchor = target_fresh.reanchor_joint_checkpoint(
                 project_root=_PROJECT_ROOT,
@@ -896,7 +897,7 @@ def status() -> dict[str, Any]:
 
 
 def resume() -> dict[str, Any]:
-    if sys.platform != "linux" or not git_ops.is_repo():
+    if sys.platform != "linux" or not git_facts.is_repo():
         return {"ok": False, "reason": "linux_source_checkout_required"}
     with _deployment_lock() as acquired:
         if not acquired:
@@ -973,7 +974,7 @@ def _systemctl(*args: str) -> None:
 
 
 def install() -> dict[str, Any]:
-    if sys.platform != "linux" or not git_ops.is_repo():
+    if sys.platform != "linux" or not git_facts.is_repo():
         return {"ok": False, "reason": "linux_source_checkout_required"}
     if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
         return {"ok": False, "reason": "paper_runtime_role_required"}
@@ -1002,7 +1003,7 @@ def install() -> dict[str, Any]:
 
 
 def uninstall() -> dict[str, Any]:
-    if sys.platform != "linux" or not git_ops.is_repo():
+    if sys.platform != "linux" or not git_facts.is_repo():
         return {"ok": False, "reason": "linux_source_checkout_required"}
     directory = _unit_dir()
     owned = []

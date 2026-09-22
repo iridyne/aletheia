@@ -8,7 +8,6 @@ import threading
 
 import typer
 
-from aletheia.update.continuity import describe_failure_code as _desc
 
 _BRA = "⣾⣽⣻⢿⡿⣟⣯⣷"
 _R = "\033[0m"
@@ -123,7 +122,7 @@ auto_app = typer.Typer(
 
 
 def _is_packaged() -> bool:
-    from aletheia.update.packaged_commands import is_packaged_mode
+    from aletheia.update.packaged import is_packaged_mode
 
     return is_packaged_mode()
 
@@ -151,6 +150,7 @@ def update(
 
 
 def _run_update(*, restart: bool, verbose: bool = False) -> None:
+    from ops.update.continuity import describe_failure_code as _desc
     if _is_packaged():
         if not restart:
             typer.echo(
@@ -159,7 +159,7 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
                 err=True,
             )
             raise typer.Exit(1)
-        from aletheia.update.packaged_commands import stage_update_blocking
+        from ops.update.packaged_commands import stage_update_blocking
 
         result = stage_update_blocking()
         state = result.get("state") or {}
@@ -180,7 +180,7 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
         return
 
 
-    from aletheia.update.continuity import apply_update_with_continuity
+    from ops.update.continuity import apply_update_with_continuity
 
     if sys.stdout.isatty():
         spinner = _Spinner()
@@ -320,7 +320,7 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
 def status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")):
     """Show durable local update progress without repeating a network check."""
 
-    from aletheia.update.applier import update_progress
+    from ops.update.applier import update_progress
 
     result = update_progress()
     if json_output:
@@ -347,7 +347,7 @@ def status(json_output: bool = typer.Option(False, "--json", help="Print machine
 def check():
     """Check whether a newer development commit or signed release is available."""
 
-    from aletheia.update.applier import check_for_update
+    from ops.update.applier import check_for_update
 
     result = check_for_update()
     if not result.get("ok"):
@@ -392,7 +392,7 @@ def rollback(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmat
     ):
         typer.echo("Aborted.")
         raise typer.Exit(0)
-    from aletheia.update.applier import rollback_update
+    from ops.update.applier import rollback_update
 
     result = rollback_update()
     if not result.get("accepted"):
@@ -406,7 +406,7 @@ def rollback(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmat
 @auto_app.command("status")
 def auto_status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")):
     """Show durable release-tag deployment state without checking the network."""
-    from aletheia.update.auto import status
+    from ops.update.auto import status
 
     result = status()
     if json_output:
@@ -423,7 +423,7 @@ def auto_status(json_output: bool = typer.Option(False, "--json", help="Print ma
 @auto_app.command("run")
 def auto_run():
     """Check once and deploy a newer stable release tag on a Paper runtime."""
-    from aletheia.update.auto import run
+    from ops.update.auto import run
 
     result = run()
     typer.echo(result.get("reason", "unknown"))
@@ -436,7 +436,7 @@ def auto_run():
 @auto_app.command("resume")
 def auto_resume():
     """Clear a recovery hold after the operator has repaired the runtime."""
-    from aletheia.update.auto import resume
+    from ops.update.auto import resume
 
     result = resume()
     typer.echo(result.get("reason", "resumed"))
@@ -447,7 +447,7 @@ def auto_resume():
 @auto_app.command("install")
 def auto_install():
     """Install the timer; set ALETHEIA_RUNTIME_ROLE=paper for auto-deployment."""
-    from aletheia.update.auto import install
+    from ops.update.auto import install
 
     result = install()
     typer.echo(result.get("reason", "unknown"))
@@ -458,7 +458,7 @@ def auto_install():
 @auto_app.command("uninstall")
 def auto_uninstall():
     """Remove only Aletheia's release-tag timer and service units."""
-    from aletheia.update.auto import uninstall
+    from ops.update.auto import uninstall
 
     result = uninstall()
     typer.echo(result.get("reason", "unknown"))

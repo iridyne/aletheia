@@ -3,6 +3,7 @@ from __future__ import annotations
 from starlette.requests import Request
 
 from aletheia.server.routes import update as update_routes
+from ops.update import applier
 
 
 def _request(*, referer: str = "", sec_fetch_site: str = "") -> Request:
@@ -45,7 +46,7 @@ def test_same_origin_confirmation_requires_browser_controlled_headers():
 def test_empty_script_request_still_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(
-        update_routes.applier,
+        applier,
         "apply_update",
         lambda: (_ for _ in ()).throw(AssertionError("applier must not run")),
     )
@@ -62,7 +63,7 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: True)
     monkeypatch.setattr(
-        update_routes.applier,
+        applier,
         "apply_update",
         lambda: {
             "mode": "packaged",
@@ -90,7 +91,7 @@ def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: False)
     monkeypatch.setattr(
-        update_routes.applier,
+        applier,
         "apply_update",
         lambda: (_ for _ in ()).throw(
             AssertionError("source API must never mutate the checkout")
@@ -111,7 +112,7 @@ def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
 def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(
-        update_routes.applier,
+        applier,
         "rollback_update",
         lambda: (_ for _ in ()).throw(AssertionError("rollback applier must not run")),
     )

@@ -497,7 +497,7 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m aletheia.maintenance.data_retention_backfill",
+        prog="python -m ops.maintenance.data_retention_backfill",
         description="One-shot Phase 3 data retention backfill.",
     )
     parser.add_argument("--dry-run", action="store_true", default=True,
@@ -669,7 +669,6 @@ def _attempt_restore_from_backup(db: sqlite3.Connection, backup_path: Path | Non
         print(f"RESTORE SUCCESS: {backup_path} -> {db_file}")
     except Exception as exc:
         print(f"RESTORE FAILED: {exc}", file=sys.stderr)
-
 
 
 # --- Archive helpers -------------------------------------------------------
@@ -1156,7 +1155,7 @@ def main(argv: list[str] | None = None) -> int:
     return run(args)
 
 
-# --- Smoke test: `python -m aletheia.maintenance.data_retention_backfill` --
+# --- Smoke test: `python -m ops.maintenance.data_retention_backfill` --
 #
 # ``main(None)`` uses sys.argv so CLI flags flow through normally. Bare
 # invocation with no args stays safe because ``--apply`` defaults to False

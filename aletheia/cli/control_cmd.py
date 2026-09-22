@@ -91,7 +91,7 @@ def _cfg_commit() -> str:
 def _auto_deploy_commit() -> str:
     """Return the last successfully activated stable Tag SHA."""
     try:
-        from aletheia.update.auto import status
+        from ops.update.auto import status
 
         last = status().get("last_successful") or {}
         sha = last.get("sha") if isinstance(last, dict) else None

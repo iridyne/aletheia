@@ -225,7 +225,7 @@ def get_position(position_id: str):
 @router.get("/backups")
 def list_backups():
     """List available backups."""
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
 
     svc = BackupService()
     return svc.list_backups()
@@ -241,7 +241,7 @@ class BackupRequest(BaseModel):
 @router.post("/backups")
 def create_backup(req: BackupRequest):
     """Create a new backup."""
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
 
     svc = BackupService()
     if req.profile != "online":

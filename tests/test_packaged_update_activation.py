@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from aletheia.update import packaged, packaged_commands
+from ops.update import packaged, packaged_commands
 
 
 def _configure_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: dict):

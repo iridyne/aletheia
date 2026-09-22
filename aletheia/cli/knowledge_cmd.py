@@ -19,7 +19,7 @@ def remediate_outcomes(
     decision. This command cannot apply it.
     """
     from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+    from ops.maintenance.outcome_integrity import remediate_outcome_history
 
     assert_migrations_current()
     build_calibration = build_feedback = None

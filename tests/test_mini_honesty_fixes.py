@@ -59,7 +59,7 @@ def test_backup_captures_audit_jsonl_hash_chain(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup(label="audit-inclusion")
 
     with tarfile.open(archive, "r:gz") as tar:

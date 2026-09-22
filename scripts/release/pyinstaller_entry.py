@@ -45,7 +45,7 @@ def _run_bootstrap() -> None:
     parser.add_argument("--feed-url-file", type=Path)
     args = parser.parse_args(sys.argv[2:])
 
-    from aletheia.update.bootstrap import install_bootstrap_runtime
+    from ops.update.bootstrap import install_bootstrap_runtime
 
     result = install_bootstrap_runtime(
         host_root=args.host_root,
@@ -57,7 +57,7 @@ def _run_bootstrap() -> None:
 
 
 def _run_update_stage() -> None:
-    from aletheia.update.packaged_commands import stage_update_blocking
+    from ops.update.packaged_commands import stage_update_blocking
 
     result = stage_update_blocking()
     print(json.dumps(result, ensure_ascii=False))
@@ -71,8 +71,9 @@ def _run_update_validate() -> None:
     # request. The first feed-enabled candidate must also accept the legacy staging
     # protocol, whose old updater calls this mode against an isolated data copy before
     # the request exists. Once a request exists this remains the sole activation path.
-    from aletheia.update.packaged import host_root, validate_current_data
-    from aletheia.update.packaged_commands import prepare_activation_data
+    from aletheia.update.packaged import host_root
+    from ops.update.packaged import validate_current_data
+    from ops.update.packaged_commands import prepare_activation_data
 
     request_path = host_root() / "update-request.json"
     if request_path.is_file():
@@ -93,7 +94,7 @@ def _run_update_preflight() -> None:
     durable switch request is intentionally written only after preflight succeeds.
     """
 
-    from aletheia.update.packaged import validate_current_data
+    from ops.update.packaged import validate_current_data
 
     print(json.dumps(validate_current_data(), ensure_ascii=False))
 
@@ -104,7 +105,7 @@ def _run_update_restore() -> None:
     archive = Path(sys.argv[2]).expanduser()
     if not archive.is_absolute():
         raise SystemExit("backup path must be absolute")
-    from aletheia.update.packaged_commands import restore_update_backup
+    from ops.update.packaged_commands import restore_update_backup
 
     print(json.dumps(restore_update_backup(archive), ensure_ascii=False))
 

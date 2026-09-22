@@ -43,7 +43,7 @@ def _snapshot(*, disk_sha: str, gateway_sha: str, main_cycle_registered: bool) -
 
 
 def test_postflight_detects_main_reclaiming_worker_owned_cycle():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(

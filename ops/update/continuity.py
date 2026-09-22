@@ -291,7 +291,7 @@ def capture_update_continuity_fresh(*, timeout_sec: float = 20.0) -> dict[str, A
 
     script = (
         "import json\n"
-        "from aletheia.update.continuity import capture_update_continuity\n"
+        "from ops.update.continuity import capture_update_continuity\n"
         "snapshot = capture_update_continuity()\n"
         "snapshot['capture_source'] = 'fresh_target_process'\n"
         f"print({_FRESH_CAPTURE_PREFIX!r} + json.dumps(snapshot, ensure_ascii=False, sort_keys=True))\n"
@@ -932,7 +932,7 @@ def capture_update_continuity_until_settled(
 
 def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
-    from aletheia.update import applier
+    from ops.update import applier
 
     total_started = time.monotonic()
     phase_name: str | None = None
@@ -1103,7 +1103,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     if barrier is not None:
         try:
             from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
-            from aletheia.update import target_fresh
+            from ops.update import target_fresh
 
             reanchor = target_fresh.reanchor_joint_checkpoint(
                 project_root=_PROJECT_ROOT,
@@ -1214,7 +1214,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     if comparison["failures"]:
         recovery = None
         if restart and result.get("mode") == "development":
-            from aletheia.update.applier import rollback_applied_update
+            from ops.update.applier import rollback_applied_update
 
             mark_phase("Rolling back failed update")
             recovery = rollback_applied_update(result)
@@ -1254,7 +1254,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         state = "pending_restart" if only_restart_pending else "unproven"
         recovery = None
         if restart and not only_restart_pending and result.get("mode") == "development":
-            from aletheia.update.applier import rollback_applied_update
+            from ops.update.applier import rollback_applied_update
 
             mark_phase("Rolling back unproven update")
             recovery = rollback_applied_update(result)
@@ -1302,7 +1302,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         },
     )
     if result.get("schema_changed") and result.get("frontend_built"):
-        from aletheia.update.applier import _PREVIOUS_DASHBOARD_STATIC
+        from ops.update.applier import _PREVIOUS_DASHBOARD_STATIC
 
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
     return {

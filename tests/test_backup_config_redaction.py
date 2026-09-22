@@ -39,7 +39,7 @@ def test_coinalyze_api_key_redacted_in_backup(tmp_path):
         encoding="utf-8",
     )
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup()
 
     result = _unpack_config(archive)
@@ -65,7 +65,7 @@ def test_proxy_credentials_redacted_in_backup(tmp_path):
         encoding="utf-8",
     )
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup()
 
     result = _unpack_config(archive)
@@ -82,7 +82,7 @@ def test_malformed_config_omitted_with_manifest_status(tmp_path):
     _make_db(tmp_path)
     (tmp_path / "config.yaml").write_bytes(b"\xff\xfe invalid: yaml: [[[")
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup()
 
     result = _unpack_config(archive)
@@ -101,7 +101,7 @@ def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
         encoding="utf-8",
     )
 
-    from aletheia.backup.service import BackupService
+    from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup()
 
     archive_bytes = archive.read_bytes()

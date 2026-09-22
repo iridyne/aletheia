@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
     from extensions.observation_lab import runner
-    from aletheia.update import applier, target_fresh
+    from ops.update import applier, target_fresh
     monkeypatch.setattr(applier.sys, "platform", "darwin")
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
@@ -106,7 +106,7 @@ def _snapshot(
 
 
 def test_compare_allows_normal_observation_progress():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     before = _snapshot(capture_source="in_process")
     after = _snapshot(
@@ -131,7 +131,7 @@ def test_compare_allows_normal_observation_progress():
 
 
 def test_compare_detects_owner_change():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(owner="worker"),
@@ -144,7 +144,7 @@ def test_compare_detects_owner_change():
 
 
 def test_compare_detects_worker_identity_change():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(worker_sha="worker111"),
@@ -157,7 +157,7 @@ def test_compare_detects_worker_identity_change():
 
 
 def test_compare_detects_data_root_change():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(data_root="sha256:before"),
@@ -170,7 +170,7 @@ def test_compare_detects_data_root_change():
 
 
 def test_compare_detects_observation_history_loss():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(observation_ids=("obs-a", "obs-b")),
@@ -183,7 +183,7 @@ def test_compare_detects_observation_history_loss():
 
 
 def test_compare_detects_manifest_generation_regression():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(generations={"obs-a": 4}),
@@ -196,7 +196,7 @@ def test_compare_detects_manifest_generation_regression():
 
 
 def test_preflight_fails_closed_on_structural_checkpoint_drift():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     result = evaluate_preflight(_snapshot(checkpoint_ok=False))
 
@@ -205,7 +205,7 @@ def test_preflight_fails_closed_on_structural_checkpoint_drift():
 
 
 def test_preflight_detects_duplicate_worker_and_main_cycle_owner():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     result = evaluate_preflight(_snapshot(owner="worker", main_cycle_registered=True))
 
@@ -214,7 +214,7 @@ def test_preflight_detects_duplicate_worker_and_main_cycle_owner():
 
 
 def test_preflight_pending_business_state_is_not_a_gate():
-    from aletheia.update.continuity import evaluate_preflight
+    from ops.update.continuity import evaluate_preflight
 
     snapshot = _snapshot()
     snapshot["observation"]["experiments"] = {
@@ -231,7 +231,7 @@ def test_preflight_pending_business_state_is_not_a_gate():
 
 
 def test_missing_structural_baseline_is_proof_gap_not_verified():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(data_root=None, worker_sha=None),
@@ -252,7 +252,7 @@ def test_missing_structural_baseline_is_proof_gap_not_verified():
 
 
 def test_compare_runtime_owner_proof_unavailable_is_unproven():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(),
@@ -271,7 +271,7 @@ def test_compare_runtime_owner_proof_unavailable_is_unproven():
 
 
 def test_compare_detects_runtime_owner_mismatch():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(),
@@ -288,7 +288,7 @@ def test_compare_detects_runtime_owner_mismatch():
 
 
 def test_compare_degraded_main_health_is_failure():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(),
@@ -305,7 +305,7 @@ def test_compare_degraded_main_health_is_failure():
 
 
 def test_compare_initializing_main_health_is_warning_only():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(),
@@ -324,7 +324,7 @@ def test_compare_initializing_main_health_is_warning_only():
 
 
 def test_no_restart_never_emits_verified_claim():
-    from aletheia.update.continuity import compare_update_continuity
+    from ops.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
         _snapshot(),
@@ -339,7 +339,7 @@ def test_no_restart_never_emits_verified_claim():
 
 
 def test_fresh_capture_parses_target_process_payload(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     payload = _snapshot(disk_sha="new222", gateway_sha="new222")
     stdout = continuity._FRESH_CAPTURE_PREFIX + json.dumps(payload)
@@ -363,7 +363,7 @@ def test_fresh_capture_parses_target_process_payload(monkeypatch):
 
 
 def test_fresh_capture_failure_is_explicit(monkeypatch):
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     monkeypatch.setattr(
         continuity.subprocess,
@@ -379,7 +379,7 @@ def test_fresh_capture_failure_is_explicit(monkeypatch):
 
 def test_minimal_collector_does_not_call_full_diagnostics():
     import inspect
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     source = inspect.getsource(continuity.capture_update_continuity)
     assert "build_control_status" not in source
@@ -389,7 +389,7 @@ def test_minimal_collector_does_not_call_full_diagnostics():
 
 
 def test_unavailable_target_capture_is_only_a_proof_gap():
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     result = continuity.compare_update_continuity(
         _snapshot(),
@@ -404,7 +404,7 @@ def test_unavailable_target_capture_is_only_a_proof_gap():
 
 
 def test_unavailable_capture_preserves_direct_gateway_mismatch():
-    from aletheia.update import continuity
+    from ops.update import continuity
 
     after = continuity._unavailable_fresh_snapshot("target_postflight_process_failed")
     after["gateway"] = {
@@ -419,7 +419,7 @@ def test_unavailable_capture_preserves_direct_gateway_mismatch():
 
 
 def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _snapshot(capture_source="in_process")
     after = _snapshot(disk_sha="new222", gateway_sha="new222")
@@ -456,7 +456,7 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
 
 
 def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _snapshot(disk_sha="target-sha", gateway_sha="old-sha", capture_source="in_process")
     after = _snapshot(disk_sha="target-sha", gateway_sha="target-sha")
@@ -484,7 +484,7 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
 
 
 def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     monkeypatch.setattr(
         continuity,
@@ -506,7 +506,7 @@ def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
 
 
 def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
     initializing = _snapshot(
@@ -549,7 +549,7 @@ def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
 
 def test_postflight_readiness_uses_preflight_port_then_one_target_capture(monkeypatch):
     """Readiness avoids both stale config parsing and repeated structural capture."""
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _snapshot(capture_source="in_process")
     before["gateway"]["port"] = 8787
@@ -592,7 +592,7 @@ def test_postflight_readiness_uses_preflight_port_then_one_target_capture(monkey
 
 
 def test_wrapper_rolls_back_postflight_failure(monkeypatch):
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     monkeypatch.setattr(
         continuity,
@@ -643,7 +643,7 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     from contextlib import contextmanager
 
     from extensions.observation_lab import runner
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _snapshot()
     after = _snapshot(disk_sha="new222", gateway_sha="new222")
@@ -674,7 +674,7 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
 
     anchored = []
     monkeypatch.setattr(
-        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        "ops.update.target_fresh.reanchor_joint_checkpoint",
         lambda **_: events.append("reanchor") or anchored.append("target-fresh") or {"ok": True},
     )
 
@@ -687,7 +687,7 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
 
 def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     """Checkpoint re-anchor is skipped when apply_update returns applied=False."""
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
     monkeypatch.setattr(
@@ -699,7 +699,7 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
 
     anchored = []
     monkeypatch.setattr(
-        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        "ops.update.target_fresh.reanchor_joint_checkpoint",
         lambda **_: anchored.append("target-fresh") or {"ok": True},
     )
 
@@ -713,7 +713,7 @@ def test_wrapper_rolls_back_before_barrier_exit_when_reanchor_fails(monkeypatch)
     from contextlib import contextmanager
 
     from extensions.observation_lab import runner
-    from aletheia.update import applier, continuity
+    from ops.update import applier, continuity
 
     before = _snapshot()
     after = _snapshot(disk_sha="new222", gateway_sha="new222")
@@ -746,7 +746,7 @@ def test_wrapper_rolls_back_before_barrier_exit_when_reanchor_fails(monkeypatch)
         lambda _result: events.append("rollback") or {"rolled_back": True},
     )
     monkeypatch.setattr(
-        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        "ops.update.target_fresh.reanchor_joint_checkpoint",
         lambda **_: {"ok": False, "reason": "target_fresh_process_failed"},
     )
 

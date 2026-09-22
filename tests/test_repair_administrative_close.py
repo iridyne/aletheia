@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from aletheia.maintenance import repair_administrative_close as repair
+from ops.maintenance import repair_administrative_close as repair
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Order, Position

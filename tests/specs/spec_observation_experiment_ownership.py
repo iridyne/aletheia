@@ -39,7 +39,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/config/schema.py",
     "extensions/counterfactual/__init__.py",
     "extensions/learning/ledger.py",
-    "aletheia/maintenance/data_retention_backfill.py",
+    "ops/maintenance/data_retention_backfill.py",
     "extensions/observation_lab/checkpoint.py",
     "extensions/observation_lab/db.py",
     "extensions/observation_lab/exposure.py",
@@ -48,7 +48,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/server/routes/settings.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
-    "aletheia/update/continuity.py",
+    "ops/update/continuity.py",
 })
 
 # Existing physical writers and mutation call sites only. A path being listed
@@ -60,7 +60,7 @@ _REFERENCE_ALLOWLIST = frozenset({
 # reference list above, because its two remaining touches are SELECTs.
 _WRITER_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
-    "aletheia/maintenance/data_retention_backfill.py",
+    "ops/maintenance/data_retention_backfill.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
 })
@@ -90,7 +90,8 @@ _NAMED_LEGACY_WRITE_CALLS = frozenset({
 def _production_sources() -> dict[str, str]:
     return {
         path.relative_to(_ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in (*_SRC.rglob("*.py"), *(_ROOT / "extensions").rglob("*.py"))
+        for path in (*_SRC.rglob("*.py"), *(_ROOT / "extensions").rglob("*.py"),
+                     *(_ROOT / "ops").rglob("*.py"), *(_ROOT / "legacy").rglob("*.py"))
     }
 
 
@@ -213,7 +214,7 @@ def test_only_settlement_and_update_diagnostic_accept_main_outbox_progress():
     }
     assert callers == {
         "extensions/observation_lab/runner.py",
-        "aletheia/update/continuity.py",
+        "ops/update/continuity.py",
     }
 
 

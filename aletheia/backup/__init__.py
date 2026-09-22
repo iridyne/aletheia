@@ -1,1 +1,1 @@
-"""Backup and restore subsystem for disaster recovery."""
+"""Core backup verification; explicit creation and restore belong to Ops."""

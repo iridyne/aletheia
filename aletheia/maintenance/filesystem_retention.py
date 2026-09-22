@@ -37,15 +37,30 @@ def _resolve_data_dir(data_dir: Path | None) -> Path:
 
 
 def prune_backups(keep_recent: int = 7, data_dir: Path | None = None) -> int:
-    """Rotate ``<data_dir>/backups`` to the newest ``keep_recent`` archives.
+    """Delete backup archives older than the newest ``keep_recent`` files.
 
-    Thin dispatch to :func:`aletheia.backup.service.retain_recent` so the
-    scheduler can consume a uniform ``prune_*`` surface. Idempotent.
+    Backups are ordered by mtime descending; anything past index
+    ``keep_recent`` is unlinked. Idempotent — repeated calls with the same
+    argument are no-ops once the directory is at or below the target size.
+
+    Returns the number of archives removed.
     """
-    # Imported lazily to keep the backup module optional at import time.
-    from aletheia.backup.service import retain_recent
-
-    return retain_recent(keep_recent=keep_recent, data_dir=_resolve_data_dir(data_dir))
+    backup_dir = _resolve_data_dir(data_dir) / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    keep_recent = max(0, int(keep_recent))
+    if not backup_dir.is_dir():
+        return 0
+    archives = [p for p in backup_dir.glob("backup_*.tar.gz") if p.is_file()]
+    archives.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    stale = archives[keep_recent:]
+    removed = 0
+    for path in stale:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError as exc:
+            logging.getLogger("aletheia.backup.service").debug("backup retain_recent skipped %s: %s", path.name, exc)
+    return removed
 
 
 def prune_diagnostics_dir(days: int = 14, data_dir: Path | None = None) -> int:

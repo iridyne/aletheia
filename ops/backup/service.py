@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from aletheia.config.loader import get_data_dir
+from aletheia.maintenance.filesystem_retention import prune_backups
 from aletheia.storage.hashing import sha256_file
 
 logger = logging.getLogger("aletheia.backup.service")
@@ -463,7 +464,7 @@ class BackupService:
 
             # Rotate older archives
             try:
-                self.retain_recent(DEFAULT_KEEP_RECENT)
+                prune_backups(DEFAULT_KEEP_RECENT, data_dir=self._data_dir)
             except Exception as exc:  # pragma: no cover - best effort
                 logger.warning("backup retain_recent after create failed: %s", exc)
 
@@ -473,29 +474,6 @@ class BackupService:
             if staging.exists():
                 shutil.rmtree(staging)
 
-    def retain_recent(self, keep_recent: int = DEFAULT_KEEP_RECENT) -> int:
-        """Delete backup archives older than the newest ``keep_recent`` files.
-
-        Backups are ordered by mtime descending; anything past index
-        ``keep_recent`` is unlinked. Idempotent — repeated calls with the same
-        argument are no-ops once the directory is at or below the target size.
-
-        Returns the number of archives removed.
-        """
-        keep_recent = max(0, int(keep_recent))
-        if not self._backup_dir.is_dir():
-            return 0
-        archives = [p for p in self._backup_dir.glob("backup_*.tar.gz") if p.is_file()]
-        archives.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        stale = archives[keep_recent:]
-        removed = 0
-        for path in stale:
-            try:
-                path.unlink()
-                removed += 1
-            except OSError as exc:
-                logger.debug("backup retain_recent skipped %s: %s", path.name, exc)
-        return removed
 
     def list_backups(self) -> list[dict]:
         """List available backups."""
@@ -508,13 +486,3 @@ class BackupService:
                 "created": datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc).isoformat(),
             })
         return results
-
-
-def retain_recent(keep_recent: int = DEFAULT_KEEP_RECENT, data_dir: Path | None = None) -> int:
-    """Standalone entry point for scheduler / one-shot callers.
-
-    Instantiates a :class:`BackupService` against ``data_dir`` (defaults to
-    :func:`get_data_dir`) and rotates its backup directory. Returns the number
-    of archives removed.
-    """
-    return BackupService(data_dir=data_dir).retain_recent(keep_recent)

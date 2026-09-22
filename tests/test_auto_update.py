@@ -12,11 +12,9 @@ import pytest
 from typer.testing import CliRunner
 
 
-
-
-
 def test_release_check_persists_exact_candidate_without_activation(tmp_path, monkeypatch):
-    from aletheia.update import applier
+    from ops.update import applier
+    from ops.update import git_ops as git_mutations
 
     events = []
     auto, git_ops, backup = _configured_candidate_run(tmp_path, monkeypatch, events)
@@ -29,7 +27,7 @@ def test_release_check_persists_exact_candidate_without_activation(tmp_path, mon
     )
     assert events == []
     backup.create_backup.assert_not_called()
-    monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: pytest.fail("GET fetched"))
+    monkeypatch.setattr(git_mutations, "fetch_release_tags", lambda: pytest.fail("GET fetched"))
     progress = applier.update_progress()
     assert progress["mode"] == "source_release"
     assert progress["status"] == "available"
@@ -54,23 +52,24 @@ def _state_paths(tmp_path: Path) -> dict[str, Path]:
 
 
 def _linux_source(monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
-    monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: {"ok": True})
+    monkeypatch.setattr(git_mutations, "fetch_release_tags", lambda: {"ok": True})
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
     monkeypatch.setattr(git_ops, "is_ancestor", lambda older, newer: True)
-    monkeypatch.setattr(git_ops, "remote_tag_names", lambda: set(git_ops.tag_names()))
+    monkeypatch.setattr(git_mutations, "remote_tag_names", lambda: set(git_ops.tag_names()))
     monkeypatch.setattr(auto, "_record_audit", lambda *args, **kwargs: None)
 
 
 def _successful_activation_boundary(monkeypatch, events: list[str] | None = None):
     from extensions.observation_lab import runner
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     events = events if events is not None else []
 
@@ -93,7 +92,8 @@ def _successful_activation_boundary(monkeypatch, events: list[str] | None = None
 
 
 def _configured_candidate_run(tmp_path, monkeypatch, events: list[str]):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     _successful_activation_boundary(monkeypatch, events)
@@ -121,7 +121,7 @@ def _configured_candidate_run(tmp_path, monkeypatch, events: list[str]):
         lambda action: events.append(f"gateway:{action}") or {"ok": True},
     )
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "merge_fast_forward",
         lambda target: events.append("source:activate") or {"ok": True},
     )
@@ -136,7 +136,8 @@ def _configured_candidate_run(tmp_path, monkeypatch, events: list[str]):
 
 
 def test_only_strict_stable_semver_tags_are_candidates(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
@@ -151,7 +152,8 @@ def test_only_strict_stable_semver_tags_are_candidates(tmp_path, monkeypatch):
 
 
 def test_product_version_parser_accepts_release_please_marker(monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(
         git_ops,
@@ -163,23 +165,25 @@ def test_product_version_parser_accepts_release_please_marker(monkeypatch):
 
 
 def test_local_or_revoked_tag_is_not_a_candidate(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
     monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
-    monkeypatch.setattr(git_ops, "remote_tag_names", lambda: set())
+    monkeypatch.setattr(git_mutations, "remote_tag_names", lambda: set())
     monkeypatch.setattr(git_ops, "version_at_ref", lambda ref: '__version__ = "1.0.0"\n')
 
     assert auto.run()["reason"] == "up_to_date"
 
 
 def test_local_tag_discovery_failure_does_not_report_up_to_date(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
-    monkeypatch.setattr(git_ops, "remote_tag_names", lambda: {"v1.1.0"})
+    monkeypatch.setattr(git_mutations, "remote_tag_names", lambda: {"v1.1.0"})
     monkeypatch.setattr(git_ops, "tag_names", lambda: None)
 
     assert auto.run()["reason"] == "local_tag_discovery_failed"
@@ -187,6 +191,7 @@ def test_local_tag_discovery_failure_does_not_report_up_to_date(tmp_path, monkey
 
 def test_release_fetch_is_master_plus_tags(monkeypatch):
     from aletheia.update import git_ops
+    from ops.update import git_ops as git_mutations
 
     calls = []
 
@@ -197,12 +202,13 @@ def test_release_fetch_is_master_plus_tags(monkeypatch):
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "_git", lambda *args: calls.append(args) or Proc())
 
-    assert git_ops.fetch_release_tags() == {"ok": True}
+    assert git_mutations.fetch_release_tags() == {"ok": True}
     assert calls == [("fetch", "origin", "master", "--tags")]
 
 
 def test_tag_requires_master_ancestry_and_matching_product_version(monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(git_ops, "is_ancestor", lambda older, newer: False)
     with pytest.raises(auto.AutoUpdateError) as error:
@@ -217,7 +223,8 @@ def test_tag_requires_master_ancestry_and_matching_product_version(monkeypatch):
 
 
 def test_moved_existing_tag_is_rejected(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     paths = _state_paths(tmp_path)
@@ -233,7 +240,8 @@ def test_moved_existing_tag_is_rejected(tmp_path, monkeypatch):
 
 
 def test_dirty_or_non_fast_forward_source_is_rejected_before_candidate_selection(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
@@ -243,7 +251,8 @@ def test_dirty_or_non_fast_forward_source_is_rejected_before_candidate_selection
 
 
 def test_same_failed_tag_is_skipped_but_does_not_create_a_hold(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     paths = _state_paths(tmp_path)
@@ -260,7 +269,8 @@ def test_same_failed_tag_is_skipped_but_does_not_create_a_hold(tmp_path, monkeyp
 
 
 def test_transient_baseline_failure_is_not_blacklisted(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
@@ -278,7 +288,8 @@ def test_transient_baseline_failure_is_not_blacklisted(tmp_path, monkeypatch):
 
 
 def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     boundary_events = _successful_activation_boundary(monkeypatch)
@@ -302,7 +313,7 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
     monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
     monkeypatch.setattr(auto, "_remove_candidate", lambda worktree: None)
     monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": action == "stop", "reason": "gateway_start_failed"})
-    monkeypatch.setattr(git_ops, "merge_fast_forward", lambda target: {"ok": True})
+    monkeypatch.setattr(git_mutations, "merge_fast_forward", lambda target: {"ok": True})
     monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
     monkeypatch.setattr(auto, "_activate_frontend_build", lambda: True)
     restored = []
@@ -324,7 +335,8 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
 
 
 def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     boundary_events = _successful_activation_boundary(monkeypatch)
@@ -353,7 +365,7 @@ def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monk
         lambda action: actions.append(action) or {"ok": action == "stop"},
     )
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "merge_fast_forward",
         lambda target: {
             "ok": False,
@@ -391,7 +403,7 @@ def test_settlement_failure_keeps_old_source_and_release_retryable(tmp_path, mon
 
 
 def test_schema_bearing_tag_reanchor_failure_rolls_back_before_postflight(tmp_path, monkeypatch):
-    from aletheia.update import target_fresh
+    from ops.update import target_fresh
 
     events: list[str] = []
     auto, _, service = _configured_candidate_run(tmp_path, monkeypatch, events)
@@ -455,7 +467,7 @@ def test_schema_bearing_tag_reanchor_failure_rolls_back_before_postflight(tmp_pa
 
 
 def test_state_is_atomic_and_resume_only_clears_global_hold(tmp_path, monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
@@ -469,7 +481,7 @@ def test_state_is_atomic_and_resume_only_clears_global_hold(tmp_path, monkeypatc
 
 
 def test_corrupt_state_fails_closed(tmp_path, monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     _linux_source(monkeypatch)
     paths = _state_paths(tmp_path)
@@ -482,7 +494,7 @@ def test_corrupt_state_fails_closed(tmp_path, monkeypatch):
 
 
 def test_candidate_frontend_always_installs_worktree_dependencies(tmp_path, monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     worktree = tmp_path / "candidate"
     frontend = worktree / "frontend"
@@ -509,7 +521,8 @@ def test_candidate_frontend_always_installs_worktree_dependencies(tmp_path, monk
 def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     root = tmp_path / "candidates"
     monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
@@ -541,7 +554,8 @@ def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypa
 def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     root = tmp_path / "candidates"
     monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
@@ -570,7 +584,7 @@ def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, m
     assert str(worktree) in kwargs["env"]["PYTHONPATH"]
 
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     calls = []
     monkeypatch.setattr(
@@ -586,7 +600,7 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
 
 
 def test_fresh_doctor_binds_real_credential_status_before_reporting(monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     prefix = '''
 import socket
@@ -643,7 +657,7 @@ migrations.migration_status = lambda: {"current": True}
     ("bitget_demo", "external_exchange", "live_enabled", False),
 ])
 def test_runtime_gate_uses_public_health_response(monkeypatch, mode, target, live_state, allowed):
-    from aletheia.update import auto
+    from ops.update import auto
 
     responses = {
         "/api/health": {"status": "healthy", "issues": [], "version": "1.2.3"},
@@ -668,7 +682,7 @@ def test_runtime_gate_uses_public_health_response(monkeypatch, mode, target, liv
 
 
 def test_runtime_diagnostics_ignore_unrelated_warnings_but_keep_deployment_gates():
-    from aletheia.update.auto import _evaluate_runtime_diagnostics
+    from ops.update.auto import _evaluate_runtime_diagnostics
 
     report = {
         "checks": [
@@ -693,7 +707,8 @@ def test_runtime_diagnostics_ignore_unrelated_warnings_but_keep_deployment_gates
 
 
 def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     _linux_source(monkeypatch)
     activation_events: list[str] = []
@@ -719,7 +734,7 @@ def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
         lambda action: activation_events.append(f"gateway:{action}") or {"ok": True},
     )
     monkeypatch.setattr(
-        git_ops,
+        git_mutations,
         "merge_fast_forward",
         lambda target: activation_events.append("source:activate") or {"ok": True},
     )
@@ -751,7 +766,7 @@ def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
 
 
 def test_rollback_stops_candidate_before_restoring(monkeypatch, tmp_path):
-    from aletheia.update import auto
+    from ops.update import auto
 
     calls = []
     monkeypatch.setattr(auto, "_gateway_command", lambda action: calls.append(action) or {"ok": True})
@@ -763,7 +778,7 @@ def test_rollback_stops_candidate_before_restoring(monkeypatch, tmp_path):
 
 def test_gateway_command_start_slow_start_is_ok(monkeypatch):
     """exit 2 from _gateway_command('start') is slow start, not failure."""
-    from aletheia.update import auto
+    from ops.update import auto
 
     class _FakeProc:
         def __init__(self, rc):
@@ -788,7 +803,7 @@ def test_gateway_command_start_slow_start_is_ok(monkeypatch):
 
 
 def test_auto_run_command_timeout_is_classified(monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     monkeypatch.setattr(
         auto.subprocess,
@@ -803,7 +818,7 @@ def test_auto_run_command_timeout_is_classified(monkeypatch):
 
 
 def test_nonblocking_flock_excludes_concurrent_timer(tmp_path, monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     paths = _state_paths(tmp_path)
     monkeypatch.setattr(auto, "_paths", lambda: paths)
@@ -815,7 +830,7 @@ def test_nonblocking_flock_excludes_concurrent_timer(tmp_path, monkeypatch):
 
 
 def test_systemd_units_are_user_timer_contract(monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
     units = auto._units()
@@ -829,7 +844,7 @@ def test_systemd_units_are_user_timer_contract(monkeypatch):
 
 
 def test_systemctl_timeout_has_stable_reason(monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     monkeypatch.setattr(
         auto.subprocess,
@@ -846,10 +861,10 @@ def test_systemctl_timeout_has_stable_reason(monkeypatch):
 
 
 def test_auto_update_requires_explicit_paper_runtime_role(monkeypatch):
-    import aletheia.update.auto as auto
+    import ops.update.auto as auto
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
-    monkeypatch.setattr(auto.git_ops, "is_repo", lambda: True)
+    monkeypatch.setattr(auto.git_facts, "is_repo", lambda: True)
     monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
     result = auto.run()
     assert result["ok"] is True
@@ -862,7 +877,8 @@ def test_auto_update_requires_explicit_paper_runtime_role(monkeypatch):
 
 
 def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
@@ -882,7 +898,8 @@ def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatc
 
 
 def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
@@ -903,7 +920,8 @@ def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path
 
 
 def test_systemd_install_requires_paper_runtime_role(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
@@ -915,7 +933,8 @@ def test_systemd_install_requires_paper_runtime_role(tmp_path, monkeypatch):
 
 
 def test_systemd_install_migrates_owned_legacy_timer(tmp_path, monkeypatch):
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
@@ -945,7 +964,7 @@ def test_systemd_install_migrates_owned_legacy_timer(tmp_path, monkeypatch):
 
 
 def test_resume_audits_the_operator(tmp_path, monkeypatch):
-    from aletheia.update import auto
+    from ops.update import auto
 
     _linux_source(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
@@ -960,7 +979,7 @@ def test_resume_audits_the_operator(tmp_path, monkeypatch):
 def test_auto_run_reports_failures_to_systemd(monkeypatch):
     from aletheia.cli import update_cmd
 
-    monkeypatch.setattr("aletheia.update.auto.run", lambda: {"ok": False, "reason": "global_hold"})
+    monkeypatch.setattr("ops.update.auto.run", lambda: {"ok": False, "reason": "global_hold"})
 
     result = CliRunner().invoke(update_cmd.update_app, ["auto", "run"])
 
@@ -971,7 +990,8 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
     from types import SimpleNamespace
 
     from extensions.observation_lab import kernel, worker_lock
-    from aletheia.update import auto, git_ops
+    from aletheia.update import git_ops
+    from ops.update import auto, git_ops as git_mutations
 
     calls: list[str] = []
 
@@ -981,7 +1001,7 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
         yield
         calls.append("lock-exit")
 
-    monkeypatch.setattr(git_ops, "reset_hard", lambda old: {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda old: {"ok": True})
     monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
     monkeypatch.setattr(auto, "get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(

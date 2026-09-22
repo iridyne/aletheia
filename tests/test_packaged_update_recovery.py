@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import time
 
-from aletheia.update import packaged, packaged_commands
+from ops.update import packaged, packaged_commands
 
 
 def _paths(root: Path) -> dict[str, Path]:

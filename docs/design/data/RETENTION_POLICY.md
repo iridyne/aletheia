@@ -160,7 +160,7 @@ Windows below are the Phase 3 defaults; each is wired through the new
 |------|--------|----------|------------|----------|
 | `~/.aletheia/agent_shell/sessions/` | 14d | DB-JOIN. `SELECT id FROM agent_shell_sessions WHERE created_at < :cutoff` → unlink `<id>.jsonl`. Orphan sweep for stems not in current session set. | `operator-main.jsonl`; any file whose `id == cfg.operator.main_session_id`; sessions whose id is a `parent_session_id` of a younger session; kinds `review_session` / `strategy_session` / `diagnostic_session` where the id matches an active `agent_shell_heartbeats.active_branch_id`. | `prune_session_logs_db_join` in `aletheia/agent_shell/file_artifacts.py` (replaces `prune_session_logs`; old name kept as deprecation wrapper). |
 | `~/.aletheia/agent_shell/tasks/` | 7d completed / 30d failed+cancelled | DB-JOIN. `SELECT id FROM agent_shell_tasks WHERE status IN ('completed','failed','cancelled') AND completed_at < :cutoff` → unlink `<safe_name(id)>.md`. Orphan sweep. | `status IN ('running','pending') AND completed_at IS NULL`. | `prune_task_notes_db_join` in `aletheia/agent_shell/file_artifacts.py`. |
-| `~/.aletheia/backups/` | keep_recent=7 (count-based) | Sort by mtime DESC, unlink 8th onwards. Fires from every backup write path AND from `scheduler._run_cleanup`. | The newest 7 `backup_pre_update_*.tar.gz` files. | `retain_recent(keep_recent=7)` in `aletheia/backup/service.py` + `prune_backups` in `aletheia/maintenance/filesystem_retention.py`. |
+| `~/.aletheia/backups/` | keep_recent=7 (count-based) | Sort by mtime DESC, unlink 8th onwards. Fires from every backup write path AND from `scheduler._run_cleanup`. | The newest 7 `backup_pre_update_*.tar.gz` files. | `prune_backups` in `aletheia/maintenance/filesystem_retention.py`, also called after backup publication by `ops/backup/service.py`. |
 | `~/.aletheia/diagnostics/` | 14d | Age-based unlink of `deferred_flow_audit_*` and `thesis_lineage_v1_1_*` older than 14d (mtime is safe here). | none | `prune_diagnostics_dir` in `aletheia/maintenance/filesystem_retention.py`. |
 | `~/.aletheia/app.db.pre-migration-backup` | 30d after `migration.completed_at` | Read `~/.aletheia/.runtime-home-migration.json.completed_at`; if `now - completed_at > 30d` AND `PRAGMA integrity_check == 'ok'`, unlink. | keep while migration is within 30d. | `prune_pre_migration_backup` in `aletheia/maintenance/filesystem_retention.py`. |
 | `~/.aletheia/knowledge/` | per-subdir (see below) | Age-based per subdir. | `operator_memory/`, `agent_memory/`, `research_notes/`, `strategies/` (durable). | `prune_knowledge_subdirs` in `aletheia/maintenance/filesystem_retention.py`. |
@@ -432,7 +432,7 @@ The scheduling lives outside code (session-scope, not durable). See
 
 ## 12. Runbook: invoking the one-shot backfill
 
-The Phase 4 backfill script is `aletheia/maintenance/data_retention_backfill.py`.
+The Phase 4 backfill script is `ops/maintenance/data_retention_backfill.py`.
 Invoke from the repo root with `uv run`.
 
 ### 12.1 Preconditions
@@ -445,7 +445,7 @@ Invoke from the repo root with `uv run`.
 ### 12.2 Dry-run (audit only, no writes)
 
 ```sh
-uv run python -m aletheia.maintenance.data_retention_backfill --dry-run
+uv run python -m ops.maintenance.data_retention_backfill --dry-run
 ```
 
 Prints per-table `table | window | eligible_rows | est_mb` and totals.
@@ -454,7 +454,7 @@ Exit code always 0. Nothing is deleted.
 ### 12.3 Apply mode
 
 ```sh
-uv run python -m aletheia.maintenance.data_retention_backfill --apply --vacuum
+uv run python -m ops.maintenance.data_retention_backfill --apply --vacuum
 ```
 
 Additional flags:

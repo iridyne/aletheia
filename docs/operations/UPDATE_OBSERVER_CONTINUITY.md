@@ -2,7 +2,7 @@
 
 Issue #1135 extends source-checkout deployment with read-only Observation continuity checks around the existing mutation transactions.
 
-The interactive mutation path remains `aletheia.update.applier.apply_update()` behind `aletheia update`. The Fedora release-tag path remains the existing `aletheia update auto run` transaction. Neither path updates the Observer checkout. Update continuity uses a narrow structural snapshot; it does not run the full control or Observation overview projections.
+The interactive mutation path remains `ops.update.applier.apply_update()` behind `aletheia update`. The Fedora release-tag path remains the existing `aletheia update auto run` transaction. Neither path updates the Observer checkout. Update continuity uses a narrow structural snapshot; it does not run the full control or Observation overview projections.
 
 ## Worker-owned deployment boundary
 
