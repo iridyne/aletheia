@@ -324,6 +324,33 @@ Behavioral evidence includes `test_candidate_facts`, `test_candidate_coverage_co
 `test_factor_feedback` and `test_exit_policy_advisor`; it is not runtime or
 economic qualification evidence.
 
+### Historical report and diagnostic consumers
+
+The following disposition separates read projections from current producers;
+neither a historical name nor a `read_only` output flag proves inertness.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| `opportunity audit --view ranker-objective` → `ranker_objective_audit` | Uses `readonly_db` plus a temporary query-only guard to analyze persisted shortlist membership and fixed-horizon outcomes. Reads batch boundaries, exact instrument/time linkage and historical admission facts; never invokes the retired Ranker, loads its policy or promotes a result. Missing intended membership remains unavailable; descriptive historical metrics do not grant current admission authority. |
+| `inspect position-path` / `stop-loss-path` → `position_path_observations` | Reads append-only observations and existing Position economics; shares the observer's pure expected-bucket calculation, not its collection loop. Stop-loss denominators and exclusions depend on central `assess_reportable_outcome`. Derives coverage, excursions and attribution without acquiring candles, settling Positions or writing observations. Ordinary repository openers mean physical read-only permissions are not established by this trace. |
+| Trade-statistics / strategy-KPI API and `inspect orders` / `status` / `pnl` CLI → `trade_stats` | Aggregates persisted Order lifecycle facts and centrally eligible Position outcomes, with family-scorecard reads. Status consumes both rolling-trade and Order statistics; PnL consumes rolling-trade statistics. These consumers do not submit Orders or materialize final PnL. Order fill-rate summaries and realized Outcome cohorts remain different populations. Default-mode resolution is a separate configuration dependency: its implicit migration persistence was repaired in #3364 using the existing read-only config context. Ordinary repository connections still preclude a blanket physically read-only claim. |
+| Trade-insight API → `trade_insights` | Other chart helpers project the loaded Outcome cohort; R distribution additionally reads Position, Proposal, frozen exit-plan, protection-state, Order and Fill rows through `readonly_db` and the hard `entry_exit_geometry` module dependency. Database acquisition and per-row evidence failures report unavailable R evidence without an ordinary-opener fallback; a missing geometry module still propagates. Default-mode configuration resolution shares the #3364 repair above. This narrow guarantee does not cover every cohort reader or the whole Analytics package. |
+| Doctor / sizing CLI / Opportunity flow → `sizing_trace` | Separates persisted proposal/Fill/Position notional from a legacy-formula counterfactual using current config values. Independently reconstructs base-notional/sample-count/Kelly/ATR scaling, reusing `compute_position_size`; it is not the authoritative `available_balance_risk_budget_size` path described in [Risk Contract §5](../../design/contracts/risk_engine_contract.md#5-仓位计算当前权威路径). Risk policy reads do not submit a trade or change a Risk decision. Config migration persistence was disabled in #3363; its database opener is still ordinary, so the full diagnostic is not proven physically read-only. Historical-data gaps must not be repaired by inventing eligible Outcome counts. |
+
+Sizing also depends on persisted `pi_decisions` conviction, `risk_decisions`
+cap evidence, `orders` for Fill linkage, and `universe_feature_snapshots` joined
+to `universe_registry` for ATR. These evidence owners remain required even when
+the final sample-dependent projection is unavailable.
+
+Focused evidence includes `test_ranker_objective_audit`,
+`test_ranker_objective_cli`, `test_stop_loss_path_attribution`,
+`test_trade_insights` and `test_trade_insights_m1`. The sizing trace's historical
+schema regression is recorded separately in its corrective PR; this inventory
+does not claim its entire suite is green or that all diagnostic import and
+configuration side effects are closed. Package movement must preserve the shared
+read rules while keeping collection, configuration migration and trading writers
+with their actual owners.
+
 ## Canonical mutation seams
 
 These are observed API owners and callers, not a blanket claim that each
