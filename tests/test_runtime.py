@@ -13,6 +13,12 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 
 def setup_env(tmp_path, monkeypatch):
+    from aletheia.agents import register_agent
+    from extensions.research.research_agent import run_research_agent
+    from extensions.research.risk_critic import run_risk_critic
+
+    register_agent("research_agent")(run_research_agent)
+    register_agent("risk_critic")(run_risk_critic)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -46,6 +52,23 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 
 # --- Scheduler ---
+
+def test_scheduler_omits_absent_risk_critic(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.agents as agents
+    import aletheia.agent_runtime.scheduler as sched
+
+    monkeypatch.delitem(agents._AGENTS, "risk_critic")
+    sched._scheduler = None
+    try:
+        scheduler = sched.init_scheduler()
+        assert scheduler.get_job("risk_critic") is None
+        assert scheduler.get_job("position_manager") is not None
+        assert scheduler.get_job("portfolio_snapshot") is not None
+    finally:
+        sched.stop_scheduler()
+        reset_db()
+
 
 def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)

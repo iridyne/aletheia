@@ -2,7 +2,7 @@
 
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
-> Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
+> Source of truth: `aletheia/agent_runtime/scheduler.py`, `aletheia/agents/*.py` and optional `extensions/research/*.py`
 > Last updated: 2026-09-13 (D2 canonical entry; other domains unchanged)
 
 ---
@@ -211,6 +211,8 @@ an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 
 #### research_agent / research_worker
 
+- **Owner**: `extensions/research/research_agent.py` owns advisory notes;
+  `aletheia/agents/research_worker.py` retains the distinct Serenity pipeline.
 - **Trigger**: enqueued by dreaming_agent or manual
 - **Inputs**: topic query + knowledge context; Serenity publication reads exact research opportunity IDs and evidence, independent of display limits
 - **LLM**: Yes (research_worker makes LLM calls)
@@ -350,10 +352,13 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
 
 #### risk_critic
 
+- **Owner**: `extensions/research/risk_critic.py`, registered by CLI/Web composition
+  in the existing Core agent registry. An absent producer is unavailable in the
+  manual catalog and omitted from the scheduler, not recorded as a failed run.
 - **Trigger**: scheduler every 6h; disabled when `agent.autonomous_learning=false`
 - **Inputs**: Open positions, risk config, recent violations, portfolio exposure
 - **LLM**: Yes (risk assessment)
-- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `risk_critic.py:42` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`)
+- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `extensions/research/risk_critic.py` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`)
 - **Side effects**: Writes one medium-confidence advisory research note. It does not flag opportunities or write `risk_decisions`; those facts remain owned by the Risk Engine. Automatic Risk lessons remain advisory because `risk_lesson_constraint` is not measurement-supported.
 
 #### dreaming_daily

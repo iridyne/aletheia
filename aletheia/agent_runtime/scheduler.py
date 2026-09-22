@@ -1427,11 +1427,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
-    _scheduler.add_job(
-        _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
-        id="risk_critic", misfire_grace_time=300,
-        next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
-    )
+    from aletheia.agents import get_agent_fn
+
+    try:
+        get_agent_fn("risk_critic")
+    except ValueError:
+        logger.info("Risk Critic not scheduled: optional Research producer unavailable")
+    else:
+        _scheduler.add_job(
+            _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
+            id="risk_critic", misfire_grace_time=300,
+            next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
+        )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
