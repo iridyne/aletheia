@@ -158,7 +158,7 @@ def test_maintenance_entrypoints_bind_before_help(monkeypatch, module_name):
     import importlib
     import sys
 
-    module = importlib.import_module("aletheia.maintenance." + module_name)
+    module = importlib.import_module("ops.maintenance." + module_name)
     monkeypatch.setattr(sys, "argv", [module_name, "--help"])
     with pytest.raises(SystemExit) as result:
         module.main()

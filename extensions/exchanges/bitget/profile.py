@@ -292,13 +292,14 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
         """
         if not venue_symbol:
             raise RuntimeError("private funding ledger unavailable")
+        page_limit = min(limit, 100)  # Classic v2 account/bill permits at most 100 rows.
         rows = []
         history_bound_reached = False
         try:
-            page = await request(exchange.fetch_funding_history(venue_symbol, since, limit))
+            page = await request(exchange.fetch_funding_history(venue_symbol, since, page_limit))
             if not isinstance(page, list):
                 raise ValueError("invalid CCXT funding history")
-            history_bound_reached = len(page) >= limit
+            history_bound_reached = len(page) >= page_limit
             rows.extend(item for item in page if isinstance(item, dict))
         except (Exception, TimeoutError):
             raise RuntimeError("private funding ledger unavailable")

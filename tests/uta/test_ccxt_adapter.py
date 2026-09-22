@@ -792,8 +792,16 @@ async def test_okx_recent_funding_window_uses_only_recent_surface(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limit", (1, 1000))
-async def test_classic_funding_keeps_symbol_bound_read_and_completeness(monkeypatch, limit):
+@pytest.mark.parametrize(("limit", "row_count", "page_limit", "partial"), (
+    (1, 1, 1, True),
+    (10, 1, 10, False),
+    (None, 1, 100, False),
+    (1000, 1, 100, False),
+    (1000, 100, 100, True),
+))
+async def test_classic_funding_keeps_symbol_bound_read_and_completeness(
+    monkeypatch, limit, row_count, page_limit, partial,
+):
     profile = _profile("classic_v2")
     exchange = FakeExchange()
     now = datetime.now(timezone.utc)
@@ -803,10 +811,10 @@ async def test_classic_funding_keeps_symbol_bound_read_and_completeness(monkeypa
     async def funding_history(symbol, since, requested_limit):
         calls.append((symbol, since, requested_limit))
         return [{"info": {
-            "billId": "funding-1", "symbol": "BTCUSDT", "amount": "-0.02",
+            "billId": f"funding-{i:03}", "symbol": "BTCUSDT", "amount": "-0.02",
             "coin": "USDT", "businessType": "contract_settle_fee",
             "cTime": int((now - timedelta(days=1)).timestamp() * 1000),
-        }}]
+        }} for i in range(row_count)]
 
     monkeypatch.setattr(exchange, "fetch_funding_history", funding_history, raising=False)
     _install(monkeypatch, exchange)
@@ -815,12 +823,12 @@ async def test_classic_funding_keeps_symbol_bound_read_and_completeness(monkeypa
         report = await adapter.get_funding_ledger(FundingLedgerQuery(scope=scope))
     finally:
         await adapter.close()
-    assert calls == [("BTC/USDT:USDT", int(scope.start_at.timestamp() * 1000), limit)]
+    assert calls == [("BTC/USDT:USDT", int(scope.start_at.timestamp() * 1000), page_limit)]
     assert [(entry.venue_ledger_id, entry.amount) for entry in report.entries] == [
-        ("funding-1", Decimal("-0.02")),
+        (f"funding-{i:03}", Decimal("-0.02")) for i in range(row_count)
     ]
-    assert report.completeness is (ReadCompleteness.PARTIAL if limit == 1 else ReadCompleteness.COMPLETE)
-    assert report.reason_code == ("funding_history_bound_reached" if limit == 1 else None)
+    assert report.completeness is (ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE)
+    assert report.reason_code == ("funding_history_bound_reached" if partial else None)
 
 
 
