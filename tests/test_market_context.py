@@ -167,7 +167,7 @@ _FakeClient = _FakeProvider
 
 def test_build_context_renders_markdown_tables():
     from aletheia.trading.market_context import build_market_context
-    from aletheia.agents.market_observer import _evaluate_pre_filter
+    from extensions.research.market_observer import _evaluate_pre_filter
     provider = _FakeProvider()
     ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], provider=provider))
     assert "Verified market data snapshot" in ctx
@@ -199,7 +199,7 @@ def test_build_context_renders_markdown_tables():
 
 def test_build_context_rejects_consistent_foreign_candle_venue():
     from aletheia.data.cache import get_cache
-    from aletheia.agents.market_observer import _evaluate_pre_filter
+    from extensions.research.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class FallbackVenueProvider(_FakeProvider):
@@ -223,7 +223,7 @@ def test_build_context_rejects_consistent_foreign_candle_venue():
 
 def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
     from aletheia.data.cache import get_cache
-    from aletheia.agents.market_observer import _evaluate_pre_filter
+    from extensions.research.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class MixedVenueProvider(_FakeProvider):
@@ -303,7 +303,7 @@ def test_build_context_includes_indicators_in_debug():
 
 
 def test_observer_pre_filter_uses_structured_1h_debug_only():
-    from aletheia.agents.market_observer import _evaluate_pre_filter
+    from extensions.research.market_observer import _evaluate_pre_filter
 
     debug = {
         "technical_context": {"artifacts": [{"stable_id": "exact"}]},
@@ -324,7 +324,7 @@ def test_observer_pre_filter_uses_structured_1h_debug_only():
 
 
 def test_observer_pre_filter_does_not_promote_markdown_or_news_keywords():
-    from aletheia.agents.market_observer import _evaluate_pre_filter
+    from extensions.research.market_observer import _evaluate_pre_filter
 
     debug = {
         "technical_context": {"artifacts": [{"stable_id": "exact"}]},
@@ -370,7 +370,7 @@ def test_build_context_preserves_instrument_identity_and_cache_scope():
 
 
 def test_observer_system_prompt_matches_normalized_technical_fields():
-    from aletheia.agents.market_observer import _SYSTEM_PROMPT
+    from extensions.research.market_observer import _SYSTEM_PROMPT
 
     for token in ("trend:", "atr: ATR14 as a percentage", "bb:", "vwap:", "donchian H/L:", "obv"):
         assert token in _SYSTEM_PROMPT
@@ -402,7 +402,7 @@ def test_observer_pre_filter_rejection_is_not_a_run_error(tmp_path, monkeypatch)
     """A normal no-signal rejection stays in filter evidence, not AgentRun errors."""
     _setup_env(tmp_path, monkeypatch)
 
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     import aletheia.trading.market_context as mc
     from tests.observer_admission_fixture import admit_observer_instrument
 
@@ -445,7 +445,8 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
 
     # Force the structured-LLM path to fail.
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from tests.observer_admission_fixture import admit_observer_instrument
 
     admit_observer_instrument(monkeypatch, mo)
@@ -484,7 +485,7 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
     out = asyncio.run(run_market_observer(permission_mode="Observe", run_id="run-mo-1"))
     # Observer should have completed without throwing, even though LLM failed.
@@ -523,7 +524,8 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch):
     """When LLM returns the new structured shape, Observer enriches all fields."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from tests.observer_admission_fixture import admit_observer_instrument
 
     owner = admit_observer_instrument(monkeypatch, mo)
@@ -567,7 +569,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
     out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-2"))
     assert any(o.startswith("opportunity:") for o in out["outputs"])
@@ -600,7 +602,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
 def test_prediction_market_lines_require_fresh_rows(tmp_path, monkeypatch):
     """Old prediction rows must not enter market_observer context as current 24h moves."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     from aletheia.storage.repositories import _insert
 
     now = datetime.now(timezone.utc)
@@ -686,7 +688,8 @@ def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path,
 def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
     """Fresh perp-structure snapshots must reach the market_observer LLM prompt."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from aletheia.storage import repositories as repo
     from tests.observer_admission_fixture import admit_observer_instrument
 
@@ -730,7 +733,7 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct"))
 
     btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
@@ -745,7 +748,8 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
 def test_observer_includes_compact_position_x_structure_context(tmp_path, monkeypatch):
     """Fresh Position X structure evidence must be compressed before prompt injection."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from aletheia.storage import repositories as repo
     from tests.observer_admission_fixture import admit_observer_instrument
 
@@ -797,7 +801,7 @@ def test_observer_includes_compact_position_x_structure_context(tmp_path, monkey
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct-compact"))
 
     btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
@@ -819,7 +823,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     the raw markdown snapshot (which used to leak through and look broken on
     the dashboard). Stub explanation instead."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
 
     async def fake_llm_structured(*a, **kw):
         # Model returns valid shape but every narrative field is empty —
@@ -842,7 +846,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
     out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-fb"))
     opps = repo.list_opportunities(limit=5)
@@ -857,7 +861,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
 def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
     """Out-of-range / non-numeric scores must be dropped, not crash."""
     _setup_env(tmp_path, monkeypatch)
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
 
     async def fake_llm_structured(*a, **kw):
         return ({
@@ -875,7 +879,7 @@ def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-3"))
     # Must not raise — junk inputs are dropped silently.
     assert not out["outputs"]

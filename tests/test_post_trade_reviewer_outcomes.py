@@ -101,7 +101,7 @@ def _seed_position(
 async def test_reviewer_skips_non_eligible_positions_without_calling_llm(
     case, monkeypatch
 ):
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
 
     _seed_position(case)
     calls = []
@@ -128,7 +128,7 @@ async def test_reviewer_skips_non_eligible_positions_without_calling_llm(
 
 @pytest.mark.anyio
 async def test_reviewer_reviews_each_eligible_position_window_once(monkeypatch):
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
 
     position_id = _seed_position("eligible")
     calls = []
@@ -163,7 +163,7 @@ async def test_reviewer_reviews_each_eligible_position_window_once(monkeypatch):
 
 @pytest.mark.anyio
 async def test_reviewer_receives_complete_exact_proposal_decision_context(monkeypatch):
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
     from aletheia.storage.models import PiDecision
     from aletheia.storage.sqlite import get_db
 
@@ -214,7 +214,7 @@ async def test_reviewer_receives_complete_exact_proposal_decision_context(monkey
 async def test_reviewer_budget_omits_whole_positions_without_truncating_selected(
     monkeypatch,
 ):
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
     from aletheia.storage.models import PiDecision
 
     oversized_id = _seed_position(
@@ -298,7 +298,7 @@ async def test_reviewer_budget_omits_whole_positions_without_truncating_selected
 
 @pytest.mark.anyio
 async def test_reviewer_gives_each_strategy_a_fair_outcome_window(monkeypatch):
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
     _seed_position(
@@ -346,7 +346,7 @@ async def test_reviewer_bounds_each_round_and_rotates_across_strategy_backlog(
     monkeypatch,
 ):
     """A real 45-strategy SQLite backlog must not fan out in one agent run."""
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
 
     for index in range(45):
         _seed_position(
@@ -383,7 +383,7 @@ async def test_reviewer_bounds_each_round_and_rotates_across_strategy_backlog(
 @pytest.mark.anyio
 async def test_reviewer_high_cardinality_pool_bounds_eligibility_queries(monkeypatch):
     """The identity query may scan SQLite, but Python/eligibility fanout stays fixed."""
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -434,7 +434,7 @@ async def test_reviewer_reviewed_and_failed_items_do_not_block_later_strategies(
     monkeypatch,
 ):
     """Durable progress advances after skips and LLM failures, including restart."""
-    from aletheia.agents import post_trade_reviewer
+    from extensions.research import post_trade_reviewer
     from aletheia.storage.models import KnowledgeItem
 
     for index in range(25):

@@ -126,6 +126,11 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 
 #### market_observer
 
+- **Owner**: `extensions/research/market_observer.py`, explicitly composed in the
+  existing Core registry. Missing Research omits the scheduler job and marks the
+  manual catalog unavailable before queue writes; Operator scan/rerun rejects
+  unavailable implementations before creating a run or its run event. Explicit context-effectiveness
+  evaluation returns blocked before provider access, without a substitute prompt.
 - **Trigger**: scheduler every 10min + event-driven wake
 - **Inputs**: exact-instrument market snapshots, structured 1h RSI/ATR pre-filter facts,
   one `technical-context-v1` closed-bar bundle, freshness-qualified
@@ -224,11 +229,15 @@ an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 
 #### portfolio_agent
 
-- **Trigger**: manual (not scheduled)
-- **Inputs**: current positions + portfolio metrics
-- **LLM**: Yes
-- **Outputs**: portfolio rebalancing recommendations
-- **Side effects**: None (advisory only)
+- **Owner**: Core `aletheia/agents/portfolio_agent.py`, a delegate of the canonical
+  `portfolio.pnl.compute_and_store_snapshot`, not an optional Research producer.
+- **Trigger**: manual and the scheduled `portfolio_snapshot` job
+- **Inputs**: configured execution identity and current open Positions
+- **LLM**: No
+- **Outputs**: persisted portfolio snapshot and its artifact reference
+- **Side effects**: The canonical calculation persists available exact open-Position
+  marks and unrealized-PnL provenance before filtering the snapshot to the configured
+  execution mode. It neither creates a second accounting algorithm nor rebalances.
 
 ---
 
@@ -344,6 +353,9 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
 
 #### post_trade_reviewer
 
+- **Owner**: `extensions/research/post_trade_reviewer.py`, explicitly composed in
+  the existing Core registry; missing Research omits its job and rejects manual
+  enqueue before persistence. Core retains central Outcome eligibility.
 - **Trigger**: scheduler every 4h; disabled when `agent.autonomous_learning=false`
 - **Inputs**: Recently closed positions (no existing review), market context at entry/exit
 - **LLM**: Yes (analysis of trade quality)

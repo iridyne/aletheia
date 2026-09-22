@@ -1217,11 +1217,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         minutes=MARKET_DATA_INTERVAL_MINUTES, id="market_data",
         misfire_grace_time=60, executor="io",
     )
-    _scheduler.add_job(
-        _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
-        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
-        executor="observer",
-    )
+    from aletheia.agents import get_agent_fn
+
+    try:
+        get_agent_fn("market_observer")
+    except ValueError:
+        logger.info("Market Observer not scheduled: optional Research producer unavailable")
+    else:
+        _scheduler.add_job(
+            _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
+            misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
+            executor="observer",
+        )
     _scheduler.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
@@ -1409,8 +1416,6 @@ def init_scheduler() -> BackgroundScheduler | None:
     # 09:30–16:00 America/New_York session.  The trigger owns the boundary so a
     # delayed 16:00 fire can still run inside misfire_grace_time after the
     # single agents worker becomes available.
-    from aletheia.agents import get_agent_fn
-
     try:
         get_agent_fn("equity_observer")
     except ValueError:
@@ -1428,11 +1433,16 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
-    _scheduler.add_job(
-        _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
-        id="post_trade_reviewer", misfire_grace_time=300,
-        next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
-    )
+    try:
+        get_agent_fn("post_trade_reviewer")
+    except ValueError:
+        logger.info("Post-trade Reviewer not scheduled: optional Research producer unavailable")
+    else:
+        _scheduler.add_job(
+            _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
+            id="post_trade_reviewer", misfire_grace_time=300,
+            next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
+        )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
     try:
         get_agent_fn("risk_critic")

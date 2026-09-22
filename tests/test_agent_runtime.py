@@ -19,8 +19,10 @@ def setup_test_env(tmp_path, monkeypatch):
     """Set up test db and config."""
     from aletheia.agents import register_agent
     from extensions.research.research_agent import run_research_agent
+    from extensions.research.market_observer import run_market_observer
 
     register_agent("research_agent")(run_research_agent)
+    register_agent("market_observer")(run_market_observer)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

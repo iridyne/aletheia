@@ -234,7 +234,7 @@ def test_policy_epoch_rotation_uses_one_monotonic_boundary(tmp_path, monkeypatch
 
 
 def test_market_observer_entry_persists_information_epoch_before_early_return():
-    from aletheia.agents.market_observer import run_market_observer
+    from extensions.research.market_observer import run_market_observer
     from aletheia.storage.sqlite import get_db
 
     result = asyncio.run(run_market_observer(permission_mode="invalid"))

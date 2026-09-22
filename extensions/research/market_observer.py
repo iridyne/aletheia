@@ -1,4 +1,4 @@
-"""Market Observer agent — advisory enrichment for deterministic Opportunities."""
+"""Optional Research Market Observer — advisory enrichment for deterministic Opportunities."""
 
 import asyncio
 import json
@@ -1934,7 +1934,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             "output_artifacts": artifact_refs,
         }
 
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from extensions.research.round_robin import DurableRoundRobin, rotate_from_next
 
     instrument_key = str
     round_robin = DurableRoundRobin(_ROUND_ROBIN_STATE_KEY)

@@ -9,12 +9,12 @@ import pytest
 
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
-    for name in ("research_agent", "risk_critic", "equity_observer"):
+    for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"):
         assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
-@pytest.mark.parametrize("missing", [None, "extensions", "extensions.research", "broken_dependency"])
+@pytest.mark.parametrize("missing", [None, "extensions", "extensions.research", "extensions.data", "broken_dependency"])
 def test_advisory_agent_composition(entrypoint, missing):
     script = f"entrypoint = {entrypoint!r}\nmissing = {missing!r}\n" + '''
 import importlib
@@ -30,7 +30,7 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-for name in ("research_agent", "risk_critic", "equity_observer"):
+for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"):
     register_agent(name)(forbidden)
 
 attempted = []
@@ -47,7 +47,7 @@ try:
         from aletheia.main import _configure_runtime
         _configure_runtime()
         # Cached module imports must still replace a stale registration.
-        for name in ("research_agent", "risk_critic", "equity_observer"):
+        for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"):
             register_agent(name)(forbidden)
         _configure_runtime()
     else:
@@ -56,8 +56,9 @@ except ModuleNotFoundError as exc:
     assert missing == "broken_dependency" and exc.name == missing, exc
 else:
     assert missing != "broken_dependency", "internal import defects must propagate"
-    for name in ("research_agent", "risk_critic", "equity_observer"):
-        if missing:
+    research_missing = missing in {"extensions", "extensions.research"}
+    for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"):
+        if research_missing:
             try:
                 get_agent_fn(name)
             except ValueError:
@@ -71,8 +72,8 @@ else:
     assert callable(get_agent_fn("portfolio_agent")), "Core snapshot agent remains available"
     from aletheia.server.routes.data import get_agents_catalog
     catalog = {row["name"]: row for row in get_agents_catalog()["agents"]}
-    for name in ("research_agent", "risk_critic", "equity_observer"):
-        if missing:
+    for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer"):
+        if research_missing:
             assert catalog[name]["runnable"] is False
             assert catalog[name]["blocked_reason"] == "agent_unavailable"
             from aletheia.agent_runtime import job_queue

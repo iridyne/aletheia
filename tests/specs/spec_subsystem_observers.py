@@ -247,7 +247,7 @@ def test_equity_observer_opportunity_execution_eligible():
 )
 def test_observer_has_pre_filter_function():
     import inspect
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     assert hasattr(mo, "_has_sufficient_signal"), (
         "_has_sufficient_signal 不存在 — OBS-PRE-FILTER 未实现"
     )
@@ -268,7 +268,7 @@ def test_observer_has_pre_filter_function():
     ),
 )
 def test_pre_filter_signal_detection():
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     assert mo._has_sufficient_signal({
         "technical_context": {"artifacts": [{"stable_id": "exact"}]},
         "symbols": {"BTC/USDT": {"1h": {"rsi_14": 72.3, "atr_pct": 0.2}}},
@@ -292,7 +292,7 @@ def test_pre_filter_signal_detection():
 )
 def test_pre_filter_rejection_returns_without_error():
     import inspect
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
 
     src = inspect.getsource(mo._analyze_symbol)
     reject_branch = src.split("if not force_full and not pre_filter_passed:", 1)[1]

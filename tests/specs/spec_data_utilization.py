@@ -25,7 +25,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
+_MARKET_OBS = _ROOT / "extensions" / "research" / "market_observer.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
 _LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
@@ -1067,7 +1067,7 @@ def test_orderbook_identity_reaches_storage_and_consumers():
     model = (root / "aletheia/data/models.py").read_text(encoding="utf-8")
     collector = (root / "extensions/data/collectors/microstructure.py").read_text(encoding="utf-8")
     repo = (root / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
-    observer = (root / "aletheia/agents/market_observer.py").read_text(encoding="utf-8")
+    observer = (root / "extensions/research/market_observer.py").read_text(encoding="utf-8")
     features = (root / "aletheia/universe/features.py").read_text(encoding="utf-8")
 
     assert "market_type: str" in model

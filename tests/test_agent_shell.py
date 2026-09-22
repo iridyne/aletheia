@@ -2539,6 +2539,10 @@ async def test_mark_task_done_completes_operator_task(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_market_scan_triggers_market_observer(monkeypatch):
     from aletheia.agent_shell.commands import run_market_scan
+    from aletheia import agents
+    from extensions.research.market_observer import run_market_observer
+
+    monkeypatch.setitem(agents._AGENTS, "market_observer", run_market_observer)
 
     async def fake_run_agent(agent_name: str, trigger_type: str = "scheduled"):
         assert agent_name == "market_observer"
@@ -2560,6 +2564,7 @@ async def test_rerun_failed_agent_task_uses_latest_failed_run(tmp_path, monkeypa
     from aletheia.agent_shell.commands import rerun_failed_agent_task
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
+    from aletheia import agents
 
     insert_agent_run(AgentRun(agent_name="paper_trader", status="failed", errors='["timeout"]'))
     insert_agent_run(AgentRun(agent_name="market_observer", status="completed"))
@@ -2570,11 +2575,34 @@ async def test_rerun_failed_agent_task_uses_latest_failed_run(tmp_path, monkeypa
         return {"run_id": "run-rerun-1", "status": "completed_with_errors", "outputs": [], "errors": ["still flaky"]}
 
     monkeypatch.setattr("aletheia.agent_shell.commands.run_agent", fake_run_agent, raising=False)
+    monkeypatch.setitem(agents._AGENTS, "paper_trader", fake_run_agent)
 
     result = await rerun_failed_agent_task({})
 
     assert result["rerun"]["agent_name"] == "paper_trader"
     assert result["rerun"]["new_run_id"] == "run-rerun-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command_name,agent_name", [
+    ("run_market_scan", "market_observer"),
+    ("rerun_failed_agent_task", "market_observer"),
+    ("rerun_failed_agent_task", "post_trade_reviewer"),
+])
+async def test_operator_research_absence_precedes_run_and_event(monkeypatch, command_name, agent_name):
+    from aletheia import agents
+    from aletheia.agent_shell import commands, operator_store
+
+    monkeypatch.delitem(agents._AGENTS, agent_name, raising=False)
+    monkeypatch.setattr(commands, "list_agent_runs", lambda **kwargs: [
+        {"id": "old-failed", "agent_name": agent_name, "status": "failed"},
+    ])
+    async def forbidden_run(*args, **kwargs):
+        pytest.fail("unavailable Research must not create an AgentRun")
+    monkeypatch.setattr(commands, "run_agent", forbidden_run)
+    monkeypatch.setattr(operator_store, "create_event", lambda **kwargs: pytest.fail("unavailable Research emitted run event"))
+    result = await getattr(commands, command_name)({})
+    assert result == {"error": f"Unknown agent: {agent_name}"}
 
 
 @pytest.mark.asyncio
