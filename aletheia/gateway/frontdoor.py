@@ -192,8 +192,11 @@ def _filtered_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
 
 
 _proxy_client: httpx.AsyncClient | None = None
+_stream_client: httpx.AsyncClient | None = None
 _PROXY_CONNECT_TIMEOUT = 5.0  # seconds — monkeypatched to 0.05 in tests via conftest
 _PROXY_MAX_CONNECTIONS = 20
+_STREAM_MAX_CONNECTIONS = 10
+_SSE_PATHS = {"operator/events/stream", "dev/reload/events"}
 
 
 def _get_proxy_client() -> httpx.AsyncClient:
@@ -205,6 +208,17 @@ def _get_proxy_client() -> httpx.AsyncClient:
             limits=httpx.Limits(max_connections=_PROXY_MAX_CONNECTIONS, max_keepalive_connections=10),
         )
     return _proxy_client
+
+
+def _get_stream_client() -> httpx.AsyncClient:
+    global _stream_client
+    if _stream_client is None or _stream_client.is_closed:
+        _stream_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=_PROXY_CONNECT_TIMEOUT, read=120.0, write=10.0, pool=0.1),
+            trust_env=False,
+            limits=httpx.Limits(max_connections=_STREAM_MAX_CONNECTIONS, max_keepalive_connections=0),
+        )
+    return _stream_client
 
 
 def _connect_backend_websocket(url: str, headers: dict[str, str]):
@@ -289,9 +303,11 @@ async def _guarded_aiter_raw(
         return
 
 
-def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception) -> JSONResponse:
+def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception, *, streaming: bool = False) -> JSONResponse:
     capacity = isinstance(exc, httpx.PoolTimeout)
     reason = "frontdoor_pool_exhausted" if capacity else "backend_unavailable"
+    if capacity and streaming:
+        reason = "frontdoor_stream_capacity_exhausted"
     message = (
         "Frontdoor upstream connection capacity is exhausted"
         if capacity else "Aletheia backend worker is restarting or unreachable"
@@ -363,6 +379,8 @@ def create_app(
         ]
         return {
             "max_connections": _PROXY_MAX_CONNECTIONS,
+            "stream_max_connections": _STREAM_MAX_CONNECTIONS,
+            "stream_admissions": sum(row["capacity_class"] == "stream" for row in rows),
             "pending_headers": sum(not row["headers_received"] for row in rows),
             "streaming": sum(row["response_class"] == "sse" for row in rows),
             "non_sse": sum(row["response_class"] == "non_sse" for row in rows),
@@ -376,7 +394,8 @@ def create_app(
     async def proxy_http(request: Request, path: str, backend: str, target: httpx.URL):
         nonlocal request_sequence
         body = await request.body()
-        client = _get_proxy_client()
+        requested_sse = "text/event-stream" in request.headers.get("accept", "").lower()
+        streaming = requested_sse or path.rstrip("/") in _SSE_PATHS
         request_sequence += 1
         request_id = request_sequence
         # Fixed diagnostic categories only: dynamic path segments, headers,
@@ -384,16 +403,22 @@ def create_app(
         category = path.split("/", 1)[0]
         if category not in {"status", "ready", "ui", "market", "operator", "runtime", "events", "dev", "_infra"}:
             category = "other"
+        # No await between capacity check and holder insertion: each admitted
+        # stream owns exactly one slot until the existing response cleanup.
+        if streaming and sum(row["capacity_class"] == "stream" for row in holders.values()) >= _STREAM_MAX_CONNECTIONS:
+            return _proxy_unavailable(category, backend, _backend_route(), httpx.PoolTimeout("stream admission full"), streaming=True)
         holder = {
             "category": category,
             "started_at_unix": time.time(),
             "started_monotonic": time.monotonic(),
             "headers_received": False,
-            "requested_sse": "text/event-stream" in request.headers.get("accept", "").lower(),
+            "requested_sse": requested_sse,
+            "capacity_class": "stream" if streaming else "finite",
             "response_class": "unknown",
         }
         holders[request_id] = holder
         try:
+            client = _get_stream_client() if streaming else _get_proxy_client()
             upstream = await client.send(
                 client.build_request(request.method, target, headers=_filtered_headers(request.headers.items()), content=body),
                 stream=True,
@@ -402,7 +427,7 @@ def create_app(
             holders.pop(request_id, None)
             if not isinstance(exc, Exception):
                 raise
-            return _proxy_unavailable(category, backend, _backend_route(), exc)
+            return _proxy_unavailable(category, backend, _backend_route(), exc, streaming=streaming)
         holder["headers_received"] = True
         holder["response_class"] = (
             "sse" if upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "text/event-stream"

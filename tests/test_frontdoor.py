@@ -50,6 +50,7 @@ async def test_proxy_capacity_failure_is_not_backend_outage(tmp_path, monkeypatc
         return {"ready": True}
 
     monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: FakeClient())
     monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
     monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
     app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
@@ -140,6 +141,7 @@ async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, mon
         return {"ready": True}
 
     monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: FakeClient())
     monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
     monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
     app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
@@ -164,6 +166,108 @@ async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, mon
             with pytest.raises(asyncio.CancelledError):
                 await task
         assert closed == ([True] if cancel_at == "body" else [])
+        assert (await client.get("/_infra/status")).json()["proxy_capacity"]["active_requests"] == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["headers", "body", "normal"])
+async def test_stream_admission_released_on_failure_and_completion(tmp_path, monkeypatch, failure):
+    import httpx
+    from aletheia.gateway import frontdoor
+
+    closed = []
+
+    class Response:
+        status_code = 200
+        headers = httpx.Headers({"content-type": "text/event-stream"})
+
+        async def aiter_raw(self):
+            yield b": ok\n\n"
+            if failure == "body":
+                raise httpx.ReadError("test")
+
+        async def aclose(self):
+            closed.append(True)
+
+    class Client:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, **kwargs):
+            if failure == "headers":
+                raise httpx.ConnectError("test")
+            return Response()
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(frontdoor, "_STREAM_MAX_CONNECTIONS", 1)
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: Client())
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda _: None)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://frontdoor") as client:
+        for _ in range(2):
+            response = await client.get("/api/operator/events/stream")
+            assert response.status_code == (503 if failure == "headers" else 200)
+            snapshot = (await client.get("/_infra/status")).json()["proxy_capacity"]
+            assert snapshot["active_requests"] == snapshot["stream_admissions"] == 0
+    assert len(closed) == (0 if failure == "headers" else 2)
+
+
+@pytest.mark.anyio
+async def test_incomplete_request_body_does_not_reserve_stream_capacity(tmp_path, monkeypatch):
+    import asyncio
+    import httpx
+    from aletheia.gateway import frontdoor
+
+    entered = asyncio.Event()
+    sent = []
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b": ok\n\n"
+
+    class Client:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, **kwargs):
+            sent.append(request)
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Body())
+
+    async def receive():
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def send(_message):
+        raise AssertionError("incomplete request must not have a response")
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(frontdoor, "_STREAM_MAX_CONNECTIONS", 1)
+    monkeypatch.setattr(frontdoor, "_get_stream_client", lambda: Client())
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda _: None)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+             "method": "GET", "scheme": "http", "path": "/api/operator/events/stream",
+             "query_string": b"", "headers": [(b"content-length", b"10")],
+             "server": ("frontdoor", 80), "client": ("127.0.0.1", 1)}
+    pending = asyncio.create_task(app(scope, receive, send))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://frontdoor") as client:
+            snapshot = (await client.get("/_infra/status")).json()["proxy_capacity"]
+            assert snapshot["stream_admissions"] == 0
+            response = await client.get("/api/operator/events/stream")
+            assert response.status_code == 200
+            assert len(sent) == 1
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://frontdoor") as client:
         assert (await client.get("/_infra/status")).json()["proxy_capacity"]["active_requests"] == 0
 
 

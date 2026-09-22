@@ -1,12 +1,11 @@
 /**
  * Dev-reload client — connects to /api/dev/reload/events SSE when available.
- * Auto-reloads the page on frontend-built or backend-ready events.
+ * Auto-reloads on frontend-built; backend-ready confirms only stream connectivity.
  * Only activates if the endpoint exists (ALETHEIA_DEV_RELOAD=1 on server).
  */
 
-let es: EventSource | null = null
-let reconnectDelay = 1000
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+import { connectEventStream } from './lib/eventStream'
+
 let statusEl: HTMLElement | null = null
 let reloading = false
 
@@ -27,59 +26,30 @@ function hideStatus() {
   if (statusEl) statusEl.style.display = 'none'
 }
 
-function connect() {
-  if (es) {
-    es.close()
-    es = null
-  }
-
-  es = new EventSource('/api/dev/reload/events')
-
-  es.addEventListener('backend-ready', () => {
-    hideStatus()
-    reconnectDelay = 1000
-  })
-
-  es.addEventListener('frontend-built', () => {
-    if (reloading) return
-    reloading = true
-    showStatus('Build updated — reloading…')
-    setTimeout(() => window.location.reload(), 300)
-  })
-
-  es.onerror = () => {
-    es?.close()
-    es = null
-    showStatus('Gateway restarting…')
-    scheduleReconnect()
-  }
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    reconnectDelay = Math.min(reconnectDelay * 1.5, 8000)
-    pollUntilReady()
-  }, reconnectDelay)
-}
-
-async function pollUntilReady() {
-  try {
-    const res = await fetch('/api/health', { cache: 'no-store' })
-    if (res.ok) {
-      window.location.reload()
-      return
-    }
-  } catch { /* server still down */ }
-  scheduleReconnect()
-}
-
 export function initDevReload() {
+  let disposed = false
+  let disconnect: (() => void) | undefined
+  let reloadTimer: ReturnType<typeof setTimeout> | undefined
   fetch('/api/dev/reload/status', { cache: 'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(data => {
-      if (data?.enabled) connect()
+      if (disposed || !data?.enabled) return
+      disconnect = connectEventStream('/api/dev/reload/events', stream => {
+        stream.addEventListener('backend-ready', hideStatus)
+        stream.addEventListener('frontend-built', () => {
+          if (reloading) return
+          reloading = true
+          showStatus('Build updated — reloading…')
+          reloadTimer = setTimeout(() => window.location.reload(), 300)
+        })
+      }, () => showStatus('Dev event stream unavailable — reconnecting…'))
     })
     .catch(() => { /* endpoint not available — dev reload not enabled */ })
+  return () => {
+    disposed = true
+    disconnect?.()
+    clearTimeout(reloadTimer)
+    reloading = false
+    hideStatus()
+  }
 }
