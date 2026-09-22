@@ -185,16 +185,20 @@ runtime path. Current source traces establish the following distinctions:
 - `agents.research_worker` owns namespaced Serenity runs/evidence. It claims a
   queued run and acquires/releases the existing research lock; its bounded
   retry registers on the existing Core scheduler, not another APScheduler.
-  Scheduler catch-up and explicit create/retry/deep-dive API calls enqueue the
-  same worker. Pipeline writes are namespaced evidence, claims, themes, links,
+  The daily `dreaming_daily` cron, startup catch-up and explicit
+  create/retry/deep-dive API calls enqueue the same worker. Before the stages,
+  `ensure_opportunity_information_policy_epoch` persists shared
+  `learning_policy_epochs` attribution; Learning is a real dependency here,
+  not proven absent-safe. Stage writes are namespaced evidence, claims, themes, links,
   opportunities and run events; Model calls use the shared inference path.
   Candidate publication delegates to `trading.serenity_publication`, which
   revalidates source/PA facts and uses the canonical Candidate/Generation writers.
   Manual and automatic publication share that implementation, not Order/Risk
   mutation. The optional equity context can perform public yfinance I/O; this
   producer is not an inert reader.
-  Run claims and terminal transitions are CAS-guarded; retries use a durable
-  parent/retry identity. Cancellation is cooperative at pipeline checkpoints,
+  Queued claims and worker/API terminal transitions are CAS-guarded; startup
+  recovery's failed transition instead uses the ordinary unrestricted run update.
+  Retries use a durable parent/retry identity. Cancellation is cooperative at pipeline checkpoints,
   as required by Serenity Contract §5.1/§13, not physical thread termination.
   Web lifespan does not join this daemon thread; actual process exit removes it,
   and scheduler startup reconciles interrupted runs before catch-up. Existing
