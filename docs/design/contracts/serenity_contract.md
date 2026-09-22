@@ -5,7 +5,7 @@
 > Source files:
 > - `aletheia/trading/serenity_evidence.py` (确定性证据评估器 D2)
 > - `aletheia/trading/serenity_scoring.py` (评分卡 + bucket)
-> - `aletheia/agents/research_worker.py` (多镜头研究 pipeline + 符号过滤 + 晋升)
+> - `extensions/research/research_worker.py` (可选多镜头研究 pipeline + 符号过滤 + 委托晋升)
 > - 决策/执行/持仓层的 trade_school 穿透 (见 §8–§10)
 > Cross-references: decision_lifecycle_contract.md · knowledge_contract.md · risk_engine_contract.md · live_unlock_contract.md · data_model.md
 > Last updated: 2026-09-07 (D2 canonical Candidate entry)
@@ -134,6 +134,13 @@ Stage 4 **强制裁决** (S4 verdict): `_OPPORTUNITIES_SYSTEM` 强制 LLM 输出
 生成端**必须**路由过评估器: `research_worker` 与 `prediction_observer` 都调 `assess_evidence_tier` / `assess_opportunity_tier`(SE-S02/S03),否则证据仍是自评。
 
 ### 5.1 Research run lifecycle truth
+
+Worker 由既有 CLI/Web composition 绑定到 Core Scheduler 的同步 enqueue callback。
+缺失时，create/retry/deep-dive API 在 profile、snapshot、run、retry 首次写入前返回
+unavailable（503）；cron 与 startup catch-up 不调度缺失 producer。历史读取、取消、
+启动 interrupted-run recovery 及已有证据的 Core publication 不要求 producer 可用。
+安装时仍使用原有后台线程、CAS、取消 checkpoint、锁和 durable retry identity；
+不新增第二个 scheduler、publisher 或 execution writer。
 
 `serenity_research_runs` 是研究 attempt 生命周期权威。Worker 用 SQLite
 compare-and-set 将 `queued→running`；因此 API 先赢得 queued cancel 时可以直接写

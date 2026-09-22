@@ -25,7 +25,7 @@ _SERENITY_EVIDENCE = _ROOT / "aletheia" / "trading" / "serenity_evidence.py"
 _SERENITY_SCORING = _ROOT / "aletheia" / "trading" / "serenity_scoring.py"
 _MODELS = _ROOT / "aletheia" / "storage" / "models.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
 
 
 # ---------------------------------------------------------------------------

@@ -2727,7 +2727,6 @@ def _probe_content_lesson_chain(report: Report) -> None:
     """ps_lessons learning→policy chain: lessons that never get accepted or applied
     are a dead loop (post-trade conclusions reach nothing)."""
     try:
-        import importlib.util
         from collections import Counter
 
         from aletheia.storage.sqlite import get_db
@@ -2738,8 +2737,13 @@ def _probe_content_lesson_chain(report: Report) -> None:
         applied = db.execute(
             "SELECT COUNT(*) FROM ps_lessons WHERE applied_policy_version IS NOT NULL"
         ).fetchone()[0]
-        # Is the evidence-gated promotion machinery wired? (find_spec does not import.)
-        reviewer_wired = importlib.util.find_spec("aletheia.agents.lesson_reviewer") is not None
+        from aletheia.agents import get_agent_fn
+        try:
+            get_agent_fn("lesson_reviewer")
+        except ValueError:
+            reviewer_wired = False
+        else:
+            reviewer_wired = True
         # Backlog that is old enough to have been reviewed (cron runs daily).
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         stale_proposed = db.execute(

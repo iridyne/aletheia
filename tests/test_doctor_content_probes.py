@@ -110,7 +110,15 @@ def test_lesson_chain_empty_is_info(db):
     assert _verdict(dx._probe_content_lesson_chain).severity == "info"
 
 
-def test_lesson_chain_recent_proposed_is_info(db):
+@pytest.fixture
+def reviewer_composed(monkeypatch):
+    from aletheia.agents import _AGENTS
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+
+    monkeypatch.setitem(_AGENTS, "lesson_reviewer", run_lesson_reviewer)
+
+
+def test_lesson_chain_recent_proposed_is_info(db, reviewer_composed):
     # lesson_reviewer machinery is now wired; recently-proposed lessons are honestly
     # awaiting the daily evidence-gated review (cron 03:00 CST), NOT a dead chain.
     # Reporting warn here would false-alarm forever the day after every new lesson.
@@ -120,7 +128,7 @@ def test_lesson_chain_recent_proposed_is_info(db):
     assert v.severity == "info" and "awaiting" in v.detail.lower()
 
 
-def test_lesson_chain_stale_backlog_warns(db):
+def test_lesson_chain_stale_backlog_warns(db, reviewer_composed):
     # proposed lessons older than the 48h review window that never drained → the
     # wired reviewer is failing (cron dead / LLM unavailable). The probe must still
     # warn here: this is the genuine dead-chain failure, just detected by staleness.
@@ -133,6 +141,16 @@ def test_lesson_chain_stale_backlog_warns(db):
 def test_lesson_chain_with_applied_is_ok(db):
     _ins_lesson(db, "l_ok", "accepted", applied="v1")
     assert _verdict(dx._probe_content_lesson_chain).severity == "ok"
+
+
+def test_lesson_chain_absent_reviewer_reports_unavailable(db, monkeypatch):
+    from aletheia.agents import _AGENTS
+
+    monkeypatch.delitem(_AGENTS, "lesson_reviewer", raising=False)
+    _ins_lesson(db, "unreviewed", "proposed")
+    verdict = _verdict(dx._probe_content_lesson_chain)
+    assert verdict.severity == "warn"
+    assert "chain not built" in verdict.detail
 
 
 # --- content.attribution -----------------------------------------------------
@@ -260,23 +278,12 @@ def test_proposal_bias_too_few_is_info(db):
     assert _verdict(dx._probe_content_proposal_bias).severity == "info"
 
 
-def test_proposal_bias_one_sided_warns_when_unmitigated(db, monkeypatch):
-    monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision._proposal_direction_overheated",
-        lambda direction, conviction: None,
-    )
+def test_proposal_bias_one_sided_warns_without_claiming_legacy_brake(db):
     for i in range(22):
         _ins_prop(db, i, "short")  # 100% short, >= 20 samples
     v = _verdict(dx._probe_content_proposal_bias)
     assert v.severity == "warn" and "bias" in v.detail.lower()
-
-
-def test_proposal_bias_one_sided_info_when_direction_brake_active(db):
-    for i in range(22):
-        _ins_prop(db, i, "short")  # 100% short, >= 20 samples
-    v = _verdict(dx._probe_content_proposal_bias)
-    assert v.severity == "info"
-    assert "brake active" in v.detail
+    assert "brake active" not in v.detail.lower()
 
 
 def test_proposal_bias_mixed_is_ok(db):

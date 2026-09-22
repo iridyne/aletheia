@@ -27,7 +27,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 @pytest.fixture
 def reviewer_provider(monkeypatch):
     """Construct no client or credential when the inference boundary is mocked."""
-    from aletheia.agents import lesson_reviewer
+    from extensions.research import lesson_reviewer
 
     provider = object()
 
@@ -213,7 +213,7 @@ def test_lesson_reviewer_registered_and_overturnable():
     """
     import pathlib
 
-    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
     assert callable(run_lesson_reviewer)
 
     root = pathlib.Path(_project_root())
@@ -223,7 +223,7 @@ def test_lesson_reviewer_registered_and_overturnable():
         "never runs. See content-probe fixes FIX 2 (LP-S09)."
     )
 
-    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/research/lesson_reviewer.py").read_text(encoding="utf-8")
     assert 'status="accepted"' in reviewer_src or "status='accepted'" in reviewer_src, (
         "lesson_reviewer never re-reads accepted lessons — acceptances are not "
         "overturnable by later evidence (owner requirement). See FIX 2 (LP-S09)."
@@ -254,7 +254,7 @@ def test_applied_policy_version_closure():
     )
 
     root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/research/lesson_reviewer.py").read_text(encoding="utf-8")
     assert "mark_applied" in reviewer_src, (
         "lesson_reviewer never calls mark_applied — accepted lessons would never "
         "stamp a policy version. See FIX 2 (LP-S10)."
@@ -299,7 +299,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provid
     from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -359,7 +359,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provid
 async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch, reviewer_provider):
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.model_provider.inference_contract import CALLER_SPECS, OutputMode
 
@@ -395,7 +395,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 ):
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
@@ -420,7 +420,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 
 
 async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -450,7 +450,7 @@ async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
 
 
 async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     import aletheia.policies.store as policy_module
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
@@ -495,7 +495,7 @@ async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
 
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.policies.store import PolicyStore
 
@@ -520,7 +520,7 @@ async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
 
 
 async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.research.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -1056,7 +1056,7 @@ def test_dreaming_agent_lesson_evidence_populated():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    dreaming_src = (root / "aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
+    dreaming_src = (root / "extensions/research/dreaming_agent.py").read_text(encoding="utf-8")
 
     # (a) store.create is called with evidence= kwarg
     tree = ast.parse(dreaming_src)
@@ -1173,7 +1173,7 @@ def test_skill_store_producer_is_draft_only():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia" / "agents" / "lesson_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions" / "research" / "lesson_reviewer.py").read_text(encoding="utf-8")
     skill_src = (root / "aletheia" / "learning" / "skills.py").read_text(encoding="utf-8")
 
     assert "SkillStore" in reviewer_src and "create_from_lesson" in reviewer_src
@@ -1201,7 +1201,7 @@ def test_dreaming_agent_has_trading_performance_block():
     """LP-S18: static probe that the function and wiring exist."""
     import pathlib
     root = pathlib.Path(_project_root())
-    src = (root / "aletheia" / "agents" / "dreaming_agent.py").read_text(encoding="utf-8")
+    src = (root / "extensions" / "research" / "dreaming_agent.py").read_text(encoding="utf-8")
 
     assert "_build_daily_trading_performance" in src, (
         "_build_daily_trading_performance not found in dreaming_agent.py — "
@@ -1238,7 +1238,7 @@ def test_dreaming_agent_has_trading_performance_block():
 def test_dreaming_agent_loss_day_label(monkeypatch):
     """LP-S19: central eligible close → LOSS_DAY; raw exclusions are ignored."""
     from aletheia.analytics import outcome_integrity
-    from aletheia.agents import dreaming_agent as da
+    from extensions.research import dreaming_agent as da
 
     eligible_loss = {"outcome_eligible": 1, "realized_pnl": -42.5, "closed_at": "2026-01-01T01:00:00+00:00"}
     monkeypatch.setattr(
@@ -1283,7 +1283,7 @@ def test_dreaming_agent_loss_day_label(monkeypatch):
 def test_dreaming_agent_null_pnl_is_not_available(monkeypatch):
     """LP-S20: an incomplete raw close is excluded by the central authority."""
     from aletheia.analytics import outcome_integrity
-    from aletheia.agents import dreaming_agent as da
+    from extensions.research import dreaming_agent as da
 
     monkeypatch.setattr(
         outcome_integrity, "eligible_strategy_outcomes", lambda **_: [],

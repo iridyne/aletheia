@@ -1,4 +1,4 @@
-"""Dreaming Agent — consolidates daily activity into learning summaries."""
+"""Optional Research Dreaming Agent — consolidates daily learning summaries."""
 
 import json
 import logging

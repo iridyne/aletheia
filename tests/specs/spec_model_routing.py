@@ -86,6 +86,6 @@ def test_get_provider_for_tier_exists_and_resolves(monkeypatch):
     ),
 )
 def test_fast_tier_agent_uses_provider_routing():
-    source = (_ROOT / "aletheia" / "agents" / "research_worker.py").read_text(encoding="utf-8")
+    source = (_ROOT / "extensions" / "research" / "research_worker.py").read_text(encoding="utf-8")
     assert 'get_provider_for_tier("fast")' in source
     assert "provider=_fast" in source

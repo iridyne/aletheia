@@ -45,6 +45,34 @@ _universe_scanner_startup_recovery_done = False
 _universe_scanner_audit_mirror_done = False
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
+_extract_research_lessons: Callable[[str | None, list[str], list[str]], Awaitable[list[dict[str, str]]]] | None = None
+_enqueue_research_run: Callable[[str], None] | None = None
+
+
+def configure_research_producers(*, extract_lessons=None, enqueue_run=None) -> None:
+    """Compose the existing nightly producer callbacks; None clears availability."""
+    global _extract_research_lessons, _enqueue_research_run
+    _extract_research_lessons = extract_lessons
+    _enqueue_research_run = enqueue_run
+
+
+def require_research_enqueue() -> Callable[[str], None]:
+    """Resolve Serenity admission before any durable request writes."""
+    if _enqueue_research_run is None:
+        raise ValueError("Serenity research producer unavailable")
+    return _enqueue_research_run
+
+
+def _nightly_research_available(job_id: str) -> bool:
+    if job_id == "dreaming_daily":
+        return _extract_research_lessons is not None or _enqueue_research_run is not None
+    if job_id == "lesson_reviewer":
+        from aletheia.agents import get_agent_fn
+        try:
+            get_agent_fn("lesson_reviewer")
+        except ValueError:
+            return False
+    return True
 
 
 def _current_scheduler() -> BackgroundScheduler | None:
@@ -1050,6 +1078,7 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     if active is not None:
         return {"status": "active", "run_id": active["id"], "batch_key": batch_key}
 
+    enqueue_research_run = require_research_enqueue()
     run = SerenityResearchRun(
         trigger_type="scheduled",
         mode="standard",
@@ -1060,7 +1089,6 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     )
     repo.insert_serenity_research_run(run)
     try:
-        from aletheia.agents.research_worker import enqueue_research_run
         enqueue_research_run(run.id)
     except Exception as exc:
         failed_at = datetime.now(timezone.utc).isoformat()
@@ -1078,7 +1106,7 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
 
 def _run_serenity_startup_catchup() -> None:
     cfg = load_config()
-    if cfg.runtime.paused or not cfg.serenity.enabled:
+    if cfg.runtime.paused or not cfg.serenity.enabled or _enqueue_research_run is None:
         return
     try:
         result = _enqueue_serenity_research_if_due()
@@ -1241,24 +1269,27 @@ def init_scheduler() -> BackgroundScheduler | None:
             misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
             executor="observer",
         )
-    _scheduler.add_job(
-        _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
-        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
-    )
-    _scheduler.add_job(
-        _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
-        "date",
-        run_date=datetime.now() + timedelta(minutes=4),
-        id="serenity_startup_catchup",
-        misfire_grace_time=None,
-        executor="agents",
-    )
+    if _nightly_research_available("dreaming_daily"):
+        _scheduler.add_job(
+            _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
+            misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+        )
+    if _enqueue_research_run is not None:
+        _scheduler.add_job(
+            _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
+            "date",
+            run_date=datetime.now() + timedelta(minutes=4),
+            id="serenity_startup_catchup",
+            misfire_grace_time=None,
+            executor="agents",
+        )
     # Evidence-gated review of the lessons dreaming produced — runs after the 2am
     # consolidation so it sees the night's fresh proposed lessons.
-    _scheduler.add_job(
-        _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
-        id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
-    )
+    if _nightly_research_available("lesson_reviewer"):
+        _scheduler.add_job(
+            _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
+            id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+        )
     if _synthesize_trading_memo is not None:
         _scheduler.add_job(
             _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
@@ -2205,7 +2236,7 @@ def _run_dreaming_agent():
     # Step 1: Serenity research pipeline (evidence collection, theme clustering, opps).
     # The durable CST batch key makes the daily cron and startup catch-up converge
     # on one attempt instead of duplicating research after every gateway restart.
-    if cfg.serenity.enabled:
+    if cfg.serenity.enabled and _enqueue_research_run is not None:
         try:
             result = _enqueue_serenity_research_if_due()
             logger.info("dreaming_agent: Serenity research %s", result["status"])
@@ -2219,13 +2250,14 @@ def _run_dreaming_agent():
     # and writes them to ps_lessons (proposed). lesson_reviewer at 03:00 then reviews
     # and marks them applied. This step was previously only reachable via fallback
     # (断口U6 fix: run it explicitly, independent of the serenity pipeline).
+    if _extract_research_lessons is None:
+        return
     try:
-        from aletheia.agents.dreaming_agent import _extract_lessons
         outputs: list[str] = []
         errors: list[str] = []
         _run_async_with_timeout(
             "dreaming_agent",  # reuse existing timeout (300s)
-            _extract_lessons("dreaming_daily_sched", outputs, errors),
+            _extract_research_lessons("dreaming_daily_sched", outputs, errors),
         )
         if outputs:
             logger.info("dreaming_agent: lesson extraction outputs: %s", outputs)
@@ -3608,7 +3640,9 @@ def _run_learning_startup_catchup():
         remaining_due: list[str] = []
 
         for job_id, fn in _DAILY_LEARNING_CATCHUP_JOBS:
-            if job_id == "insight_synthesizer" and _synthesize_trading_memo is None:
+            if not _nightly_research_available(job_id) or (
+                job_id == "insight_synthesizer" and _synthesize_trading_memo is None
+            ):
                 results.append({"job_id": job_id, "status": "unavailable"})
                 continue
             if not daily_catchup_due(job_id):

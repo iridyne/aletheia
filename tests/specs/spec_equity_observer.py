@@ -103,7 +103,7 @@ def test_equity_observer_uses_priority_token_lookup():
     ),
 )
 def test_research_worker_has_equity_chain_lens():
-    src = (_ROOT / "aletheia" / "agents" / "research_worker.py").read_text(encoding="utf-8")
+    src = (_ROOT / "extensions" / "research" / "research_worker.py").read_text(encoding="utf-8")
     assert "_EQUITY_CHAIN_LENS" in src, (
         "research_worker must define _EQUITY_CHAIN_LENS"
     )

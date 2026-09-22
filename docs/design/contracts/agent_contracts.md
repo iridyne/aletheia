@@ -231,7 +231,7 @@ an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 #### research_agent / research_worker
 
 - **Owner**: `extensions/research/research_agent.py` owns advisory notes;
-  `aletheia/agents/research_worker.py` retains the distinct Serenity pipeline.
+  `extensions/research/research_worker.py` owns the distinct optional Serenity pipeline.
 - **Trigger**: enqueued by dreaming_agent or manual
 - **Inputs**: topic query + knowledge context; Serenity publication reads exact research opportunity IDs and evidence, independent of display limits
 - **LLM**: Yes (research_worker makes LLM calls)
@@ -389,6 +389,19 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
 
 #### dreaming_daily
 
+- **Owner / availability**: Dreaming and Lesson Reviewer have one implementation each in
+  `extensions/research`; CLI/Web compose their manual functions into the Core agent
+  registry. Scheduler receives only the existing async lesson-extraction helper and
+  synchronous Serenity enqueue callback. Missing producers are unavailable in the
+  catalog and omitted from cron/startup catch-up before Learning guards, without
+  failed attempts, success watermarks or endless retries for absent work. Each
+  available nightly sub-capability can still run independently.
+- **Manual versus scheduled**: Full manual Dreaming writes knowledge summaries,
+  daily reviews when its existing trigger permits, lessons and the optional Git
+  artifact snapshot. The nightly wrapper enqueues Serenity and extracts lessons;
+  it does not invoke full manual Dreaming. Lesson Reviewer retains scoped evidence
+  floors, LessonStore CAS, immutable policy-history transaction and draft-skill
+  creation/recovery; it neither activates skills nor writes execution facts.
 - **Trigger**: daily 02:00 CST; the shared Learning catch-up checks the latest missed lesson-extraction window 5 minutes after boot; `serenity_startup_catchup` separately repairs the research batch at 4 minutes
 - **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
 - **LLM**: Yes (synthesis)
