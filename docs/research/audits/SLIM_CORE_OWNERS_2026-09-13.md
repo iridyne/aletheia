@@ -20,6 +20,17 @@ recovery remain Core-accessible. Producer bodies, shared policy epochs, cursor/C
 immutable lesson-policy history, draft skills and Core Candidate publication are
 unchanged; this cutover does not claim runtime or whole-Learning absence proof.
 
+Market Observer, Post-trade Reviewer and their sole shared durable round-robin
+helper now live in `extensions/research`. Producer behavior is unchanged apart
+from the helper import path: existing epoch/exposure/filter facts, exact admitted
+Opportunity enrichment, central eligible-Outcome reads, knowledge/case/guard
+writes and namespaced cursors retain their semantics. CLI/Web use the existing
+registry; absent Research omits the two scheduler jobs and prevents manual queue
+writes. Explicit paired context evaluation blocks before provider access when
+Research is absent. Core registry/inference/telemetry and Portfolio Agent remain
+in Core; the latter is a manual/scheduled snapshot delegate with canonical
+Position-mark effects, not an optional Model-backed rebalancer.
+
 Prediction Observer and Divergence Scanner now also live in `extensions/research`
 without forwarding modules or producer-body changes. Their separate CLI/Web
 composition block binds both through the existing registry; missing Research or

@@ -1,6 +1,6 @@
 """Regression coverage for bounded observer-loop fairness."""
 
-from aletheia.agents.round_robin import rotate_from_next
+from extensions.research.round_robin import rotate_from_next
 
 
 def _prepare_db(tmp_path, monkeypatch):
@@ -23,7 +23,7 @@ def test_rotation_deduplicates_and_recovers_when_saved_item_disappears():
 
 
 def test_durable_state_advances_to_the_first_unprocessed_successor(tmp_path, monkeypatch):
-    from aletheia.agents.round_robin import DurableRoundRobin
+    from extensions.research.round_robin import DurableRoundRobin
 
     _prepare_db(tmp_path, monkeypatch)
     first = DurableRoundRobin("test.observer.round-robin")

@@ -34,7 +34,7 @@ from aletheia.model_provider.base import ModelResponse
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
+_MARKET_OBS = _ROOT / "extensions" / "research" / "market_observer.py"
 
 _CONTRACT = "gateway_stability_contract"
 
@@ -52,7 +52,7 @@ _CONTRACT = "gateway_stability_contract"
     ),
 )
 def test_market_observer_loop_has_wallclock_budget():
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
     assert hasattr(mo, "_MARKET_OBSERVER_LOOP_BUDGET_SEC"), "loop budget constant missing"
     assert hasattr(mo, "_MARKET_OBSERVER_JOB_TIMEOUT_S"), "job-timeout hint constant missing"
     assert mo._MARKET_OBSERVER_LOOP_BUDGET_SEC < mo._MARKET_OBSERVER_JOB_TIMEOUT_S, (
@@ -91,7 +91,7 @@ def test_market_observer_loop_has_wallclock_budget():
 )
 def test_market_observer_has_module_logger():
     import logging
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
     assert isinstance(getattr(mo, "logger", None), logging.Logger), (
         "market_observer must define a module-level logging.Logger named 'logger'"
     )
@@ -106,7 +106,7 @@ def test_market_observer_has_module_logger():
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from extensions.research.round_robin import DurableRoundRobin, rotate_from_next
 
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")
@@ -333,7 +333,8 @@ def test_llm_structured_fallback_to_defaults(monkeypatch):
     ),
 )
 def test_llm_structured_budget_is_below_observer_caps():
-    from aletheia.agents import helpers, market_observer
+    from aletheia.agents import helpers
+    from extensions.research import market_observer
     from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
 
     assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < market_observer._MARKET_OBSERVER_LOOP_BUDGET_SEC

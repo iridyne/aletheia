@@ -1,4 +1,4 @@
-"""Durable, identity-aware round-robin ordering for bounded agent loops."""
+"""Durable, identity-aware round-robin ordering for bounded Research loops."""
 
 from __future__ import annotations
 

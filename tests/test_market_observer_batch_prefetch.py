@@ -257,12 +257,12 @@ def test_batch_prefetch_db_news_cutoff_respects_patched_datetime(monkeypatch):
     datetime so simulation harnesses can override it via patch.object.
 
     A local ``from datetime import datetime as _dt`` inside the function would
-    bypass any patch applied to ``aletheia.agents.market_observer.datetime``
+    bypass any patch applied to ``extensions.research.market_observer.datetime``
     and silently inject future news into historical simulations (lookahead bias).
     This test fails immediately if the local re-import is re-introduced.
     """
     from datetime import datetime, timedelta, timezone
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     import aletheia.storage.repositories as repo_mod
     import aletheia.data.freshness as freshness_mod
 

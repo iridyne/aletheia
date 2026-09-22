@@ -74,7 +74,7 @@ _EXECUTOR_WORKERS = {
 | # | job_id | 行 | trigger | 参数 | executor | timeout(s) | misfire_grace |
 |---|---|---|---|---|---|---|---|
 | 1 | `market_data` | 324 | interval | minutes=5 | io | 90 | 60 |
-| 2 | `market_observer` | 328 | interval | minutes=10 | observer | 500 | 60 |
+| 2 | `market_observer` | — | interval | minutes=10；仅注册已组合的 producer | observer | 500 | 60 |
 | 3 | `dreaming_daily` | — | cron | hour=2, minute=0, tz=Asia/Shanghai；至少一个 nightly Research callback 已组合 | agents | 300 | 300 |
 | 4 | `insight_synthesizer` | 337 | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
 | 5 | `confidence_calibration` | 341 | interval | hours=6 | io | 30 | 300 |
@@ -92,7 +92,7 @@ _EXECUTOR_WORKERS = {
 | 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |
 | 20 | `equity_observer` | — | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟；仅注册已组合的 producer | agents | 240 | 300 |
 | 21 | `prediction_observer` | — | interval | minutes=30；仅当 Prediction Observer 与 Divergence Scanner 均已组合时注册 | agents | 240 | 120 |
-| 22 | `post_trade_reviewer` | 424 | interval | hours=4 | agents | 300 | 300 |
+| 22 | `post_trade_reviewer` | — | interval | hours=4；仅注册已组合的 producer | agents | 300 | 300 |
 | 23 | `risk_critic` | — | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
@@ -139,7 +139,7 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
 **注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。
-`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
+`market_observer`、`post_trade_reviewer`、`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
 `extensions/research` producer 绑定到既有 agent registry、`get_agent_fn()` 可解析时注册。
 Research 缺失时省略对应 job，不创建失败 AgentRun 或调度失败健康记录；Core 任务保持注册。
 Equity 的 `_equity_observer_trigger()` 保留 Eastern-time DST 与 misfire 语义。

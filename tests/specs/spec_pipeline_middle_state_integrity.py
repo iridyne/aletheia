@@ -973,7 +973,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     assert queued["thesis"] != "late observer output must not rewrite a queued owner"
     assert queued["direction_bias"] == "long"
     import inspect
-    from aletheia.agents import market_observer
+    from extensions.research import market_observer
 
     assert "insert_opportunity_once_by_snapshot(" not in inspect.getsource(
         market_observer

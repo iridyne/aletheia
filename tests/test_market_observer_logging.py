@@ -10,7 +10,7 @@ def test_market_observer_diagnostics_are_debug_only() -> None:
     """Routine per-symbol diagnostics must never masquerade as warnings."""
 
     root = Path(__file__).resolve().parents[1]
-    source = (root / "aletheia" / "agents" / "market_observer.py").read_text(
+    source = (root / "extensions" / "research" / "market_observer.py").read_text(
         encoding="utf-8"
     )
     tree = ast.parse(source)
@@ -37,7 +37,7 @@ def test_market_observer_failures_remain_warnings() -> None:
     """Demoting duplicate diagnostics must not hide the authoritative failures."""
 
     root = Path(__file__).resolve().parents[1]
-    source = (root / "aletheia" / "agents" / "market_observer.py").read_text(
+    source = (root / "extensions" / "research" / "market_observer.py").read_text(
         encoding="utf-8"
     )
     tree = ast.parse(source)

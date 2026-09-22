@@ -1,4 +1,4 @@
-"""Post-trade Reviewer agent — reviews eligible closes and writes a review.
+"""Optional Research Post-trade Reviewer — reviews eligible closes and writes a review.
 
 Also triggers structured case study generation and guard candidate detection
 from the trade_case_builder module (deterministic, no LLM).
@@ -255,7 +255,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         errors.append("create_post_trade_review not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
-    from aletheia.agents.round_robin import DurableRoundRobin
+    from extensions.research.round_robin import DurableRoundRobin
 
     round_robin = DurableRoundRobin(_STRATEGY_ROUND_ROBIN_STATE_KEY)
     started_at = time.monotonic()

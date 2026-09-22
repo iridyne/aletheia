@@ -114,7 +114,7 @@ def test_forward_outcome_direction_uses_scanner_direction():
 )
 def test_market_observer_per_symbol_guard():
     from aletheia.knowledge import router
-    from aletheia.agents import market_observer
+    from extensions.research import market_observer
 
     assert hasattr(router, "build_guard_advisory")
     mo_src = inspect.getsource(market_observer)
@@ -128,7 +128,7 @@ def test_market_observer_per_symbol_guard():
               "the symbol so the read validates that family, not a generic scan"),
 )
 def test_market_observer_prompt_scanner_hint():
-    from aletheia.agents import market_observer
+    from extensions.research import market_observer
 
     src = inspect.getsource(market_observer)
     assert "scanner_hint" in src and "surfaced by the" in src

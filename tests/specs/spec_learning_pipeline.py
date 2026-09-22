@@ -710,7 +710,7 @@ def test_two_track_learning_triggers_independent():
     )
 
     # (d) post_trade_reviewer 的实现内部调用 trade_case_builder
-    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/research/post_trade_reviewer.py").read_text(encoding="utf-8")
     assert "trade_case_builder" in reviewer_src, (
         "post_trade_reviewer.py 未引用 trade_case_builder — 个例 reflection "
         "与 case_builder 的链接断开"
@@ -996,7 +996,7 @@ def test_post_trade_reviewer_idempotent():
     import inspect
     import pathlib
 
-    from aletheia.agents.post_trade_reviewer import _fills_window_key
+    from extensions.research.post_trade_reviewer import _fills_window_key
 
     fills_a = [{"id": "f1"}, {"id": "f2"}]
     fills_b = [{"id": "f2"}, {"id": "f1"}]  # reversed order
@@ -1015,7 +1015,7 @@ def test_post_trade_reviewer_idempotent():
     )
 
     root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/research/post_trade_reviewer.py").read_text(encoding="utf-8")
     assert "window:" in reviewer_src, (
         "window: tag prefix missing from post_trade_reviewer.py — "
         "idempotency tag not written"

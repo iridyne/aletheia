@@ -396,7 +396,7 @@ def test_observers_do_not_insert_pi_decisions():
     # chain_observer.py and macro_observer.py are not yet implemented —
     # guard only the files that exist to avoid false failures on missing files.
     _OBSERVER_FILES = [
-        _PROJECT_ROOT / "aletheia" / "agents" / "market_observer.py",
+        _PROJECT_ROOT / "extensions" / "research" / "market_observer.py",
     ]
     # Optionally guard additional observers if they exist
     for optional_name in ("chain_observer.py", "macro_observer.py"):

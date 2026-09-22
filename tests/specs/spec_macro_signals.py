@@ -35,7 +35,7 @@ _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
 _REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
 _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
-_MARKET_OBSERVER = _ROOT / "aletheia" / "agents" / "market_observer.py"
+_MARKET_OBSERVER = _ROOT / "extensions" / "research" / "market_observer.py"
 _SETTINGS_SHELL = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
 _SIGNALS_TAB = _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / "SignalsTab.tsx"
 

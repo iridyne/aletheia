@@ -185,6 +185,17 @@ async def _run_context_pair(
         fixture_label=fixture_label,
     )
     review_path = _review_path(review_output)
+    try:
+        from extensions.research.market_observer import MarketRead, _SYSTEM_PROMPT
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.research"}:
+            raise
+        return {
+            "status": "blocked",
+            "blocker": "research_observer_unavailable",
+            "fixture_id": fixture["fixture_id"],
+            "effectiveness_conclusion": None,
+        }
     resolved_provider, blocker = _provider_preflight(provider_name)
     if blocker:
         return {
@@ -195,7 +206,6 @@ async def _run_context_pair(
         }
 
     from aletheia.agents.helpers import llm_structured
-    from aletheia.agents.market_observer import MarketRead, _SYSTEM_PROMPT
 
     pair_id = pair_prefix + uuid4().hex[:16]
     arms = ["control", "treatment"]

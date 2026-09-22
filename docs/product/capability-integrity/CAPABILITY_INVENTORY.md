@@ -64,7 +64,7 @@ Discovery surfaces:
 
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
-| DC-01 | Deterministic Universe opportunity generation | Admit attributable Universe opportunities deterministically; Observer may add advisory context only | Scheduler, Agent Activity | `aletheia/universe/signal_emitter.py`, `aletheia/agents/market_observer.py` |
+| DC-01 | Deterministic Universe opportunity generation | Admit attributable Universe opportunities deterministically; Observer may add advisory context only | Scheduler, Agent Activity | `aletheia/universe/signal_emitter.py`, `extensions/research/market_observer.py` |
 | DC-02 | Candidate attention admission | Admit selected Universe identities into bounded, durable planning attention with soft and hard deadlines | Entry Workbench, scheduler | `candidate_planning_generations`, `aletheia/universe/service.py` |
 | DC-03 | Candidate planning | Claim valid Candidate attention and produce one immutable, identity-bound Entry Plan or an explicit terminal outcome | Entry Workbench, Agent Activity, scheduler | `aletheia/agent_shell/entry_planner.py`, `entry_plans` |
 | DC-04 | PI scheduled decision fallback | Run decision assessments even when no event wake is received | Scheduler, Agent Activity | `scheduler.py:pi_trading_decision` |

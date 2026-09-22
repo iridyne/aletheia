@@ -1166,6 +1166,12 @@ async def reconcile_positions(params: dict) -> dict:
 
 async def run_market_scan(params: dict) -> dict:
     from aletheia.agent_shell.operator_store import create_event
+    from aletheia.agents import get_agent_fn
+
+    try:
+        get_agent_fn("market_observer")
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     result = await run_agent("market_observer", trigger_type="manual")
     create_event(
@@ -1214,6 +1220,13 @@ async def rerun_failed_agent_task(params: dict) -> dict:
 
     if target_run is None:
         return {"error": "No failed agent run found to rerun."}
+
+    from aletheia.agents import get_agent_fn
+
+    try:
+        get_agent_fn(str(target_run["agent_name"]))
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     result = await run_agent(str(target_run["agent_name"]), trigger_type="manual")
     create_event(

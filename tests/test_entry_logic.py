@@ -182,11 +182,11 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
             "rationale": "uptrend",
         }, None
 
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("extensions.research.market_observer.llm_structured", fake_structured)
     from aletheia.config.schema import ModelSelection
-    monkeypatch.setattr("aletheia.agents.market_observer.get_provider_for_tier",
+    monkeypatch.setattr("extensions.research.market_observer.get_provider_for_tier",
                         lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
+    monkeypatch.setattr("extensions.research.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert len(opps) == 1
@@ -214,8 +214,8 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     async def fake_structured(*_args, **_kwargs):
         raise AssertionError("Observer must not call the LLM without an admitted owner")
 
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
+    monkeypatch.setattr("extensions.research.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("extensions.research.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert opps == []

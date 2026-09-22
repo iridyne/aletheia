@@ -18,7 +18,7 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
 
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import get_opportunity
@@ -141,7 +141,7 @@ async def test_stock_linked_owner_skips_crypto_observer_context(tmp_path, monkey
     from tests.test_opportunity_source_manifest import _prepare_db
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.data.symbols import (
         build_instrument_background,
