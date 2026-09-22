@@ -131,7 +131,7 @@ def test_market_observer_does_not_pass_new_fields_into_opportunity_constructor()
     key_observations is its choice — but the structured row must stay clean.
     """
     import ast
-    src = (ROOT / "aletheia/agents/market_observer.py").read_text(encoding="utf-8")
+    src = (ROOT / "extensions/research/market_observer.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     forbidden = {"long_short_ratio", "fng_value", "fng_classification", "top_movers_summary"}
     bad: list[str] = []

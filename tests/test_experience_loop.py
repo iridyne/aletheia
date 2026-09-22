@@ -19,6 +19,12 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 
 def setup_env(tmp_path, monkeypatch):
+    from aletheia.agents import register_agent
+    from extensions.research.market_observer import run_market_observer
+    from extensions.research.post_trade_reviewer import run_post_trade_reviewer
+
+    register_agent("market_observer")(run_market_observer)
+    register_agent("post_trade_reviewer")(run_post_trade_reviewer)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -137,7 +143,7 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
 
     from aletheia.knowledge.manager import create_research_note
-    import aletheia.agents.market_observer as observer
+    import extensions.research.market_observer as observer
     from tests.observer_admission_fixture import admit_observer_instrument
 
     admit_observer_instrument(monkeypatch, observer)
@@ -242,7 +248,7 @@ async def test_post_trade_reviewer_writes_medium_confidence_reviews(tmp_path, mo
 
     async def ok_llm(*a, **k):
         return ("Trailing stop on the SOL short would have captured more downside; exit was early.", None)
-    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", ok_llm)
+    monkeypatch.setattr("extensions.research.post_trade_reviewer.llm_complete", ok_llm)
 
     result = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
@@ -263,7 +269,7 @@ async def test_post_trade_reviewer_keeps_fallback_lessons_medium(tmp_path, monke
 
     async def down_llm(*a, **k):
         return ("", "LLM unavailable")
-    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", down_llm)
+    monkeypatch.setattr("extensions.research.post_trade_reviewer.llm_complete", down_llm)
 
     result = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")

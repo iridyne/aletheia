@@ -45,7 +45,7 @@ async def test_empty_workset_reports_retryable_attestation_failure(
 ):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
 
     init_tool_registry()
     monkeypatch.setattr(
@@ -74,14 +74,14 @@ async def test_empty_workset_reports_retryable_attestation_failure(
 
 
 def test_signal_score_no_signal():
-    from aletheia.agents.market_observer import _signal_score
+    from extensions.research.market_observer import _signal_score
 
     pf = {"passed": False, "rsi": None, "atr_pct": None, "keyword_hits": [], "matched_rules": []}
     assert _signal_score(pf) == 0.0
 
 
 def test_signal_score_rsi_deviation():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION
+    from extensions.research.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION
 
     rsi = 35.0  # deviation = |35 - 50| = 15
     pf = {"passed": True, "rsi": rsi, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}
@@ -91,7 +91,7 @@ def test_signal_score_rsi_deviation():
 
 
 def test_signal_score_atr_pct():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_ATR_PCT
+    from extensions.research.market_observer import _signal_score, _PREFILTER_ATR_PCT
 
     pf = {"passed": True, "rsi": None, "atr_pct": 1.6, "keyword_hits": [], "matched_rules": ["atr_pct"]}
     score = _signal_score(pf)
@@ -99,14 +99,14 @@ def test_signal_score_atr_pct():
 
 
 def test_signal_score_does_not_accept_keyword_only():
-    from aletheia.agents.market_observer import _signal_score
+    from extensions.research.market_observer import _signal_score
 
     pf = {"passed": True, "rsi": None, "atr_pct": None, "keyword_hits": ["breakout"], "matched_rules": ["keyword"]}
     assert _signal_score(pf) == 0.0
 
 
 def test_signal_score_takes_max_of_dimensions():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION, _PREFILTER_ATR_PCT
+    from extensions.research.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION, _PREFILTER_ATR_PCT
 
     # RSI deviation = 14 → 14/12 ≈ 1.17; ATR% = 1.6 → 1.6/0.8 = 2.0 — ATR wins
     pf = {
@@ -122,7 +122,7 @@ def test_signal_score_takes_max_of_dimensions():
 
 
 def test_signal_score_below_threshold():
-    from aletheia.agents.market_observer import _signal_score
+    from extensions.research.market_observer import _signal_score
 
     # RSI close to 50 → no deviation rule fires; keyword also absent → score < 1.0
     pf = {"passed": False, "rsi": 52.0, "atr_pct": 0.3, "keyword_hits": [], "matched_rules": []}
@@ -131,7 +131,7 @@ def test_signal_score_below_threshold():
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_pre_filter_rejects_nonfinite_structured_values(value):
-    from aletheia.agents.market_observer import _evaluate_pre_filter, _signal_score
+    from extensions.research.market_observer import _evaluate_pre_filter, _signal_score
 
     result = _evaluate_pre_filter(
         {
@@ -158,7 +158,7 @@ def test_pre_filter_rejects_nonfinite_structured_values(value):
 
 def test_signal_ordering_passed_before_failed():
     """Instruments with signal_score >= 1.0 sort before those with score < 1.0."""
-    from aletheia.agents.market_observer import _signal_score
+    from extensions.research.market_observer import _signal_score
 
     scores = {
         "A": _signal_score({"passed": False, "rsi": 51.0, "atr_pct": 0.2, "keyword_hits": [], "matched_rules": []}),
@@ -179,7 +179,7 @@ def test_signal_ordering_passed_before_failed():
 
 def test_signal_ordering_higher_score_first():
     """Among passed instruments, higher score comes first."""
-    from aletheia.agents.market_observer import _signal_score
+    from extensions.research.market_observer import _signal_score
 
     # A: RSI deviation 30 → score = 30/12 = 2.5
     # B: RSI deviation 13 → score = 13/12 ≈ 1.08
@@ -210,8 +210,8 @@ def test_completed_prefix_cursor_consumes_each_attempt_once(tmp_path, monkeypatc
     already-completed C, but it must stop at A rather than wrap over A again.
     """
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import _advance_completed_round_robin_prefix
-    from aletheia.agents.round_robin import DurableRoundRobin
+    from extensions.research.market_observer import _advance_completed_round_robin_prefix
+    from extensions.research.round_robin import DurableRoundRobin
 
     rr = DurableRoundRobin("test.signal-sort.rr")
     original_order = ["A", "B", "C"]
@@ -241,7 +241,7 @@ def test_round_robin_advance_partial_run(tmp_path, monkeypatch):
     Next run starts at B (picks up the skipped one).
     """
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.round_robin import DurableRoundRobin
+    from extensions.research.round_robin import DurableRoundRobin
 
     rr = DurableRoundRobin("test.partial-run.rr")
     original_order = ["A", "B", "C"]
@@ -261,11 +261,11 @@ def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(tmp_
     round-robin identity must still force B to the front on the next cycle.
     """
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import (
+    from extensions.research.market_observer import (
         _advance_completed_round_robin_prefix,
         _fair_signal_order,
     )
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from extensions.research.round_robin import DurableRoundRobin, rotate_from_next
 
     canonical = ["A", "B", "C"]
     scores = {"A": 2.0, "B": 0.0, "C": 3.0}
@@ -303,7 +303,7 @@ def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(tmp_
 @pytest.mark.asyncio
 async def test_prefetch_wait_uses_only_remaining_run_budget(monkeypatch):
     """Parallel prefetch cannot start a fresh full observer budget."""
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     captured: dict[str, float] = {}
 
@@ -326,7 +326,7 @@ async def test_prefetch_wait_uses_only_remaining_run_budget(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_prefetch_deadline_does_not_drain_cancellation_resistant_io(monkeypatch):
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     cleanup_started = asyncio.Event()
     release_cleanup = asyncio.Event()
@@ -361,7 +361,7 @@ async def test_prefetch_deadline_does_not_drain_cancellation_resistant_io(monkey
 async def test_prefetch_batch_reuses_one_provider_and_bounds_concurrency(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
     from extensions.data import ccxt_provider
 
     class FakeProvider:
@@ -427,7 +427,7 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(tmp_path, m
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -545,7 +545,7 @@ async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch)
     from unittest.mock import patch
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import _SymbolPrefetch, _DbCache
+    from extensions.research.market_observer import _SymbolPrefetch, _DbCache
 
     # Build a minimal _DbCache (empty — no DB data needed for this test)
     empty_cache = _DbCache(
@@ -574,7 +574,7 @@ async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch)
     with patch("aletheia.trading.market_context.build_market_context", side_effect=mock_build_market_context):
         # Patch away the DB-enrichment imports so only the exchange call matters
         with patch("aletheia.data.context_builder.build_market_context_from_db", side_effect=Exception("skip")):
-            from aletheia.agents.market_observer import _prefetch_symbol
+            from extensions.research.market_observer import _prefetch_symbol
 
             coros = [
                 _prefetch_symbol(
@@ -612,7 +612,7 @@ async def test_spot_prefetch_omits_hl_and_position_x(tmp_path, monkeypatch):
     from unittest.mock import patch
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import _DbCache, _prefetch_symbol
+    from extensions.research.market_observer import _DbCache, _prefetch_symbol
 
     cache = _DbCache(
         perp_structures={"BTC/USDT": {"id": "px", "source": "position_x"}},
@@ -673,9 +673,9 @@ async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import _analyze_symbol, _SymbolPrefetch
+    from extensions.research.market_observer import _analyze_symbol, _SymbolPrefetch
     monkeypatch.setattr(
-        "aletheia.agents.market_observer.find_opportunity_by_symbol_snapshot",
+        "extensions.research.market_observer.find_opportunity_by_symbol_snapshot",
         lambda *_args, **_kwargs: {
             "id": "prefetch-owner",
             "status": "open",
@@ -741,7 +741,7 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -843,7 +843,7 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -936,7 +936,7 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1029,7 +1029,7 @@ async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1126,7 +1126,7 @@ async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatc
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1213,7 +1213,7 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1306,7 +1306,7 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
 
 def test_fair_budget_accounts_for_concurrent_llm_slots():
     """Two parallel slots should budget waves, not pretend work is serial."""
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     assert mo._fair_llm_budget_seconds(460.0, 26) == pytest.approx(460.0 / 13)
     assert mo._fair_llm_budget_seconds(460.0, 25) == pytest.approx(460.0 / 13)
@@ -1327,7 +1327,7 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1424,7 +1424,7 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol):
@@ -1531,7 +1531,7 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol, signal):
@@ -1640,7 +1640,7 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as mo
+    from extensions.research import market_observer as mo
 
     class _Instrument:
         def __init__(self, symbol, signal):
@@ -1740,7 +1740,7 @@ def test_observer_llm_latency_persisted_and_readable(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
     from aletheia.storage.migrations import run_migrations
-    from aletheia.agents.market_observer import (
+    from extensions.research.market_observer import (
         _record_observer_llm_latency,
         _read_observer_llm_latency_p50,
     )
@@ -1767,7 +1767,7 @@ def test_latency_history_rolling_window_capped_at_n(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
     from aletheia.storage.migrations import run_migrations
-    from aletheia.agents.market_observer import (
+    from extensions.research.market_observer import (
         _record_observer_llm_latency,
         _read_observer_llm_latency_p50,
         _LLM_LATENCY_SETTINGS_KEY,

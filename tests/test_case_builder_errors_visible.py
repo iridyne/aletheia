@@ -4,14 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aletheia.agents.post_trade_reviewer import _run_case_builder_safe
+from extensions.research.post_trade_reviewer import _run_case_builder_safe
 
 _CASES_MODULE = "aletheia.analytics.trade_case_builder"
 
 
 @pytest.fixture(autouse=True)
 def _no_log_tool():
-    with patch("aletheia.agents.post_trade_reviewer.log_tool"):
+    with patch("extensions.research.post_trade_reviewer.log_tool"):
         yield
 
 

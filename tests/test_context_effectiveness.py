@@ -201,6 +201,34 @@ def test_learning_b_refuses_raw_review_packet_inside_repository():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["extensions", "extensions.research", "broken_dependency"])
+async def test_context_pair_requires_optional_observer_before_provider(tmp_path, monkeypatch, missing):
+    import builtins
+    from aletheia.economics import context_effectiveness as effectiveness
+
+    real_import = builtins.__import__
+    def absent(name, *args, **kwargs):
+        if name == "extensions.research.market_observer":
+            raise ModuleNotFoundError(name=missing)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+    monkeypatch.setattr(effectiveness, "_provider_preflight", lambda *_: pytest.fail("provider accessed without Research"))
+    review_path = tmp_path / "must-not-exist.json"
+    if missing == "broken_dependency":
+        with pytest.raises(ModuleNotFoundError) as exc:
+            await effectiveness.run_learning_b_pair(fixture_path=_FIXTURE, review_output=review_path)
+        assert exc.value.name == missing
+    else:
+        report = await effectiveness.run_learning_b_pair(fixture_path=_FIXTURE, review_output=review_path)
+        assert report == {
+            "status": "blocked", "blocker": "research_observer_unavailable",
+            "fixture_id": "learning-b-market-observer-v1", "effectiveness_conclusion": None,
+        }
+    assert not review_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_technical_context_pair_reuses_harness_and_stays_content_free(
     tmp_path, monkeypatch
 ):

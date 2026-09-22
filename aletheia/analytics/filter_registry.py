@@ -454,7 +454,7 @@ _HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="pre_persistence",
         drop_reason_codes=(),  # rejected symbols never become opportunity rows
         config_path="",
-        hardcoded_at="aletheia/agents/market_observer.py:"
+        hardcoded_at="extensions/research/market_observer.py:"
                      "_PREFILTER_RSI_DEVIATION/_PREFILTER_ATR_PCT",
         current_value="rsi_deviation>12, atr_pct>0.8",
         loosen_direction="down",  # lower thresholds → more opportunities created

@@ -31,7 +31,7 @@ async def test_observer_does_not_analyze_or_emit_without_deterministic_owner(
 ):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.storage.repositories import list_opportunities
 
     init_tool_registry()
@@ -103,7 +103,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -248,7 +248,7 @@ async def test_observer_enrichment_failure_does_not_claim_unrendered_source_ids(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -317,7 +317,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
 ):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import get_opportunity
     from aletheia.analytics.filter_evidence import record_filter_decision
@@ -607,7 +607,7 @@ def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
 
 
 def test_observer_workset_keeps_spot_and_perp_owners_distinct(monkeypatch):
-    from aletheia.agents import market_observer as observer
+    from extensions.research import market_observer as observer
 
     members = [
         {

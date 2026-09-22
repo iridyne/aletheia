@@ -173,7 +173,7 @@ def test_opportunity_carries_derivatives_fields():
     assert "oi_delta_1h" in fields
 
     # market_observer enriches the existing Opportunity with derivatives values.
-    import aletheia.agents.market_observer as mo
+    import extensions.research.market_observer as mo
     src = inspect.getsource(mo._analyze_symbol)
     assert 'updates["funding_rate"]' in src
     assert 'updates["oi_delta_1h"]' in src

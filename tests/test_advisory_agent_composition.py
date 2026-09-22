@@ -9,7 +9,7 @@ import pytest
 
 def test_old_advisory_modules_are_removed():
     root = Path(__file__).resolve().parents[1]
-    for name in ("research_agent", "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner"):
+    for name in ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer", "prediction_observer", "divergence_scanner"):
         assert not (root / "aletheia" / "agents" / f"{name}.py").exists()
 
 
@@ -33,7 +33,7 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-advisory = ("research_agent", "risk_critic", "equity_observer")
+advisory = ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer")
 pipeline = ("prediction_observer", "divergence_scanner")
 names = advisory + pipeline
 broken = missing in {"broken_dependency", "broken_data_dependency"}

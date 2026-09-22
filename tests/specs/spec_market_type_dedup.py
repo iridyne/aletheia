@@ -186,7 +186,7 @@ def test_universe_member_dedup_respects_preferred_market():
               "so same-symbol opps in different markets don't overwrite each other"),
 )
 def test_market_observer_passes_market_filter():
-    from aletheia.agents import market_observer
+    from extensions.research import market_observer
     lookup_src = inspect.getsource(market_observer._find_universe_opportunity)
     src = inspect.getsource(market_observer._analyze_symbol)
     assert "market=" in lookup_src and "find_opportunity_by_symbol_snapshot" in lookup_src, (
@@ -246,8 +246,8 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
+    monkeypatch.setattr("extensions.research.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("extensions.research.market_observer._has_sufficient_signal", lambda ctx: True)
     await run_agent("market_observer", trigger_type="manual")
 
     opps = repo.list_opportunities()
@@ -291,7 +291,7 @@ async def test_observer_rejection_evidence_failure_is_retryable(tmp_path, monkey
         quiet_market_context,
     )
     monkeypatch.setattr(
-        "aletheia.agents.market_observer._has_sufficient_signal",
+        "extensions.research.market_observer._has_sufficient_signal",
         lambda context: False,
     )
     monkeypatch.setattr(
@@ -372,11 +372,11 @@ async def test_observer_emitted_evidence_failure_rolls_back_opportunity(
         deterministic_market_context,
     )
     monkeypatch.setattr(
-        "aletheia.agents.market_observer.llm_structured",
+        "extensions.research.market_observer.llm_structured",
         deterministic_read,
     )
     monkeypatch.setattr(
-        "aletheia.agents.market_observer._has_sufficient_signal",
+        "extensions.research.market_observer._has_sufficient_signal",
         lambda _context: True,
     )
     monkeypatch.setattr(
