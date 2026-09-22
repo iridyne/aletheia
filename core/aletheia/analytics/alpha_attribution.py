@@ -36,15 +36,14 @@ ALPHA_THRESHOLD_PCT = 0.10
 
 _MODULES_BY_LAYER = {
     "Universe Alpha": [
-        "aletheia/universe/scanners.py",
-        "aletheia/universe/allocator.py",
-        "aletheia/universe/filters.py",
-        "aletheia/universe/service.py",
+        "core/aletheia/universe/scanners.py",
+        "core/aletheia/universe/allocator.py",
+        "core/aletheia/universe/filters.py",
+        "core/aletheia/universe/service.py",
     ],
     "System Operator Alpha": [
-        "aletheia/agent_shell/trading_decision.py",
-        "aletheia/agent_shell/trading_context.py",
-        "aletheia/agent_runtime/pi_daemon.py",
+        "core/aletheia/agent_shell/trading_context.py",
+        "core/aletheia/agent_runtime/pi_daemon.py",
     ],
     "Learning Alpha": [
         "extensions/learning/lessons.py",
@@ -54,8 +53,8 @@ _MODULES_BY_LAYER = {
     ],
     "Serenity Alpha": [
         "extensions/research/research_worker.py",
-        "aletheia/trading/serenity_scoring.py",
-        "aletheia/trading/serenity_evidence.py",
+        "core/aletheia/trading/serenity_scoring.py",
+        "core/aletheia/trading/serenity_evidence.py",
     ],
 }
 

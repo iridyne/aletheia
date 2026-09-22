@@ -72,8 +72,12 @@ def is_ancestor(older: str, newer: str) -> bool:
 
 def version_at_ref(ref: str) -> str:
     """Read the product version from a Git object without checking it out."""
-    r = _git("show", f"{ref}:aletheia/__init__.py")
-    return r.stdout if r.returncode == 0 else ""
+    # Pre-layout release/rollback refs retain their historical Git-object path.
+    for path in ("core/aletheia/__init__.py", "aletheia/__init__.py"):
+        r = _git("show", f"{ref}:{path}")
+        if r.returncode == 0:
+            return r.stdout
+    return ""
 
 
 def behind_count(branch: str = "master") -> int:

@@ -2,7 +2,7 @@
 
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
-> Source of truth: `core/aletheia/agent_runtime/scheduler.py`, `aletheia/agents/*.py` and optional `extensions/research/*.py`
+> Source of truth: `core/aletheia/agent_runtime/scheduler.py`, `core/aletheia/agents/*.py` and optional `extensions/research/*.py`
 > Last updated: 2026-09-13 (D2 canonical entry; other domains unchanged)
 
 ---

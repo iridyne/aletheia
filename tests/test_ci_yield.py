@@ -57,6 +57,22 @@ def test_failed_test_lane_stays_unknown_without_bounded_log_evidence() -> None:
     assert failure["confidence"] == "unknown"
 
 
+@pytest.mark.parametrize("paths", [
+    ["aletheia/execution/gateway.py", "aletheia/risk/engine.py", "aletheia/data/provider.py"],
+    ["aletheia/market_data/provider.py", "aletheia/execution/gateway.py", "aletheia/risk/engine.py"],
+    ["core/aletheia/execution/gateway.py", "core/aletheia/risk/engine.py", "extensions/data/ccxt_provider.py"],
+])
+def test_pr_shape_preserves_authorities_across_source_layouts(paths) -> None:
+    pr = _pr()
+    pr.update(changedFiles=len(paths), files=[{"path": path} for path in paths])
+
+    shape = ci_yield._pr_shape(pr)
+
+    assert shape["touched_subsystems"] == ["execution", "market_data", "risk", "runtime"]
+    assert shape["touched_authorities"] == ["execution", "risk", "runtime"]
+    assert shape["authority_count"] == 3
+
+
 @pytest.mark.parametrize(
     ("metadata_started_at", "expected_next_event"),
     [

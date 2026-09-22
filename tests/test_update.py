@@ -118,6 +118,34 @@ def test_changed_files_returns_unknown_on_git_failure(monkeypatch):
     assert git_ops.changed_files("old", "new") is None
 
 
+@pytest.mark.parametrize(
+    ("objects", "expected", "paths"),
+    [
+        ({"core/aletheia/__init__.py": '__version__ = "1.1.0"'},
+         '__version__ = "1.1.0"', ["core/aletheia/__init__.py"]),
+        ({"aletheia/__init__.py": '__version__ = "1.0.0"'},
+         '__version__ = "1.0.0"', ["core/aletheia/__init__.py", "aletheia/__init__.py"]),
+        ({"core/aletheia/__init__.py": "", "aletheia/__init__.py": '__version__ = "1.0.0"'},
+         "", ["core/aletheia/__init__.py"]),
+        ({}, "", ["core/aletheia/__init__.py", "aletheia/__init__.py"]),
+    ],
+)
+def test_version_at_ref_reads_current_and_historical_git_objects(monkeypatch, objects, expected, paths):
+    from aletheia.update import git_ops
+
+    calls = []
+
+    def fake_git(*args):
+        calls.append(args)
+        path = args[1].split(":", 1)[1]
+        return _FakeProc(stdout=objects.get(path, ""), returncode=0 if path in objects else 128)
+
+    monkeypatch.setattr(git_ops, "_git", fake_git)
+
+    assert git_ops.version_at_ref("source-sha") == expected
+    assert calls == [("show", f"source-sha:{path}") for path in paths]
+
+
 def test_git_timeout_is_reported_as_unknown_state(monkeypatch):
     from aletheia.update import git_ops
     from ops.update import git_ops as git_mutations
@@ -1080,12 +1108,17 @@ def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
     monkeypatch.setattr(applier.subprocess, "run", run)
 
     assert applier._restart_gateway() == {"ok": True}
-    assert seen["command"] == [
-        applier.sys.executable,
-        "-c",
+    assert seen["command"][:2] == [applier.sys.executable, "-c"]
+    script = seen["command"][2]
+    roots = [str(applier._PROJECT_ROOT / "core"), str(applier._PROJECT_ROOT)]
+    assert f"sys.path[:0] = {roots!r}" in script
+    assert str(applier._PROJECT_ROOT / "core/aletheia/__init__.py") in script
+    assert "Path(aletheia.__file__).resolve()" in script
+    assert "target_core_source_mismatch" in script
+    assert script.endswith(
         "from aletheia.gateway.lifecycle import do_start, do_stop; "
-        "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)",
-    ]
+        "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)"
+    )
     assert seen["cwd"] == str(applier._PROJECT_ROOT)
 
     # exit 2 = slow start (do_start returned False: alive but readiness timed out).
@@ -1323,7 +1356,7 @@ def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, 
 
     source = tmp_path / "source"
     source.mkdir()
-    for directory in ("aletheia", "extensions", "ops", "legacy", "tests"):
+    for directory in ("core", "extensions", "ops", "legacy", "tests"):
         shutil.copytree(git_ops.REPO_ROOT / directory, source / directory,
                         ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
     for filename in ("pyproject.toml", "uv.lock", "README.md"):

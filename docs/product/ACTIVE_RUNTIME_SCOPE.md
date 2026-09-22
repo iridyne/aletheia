@@ -102,7 +102,7 @@ pre-risk candidate filter and cannot replace Risk Engine approval.
 risk-decision ancestry. A close counts as a genuine outcome only when Outcome
 Integrity has verified its economic evidence.
 - Paper-candidate blockers must be declared in
-`aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
+`core/aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
 historical auto-guard, or inline historical ranker condition has no block authority.
 
 The executable checks live in `tests/specs/spec_active_runtime_scope.py`, the

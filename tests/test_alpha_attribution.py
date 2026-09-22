@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -12,6 +13,24 @@ def _freeze_alpha_audit_clock(monkeypatch):
 
     audit_now = datetime.fromisoformat("2026-07-13T09:10:01+00:00")
     monkeypatch.setattr("aletheia.analytics.alpha_attribution._utcnow", lambda: audit_now)
+
+
+@pytest.mark.parametrize("layer", [
+    "Universe Alpha", "System Operator Alpha", "Learning Alpha", "Serenity Alpha",
+])
+def test_measured_negative_suspect_modules_resolve_to_current_owners(layer):
+    from aletheia.analytics.alpha_attribution import _main_bottleneck, _verdict
+
+    verdict = _verdict(
+        layer, "negative", 30, 0.0, -1.0, -1.0, "high", "synthetic measured loss",
+        causal_grade="strong_prospective_control",
+    )
+    modules = _main_bottleneck({"layer": verdict})["suspected_modules"]
+    root = Path(__file__).resolve().parents[1]
+
+    assert modules
+    assert all(path.startswith(("core/aletheia/", "extensions/")) for path in modules)
+    assert all((root / path).is_file() for path in modules)
 
 
 def _iso(days_ago: int = 0, hours_after: int = 0) -> str:

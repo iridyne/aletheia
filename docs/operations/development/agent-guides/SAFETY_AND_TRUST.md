@@ -21,16 +21,16 @@ audit work. The canonical policy is
 Touch only when the task explicitly requires it:
 
 ```text
-aletheia/risk
-aletheia/execution
+core/aletheia/risk
+core/aletheia/execution
 extensions/exchanges/bitget/auth.py
 extensions/exchanges/bitget/client.py
-aletheia/config/secrets.py
-aletheia/agent_runtime/permissions.py
-aletheia/agent_runtime/tool_registry.py
-aletheia/agent_shell/registry.py
-aletheia/files/jsonl.py
-aletheia/server/routes/live.py
+core/aletheia/config/secrets.py
+core/aletheia/agent_runtime/permissions.py
+core/aletheia/agent_runtime/tool_registry.py
+core/aletheia/agent_shell/registry.py
+core/aletheia/files/jsonl.py
+core/aletheia/server/routes/live.py
 ```
 
 Before changing one, read the canonical policy and affected `tests/specs/`.
