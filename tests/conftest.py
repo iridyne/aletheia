@@ -17,10 +17,48 @@ import pytest
 
 
 @pytest.fixture
+def installed_learning_consumers(monkeypatch):
+    """Explicit installed-extension composition for direct consumer tests only."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.agent_shell import context
+    from aletheia.universe import outcome_recorder
+    from extensions.learning import control, lessons
+    from extensions.knowledge import manager
+
+    for name, callback in (
+        ("_learning_job_gate", lambda *a, **kw: control.learning_job_gate_reason(*a, **kw)),
+        ("_learning_job_skipped", lambda *a, **kw: control.record_learning_job_skipped(*a, **kw)),
+        ("_learning_job_started", lambda *a, **kw: control.record_learning_job_started(*a, **kw)),
+        ("_learning_job_succeeded", lambda *a, **kw: control.record_learning_job_success(*a, **kw)),
+        ("_learning_job_failed", lambda *a, **kw: control.record_learning_job_failure(*a, **kw)),
+    ):
+        monkeypatch.setattr(scheduler, name, callback)
+    monkeypatch.setattr(context, "_list_learning_lessons", lambda **kw: lessons.LessonStore().list_all(**kw))
+    monkeypatch.setattr(outcome_recorder, "_create_guard_candidate", lambda **kw: manager.create_guard_candidate(**kw))
+
+
+@pytest.fixture
+def optional_evidence_jobs(monkeypatch):
+    """Explicit installed-extension composition for direct Core consumer tests."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import family_scorecard
+    from extensions.analytics import filter_controller, guard_promotion
+    from extensions.counterfactual import trades
+    from extensions.counterfactual import family_scorecard as shadows
+    from extensions.learning import control
+
+    monkeypatch.setattr(scheduler, "_resolve_stale_shadows", lambda: trades.resolve_stale_shadows())
+    monkeypatch.setattr(scheduler, "_expire_learned_guards", lambda: guard_promotion._deprecate_expired_learned_guards())
+    monkeypatch.setattr(scheduler, "_observe_filter_controller", lambda **kwargs: filter_controller.run_controller_observe(**kwargs))
+    monkeypatch.setattr(scheduler, "_learning_daily_catchup_due", lambda job_id: control.daily_catchup_due(job_id))
+    monkeypatch.setattr(family_scorecard, "_read_shadow_cohort", shadows.read_shadow_cohort)
+
+
+@pytest.fixture
 def observation_readers(monkeypatch):
     """Explicit installed-Lab composition for repository/owner integration tests."""
     from aletheia.storage import repositories as repo
-    from aletheia.observation_lab import main_readers as lab
+    from extensions.observation_lab import main_readers as lab
 
     for name, callback in (
         ("_lab_authority", lab._canonical_lab_authority),
@@ -348,7 +386,7 @@ def _bind_market_listing(monkeypatch):
 @pytest.fixture(autouse=True)
 def _bind_demo_quality_epoch(monkeypatch):
     """Use actual epoch persistence against test-owned DBs, without starting Web/CLI."""
-    from aletheia.learning import demo_entry_quality as policy
+    from extensions.learning import demo_entry_quality as policy
     from aletheia.risk import demo_entry_quality as quality
 
     monkeypatch.setattr(quality, "_policy_epoch_writer", lambda: policy.ensure_demo_entry_quality_policy_epoch())
@@ -357,7 +395,7 @@ def _bind_demo_quality_epoch(monkeypatch):
 @pytest.fixture(autouse=True)
 def _bind_entry_learning(monkeypatch):
     """Exercise actual optional Entry evidence against isolated test state."""
-    from aletheia.learning.entry_context import load_entry_learning_context
+    from extensions.learning.entry_context import load_entry_learning_context
     from aletheia.trading import entry_learning
 
     monkeypatch.setattr(entry_learning, "_context_loader", load_entry_learning_context)
@@ -365,7 +403,7 @@ def _bind_entry_learning(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _bind_candidate_filter_path(monkeypatch):
-    from aletheia.learning.registry import candidate_filter_path_declared
+    from extensions.learning.registry import candidate_filter_path_declared
     from aletheia.trust import behavior_authority
 
     monkeypatch.setattr(behavior_authority, "_candidate_filter_path_resolver", candidate_filter_path_declared)
@@ -373,7 +411,7 @@ def _bind_candidate_filter_path(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _bind_learning_safety(monkeypatch):
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.trust import learning_safety
 
     monkeypatch.setattr(learning_safety, "_influence_gate", lambda: control.learning_influence_gate_reason())
@@ -382,7 +420,7 @@ def _bind_learning_safety(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _bind_sizing_evidence(monkeypatch):
-    from aletheia.learning.sizing_evidence import resolve_sizing_evidence
+    from extensions.learning.sizing_evidence import resolve_sizing_evidence
     from aletheia.trading import sizing_policy
 
     monkeypatch.setattr(sizing_policy, "_learned_notional_resolver", resolve_sizing_evidence)

@@ -26,7 +26,7 @@ from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )
-from aletheia.learning.verdicts import METRIC_VERSION
+from extensions.learning.verdicts import METRIC_VERSION
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import (
     LAYERS,
@@ -621,8 +621,8 @@ def _confirmatory_exposure_reason(
     if len(policy_rows) != 1 or not policy_rows[0].get("effective_values_hash"):
         return "epoch_mismatch"
     try:
-        from aletheia.learning.behavior_contracts import build_behavior_contract_hash
-        from aletheia.learning.verdicts import METRIC_VERSION
+        from extensions.learning.behavior_contracts import build_behavior_contract_hash
+        from extensions.learning.verdicts import METRIC_VERSION
 
         expected_hash = build_behavior_contract_hash(
             path_id=path_id,

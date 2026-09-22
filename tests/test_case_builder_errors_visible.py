@@ -6,7 +6,7 @@ import pytest
 
 from extensions.research.post_trade_reviewer import _run_case_builder_safe
 
-_CASES_MODULE = "aletheia.analytics.trade_case_builder"
+_CASES_MODULE = "extensions.analytics.trade_case_builder"
 
 
 @pytest.fixture(autouse=True)

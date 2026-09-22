@@ -492,7 +492,7 @@ def test_shared_async_timeout_worker_allows_news_and_rss_coroutines_to_progress(
 async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from extensions.data import news_collector
-    from aletheia.learning import opportunity_information_policy
+    from extensions.learning import opportunity_information_policy
     from aletheia.storage.sqlite import close_db, get_db
 
     feed_started = threading.Event()
@@ -550,7 +550,7 @@ async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monke
 async def test_news_fetch_reports_all_feed_failures(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from extensions.data import news_collector
-    from aletheia.learning import opportunity_information_policy
+    from extensions.learning import opportunity_information_policy
 
     feeds = [
         SimpleNamespace(enabled=True, url="https://example.test/one", name="one", source="one"),
@@ -588,7 +588,7 @@ async def test_news_fetch_reports_all_feed_failures(tmp_path, monkeypatch):
 async def test_news_fetch_preserves_valid_rows_in_partial_batch(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from extensions.data import news_collector
-    from aletheia.learning import opportunity_information_policy
+    from extensions.learning import opportunity_information_policy
     from aletheia.storage.sqlite import get_db
 
     feeds = [
@@ -628,7 +628,7 @@ async def test_news_fetch_preserves_valid_rows_in_partial_batch(tmp_path, monkey
 async def test_news_fetch_empty_success_is_not_failure(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from extensions.data import news_collector
-    from aletheia.learning import opportunity_information_policy
+    from extensions.learning import opportunity_information_policy
 
     feeds = [
         SimpleNamespace(enabled=True, url="https://example.test/one", name="one", source="one"),

@@ -2,8 +2,8 @@
 
 
 def test_historical_equivalence_latest_record_is_read_without_writes():
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.ufc_shadow import decode_equivalence_result, latest_equivalence_record
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.ufc_shadow import decode_equivalence_result, latest_equivalence_record
 
     db = get_lab_db()
     for identity, timestamp, matched, note in (
@@ -24,8 +24,8 @@ def test_historical_equivalence_latest_record_is_read_without_writes():
 
 
 def test_historical_equivalence_read_does_not_create_missing_lab():
-    from aletheia.observation_lab.db import lab_db_path
-    from aletheia.observation_lab.ufc_shadow import latest_equivalence_record
+    from extensions.observation_lab.db import lab_db_path
+    from extensions.observation_lab.ufc_shadow import latest_equivalence_record
 
     assert not lab_db_path().exists()
     assert latest_equivalence_record("history") is None

@@ -502,7 +502,7 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             }
             if not required_outbox.issubset(outbox_columns):
                 raise sqlite3.Error("outbox_schema_unavailable")
-            from aletheia.observation_lab.checkpoint import _OUTBOX_IDENTITY_COLUMNS
+            from extensions.observation_lab.checkpoint import _OUTBOX_IDENTITY_COLUMNS
 
             if not set(_OUTBOX_IDENTITY_COLUMNS).issubset(outbox_columns):
                 raise sqlite3.Error("outbox_identity_schema_unavailable")

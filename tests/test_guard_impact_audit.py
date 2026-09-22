@@ -204,7 +204,7 @@ def test_guard_impact_read_model_has_no_llm_http_or_exchange_calls():
 
 @pytest.mark.parametrize("exists", [False, True])
 def test_guard_impact_file_access_is_readonly(tmp_path, monkeypatch, exists):
-    import aletheia.analytics.guard_impact as report_module
+    import extensions.analytics.guard_impact as report_module
     import aletheia.storage.sqlite as sq
 
     path = tmp_path / "guard-history.db"
@@ -242,7 +242,7 @@ def test_guard_impact_file_access_is_readonly(tmp_path, monkeypatch, exists):
 
 def test_guard_impact_empty_db_does_not_crash(monkeypatch):
     import aletheia.storage.sqlite as sq
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -257,7 +257,7 @@ def test_guard_impact_empty_db_does_not_crash(monkeypatch):
 
 
 def test_guard_impact_no_active_guards_returns_clean_report():
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
 
     report = build_guard_impact_audit(hours=24)
 
@@ -267,7 +267,7 @@ def test_guard_impact_no_active_guards_returns_clean_report():
 
 
 def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_path):
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
     from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
@@ -293,7 +293,7 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
 
 
 def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
     from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
@@ -309,7 +309,7 @@ def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
 
 
 def test_guard_impact_excludes_keyed_shadow_with_canonical_identity_mismatch(tmp_path):
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
     from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
@@ -330,7 +330,7 @@ def test_guard_impact_excludes_keyed_shadow_with_canonical_identity_mismatch(tmp
 
 
 def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
-    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit
     from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)

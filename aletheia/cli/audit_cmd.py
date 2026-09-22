@@ -467,7 +467,7 @@ def learning_context_b1(
     import asyncio
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import run_learning_b_pair
+    from extensions.research.context_effectiveness import run_learning_b_pair
 
     fixture_path = (
         Path(fixture)
@@ -506,7 +506,7 @@ def technical_context_check(
     import asyncio
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import run_technical_context_pair
+    from extensions.research.context_effectiveness import run_technical_context_pair
 
     fixture_path = (
         Path(fixture)
@@ -548,7 +548,7 @@ def context_ablation(
     import asyncio
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import run_context_ablation_pair
+    from extensions.research.context_effectiveness import run_context_ablation_pair
 
     report = asyncio.run(
         run_context_ablation_pair(
@@ -575,7 +575,7 @@ def learning_context_b1_score(
     """Import aggregate blinded owner scores; never import raw model outputs."""
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import record_learning_b_review
+    from extensions.research.context_effectiveness import record_learning_b_review
 
     report = record_learning_b_review(pair_id=pair_id, scores_path=Path(scores))
     if output_json:
@@ -595,7 +595,7 @@ def technical_context_score(
     """Import aggregate blinded technical-context scores without raw outputs."""
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import record_technical_context_review
+    from extensions.research.context_effectiveness import record_technical_context_review
 
     report = record_technical_context_review(
         pair_id=pair_id, scores_path=Path(scores)
@@ -617,7 +617,7 @@ def context_ablation_score(
     """Import blinded scores for one context-ablation pair."""
     from pathlib import Path
 
-    from aletheia.economics.context_effectiveness import (
+    from extensions.research.context_effectiveness import (
         record_context_ablation_review,
     )
 
@@ -638,7 +638,7 @@ def learning_context_b1_summary(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Summarize aggregate reviewed Learning B pairs without raw content."""
-    from aletheia.economics.context_effectiveness import summarize_learning_b_reviews
+    from extensions.research.context_effectiveness import summarize_learning_b_reviews
 
     report = summarize_learning_b_reviews()
     if output_json:

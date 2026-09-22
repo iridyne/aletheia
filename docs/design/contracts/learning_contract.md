@@ -54,7 +54,7 @@ realized closes + fixed-horizon candidate/shadow outcomes
 ### 1.1 Current full-loop inventory
 
 The following inventory is normative for present behavior. A path belongs here if historical
-results can influence a later trading judgment, even when it lives outside `aletheia/learning/`.
+results can influence a later trading judgment, even when it lives outside `extensions/learning/`.
 
 | Role | Current implementation | Current authority |
 | --- | --- | --- |
@@ -342,7 +342,7 @@ supported. No Learning path grants Execution, exchange or live authority.
 
 ## 2. LessonStore
 
-Source: `aletheia/learning/lessons.py`.
+Source: `extensions/learning/lessons.py`.
 Table: `ps_lessons`.
 
 ### 2.1 Fields
@@ -418,7 +418,7 @@ owner approval.
 
 ## 3. SkillStore
 
-Source: `aletheia/learning/skills.py`.
+Source: `extensions/learning/skills.py`.
 Table: `ps_skills`.
 
 ### 3.1 Lifecycle

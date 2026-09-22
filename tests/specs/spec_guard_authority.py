@@ -35,7 +35,7 @@ def test_auto_promote_disabled_by_default():
     "GA-S02", "guard_authority", "§shadow-only creation", "L2a",
     "Every auto-generated guard candidate is created shadow-only (no block); manual is untouched."))
 def test_auto_candidates_forced_shadow_only():
-    from aletheia.knowledge.manager import _force_shadow_only_if_auto
+    from extensions.knowledge.manager import _force_shadow_only_if_auto
 
     auto = _force_shadow_only_if_auto(
         {"guard_id": "auto_momentum_long_x", "block_candidate": True, "tags": ["auto-generated"]}
@@ -59,7 +59,7 @@ def test_auto_candidates_forced_shadow_only():
     "GA-S05", "guard_authority", "§origin classification", "L2a",
     "guard_origin separates seed / manual / learned guards."))
 def test_guard_origin_classifies_provenance():
-    from aletheia.knowledge.guards import guard_origin
+    from extensions.knowledge.guards import guard_origin
 
     assert guard_origin({"guard_id": "late_entry_chase_v1"}) == "seed"
     assert guard_origin({"guard_id": "backtest_false_positive_v1"}) == "seed"
@@ -73,7 +73,7 @@ def test_guard_origin_classifies_provenance():
     "GA-S12", "guard_authority", "§owner read model", "L2a",
     "Guard API projection separates lifecycle, provenance, proposed effect, experiment context, assignment authority, and baseline effect."))
 def test_guard_api_projection_names_active_learned_guard_as_observe_only():
-    from aletheia.knowledge.guards import TradingGuard
+    from extensions.knowledge.guards import TradingGuard
     from aletheia.server.routes.data import _guard_response
 
     guard = TradingGuard(
@@ -112,7 +112,7 @@ def test_guard_api_projection_names_active_learned_guard_as_observe_only():
     "GA-S13", "guard_authority", "§owner read model", "L2a",
     "Owner-authored active guards remain visibly distinct from learned experiment-gated guards."))
 def test_guard_api_projection_keeps_owner_guard_effect_truthful():
-    from aletheia.knowledge.guards import TradingGuard
+    from extensions.knowledge.guards import TradingGuard
     from aletheia.server.routes.data import _guard_response
 
     row = _guard_response(TradingGuard(
@@ -201,7 +201,7 @@ def test_guard_api_projection_has_no_unsupported_experiment_context():
         "learned_guard_block_authorized is False on master (no experiment authority yet)."),
 )
 def test_learned_guard_enforcement_suppressed_seed_honored():
-    from aletheia.knowledge.guards import (
+    from extensions.knowledge.guards import (
         evaluate_guards, TradingGuard, GuardAppliesTo, GuardPredicate,
         learned_guard_block_authorized,
     )
@@ -254,13 +254,13 @@ def test_learned_guard_enforcement_suppressed_seed_honored():
     "GA-B04", "guard_authority", "§per-candidate prospective authority", "L2b",
     "A learned Guard applies its preserved proposed effect only for an exact authorized treatment assignment and records the candidate identity."))
 def test_learned_guard_uses_per_candidate_treatment_authority(monkeypatch):
-    from aletheia.knowledge.guards import (
+    from extensions.knowledge.guards import (
         GuardAppliesTo,
         GuardPredicate,
         TradingGuard,
         evaluate_guards,
     )
-    from aletheia.learning.experiments import InfluenceDecision
+    from extensions.learning.experiments import InfluenceDecision
 
     captured = {}
 
@@ -272,7 +272,7 @@ def test_learned_guard_uses_per_candidate_treatment_authority(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "aletheia.learning.experiments.apply_numeric_treatment",
+        "extensions.learning.experiments.apply_numeric_treatment",
         authorized_treatment,
     )
     guard = TradingGuard(
@@ -313,7 +313,7 @@ def test_learned_guard_uses_per_candidate_treatment_authority(monkeypatch):
     "GA-C01", "guard_authority", "§durable authorized exposure", "L2c",
     "A learned Guard cannot create legacy experiments or apply treatment without canonical authority."))
 def test_learned_guard_without_lab_authority_cannot_create_legacy_experiment():
-    from aletheia.knowledge.guards import (
+    from extensions.knowledge.guards import (
         GuardAppliesTo,
         GuardPredicate,
         TradingGuard,
@@ -352,9 +352,9 @@ def test_learned_guard_without_lab_authority_cannot_create_legacy_experiment():
 @spec_claim(SpecClaim(
     "GA-S03", "guard_authority", "§no auto-promotion of learned/shadow", "L2b",
     "The scheduled guard expiry job never promotes a shadow-only learned candidate."))
-def test_promotion_never_auto_promotes_shadow_learned():
-    from aletheia.knowledge.guards import TradingGuard, GuardAppliesTo, GuardPredicate
-    from aletheia.analytics import guard_promotion as gp
+def test_promotion_never_auto_promotes_shadow_learned(optional_evidence_jobs):
+    from extensions.knowledge.guards import TradingGuard, GuardAppliesTo, GuardPredicate
+    from extensions.analytics import guard_promotion as gp
     from aletheia.agent_runtime import scheduler
 
     shadow_candidate = TradingGuard(
@@ -371,9 +371,9 @@ def test_promotion_never_auto_promotes_shadow_learned():
 
     with patch.object(scheduler, "load_config", return_value=cfg), \
          patch.object(gp, "load_trading_guards", return_value=[shadow_candidate]), \
-         patch("aletheia.learning.control.promotion_refreeze_reason", return_value=None), \
+         patch("extensions.learning.control.promotion_refreeze_reason", return_value=None), \
          patch("aletheia.analytics.trade_attribution.build_trade_attribution_rows", return_value=[]), \
-         patch("aletheia.analytics.guard_effectiveness._clean_rows", return_value=[]), \
+         patch("extensions.analytics.guard_effectiveness._clean_rows", return_value=[]), \
          patch.object(gp, "promote_guard_candidate_to_active") as promote_spy:
         scheduler._run_guard_promotion()
 
@@ -392,7 +392,7 @@ def test_promotion_never_auto_promotes_shadow_learned():
 def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-    from aletheia.analytics.guard_promotion import audit_auto_guards, downgrade_learned_guards_to_shadow
+    from extensions.analytics.guard_promotion import audit_auto_guards, downgrade_learned_guards_to_shadow
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -462,7 +462,7 @@ def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
 def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-    from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
+    from extensions.analytics.guard_promotion import prune_learned_guard_candidates
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     cand_dir = tmp_path / "knowledge" / "guard_candidates"
@@ -512,8 +512,8 @@ def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
     "Every auto-generated guard candidate is stamped with created_at and expires_at "
     "(now + LEARNED_GUARD_TTL_DAYS) at creation (#195). Manual candidates are never stamped."))
 def test_auto_candidate_gets_ttl_stamps():
-    from aletheia.knowledge.manager import _force_shadow_only_if_auto
-    from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
+    from extensions.knowledge.manager import _force_shadow_only_if_auto
+    from extensions.knowledge.guards import LEARNED_GUARD_TTL_DAYS
     from datetime import datetime, timedelta, timezone
 
     before = datetime.now(timezone.utc)
@@ -544,7 +544,7 @@ def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
     from aletheia.files.frontmatter import render_frontmatter
-    from aletheia.knowledge.guards import load_trading_guards
+    from extensions.knowledge.guards import load_trading_guards
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -593,7 +593,7 @@ def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
     "Learned guards without created_at or expires_at receive the bounded migration deadline "
     "LEARNED_GUARD_MIGRATION_DEADLINE_ISO rather than living forever (#195)."))
 def test_effective_expires_at_precedence():
-    from aletheia.knowledge.guards import (
+    from extensions.knowledge.guards import (
         LEARNED_GUARD_MIGRATION_DEADLINE_ISO,
         LEARNED_GUARD_TTL_DAYS,
         _effective_learned_expires_at,
@@ -623,7 +623,7 @@ def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
     from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-    from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
+    from extensions.analytics.guard_promotion import _deprecate_expired_learned_guards
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -691,7 +691,7 @@ def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
     from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+    from extensions.analytics.guard_promotion import promote_guard_candidate_to_active
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     candidates_dir = tmp_path / "knowledge" / "guard_candidates"
@@ -719,11 +719,11 @@ def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
 @spec_claim(SpecClaim(
     "GA-B07", "guard_authority", "§expiry deprecation runs even when auto-promote is disabled", "L2b",
     "The scheduled guard job still expires learned guards with legacy auto-promotion disabled (#195)."))
-def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch):
+def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch, optional_evidence_jobs):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
     from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-    from aletheia.analytics import guard_promotion as gp
+    from extensions.analytics import guard_promotion as gp
     from aletheia.agent_runtime import scheduler
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

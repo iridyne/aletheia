@@ -101,7 +101,7 @@ def _setup_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
 
 def test_backfill_lab_authority_does_not_use_legacy_experiment_floor(monkeypatch):
     from aletheia.maintenance import data_retention_backfill as drb
-    from aletheia.observation_lab import canonical
+    from extensions.observation_lab import canonical
 
     monkeypatch.setattr(
         canonical,
@@ -116,7 +116,7 @@ def test_backfill_lab_authority_does_not_use_legacy_experiment_floor(monkeypatch
 
 def test_backfill_authority_read_failure_is_not_treated_as_empty_floor(monkeypatch):
     from aletheia.maintenance import data_retention_backfill as drb
-    from aletheia.observation_lab import canonical
+    from extensions.observation_lab import canonical
 
     def unavailable(*, db):
         raise RuntimeError("authority_state_unavailable")

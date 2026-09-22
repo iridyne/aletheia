@@ -6,7 +6,7 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
-from aletheia.knowledge.manager import create_research_note
+from extensions.knowledge.manager import create_research_note
 from aletheia.storage.repositories import list_trade_proposals, list_risk_decisions
 
 

@@ -13,7 +13,7 @@ import pytest
 
 def test_no_symlink_ignore_returns_symlinks_in_names(tmp_path):
     """_no_symlink_ignore must return symlink names for copytree to skip."""
-    from aletheia.sync.exporter import _no_symlink_ignore
+    from extensions.sync.exporter import _no_symlink_ignore
     # Create a real file and a symlink
     real = tmp_path / "real.txt"
     real.write_text("data")
@@ -27,7 +27,7 @@ def test_no_symlink_ignore_returns_symlinks_in_names(tmp_path):
 
 def test_export_copytree_uses_symlink_protection():
     """export service copytree calls use _no_symlink_ignore."""
-    import aletheia.sync.exporter as mod
+    import extensions.sync.exporter as mod
     src = inspect.getsource(mod.ExportService._copy_artifacts)
     assert "_no_symlink_ignore" in src or "is_symlink" in src, (
         "_copy_artifacts must reject symlinks in backup source (#1434)"

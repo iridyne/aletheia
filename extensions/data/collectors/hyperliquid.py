@@ -44,7 +44,7 @@ class HyperliquidCollector:
 
         Returns {"funding": [...], "open_interest": [...], "errors": [...]}.
         """
-        from aletheia.learning.opportunity_information_policy import (
+        from extensions.learning.opportunity_information_policy import (
             ensure_opportunity_information_policy_epoch,
         )
 

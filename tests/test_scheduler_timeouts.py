@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 
 def test_stale_scanner_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
@@ -172,7 +174,7 @@ def test_core_job_guard_runs_when_learning_extension_is_missing(monkeypatch):
     real_import = builtins.__import__
 
     def missing_learning(name, *args, **kwargs):
-        if name == "aletheia.learning.control":
+        if name == "extensions.learning.control":
             raise ModuleNotFoundError(name=name)
         return real_import(name, *args, **kwargs)
 
@@ -1179,7 +1181,7 @@ def test_scheduler_result_failures_survive_outer_wrapper(
     monkeypatch, job_id, result, stable_error
 ):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.storage import sqlite
 
     failures: list[tuple[str, str]] = []
@@ -1224,7 +1226,7 @@ def test_scheduler_clean_or_empty_result_resets_failure_health(
     monkeypatch, job_id, result
 ):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.storage import sqlite
 
     monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)
@@ -1259,7 +1261,7 @@ def test_protective_essential_jobs_run_and_report_failure_while_paused(
     monkeypatch, job_id, result
 ):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.storage import sqlite
 
     monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)

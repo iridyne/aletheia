@@ -14,7 +14,7 @@ from types import SimpleNamespace
 attempted = []
 class MissingLearning:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.learning" or fullname.startswith("aletheia.learning."):
+        if fullname == "extensions.learning" or fullname.startswith("extensions.learning."):
             attempted.append(fullname)
             raise AssertionError("Core imported concrete Learning: " + fullname)
 sys.meta_path.insert(0, MissingLearning())
@@ -66,7 +66,7 @@ def test_bootstrap_binds_learning_safety_without_querying(entrypoint, available)
 import sys
 class MissingControl:
     def find_spec(self, fullname, path=None, target=None):
-        if not available and fullname in {"aletheia.learning.control", "aletheia.learning.registry"}:
+        if not available and fullname in {"extensions.learning.control", "extensions.learning.registry"}:
             raise ModuleNotFoundError("Learning control absent", name=fullname)
 sys.meta_path.insert(0, MissingControl())
 from aletheia.trust import learning_safety as safety
@@ -74,8 +74,8 @@ from aletheia.trust import behavior_authority as behavior
 def forbidden(*args):
     raise AssertionError("bootstrap queried Learning safety")
 if available:
-    from aletheia.learning import control
-    from aletheia.learning import registry
+    from extensions.learning import control
+    from extensions.learning import registry
     control.learning_influence_gate_reason = forbidden
     control.global_learning_refreeze_reason = forbidden
     registry.candidate_filter_path_declared = forbidden
@@ -110,7 +110,7 @@ def test_registry_evidence_cannot_override_core_source_or_path(monkeypatch):
 
 
 def test_real_registry_only_declares_filter_capability():
-    from aletheia.learning.registry import candidate_filter_path_declared
+    from extensions.learning.registry import candidate_filter_path_declared
 
     assert candidate_filter_path_declared("ranker_learned_guard") is True
     assert candidate_filter_path_declared("ranker_factor_filter") is True

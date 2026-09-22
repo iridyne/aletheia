@@ -33,9 +33,9 @@ def _losing_momentum_long_trade(i: int):
 
 
 class TestGuardPromotionChain:
-    def test_auto_candidate_is_shadow_and_not_auto_promoted(self, e2e_db):
-        from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards, guard_origin
+    def test_auto_candidate_is_shadow_and_not_auto_promoted(self, e2e_db, optional_evidence_jobs):
+        from extensions.knowledge.manager import create_guard_candidate
+        from extensions.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.agent_runtime.scheduler import _run_guard_promotion
 
         # 1) create an auto-style candidate (mirrors outcome_recorder's metadata)
@@ -62,7 +62,7 @@ class TestGuardPromotionChain:
             _losing_momentum_long_trade(i)
 
         # 4) a healthy durable reviewer checkpoint (so refreeze does not mask the result)
-        from aletheia.learning.control import record_learning_job_success
+        from extensions.learning.control import record_learning_job_success
         record_learning_job_success("lesson_reviewer")
 
         # 5) even with auto_promote_enabled=True and strong loss evidence, a learned
@@ -84,7 +84,7 @@ class TestGuardPromotionChain:
         candidate is promotable via the explicit owner route."""
         from datetime import datetime, timedelta, timezone
 
-        from aletheia.analytics.guard_promotion import (
+        from extensions.analytics.guard_promotion import (
             _deprecate_expired_learned_guards,
             promote_guard_candidate_to_active,
         )
@@ -94,8 +94,8 @@ class TestGuardPromotionChain:
             resolve_knowledge_path,
         )
         from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
-        from aletheia.knowledge.guards import load_trading_guards, guard_origin
-        from aletheia.knowledge.manager import create_guard_candidate
+        from extensions.knowledge.guards import load_trading_guards, guard_origin
+        from extensions.knowledge.manager import create_guard_candidate
         from aletheia.storage import repositories as repo
         from aletheia.storage.repositories import get_knowledge_item
 
@@ -156,9 +156,9 @@ class TestGuardPromotionChain:
 
     def test_event_failure_does_not_publish_guard_state(self, e2e_db, monkeypatch):
         """A failed durable provenance write leaves the candidate untouched."""
-        from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards
-        from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+        from extensions.knowledge.manager import create_guard_candidate
+        from extensions.knowledge.guards import load_trading_guards
+        from extensions.analytics.guard_promotion import promote_guard_candidate_to_active
         from aletheia.storage import repositories as repo
         from aletheia.storage.event_store import get_event_store
 

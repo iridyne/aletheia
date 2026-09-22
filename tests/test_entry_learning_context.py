@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from aletheia.learning.entry_context import build_entry_learning_context
+from extensions.learning.entry_context import build_entry_learning_context
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     Fill, FilterCandidateOutcome, Order, Position, TradeProposal, UniverseMember,
@@ -261,8 +261,8 @@ def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units(
 
 
 def test_entry_learning_path_resolves_planning_generation_statistical_unit():
-    from aletheia.learning.cohorts import _load_exact_outcomes
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.cohorts import _load_exact_outcomes
+    from extensions.learning.registry import get_learning_path
 
     generation = _generation(created_at="2026-09-01T00:00:00+00:00")
     repo.execute_write(
@@ -285,8 +285,8 @@ def test_entry_learning_path_resolves_planning_generation_statistical_unit():
 
 
 def test_entry_learning_cohort_evaluates_boolean_treatment_receipts():
-    from aletheia.learning.cohorts import build_experiment_cohorts
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from extensions.learning.cohorts import build_experiment_cohorts
+    from extensions.learning.models import LearningExperiment, LearningHypothesis
 
     generations = [
         _generation(
@@ -564,7 +564,7 @@ def test_entry_learning_fails_closed_when_exact_inference_cost_is_missing():
 def test_entry_learning_treatment_freezes_epoch_and_changes_only_context_presence():
     from types import SimpleNamespace
 
-    from aletheia.learning.entry_context import (
+    from extensions.learning.entry_context import (
         ENTRY_LEARNING_INTERFERENCE_KEY,
         EntryLearningTreatmentAdapter,
     )
@@ -598,7 +598,7 @@ def test_entry_learning_treatment_freezes_epoch_and_changes_only_context_presenc
 def test_entry_learning_treatment_receipt_uses_planning_generation_outcome_key(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.learning.entry_context import resolve_entry_learning_treatment
+    from extensions.learning.entry_context import resolve_entry_learning_treatment
 
     captured = {}
 
@@ -607,7 +607,7 @@ def test_entry_learning_treatment_receipt_uses_planning_generation_outcome_key(m
         return SimpleNamespace(payload={"include_learning_context": False})
 
     monkeypatch.setattr(
-        "aletheia.observation_lab.canonical.resolve_observation_treatment", resolve,
+        "extensions.observation_lab.canonical.resolve_observation_treatment", resolve,
     )
     resolve_entry_learning_treatment(
         planning_generation_id="generation-1", mechanism="reversal", direction="long",

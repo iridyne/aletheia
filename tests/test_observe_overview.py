@@ -43,22 +43,22 @@ def _worker_status(*, systemd_available: bool = False) -> dict:
 
 
 def _set_owner(monkeypatch: pytest.MonkeyPatch, owner: str) -> None:
-    from aletheia.observation_lab import execution_owner
+    from extensions.observation_lab import execution_owner
 
     monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: owner)
 
 
 def _ensure_lab() -> None:
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
 
 
 def _register_ranker() -> None:
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="overview fixture")
 
-    from aletheia.counterfactual.filter_experiments import register_observation_from_spec
+    from extensions.counterfactual.filter_experiments import register_observation_from_spec
 
     register_observation_from_spec(
         {
@@ -80,7 +80,7 @@ def _register_ranker() -> None:
 def _seed_equivalence_row(*, result: str) -> None:
     import uuid
 
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     assert result in {"matched", "mismatched", "skipped"}
     get_lab_db().execute(
@@ -118,7 +118,7 @@ def _seed_equivalence_row(*, result: str) -> None:
     ],
 )
 def test_decode_equivalence_result_preserves_historical_skip_notes(note: str):
-    from aletheia.observation_lab.ufc_shadow import decode_equivalence_result
+    from extensions.observation_lab.ufc_shadow import decode_equivalence_result
 
     assert decode_equivalence_result({"matched": 0, "notes": note}) == "skipped"
     assert (
@@ -141,7 +141,7 @@ def test_collect_overview_missing_lab_is_unavailable_and_read_only(tmp_path):
 @pytest.mark.real_db
 def test_collect_overview_missing_databases_creates_nothing(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import close_lab_db
+    from extensions.observation_lab.db import close_lab_db
     from aletheia.storage.sqlite import reset_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -185,7 +185,7 @@ def test_collect_overview_does_not_persist_legacy_config_migration(
 
 
 def test_collect_overview_shape_on_empty_existing_lab(monkeypatch):
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
     monkeypatch.setattr(observe_cmd, "_collect_worker_status", _worker_status)
@@ -235,7 +235,7 @@ def test_collect_overview_reports_experiments_and_equivalence():
 
 
 def test_collect_overview_reports_active_manifests():
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
 
     manifest = build_manifest(
         observation_id="active-manifest",
@@ -353,9 +353,9 @@ def test_collect_overview_unknown_owner_is_unavailable(monkeypatch):
 
 
 def test_collect_overview_reports_window_handler_and_error(monkeypatch):
-    from aletheia.observation_lab import kernel
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab import kernel
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.kernel import (
         ObservationHandler,
         ObservationProgress,
         register_handler,
@@ -401,7 +401,7 @@ def test_collect_overview_reports_window_handler_and_error(monkeypatch):
 
 
 def test_collect_overview_checkpoint_and_ufc_mismatch_are_degraded(monkeypatch):
-    from aletheia.observation_lab import checkpoint
+    from extensions.observation_lab import checkpoint
 
     _ensure_lab()
     _seed_equivalence_row(result="mismatched")
@@ -422,7 +422,7 @@ def test_collect_overview_checkpoint_and_ufc_mismatch_are_degraded(monkeypatch):
 
 
 def test_collect_overview_attributes_corrupt_checkpoint_to_lab(monkeypatch):
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     _ensure_lab()
     get_lab_db().execute(
@@ -453,7 +453,7 @@ def test_collect_overview_attributes_corrupt_checkpoint_to_lab(monkeypatch):
 
 
 def test_readonly_lab_db_physically_rejects_writes():
-    from aletheia.observation_lab.db import get_lab_db, readonly_lab_db
+    from extensions.observation_lab.db import get_lab_db, readonly_lab_db
 
     get_lab_db()
     with readonly_lab_db() as db:
@@ -509,7 +509,7 @@ def test_observe_overview_renders_skip_neutrally(runner: CliRunner):
 
 
 def test_observe_checkpoint_command_saves_and_verifies(runner: CliRunner):
-    from aletheia.observation_lab.checkpoint import latest_joint_checkpoint
+    from extensions.observation_lab.checkpoint import latest_joint_checkpoint
 
     result = runner.invoke(observe_app, ["checkpoint", "--json"])
     assert result.exit_code == 0
@@ -523,7 +523,7 @@ def test_observe_checkpoint_command_saves_and_verifies(runner: CliRunner):
 
 
 def test_observe_checkpoint_verify_only_does_not_save(runner: CliRunner):
-    from aletheia.observation_lab.checkpoint import latest_joint_checkpoint
+    from extensions.observation_lab.checkpoint import latest_joint_checkpoint
 
     result = runner.invoke(observe_app, ["checkpoint", "--verify-only", "--json"])
     assert result.exit_code == 0

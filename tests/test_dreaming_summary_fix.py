@@ -183,7 +183,7 @@ async def test_dreaming_summary_uses_persisted_run_artifact_links(client):
 
 @pytest.mark.anyio
 async def test_dreaming_summary_exposes_scheduler_health_failure(client, monkeypatch):
-    from aletheia.learning import control
+    from extensions.learning import control
 
     monkeypatch.setattr(
         control,

@@ -31,9 +31,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
     "aletheia/analytics/factor_feedback.py",
-    "aletheia/analytics/guard_promotion.py",
-    "aletheia/analytics/guard_effectiveness.py",
-    "aletheia/analytics/trade_case_builder.py",
+    "extensions/analytics/guard_promotion.py",
+    "extensions/analytics/guard_effectiveness.py",
+    "extensions/analytics/trade_case_builder.py",
     "aletheia/analytics/trade_path.py",
 )
 
@@ -107,7 +107,7 @@ def test_dependency_neutral_outcome_read_model_exists():
     ):
         assert token in source
     for forbidden in (
-        "aletheia.learning", "aletheia.risk", "aletheia.execution",
+        "extensions.learning", "aletheia.risk", "aletheia.execution",
         "aletheia.exchanges", "extensions.exchanges", "aletheia.agent_shell",
     ):
         assert forbidden not in source

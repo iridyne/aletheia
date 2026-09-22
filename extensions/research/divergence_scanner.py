@@ -266,7 +266,7 @@ async def run_divergence_scanner(
     **kwargs,
 ) -> dict:
     """Scan recent prediction markets for crypto price divergences."""
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 

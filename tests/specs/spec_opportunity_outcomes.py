@@ -435,7 +435,7 @@ def test_universe_ui_does_not_refold_calibration_cohorts():
     )
 )
 def test_guard_market_scope_is_supported_end_to_end():
-    from aletheia.knowledge.guards import ALLOWED_GUARD_FIELDS, GuardAppliesTo
+    from extensions.knowledge.guards import ALLOWED_GUARD_FIELDS, GuardAppliesTo
 
     assert "market_type" in GuardAppliesTo.model_fields
     assert "market_type" in ALLOWED_GUARD_FIELDS

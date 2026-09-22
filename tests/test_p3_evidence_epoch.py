@@ -56,7 +56,7 @@ def db(tmp_path, monkeypatch):
 
 
 def test_exit_trailing_evidence_path_declared():
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.registry import get_learning_path
 
     path = get_learning_path("exit_trailing_evidence")
     # Evidence epoch paths are observation-only anchors, NOT closed influence loops.
@@ -71,7 +71,7 @@ def test_exit_trailing_evidence_path_declared():
 
 
 def test_entry_correction_v2_path_declared():
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.registry import get_learning_path
 
     path = get_learning_path("entry_correction_v2")
     assert path.measurement_supported is False
@@ -88,7 +88,7 @@ def test_entry_correction_v2_path_declared():
 
 
 def test_ensure_evidence_epochs_creates_both_paths(db):
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
 
     result = ensure_evidence_epochs(commit_sha="abc123deadbeef")
 
@@ -101,7 +101,7 @@ def test_ensure_evidence_epochs_creates_both_paths(db):
 def test_durable_runtime_session_creates_profit_loop_epoch(db, monkeypatch):
     import aletheia.agent_runtime.runtime_session as runtime_session
     from aletheia.analytics.profit_loop_counterfactual import profit_loop_registry_hash
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
     monkeypatch.setattr(
         runtime_session,
@@ -130,7 +130,7 @@ def test_durable_runtime_session_creates_profit_loop_epoch(db, monkeypatch):
 
 def test_ensure_evidence_epochs_is_idempotent(db):
     """Same commit → same epoch ids on second call."""
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
 
     sha = "abc123deadbeef"
     first = ensure_evidence_epochs(commit_sha=sha)
@@ -142,7 +142,7 @@ def test_ensure_evidence_epochs_is_idempotent(db):
 
 def test_profit_loop_restart_reuses_identity_and_rotates_commit_or_fingerprint(db, monkeypatch):
     import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
 
     identity = {
         "durable": True,
@@ -164,7 +164,7 @@ def test_profit_loop_restart_reuses_identity_and_rotates_commit_or_fingerprint(d
 
 def test_profit_loop_fails_closed_without_complete_durable_session(db, monkeypatch):
     import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
 
     for session in (
         None,
@@ -178,7 +178,7 @@ def test_profit_loop_fails_closed_without_complete_durable_session(db, monkeypat
 
 
 def test_ensure_evidence_epochs_acquires_one_writer_per_registration(db, monkeypatch):
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
     from aletheia.storage import repositories as repo
 
     real_acquire = repo.acquire_write_lock
@@ -197,7 +197,7 @@ def test_ensure_evidence_epochs_acquires_one_writer_per_registration(db, monkeyp
 
 def test_ensure_evidence_epochs_rotates_on_new_commit(db):
     """Different commit SHA → new epoch ids (existing epoch closed)."""
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs
 
     first = ensure_evidence_epochs(commit_sha="sha_old_deploy")
     second = ensure_evidence_epochs(commit_sha="sha_new_deploy")
@@ -214,9 +214,9 @@ def test_ensure_evidence_epochs_rotates_on_new_commit(db):
 
 def test_evidence_epoch_summary_sha_consistent(db, monkeypatch):
     """Summary shows sha_consistent=True when epoch commit matches HEAD."""
-    import aletheia.learning.evidence_epoch as ev_mod
+    import extensions.learning.evidence_epoch as ev_mod
     import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
     sha = "abcdef1234567890"
     monkeypatch.setattr(ev_mod, "_current_commit", lambda: sha)
@@ -243,8 +243,8 @@ def test_evidence_epoch_summary_sha_consistent(db, monkeypatch):
 
 def test_evidence_epoch_summary_sha_inconsistent_on_stale_epoch(db, monkeypatch):
     """Summary shows sha_consistent=False when HEAD has advanced past the epoch."""
-    import aletheia.learning.evidence_epoch as ev_mod
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    import extensions.learning.evidence_epoch as ev_mod
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
     old_sha = "old_sha_from_last_deploy"
     new_sha = "new_sha_after_update"
@@ -263,8 +263,8 @@ def test_evidence_epoch_summary_sha_inconsistent_on_stale_epoch(db, monkeypatch)
 
 
 def test_evidence_epoch_summary_uses_full_sha_equality(db, monkeypatch):
-    import aletheia.learning.evidence_epoch as ev_mod
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    import extensions.learning.evidence_epoch as ev_mod
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
     ensure_evidence_epochs(commit_sha="same-prefix-111111")
     monkeypatch.setattr(ev_mod, "_current_commit", lambda: "same-prefix-222222")
@@ -277,7 +277,7 @@ def test_evidence_epoch_summary_uses_full_sha_equality(db, monkeypatch):
 
 @pytest.mark.parametrize("started_at", ["", "not-a-timestamp"])
 def test_profit_loop_summary_fails_closed_on_malformed_started_at(db, started_at):
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    from extensions.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
     from aletheia.storage.sqlite import get_db
 
     ensure_evidence_epochs(commit_sha="legacy")
@@ -299,8 +299,8 @@ def test_profit_loop_summary_fails_closed_on_malformed_started_at(db, started_at
 
 def test_evidence_epoch_summary_not_registered(db, monkeypatch):
     """Absent epochs cannot report SHA consistency as healthy."""
-    import aletheia.learning.evidence_epoch as ev_mod
-    from aletheia.learning.evidence_epoch import evidence_epoch_summary
+    import extensions.learning.evidence_epoch as ev_mod
+    from extensions.learning.evidence_epoch import evidence_epoch_summary
 
     monkeypatch.setattr(ev_mod, "_current_commit", lambda: "deployed-sha")
     summary = evidence_epoch_summary()
@@ -311,7 +311,7 @@ def test_evidence_epoch_summary_not_registered(db, monkeypatch):
 
 
 def test_ensure_evidence_epochs_rejects_missing_deployment_sha(db, monkeypatch):
-    import aletheia.learning.evidence_epoch as ev_mod
+    import extensions.learning.evidence_epoch as ev_mod
 
     monkeypatch.setattr(ev_mod, "_current_commit", lambda: "")
     with pytest.raises(ValueError, match="running deployment commit"):

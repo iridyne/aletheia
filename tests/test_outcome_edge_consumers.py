@@ -281,7 +281,7 @@ def test_sql_and_python_enforce_the_same_settlement_price_provenance():
 def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
     from unittest.mock import patch
 
-    from aletheia.counterfactual.trades import list_deduped_shadows, persist_shadow_batch
+    from extensions.counterfactual.trades import list_deduped_shadows, persist_shadow_batch
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from tests.shadow_outcome_fixture import (
@@ -298,7 +298,7 @@ def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
         "scanner_family": "momentum",
         "trade_score": 60.0,
     }
-    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+    with patch("extensions.counterfactual.trades._current_price", return_value=100.0):
         shadow_id = persist_shadow_batch([candidate], candidate)[0]
     settle_pending_keyed_shadows(1.0)
 
@@ -377,7 +377,7 @@ def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
     assert repo.get_decision_grade_shadow_outcome(shadow_id, "24h") is None
     assert repo.get_decision_grade_shadow_outcome(shadow_id, "4h") is not None
     db.execute("UPDATE shadow_trades SET net_pnl_pct=1.0 WHERE id=?", (shadow_id,))
-    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+    with patch("extensions.counterfactual.trades._current_price", return_value=100.0):
         late_shadow_id = persist_shadow_batch([candidate], candidate)[0]
     db.execute(
         "UPDATE shadow_trades SET created_at=? WHERE id=?",
@@ -399,7 +399,7 @@ def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
 def test_linked_projection_settles_all_time_aligned_same_key_shadows():
     from unittest.mock import patch
 
-    from aletheia.counterfactual.trades import persist_shadow_batch
+    from extensions.counterfactual.trades import persist_shadow_batch
     from aletheia.storage.sqlite import get_db
     from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
 
@@ -412,7 +412,7 @@ def test_linked_projection_settles_all_time_aligned_same_key_shadows():
         "scanner_family": "momentum",
         "trade_score": 60.0,
     }
-    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+    with patch("extensions.counterfactual.trades._current_price", return_value=100.0):
         first_id = persist_shadow_batch([candidate], candidate)[0]
         second_id = persist_shadow_batch([candidate], candidate)[0]
     db = get_db()
@@ -471,7 +471,7 @@ def test_public_shadow_diagnostics_sanitize_unauthorized_results():
     from unittest.mock import patch
 
     from aletheia.cli.inspect_cmd import inspect_app
-    from aletheia.counterfactual.trades import (
+    from extensions.counterfactual.trades import (
         list_shadow_trade_diagnostics,
         persist_shadow_batch,
     )
@@ -494,7 +494,7 @@ def test_public_shadow_diagnostics_sanitize_unauthorized_results():
             "scanner_family": "momentum",
             "trade_score": 60.0,
         }
-        with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+        with patch("extensions.counterfactual.trades._current_price", return_value=100.0):
             return persist_shadow_batch([candidate], candidate)[0]
 
     valid_id = persist("diagnostic-valid")

@@ -458,7 +458,7 @@ def test_historical_treatment_never_grants_current_execution(monkeypatch, exposu
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", _actual_ai_entry_authority)
     def no_experiment_authority(*args):
         raise AssertionError("Historical experiment ledger cannot authorize current execution")
-    monkeypatch.setattr("aletheia.learning.ledger.get_exposure", no_experiment_authority)
+    monkeypatch.setattr("extensions.learning.ledger.get_exposure", no_experiment_authority)
     now = datetime.now(timezone.utc)
     with pytest.raises(ValueError, match="ai_entry_running_contract_mismatch"):
         build_entry_plan_order_intent(historical, bid=100, ask=100.05,

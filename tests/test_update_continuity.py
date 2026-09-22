@@ -5,8 +5,8 @@ from __future__ import annotations
 def test_observation_ids_use_canonical_lab_generations(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.observation_lab import canonical
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import canonical
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.update import continuity
 
     monkeypatch.setattr(

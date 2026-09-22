@@ -728,7 +728,12 @@ async def create_research_note(params: dict) -> dict:
     if not content:
         return {"error": "Cannot create a research note without content."}
 
-    from aletheia.knowledge.manager import create_research_note as _create
+    try:
+        from extensions.knowledge.manager import create_research_note as _create
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        return {"error": "knowledge_extension_unavailable"}
     item = _create(title=title, content=content)
     if item is None:
         return {"error": "Research note rejected by quality gate (content too short or placeholder)."}
@@ -744,7 +749,12 @@ async def create_dreaming_log(params: dict) -> dict:
     if not content:
         return {"error": "Cannot create a dreaming log without content."}
 
-    from aletheia.knowledge.manager import create_dreaming_log as _create
+    try:
+        from extensions.knowledge.manager import create_dreaming_log as _create
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        return {"error": "knowledge_extension_unavailable"}
 
     item = _create(title=title, content=content)
     if item is None:
@@ -787,7 +797,12 @@ async def create_diagnostic_todo(params: dict) -> dict:
     content = params.get("content", title)
 
     from aletheia.agent_shell.file_artifacts import write_diagnostic_todo
-    from aletheia.knowledge.manager import create_research_note as _create
+    try:
+        from extensions.knowledge.manager import create_research_note as _create
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        return {"error": "knowledge_extension_unavailable"}
     item = _create(title=f"[DIAG] {title}", content=content,
                    metadata={"type": "diagnostic_todo"})
     if item is None:
@@ -805,7 +820,12 @@ async def create_improvement_proposal(params: dict) -> dict:
     title = params.get("title", "Improvement Proposal")
     content = params.get("content", title)
 
-    from aletheia.knowledge.manager import create_research_note as _create
+    try:
+        from extensions.knowledge.manager import create_research_note as _create
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        return {"error": "knowledge_extension_unavailable"}
     item = _create(title=f"[PROPOSAL] {title}", content=content,
                    metadata={"type": "improvement_proposal"})
     return {"created": True, "id": item.id if item else None, "title": title}
@@ -985,7 +1005,12 @@ async def create_daily_review(params: dict) -> dict:
     if not content:
         return {"error": "Cannot create a daily review without content."}
 
-    from aletheia.knowledge.manager import create_daily_review as _create
+    try:
+        from extensions.knowledge.manager import create_daily_review as _create
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.knowledge", "extensions.knowledge.manager"}:
+            raise
+        return {"error": "knowledge_extension_unavailable"}
 
     item = _create(title=title, content=content)
     if item is None:

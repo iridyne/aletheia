@@ -255,8 +255,8 @@ def prepare_activation_data() -> dict[str, Any]:
     if request.get("backup_profile") not in {"online", "authoritative"}:
         raise PackagedUpdateError("update_backup_profile_unproven")
 
-    from aletheia.observation_lab.execution_owner import get_execution_owner
-    from aletheia.observation_lab.runner import observation_settlement_barrier
+    from extensions.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.runner import observation_settlement_barrier
 
     if get_execution_owner() != "main":
         raise PackagedUpdateError("packaged_worker_owner_not_quiesced")

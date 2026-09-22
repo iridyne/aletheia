@@ -36,10 +36,10 @@ pytestmark = pytest.mark.usefixtures("observation_readers")
 
 def test_scheduler_startup_skips_filter_controller_observe_when_worker_owns():
     """Main scheduler startup MUST NOT register the observation cycle in worker mode."""
-    from aletheia.observation_lab.execution_owner import is_main_owner
+    from extensions.observation_lab.execution_owner import is_main_owner
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         assert is_main_owner() is False
@@ -54,7 +54,7 @@ def test_scheduler_treats_missing_observation_owner_as_unavailable(monkeypatch):
     real_import = builtins.__import__
 
     def missing_owner(name, *args, **kwargs):
-        if name == "aletheia.observation_lab.execution_owner":
+        if name == "extensions.observation_lab.execution_owner":
             raise ModuleNotFoundError(name=name)
         return real_import(name, *args, **kwargs)
 
@@ -89,7 +89,7 @@ def test_reconcile_removes_job_when_worker_owns(monkeypatch):
     monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         # Even with ``shadow_enabled=True``, worker mode overrides.
@@ -125,7 +125,7 @@ def test_reconcile_leaves_missing_job_missing_in_worker_mode(monkeypatch):
     monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         ok = scheduler_module.reconcile_filter_controller(
@@ -186,7 +186,7 @@ def test_reconcile_adds_job_when_main_owns_and_shadow_enabled(monkeypatch):
     monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="main",
     ):
         ok = scheduler_module.reconcile_filter_controller(
@@ -216,7 +216,7 @@ def test_reconcile_keeps_main_cycle_when_shadow_disabled(monkeypatch):
     monkeypatch.setattr(scheduler_module, "_scheduler", _FakeScheduler())
     monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="main",
     ):
         assert scheduler_module.reconcile_filter_controller(False, 6) is True
@@ -224,7 +224,7 @@ def test_reconcile_keeps_main_cycle_when_shadow_disabled(monkeypatch):
     assert calls == ["reschedule:filter_controller_observe"]
 
 
-def test_main_owned_shadow_disabled_still_runs_durable_cycle(monkeypatch):
+def test_main_owned_shadow_disabled_still_runs_durable_cycle(monkeypatch, optional_evidence_jobs):
     from types import SimpleNamespace
 
     import aletheia.agent_runtime.scheduler as scheduler_module
@@ -235,21 +235,21 @@ def test_main_owned_shadow_disabled_still_runs_durable_cycle(monkeypatch):
         lambda: SimpleNamespace(controller=SimpleNamespace(shadow_enabled=False, min_samples_gate=23)),
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe",
+        "extensions.analytics.filter_controller.run_controller_observe",
         lambda **_kwargs: pytest.fail("shadow-disabled Main must not run controller diagnostics"),
     )
     monkeypatch.setattr(
-        "aletheia.observation_lab.runner.run_lab_windows",
+        "extensions.observation_lab.runner.run_lab_windows",
         lambda: calls.append("lab") or {"windows_run": 1},
     )
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="main",
     ):
         scheduler_module._run_filter_controller_observe()
 
     assert calls == ["lab"]
-def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch):
+def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch, optional_evidence_jobs):
     """Main-side stray run must refuse with a typed reason when Worker owns."""
     import aletheia.agent_runtime.scheduler as scheduler_module
 
@@ -260,7 +260,7 @@ def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch
         return {}
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe",
+        "extensions.analytics.filter_controller.run_controller_observe",
         _fake_run_controller_observe,
     )
 
@@ -272,7 +272,7 @@ def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         scheduler_module._run_filter_controller_observe()
@@ -300,12 +300,12 @@ def test_worker_run_cli_calls_run_controller_observe(monkeypatch, tmp_path):
         return {"recommendations_written": 3, "lab_windows": {"windows_run": 2}}
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe",
+        "extensions.analytics.filter_controller.run_controller_observe",
         _fake_run_controller_observe,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = CliRunner().invoke(observe_app, ["run", "--min-samples", "7", "--json"])
@@ -327,12 +327,12 @@ def test_worker_run_cli_fails_closed_when_main_owns(monkeypatch):
         return {}
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe",
+        "extensions.analytics.filter_controller.run_controller_observe",
         _fake_run_controller_observe,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="main",
     ):
         result = CliRunner().invoke(observe_app, ["run"])
@@ -350,8 +350,8 @@ def test_two_worker_passes_cannot_overlap(tmp_path, monkeypatch):
     from threading import Event, Thread
 
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.worker_lock import (
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.worker_lock import (
         WorkerCycleLockError,
         worker_pass_lock,
     )
@@ -385,8 +385,8 @@ def test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread(
     tmp_path, monkeypatch
 ):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.worker_lock import worker_cycle_exclusion
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
@@ -401,8 +401,8 @@ def test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread(
 def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
     """Release must actually free the lock — otherwise every second pass fails."""
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.worker_lock import worker_pass_lock
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.worker_lock import worker_pass_lock
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
@@ -417,8 +417,8 @@ def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
     reset_lab_db()
 def test_worker_pass_writes_unknown_signature_without_cycle_guard_pollution(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion, worker_pass_lock
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.worker_lock import worker_cycle_exclusion, worker_pass_lock
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
@@ -431,7 +431,7 @@ def test_worker_pass_writes_unknown_signature_without_cycle_guard_pollution(tmp_
     assert lock_path.read_text() == signature
     reset_lab_db()
 
-def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypatch):
+def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypatch, optional_evidence_jobs):
     """A Main cycle cannot enter while an already-started Worker cycle runs."""
     from threading import Event, Thread
     from types import SimpleNamespace
@@ -440,9 +440,9 @@ def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypa
 
     import aletheia.agent_runtime.scheduler as scheduler_module
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.execution_owner as execution_owner
+    import extensions.observation_lab.execution_owner as execution_owner
     from aletheia.cli.observe_cmd import observe_app
-    from aletheia.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.db import reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(
@@ -474,7 +474,7 @@ def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypa
             active -= 1
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+        "extensions.analytics.filter_controller.run_controller_observe", fake_runner
     )
     failures: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -510,7 +510,7 @@ def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypa
 
 
 def test_main_to_worker_transition_serializes_and_exception_releases_lock(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, optional_evidence_jobs
 ):
     """Worker defers behind Main, then enters after Main raises and releases."""
     from threading import Event, Thread
@@ -520,9 +520,9 @@ def test_main_to_worker_transition_serializes_and_exception_releases_lock(
 
     import aletheia.agent_runtime.scheduler as scheduler_module
     import aletheia.config.loader as loader
-    import aletheia.observation_lab.execution_owner as execution_owner
+    import extensions.observation_lab.execution_owner as execution_owner
     from aletheia.cli.observe_cmd import observe_app
-    from aletheia.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.db import reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(
@@ -547,7 +547,7 @@ def test_main_to_worker_transition_serializes_and_exception_releases_lock(
         return {"pass_status": "success"}
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+        "extensions.analytics.filter_controller.run_controller_observe", fake_runner
     )
     failures: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -610,7 +610,7 @@ def test_execution_owner_is_config_driven_not_binary_driven():
     """Ownership is a shared-config decision; the Worker binary itself does not
     hard-code ownership. Two checkouts of the same repo at different SHAs
     each read the same shared config and act accordingly."""
-    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.execution_owner import get_execution_owner
 
     with patch(
         "aletheia.config.loader.load_config",
@@ -641,7 +641,7 @@ def test_execution_owner_is_config_driven_not_binary_driven():
 
 def test_config_read_failure_returns_owner_unavailable():
     """A load_config failure must return 'unknown', not 'main'."""
-    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.execution_owner import get_execution_owner
 
     for exc_type in (RuntimeError, OSError, ValueError):
         with patch(
@@ -655,7 +655,7 @@ def test_config_read_failure_returns_owner_unavailable():
 
 def test_require_main_or_absent_fails_closed_on_owner_unavailable():
     """Main must not be allowed to execute when ownership cannot be read."""
-    from aletheia.observation_lab.execution_owner import (
+    from extensions.observation_lab.execution_owner import (
         ObservationOwnerError,
         require_main_or_absent,
     )
@@ -670,7 +670,7 @@ def test_require_main_or_absent_fails_closed_on_owner_unavailable():
 
 def test_require_worker_owner_fails_closed_on_owner_unavailable():
     """Worker CLI must not be allowed to run when ownership cannot be read."""
-    from aletheia.observation_lab.execution_owner import (
+    from extensions.observation_lab.execution_owner import (
         ObservationOwnerError,
         require_worker_owner,
     )
@@ -685,7 +685,7 @@ def test_require_worker_owner_fails_closed_on_owner_unavailable():
 
 def test_invalid_explicit_owner_returns_owner_unavailable():
     """An explicitly set but unrecognised owner value must be treated as unavailable."""
-    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.execution_owner import get_execution_owner
 
     with patch(
         "aletheia.config.loader.load_config",

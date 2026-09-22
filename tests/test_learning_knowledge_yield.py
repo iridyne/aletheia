@@ -3,8 +3,8 @@
 
 
 def test_lab_authority_knowledge_yield_is_unavailable():
-    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.learning.knowledge_yield import build_knowledge_yield_report
+    from extensions.observation_lab.canonical import set_authority_source
 
     set_authority_source("lab", actor="owner", reason="knowledge-yield-authority-test")
 
@@ -21,10 +21,10 @@ def test_lab_authority_knowledge_yield_is_unavailable():
 
 def test_zero_real_intervention_drag_is_none_and_hold():
     """#2543: zero real-intervention hypotheses → drag is None, meta says HOLD."""
-    from aletheia.learning.knowledge_yield import (
+    from extensions.learning.knowledge_yield import (
         KnowledgeYieldReportV1, KnowledgeYieldSliceV1,
     )
-    from aletheia.learning.meta_evolution import recommend_meta_evolution
+    from extensions.learning.meta_evolution import recommend_meta_evolution
 
     slice_zero = KnowledgeYieldSliceV1(
         path_id="ranker_case_score",

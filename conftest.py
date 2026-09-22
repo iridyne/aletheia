@@ -29,7 +29,7 @@ def _settled_update_activation_boundary(request, monkeypatch):
     if module_name not in _UPDATE_CONTINUITY_MODULES:
         return
 
-    from aletheia.observation_lab import runner
+    from extensions.observation_lab import runner
 
     @contextmanager
     def settled_barrier():

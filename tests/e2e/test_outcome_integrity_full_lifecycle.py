@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def test_verified_exchange_close_flows_once_to_risk_reporting_and_learning(monkeypatch):
+def test_verified_exchange_close_flows_once_to_risk_reporting_and_learning(monkeypatch, optional_evidence_jobs):
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
         eligible_strategy_outcomes,
@@ -63,7 +63,7 @@ def test_verified_exchange_close_flows_once_to_risk_reporting_and_learning(monke
     assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
-def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_loss(monkeypatch):
+def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_loss(monkeypatch, optional_evidence_jobs):
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_trade_stats
     from aletheia.config.loader import load_config, save_config
@@ -127,7 +127,7 @@ def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_los
 
 
 def test_native_and_adopted_reopens_share_one_durable_learning_refreeze():
-    from aletheia.learning.control import global_learning_refreeze_reason
+    from extensions.learning.control import global_learning_refreeze_reason
     from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
     from aletheia.portfolio.reconciliation_integrity import (
         get_active_reconciliation_integrity_incident,

@@ -129,7 +129,7 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
 
 
 def test_controller_report_surfaces_observer_rule_diagnostics(monkeypatch):
-    from aletheia.analytics import filter_controller as controller
+    from extensions.analytics import filter_controller as controller
 
     monkeypatch.setattr(controller, "compute_filter_feedback", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -158,11 +158,11 @@ def test_controller_report_surfaces_observer_rule_diagnostics(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments."
+        "extensions.counterfactual.filter_experiments."
         "build_filter_shadow_experiment_report",
         lambda: [],
     )
@@ -185,7 +185,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.analytics.filter_evidence import record_filter_decision
-    from aletheia.counterfactual.filter_replay import build_observer_pre_filter_replay
+    from extensions.counterfactual.filter_replay import build_observer_pre_filter_replay
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
@@ -308,7 +308,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
 
 
 def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
-    from aletheia.analytics import filter_controller as controller
+    from extensions.analytics import filter_controller as controller
 
     monkeypatch.setattr(controller, "compute_filter_feedback", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -328,7 +328,7 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *_args, **_kwargs: [],
     )
 
@@ -336,11 +336,11 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
         raise AssertionError("stale production version must not be replayed")
 
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_observer_pre_filter_replay",
+        "extensions.counterfactual.filter_replay.build_observer_pre_filter_replay",
         forbidden_replay,
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments."
+        "extensions.counterfactual.filter_experiments."
         "build_filter_shadow_experiment_report",
         lambda: [],
     )

@@ -94,7 +94,7 @@ def _find_call_keywords(source: str, func_name: str) -> list[set[str]]:
 # ---------------------------------------------------------------------------
 
 
-_GUARDS_MODULE = "aletheia/knowledge/guards.py"
+_GUARDS_MODULE = "extensions/knowledge/guards.py"
 
 
 
@@ -117,7 +117,7 @@ def test_guard_candidates_reachable_by_promoter():
     import pathlib
     src = (pathlib.Path(_project_root()) / _GUARDS_MODULE).read_text(encoding="utf-8")
     assert "guard_candidates" in src, (
-        "aletheia/knowledge/guards.py never references 'guard_candidates' — the "
+        "extensions/knowledge/guards.py never references 'guard_candidates' — the "
         "promoter reads knowledge/guards/ while candidates are written to "
         "knowledge/guard_candidates/ → 0 promotions ever. "
         "See round2_week1_decision_chain_fixes.md Fix L-Bug-D"
@@ -147,7 +147,7 @@ def test_guard_candidates_reachable_by_promoter():
               status="implemented"),
 )
 def test_synthetic_closures_excluded_from_corpus():
-    """GREEN: the fix lives in aletheia/analytics/trade_case_builder.py (NOT the
+    """GREEN: the fix lives in extensions/analytics/trade_case_builder.py (NOT the
     frozen decision chain — analytics is solo-editable). Verifies behaviourally that
     a synthetic-closure row produces no case study while a genuine close still does,
     and that the same filter guards auto-generated guard candidates.
@@ -157,7 +157,7 @@ def test_synthetic_closures_excluded_from_corpus():
     """
     from unittest.mock import MagicMock, patch
 
-    from aletheia.analytics import trade_case_builder as tcb
+    from extensions.analytics import trade_case_builder as tcb
 
     def _row(position_id, close_reason, pnl_pct):
         return {
@@ -247,7 +247,7 @@ def test_applied_policy_version_closure():
     """mark_applied exists, is invoked by the reviewer, and the column is present."""
     import pathlib
 
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     assert hasattr(LessonStore, "mark_applied") and callable(LessonStore.mark_applied), (
         "LessonStore.mark_applied missing — applied_policy_version can never be set. "
         "See FIX 2 (LP-S10)."
@@ -300,9 +300,9 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provid
     from unittest.mock import AsyncMock
 
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.learning.skills import SkillStore
-    from aletheia.policies.store import PolicyStore
+    from extensions.learning.lessons import LessonStore
+    from extensions.learning.skills import SkillStore
+    from extensions.policies.store import PolicyStore
     from aletheia.storage.models import new_id
     from aletheia.storage.sqlite import get_db
     _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
@@ -360,7 +360,7 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch,
     from unittest.mock import AsyncMock
 
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.model_provider.inference_contract import CALLER_SPECS, OutputMode
 
     assert CALLER_SPECS["lesson_reviewer.judge"].output_mode is OutputMode.STRUCTURED
@@ -396,7 +396,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
     from unittest.mock import AsyncMock
 
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
 
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
     monkeypatch.setattr(
@@ -421,9 +421,9 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 
 async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.learning.skills import SkillStore
-    from aletheia.policies.store import PolicyStore
+    from extensions.learning.lessons import LessonStore
+    from extensions.learning.skills import SkillStore
+    from extensions.policies.store import PolicyStore
 
     store = LessonStore()
     lesson = store.create("stale review", "trade_case_study", "case-stale")
@@ -451,9 +451,9 @@ async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
 
 async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
     import extensions.research.lesson_reviewer as lr
-    import aletheia.policies.store as policy_module
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.learning.skills import SkillStore
+    import extensions.policies.store as policy_module
+    from extensions.learning.lessons import LessonStore
+    from extensions.learning.skills import SkillStore
     from aletheia.storage.sqlite import get_db
 
     store = LessonStore()
@@ -496,8 +496,8 @@ async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.policies.store import PolicyStore
+    from extensions.learning.lessons import LessonStore
+    from extensions.policies.store import PolicyStore
 
     store = LessonStore()
     first = store.create("first", "trade_case_study", "case-1")
@@ -521,9 +521,9 @@ async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
 
 async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monkeypatch):
     import extensions.research.lesson_reviewer as lr
-    from aletheia.learning.lessons import LessonStore
-    from aletheia.learning.skills import SkillStore
-    from aletheia.policies.store import PolicyStore
+    from extensions.learning.lessons import LessonStore
+    from extensions.learning.skills import SkillStore
+    from extensions.policies.store import PolicyStore
 
     store = LessonStore()
     lesson = store.create("recover draft", "trade_case_study", "case-recover")
@@ -575,7 +575,7 @@ async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monke
 @spec_claim(
     SpecClaim("LP-S13", "learning_pipeline", "§8.3 risk threshold immutability", "L2a",
               "No create_* function in knowledge/manager.py and no module under "
-              "aletheia/learning/ imports or calls update_config() / "
+              "extensions/learning/ imports or calls update_config() / "
               "update_risk_config() — the structural guarantee that learning output "
               "cannot modify risk_engine thresholds (knowledge_contract.md §8.3)",
               status="implemented"),
@@ -584,9 +584,9 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
     """LP-S13: §8.3 — learning pipeline has no write path to risk thresholds.
 
     Checks source text only (static analysis). Verifies that:
-    (a) aletheia/knowledge/manager.py create_* functions never call update_config
+    (a) extensions/knowledge/manager.py create_* functions never call update_config
         or update_risk_config.
-    (b) every .py file under aletheia/learning/ (LessonStore, PolicyStore, etc.)
+    (b) every .py file under extensions/learning/ (LessonStore, PolicyStore, etc.)
         does not import from aletheia.risk.engine or call update_config directly.
 
     This is an L2a structural claim — not a behavioural test — because the
@@ -600,17 +600,17 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
     forbidden_calls = ("update_config", "update_risk_config")
 
     # (a) knowledge/manager.py must not contain any forbidden call
-    mgr_src = (root / "aletheia/knowledge/manager.py").read_text(encoding="utf-8")
+    mgr_src = (root / "extensions/knowledge/manager.py").read_text(encoding="utf-8")
     for fn in forbidden_calls:
         assert fn not in mgr_src, (
             f"knowledge/manager.py calls {fn}() — learning write path can "
             "reach risk threshold configuration (§8.3 violation)"
         )
 
-    # (b) all .py files under aletheia/learning/ must not import risk.engine
+    # (b) all .py files under extensions/learning/ must not import risk.engine
     #     or call the forbidden config writers
-    learning_dir = root / "aletheia" / "learning"
-    assert learning_dir.exists(), "aletheia/learning/ directory missing"
+    learning_dir = root / "extensions" / "learning"
+    assert learning_dir.exists(), "extensions/learning/ directory missing"
     violations: list[str] = []
     for py_file in learning_dir.rglob("*.py"):
         src = py_file.read_text(encoding="utf-8")
@@ -946,7 +946,7 @@ def test_time_decay_overturn_path_exists():
 
     # 通过 AST 扫描函数名（FunctionDef/AsyncFunctionDef），不扫字符串字面量
     found_fns: list[str] = []
-    for search_dir in ("aletheia/analytics", "aletheia/learning", "aletheia/knowledge"):
+    for search_dir in ("aletheia/analytics", "extensions/analytics", "extensions/learning", "extensions/knowledge"):
         d = root / search_dir
         if not d.exists():
             continue
@@ -963,7 +963,7 @@ def test_time_decay_overturn_path_exists():
                             found_fns.append(f"{py_file.relative_to(root)}::{node.name}")
 
     assert found_fns, (
-        "未在 aletheia/analytics/、aletheia/learning/ 或 aletheia/knowledge/ 中找到 "
+        "未在 aletheia/analytics/、extensions/learning/ 或 extensions/knowledge/ 中找到 "
         "trading_memo/regime_playbook 专属的 half-life 时间衰减函数 "
         f"（目标函数名模式: {decay_fn_patterns}）— "
         "Phase 2 时间衰减推翻路径缺失或发生回归。"
@@ -1022,7 +1022,7 @@ def test_post_trade_reviewer_idempotent():
     )
 
     # create_post_trade_review must accept tags
-    from aletheia.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.manager import create_post_trade_review
     sig = inspect.signature(create_post_trade_review)
     assert "tags" in sig.parameters, (
         "create_post_trade_review() must accept a `tags` parameter to store the window key"
@@ -1089,7 +1089,7 @@ def test_dreaming_agent_lesson_evidence_populated():
     # (c) LessonStore.create signature accepts evidence
     import inspect
 
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     sig = inspect.signature(LessonStore.create)
     assert "evidence" in sig.parameters, (
         "LessonStore.create() must accept an `evidence` parameter"
@@ -1174,7 +1174,7 @@ def test_skill_store_producer_is_draft_only():
 
     root = pathlib.Path(_project_root())
     reviewer_src = (root / "extensions" / "research" / "lesson_reviewer.py").read_text(encoding="utf-8")
-    skill_src = (root / "aletheia" / "learning" / "skills.py").read_text(encoding="utf-8")
+    skill_src = (root / "extensions" / "learning" / "skills.py").read_text(encoding="utf-8")
 
     assert "SkillStore" in reviewer_src and "create_from_lesson" in reviewer_src
     assert "status=\"draft\"" in skill_src
@@ -1393,7 +1393,7 @@ def test_policy_diff_route_is_reachable_without_shadowing(tmp_path, monkeypatch)
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite_store
-    from aletheia.policies.store import PolicyStore
+    from extensions.policies.store import PolicyStore
     from aletheia.server.app import app
     from aletheia.storage.migrations import run_migrations
 

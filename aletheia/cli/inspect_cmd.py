@@ -821,7 +821,7 @@ def guards(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """List active trading guards."""
-    from aletheia.knowledge.guards import load_trading_guards
+    from extensions.knowledge.guards import load_trading_guards
     filter_scope = None if (not scope or scope == "all") else scope
     guard_list = load_trading_guards(scope=filter_scope, status="active")
     result = []
@@ -849,7 +849,7 @@ def guard_impact(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Read-only audit of active blocking guard impact on recent candidates."""
-    from aletheia.analytics.guard_impact import build_guard_impact_audit, render_guard_impact_audit
+    from extensions.analytics.guard_impact import build_guard_impact_audit, render_guard_impact_audit
 
     report = build_guard_impact_audit(hours=hours)
     if json_output:
@@ -1582,7 +1582,7 @@ def shadow_trades(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
-    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+    from extensions.counterfactual.trades import list_shadow_trade_diagnostics
 
     rows = list_shadow_trade_diagnostics(
         scanner_family=scanner,

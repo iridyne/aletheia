@@ -205,7 +205,7 @@ def reanchor_joint_checkpoint(
     expected = repr(str(expected_checkpoint_fingerprint))
     script = (
         "import json\n"
-        "from aletheia.observation_lab.checkpoint import (\n"
+        "from extensions.observation_lab.checkpoint import (\n"
         "    compute_joint_checkpoint, save_joint_checkpoint, verify_joint_checkpoint,\n"
         ")\n"
         "from aletheia.update.target_fresh import checkpoint_delta_allowed\n"

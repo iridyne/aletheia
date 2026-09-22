@@ -267,7 +267,7 @@ def test_filter_controller_shadow_disabled_keeps_paused_main_job(monkeypatch):
     paused_set = {"filter_controller_observe"}
     monkeypatch.setattr(scheduler, "_selectively_paused_jobs", paused_set)
     monkeypatch.setattr(
-        "aletheia.observation_lab.execution_owner.is_worker_owner",
+        "extensions.observation_lab.execution_owner.is_worker_owner",
         lambda: False,
     )
 
@@ -346,7 +346,7 @@ def test_trigger_changes_preserve_layered_pause(monkeypatch):
     monkeypatch.setattr(scheduler, "_scheduler", fs)
     monkeypatch.setattr(scheduler, "_selectively_paused_jobs", set(job_ids))
     monkeypatch.setattr(
-        "aletheia.observation_lab.execution_owner.is_worker_owner",
+        "extensions.observation_lab.execution_owner.is_worker_owner",
         lambda: False,
     )
 

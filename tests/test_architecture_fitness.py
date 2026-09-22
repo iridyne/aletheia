@@ -706,16 +706,16 @@ def test_trust_boundary_files_are_registered_in_coveragerc():
         "aletheia/analytics/profit_gradient*.py",
         "aletheia/execution/reconciliation.py",
         "aletheia/economics/context_artifacts.py",
-        "aletheia/learning/*epoch*.py",
-        "aletheia/learning/policy_epochs.py",
+        "extensions/learning/*epoch*.py",
+        "extensions/learning/policy_epochs.py",
         # Replay lives under two subpackages today; both count.
         "aletheia/analytics/*replay*.py",
-        "aletheia/counterfactual/*replay*.py",
+        "extensions/counterfactual/*replay*.py",
     )
 
     aletheia_root = repo_root / "aletheia"
     unregistered: list[str] = []
-    for path in aletheia_root.rglob("*.py"):
+    for path in (*aletheia_root.rglob("*.py"), *(repo_root / "extensions").rglob("*.py")):
         if path.name == "__init__.py":
             continue
         rel = path.relative_to(repo_root).as_posix()

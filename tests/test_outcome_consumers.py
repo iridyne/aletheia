@@ -136,7 +136,7 @@ def test_trade_stats_resolves_eligible_outcomes_through_source_module(monkeypatc
     assert ts.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
 
 
-def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monkeypatch):
+def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monkeypatch, optional_evidence_jobs):
     """Regression (sibling of the trade_stats case): compute_family_scorecard is
     reached via build_trade_stats inside performance_report._collect, so the same
     report tests that patch outcome_integrity.eligible_strategy_outcomes used to
@@ -182,7 +182,7 @@ def test_operator_strategy_performance_ignores_administrative_rows():
     assert performance["outcome_semantics_version"] == "oi-v1"
 
 
-def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows():
+def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows(optional_evidence_jobs):
     from aletheia.analytics.family_scorecard import compute_family_scorecard
     from aletheia.analytics.go_live_scorecard import _genuine_closed_pnls
 

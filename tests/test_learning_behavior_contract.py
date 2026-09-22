@@ -6,7 +6,7 @@ from dataclasses import replace
 
 
 def test_every_measured_path_declares_a_behavior_contract_version():
-    from aletheia.learning.registry import LEARNING_PATHS
+    from extensions.learning.registry import LEARNING_PATHS
 
     assert all(
         path.behavior_contract_version
@@ -16,7 +16,7 @@ def test_every_measured_path_declares_a_behavior_contract_version():
 
 
 def test_behavior_contract_hash_is_deterministic_and_commit_independent(monkeypatch):
-    from aletheia.learning import behavior_contracts
+    from extensions.learning import behavior_contracts
 
     path = behavior_contracts.get_learning_path("universe_family_calibration")
     first = behavior_contracts.build_behavior_contract_hash(
@@ -52,7 +52,7 @@ def test_behavior_contract_hash_is_deterministic_and_commit_independent(monkeypa
 
 
 def test_behavior_contract_hash_rotates_with_measured_contract_inputs():
-    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
+    from extensions.learning.behavior_contracts import build_behavior_contract_hash
 
     common = {
         "path_id": "universe_family_calibration",
@@ -73,7 +73,7 @@ def test_behavior_contract_hash_rotates_with_measured_contract_inputs():
 
 
 def test_declared_behavior_version_rotates_the_policy_epoch(monkeypatch):
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
 
     current_path = experiments.get_learning_path("universe_family_calibration")
     before = experiments._policy_epoch_definition(current_path.path_id)
@@ -92,7 +92,7 @@ def test_declared_behavior_version_rotates_the_policy_epoch(monkeypatch):
 
 
 def test_measured_policy_epochs_rotate_with_cost_model_version(monkeypatch):
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     before = {
@@ -112,7 +112,7 @@ def test_measured_policy_epochs_rotate_with_cost_model_version(monkeypatch):
 
 
 def test_measured_cost_model_identity_survives_cold_config_failure(monkeypatch):
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     path_id = "universe_family_calibration"
@@ -135,9 +135,9 @@ def test_measured_cost_model_identity_survives_cold_config_failure(monkeypatch):
 
 
 def test_behavior_hash_is_reproducible_across_distinct_epoch_ids():
-    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
-    from aletheia.learning.ledger import insert_record
-    from aletheia.learning.models import LearningPolicyEpoch
+    from extensions.learning.behavior_contracts import current_behavior_contract_hash
+    from extensions.learning.ledger import insert_record
+    from extensions.learning.models import LearningPolicyEpoch
     from aletheia.storage.sqlite import get_db
 
     policy_hash = "a" * 64
@@ -171,9 +171,9 @@ def test_behavior_hash_is_reproducible_across_distinct_epoch_ids():
 def test_policy_epoch_from_another_path_cannot_define_behavior_identity():
     import pytest
 
-    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
-    from aletheia.learning.ledger import insert_record
-    from aletheia.learning.models import LearningPolicyEpoch
+    from extensions.learning.behavior_contracts import current_behavior_contract_hash
+    from extensions.learning.ledger import insert_record
+    from extensions.learning.models import LearningPolicyEpoch
 
     assert insert_record("learning_policy_epochs", LearningPolicyEpoch(
         epoch_id="wrong-path-epoch",

@@ -36,7 +36,7 @@ class _Adapter:
 
 
 def _manifest(*, effect_mode="paper_treatment", **overrides):
-    from aletheia.observation_lab.manifest import build_manifest
+    from extensions.observation_lab.manifest import build_manifest
 
     values = dict(
         observation_id="obs-canonical",
@@ -67,8 +67,8 @@ def _manifest(*, effect_mode="paper_treatment", **overrides):
 
 
 def test_lab_v2_schema_and_authority_start_legacy():
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.canonical import get_authority_source
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import get_authority_source
 
     tables = {
         str(row[0])
@@ -94,12 +94,12 @@ def test_lab_v2_schema_and_authority_start_legacy():
 
 
 def test_bridge_health_reports_only_current_unrevoked_manifests():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         observation_bridge_health,
         set_authority_source,
     )
-    from aletheia.observation_lab.manifest import publish_manifest
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.db import get_lab_db
 
     set_authority_source("lab", actor="owner", reason="bridge-health-test")
     lab = get_lab_db()
@@ -145,7 +145,7 @@ def test_bridge_health_reports_only_current_unrevoked_manifests():
 
 
 def test_missing_authority_row_fails_closed():
-    from aletheia.observation_lab.canonical import get_authority_source
+    from extensions.observation_lab.canonical import get_authority_source
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
@@ -156,7 +156,7 @@ def test_missing_authority_row_fails_closed():
 
 
 def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
         prune_observation_delivery_outbox,
@@ -165,8 +165,8 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.manifest import publish_manifest
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     register_treatment_adapter(_Adapter(), replace=True)
@@ -233,7 +233,7 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
     ).fetchone()
     assert tuple(cursor_after_idle) == checkpoint_before_idle
     from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
     )
@@ -284,8 +284,8 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
     ],
 )
 def test_importer_idle_rejects_unproved_prior_cursor_identity(corruption):
-    from aletheia.observation_lab.canonical import import_delivery_receipts
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import import_delivery_receipts
+    from extensions.observation_lab.db import get_lab_db
 
     lab = get_lab_db()
     checkpoint = {
@@ -348,8 +348,8 @@ def test_importer_idle_rejects_unproved_prior_cursor_identity(corruption):
 
 
 def test_importer_fresh_empty_pass_does_not_create_cursor():
-    from aletheia.observation_lab.canonical import import_delivery_receipts
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import import_delivery_receipts
+    from extensions.observation_lab.db import get_lab_db
 
     lab = get_lab_db()
     result = import_delivery_receipts()
@@ -361,11 +361,11 @@ def test_importer_fresh_empty_pass_does_not_create_cursor():
 
 
 def test_importer_exact_limit_then_idle_preserves_last_processed_receipt():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db()
     receipt_ids = [
@@ -396,13 +396,13 @@ def test_importer_exact_limit_then_idle_preserves_last_processed_receipt():
 def test_importer_retries_main_ack_for_already_imported_receipt(monkeypatch):
     from contextlib import contextmanager
 
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
         register_observation_spec,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage import repositories
     from aletheia.storage.sqlite import get_db
 
@@ -469,14 +469,14 @@ def test_importer_retries_main_ack_for_already_imported_receipt(monkeypatch):
 def test_lab_treatment_falls_back_when_joint_checkpoint_is_unproven(monkeypatch):
     from types import SimpleNamespace
 
-    import aletheia.observation_lab.checkpoint as checkpoint
-    from aletheia.observation_lab.canonical import (
+    import extensions.observation_lab.checkpoint as checkpoint
+    from extensions.observation_lab.canonical import (
         register_treatment_adapter,
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import publish_manifest
 
     register_treatment_adapter(_Adapter(), replace=True)
     set_authority_source("lab", actor="owner", reason="checkpoint-gate-test")
@@ -514,14 +514,14 @@ def test_lab_treatment_falls_back_when_joint_checkpoint_is_unproven(monkeypatch)
 
 
 def test_late_delivery_receipt_is_rejected_after_generation_terminalization():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         append_lifecycle_event,
         import_delivery_receipts,
         register_observation_spec,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     set_authority_source("lab", actor="owner", reason="late-receipt-test")
@@ -564,13 +564,13 @@ def test_late_delivery_receipt_is_rejected_after_generation_terminalization():
 
 
 def test_paper_manifest_without_explicit_lab_authorization_falls_back_to_baseline():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         register_treatment_adapter,
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import publish_manifest
 
     register_treatment_adapter(_Adapter(), replace=True)
     set_authority_source("lab", actor="owner", reason="missing-paper-authority-test")
@@ -607,7 +607,7 @@ def test_paper_manifest_without_explicit_lab_authorization_falls_back_to_baselin
 
 
 def test_lab_outbox_prune_stays_unavailable_without_import_proof():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         prune_observation_delivery_outbox,
         set_authority_source,
@@ -639,12 +639,12 @@ def test_lab_outbox_prune_stays_unavailable_without_import_proof():
 
 
 def test_identityless_capture_receipt_is_imported_as_non_authorizing_lab_audit():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     set_authority_source("lab", actor="owner", reason="capture-import-test")
     receipt_id = append_delivery_receipt(
@@ -669,12 +669,12 @@ def test_identityless_capture_receipt_is_imported_as_non_authorizing_lab_audit()
 
 
 def test_legacy_identityless_treatment_refusal_imports_as_non_authorizing_audit():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         import_delivery_receipts,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     set_authority_source("lab", actor="owner", reason="legacy-refusal-import-test")
     receipt_id = append_delivery_receipt(
@@ -699,7 +699,7 @@ def test_legacy_identityless_treatment_refusal_imports_as_non_authorizing_audit(
 
 
 def test_pending_receipt_blocks_cutover_without_losing_evidence():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt, get_authority_source, set_authority_source,
     )
     from aletheia.storage.sqlite import get_db
@@ -720,7 +720,7 @@ def test_pending_receipt_blocks_cutover_without_losing_evidence():
 
 @pytest.mark.parametrize("authority_state", ["legacy", "missing_row", "missing_schema"])
 def test_numeric_treatment_without_lab_authority_preserves_baseline(authority_state):
-    from aletheia.learning.experiments import InfluenceDecision, apply_numeric_treatment
+    from extensions.learning.experiments import InfluenceDecision, apply_numeric_treatment
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -739,7 +739,7 @@ def test_numeric_treatment_without_lab_authority_preserves_baseline(authority_st
 
 
 def test_canonical_resolver_missing_schema_reports_unavailable_not_legacy():
-    from aletheia.observation_lab.canonical import register_treatment_adapter, resolve_observation_treatment
+    from extensions.observation_lab.canonical import register_treatment_adapter, resolve_observation_treatment
     from aletheia.storage.sqlite import get_db
 
     get_db().execute("DROP TABLE observation_authority_state")
@@ -755,10 +755,10 @@ def test_canonical_resolver_missing_schema_reports_unavailable_not_legacy():
 
 
 def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
-    from aletheia.learning import experiments
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.learning import experiments
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
     from aletheia.storage.sqlite import get_db
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
@@ -819,9 +819,9 @@ def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
 
 
 def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monkeypatch):
-    from aletheia.learning import experiments
-    from aletheia.observation_lab import canonical
-    from aletheia.observation_lab.canonical import (
+    from extensions.learning import experiments
+    from extensions.observation_lab import canonical
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         set_authority_source,
     )
@@ -860,8 +860,8 @@ def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monke
 
 
 def test_deferred_identityless_refusal_is_published_as_capture(monkeypatch):
-    from aletheia.learning import experiments
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.learning import experiments
+    from extensions.observation_lab.canonical import set_authority_source
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
     set_authority_source("lab", actor="owner", reason="deferred-capture-test")
@@ -886,13 +886,13 @@ def test_deferred_identityless_refusal_is_published_as_capture(monkeypatch):
 
 
 def test_observe_only_and_deny_tombstone_never_change_baseline():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         register_treatment_adapter,
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db, lab_transaction
-    from aletheia.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.db import get_lab_db, lab_transaction
+    from extensions.observation_lab.manifest import publish_manifest
 
     register_treatment_adapter(_Adapter(), replace=True)
     set_authority_source("lab", actor="owner", reason="observe-only-test")
@@ -931,7 +931,7 @@ def test_observe_only_and_deny_tombstone_never_change_baseline():
 
 
 def test_receipt_is_atomic_with_caller_transaction():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.canonical import append_delivery_receipt
     from aletheia.storage.repositories import transaction
     from aletheia.storage.sqlite import get_db
 
@@ -951,7 +951,7 @@ def test_receipt_is_atomic_with_caller_transaction():
 
 
 def test_checkpoint_and_manifest_identity_triggers_remain_append_only():
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db().execute(
         "INSERT INTO observation_archives "
@@ -967,7 +967,7 @@ def test_checkpoint_and_manifest_identity_triggers_remain_append_only():
 
 
 def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_lifecycle_event,
         compact_finalized_generations,
         consume_inference_plan,
@@ -982,7 +982,7 @@ def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
         verify_generation_archive,
         write_generation_archive,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     db = get_lab_db()
     db.execute(
@@ -1060,8 +1060,8 @@ def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
 
 
 def test_retention_claim_cannot_invent_unbound_source_identity():
-    from aletheia.observation_lab.canonical import upsert_retention_claim
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import upsert_retention_claim
+    from extensions.observation_lab.db import get_lab_db
 
     db = get_lab_db()
     db.execute(
@@ -1082,8 +1082,8 @@ def test_retention_claim_cannot_invent_unbound_source_identity():
 
 
 def test_lab_cutover_rejects_fabricated_active_retention_claim():
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.db import get_lab_db
 
     db = get_lab_db()
     db.execute(
@@ -1109,8 +1109,8 @@ def test_lab_cutover_rejects_fabricated_active_retention_claim():
 
 
 def test_evaluation_source_cutoff_rejects_unstructured_text():
-    from aletheia.observation_lab.canonical import record_observation_evaluation
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import record_observation_evaluation
+    from extensions.observation_lab.db import get_lab_db
 
     get_lab_db().execute(
         "INSERT INTO observation_windows "
@@ -1131,8 +1131,8 @@ def test_evaluation_source_cutoff_rejects_unstructured_text():
 
 
 def test_evaluation_source_cutoff_cannot_run_ahead_of_import_cursor():
-    from aletheia.observation_lab.canonical import record_observation_evaluation
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import record_observation_evaluation
+    from extensions.observation_lab.db import get_lab_db
 
     db = get_lab_db()
     db.execute(
@@ -1161,11 +1161,11 @@ def test_evaluation_source_cutoff_cannot_run_ahead_of_import_cursor():
 
 def test_lab_audit_outbox_mirrors_idempotently(monkeypatch, tmp_path):
     from aletheia.files import jsonl
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         enqueue_lab_audit,
         mirror_lab_audit_outbox,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     log_dir = tmp_path / "logs"
     monkeypatch.setattr(jsonl, "_log_dir", lambda: log_dir)
@@ -1188,13 +1188,13 @@ def test_lab_audit_outbox_mirrors_idempotently(monkeypatch, tmp_path):
 
 
 def test_inference_plan_rejects_evaluation_from_another_generation():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         consume_inference_plan,
         freeze_inference_plan,
         record_observation_evaluation,
         register_inference_plan,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     db = get_lab_db()
     for observation_id in ("obs-plan-a", "obs-plan-b"):
@@ -1228,8 +1228,8 @@ def test_inference_plan_rejects_evaluation_from_another_generation():
 
 
 def test_importer_does_not_treat_a_numeric_outbox_gap_as_missing_evidence():
-    from aletheia.observation_lab.canonical import import_delivery_receipts
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import import_delivery_receipts
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     get_lab_db()
@@ -1250,8 +1250,8 @@ def test_importer_does_not_treat_a_numeric_outbox_gap_as_missing_evidence():
 
 
 def test_canonical_registration_does_not_create_a_main_experiment():
-    from aletheia.observation_lab.canonical import register_observation_spec
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     row = register_observation_spec({
@@ -1275,7 +1275,7 @@ def test_canonical_registration_does_not_create_a_main_experiment():
 
 
 def test_lab_authority_cannot_return_to_legacy():
-    from aletheia.observation_lab.canonical import get_authority_source, set_authority_source
+    from extensions.observation_lab.canonical import get_authority_source, set_authority_source
 
     legacy = get_authority_source()
     assert legacy.source == "legacy"
@@ -1291,7 +1291,7 @@ def test_lab_authority_cannot_return_to_legacy():
 
 
 def test_owner_close_is_imported_as_terminal_lab_lifecycle():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         import_delivery_receipts,
         record_owner_action,
         register_observation_spec,
@@ -1299,11 +1299,11 @@ def test_owner_close_is_imported_as_terminal_lab_lifecycle():
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.manifest import (
+    from extensions.observation_lab.manifest import (
         build_manifest,
         publish_manifest,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     register_treatment_adapter(_Adapter(), replace=True)
     set_authority_source("lab", actor="owner", reason="owner-close-test")
@@ -1373,13 +1373,13 @@ def test_owner_close_is_imported_as_terminal_lab_lifecycle():
 
 
 def test_owner_admission_creates_lab_successor_and_applied_receipt():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         import_delivery_receipts,
         record_owner_action,
         register_observation_spec,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     set_authority_source("lab", actor="owner", reason="admission-successor-test")
@@ -1444,7 +1444,7 @@ def test_owner_admission_creates_lab_successor_and_applied_receipt():
 
 
 def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         import_delivery_receipts,
         publish_manifest_with_lifecycle,
         record_owner_action,
@@ -1452,8 +1452,8 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
         register_treatment_adapter,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import build_manifest
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import build_manifest
 
     register_treatment_adapter(_Adapter(), replace=True)
     set_authority_source("lab", actor="owner", reason="paper-publication-test")
@@ -1573,7 +1573,7 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
 
 
 def test_main_delivery_outbox_is_append_only_until_acknowledged():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         prune_observation_delivery_outbox,
     )
@@ -1607,7 +1607,7 @@ def test_main_delivery_outbox_is_append_only_until_acknowledged():
 
 
 def test_delivery_receipt_duplicate_id_cannot_change_identity():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.canonical import append_delivery_receipt
 
     append_delivery_receipt(
         receipt_id="receipt-identity",

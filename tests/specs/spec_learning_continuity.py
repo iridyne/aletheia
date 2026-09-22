@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -26,7 +28,7 @@ def _keep_spec_memory_db_open(monkeypatch):
 ))
 def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.trust.learning_safety import AUTONOMOUS_LEARNING_JOBS
 
     monkeypatch.setattr(
@@ -60,9 +62,9 @@ def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
     "date-window cannot run twice after another restart.",
     status="implemented",
 ))
-def test_daily_learning_catchup_is_once_per_successful_window(monkeypatch):
+def test_daily_learning_catchup_is_once_per_successful_window(monkeypatch, optional_evidence_jobs):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.agents import _AGENTS
     from extensions.research.lesson_reviewer import run_lesson_reviewer
 
@@ -94,9 +96,9 @@ def test_daily_learning_catchup_is_once_per_successful_window(monkeypatch):
     assert health.status == "healthy"
 
 
-def test_daily_learning_catchup_retries_only_failed_due_children(monkeypatch):
+def test_daily_learning_catchup_retries_only_failed_due_children(monkeypatch, optional_evidence_jobs):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.agents import _AGENTS
     from extensions.research.lesson_reviewer import run_lesson_reviewer
 
@@ -174,8 +176,8 @@ def test_daily_learning_catchup_retries_only_failed_due_children(monkeypatch):
 ))
 def test_reviewer_backlog_and_failure_are_durable(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning import control
+    from extensions.learning.lessons import LessonStore
 
     monkeypatch.setattr(
         control,
@@ -232,7 +234,7 @@ def test_reviewer_backlog_and_failure_are_durable(monkeypatch):
 
 def test_newer_learning_success_does_not_erase_prior_failed_window(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
+    from extensions.learning import control
 
     monkeypatch.setattr(
         control,
@@ -262,8 +264,8 @@ def test_newer_learning_success_does_not_erase_prior_failed_window(monkeypatch):
 
 def test_lesson_reviewer_attempt_history_links_retry(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
-    from aletheia.learning.ledger import list_records
+    from extensions.learning import control
+    from extensions.learning.ledger import list_records
 
     monkeypatch.setattr(
         control,
@@ -291,8 +293,8 @@ def test_lesson_reviewer_attempt_history_links_retry(monkeypatch):
 
 def test_lesson_reviewer_restart_and_boundary_keep_attempt_truth(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
-    from aletheia.learning.ledger import list_records
+    from extensions.learning import control
+    from extensions.learning.ledger import list_records
 
     monkeypatch.setattr(
         control,

@@ -96,7 +96,7 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
     monkeypatch.setattr(observer, "record_step", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(observer, "log_tool", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "aletheia.learning.prompt_bundles.authorize_observer_learning_bundle",
+        "extensions.learning.prompt_bundles.authorize_observer_learning_bundle",
         lambda *_args, **_kwargs: ("", None),
     )
     prefetched = observer._SymbolPrefetch(

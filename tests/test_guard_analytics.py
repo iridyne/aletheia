@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from aletheia.analytics.guard_effectiveness import (
+from extensions.analytics.guard_effectiveness import (
     compute_guard_stats,
     _row_to_guard_context,
 )
@@ -30,17 +30,17 @@ class TestRowToGuardContext:
 
 
 class TestComputeGuardStats:
-    @patch("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows")
-    @patch("aletheia.analytics.guard_effectiveness.load_trading_guards")
+    @patch("extensions.analytics.guard_effectiveness.build_trade_attribution_rows")
+    @patch("extensions.analytics.guard_effectiveness.load_trading_guards")
     def test_no_guards_empty(self, mock_guards, mock_rows):
         mock_guards.return_value = []
         result = compute_guard_stats()
         assert result == []
 
-    @patch("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows")
-    @patch("aletheia.analytics.guard_effectiveness.load_trading_guards")
+    @patch("extensions.analytics.guard_effectiveness.build_trade_attribution_rows")
+    @patch("extensions.analytics.guard_effectiveness.load_trading_guards")
     def test_no_rows_zero_counts(self, mock_guards, mock_rows):
-        from aletheia.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
+        from extensions.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
         mock_guards.return_value = [TradingGuard(
             guard_id="test", title="Test", status="active",
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],
@@ -50,10 +50,10 @@ class TestComputeGuardStats:
         result = compute_guard_stats()
         assert result == []
 
-    @patch("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows")
-    @patch("aletheia.analytics.guard_effectiveness.load_trading_guards")
+    @patch("extensions.analytics.guard_effectiveness.build_trade_attribution_rows")
+    @patch("extensions.analytics.guard_effectiveness.load_trading_guards")
     def test_counts_matching_rows(self, mock_guards, mock_rows):
-        from aletheia.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
+        from extensions.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
         mock_guards.return_value = [TradingGuard(
             guard_id="late_guard", title="Late Guard", status="active",
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],

@@ -39,8 +39,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "knowledge_fts_integrity"
 _ROOT = Path(__file__).parent.parent.parent
-_MANAGER = _ROOT / "aletheia" / "knowledge" / "manager.py"
-_RETRIEVAL = _ROOT / "aletheia" / "knowledge" / "retrieval.py"
+_MANAGER = _ROOT / "extensions" / "knowledge" / "manager.py"
+_RETRIEVAL = _ROOT / "extensions" / "knowledge" / "retrieval.py"
 _INDEX = _ROOT / "aletheia" / "storage" / "knowledge_index.py"
 _OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
 
@@ -237,7 +237,7 @@ def test_reindex_skips_missing_file_items():
     # We validate this by checking that _read_body("") returns "" and that
     # index_knowledge_item with an empty body still writes (the gate is in reindex_all).
     # The real guard is: reindex_all must check body before calling index_knowledge_item.
-    from aletheia.knowledge.retrieval import _read_body
+    from extensions.knowledge.retrieval import _read_body
     assert _read_body(None) == "", "_read_body(None) must return empty string"
     assert _read_body("/nonexistent/path/that/does/not/exist.md") == "", \
         "_read_body of missing file must return empty string"

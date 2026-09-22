@@ -154,7 +154,7 @@ async def test_lesson_extraction_reports_invalid_structured_output(
     setup_env(tmp_path, monkeypatch)
 
     from extensions.research import dreaming_agent
-    from aletheia.learning.control import get_learning_job_health
+    from extensions.learning.control import get_learning_job_health
     from aletheia.storage.repositories import pending_trade_case_studies_summary
     _seed_trade_case_study()
 
@@ -240,7 +240,7 @@ async def test_lesson_extraction_drains_cases_with_durable_cursor(
 ):
     setup_env(tmp_path, monkeypatch)
     from extensions.research import dreaming_agent
-    from aletheia.learning.control import (
+    from extensions.learning.control import (
         get_learning_job_health,
         job_health_view,
     )
@@ -275,8 +275,8 @@ async def test_reopened_prefix_does_not_starve_forward_cases(tmp_path, monkeypat
     from pathlib import Path
 
     from extensions.research import dreaming_agent
-    from aletheia.learning.control import get_learning_job_health
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.control import get_learning_job_health
+    from extensions.learning.lessons import LessonStore
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -362,7 +362,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     from pathlib import Path
 
     from extensions.research import dreaming_agent
-    from aletheia.learning import guard_routing, hypotheses
+    from extensions.learning import guard_routing, hypotheses
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import pending_trade_case_studies_summary
     from tests.specs.spec_learning_attribution import _ready_research
@@ -430,7 +430,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
 
 def test_pending_trade_case_reopens_after_rejected_lesson(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.storage.repositories import (
         list_pending_trade_case_studies,
         pending_trade_case_studies_summary,
@@ -517,7 +517,7 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     insert_strategy(s2)
     update_strategy(s2.id, state="strategy_hypothesis")
 
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
     # Content must be ≥80 chars to pass _is_quality_pass's _MIN_CONTENT_LENGTH gate.
     create_research_note("note A", "Evidence A: momentum divergence observed in BTC 4h chart. RSI overbought while price flat — bearish signal.")
     create_research_note("note B", "Evidence B: ETH funding rates turned negative on perpetuals, suggesting leveraged longs being squeezed out gradually.")

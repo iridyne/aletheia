@@ -33,7 +33,7 @@ _ROOT = Path(__file__).parents[2]
     ),
 )
 def test_legacy_gateway_write_graph_is_removed():
-    from aletheia.sync.importer import _IMPORT_ALLOWED_TABLES
+    from extensions.sync.importer import _IMPORT_ALLOWED_TABLES
 
     assert _IMPORT_ALLOWED_TABLES == {
         "serenity_themes", "serenity_evidence", "serenity_claims",

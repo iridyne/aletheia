@@ -6,7 +6,7 @@ from tests.test_experience_loop import setup_env
 def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.files.knowledge_document import CONTENT_FORMAT, content_sha256
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
 
     item = create_research_note(
         "Canonical provenance",
@@ -105,8 +105,8 @@ def test_legacy_path_uses_knowledge_segment_below_data_root(tmp_path, monkeypatc
 def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.files.knowledge_document import read_knowledge_document
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.repositories import get_knowledge_item
 
     item = create_research_note(
@@ -185,8 +185,8 @@ def test_old_schema_reindex_does_not_write_v51_columns(tmp_path, monkeypatch):
 
 def test_structured_filters_apply_before_candidate_limit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
 
     for index in range(60):
         assert create_research_note(
@@ -216,8 +216,8 @@ def test_structured_filters_apply_before_candidate_limit(tmp_path, monkeypatch):
 
 def test_result_limit_applies_after_recency_scoring(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import get_db
 
     old = create_research_note(
@@ -250,7 +250,7 @@ def test_result_limit_applies_after_recency_scoring(tmp_path, monkeypatch):
 def test_unknown_content_format_fails_closed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.files.knowledge_document import read_knowledge_document
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item
 
     item = create_research_note(
@@ -268,8 +268,8 @@ def test_unknown_content_format_fails_closed(tmp_path, monkeypatch):
 
 def test_retrieval_snippet_comes_from_verified_document(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.sqlite import get_db
 
     item = create_research_note(
@@ -292,7 +292,7 @@ def test_retrieval_snippet_comes_from_verified_document(tmp_path, monkeypatch):
 def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.files.knowledge_document import read_knowledge_document
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item
 
     item = create_research_note(
@@ -321,8 +321,8 @@ def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypat
 def test_legacy_frontmatter_conflict_is_not_backfilled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.files.knowledge_document import read_knowledge_document
-    from aletheia.knowledge.maintenance import backfill_content_from_disk
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.maintenance import backfill_content_from_disk
+    from extensions.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item
     from aletheia.storage.sqlite import get_db
 

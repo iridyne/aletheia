@@ -258,7 +258,7 @@ def _wait_for_runtime(expected_sha: str, expected_version: str) -> dict[str, Any
 
 def _observer_auto_preflight() -> dict[str, Any]:
     """Require complete structural proof only when a sibling Worker owns Observation."""
-    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from extensions.observation_lab.execution_owner import get_execution_owner
 
     if get_execution_owner() != "worker":
         return {"required": False, "ok": True, "before": None, "preflight": None}
@@ -341,7 +341,7 @@ def _observer_rollback_guard(guard: dict[str, Any]) -> Iterator[bool]:
         yield True
         return
 
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from extensions.observation_lab.worker_lock import worker_cycle_exclusion
 
     exclusion = worker_cycle_exclusion()
     try:
@@ -522,8 +522,8 @@ def _install_source_dependencies() -> bool:
 
 def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, restore_static: bool) -> dict[str, Any]:
     # Bind before reset_hard may replace the currently running source tree.
-    from aletheia.observation_lab.kernel import invalidate_active_for_restore
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from extensions.observation_lab.kernel import invalidate_active_for_restore
+    from extensions.observation_lab.worker_lock import worker_cycle_exclusion
 
     try:
         reset = git_ops.reset_hard(old)
@@ -716,7 +716,7 @@ def _release_transaction(*, deploy: bool) -> dict[str, Any]:
             if not stopped_result.get("ok"):
                 raise AutoUpdateError(stopped_result.get("reason", "gateway_stop_failed"), stopped_result.get("detail", ""))
             stopped = True
-            from aletheia.observation_lab.runner import observation_settlement_barrier
+            from extensions.observation_lab.runner import observation_settlement_barrier
             activation_barrier = observation_settlement_barrier()
             settlement = activation_barrier.__enter__()
             if not settlement.get("ok"):

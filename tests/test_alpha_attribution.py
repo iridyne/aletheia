@@ -661,7 +661,7 @@ def test_alpha_audit_twin_projection_fails_closed_without_storage():
 def test_alpha_audit_twin_projection_never_promotes_complete_invalid_or_failed_evidence(
     monkeypatch,
 ):
-    import aletheia.universe.twin_evaluation as twin_evaluation
+    import extensions.analytics.twin_evaluation as twin_evaluation
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage import repositories as repo
     from tests.test_universe_twin_experiment import _bundle
@@ -807,7 +807,7 @@ def test_two_measured_negative_layers_are_not_ranked_by_raw_delta():
 @pytest.mark.parametrize("authority", ["legacy", "missing", "lab"])
 def test_learning_alpha_does_not_infer_current_contribution_from_old_lessons(authority):
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
-    from aletheia.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.db import reset_lab_db
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()
@@ -836,8 +836,8 @@ def test_learning_alpha_does_not_infer_current_contribution_from_old_lessons(aut
 
 def test_learning_alpha_exposes_persisted_lab_result_without_granting_qualification():
     from aletheia.analytics.alpha_attribution import _learning_alpha
-    from aletheia.observation_lab.canonical import register_observation_spec, record_observation_result
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.canonical import register_observation_spec, record_observation_result
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()

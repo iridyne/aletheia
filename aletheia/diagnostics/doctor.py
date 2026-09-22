@@ -2028,7 +2028,7 @@ def _probe_learning_retrieval(report: Report) -> None:
         # for the guard lifecycle.
         active_guards = pending_candidates = 0
         try:
-            from aletheia.knowledge.guards import load_trading_guards
+            from extensions.knowledge.guards import load_trading_guards
             active_guards = len(load_trading_guards(status="active"))
             pending_candidates = len(load_trading_guards(status="candidate"))
         except Exception:
@@ -2213,7 +2213,7 @@ def _probe_persona_rollout(report: Report) -> None:
 def _probe_reconcile_thrash(report: Report) -> None:
     """Report current churn plus the durable circuit-breaker/recovery state."""
     try:
-        from aletheia.learning.control import global_learning_refreeze_reason
+        from extensions.learning.control import global_learning_refreeze_reason
         from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
         from aletheia.portfolio.reconciliation_integrity import (
             clean_observation_gate,
@@ -3302,7 +3302,7 @@ def _probe_fts_coverage(report: Report) -> None:
                    "run: uv run aletheia knowledge reindex")
         return
     try:
-        from aletheia.knowledge.retrieval import _read_body
+        from extensions.knowledge.retrieval import _read_body
     except Exception:
         _read_body = None  # type: ignore[assignment]
 

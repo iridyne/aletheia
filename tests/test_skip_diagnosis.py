@@ -377,7 +377,7 @@ def test_query_failure_is_honest_diagnosis_unavailable(tmp_path, monkeypatch):
 
 def test_explicit_policy_epoch_excludes_pre_epoch_candidates(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
-    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from extensions.learning.skip_policy import ensure_skip_remediation_policy_epoch
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
     now = datetime.now(timezone.utc)

@@ -9,13 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from aletheia.config.schema import UniverseConfig
-from aletheia.learning.registry import get_learning_path
+from extensions.learning.registry import get_learning_path
 from aletheia.storage import repositories as repo
 from aletheia.universe import service
 from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
 from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
-from aletheia.universe.twin_evaluation import evaluate_twin_shadow_epoch
-from aletheia.universe.twin_experiment import (
+from extensions.analytics.twin_evaluation import evaluate_twin_shadow_epoch
+from extensions.analytics.twin_experiment import (
     TWIN_EXPERIMENT_ASSIGNMENT_PROPENSITY,
     TWIN_EXPERIMENT_PATH_ID,
     TWIN_EXPERIMENT_PRIMARY_HORIZON,
@@ -383,7 +383,7 @@ def test_task6_no_chase_proposed_direction_is_replayable() -> None:
 
 
 def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote(monkeypatch) -> None:
-    from aletheia.universe import twin_evaluation
+    from extensions.analytics import twin_evaluation
 
     original = twin_evaluation.assess_candidate_outcome
     as_of_values = []

@@ -321,7 +321,7 @@ def status():
         }
 
     try:
-        from aletheia.observation_lab.runtime_status import main_scheduler_ownership_snapshot
+        from extensions.observation_lab.runtime_status import main_scheduler_ownership_snapshot
 
         observation_execution = main_scheduler_ownership_snapshot()
     except Exception as e:

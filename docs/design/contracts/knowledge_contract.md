@@ -2,7 +2,7 @@
 
 > 契约级别: L2 — 规范性文档,实现依据。
 > 改动信任不变量前必须 change control (§5)。
-> Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
+> Source files: `extensions/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
 > Core persistence/format owners: `aletheia/storage/knowledge_index.py` · `aletheia/files/knowledge_document.py` · `aletheia/files/frontmatter.py`
 > Cross-references: `docs/governance/policies/trust_and_change_control.md §4` · `docs/design/contracts/agent_contracts.md` · `docs/design/data/data_model.md §3.C`
 > Last updated: 2026-09-07 (entry consumer retirement)
@@ -12,7 +12,7 @@
 
 ## §1 入口与对象
 
-可选知识创作的公开入口位于 `aletheia/knowledge/manager.py`。每个写入函数对应一种 `item_type`，不存在通用的 `create_item()` 入口——类型由调用方在编译时固定。Core 文档格式、历史读取与 FTS 维护不依赖该可选创作/检索模块；Operator 审计写入和已有启动迁移使用同一个 Core persistence owner。
+可选知识创作的公开入口位于 `extensions/knowledge/manager.py`。每个写入函数对应一种 `item_type`，不存在通用的 `create_item()` 入口——类型由调用方在编译时固定。Core 文档格式、历史读取与 FTS 维护不依赖该可选创作/检索模块；Operator 审计写入和已有启动迁移使用同一个 Core persistence owner。
 
 ### 1.1 创建函数
 
@@ -87,7 +87,7 @@
 
 ## §3 检索路径
 
-检索核心实现于 `aletheia/knowledge/retrieval.py`。
+检索核心实现于 `extensions/knowledge/retrieval.py`。
 
 ### 3.1 `retrieve_lessons()` 管道 (`retrieval.py:185`)
 
@@ -251,7 +251,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 > `learning_contribution_observability` feature; current normative documents do not use bare A2 as
 > that feature's durable name.
 
-**现状**: `aletheia/learning/skills.py` 的 SkillStore 有完整的 create/activate/deprecate 生命周期；`lesson_reviewer` 在 lesson 被应用到 policy version 后，会通过 `SkillStore.create_from_lesson()` 生成一个 `status="draft"` 的长期技能候选。
+**现状**: `extensions/learning/skills.py` 的 SkillStore 有完整的 create/activate/deprecate 生命周期；`lesson_reviewer` 在 lesson 被应用到 policy version 后，会通过 `SkillStore.create_from_lesson()` 生成一个 `status="draft"` 的长期技能候选。
 
 **边界**: draft skill 不会自动启用，不会 grant risk/execution/live/credential/order 权限；`FORBIDDEN_LAYERS` 仍拒绝风险、执行、凭证、live、下单相关层。人工审核后才可 activate。
 

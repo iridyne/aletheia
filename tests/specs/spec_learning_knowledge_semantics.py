@@ -12,7 +12,7 @@ _CONTRACT = "learning_contract"
     status="implemented",
 ))
 def test_active_lesson_or_skill_is_not_economic_knowledge():
-    from aletheia.learning.economic_knowledge import (
+    from extensions.learning.economic_knowledge import (
         EconomicKnowledgeFactV1,
         project_current_economic_knowledge,
     )
@@ -30,7 +30,7 @@ def test_active_lesson_or_skill_is_not_economic_knowledge():
     status="implemented",
 ))
 def test_new_evidence_nomination_is_not_collapsed_into_one_hypothesis_row():
-    from aletheia.learning.hypotheses import nomination_identity
+    from extensions.learning.hypotheses import nomination_identity
 
     behavior = "b" * 64
     exact_a = nomination_identity(behavior_fingerprint=behavior, source_bundle_hash="source-a")

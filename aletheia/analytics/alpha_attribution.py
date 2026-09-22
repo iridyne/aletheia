@@ -47,10 +47,10 @@ _MODULES_BY_LAYER = {
         "aletheia/agent_runtime/pi_daemon.py",
     ],
     "Learning Alpha": [
-        "aletheia/learning/lessons.py",
+        "extensions/learning/lessons.py",
         "extensions/analytics/memo_effectiveness.py",
-        "aletheia/knowledge/guards.py",
-        "aletheia/analytics/guard_effectiveness.py",
+        "extensions/knowledge/guards.py",
+        "extensions/analytics/guard_effectiveness.py",
     ],
     "Serenity Alpha": [
         "extensions/research/research_worker.py",
@@ -329,7 +329,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
             "audit_window_compatible": False,
         }
     try:
-        from aletheia.universe.twin_evaluation import evaluate_twin_shadow_epoch
+        from extensions.analytics.twin_evaluation import evaluate_twin_shadow_epoch
 
         report = evaluate_twin_shadow_epoch(policy_epoch_id)
         complete_cluster_n = int(report.get("complete_cluster_n") or 0)
@@ -1092,7 +1092,7 @@ def _system_operator_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int)
 
 def _learning_alpha(cutoff: str) -> dict:
     """Expose persisted Lab evidence without promoting it to current qualification."""
-    from aletheia.learning.read_models import build_learning_contribution_projection
+    from extensions.learning.read_models import build_learning_contribution_projection
 
     projection = build_learning_contribution_projection(limit=100)
     cutoff_at = parse_utc(cutoff)

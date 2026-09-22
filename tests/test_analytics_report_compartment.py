@@ -58,7 +58,7 @@ else:
         scheduler._DAILY_LEARNING_CATCHUP_JOBS = (("insight_synthesizer", forbidden),)
         catchup = scheduler._run_learning_startup_catchup()
         assert catchup == {"children": [{"job_id": "insight_synthesizer", "status": "unavailable"}], "remaining_due": [], "retry_scheduled": False}
-        from aletheia.learning.control import get_learning_job_health
+        from extensions.learning.control import get_learning_job_health
         assert get_learning_job_health("insight_synthesizer").input_watermark is None
         # Canonical maintenance already commits before optional rebuild.
         from aletheia.maintenance.outcome_integrity import remediate_outcome_history

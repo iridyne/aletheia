@@ -8,7 +8,7 @@ import pytest
 
 
 def test_historical_cutoff_is_readable_and_rejects_tampering():
-    from aletheia.learning.ledger import get_record
+    from extensions.learning.ledger import get_record
     from aletheia.storage.sqlite import get_db
 
     cutoff = json.dumps({"assignment_unit_keys": ["treatment", "control"]}, sort_keys=True, separators=(",", ":"))
@@ -38,8 +38,8 @@ def test_historical_cutoff_is_readable_and_rejects_tampering():
     "learning_inference_decisions", "learning_lifecycle_events",
 ])
 def test_runtime_cannot_write_legacy_evidence_even_before_cutover(table):
-    from aletheia.learning.models import LearningJobHealth
-    from aletheia.learning.ledger import insert_record
+    from extensions.learning.models import LearningJobHealth
+    from extensions.learning.ledger import insert_record
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

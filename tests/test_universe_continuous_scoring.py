@@ -548,7 +548,7 @@ def test_pure_module_has_no_authority_or_persistence_imports() -> None:
     imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imported.update(node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom))
     forbidden = (
-        "aletheia.learning",
+        "extensions.learning",
         "aletheia.storage",
         "aletheia.risk",
         "aletheia.execution",

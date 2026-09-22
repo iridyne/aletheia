@@ -48,10 +48,7 @@ assert_migrations_current()
 assert not credential_attempts
 """
     run = common + """
-missing = (
-    "extensions", "aletheia.learning", "aletheia.knowledge",
-    "aletheia.counterfactual", "aletheia.observation_lab",
-)
+missing = ("extensions",)
 attempted = set()
 class MissingOptional(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -82,7 +79,9 @@ async def check():
     assert loader.load_config(persist_migrations=False).runtime.paused is True
 
 asyncio.run(check())
-assert {"extensions", "aletheia.learning", "aletheia.knowledge"} <= attempted
+# Python resolves a missing parent before looking up its children. Denying the
+# root excludes every optional package; child finder calls cannot be expected.
+assert attempted == {"extensions"}
 assert not any(name == root or name.startswith(root + ".") for name in sys.modules for root in missing)
 assert not credential_attempts
 """

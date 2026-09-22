@@ -341,8 +341,8 @@ def test_filter_outcome_settler_prioritizes_active_lab_contract(
 
 def test_lab_priority_uses_frozen_contract_and_proven_retention():
     import time
-    from aletheia.observation_lab.canonical import _hash, record_generation_contract, upsert_retention_claim
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.canonical import _hash, record_generation_contract, upsert_retention_claim
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.storage import repositories as repo
 
     lab = get_lab_db()
@@ -627,7 +627,7 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
     # explicit past time so "pre-epoch" is guaranteed regardless of clock resolution.
     from datetime import timedelta, timezone
 
-    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from extensions.learning.skip_policy import ensure_skip_remediation_policy_epoch
     from aletheia.diagnostics import doctor
     from aletheia.storage.models import PiDecision
     from aletheia.storage.repositories import insert_pi_decision
@@ -750,7 +750,7 @@ def test_doctor_excludes_administrative_cascade_from_candidate_skips(
 def test_risk_evidence_is_atomic_after_authoritative_decision():
     from pathlib import Path
 
-    from aletheia.analytics.filter_registry import filter_by_name
+    from extensions.analytics.filter_registry import filter_by_name
 
     source = (
         Path(__file__).parents[2] / "aletheia" / "risk" / "engine.py"
@@ -852,7 +852,7 @@ def test_gold_backed_assets_are_not_in_stablecoin_exclusion_set():
     )
 )
 def test_directionless_universe_filters_are_report_only():
-    from aletheia.analytics.filter_registry import filter_by_name
+    from extensions.analytics.filter_registry import filter_by_name
 
     names = {
         "ticker_availability",
@@ -904,7 +904,7 @@ def test_filter_evidence_cleanup_is_wired_and_analytics_only():
     )
 )
 def test_persisted_ranker_and_selection_gates_are_registered():
-    from aletheia.analytics.filter_registry import filter_by_name
+    from extensions.analytics.filter_registry import filter_by_name
 
     names = {
         "execution_capability",
@@ -954,7 +954,7 @@ def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
     import inspect
 
     from aletheia.analytics import filter_evidence
-    from aletheia.counterfactual import filter_replay
+    from extensions.counterfactual import filter_replay
 
     cte = filter_evidence.FIRST_EXPOSURE_CTE_SQL
     assert "ROW_NUMBER() OVER" in cte
@@ -978,7 +978,7 @@ def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
 def test_filter_shadow_experiments_are_prospective_and_observe_only():
     import inspect
 
-    from aletheia.counterfactual import filter_experiments as filter_shadow_experiments
+    from extensions.counterfactual import filter_experiments as filter_shadow_experiments
 
     source = inspect.getsource(filter_shadow_experiments)
     assert "prospective_first_exposure" in source
@@ -1001,12 +1001,10 @@ def test_filter_shadow_experiments_are_prospective_and_observe_only():
 def test_observer_diagnostics_and_replay_are_versioned_read_only_surfaces():
     import inspect
 
-    from aletheia.analytics import (
-        filter_controller,
-        filter_evidence,
-        filter_registry,
-    )
-    from aletheia.counterfactual import filter_replay
+    from extensions.analytics import filter_controller
+    from aletheia.analytics import filter_evidence
+    from extensions.analytics import filter_registry
+    from extensions.counterfactual import filter_replay
 
     diagnostics = inspect.getsource(filter_evidence.observer_pre_filter_diagnostics)
     replay = inspect.getsource(filter_replay.build_observer_pre_filter_replay)

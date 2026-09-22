@@ -17,6 +17,13 @@ from aletheia.analytics.holding_time import holding_hours
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
+_read_shadow_cohort = None
+
+
+def configure_shadow_cohort_reader(reader=None) -> None:
+    """Bind optional Counterfactual enrichment without owning its cohort policy."""
+    global _read_shadow_cohort
+    _read_shadow_cohort = reader
 
 
 def compute_family_scorecard(*, execution_mode: str | None = None) -> list[dict]:
@@ -107,28 +114,12 @@ def compute_family_scorecard_with_epoch(
     # Count shadow candidates per family, deduped by outcome_candidate_key.
     # Epoch guard: only count shadows within a single policy epoch to avoid
     # pooling non-exchangeable cohorts (CF-I04).
-    from aletheia.counterfactual.trades import (
-        _EPOCH_DETECTION_FAILURE_REASON,
-        _detect_window_epochs,
-        list_deduped_shadows,
-    )
-
-    shadow_epoch_error = None
-    try:
-        shadow_epoch_id, shadow_epoch_status = _detect_window_epochs(days=90)
-    except Exception:
-        shadow_epoch_id, shadow_epoch_status = None, "unavailable"
-        shadow_epoch_error = _EPOCH_DETECTION_FAILURE_REASON
-    if shadow_epoch_status not in {"single", "mixed", "all_null"}:
-        shadow_epoch_id, shadow_epoch_status = None, "unavailable"
-        shadow_epoch_error = _EPOCH_DETECTION_FAILURE_REASON
-
+    shadow_epoch_id, shadow_epoch_status = None, "unavailable"
+    shadow_epoch_error = "counterfactual_extension_unavailable"
+    shadow_rows = []
+    if _read_shadow_cohort is not None:
+        shadow_epoch_id, shadow_epoch_status, shadow_epoch_error, shadow_rows = _read_shadow_cohort()
     if shadow_epoch_status in {"single", "all_null"}:
-        shadow_rows = list_deduped_shadows(
-            days=90,
-            columns=("scanner_family",),
-            policy_epoch_id=shadow_epoch_id,
-        )
         for sr in shadow_rows:
             family = sr.get("scanner_family") or "unknown"
             if family not in families:

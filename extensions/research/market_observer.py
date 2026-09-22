@@ -1556,7 +1556,7 @@ async def _analyze_symbol(
     guard_block = ""
     if scanner_family and learning_memory_block is not None:
         try:
-            from aletheia.knowledge.router import build_guard_advisory
+            from extensions.knowledge.router import build_guard_advisory
 
             guard_block = build_guard_advisory(
                 {
@@ -1567,7 +1567,7 @@ async def _analyze_symbol(
             )
         except Exception:
             pass
-    from aletheia.learning.prompt_bundles import authorize_observer_learning_bundle
+    from extensions.learning.prompt_bundles import authorize_observer_learning_bundle
 
     learning_candidate_key = _observer_learning_candidate_key(
         run_id=run_id,
@@ -1894,7 +1894,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     """Enrich deterministically admitted Universe Opportunities."""
     import time as _time
 
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 
@@ -1948,7 +1948,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Experience-loop advisory context (lessons + case studies + guard advisories)
     memory_block = ""
     try:
-        from aletheia.knowledge.router import build_advisory_context
+        from extensions.knowledge.router import build_advisory_context
 
         # Guard advisory is now built PER-SYMBOL inside _analyze_symbol (guards match
         # on symbol + scanner_family, absent here where we only have a symbol LIST —

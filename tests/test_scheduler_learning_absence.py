@@ -1,20 +1,16 @@
 """Missing optional control cannot grant autonomous Learning execution."""
 
-import builtins
-
 import pytest
+
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
 
 
 @pytest.fixture
-def missing_learning_control(monkeypatch):
-    real_import = builtins.__import__
-
-    def absent(name, *args, **kwargs):
-        if name == "aletheia.learning.control":
-            raise ModuleNotFoundError(name=name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", absent)
+def missing_learning_control(monkeypatch, installed_learning_consumers):
+    from aletheia.agent_runtime import scheduler
+    for name in ("_learning_job_gate", "_learning_job_skipped", "_learning_job_started",
+                 "_learning_job_succeeded", "_learning_job_failed"):
+        monkeypatch.setattr(scheduler, name, None)
 
 
 @pytest.mark.parametrize("missing_control", [False, True])

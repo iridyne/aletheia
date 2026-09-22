@@ -78,7 +78,7 @@ def test_opportunity_evidence_has_four_non_summed_mechanisms():
     status="implemented",
 ))
 def test_target_policy_authority_is_explicit_and_fail_closed():
-    from aletheia.learning.registry import get_learning_path
+    from extensions.learning.registry import get_learning_path
     from aletheia.universe.candidate_selection_authority import (
         TARGET_CANDIDATE_POLICY,
         candidate_selection_authority_block_reason,

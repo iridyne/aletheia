@@ -310,7 +310,7 @@ def _connectivity_snapshot() -> dict[str, Any]:
 
 def _open_experiments() -> dict[str, Any]:
     try:
-        from aletheia.learning.ledger import list_open_experiments
+        from extensions.learning.ledger import list_open_experiments
 
         return {"available": True, "items": list_open_experiments()}
     except Exception as exc:
@@ -338,7 +338,7 @@ def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]] | dict[str, Any
 def _evidence_epochs() -> dict[str, Any]:
     try:
         from aletheia.storage.sqlite import get_db
-        from aletheia.learning.evidence_epoch import evidence_epoch_summary
+        from extensions.learning.evidence_epoch import evidence_epoch_summary
 
         # Force missing/read-only DB state to remain explicit; the summary helper
         # intentionally treats a failed epoch query as an empty historical view.
@@ -355,7 +355,7 @@ def _evidence_epochs() -> dict[str, Any]:
 
 def _learning_authority() -> dict[str, Any]:
     try:
-        from aletheia.learning.control import (
+        from extensions.learning.control import (
             learning_influence_gate_reason,
             global_learning_refreeze_reason,
         )
@@ -599,7 +599,7 @@ def _ufc_status() -> dict[str, Any]:
         "projection_schema_version": None,
     }
     try:
-        from aletheia.learning.read_models import build_learning_contribution_projection
+        from extensions.learning.read_models import build_learning_contribution_projection
 
         projection = build_learning_contribution_projection(limit=20)
     except Exception as exc:

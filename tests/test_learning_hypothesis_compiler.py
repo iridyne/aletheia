@@ -4,7 +4,7 @@ from tests.test_learning_hypothesis_nominations import _envelope
 
 
 def test_compiler_uses_registry_consumer_and_one_action_parameter():
-    from aletheia.learning.hypothesis_compiler import compile_hypothesis_draft
+    from extensions.learning.hypothesis_compiler import compile_hypothesis_draft
 
     envelope = _envelope("compiler-source")
     draft = compile_hypothesis_draft(
@@ -28,7 +28,7 @@ def test_compiler_uses_registry_consumer_and_one_action_parameter():
 
 
 def test_compiler_rejects_free_form_or_multi_parameter_treatment():
-    from aletheia.learning.hypothesis_compiler import compile_hypothesis_draft
+    from extensions.learning.hypothesis_compiler import compile_hypothesis_draft
 
     envelope = _envelope("compiler-invalid")
     draft = compile_hypothesis_draft(

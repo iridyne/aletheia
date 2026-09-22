@@ -44,7 +44,7 @@ def test_available_balance_risk_budget_rejects_invalid_authority_values():
 
 
 def test_operator_learning_epoch_carries_sizing_policy_identity(monkeypatch):
-    from aletheia.learning import experiments
+    from extensions.learning import experiments
 
     policy = SimpleNamespace(loss=SimpleNamespace(max_single_trade_risk_pct=2.0))
     cfg = SimpleNamespace(
@@ -66,11 +66,11 @@ def test_operator_learning_epoch_carries_sizing_policy_identity(monkeypatch):
         lambda _path_id: SimpleNamespace(behavior_contract_version="test-v1"),
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.skip_policy.skip_policy_context",
+        "extensions.learning.skip_policy.skip_policy_context",
         lambda: {"version": "skip-v1"},
     )
     monkeypatch.setattr(
-        "aletheia.learning.opportunity_information_policy.opportunity_information_policy_context",
+        "extensions.learning.opportunity_information_policy.opportunity_information_policy_context",
         lambda: {"version": "information-v1"},
     )
 

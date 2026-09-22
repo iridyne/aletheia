@@ -108,7 +108,7 @@ def _select_min_open_experiment_exposure_at(db: sqlite3.Connection) -> str | Non
     # experiment-wide floor—own protection. Keep this one-shot tool from
     # widening Main TTL after cutover.
     try:
-        from aletheia.observation_lab.canonical import get_authority_source
+        from extensions.observation_lab.canonical import get_authority_source
 
         authority = get_authority_source(db=db)
     except sqlite3.OperationalError as exc:
@@ -1007,13 +1007,13 @@ def run(args: argparse.Namespace) -> int:
     from aletheia.storage.repositories import configure_observation_readers
 
     try:
-        from aletheia.observation_lab.main_readers import (
+        from extensions.observation_lab.main_readers import (
             _canonical_lab_authority, _observation_retention_floor,
             _active_observation_claim_refs, list_observation_filter_outcome_priority_keys,
             active_benchmark, outcome_write_guard,
         )
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.observation_lab", "aletheia.observation_lab.main_readers"}:
+        if exc.name not in {"extensions", "extensions.observation_lab", "extensions.observation_lab.main_readers"}:
             raise
         configure_observation_readers()
     else:

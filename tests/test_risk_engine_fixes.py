@@ -114,7 +114,7 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
     """#93: block_* hard rejects only apply to category='risk' lessons, not other categories."""
     _prepare(tmp_path, monkeypatch)
     import aletheia.storage.sqlite as sq
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal

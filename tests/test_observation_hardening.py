@@ -27,11 +27,11 @@ def test_worker_mode_bypasses_freshness_gate(monkeypatch):
     """Worker owner + fresh prior run → still executes; the freshness gate
     only applies to Main APScheduler misfires, not to systemd + fcntl-locked
     Worker passes."""
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
     # Lab authority is a DB-backed precondition that runs before the gate under
     # test; this test owns no runtime DB, so satisfy it explicitly.
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="controller fixture")
 
     # Rig ``_is_fresh_prior_run`` to always claim freshness would swallow.
@@ -44,7 +44,7 @@ def test_worker_mode_bypasses_freshness_gate(monkeypatch):
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         summary = filter_controller.run_controller_observe(min_samples=20)
@@ -56,9 +56,9 @@ def test_worker_mode_bypasses_freshness_gate(monkeypatch):
 
 def test_main_mode_still_honors_freshness_gate(monkeypatch):
     """Main-mode backward compatibility: fresh prior run still short-circuits."""
-    from aletheia.analytics import filter_controller
+    from extensions.analytics import filter_controller
 
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="controller fixture")
     monkeypatch.setattr(filter_controller, "_is_fresh_prior_run", lambda _hours: True)
     ran = {"count": 0}
@@ -68,7 +68,7 @@ def test_main_mode_still_honors_freshness_gate(monkeypatch):
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="main",
     ):
         summary = filter_controller.run_controller_observe(min_samples=20)
@@ -183,12 +183,12 @@ def test_run_records_checkout_commit_without_gateway_boot(cli, monkeypatch):
     )
     monkeypatch.setattr("aletheia.update.git_ops.current_commit", lambda: expected)
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe",
+        "extensions.analytics.filter_controller.run_controller_observe",
         lambda **_: {"pass_status": "success"},
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = cli.invoke(observe_app, ["run", "--json"])
@@ -212,11 +212,11 @@ def test_run_quiet_mode_stays_silent_on_clean_pass(cli, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", _fake_run,
+        "extensions.analytics.filter_controller.run_controller_observe", _fake_run,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = cli.invoke(observe_app, ["run", "--quiet"])
@@ -240,11 +240,11 @@ def test_run_quiet_mode_still_prints_on_mismatch(cli, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", _fake_run,
+        "extensions.analytics.filter_controller.run_controller_observe", _fake_run,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = cli.invoke(observe_app, ["run", "--quiet"])
@@ -267,11 +267,11 @@ def test_run_quiet_mode_still_prints_on_window_error(cli, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", _fake_run,
+        "extensions.analytics.filter_controller.run_controller_observe", _fake_run,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = cli.invoke(observe_app, ["run", "--quiet"])
@@ -294,11 +294,11 @@ def test_run_default_mode_still_prints_clean_summary(cli, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_controller.run_controller_observe", _fake_run,
+        "extensions.analytics.filter_controller.run_controller_observe", _fake_run,
     )
 
     with patch(
-        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        "extensions.observation_lab.execution_owner.get_execution_owner",
         return_value="worker",
     ):
         result = cli.invoke(observe_app, ["run"])

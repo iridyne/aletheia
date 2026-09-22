@@ -46,7 +46,7 @@ def test_scheduler_max_workers_cap():
     ),
 )
 def test_knowledge_manager_crud():
-    from aletheia.knowledge import manager
+    from extensions.knowledge import manager
 
     required = [
         "create_research_note",
@@ -66,7 +66,7 @@ def test_knowledge_manager_crud():
     ),
 )
 def test_guard_pipeline_functions():
-    from aletheia.knowledge import guards
+    from extensions.knowledge import guards
 
     assert callable(guards.load_trading_guards)
     assert callable(guards.evaluate_guards)
@@ -539,7 +539,7 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
         "extensions/research/equity_observer.py": "equity_observer_opportunity",
         "extensions/research/prediction_observer.py": "prediction_observer_opportunity",
         "extensions/research/divergence_scanner.py": "divergence_scanner_opportunity",
-        "aletheia/analytics/guard_promotion.py": "guard_set_changed",
+        "extensions/analytics/guard_promotion.py": "guard_set_changed",
         "aletheia/server/routes/settings.py": "ranker_config_changed",
     }
     for relative, retired_source in retired.items():

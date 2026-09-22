@@ -90,7 +90,7 @@ async def fetch_news_feeds() -> dict:
     The analyzer can still be called separately if needed, but it no longer blocks
     the RSS fetch pipeline.
     """
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 

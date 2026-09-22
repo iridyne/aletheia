@@ -76,7 +76,7 @@ def test_production_migrations_persist_stable_ledger_and_apply_once(tmp_path, mo
 
 
 @pytest.mark.real_db
-@pytest.mark.parametrize("missing_dependency", [None, "aletheia.observation_lab", "lab_dependency"])
+@pytest.mark.parametrize("missing_dependency", [None, "extensions.observation_lab", "lab_dependency"])
 def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monkeypatch, missing_dependency):
     """A fresh production migration starts on Lab authority without legacy engines."""
     import aletheia.config.loader as loader
@@ -97,7 +97,7 @@ def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monk
             original_import = builtins.__import__
 
             def missing_lab(name, *args, **kwargs):
-                if name == "aletheia.observation_lab.canonical":
+                if name == "extensions.observation_lab.canonical":
                     raise ModuleNotFoundError("initialization dependency unavailable", name=missing_dependency)
                 return original_import(name, *args, **kwargs)
 
@@ -1348,7 +1348,7 @@ def _legacy_active_ufc_db(*, fingerprint: str) -> sqlite3.Connection:
 
 def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypatch):
     import aletheia.storage.migrations as migrations
-    import aletheia.learning.hypotheses as live_hypotheses
+    import extensions.learning.hypotheses as live_hypotheses
 
     connection = _legacy_active_ufc_db(fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8")
     assert migrations._UFC_CANONICAL_IDENTITY_CHECKSUM == (

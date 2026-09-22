@@ -35,7 +35,7 @@ def test_learning_has_no_execution_or_risk_authority():
         "aletheia.risk",
     )
     violations: dict[str, list[str]] = {}
-    for path in sorted((ROOT / "aletheia" / "learning").glob("*.py")):
+    for path in sorted((ROOT / "extensions" / "learning").glob("*.py")):
         rel = str(path.relative_to(ROOT))
         bad = sorted(
             module for module in _imports(rel)

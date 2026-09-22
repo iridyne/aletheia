@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
+
 
 @pytest.fixture
 def absent(monkeypatch):
@@ -22,6 +24,7 @@ def test_absent_cron_and_startup_jobs_are_omitted(absent, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
 
     monkeypatch.setattr(absent, "load_config", AletheiaConfig)
+    monkeypatch.setattr(absent, "_synthesize_trading_memo", lambda: None)
     monkeypatch.setattr(absent, "_scheduler", None)
     started = absent.init_scheduler()
     try:
@@ -32,8 +35,8 @@ def test_absent_cron_and_startup_jobs_are_omitted(absent, monkeypatch):
         absent.stop_scheduler()
 
 
-def test_absent_catchup_skips_before_guard_without_watermark_or_retry(absent, monkeypatch):
-    from aletheia.learning import control
+def test_absent_catchup_skips_before_guard_without_watermark_or_retry(absent, monkeypatch, optional_evidence_jobs):
+    from extensions.learning import control
 
     calls = []
     monkeypatch.setattr(control, "daily_catchup_due", lambda job_id: True)

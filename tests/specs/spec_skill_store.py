@@ -7,7 +7,7 @@ future Tier 2/3 activation starts from a known-good contract.
 
 import pytest
 
-from aletheia.learning.skills import FORBIDDEN_LAYERS, SkillPermissionError, SkillStore
+from extensions.learning.skills import FORBIDDEN_LAYERS, SkillPermissionError, SkillStore
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 

@@ -905,8 +905,8 @@ def validate_current_data() -> dict[str, Any]:
 
 def restore_update_backup(archive_path: Path) -> dict[str, Any]:
     """Restore a verified update backup while the gateway is stopped."""
-    from aletheia.observation_lab.kernel import invalidate_active_for_restore
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from extensions.observation_lab.kernel import invalidate_active_for_restore
+    from extensions.observation_lab.worker_lock import worker_cycle_exclusion
 
     data_dir = get_data_dir()
     with worker_cycle_exclusion():

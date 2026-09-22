@@ -53,9 +53,9 @@ def _operator_prompt_context() -> dict:
         status="implemented",
     )
 )
-def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
+def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch, installed_learning_consumers):
     from aletheia.agent_shell import context
-    from aletheia.learning import lessons
+    from extensions.learning import lessons
 
     monkeypatch.setattr(
         lessons,
@@ -151,7 +151,7 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
 )
 async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
     from extensions.research import lesson_reviewer
-    from aletheia.learning.lessons import LessonStore
+    from extensions.learning.lessons import LessonStore
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -218,7 +218,7 @@ async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
     )
 )
 def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
-    from aletheia.learning.experiments import InfluenceDecision
+    from extensions.learning.experiments import InfluenceDecision
     from aletheia.trading import sizing_policy
 
     captured = {}
@@ -231,7 +231,7 @@ def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
             exposure_id="x-size",
         )
 
-    monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
+    monkeypatch.setattr("extensions.learning.experiments.apply_numeric_treatment", refrozen)
     trace = sizing_policy.resolve_learned_notional(
         baseline_notional=25.0, learned_notional=31.0, symbol="BTC/USDT",
         direction="long", regime_bucket="bull", candidate_key="opportunity:opp-size",
@@ -253,7 +253,7 @@ def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
     assert captured["manifest"]["learned_notional"] == 31.0
 
     monkeypatch.setattr(
-        "aletheia.learning.experiments.apply_numeric_treatment",
+        "extensions.learning.experiments.apply_numeric_treatment",
         lambda **_: (_ for _ in ()).throw(RuntimeError("ledger unavailable")),
     )
     unavailable = sizing_policy.resolve_learned_notional(
@@ -264,7 +264,7 @@ def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
     assert unavailable["actual_notional"] == 25.0
     assert unavailable["reason"] == "adapter_error"
 
-    monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
+    monkeypatch.setattr("extensions.learning.experiments.apply_numeric_treatment", refrozen)
     import aletheia.config.loader as loader
     from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import persona, sizing

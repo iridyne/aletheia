@@ -12,7 +12,7 @@ import importlib
 import socket
 import sys
 
-blocked = ("aletheia.knowledge", "aletheia.analytics.temporal", "aletheia.analytics.attribution")
+blocked = ("extensions.knowledge", "aletheia.analytics.temporal", "aletheia.analytics.attribution")
 class MissingOptional:
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == name or fullname.startswith(name + ".") for name in blocked):
@@ -102,11 +102,11 @@ def test_optional_owners_have_no_core_codec_or_index_implementation():
     import ast
 
     root = Path(__file__).resolve().parents[1]
-    assert not (root / "aletheia/knowledge/document.py").exists()
-    assert not (root / "aletheia/knowledge/frontmatter.py").exists()
+    assert not (root / "extensions/knowledge/document.py").exists()
+    assert not (root / "extensions/knowledge/frontmatter.py").exists()
     for path, names in (
-        ("aletheia/knowledge/retrieval.py", {"index_knowledge_item", "reindex_all", "remove_from_index"}),
-        ("aletheia/knowledge/manager.py", {"_index"}),
+        ("extensions/knowledge/retrieval.py", {"index_knowledge_item", "reindex_all", "remove_from_index"}),
+        ("extensions/knowledge/manager.py", {"_index"}),
         ("aletheia/analytics/temporal.py", {"parse_utc_instant"}),
     ):
         tree = ast.parse((root / path).read_text())

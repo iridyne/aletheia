@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from aletheia.analytics import filter_controller as fc
-from aletheia.analytics.filter_registry import (
+from extensions.analytics import filter_controller as fc
+from extensions.analytics.filter_registry import (
     tunable_filters,
     FILTER_REGISTRY,
 )
@@ -22,7 +22,7 @@ from aletheia.analytics.filter_registry import (
 @pytest.fixture(autouse=True)
 def _grant_lab_authority():
     """Exercise controller behavior behind the real Lab authority guard."""
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="controller fixture")
 
 
@@ -104,7 +104,7 @@ def test_build_report_applies_requested_evidence_window(monkeypatch):
 
 
 def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
-    from aletheia.analytics.filter_controller import FilterRecommendation
+    from extensions.analytics.filter_controller import FilterRecommendation
 
     recommendation = FilterRecommendation(
         filter_name="family_ttl",
@@ -151,7 +151,7 @@ def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [replay],
     )
 
@@ -175,11 +175,11 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
         lambda **kwargs: {},
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.build_filter_shadow_experiment_report",
+        "extensions.counterfactual.filter_experiments.build_filter_shadow_experiment_report",
         lambda: [{
             "filter_name": "family_ttl",
             "scanner_family": "momentum",
@@ -212,7 +212,7 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
 def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     from datetime import datetime, timezone
 
-    from aletheia.counterfactual.filter_experiments import register_observation_from_spec
+    from extensions.counterfactual.filter_experiments import register_observation_from_spec
 
     calls = {"registered": 0}
     cutoffs = {}
@@ -227,7 +227,7 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
 
     monkeypatch.setattr(fc, "compute_filter_feedback", fake_compute)
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         fake_replays,
     )
 
@@ -237,7 +237,7 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
         return {"registered": 1, "already_registered": 0, "skipped": 0}
 
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        "extensions.counterfactual.filter_experiments.register_replay_ready_experiments",
         fake_register,
     )
 
@@ -523,15 +523,15 @@ def test_observe_pass_status_success_when_all_clean(monkeypatch):
         fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        "extensions.counterfactual.filter_experiments.register_replay_ready_experiments",
         lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
     )
     monkeypatch.setattr(
-        "aletheia.observation_lab.runner.run_lab_windows",
+        "extensions.observation_lab.runner.run_lab_windows",
         lambda: {
             "windows_run": 2,
             "windows_errored": 0,
@@ -586,15 +586,15 @@ def test_observe_pass_status_failed_when_persist_fails(monkeypatch):
         fail_transaction,
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        "extensions.counterfactual.filter_experiments.register_replay_ready_experiments",
         lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
     )
     monkeypatch.setattr(
-        "aletheia.observation_lab.runner.run_lab_windows",
+        "extensions.observation_lab.runner.run_lab_windows",
         lambda: {
             "windows_run": 0, "windows_errored": 0,
             "results": {
@@ -616,15 +616,15 @@ def test_observe_pass_status_partial_when_lab_windows_errored(monkeypatch):
         fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        "extensions.counterfactual.filter_experiments.register_replay_ready_experiments",
         lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
     )
     monkeypatch.setattr(
-        "aletheia.observation_lab.runner.run_lab_windows",
+        "extensions.observation_lab.runner.run_lab_windows",
         lambda: {
             "windows_run": 3,
             "windows_errored": 2,
@@ -646,15 +646,15 @@ def test_observe_pass_status_partial_when_ufc_mismatch(monkeypatch):
         fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        "extensions.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        "extensions.counterfactual.filter_experiments.register_replay_ready_experiments",
         lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
     )
     monkeypatch.setattr(
-        "aletheia.observation_lab.runner.run_lab_windows",
+        "extensions.observation_lab.runner.run_lab_windows",
         lambda: {
             "windows_run": 2,
             "windows_errored": 0,

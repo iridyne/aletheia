@@ -33,8 +33,8 @@ def _experiment(
     *, min_samples: int = 1, min_days: int = 0,
     path_id: str = "universe_family_calibration", stage: str = "paper_10",
 ):
-    from aletheia.learning.ledger import insert_hypothesis
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from extensions.learning.ledger import insert_hypothesis
+    from extensions.learning.models import LearningExperiment, LearningHypothesis
 
     suffix = f"{path_id}:{min_samples}:{min_days}"
     hypothesis = LearningHypothesis(
@@ -83,8 +83,8 @@ def _exposure(
     behavior_contract_hash: str | None = "behavior-v1",
     assignment_unit_key: str | None = None,
 ):
-    from aletheia.learning.ledger import insert_record
-    from aletheia.learning.models import LearningExposure, LearningPolicyEpoch
+    from extensions.learning.ledger import insert_record
+    from extensions.learning.models import LearningExposure, LearningPolicyEpoch
 
     insert_record("learning_policy_epochs", LearningPolicyEpoch(
         epoch_id=epoch,
@@ -262,11 +262,11 @@ def _filter_outcome(
 
 
 def test_latest_measurement_verdict_orders_by_exact_created_instant():
-    from aletheia.learning.ledger import (
+    from extensions.learning.ledger import (
         get_latest_measurement_verdict,
         insert_record,
     )
-    from aletheia.learning.models import LearningContributionVerdict
+    from extensions.learning.models import LearningContributionVerdict
 
     hypothesis, experiment = _experiment()
     common = dict(
@@ -317,11 +317,11 @@ def test_latest_measurement_verdict_orders_by_exact_created_instant():
 
 
 def test_latest_measurement_verdict_treats_offset_equivalent_instants_as_ties():
-    from aletheia.learning.ledger import (
+    from extensions.learning.ledger import (
         get_latest_measurement_verdict,
         insert_record,
     )
-    from aletheia.learning.models import LearningContributionVerdict
+    from extensions.learning.models import LearningContributionVerdict
 
     hypothesis, experiment = _experiment(path_id="ranker_factor_filter")
     common = dict(
@@ -380,8 +380,8 @@ def _filter_outcome_matrix(
 
 
 def _cohorts(experiment_id, **kwargs):
-    from aletheia.learning.cohorts import build_experiment_cohorts
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from extensions.learning.cohorts import build_experiment_cohorts
+    from extensions.learning.models import LearningExperiment, LearningHypothesis
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -403,7 +403,7 @@ def _cohorts(experiment_id, **kwargs):
 
 
 def _run(experiment_id: str, **kwargs):
-    from aletheia.learning.verdicts import evaluate_cohort
+    from extensions.learning.verdicts import evaluate_cohort
 
     return [evaluate_cohort(cohort) for cohort in _cohorts(experiment_id, **kwargs)]
 
@@ -1018,9 +1018,9 @@ def test_different_behavior_contracts_stay_isolated_on_same_commit():
 def test_v5_v6_identity_does_not_mix_v4_v5_evidence(monkeypatch):
     from dataclasses import replace
 
-    from aletheia.learning import behavior_contracts
-    from aletheia.learning.registry import get_learning_path
-    from aletheia.learning.verdicts import METRIC_VERSION
+    from extensions.learning import behavior_contracts
+    from extensions.learning.registry import get_learning_path
+    from extensions.learning.verdicts import METRIC_VERSION
 
     hypothesis, experiment = _experiment()
     path = get_learning_path(hypothesis.path_id)
@@ -1207,7 +1207,7 @@ def test_mixed_cost_model_versions_make_cohort_invalid_and_auditable():
 
 @pytest.mark.parametrize("outcome_source", ["universe", "filter"])
 def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source):
-    from aletheia.learning.ledger import linked_settled_exposure_counts
+    from extensions.learning.ledger import linked_settled_exposure_counts
 
     hypothesis, experiment = _experiment()
     for candidate, assignment, version in (
@@ -1494,7 +1494,7 @@ def test_ranker_shadow_no_intervention_precedes_harm_breach(monkeypatch):
             )
             _filter_outcome(candidate, net=net, mae=-10.0)
 
-    from aletheia.learning import verdicts
+    from extensions.learning import verdicts
 
     monkeypatch.setattr(
         verdicts,
@@ -1541,7 +1541,7 @@ def test_loss_rate_gate_is_reachable_after_fifty_samples_per_arm():
 
 
 def test_conflict_provenance_bounds_rows_inside_one_conflict():
-    from aletheia.learning.cohorts import _conflict_provenance
+    from extensions.learning.cohorts import _conflict_provenance
 
     rows = [
         ("universe_forward_outcomes", {
@@ -1564,7 +1564,7 @@ def test_conflict_provenance_bounds_rows_inside_one_conflict():
 
 
 def test_bounded_conflict_provenance_keeps_a_triggering_mirror():
-    from aletheia.learning.cohorts import _conflict_provenance
+    from extensions.learning.cohorts import _conflict_provenance
 
     canonical = ("filter_candidate_outcomes", {"id": 1, "net_return_pct": 1.0})
     matching = [
@@ -2123,7 +2123,7 @@ def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
             _outcome(candidate, net=net, entry_at=_iso(index // 5, index % 5 + 1))
 
     verdict = _run(experiment.experiment_id)[0]
-    from aletheia.learning.ledger import get_record
+    from extensions.learning.ledger import get_record
 
     assert verdict.verdict == "positive"
     assert get_record("learning_hypotheses", hypothesis.hypothesis_id)["status"] == hypothesis.status
@@ -2167,7 +2167,7 @@ def test_frozen_assignment_domain_excludes_later_invalid_evidence():
         _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
         _outcome(candidate, net=net)
     fixed_units = frozenset({"fixed-t", "fixed-c"})
-    from aletheia.learning.verdicts import evaluate_cohort
+    from extensions.learning.verdicts import evaluate_cohort
 
     before = evaluate_cohort(_cohorts(experiment.experiment_id, assignment_unit_keys=fixed_units)[0])
     _exposure(experiment, hypothesis, candidate="later-invalid", assignment="treatment", contract="wrong")

@@ -155,7 +155,7 @@ def test_capture_rejects_unavailable_current_producer_provenance(benchmark_db, m
 
 
 def test_app_batch_reconciles_when_lab_append_initially_fails(benchmark_db, monkeypatch):
-    from aletheia.observation_lab import kernel
+    from extensions.observation_lab import kernel
 
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
@@ -191,8 +191,8 @@ def test_app_batch_reconciles_when_lab_append_initially_fails(benchmark_db, monk
 def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
     benchmark_db, monkeypatch
 ):
-    from aletheia.observation_lab import kernel
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab import kernel
+    from extensions.observation_lab.db import get_lab_db
     from aletheia.agent_runtime import runtime_session
 
     started_at = "2026-01-01T00:00:00+00:00"
@@ -245,7 +245,7 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
 
 
 def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, monkeypatch):
-    from aletheia.observation_lab import kernel
+    from extensions.observation_lab import kernel
 
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
@@ -294,7 +294,7 @@ def test_empty_batch_has_durable_admission_marker(benchmark_db):
 
 
 def test_legacy_admitted_batch_retry_keeps_historical_unit_hashes(benchmark_db, monkeypatch):
-    from aletheia.observation_lab import kernel
+    from extensions.observation_lab import kernel
 
     handler = kernel._handler("universe_discovery", benchmark._HANDLER_VERSION)
     assert handler is not None
@@ -416,8 +416,8 @@ def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
     ) is False
 
 def test_finalize_marks_orphan_app_batch_integrity_unavailable(benchmark_db, monkeypatch):
-    from aletheia.observation_lab import kernel
-    from aletheia.observation_lab.kernel import advance_windows
+    from extensions.observation_lab import kernel
+    from extensions.observation_lab.kernel import advance_windows
 
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
@@ -610,7 +610,7 @@ def test_cli_start_uses_verified_current_runtime_among_stale_open_sessions(
     assert started.exit_code == 0, started.output
     payload = json.loads(started.output)
     assert payload["code_commit"] == "current-commit"
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     row = get_lab_db().execute(
         "SELECT producer_commit FROM observation_windows WHERE observation_id=?",
@@ -644,7 +644,7 @@ def test_cli_start_fails_closed_when_external_runtime_cannot_be_verified(
 
     assert started.exit_code != 0
     assert "runtime_boot_commit_unavailable" in started.output
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     count = get_lab_db().execute(
         "SELECT COUNT(*) FROM observation_windows"
@@ -960,7 +960,7 @@ def test_finalize_uses_durable_start_provenance_when_runtime_commit_is_unavailab
     assert package["manifest"]["producer_commits"] == ["commit-a"]
 def test_cli_finalize_copies_runner_canonical_artifact_without_reanalysis(benchmark_db, monkeypatch):
     from aletheia.cli.evidence_cmd import evidence_app
-    from aletheia.observation_lab.kernel import advance_windows
+    from extensions.observation_lab.kernel import advance_windows
 
     window = benchmark.start_benchmark(
         now="2026-01-01T00:00:00+00:00", code_commit="commit-a"
@@ -991,7 +991,7 @@ def test_cli_finalize_copies_runner_canonical_artifact_without_reanalysis(benchm
 
 def test_cli_finalize_decodes_canonical_gzip_to_requested_json(benchmark_db):
     from aletheia.cli.evidence_cmd import evidence_app
-    from aletheia.observation_lab.kernel import advance_windows
+    from extensions.observation_lab.kernel import advance_windows
 
     window = benchmark.start_benchmark(
         now="2026-01-01T00:00:00+00:00", code_commit="commit-a"
@@ -1225,7 +1225,7 @@ def test_legacy_cutover_failure_compensates_new_window(benchmark_db, monkeypatch
         benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="new")
 
     assert repo.get_universe_discovery_benchmark(legacy["id"])["status"] == "active"
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
     generic = dict(get_lab_db().execute(
         "SELECT * FROM observation_windows WHERE slot_key='universe-discovery'"
     ).fetchone())
@@ -1235,7 +1235,7 @@ def test_legacy_cutover_failure_compensates_new_window(benchmark_db, monkeypatch
 
 def test_idempotent_capture_uses_persisted_provenance_and_evidence_time(benchmark_db, monkeypatch):
     from aletheia.agent_runtime import runtime_session
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     started_at = "2026-01-01T00:00:00+00:00"
     known_at = "2026-01-01T04:00:00+00:00"
@@ -1274,7 +1274,7 @@ async def test_independent_scheduler_settler_obeys_observation_cycle_lock(benchm
     from threading import Event, Thread
 
     from aletheia.agent_runtime import scheduler
-    from aletheia.observation_lab.worker_lock import (
+    from extensions.observation_lab.worker_lock import (
         WorkerCycleLockError, worker_cycle_exclusion,
     )
     from aletheia.universe import outcome_recorder

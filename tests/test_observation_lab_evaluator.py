@@ -30,14 +30,14 @@ def _outcome(db, candidate: str, *, net: float) -> None:
 
 
 def test_lab_evaluator_records_immutable_result_from_lab_exposures():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         consume_inference_plan,
         freeze_inference_plan,
         register_inference_plan,
         register_observation_spec,
     )
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.evaluator import evaluate_observation
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.evaluator import evaluate_observation
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()
@@ -151,10 +151,10 @@ def test_lab_evaluator_records_immutable_result_from_lab_exposures():
 
 
 def test_canonical_runner_keeps_window_active_when_evaluation_is_unavailable():
-    from aletheia.observation_lab.canonical import register_observation_spec
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.kernel import advance_windows
-    from aletheia.observation_lab.runner import register_builtin_handlers
+    from extensions.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.kernel import advance_windows
+    from extensions.observation_lab.runner import register_builtin_handlers
 
     reset_lab_db()
     register_builtin_handlers()
@@ -191,13 +191,13 @@ def test_canonical_runner_keeps_window_active_when_evaluation_is_unavailable():
 
 
 def test_confirmatory_evaluation_requires_declared_authority_alpha():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         freeze_inference_plan,
         register_inference_plan,
         register_observation_spec,
     )
-    from aletheia.observation_lab.db import reset_lab_db
-    from aletheia.observation_lab.evaluator import evaluate_observation
+    from extensions.observation_lab.db import reset_lab_db
+    from extensions.observation_lab.evaluator import evaluate_observation
 
     reset_lab_db()
     root = register_observation_spec(
@@ -241,13 +241,13 @@ def test_confirmatory_evaluation_requires_declared_authority_alpha():
 
 
 def test_negative_evaluation_atomically_withdraws_active_generation():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         apply_evaluation_safety_disposition,
         register_observation_spec,
     )
-    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
-    from aletheia.observation_lab.evaluator import evaluate_observation
+    from extensions.observation_lab.db import get_lab_db, reset_lab_db
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.observation_lab.evaluator import evaluate_observation
     from aletheia.storage.sqlite import get_db
 
     reset_lab_db()

@@ -12,7 +12,7 @@ import pytest
 
 
 def test_first_pass_records_and_verifies_ok():
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         latest_joint_checkpoint,
         save_joint_checkpoint,
@@ -36,7 +36,7 @@ def test_first_pass_records_and_verifies_ok():
 
 
 def test_second_pass_with_no_state_change_verifies_match():
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -49,8 +49,8 @@ def test_second_pass_with_no_state_change_verifies_match():
 
 
 def test_appended_main_receipt_requires_explicit_progress_mode():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -74,8 +74,8 @@ def test_appended_main_receipt_requires_explicit_progress_mode():
 
 
 def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -107,11 +107,11 @@ def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
 
 
 def test_pruning_acknowledged_receipts_keeps_exact_checkpoint_match():
-    from aletheia.observation_lab.canonical import (
+    from extensions.observation_lab.canonical import (
         append_delivery_receipt,
         prune_observation_delivery_outbox,
     )
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -142,8 +142,8 @@ def test_pruning_acknowledged_receipts_keeps_exact_checkpoint_match():
 
 
 def test_pending_receipt_identity_change_is_structured_outbox_drift():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -173,7 +173,7 @@ def test_pending_receipt_identity_change_is_structured_outbox_drift():
 def test_outbox_frontier_uses_one_sqlite_snapshot(monkeypatch, tmp_path):
     import sqlite3
 
-    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from extensions.observation_lab.checkpoint import _read_app_outbox_state
     from aletheia.storage import sqlite as sqlite_store
 
     path = tmp_path / "snapshot.db"
@@ -212,7 +212,7 @@ def test_outbox_frontier_uses_one_sqlite_snapshot(monkeypatch, tmp_path):
 def test_outbox_frontier_rejects_incomplete_identity_schema(monkeypatch, tmp_path):
     import sqlite3
 
-    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from extensions.observation_lab.checkpoint import _read_app_outbox_state
     from aletheia.storage import sqlite as sqlite_store
 
     db = sqlite3.connect(tmp_path / "incomplete.db", isolation_level=None)
@@ -230,8 +230,8 @@ def test_outbox_frontier_rejects_incomplete_identity_schema(monkeypatch, tmp_pat
 def test_runtime_verification_accepts_exact_legacy_outbox_fingerprint():
     from dataclasses import replace
 
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         _fingerprint,
         compute_joint_checkpoint,
         save_joint_checkpoint,
@@ -279,8 +279,8 @@ def test_runtime_verification_accepts_exact_legacy_outbox_fingerprint():
 
 
 def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -307,12 +307,12 @@ def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
 
 def test_manifest_set_change_causes_mismatch_verdict():
     """Publishing a new active manifest after a checkpoint = failed proof."""
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
 
     # Record baseline (empty manifest set).
     save_joint_checkpoint(compute_joint_checkpoint())
@@ -349,12 +349,12 @@ def test_manifest_set_change_causes_mismatch_verdict():
 
 def test_lab_evidence_change_causes_mismatch_verdict():
     """Lab-only evidence restore/divergence cannot keep the same checkpoint."""
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     save_joint_checkpoint(compute_joint_checkpoint())
     get_lab_db().execute(
@@ -376,7 +376,7 @@ def test_lab_evidence_change_causes_mismatch_verdict():
 
 
 def test_lab_checkpoint_state_is_stable_after_saving_quiet_pass():
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
     )
@@ -393,7 +393,7 @@ def test_lab_checkpoint_state_is_stable_after_saving_quiet_pass():
 
 def test_app_migration_head_change_causes_mismatch_verdict():
     """A restore that rolls app.db to a different migration head must be seen."""
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
         verify_joint_checkpoint,
@@ -403,7 +403,7 @@ def test_app_migration_head_change_causes_mismatch_verdict():
 
     # Simulate an app.db restore by monkeypatching the migration reader.
     with patch(
-        "aletheia.observation_lab.checkpoint._read_app_migration_state",
+        "extensions.observation_lab.checkpoint._read_app_migration_state",
         return_value=("<restored-different-head>", 999),
     ):
         verdict = verify_joint_checkpoint()
@@ -416,11 +416,11 @@ def test_app_migration_head_change_causes_mismatch_verdict():
 
 
 def test_save_is_idempotent_on_unchanged_fingerprint():
-    from aletheia.observation_lab.checkpoint import (
+    from extensions.observation_lab.checkpoint import (
         compute_joint_checkpoint,
         save_joint_checkpoint,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     save_joint_checkpoint(compute_joint_checkpoint())
     save_joint_checkpoint(compute_joint_checkpoint())
@@ -436,8 +436,8 @@ def test_save_is_idempotent_on_unchanged_fingerprint():
 def test_execution_manifests_are_immutable():
     import sqlite3
 
-    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import build_manifest, publish_manifest
+    from extensions.observation_lab.db import get_lab_db
 
     manifest = build_manifest(
         observation_id="immutable-manifest",
@@ -476,8 +476,8 @@ def test_execution_manifests_are_immutable():
 def test_joint_checkpoint_ledger_is_append_only():
     import sqlite3
 
-    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
+    from extensions.observation_lab.db import get_lab_db
 
     save_joint_checkpoint(compute_joint_checkpoint())
     checkpoint_id = get_lab_db().execute(
@@ -498,7 +498,7 @@ def test_joint_checkpoint_ledger_is_append_only():
 def test_existing_manifest_table_is_migrated_before_schema_head_is_recorded():
     import sqlite3
 
-    from aletheia.observation_lab import db as lab_db
+    from extensions.observation_lab import db as lab_db
 
     connection = sqlite3.connect(":memory:")
     legacy_sql = lab_db._EXECUTION_MANIFEST_TABLE_SQL.replace(
@@ -522,7 +522,7 @@ def test_existing_manifest_table_is_migrated_before_schema_head_is_recorded():
 
 
 def test_fingerprint_is_deterministic_across_recomputes():
-    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
+    from extensions.observation_lab.checkpoint import compute_joint_checkpoint
 
     a = compute_joint_checkpoint()
     b = compute_joint_checkpoint()

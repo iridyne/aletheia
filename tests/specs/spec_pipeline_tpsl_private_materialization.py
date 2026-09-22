@@ -757,7 +757,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
     from aletheia.agent_runtime import scheduler
     from aletheia.execution import exchange_materialization
     from extensions.exchanges.bitget import client as bitget_client
-    from aletheia.learning import control
+    from extensions.learning import control
     from aletheia.storage import repositories, sqlite
 
     positions = [

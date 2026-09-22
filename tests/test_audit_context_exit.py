@@ -30,7 +30,7 @@ _COMMANDS = (
 def test_paired_context_failures_exit_four(
     monkeypatch, command, runner_name, command_args, output_json, report, detail,
 ):
-    from aletheia.economics import context_effectiveness
+    from extensions.research import context_effectiveness
 
     async def stub(**_kwargs):
         return report
@@ -54,7 +54,7 @@ def test_paired_context_failures_exit_four(
 def test_paired_context_review_ready_exits_zero(
     monkeypatch, command, runner_name, command_args, output_json,
 ):
-    from aletheia.economics import context_effectiveness
+    from extensions.research import context_effectiveness
 
     async def stub(**_kwargs):
         return {

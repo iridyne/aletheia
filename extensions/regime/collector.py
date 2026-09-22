@@ -22,7 +22,7 @@ async def collect_regime_inputs() -> dict[str, Any]:
     Returns a kwargs dict suitable for `detect_regime(**result)`.
     Never raises — returns partial data on any failure.
     """
-    from aletheia.learning.opportunity_information_policy import (
+    from extensions.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
 

@@ -202,7 +202,7 @@ async def test_ac08_knowledge_base(client, monkeypatch):
 @pytest.mark.anyio
 async def test_review_summary_reports_missing_post_trade_review_coverage(client):
     c, tmp_path = client
-    from aletheia.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.manager import create_post_trade_review
     from aletheia.storage.models import Position
 
     for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
@@ -249,7 +249,7 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
 async def test_archived_review_does_not_suppress_missing_coverage(client):
     """#269: archiving an invalid review must re-expose the strategy as needing review."""
     c, tmp_path = client
-    from aletheia.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.manager import create_post_trade_review
     from aletheia.storage import repositories as _repo
     from aletheia.storage.models import Position
 

@@ -8,7 +8,7 @@ import pytest
 
 
 def _sample_manifest(**overrides):
-    from aletheia.observation_lab.manifest import build_manifest
+    from extensions.observation_lab.manifest import build_manifest
 
     kwargs = dict(
         observation_id="ufc:exp-1:epoch-1:0",
@@ -98,7 +98,7 @@ def test_build_manifest_preserves_submillisecond_interval_and_hash_input():
 
 
 def test_publish_manifest_is_idempotent_on_same_hash():
-    from aletheia.observation_lab.manifest import publish_manifest
+    from extensions.observation_lab.manifest import publish_manifest
 
     manifest = _sample_manifest()
     assert publish_manifest(manifest) is True
@@ -107,7 +107,7 @@ def test_publish_manifest_is_idempotent_on_same_hash():
 
 
 def test_publish_manifest_rejects_semantically_different_content_for_same_generation():
-    from aletheia.observation_lab.manifest import (
+    from extensions.observation_lab.manifest import (
         ManifestGenerationConflict,
         build_manifest,
         publish_manifest,
@@ -143,7 +143,7 @@ def test_publish_manifest_rejects_semantically_different_content_for_same_genera
 
 
 def test_load_active_manifests_respects_effective_interval():
-    from aletheia.observation_lab.manifest import load_active_manifests, publish_manifest
+    from extensions.observation_lab.manifest import load_active_manifests, publish_manifest
 
     active = _sample_manifest(
         observation_id="active-1",
@@ -170,8 +170,8 @@ def test_load_active_manifests_respects_effective_interval():
 def test_load_active_manifests_reports_malformed_legacy_row():
     from unittest.mock import patch
 
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import (
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import (
         ManifestIntegrityError,
         load_active_manifests,
         publish_manifest,
@@ -194,7 +194,7 @@ def test_load_active_manifests_reports_malformed_legacy_row():
         def execute(self, *_args):
             return _Rows()
 
-    with patch("aletheia.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
+    with patch("extensions.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
         with pytest.raises(ManifestIntegrityError, match=manifest.manifest_id):
             load_active_manifests(now="2026-08-19T12:00:00+00:00")
 
@@ -202,8 +202,8 @@ def test_load_active_manifests_reports_malformed_legacy_row():
 def test_load_active_manifests_reports_payload_hash_mismatch():
     from unittest.mock import patch
 
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.manifest import (
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.manifest import (
         ManifestIntegrityError,
         load_active_manifests,
         publish_manifest,
@@ -225,13 +225,13 @@ def test_load_active_manifests_reports_payload_hash_mismatch():
         def execute(self, *_args):
             return _Rows()
 
-    with patch("aletheia.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
+    with patch("extensions.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
         with pytest.raises(ManifestIntegrityError, match="manifest_hash"):
             load_active_manifests(now="2026-08-19T12:00:00+00:00")
 
 
 def test_resolve_treatment_is_deterministic_and_arms_split_at_allocation():
-    from aletheia.observation_lab.manifest import resolve_treatment
+    from extensions.observation_lab.manifest import resolve_treatment
 
     manifest = _sample_manifest(allocation_pct=0.5)
 
@@ -267,7 +267,7 @@ def test_resolve_treatment_is_deterministic_and_arms_split_at_allocation():
 
 
 def test_resolve_treatment_not_effective_returns_baseline():
-    from aletheia.observation_lab.manifest import resolve_treatment
+    from extensions.observation_lab.manifest import resolve_treatment
 
     manifest = _sample_manifest(effective_from="2099-01-01T00:00:00+00:00")
     r = resolve_treatment(
@@ -283,7 +283,7 @@ def test_resolve_treatment_not_effective_returns_baseline():
 
 
 def test_resolve_treatment_expired_returns_baseline():
-    from aletheia.observation_lab.manifest import resolve_treatment
+    from extensions.observation_lab.manifest import resolve_treatment
 
     manifest = _sample_manifest(
         effective_from="2020-01-01T00:00:00+00:00",
@@ -300,7 +300,7 @@ def test_resolve_treatment_expired_returns_baseline():
 
 
 def test_resolve_treatment_rejects_malformed_input():
-    from aletheia.observation_lab.manifest import resolve_treatment
+    from extensions.observation_lab.manifest import resolve_treatment
 
     manifest = _sample_manifest()
     r = resolve_treatment(
@@ -329,7 +329,7 @@ def test_resolve_treatment_rejects_malformed_input():
 def test_resolve_treatment_fails_closed_for_malformed_time_shape(
     effective_from, effective_until, now,
 ):
-    from aletheia.observation_lab.manifest import resolve_treatment
+    from extensions.observation_lab.manifest import resolve_treatment
 
     manifest = replace(
         _sample_manifest(),

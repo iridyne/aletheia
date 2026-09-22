@@ -4,7 +4,7 @@ import pytest
 
 
 def _slice(**overrides):
-    from aletheia.learning.knowledge_yield import KnowledgeYieldSliceV1
+    from extensions.learning.knowledge_yield import KnowledgeYieldSliceV1
 
     values = {
         "path_id": "ranker_case_score",
@@ -27,8 +27,8 @@ def _slice(**overrides):
 
 
 def _recommend(item):
-    from aletheia.learning.knowledge_yield import KnowledgeYieldReportV1
-    from aletheia.learning.meta_evolution import recommend_meta_evolution
+    from extensions.learning.knowledge_yield import KnowledgeYieldReportV1
+    from extensions.learning.meta_evolution import recommend_meta_evolution
 
     report = KnowledgeYieldReportV1(
         window_start="2026-08-01T00:00:00+00:00",

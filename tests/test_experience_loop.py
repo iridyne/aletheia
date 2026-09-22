@@ -45,8 +45,8 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_retrieve_only_high_confidence_active(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons
 
     create_research_note("High conf funding lesson",
                          "Extreme perp funding rates signal crowded long positioning; reducing spot exposure is prudent risk management ahead of potential liquidation cascade.",
@@ -66,8 +66,8 @@ def test_retrieve_only_high_confidence_active(tmp_path, monkeypatch):
 
 def test_archived_item_not_recalled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note, archive_item
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_research_note, archive_item
+    from extensions.knowledge.retrieval import retrieve_lessons
 
     item = create_research_note("Drawdown lesson",
                                 "Tighten stops after three consecutive losses to limit drawdown exposure; max consecutive loss streak triggers mandatory position size reduction.",
@@ -80,8 +80,8 @@ def test_archived_item_not_recalled(tmp_path, monkeypatch):
 
 def test_memory_block_has_provenance(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+    from extensions.knowledge.manager import create_research_note
+    from extensions.knowledge.retrieval import retrieve_lessons, format_memory_block
 
     create_research_note("Volatility lesson",
                          "Volatility expands after contraction periods; sizing down into squeezes protects capital and preserves powder for the eventual breakout move.",
@@ -95,7 +95,7 @@ def test_memory_block_has_provenance(tmp_path, monkeypatch):
 
 def test_empty_query_and_empty_index_return_nothing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+    from extensions.knowledge.retrieval import retrieve_lessons, format_memory_block
     assert retrieve_lessons("", k=3) == []
     assert retrieve_lessons("anything at all", k=3) == []  # empty index
     assert format_memory_block([]) == ""
@@ -104,9 +104,9 @@ def test_empty_query_and_empty_index_return_nothing(tmp_path, monkeypatch):
 
 def test_reindex_backfills_existing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
     from aletheia.storage.knowledge_index import reindex_all
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.retrieval import retrieve_lessons
     import aletheia.storage.sqlite as sq
 
     create_research_note("Trend lesson",
@@ -143,7 +143,7 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
 
-    from aletheia.knowledge.manager import create_research_note
+    from extensions.knowledge.manager import create_research_note
     import extensions.research.market_observer as observer
     from tests.observer_admission_fixture import admit_observer_instrument
 
@@ -214,8 +214,8 @@ def _seed_filled_short(strategy_id: str = "s1") -> None:
 
 def test_post_trade_review_confidence_gates_retrieval(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_post_trade_review
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.manager import create_post_trade_review
+    from extensions.knowledge.retrieval import retrieve_lessons
 
     # Identical bodies; only the high_confidence one may be recalled.
     body = "Trailing stop on the SOL short would have captured more downside; the exit was early."
@@ -244,7 +244,7 @@ async def test_post_trade_reviewer_writes_medium_confidence_reviews(tmp_path, mo
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.retrieval import retrieve_lessons
     _seed_filled_short()
 
     async def ok_llm(*a, **k):
@@ -295,7 +295,7 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
-    from aletheia.knowledge.retrieval import retrieve_lessons
+    from extensions.knowledge.retrieval import retrieve_lessons
     repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id="s1", symbol="BTC/USDT",
                                              market_type="futures", direction="long",
                                              execution_mode="bitget_demo"))

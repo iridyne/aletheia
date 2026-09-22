@@ -21,7 +21,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     status="implemented",
 ))
 def test_research_evidence_contract_rejects_incomplete_or_unbounded_payloads():
-    from aletheia.learning.hypotheses import (
+    from extensions.learning.hypotheses import (
         HypothesisResearchEvidenceV1,
         nominate_learning_hypothesis,
     )
@@ -69,9 +69,9 @@ def test_research_evidence_contract_rejects_incomplete_or_unbounded_payloads():
     status="implemented",
 ))
 async def test_missing_t0_context_fails_closed_without_research_or_authority(monkeypatch):
-    from aletheia.learning import guard_routing, hypothesis_research
-    from aletheia.learning.hypotheses import HypothesisCounterfactualCheckV1
-    from aletheia.learning.ledger import list_records
+    from extensions.learning import guard_routing, hypothesis_research
+    from extensions.learning.hypotheses import HypothesisCounterfactualCheckV1
+    from extensions.learning.ledger import list_records
     from tests.specs.spec_learning_attribution import _ready_research
 
     monkeypatch.setattr(
@@ -234,7 +234,7 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
     status="implemented",
 ))
 def test_path_aware_research_rejects_equal_count_unrelated_t0_sources():
-    from aletheia.learning.hypothesis_research import _assemble_t0_envelope_context
+    from extensions.learning.hypothesis_research import _assemble_t0_envelope_context
     from tests.specs.spec_learning_t0_foundation import _ranker_envelope
 
     envelope = _ranker_envelope()
@@ -281,10 +281,10 @@ def test_path_aware_research_rejects_equal_count_unrelated_t0_sources():
     status="implemented",
 ))
 async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypatch):
-    from aletheia.knowledge.manager import create_trade_case_study
-    from aletheia.learning import guard_routing, hypothesis_research
-    from aletheia.learning.ledger import list_records
-    from aletheia.learning.registry import get_learning_path
+    from extensions.knowledge.manager import create_trade_case_study
+    from extensions.learning import guard_routing, hypothesis_research
+    from extensions.learning.ledger import list_records
+    from extensions.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import PiDecision, ShadowTrade
     from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow

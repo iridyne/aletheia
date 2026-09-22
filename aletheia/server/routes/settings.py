@@ -379,9 +379,9 @@ def get_settings() -> SettingsResponse:
     cfg = load_config()
     from aletheia.agent_runtime.pi_daemon import daemon_status
     try:
-        from aletheia.learning.registry import paper_influence_path_options
+        from extensions.learning.registry import paper_influence_path_options
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.learning", "aletheia.learning.registry"}:
+        if exc.name not in {"extensions", "extensions.learning", "extensions.learning.registry"}:
             raise
         learning_path_options = None
     else:
@@ -1096,7 +1096,7 @@ class LearningConfigUpdate(SettingsRequest):
 
 def _lab_experiment_authority() -> bool:
     try:
-        from aletheia.observation_lab.canonical import get_authority_source
+        from extensions.observation_lab.canonical import get_authority_source
 
         return get_authority_source().source == "lab"
     except Exception:
@@ -1107,7 +1107,7 @@ def _validated_paper_influence_paths(values: list[str]) -> list[str]:
     requested_paths = sorted({
         str(path).strip() for path in values if str(path).strip()
     })
-    from aletheia.learning.registry import (
+    from extensions.learning.registry import (
         get_learning_path,
         supported_paper_influence_path_ids,
     )
@@ -1169,7 +1169,7 @@ async def update_learning_config(req: LearningConfigUpdate):
 def list_learning_experiments(limit: int = 100):
     """List all learning experiments with lightweight summary (path, stage, status)."""
     if _lab_experiment_authority():
-        from aletheia.observation_lab.db import readonly_lab_db
+        from extensions.observation_lab.db import readonly_lab_db
 
         try:
             with readonly_lab_db(allow_missing=True) as lab:
@@ -1210,7 +1210,7 @@ def list_learning_experiments(limit: int = 100):
 def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
     if _lab_experiment_authority():
-        from aletheia.observation_lab.db import readonly_lab_db
+        from extensions.observation_lab.db import readonly_lab_db
 
         try:
             with readonly_lab_db(allow_missing=True) as lab:
@@ -1381,7 +1381,7 @@ def queue_observation_owner_action(
     """Queue an owner action and report transport state, never Lab success."""
     if not _lab_experiment_authority():
         raise HTTPException(409, "canonical Lab authority is not selected")
-    from aletheia.observation_lab.db import readonly_lab_db
+    from extensions.observation_lab.db import readonly_lab_db
 
     try:
         with readonly_lab_db(allow_missing=True) as lab:
@@ -1418,7 +1418,7 @@ def queue_observation_owner_action(
         raise HTTPException(503, "observation Lab unavailable") from exc
 
     from hashlib import sha256
-    from aletheia.observation_lab.canonical import record_owner_action
+    from extensions.observation_lab.canonical import record_owner_action
 
     dedup_key = "lab-owner-action:" + sha256(
         json.dumps(

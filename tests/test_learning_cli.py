@@ -38,7 +38,7 @@ def test_learning_knowledge_zero_and_missing_inspect_are_explicit():
 
 
 def test_learning_nomination_yield_and_meta_commands_are_read_only():
-    from aletheia.learning.hypotheses import publish_hypothesis_nomination
+    from extensions.learning.hypotheses import publish_hypothesis_nomination
     from tests.test_learning_hypothesis_nominations import _envelope
 
     nomination = publish_hypothesis_nomination(_envelope("cli-bundle"))

@@ -13,7 +13,7 @@ from aletheia.cli.observe_cmd import observe_app
 
 @pytest.fixture()
 def runner() -> CliRunner:
-    from aletheia.observation_lab.canonical import set_authority_source
+    from extensions.observation_lab.canonical import set_authority_source
 
     set_authority_source("lab", actor="test", reason="CLI fixture")
     return CliRunner()
@@ -21,7 +21,7 @@ def runner() -> CliRunner:
 
 def _register_ranker(*, scanner_family: str = "mean_reversion") -> dict:
     """Seed one canonical Lab observation."""
-    from aletheia.observation_lab.canonical import register_observation_spec
+    from extensions.observation_lab.canonical import register_observation_spec
 
     return register_observation_spec(
         {
@@ -78,7 +78,7 @@ def test_observe_register_yaml_creates_row(runner: CliRunner, tmp_path: Path) ->
 
 
 def test_observe_status_text_projects_durable_window_contract(runner: CliRunner) -> None:
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, register_handler, start_window,
     )
 
@@ -113,9 +113,9 @@ def test_observe_status_text_projects_durable_window_contract(runner: CliRunner)
 def test_observe_status_bootstraps_builtin_handlers_without_writing_window(
     runner: CliRunner, monkeypatch
 ) -> None:
-    from aletheia.observation_lab import kernel
-    from aletheia.observation_lab.db import get_lab_db
-    from aletheia.observation_lab.runner import register_builtin_handlers
+    from extensions.observation_lab import kernel
+    from extensions.observation_lab.db import get_lab_db
+    from extensions.observation_lab.runner import register_builtin_handlers
 
     monkeypatch.setattr(kernel, "_HANDLERS", {})
     register_builtin_handlers()
@@ -166,7 +166,7 @@ def test_observe_status_bootstraps_builtin_handlers_without_writing_window(
 def test_observe_status_keeps_unknown_durable_handler_unavailable(
     runner: CliRunner, monkeypatch
 ) -> None:
-    from aletheia.observation_lab import kernel
+    from extensions.observation_lab import kernel
 
     monkeypatch.setattr(kernel, "_HANDLERS", {})
     kernel.register_handler(kernel.ObservationHandler(
@@ -200,7 +200,7 @@ def test_observe_status_keeps_unknown_durable_handler_unavailable(
     assert payload["handler_available"] is False
     assert payload["phase"] == "handler_unavailable"
 def test_observe_status_resolves_unique_durable_prefix_and_rejects_ambiguity(runner: CliRunner) -> None:
-    from aletheia.observation_lab.kernel import (
+    from extensions.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, register_handler, start_window,
     )
 
@@ -228,7 +228,7 @@ def test_observe_status_resolves_unique_durable_prefix_and_rejects_ambiguity(run
 def test_observe_close_stops_collection_without_deleting_history(
     runner: CliRunner,
 ) -> None:
-    from aletheia.observation_lab.db import get_lab_db
+    from extensions.observation_lab.db import get_lab_db
 
     experiment = _register_ranker()
     result = runner.invoke(
@@ -261,7 +261,7 @@ def test_observe_missing_app_database_is_unavailable_without_creation(tmp_path):
 
 
 def test_observe_legacy_authority_refuses_current_list():
-    from aletheia.observation_lab.canonical import get_authority_source
+    from extensions.observation_lab.canonical import get_authority_source
 
     before = get_authority_source()
     assert before.source == "legacy"

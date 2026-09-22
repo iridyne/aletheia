@@ -113,7 +113,7 @@ def test_forward_outcome_direction_uses_scanner_direction():
               "(the run-level symbol-LIST context never matched any guard)"),
 )
 def test_market_observer_per_symbol_guard():
-    from aletheia.knowledge import router
+    from extensions.knowledge import router
     from extensions.research import market_observer
 
     assert hasattr(router, "build_guard_advisory")

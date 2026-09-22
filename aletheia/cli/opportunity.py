@@ -203,7 +203,7 @@ def _build_audit_view(
         report = build_sizing_counterfactual(days=days)
         return report, render_sizing_counterfactual(report)
     if clean_view == "controller":
-        from aletheia.analytics.filter_controller import (
+        from extensions.analytics.filter_controller import (
             build_filter_controller_report,
             render_filter_controller_report,
         )
