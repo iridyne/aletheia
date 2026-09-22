@@ -7,7 +7,7 @@ are consistent across the Analytics tab and Trade Insights panel.
 from __future__ import annotations
 
 from aletheia.analytics.streaks import summarize_streaks
-from aletheia.analytics.temporal import parse_utc_instant
+from aletheia.utils.dt import parse_utc_instant
 
 from aletheia.data.symbols import to_canonical
 from aletheia.analytics.holding_time import holding_hours

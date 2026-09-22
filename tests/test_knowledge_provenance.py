@@ -5,7 +5,7 @@ from tests.test_experience_loop import setup_env
 
 def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import CONTENT_FORMAT, content_sha256
+    from aletheia.files.knowledge_document import CONTENT_FORMAT, content_sha256
     from aletheia.knowledge.manager import create_research_note
 
     item = create_research_note(
@@ -34,7 +34,7 @@ def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
 
 def test_repository_canonicalizes_inline_knowledge_writes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import CONTENT_FORMAT, read_knowledge_document
+    from aletheia.files.knowledge_document import CONTENT_FORMAT, read_knowledge_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import get_knowledge_item, insert_knowledge_item
 
@@ -53,7 +53,7 @@ def test_repository_canonicalizes_inline_knowledge_writes(tmp_path, monkeypatch)
 
 def test_yaml_timestamp_metadata_has_stable_json_provenance(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import (
+    from aletheia.files.knowledge_document import (
         canonicalize_written_document,
         read_knowledge_document,
     )
@@ -73,7 +73,7 @@ def test_yaml_timestamp_metadata_has_stable_json_provenance(tmp_path, monkeypatc
 
 def test_foreign_absolute_path_never_becomes_read_authority(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
 
     foreign = tmp_path.parent / "foreign" / "knowledge" / "research_notes" / "item.md"
     foreign.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +93,7 @@ def test_foreign_absolute_path_never_becomes_read_authority(tmp_path, monkeypatc
 def test_legacy_path_uses_knowledge_segment_below_data_root(tmp_path, monkeypatch):
     data_root = tmp_path / "knowledge" / "runtime"
     setup_env(data_root, monkeypatch)
-    from aletheia.knowledge.document import resolve_knowledge_path
+    from aletheia.files.knowledge_document import resolve_knowledge_path
 
     current = data_root / "knowledge" / "research_notes" / "item.md"
     current.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +104,7 @@ def test_legacy_path_uses_knowledge_segment_below_data_root(tmp_path, monkeypatc
 
 def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.knowledge.manager import create_research_note
     from aletheia.knowledge.retrieval import retrieve_lessons
     from aletheia.storage.repositories import get_knowledge_item
@@ -129,7 +129,7 @@ def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
 
 def test_invalid_metadata_snapshot_is_an_integrity_conflict(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import (
+    from aletheia.files.knowledge_document import (
         canonicalize_written_document,
         read_knowledge_document,
     )
@@ -150,7 +150,7 @@ def test_old_schema_reindex_does_not_write_v51_columns(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import sqlite3
 
-    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.knowledge_index import reindex_all
 
     path = tmp_path / "knowledge" / "research_notes" / "legacy.md"
     path.write_text("# Legacy\n\nLegacy body", encoding="utf-8")
@@ -249,7 +249,7 @@ def test_result_limit_applies_after_recency_scoring(tmp_path, monkeypatch):
 
 def test_unknown_content_format_fails_closed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item
 
@@ -291,7 +291,7 @@ def test_retrieval_snippet_comes_from_verified_document(tmp_path, monkeypatch):
 
 def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item
 
@@ -320,7 +320,7 @@ def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypat
 
 def test_legacy_frontmatter_conflict_is_not_backfilled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.knowledge.maintenance import backfill_content_from_disk
     from aletheia.knowledge.manager import create_research_note
     from aletheia.storage.repositories import get_knowledge_item

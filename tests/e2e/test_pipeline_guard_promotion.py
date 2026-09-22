@@ -88,12 +88,12 @@ class TestGuardPromotionChain:
             _deprecate_expired_learned_guards,
             promote_guard_candidate_to_active,
         )
-        from aletheia.knowledge.document import (
+        from aletheia.files.knowledge_document import (
             canonicalize_written_document,
             read_knowledge_document,
             resolve_knowledge_path,
         )
-        from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+        from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
         from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.knowledge.manager import create_guard_candidate
         from aletheia.storage import repositories as repo

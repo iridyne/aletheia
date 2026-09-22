@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from aletheia.analytics.trade_attribution import build_trade_attribution_rows, factor_key
 from aletheia.knowledge.manager import create_trade_case_study, create_guard_candidate
-from aletheia.knowledge.frontmatter import render_frontmatter
+from aletheia.files.frontmatter import render_frontmatter
 
 logger = logging.getLogger("aletheia.analytics.trade_case_builder")
 
@@ -414,7 +414,7 @@ def _get_existing_case_position_ids() -> set[str]:
     """Get position IDs that already have case studies (from file frontmatter)."""
     try:
         from aletheia.config.loader import get_data_dir
-        from aletheia.knowledge.frontmatter import parse_frontmatter
+        from aletheia.files.frontmatter import parse_frontmatter
 
         case_dir = get_data_dir() / "knowledge" / "case_studies"
         if not case_dir.exists():

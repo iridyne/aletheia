@@ -256,7 +256,7 @@ def test_strategy_memory_creation(tmp_path, monkeypatch):
     )
     assert first.item_type == "strategy_memory"
     assert first.file_path != second.file_path
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.storage.repositories import get_knowledge_item
 
     first_row = get_knowledge_item(first.id)
@@ -324,7 +324,7 @@ def test_contradiction_detection_ignores_inactive_items():
     assert result == []
 
 def test_contradiction_detection_rejects_integrity_conflicts():
-    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.files.knowledge_document import canonicalize_inline_document
 
     tampered = {
         "id": "memo-tampered",

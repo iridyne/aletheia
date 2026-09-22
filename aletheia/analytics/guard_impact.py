@@ -23,7 +23,7 @@ from aletheia.analytics.outcome_semantics import (
     outcome_values,
 )
 from aletheia.config.loader import get_data_dir
-from aletheia.knowledge.frontmatter import parse_frontmatter
+from aletheia.files.frontmatter import parse_frontmatter
 from aletheia.knowledge.guards import TradingGuard, evaluate_guards, load_trading_guards
 from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 from aletheia.storage.sqlite import get_db, readonly_db

@@ -14,8 +14,8 @@ import tempfile
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
-from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
-from aletheia.knowledge.document import (
+from aletheia.files.frontmatter import parse_frontmatter, render_frontmatter
+from aletheia.files.knowledge_document import (
     canonicalize_inline_document,
     canonicalize_written_document,
     relative_knowledge_path,
@@ -206,7 +206,7 @@ def _persist_guard_promotion(
 ) -> None:
     """Persist the durable guard row and promotion event in one commit."""
     from aletheia.storage import repositories as repo
-    from aletheia.knowledge.manager import _index
+    from aletheia.storage.knowledge_index import _index
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import transaction
 

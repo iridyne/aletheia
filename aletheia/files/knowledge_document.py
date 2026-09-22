@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from aletheia.config.loader import get_data_dir
-from aletheia.knowledge.frontmatter import parse_frontmatter_text
+from aletheia.files.frontmatter import parse_frontmatter_text
 
 
 CONTENT_FORMAT = "knowledge-markdown/v1"

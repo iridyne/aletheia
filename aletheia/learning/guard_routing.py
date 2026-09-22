@@ -252,7 +252,7 @@ def _build_ranker_guard_t0_envelopes(
     source_artifact_ids: list[str],
 ) -> list[T0ContextEnvelopeV1]:
     """Reconstruct exact Ranker T0 projections from immutable decision facts."""
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 

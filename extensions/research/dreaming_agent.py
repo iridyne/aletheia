@@ -361,7 +361,7 @@ async def _extract_lessons(
         wrapped = bool(reviews)
     if not reviews:
         return []
-    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.files.knowledge_document import read_knowledge_document
 
     verified_documents = {}
     verified_reviews = []
