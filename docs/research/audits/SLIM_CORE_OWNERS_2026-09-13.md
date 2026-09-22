@@ -185,9 +185,28 @@ runtime path. Current source traces establish the following distinctions:
 - `agents.research_worker` owns namespaced Serenity runs/evidence. It claims a
   queued run and acquires/releases the existing research lock; its bounded
   retry registers on the existing Core scheduler, not another APScheduler.
-  Candidate publication delegates to `trading.serenity_publication`. Full
-  pipeline/caller and shutdown proof remain open; a thread alone does not prove
-  a duplicate Runtime authority.
+  The daily `dreaming_daily` cron, startup catch-up and explicit
+  create/retry/deep-dive API calls enqueue the same worker. Before the stages,
+  `ensure_opportunity_information_policy_epoch` persists shared
+  `learning_policy_epochs` attribution; Learning is a real dependency here,
+  not proven absent-safe. Stage writes are namespaced evidence, claims, themes, links,
+  opportunities and run events; Model calls use the shared inference path.
+  Candidate publication delegates to `trading.serenity_publication`, which
+  revalidates source/PA facts and uses the canonical Candidate/Generation writers.
+  Manual and automatic publication share that implementation, not Order/Risk
+  mutation. The optional equity context can perform public yfinance I/O; this
+  producer is not an inert reader.
+  Queued claims and worker/API terminal transitions are CAS-guarded; startup
+  recovery's failed transition instead uses the ordinary unrestricted run update.
+  Retries use a durable parent/retry identity. Cancellation is cooperative at pipeline checkpoints,
+  as required by Serenity Contract §5.1/§13, not physical thread termination.
+  Web lifespan does not join this daemon thread; actual process exit removes it,
+  and scheduler startup reconciles interrupted runs before catch-up. Existing
+  manual AgentJobManager owns different `AgentRun` jobs, not Serenity attempts;
+  neither thread count nor similar status names prove duplicate Core authority.
+  On `026062610`, 107 focused workbench/scheduler/publication checks (11 claims)
+  pass. This proves the bounded source/fixture flows, not a Fedora shutdown or
+  a hard-stop guarantee, and does not justify a new worker framework.
 - `data.price_feed` and `history_downloader` now construct exact-venue providers
   through the existing Data port (#3330). Cache/event and history-writer owners
   remain unchanged; this does not classify every collector as Core.
