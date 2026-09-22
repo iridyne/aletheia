@@ -693,7 +693,7 @@ async def lifespan(app: FastAPI):
     telegram_task = None
     if background_services_enabled:
         try:
-            from aletheia.telegram.bot import TelegramBot
+            from extensions.telegram.bot import TelegramBot
 
             telegram_bot = TelegramBot()
             if telegram_bot.configure():
@@ -1185,6 +1185,17 @@ else:
     configure_outcome_feedback(execute_outcome_feedback)
 
 
+from aletheia.notifications import configure_telegram_sender
+
+try:
+    from extensions.telegram.delivery import send_telegram_alert
+except ModuleNotFoundError as exc:
+    if exc.name not in {"extensions", "extensions.telegram", "extensions.telegram.delivery"}:
+        raise
+    configure_telegram_sender(None)
+else:
+    configure_telegram_sender(send_telegram_alert)
+
 from aletheia.model_provider.router import configure_model_provider
 
 try:
@@ -1231,9 +1242,9 @@ app.include_router(risk_router)
 app.include_router(update_router)
 app.include_router(gateway_router)
 try:
-    from aletheia.telegram.routes import router as telegram_router
+    from extensions.telegram.routes import router as telegram_router
 except ModuleNotFoundError as exc:
-    if exc.name not in {"aletheia.telegram", "aletheia.telegram.routes"}:
+    if exc.name not in {"extensions", "extensions.telegram", "extensions.telegram.routes"}:
         raise
     logger.warning("telegram_routes_unavailable")
 else:

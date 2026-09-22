@@ -1,4 +1,4 @@
-"""Telegram bot adapter — light polling-based implementation."""
+"""Optional Telegram bot adapter — light polling-based implementation."""
 
 import asyncio
 import logging

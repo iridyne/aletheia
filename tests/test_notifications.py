@@ -10,9 +10,12 @@ import pytest
 
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
+from extensions.telegram import delivery as telegram_delivery
 
 
 def setup_env(tmp_path, monkeypatch):
+    from aletheia import notifications
+    monkeypatch.setattr(notifications, "_telegram_sender", telegram_delivery.send_telegram_alert)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -502,7 +505,7 @@ def test_trade_fill_escapes_dynamic_text_once_at_final_telegram_boundary(
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     from aletheia import notifications
-    from aletheia.telegram.bot import TelegramBot
+    from extensions.telegram.bot import TelegramBot
 
     cfg = load_config()
     cfg.telegram.enabled = True
@@ -517,8 +520,8 @@ def test_trade_fill_escapes_dynamic_text_once_at_final_telegram_boundary(
     async def send_message(bot, chat_id, text, *, parse_mode):
         delivered.append((chat_id, text, parse_mode))
 
-    monkeypatch.setattr(notifications, "_reserve_delivery", lambda message, recipient: True)
-    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(telegram_delivery, "_reserve_delivery", lambda message, recipient: True)
+    monkeypatch.setattr(telegram_delivery, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
     monkeypatch.setattr(notifications, "_send_webhook", lambda *args, **kwargs: None)
@@ -550,7 +553,7 @@ def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
     from aletheia.config.loader import load_config, save_config
     from aletheia import notifications
     import aletheia.portfolio.pnl as pnl
-    from aletheia.telegram.bot import TelegramBot
+    from extensions.telegram.bot import TelegramBot
 
     cfg = load_config()
     cfg.telegram.enabled = True
@@ -565,8 +568,8 @@ def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
     async def send_message(bot, chat_id, text, *, parse_mode):
         delivered.append((chat_id, text, parse_mode))
 
-    monkeypatch.setattr(notifications, "_reserve_delivery", lambda message, recipient: True)
-    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(telegram_delivery, "_reserve_delivery", lambda message, recipient: True)
+    monkeypatch.setattr(telegram_delivery, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
     monkeypatch.setattr(notifications, "_send_webhook", lambda *args, **kwargs: None)
@@ -654,14 +657,14 @@ def test_telegram_fanout_retries_only_failed_recipient(tmp_path, monkeypatch, ca
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     from aletheia import notifications
-    from aletheia.telegram.bot import TelegramBot
+    from extensions.telegram.bot import TelegramBot
 
     cfg = load_config()
     cfg.telegram.enabled = True
     cfg.health.alert_via_telegram = True
     save_config(cfg)
-    notifications._recent_messages.clear()
-    notifications._inflight_messages.clear()
+    telegram_delivery._recent_messages.clear()
+    telegram_delivery._inflight_messages.clear()
     attempts: list[int] = []
 
     def configure(bot):
@@ -673,7 +676,7 @@ def test_telegram_fanout_retries_only_failed_recipient(tmp_path, monkeypatch, ca
         if chat_id == 1 and attempts.count(1) == 1:
             raise RuntimeError("rejected")
 
-    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(telegram_delivery, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
 
@@ -688,14 +691,14 @@ def test_telegram_fanout_reserves_concurrent_delivery(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     from aletheia import notifications
-    from aletheia.telegram.bot import TelegramBot
+    from extensions.telegram.bot import TelegramBot
 
     cfg = load_config()
     cfg.telegram.enabled = True
     cfg.health.alert_via_telegram = True
     save_config(cfg)
-    notifications._recent_messages.clear()
-    notifications._inflight_messages.clear()
+    telegram_delivery._recent_messages.clear()
+    telegram_delivery._inflight_messages.clear()
     entered = threading.Event()
     release = threading.Event()
     attempts = []
@@ -709,7 +712,7 @@ def test_telegram_fanout_reserves_concurrent_delivery(tmp_path, monkeypatch):
         entered.set()
         await asyncio.to_thread(release.wait)
 
-    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(telegram_delivery, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
 
@@ -730,14 +733,14 @@ async def test_command_reply_plain_text(tmp_path, monkeypatch):
     and command output contains no literal HTML tags."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    import aletheia.telegram.bot as bot_module
-    from aletheia.telegram.bot import TelegramBot
+    import extensions.telegram.bot as bot_module
+    from extensions.telegram.bot import TelegramBot
 
     cfg = load_config()
     cfg.telegram.enabled = True
     cfg.telegram.allowed_chat_ids = [999]
     save_config(cfg)
-    # Patch get_secret at its import site inside aletheia.telegram.bot
+    # Patch get_secret at its import site inside extensions.telegram.bot
     monkeypatch.setattr(bot_module, "get_secret",
                         lambda key: "fake-token" if "telegram" in key else None)
 

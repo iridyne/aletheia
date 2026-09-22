@@ -52,6 +52,17 @@ app = typer.Typer(
 
 @app.callback()
 def _configure_runtime() -> None:
+    from aletheia.notifications import configure_telegram_sender
+
+    try:
+        from extensions.telegram.delivery import send_telegram_alert
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"extensions", "extensions.telegram", "extensions.telegram.delivery"}:
+            raise
+        configure_telegram_sender(None)
+    else:
+        configure_telegram_sender(send_telegram_alert)
+
     from aletheia.model_provider.router import configure_model_provider
     from aletheia.data.providers import configure_listing_reader, configure_market_data_factory
 
