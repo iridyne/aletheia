@@ -174,7 +174,8 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
     status: 'supported' | 'consumer_unwired' | 'measurement_unwired' | 'authority_unwired'
   }> : []
   const knownLearningPathIds = new Set(learningPathOptions.map(option => option.path_id))
-  const unknownPaperInfluencePaths = paperInfluencePaths.filter(
+  const learningPathsUnavailable = settings?.learning_path_options === null
+  const unknownPaperInfluencePaths = learningPathsUnavailable ? [] : paperInfluencePaths.filter(
     (path: string) => !knownLearningPathIds.has(path),
   )
   const autoRefreeze = learningCfg.auto_refreeze !== false
@@ -230,6 +231,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
         <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
           <Toggle checked={bypassDistressGate} persistence="immediate" onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
+        {learningPathsUnavailable && <p className="hint">Learning path inventory unavailable. Saved selections are unchanged.</p>}
         <Collapsible title="Paper Learning Experiments">
           <p className="hint mb-2">Measured Paper Learning capability defaults on. A Shadow experiment still has no influence until explicit owner admission, and Learning never affects live trading.</p>
           <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
