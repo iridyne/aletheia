@@ -222,10 +222,7 @@ async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    setup_test_env(tmp_path, monkeypatch)
 
     # Save config with ReadOnly mode
     from aletheia.config.schema import AletheiaConfig
@@ -234,19 +231,10 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Observe"
     save_config(cfg)
 
-    import aletheia.storage.sqlite as sq
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-    init_tool_registry()
-
     result = await run_agent("research_agent", trigger_type="manual")
     # In Observe mode, research notes ARE permitted (observe tool class)
     assert result["status"] in _OK
+    assert not any("Unknown agent" in error for error in result["errors"])
     reset_db()
 
 
