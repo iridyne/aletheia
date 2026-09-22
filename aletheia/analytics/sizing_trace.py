@@ -223,8 +223,8 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             proposal_notional=proposal_notional,
             executed_notional=executed_notional,
         )
+        notes.append("reconstructed_from_current_config")
         if sizing["intended_position_size_usdt"] is not None:
-            notes.append("reconstructed_from_current_config")
             notes.append("current_policy_projection_not_historical_intent")
         traces.append({
             "proposal_id": proposal["id"],
@@ -486,14 +486,14 @@ def _reason(
     if risk_cap_hit:
         notes.append("Risk decision or configured notional cap constrained the proposal.")
         return "risk_cap", notes
-    if paper_trade_count is None:
-        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if base_notional is not None and base_notional <= _LOW_BASE_NOTIONAL_USDT:
         notes.append(f"Base notional is {base_notional}U.")
         return "low_base_notional", notes
     if conviction is not None and conviction < _LOW_CONVICTION:
         notes.append(f"System Operator conviction is {conviction}.")
         return "low_conviction", notes
+    if paper_trade_count is None:
+        return "sample_evidence_unavailable", ["Fill evidence is unavailable; sample-dependent sizing projection is unavailable."]
     if paper_trade_count < 10 and effective_kelly == 0.1:
         notes.append("Fewer than 10 closed paper samples compress the legacy scaling factor to 0.1.")
         return "sample_aware_scaling", notes
