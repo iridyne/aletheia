@@ -380,6 +380,17 @@ def test_funding_recovery_states_degrade_health_and_doctor(
             outcome_exclusion_reason=reason,
         )
 
+    # An exclusion label alone is not evidence permitting cost recovery (§11.6).
+    assert "broker_funding_recovery_pending:1" not in health.compute_health()["issues"]
+    force_update_position(
+        "funding-retry",
+        exit_fill_verified=True,
+        exit_price_source="broker_fill",
+        entry_fee=0.1,
+        exit_fee=0.1,
+        funding_cost=None,
+    )
+
     result = health.compute_health()
     assert result["status"] == "degraded"
     assert "broker_funding_history_expired:1" in result["issues"]
