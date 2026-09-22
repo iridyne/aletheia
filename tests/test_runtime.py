@@ -14,11 +14,13 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 def setup_env(tmp_path, monkeypatch):
     from aletheia.agents import register_agent
+    from extensions.research.equity_observer import run_equity_observer
     from extensions.research.research_agent import run_research_agent
     from extensions.research.risk_critic import run_risk_critic
 
     register_agent("research_agent")(run_research_agent)
     register_agent("risk_critic")(run_risk_critic)
+    register_agent("equity_observer")(run_equity_observer)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -53,16 +55,17 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 # --- Scheduler ---
 
-def test_scheduler_omits_absent_risk_critic(tmp_path, monkeypatch):
+@pytest.mark.parametrize("agent_name", ["risk_critic", "equity_observer"])
+def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_name):
     setup_env(tmp_path, monkeypatch)
     import aletheia.agents as agents
     import aletheia.agent_runtime.scheduler as sched
 
-    monkeypatch.delitem(agents._AGENTS, "risk_critic")
+    monkeypatch.delitem(agents._AGENTS, agent_name)
     sched._scheduler = None
     try:
         scheduler = sched.init_scheduler()
-        assert scheduler.get_job("risk_critic") is None
+        assert scheduler.get_job(agent_name) is None
         assert scheduler.get_job("position_manager") is not None
         assert scheduler.get_job("portfolio_snapshot") is not None
     finally:
@@ -104,7 +107,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
-        "guard_promotion", "post_trade_reviewer", "risk_critic",
+        "guard_promotion", "post_trade_reviewer", "risk_critic", "equity_observer",
         "universe_refresh", "pi_operator_loop", "filter_controller_observe",
     }
     missing = required - job_ids
@@ -126,6 +129,10 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert position_manager_job is not None
     assert position_manager_job.trigger.interval == timedelta(seconds=30)
     assert position_manager_job.executor == "protective"
+    equity_job = s.get_job("equity_observer")
+    assert equity_job.executor == "agents"
+    assert equity_job.misfire_grace_time == 300
+    assert str(equity_job.trigger) == str(sched._equity_observer_trigger())
     post_trade_job = s.get_job("post_trade_reviewer")
     assert post_trade_job is not None
     assert post_trade_job.executor == "agents"

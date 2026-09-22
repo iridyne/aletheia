@@ -56,7 +56,7 @@ Discovery surfaces:
 | MD-08 | Forward outcome settlement | Settle universe/filter/shadow outcomes at declared horizons | Scheduler, Learning, CLI | `scheduler.py:outcome_settler`, shared assessment in `aletheia/analytics/outcome_semantics.py` |
 | MD-09 | Market regime detection | Produce regime state and use it in analysis/sizing/risk context | Markets, Settings, CLI | `aletheia/regime/`, `aletheia/server/routes/data.py` |
 | MD-10 | News ingestion and analysis | Fetch, deduplicate, analyze, and expose relevant news | News Intel, Markets, scheduler | `news_fetch`, `news_analyze`, `aletheia/news/` |
-| MD-11 | Equity opportunity observation | Observe supported equities/xStocks during market hours and emit opportunities | Scheduler, Agent Activity | `scheduler.py:equity_observer`, `aletheia/agents/equity_observer.py` |
+| MD-11 | Equity opportunity observation | Observe supported equities/xStocks during market hours and emit opportunities | Scheduler, Agent Activity | `scheduler.py:equity_observer`, `extensions/research/equity_observer.py` |
 | MD-12 | Prediction-market observation | Collect prediction events/markets, claims, history, and emit opportunities | Prediction Lens, Settings, scheduler | `aletheia/prediction/`, `aletheia/server/routes/prediction.py` |
 | MD-13 | Exchange symbol/market eligibility | Validate that an exact symbol and market type can be traded on the selected venue | Settings, execution preflight, doctor | `aletheia/config/exchanges.py`, `aletheia/execution/order_constraints.py` |
 

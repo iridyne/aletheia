@@ -1,4 +1,4 @@
-"""Equity Observer agent — unified US equity observation via yfinance + Bitget xStocks.
+"""Optional Research Equity Observer — US equity observation via yfinance + Bitget xStocks.
 
 Replaces the separate stock_observer (yfinance-only) and the xStocks branch inside
 market_observer. For each ticker in cfg.market_data.observed_equities:

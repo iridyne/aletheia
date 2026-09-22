@@ -1409,10 +1409,17 @@ def init_scheduler() -> BackgroundScheduler | None:
     # 09:30–16:00 America/New_York session.  The trigger owns the boundary so a
     # delayed 16:00 fire can still run inside misfire_grace_time after the
     # single agents worker becomes available.
-    _scheduler.add_job(
-        _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
-        id="equity_observer", misfire_grace_time=300, executor="agents",
-    )
+    from aletheia.agents import get_agent_fn
+
+    try:
+        get_agent_fn("equity_observer")
+    except ValueError:
+        logger.info("Equity Observer not scheduled: optional Research producer unavailable")
+    else:
+        _scheduler.add_job(
+            _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
+            id="equity_observer", misfire_grace_time=300, executor="agents",
+        )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
         _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
@@ -1427,8 +1434,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
-    from aletheia.agents import get_agent_fn
-
     try:
         get_agent_fn("risk_critic")
     except ValueError:
