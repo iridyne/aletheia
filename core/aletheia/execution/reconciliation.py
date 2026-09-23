@@ -1321,8 +1321,8 @@ def reconcile() -> dict:
                 default=None,
             )
             try:
-                open_rows[market_type] = _response_rows(
-                    _run_coro(client.get_open_orders(market_type=market_type))
+                open_rows[market_type] = _run_coro(
+                    client.get_open_orders(market_type=market_type)
                 )
             except Exception as exc:
                 open_rows[market_type] = []
