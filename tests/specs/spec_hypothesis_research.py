@@ -258,8 +258,12 @@ def test_path_aware_research_rejects_equal_count_unrelated_t0_sources():
     )
     assert recorded
     assert not any(reason.startswith("source_t0_identity_mismatch:") for reason in missing)
-    assert outcomes == ["position-1"]
-    assert cases[0]["source_artifact_id"] == "decision-1"
+    assert outcomes == []
+    assert cases == []
+    assert any(
+        reason.startswith("ineligible_realized_outcome:")
+        for reason in missing
+    )
 
     recorded, missing, outcomes, cases = _assemble_t0_envelope_context(
         path_id="ranker_case_score",
@@ -303,12 +307,12 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             entry_price=100.0,
             realized_pnl=-20.0,
             close_reason="stop_loss",
-            closed_at="2026-08-16T04:01:00+00:00",
+            closed_at="2026-09-23T20:45:00+00:00",
             execution_mode="bitget_demo",
             scanner_family="momentum",
-            opened_at="2026-08-16T00:01:00+00:00",
+            opened_at="2026-09-23T16:45:00+00:00",
             agent_rationale="Oversold momentum suggested a mean-reversion long.",
-            expected_outcome_eligible=False,
+            expected_outcome_eligible=True,
         )
         opportunity_id = position["opportunity_id"]
         proposal_id = position["proposal_id"]
@@ -334,7 +338,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             proposal_id=proposal_id,
             opportunity_id=opportunity_id,
             signal_source="market_observer",
-            created_at="2026-08-16T00:00:00+00:00",
+            created_at="2026-09-23T16:44:00+00:00",
         ))
         case = create_trade_case_study(
             f"Deterministic oversold loss {index}",
@@ -370,7 +374,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         entry_price=100.0,
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
-        created_at="2026-08-16T00:00:30+00:00",
+        created_at="2026-09-23T16:44:30+00:00",
     ))
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
@@ -389,7 +393,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             entry_price=100.0,
             outcome_candidate_key=f"opportunity:alternative-{rank}",
             was_selected=False,
-            created_at="2026-08-16T00:00:30+00:00",
+            created_at="2026-09-23T16:44:30+00:00",
         ))
         insert_canonical_outcome_for_shadow(
             f"causal-shadow-alt-{rank}", horizon="4h", net_return_pct=1.0,
@@ -490,13 +494,13 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             regime_tag="risk_off",
             inputs={"candidate_score": 1.0, "active_guard_ids": []},
             parameters={"guard_contract": "candidate-guard/v1"},
-            evaluated_at="2026-08-16T00:00:30+00:00",
+            evaluated_at="2026-09-23T16:44:30+00:00",
             outcome_candidate_key=f"opportunity:{source_opportunity_id}",
             entry_price_usd=None if index == 0 else 100.0,
             entry_spread_bps=None if index == 0 else 1.0,
             funding_rate_at_entry=None if index == 0 else 0.001,
             entry_ts=(
-                None if index == 0 else "2026-08-16T00:00:30+00:00"
+                None if index == 0 else "2026-09-23T16:44:30+00:00"
             ),
             raise_on_error=True,
         )
@@ -558,6 +562,29 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     assert scope_mismatch["reason"] == "research_scope_identity_mismatch"
     assert review_calls == []
 
+    force_update_position(
+        "causal-loss-position-0",
+        outcome_eligible=0,
+        outcome_exclusion_reason="review_excluded",
+    )
+    ineligible = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence=evidence,
+        source_id=case_ids[0],
+    )
+    assert ineligible["action"] == "guard_shadow_unavailable"
+    assert ineligible["research_status"] == "insufficient_context"
+    assert any(
+        reason.startswith("ineligible_realized_outcome:")
+        for reason in ineligible["research_evidence"]["missing_evidence"]
+    )
+    assert review_calls == []
+    assert list_records("learning_hypotheses") == []
+    force_update_position(
+        "causal-loss-position-0",
+        outcome_eligible=1,
+        outcome_exclusion_reason="eligible",
+    )
     async def ready_review(*, user, **_kwargs):
         payload = json.loads(user)
         assert set(payload["recorded_t0_context"]) >= {
@@ -612,7 +639,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         regime_tag="risk_off",
         inputs={"candidate_score": 1.0, "active_guard_ids": []},
         parameters={"guard_contract": "candidate-guard/v1"},
-        evaluated_at="2026-08-16T00:00:40+00:00",
+        evaluated_at="2026-09-23T16:44:40+00:00",
         raise_on_error=True,
     )
     retry_envelope = guard_routing._build_ranker_guard_t0_envelopes(
@@ -656,10 +683,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         target_horizon="4h",
     )
     assert missing_outcome.research_status == "insufficient_context"
-    assert any(
-        reason.startswith("exact_trade_attribution_unavailable:")
-        for reason in missing_outcome.missing_evidence
-    )
+    assert "exact_counterfactual_evidence_unavailable" in missing_outcome.missing_evidence
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
     )
@@ -677,17 +701,17 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         entry_price=100.0,
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
-        created_at="2026-08-16T01:00:00+00:00",
+        created_at="2026-09-23T17:45:00+00:00",
     ))
     assert hypothesis_research._bounded_counterfactual_checks(
-        [{"opportunity_id": opportunity_id, "opened_at": "2026-08-16T00:00:00+00:00"}],
+        [{"opportunity_id": opportunity_id, "opened_at": "2026-09-23T16:45:00+00:00"}],
         3,
         "4h",
     ) == []
 
     force_update_position(
         "causal-loss-position-0",
-        closed_at="2026-08-16T01:00:00+00:00",
+        closed_at="2026-09-23T17:45:00+00:00",
     )
     horizon_mismatch = await hypothesis_research.research_learning_hypothesis(
         candidate_explanation="A broad momentum block may improve 4h net utility.",
@@ -697,6 +721,6 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         target_horizon="4h",
     )
     assert horizon_mismatch.research_status == "insufficient_context"
-    assert f"exact_trade_attribution_unavailable:{case_ids[0]}" in (
+    assert f"outcome_horizon_mismatch:{case_ids[0]}" in (
         horizon_mismatch.missing_evidence
     )

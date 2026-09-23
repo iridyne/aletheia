@@ -115,7 +115,7 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch, 
 
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,
                             complete: bool = True) -> None:
-    _ts = "2026-09-23T18:00:00+00:00"
+    _ts = datetime.now(timezone.utc).isoformat()
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id,outcome_candidate_key,member_id,snapshot_id,venue,symbol,scanner_family,direction,horizon,market_type,"
