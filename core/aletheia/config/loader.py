@@ -452,6 +452,12 @@ def load_config(
             return cfg.model_copy(deep=True)
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        market_data = raw.get("market_data")
+        if isinstance(market_data, dict) and "coinalyze_api_key" in market_data:
+            raise ValueError(
+                "market_data.coinalyze_api_key is retired; remove this field from "
+                "config.yaml. Its value is not shown."
+            )
         removed_agent_keys = _migrate_removed_agent_config_keys(raw)
         trading = raw.get("trading")
         removed_confidence_key = isinstance(trading, dict) and "min_confidence_to_trade" in trading

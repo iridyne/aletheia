@@ -7194,7 +7194,7 @@ export interface components {
          *     appends them to `controller_recommendations`, and can preregister/evaluate
          *     prospective observe-only experiments for replay-ready monotonic thresholds.
          *     It NEVER writes trading config. Full closed-loop actuation remains out of scope.
-         *     See aletheia/analytics/filter_controller.py + filter_registry.py.
+         *     See extensions/analytics/filter_controller.py + filter_registry.py.
          */
         ControllerConfig: {
             /**
@@ -9076,8 +9076,6 @@ export interface components {
              * @default bybit
              */
             ccxt_fallback: string;
-            /** Coinalyze Api Key */
-            coinalyze_api_key?: string | null;
             /**
              * Coingecko Top N
              * @default 50

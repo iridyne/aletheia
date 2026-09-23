@@ -143,7 +143,7 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 - **Hyperliquid（曾 ❌ orphan）→ 已闭合 ✅**：`market_observer` 同时读取明确标记为 Hyperliquid 的 funding、predicted funding 与 OI；funding 只用 annualized 值跨 venue 比较，OI 显示绝对值、真实 1h delta 和 observed timestamp。System Operator 的 `evidence_manifest_json` 保存实际命中的 funding/OI row id，不把“已采集”误写成“已使用”。锁定于 DU-S01/S02/S21/B01/B02。
 - **永续持仓结构（🟡）**：没有可信自动 endpoint 时，`doctor` 明确显示 not configured；不生成假数据。Owner 可通过显式 CLI 导入白名单 aggregate export，系统保存 source ref/hash 和审计事件，并为有 reference price + directional bias 的行建立 1h/4h/24h shadow outcome。14 天窗口成熟前 `decision_influence=disabled`，之后也只进入人工评审，不自动进入 Risk/Execution。
 - **Position X 离线材料（🟡）**：`aletheia.data.position_x` 只读授权样本中的维度说明、结构总结、拟合结果、`analysis_*.json` 的表达样式和 prompt 组织方式；`extract_position_x_material_bundle()` 可一次性把目录中的授权材料提炼成安全 knowledge cards 与结构化快照。原始 prompt、账户、地址、余额、credential、token 不进入运行时卡片、日志或 prompt；拟合文件只保留公式提示、相关性结论和 source hash。
-- **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；有 `coinalyze_api_key` 时写入 `open_interest_snapshots(exchange='coinalyze')` 与 `liquidation_events(exchange='coinalyze')`，无 key 时返回 `errors=["no_key"]` 并诚实跳过。持久化路径锁定于 DU-T01。
+- **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；Data Extension 从自身 `coinalyze_api_key` Secret Store reference 读取，缺失时可用专属 `COINALYZE_API_KEY` 环境回退；均未配置时返回 `errors=["no_key"]` 并诚实跳过。Core 配置只保留 enable flag；若旧 `config.yaml` 仍含原始 key 字段，加载时会拒绝并安全提示手工移除字段，不回显值。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
 - **xStock 上市状态（🟡）**：只在 ticker 失败后查询责任交易所 active spot market list；结果只维护 observation-only 采集配置，不进入排序、风控或执行。查询按 venue 单轮复用并有硬截止，任何不确定结果都保留用户配置。锁定于 DU-S24。
 - **Learning Contribution Observability（🟠）**：这里登记的是已有内部事实的展示消费者，
@@ -177,7 +177,7 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
 | DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
 | DU-S05 | L2a | 不存在 `class RegimeCollector`；宏观风险标签由 `data/freshness.py` 的单一投影供采集与存量读取共用，不依赖 optional collector；独立市场 regime detector 语义不变 |
-| DU-S06 | L2a | `scheduler.py` 含 `CoinalyzeCollector` 引用（已注册 `_async_data_collector_context`）且 `config/schema.py` 定义 `enable_coinalyze` + `coinalyze_api_key`（调度+配置结构双锁） |
+| DU-S06 | L2a | `CoinalyzeCollector` 已注册到 `_async_data_collector_context`；Core `MarketDataConfig` 仅定义非敏感 `enable_coinalyze`，不接受或暴露原始 credential；Data Extension 仅解析自己的 `coinalyze_api_key` Secret Store reference 或专属 `COINALYZE_API_KEY` 环境回退，缺少凭据则诚实跳过；旧 YAML key 只报字段名和安全移除指引，不回显值 |
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
 | DU-S12 | L2a | 默认新闻源包含 SEC/CFTC/Ethereum Foundation 官方 RSS，且 §3 登记为 NewsCollector→`news_items`→market_observer/research_worker |
 | DU-T01 | L2b | 离线注入 CoinalyzeCollector 输出，断言 scheduler 写入 `open_interest_snapshots` 与 `liquidation_events`（不依赖真实 API key） |

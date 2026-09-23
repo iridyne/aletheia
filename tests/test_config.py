@@ -227,6 +227,28 @@ def test_unknown_config_error_exposes_safe_path_and_repair_hint(tmp_path):
     assert config_file.read_text(encoding="utf-8") == yaml_text
 
 
+def test_legacy_coinalyze_key_is_rejected_without_echoing_or_rewriting(tmp_path):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["market_data"]["coinalyze_api_key"] = "synthetic-not-a-credential"
+    config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    original = config_file.read_text(encoding="utf-8")
+
+    with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
+        loader, "CONFIG_PATH", config_file
+    ), patch.object(loader, "_config_cache", None):
+        with pytest.raises(ValueError) as exc_info:
+            loader.load_config(use_cache=False)
+
+    message = str(exc_info.value)
+    assert "market_data.coinalyze_api_key" in message
+    assert "remove this field from config.yaml" in message
+    assert "synthetic-not-a-credential" not in message
+    assert config_file.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize(
     ("enabled", "activated_at"),
     [(False, None), (True, "2026-08-31T12:00:00+00:00")],

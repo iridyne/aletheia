@@ -22,6 +22,12 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 
+def test_coinalyze_secret_is_not_a_core_config_field():
+    from aletheia.config.schema import MarketDataConfig
+
+    assert "coinalyze_api_key" not in MarketDataConfig.model_fields
+
+
 @pytest.mark.parametrize("canonical", [None, [], ["AAPL"]])
 def test_historical_equities_decode_once_and_explicit_clear_survives_reload(canonical):
     from aletheia.config.schema import MarketDataConfig
