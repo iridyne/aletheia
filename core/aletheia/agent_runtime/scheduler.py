@@ -3071,12 +3071,6 @@ def _run_cleanup():
             # Fill or open Position. Returns a summary dict, not a bare count.
             "stale_orders": cleanup_stale_orphan_orders(),
         }
-        try:
-            from aletheia.maintenance.database_capacity import optimize_query_planner
-
-            counts["query_planner_optimize"] = optimize_query_planner(get_db())
-        except Exception as opt_err:  # noqa: BLE001 — best-effort statistics refresh
-            logger.debug("query_planner_optimize skipped: %s", opt_err)
         # WAL checkpoint: copy eligible frames back and expose reader-pinned
         # backlog without blocking runtime. Later WAL resets apply the
         # per-connection 64 MiB retention limit.
