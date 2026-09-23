@@ -235,9 +235,9 @@ The explicit offline `aletheia data compact --apply` sequence is:
 
 After (4), the recurring `_run_cleanup` pass reclaims freelist pages via
 bounded `PRAGMA incremental_vacuum(N)` at the tail: at most 16 MiB normally or
-64 MiB after reaching 80% of the configured capacity budget. The operation holds
-the process/cross-process writer permit. No more full VACUUM is needed during
-runtime unless page packing/fragmentation evidence justifies an offline window.
+64 MiB after reaching 80% of the configured capacity budget. Reclamation runs in
+64-page chunks, and each chunk separately holds the process/cross-process writer
+permit. No more full VACUUM is needed during runtime unless page packing/fragmentation evidence justifies an offline window.
 
 New databases set incremental mode before their first schema object. Existing
 databases with `PRAGMA auto_vacuum=0` do not reclaim file bytes when

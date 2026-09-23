@@ -322,14 +322,13 @@ def reclaim_incremental_freelist(
     *,
     max_mb: int = 16,
 ) -> dict:
-    """Reclaim a bounded number of freelist pages without deleting rows."""
+    """Reclaim freelist pages in short writer-permit holds."""
 
     page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
     before = int(db.execute("PRAGMA freelist_count").fetchone()[0])
     mode = int(db.execute("PRAGMA auto_vacuum").fetchone()[0])
-    max_pages = max(1, int(max_mb) * _MIB // max(1, page_size))
-    requested = min(before, max_pages)
-    if mode != 2 or requested <= 0:
+    target = min(before, max(1, int(max_mb) * _MIB // max(1, page_size)))
+    if mode != 2 or target <= 0:
         return {
             "enabled": mode == 2,
             "requested_pages": 0,
@@ -339,15 +338,23 @@ def reclaim_incremental_freelist(
 
     from aletheia.storage.sqlite import acquire_write_lock, release_write_lock
 
-    acquire_write_lock()
-    try:
-        db.execute(f"PRAGMA incremental_vacuum({requested})")
-    finally:
-        release_write_lock()
-    after = int(db.execute("PRAGMA freelist_count").fetchone()[0])
+    attempted = 0
+    remaining = before
+    while attempted < target:
+        chunk = min(64, target - attempted)
+        acquire_write_lock()
+        try:
+            db.execute(f"PRAGMA incremental_vacuum({chunk})")
+        finally:
+            release_write_lock()
+        after = int(db.execute("PRAGMA freelist_count").fetchone()[0])
+        attempted += chunk
+        if after >= remaining:
+            break
+        remaining = after
     return {
         "enabled": True,
-        "requested_pages": requested,
-        "reclaimed_pages": max(0, before - after),
-        "remaining_pages": after,
+        "requested_pages": attempted,
+        "reclaimed_pages": max(0, before - remaining),
+        "remaining_pages": remaining,
     }
