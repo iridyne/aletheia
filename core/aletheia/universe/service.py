@@ -8,6 +8,7 @@ Static instruments are an explicitly named observation fallback, never Candidate
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import logging
@@ -16,6 +17,7 @@ import time
 from contextlib import contextmanager
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from uuid import uuid4
 
 from aletheia.config.loader import load_config
@@ -36,6 +38,9 @@ logger = logging.getLogger("aletheia.universe")
 
 # This bundle now owns candidate admission and reads the full eligible training history.
 _CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC = 60.0
+_candidate_selection_executor = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="candidate-selection"
+)
 _regime_refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None = None
 
 
@@ -203,6 +208,66 @@ def _build_candidate_selection_bundle(
         authority_applied=authority_applied,
         qualification_evidence=qualification_evidence,
     )
+
+async def _build_candidate_selection_bundle_owned(
+    *,
+    training_diagnostics_out: dict[str, object],
+    lifecycle_observer: Callable[[str], None] | None = None,
+    **kwargs,
+):
+    """Keep synchronous selection owned until its single worker actually stops."""
+    def set_lifecycle(state: str) -> None:
+        training_diagnostics_out["worker_lifecycle"] = state
+        if lifecycle_observer is not None:
+            lifecycle_observer(state)
+
+    async def drain(worker) -> bool:
+        cancelled = False
+        current = asyncio.current_task()
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+                while current is not None and current.cancelling():
+                    current.uncancel()
+            except Exception:
+                break
+        return cancelled
+
+    set_lifecycle("running")
+    worker = asyncio.get_running_loop().run_in_executor(
+        _candidate_selection_executor,
+        partial(
+            _build_candidate_selection_bundle,
+            training_diagnostics_out=training_diagnostics_out,
+            **kwargs,
+        ),
+    )
+    try:
+        result = await asyncio.wait_for(
+            asyncio.shield(worker),
+            timeout=_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC,
+        )
+    except TimeoutError:
+        set_lifecycle("deadline_exceeded_draining")
+        cancelled = await drain(worker)
+        set_lifecycle(
+            "stopped_after_cancellation" if cancelled else "stopped_after_deadline"
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        raise TimeoutError("candidate_selection_worker_deadline_exceeded") from None
+    except asyncio.CancelledError:
+        set_lifecycle("caller_cancelled_draining")
+        await drain(worker)
+        set_lifecycle("stopped_after_cancellation")
+        raise
+    except Exception:
+        set_lifecycle("stopped_with_error")
+        raise
+    set_lifecycle("completed")
+    return result
 
 def _candidate_selection_reason_counts(bundle) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -673,19 +738,36 @@ class UniverseService:
                 block_reason = candidate_selection_authority_block_reason(cfg)
                 if block_reason is not None:
                     raise RuntimeError(block_reason)
-                candidate_selection_authority_bundle = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        _build_candidate_selection_bundle,
+
+                def record_worker_lifecycle(_state: str) -> None:
+                    try:
+                        repo.update_universe_scanner_run(
+                            run.id,
+                            metrics=json.dumps({"candidate_path": path_metrics}),
+                        )
+                    except Exception as exc:
+                        logger.warning("Candidate worker lifecycle persistence failed: %s", exc)
+
+                try:
+                    candidate_selection_authority_bundle = await _build_candidate_selection_bundle_owned(
                         population=features_list,
-                                        scanner_run_id=run.id,
+                        scanner_run_id=run.id,
                         captured_at=entry_ts,
                         cfg=cfg,
                         authority_applied=True,
                         qualification_evidence=qualification,
                         training_diagnostics_out=data_diagnostics,
-                    ),
-                    timeout=_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC,
-                )
+                        lifecycle_observer=record_worker_lifecycle,
+                    )
+                except asyncio.CancelledError:
+                    repo.update_universe_scanner_run(
+                        run.id,
+                        status="failed",
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        errors=json.dumps(["candidate_selection_refresh_cancelled"]),
+                        metrics=json.dumps({"candidate_path": path_metrics}),
+                    )
+                    raise
                 if (
                     candidate_selection_authority_bundle.batch.policy_epoch_id
                     != cfg.universe.candidate_selection_policy_epoch

@@ -1,6 +1,7 @@
 """Tests for UniverseService — fallback behavior, get_current_universe, refresh."""
 
 import json
+import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -588,3 +589,222 @@ def test_canonical_planning_priority_without_legacy_carriers(tmp_path, monkeypat
     assert repo.get_db().execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
     repo.execute_write("UPDATE candidate_planning_generations SET is_current=0 WHERE id=?", (generation["id"],))
     assert repo.list_candidate_planning_refresh_assets(venue="bitget", now=now) == []
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_timeout_drains_single_worker_before_successor(monkeypatch):
+    import threading
+
+    from aletheia.universe import service
+
+    started = [threading.Event() for _ in range(3)]
+    release = [threading.Event() for _ in range(3)]
+    state_lock = threading.Lock()
+    calls = 0
+    active = 0
+    max_active = 0
+
+    def slow_builder(**_kwargs):
+        nonlocal calls, active, max_active
+        with state_lock:
+            index = calls
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+        started[index].set()
+        assert release[index].wait(2)
+        with state_lock:
+            active -= 1
+        return index
+
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", slow_builder)
+    monkeypatch.setattr(service, "_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC", 0.01)
+    diagnostics = [{} for _ in range(3)]
+    observed = [[] for _ in range(3)]
+    tasks = [
+        asyncio.create_task(
+            service._build_candidate_selection_bundle_owned(
+                training_diagnostics_out=diagnostic,
+                lifecycle_observer=observed[index].append,
+            )
+        )
+        for index, diagnostic in enumerate(diagnostics)
+    ]
+
+    for index in range(3):
+        assert await asyncio.to_thread(started[index].wait, 1)
+        await asyncio.sleep(0.02)
+        assert calls == index + 1
+        assert diagnostics[index]["worker_lifecycle"] == "deadline_exceeded_draining"
+        assert observed[index][-1] == "deadline_exceeded_draining"
+        assert not tasks[index].done()
+        release[index].set()
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert all(isinstance(result, TimeoutError) for result in results)
+    assert max_active == 1
+    assert active == 0
+    assert all(item["worker_lifecycle"] == "stopped_after_deadline" for item in diagnostics)
+    assert all(states[-1] == "stopped_after_deadline" for states in observed)
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_owned_worker_returns_normal_result(monkeypatch):
+    from aletheia.universe import service
+
+    expected = object()
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", lambda **_kwargs: expected)
+    diagnostics = {}
+
+    result = await service._build_candidate_selection_bundle_owned(
+        training_diagnostics_out=diagnostics,
+    )
+
+    assert result is expected
+    assert diagnostics["worker_lifecycle"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_cancellation_drains_before_releasing_single_flight(monkeypatch):
+    import threading
+
+    from aletheia.universe import service
+
+    started = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+    calls = 0
+
+    def slow_builder(**_kwargs):
+        nonlocal calls
+        index = calls
+        calls += 1
+        started[index].set()
+        assert release[index].wait(2)
+        return index
+
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", slow_builder)
+    monkeypatch.setattr(service, "_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC", 10)
+    first_diagnostics = {}
+    first = asyncio.create_task(
+        service._build_candidate_selection_bundle_owned(
+            training_diagnostics_out=first_diagnostics,
+        )
+    )
+    assert await asyncio.to_thread(started[0].wait, 1)
+    first.cancel()
+    await asyncio.sleep(0)
+    assert first_diagnostics["worker_lifecycle"] == "caller_cancelled_draining"
+    assert not first.done()
+
+    second = asyncio.create_task(
+        service._build_candidate_selection_bundle_owned(training_diagnostics_out={})
+    )
+    await asyncio.sleep(0.02)
+    assert calls == 1
+
+    release[0].set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    started_second = await asyncio.to_thread(started[1].wait, 1)
+    assert started_second, (calls, second.done())
+    release[1].set()
+    assert await second == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_cancel_during_timeout_drain_still_owns_worker(monkeypatch):
+    import threading
+
+    from aletheia.universe import service
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_builder(**_kwargs):
+        started.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", slow_builder)
+    monkeypatch.setattr(service, "_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC", 0.01)
+    diagnostics = {}
+    task = asyncio.create_task(
+        service._build_candidate_selection_bundle_owned(
+            training_diagnostics_out=diagnostics,
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    while diagnostics.get("worker_lifecycle") != "deadline_exceeded_draining":
+        await asyncio.sleep(0)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert diagnostics["worker_lifecycle"] == "stopped_after_cancellation"
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_worker_error_records_stopped_lifecycle(monkeypatch):
+    from aletheia.universe import service
+
+    def fail_builder(**_kwargs):
+        raise ValueError("broken evidence")
+
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", fail_builder)
+    diagnostics = {}
+    observed = []
+    with pytest.raises(ValueError, match="broken evidence"):
+        await service._build_candidate_selection_bundle_owned(
+            training_diagnostics_out=diagnostics,
+            lifecycle_observer=observed.append,
+        )
+    assert diagnostics["worker_lifecycle"] == "stopped_with_error"
+    assert observed[-1] == "stopped_with_error"
+
+
+@pytest.mark.asyncio
+async def test_refresh_cancellation_terminalizes_scanner_after_worker_drain(monkeypatch):
+    from aletheia.universe import candidate_selection_authority, service
+    from aletheia.universe import candidate_selection_shadow as _candidate_selection_shadow
+    from aletheia.universe import outcome_recorder, registry
+    from aletheia.agent_runtime import scheduler
+
+    cfg = MagicMock()
+    cfg.regime.enabled = False
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.universe = UniverseConfig(
+        enabled=True,
+        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy_epoch="epoch",
+    )
+    updates = []
+    monkeypatch.setattr(service, "load_config", lambda: cfg)
+    monkeypatch.setattr(candidate_selection_authority, "recover_candidate_selection_authority_transition", lambda: False)
+    monkeypatch.setattr(candidate_selection_authority, "candidate_selection_policy_identity", lambda _cfg: "epoch")
+    monkeypatch.setattr(candidate_selection_authority, "candidate_selection_authority_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(outcome_recorder, "settle_due", AsyncMock())
+    monkeypatch.setattr(registry, "sync_registry", AsyncMock())
+    monkeypatch.setattr(scheduler, "get_latest_volume_ranking", lambda: None)
+    monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
+    monkeypatch.setattr(service.repo, "insert_universe_scanner_run", lambda _run: None)
+    monkeypatch.setattr(service.repo, "list_universe_assets", lambda **_kwargs: [{"id": "asset"}])
+    monkeypatch.setattr(service.repo, "list_candidate_planning_refresh_assets", lambda **_kwargs: [])
+    monkeypatch.setattr(service.repo, "update_universe_scanner_run", lambda *args, **kwargs: updates.append(kwargs))
+    monkeypatch.setattr("aletheia.universe.features.collect_features", AsyncMock(return_value=[{}]))
+
+    async def cancelled_worker(**kwargs):
+        kwargs["training_diagnostics_out"]["worker_lifecycle"] = "stopped_after_cancellation"
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle_owned", cancelled_worker)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.UniverseService().refresh()
+
+    assert updates[-1]["status"] == "failed"
+    assert updates[-1]["completed_at"]
+    assert json.loads(updates[-1]["errors"]) == ["candidate_selection_refresh_cancelled"]
+    metrics = json.loads(updates[-1]["metrics"])
+    assert metrics["candidate_path"]["data"]["worker_lifecycle"] == "stopped_after_cancellation"
