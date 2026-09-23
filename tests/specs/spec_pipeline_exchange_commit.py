@@ -30,6 +30,7 @@ def _seed_exchange_gateway(
             slippage_bps=0.0,
             execution_fee_pct=0.0,
             default_take_profit_pct=4.0,
+            exchange_tpsl_enabled=False,
         )
     )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)

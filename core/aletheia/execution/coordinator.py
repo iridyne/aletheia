@@ -130,7 +130,13 @@ def _status(report, *, close_position_id: str | None = None) -> tuple[str, str |
     return "submission_unknown", "unrecognized_venue_order_status"
 
 
-def _apply_report(order: Order, report, *, close_position_id: str | None = None) -> dict:
+def _apply_report(
+    order: Order,
+    report,
+    *,
+    close_position_id: str | None = None,
+    audit_context: dict | None = None,
+) -> dict:
     status, reason = _status(report, close_position_id=close_position_id)
     pending_close_status = status
     if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED:
@@ -160,7 +166,11 @@ def _apply_report(order: Order, report, *, close_position_id: str | None = None)
                 "entity_id": order.id,
                 "reason": reason,
                 "before": {"status": "pending"},
-                "after": {"status": status, "command_evidence": report.evidence.value},
+                "after": {
+                    "status": status,
+                    "command_evidence": report.evidence.value,
+                    **(audit_context or {}),
+                },
             }
         )
     else:
@@ -189,6 +199,7 @@ def execute_order(
     leverage: int | None = None,
     stop_price: float | None = None,
     take_profit_price: float | None = None,
+    native_tpsl_enabled: bool = False,
     time_in_force: str | None = None,
     post_only: bool = False,
     entry_plan_id: str | None = None,
@@ -277,12 +288,14 @@ def execute_order(
         stop_loss_price=(
             Decimal(str(stop_price))
             if stop_price is not None
+            and native_tpsl_enabled
             and adapter.capabilities.native_tpsl is CapabilitySupport.SUPPORTED
             else None
         ),
         take_profit_price=(
             Decimal(str(take_profit_price))
             if take_profit_price is not None
+            and native_tpsl_enabled
             and adapter.capabilities.native_tpsl is CapabilitySupport.SUPPORTED
             else None
         ),
@@ -305,7 +318,13 @@ def execute_order(
         report = _run(_call_and_close(adapter, "submit_order", command))
     except Exception:
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
-    acknowledgement = _apply_report(order, report)
+    acknowledgement = _apply_report(
+        order,
+        report,
+        audit_context={
+            "native_tpsl_enabled": native_tpsl_enabled,
+        },
+    )
     return entry_acknowledgement_result(acknowledgement)
 
 
