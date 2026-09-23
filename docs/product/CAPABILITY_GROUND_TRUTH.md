@@ -10,9 +10,10 @@ runtime capability.
 
 [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md) declares the Bitget Demo route
 and is consumed by the startup gate. Frozen exchange identities remain valid for
-historical provenance and recovery, not new-entry support. Physical separation,
-absent-safe Core operation and exact-runtime qualification remain to be proven;
-this page does not assert that #3134 is complete.
+historical provenance and recovery, not new-entry support. Scheme A's physical
+source layout is implemented; absent-safe Core operation and exact-runtime
+qualification remain to be proven. This page does not assert that #3134 is
+complete.
 Risk approval must precede Gateway submission; genuine outcomes require verified
 economic evidence.
 
