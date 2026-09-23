@@ -170,10 +170,8 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "Universe Twin and Exit paired evidence remain non-authoritative outside "
               "those five verdicts; dynamic-trailing qualification preserves an exact-build "
               "control holdout, forbids cross-cohort pooling, and cannot self-promote; "
-              "and Risk policy evidence must fail closed unless its paired fixed-horizon "
-              "identity and actual-intervention contract is complete; Execution cost "
-              "evidence likewise requires prospective immutable reference prices and "
-              "exact paired Fill and Outcome economics.",
+              "and the retired local-simulated paired Risk/Execution evidence blocks "
+              "stay absent from the report.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
@@ -211,18 +209,15 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert trailing["recovery_contract"]["authority"] == "diagnostic_only"
     assert trailing["cross_cohort_pooling"] is False
     assert trailing["promotion_eligible"] is False
-    risk = report["risk_policy_evidence"]
-    assert risk["contract_version"] == "risk-policy-value/v1"
-    assert risk["baseline_policy"] == "pass-all-candidates/v1"
-    assert risk["behavior_authority"] is False
-    assert risk["promotion_eligible"] is False
-    assert risk["contribution_verdict"] == "insufficient_data"
-    execution = report["execution_cost_evidence"]
-    assert execution["contract_version"] == "execution-cost-pair/v1"
-    assert execution["baseline_policy"] == "frictionless-requested-fill/v1"
-    assert execution["behavior_authority"] is False
-    assert execution["promotion_eligible"] is False
-    assert execution["contribution_verdict"] == "insufficient_data"
+    assert "risk_policy_evidence" not in report, (
+        "the paired Risk-policy-value evidence was retired with the local simulated "
+        "account (owner-approved D2 #3022); a reappearing key would be a second "
+        "current authority for a retired capability"
+    )
+    assert "execution_cost_evidence" not in report, (
+        "the paired Execution-cost evidence was retired with the local simulated "
+        "account (owner-approved D2 #3022)"
+    )
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
     weak_negative = {

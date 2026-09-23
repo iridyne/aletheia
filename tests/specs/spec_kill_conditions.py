@@ -61,6 +61,7 @@ def test_consecutive_kill_round_detection_exists():
 
     scorecard_path = (
         pathlib.Path(__file__).resolve().parents[2]
+        / "core"
         / "aletheia"
         / "analytics"
         / "go_live_scorecard.py"
@@ -338,6 +339,7 @@ def test_live_unlock_route_calls_compute_scorecard():
 
     live_route_path = (
         pathlib.Path(__file__).resolve().parents[2]
+        / "core"
         / "aletheia"
         / "server"
         / "routes"

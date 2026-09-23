@@ -54,26 +54,27 @@ _ROOT = Path(__file__).resolve().parents[2]
 )
 def test_utility_owns_cross_market_selection():
     service = (_ROOT / "core/aletheia/universe/service.py").read_text(encoding="utf-8")
-
-    # The legacy quota allocator is not merely unused — refresh cannot reach it.
-    assert "legacy_allocated = []" in service, (
-        "refresh no longer allocates a six-family quota; if this literal is gone, "
-        "confirm against candidate_selection_utility_contract.md whether the legacy "
-        "allocator regained authority before changing this spec"
-    )
-    assert "unique_scored = scored" in service, (
-        "refresh must retain every physical instrument — Utility owns cross-market "
-        "selection, so pre-allocation dedupe would drop rows it needs to rank"
-    )
     tree = ast.parse(service)
     called = {
         node.func.id if isinstance(node.func, ast.Name) else
         node.func.attr if isinstance(node.func, ast.Attribute) else ""
         for node in ast.walk(tree) if isinstance(node, ast.Call)
     }
+
+    # Utility is the live selector; the retired family-quota allocator is not a
+    # second authority (it survives only for frozen shadow replay).
+    assert "target_candidates_from_bundle" in called, (
+        "refresh does not admit Candidates through the Candidate Selection Utility"
+    )
     assert "allocate_universe" not in called, (
         "service.py calls the retired family-quota allocator again — a second "
         "selection authority alongside Candidate Selection Utility"
+    )
+    # The legacy runtime branch is fenced off, not merely unused: an unavailable
+    # Utility bundle must fail closed instead of falling back to a legacy path.
+    assert "candidate_selection_legacy_runtime_removed" in service, (
+        "refresh no longer fails closed when the Candidate Selection Utility "
+        "bundle is unavailable — a legacy selection path could return"
     )
 
 

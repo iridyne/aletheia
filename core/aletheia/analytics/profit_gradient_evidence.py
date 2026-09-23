@@ -26,7 +26,6 @@ from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )
-from extensions.learning.verdicts import METRIC_VERSION
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import (
     LAYERS,
@@ -58,6 +57,22 @@ _FIXED_CANDIDATE_HORIZON = "24h"
 _GRADIENT_COMPARISON_METHOD = "paired_same_unit"
 _GRADIENT_OUTCOME_CONTRACT_VERSION = "v1"
 _GRADIENT_STATISTICAL_UNIT_VERSION = PROFIT_LOOP_FACT_CONTRACT_VERSION
+
+
+def _learning_metric_version() -> str | None:
+    """Return the optional Learning Extension's metric version, or ``None``.
+
+    The Learning Extension owns that identity, so Core must stay importable and
+    truthful when the extension is absent. An unresolved version leaves the
+    randomized cohort identity unavailable instead of inventing a value.
+    """
+    try:
+        from extensions.learning.verdicts import METRIC_VERSION
+    except ModuleNotFoundError:
+        return None
+    return METRIC_VERSION
+
+
 _LAYER_PATH_IDS = {
     "Selection": (),
     "Decision": (),
@@ -622,16 +637,18 @@ def _confirmatory_exposure_reason(
         return "epoch_mismatch"
     try:
         from extensions.learning.behavior_contracts import build_behavior_contract_hash
-        from extensions.learning.verdicts import METRIC_VERSION
 
+        metric_version = _learning_metric_version()
+        if metric_version is None:
+            return "epoch_mismatch"
         expected_hash = build_behavior_contract_hash(
             path_id=path_id,
             policy_hash=str(policy_rows[0]["effective_values_hash"]),
             target_horizon=str(hypothesis["target_horizon"]),
             outcome_contract_version=str(row.get("outcome_contract_version") or ""),
-            metric_version=METRIC_VERSION,
+            metric_version=metric_version,
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, ModuleNotFoundError):
         return "epoch_mismatch"
     if str(row.get("behavior_contract_hash") or "") != expected_hash:
         return "epoch_mismatch"
@@ -1765,7 +1782,9 @@ def _coverage_context(
         "outcome_contract_versions": (
             [] if outcome_contract_missing else sorted(outcome_contract_values)
         ),
-        "metric_versions": [METRIC_VERSION],
+        "metric_versions": (
+            [] if (metric_version := _learning_metric_version()) is None else [metric_version]
+        ),
         "statistical_unit_versions": [_GRADIENT_STATISTICAL_UNIT_VERSION],
         "stages": sorted(stage_values),
         "fixed_horizon": _FIXED_CANDIDATE_HORIZON,

@@ -37,7 +37,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+from aletheia.config.exchanges import DEMO_EXECUTION_MODES, execution_mode_venue
 from aletheia.config.loader import _PROJECT_ROOT
 
 logger = logging.getLogger("aletheia.startup_behavior_gate")
@@ -408,7 +408,7 @@ def _check_bitget_profile(cfg) -> tuple[bool, str]:
     known = KNOWN_BITGET_PROFILES
     if profile not in known:
         return False, f"bitget_profile={profile!r} is not a known profile {sorted(known)}"
-    if "bitget" not in mode:
+    if execution_mode_venue(mode) != "bitget":
         return True, f"bitget_profile={profile!r} (bitget not active)"
     if profile == "uta_v3":
         return True, "bitget_profile=uta_v3 (Experimental — Demo qualification required before live use)"

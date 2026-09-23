@@ -449,7 +449,7 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
     assert context["comparison_method"] == "paired_same_unit"
     assert context["horizons"] == ["24h"]
     assert context["outcome_contract_versions"] == ["v2"]
-    assert context["metric_versions"] == [evidence.METRIC_VERSION]
+    assert context["metric_versions"] == [evidence._learning_metric_version()]
     assert context["statistical_unit_versions"] == ["profit_loop_fact/v1"]
     assert context["stages"] == ["paper_10"]
 

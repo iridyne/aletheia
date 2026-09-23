@@ -499,6 +499,97 @@ def test_entry_route_gates_use_registered_capabilities():
         assert hardcoded == [], f"{path.relative_to(PROJECT_ROOT)} hard-codes {route} in a route gate"
 
 
+def test_core_optional_extension_imports_are_absent_safe():
+    """Core may only reach optional Extensions through guarded module-level imports.
+
+    #3134 rule 1: Core cannot import concrete Extension implementations.
+    Composition/registration entrypoints may still do it, but only inside a
+    ``try`` that handles ``ModuleNotFoundError`` so Core stays importable when
+    the optional Extension is absent.
+    """
+    guarded = {"ModuleNotFoundError", "ImportError", "Exception", "BaseException"}
+    violations = []
+    for path in SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for statement in tree.body:
+            nodes = (
+                list(ast.walk(statement))
+                if isinstance(statement, ast.Try)
+                else [statement]
+            )
+            catches_absence = isinstance(statement, ast.Try) and any(
+                handler.type is None
+                or any(
+                    getattr(handler.type, "id", None) == name
+                    or getattr(handler.type, "attr", None) == name
+                    for name in guarded
+                )
+                or isinstance(handler.type, ast.Tuple)
+                and any(
+                    getattr(element, "id", None) in guarded
+                    or getattr(element, "attr", None) in guarded
+                    for element in handler.type.elts
+                )
+                for handler in statement.handlers
+            )
+            for node in nodes:
+                module = (
+                    node.module
+                    if isinstance(node, ast.ImportFrom)
+                    else node.names[0].name
+                    if isinstance(node, ast.Import) and node.names
+                    else None
+                )
+                if not module or not module.startswith("extensions"):
+                    continue
+                if catches_absence:
+                    continue
+                violations.append(
+                    f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} {module}"
+                )
+    assert violations == [], (
+        f"ARCH VIOLATION: unguarded Core -> Extension import: {violations}"
+    )
+
+
+_ENVIRONMENT_FRAGMENTS = ("live", "demo", "testnet", "local")
+
+
+def test_core_does_not_infer_environment_from_mode_name_fragments():
+    """#3134 rule 2: Core cannot infer semantics from ``*_demo``/``*_live`` text.
+
+    A substring test against an execution-mode value is not identity. Registered
+    execution identities must be classified through
+    ``aletheia.config.exchanges`` (``execution_mode_environment`` /
+    ``execution_mode_venue`` / ``is_live_execution_mode``).
+    """
+    violations = []
+    for path in SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            for operator, comparator in zip(node.ops, node.comparators):
+                if not isinstance(operator, (ast.In, ast.NotIn)):
+                    continue
+                for literal, container in ((node.left, comparator), (comparator, node.left)):
+                    if not (
+                        isinstance(literal, ast.Constant)
+                        and isinstance(literal.value, str)
+                        and literal.value.strip().lower() in _ENVIRONMENT_FRAGMENTS
+                        and "mode" in ast.unparse(container).lower()
+                    ):
+                        continue
+                    violations.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} "
+                        f"{ast.unparse(node)[:60]}"
+                    )
+    assert violations == [], (
+        "ARCH VIOLATION: Core infers environment from a mode-name fragment: "
+        f"{violations}"
+    )
+
+
 def test_agent_shell_does_not_import_exchange_auth():
     """agent_shell cannot directly import exchange auth or secrets."""
     forbidden = {"aletheia.exchanges.bitget.auth", "extensions.exchanges.bitget.auth", "aletheia.config.secrets"}
