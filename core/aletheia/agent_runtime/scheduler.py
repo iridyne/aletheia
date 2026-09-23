@@ -764,7 +764,12 @@ def _run_sync_with_timeout(
         raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
 
 
-def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
+def _run_async_with_timeout(
+    job_id: str,
+    awaitable: Awaitable[object],
+    *,
+    drain_on_timeout: bool = False,
+) -> object:
     """Run an async job with a hard wall-clock bound.
 
     Every invocation is admitted to a fixed process-owned event loop. News
@@ -812,6 +817,16 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
         _bump_timeout_metric("async_timed_out")
         raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
     except concurrent.futures.TimeoutError:
+        if drain_on_timeout:
+            logger.warning(
+                "job %s: deadline exceeded; waiting for owned work to stop",
+                job_id,
+            )
+            try:
+                return future.result()
+            except _AsyncJobDeadline as exc:
+                _bump_timeout_metric("async_timed_out")
+                raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
         # The persistent loop itself did not respond to cancellation in time.
         # Cancel the exact future but keep the one fixed worker thread; capacity
         # remains accounted until its done callback actually runs.
@@ -3651,13 +3666,18 @@ def _cleanup_stale_scanner_runs():
     """
     try:
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.service import active_scanner_run_ids
         db = get_db()
         was_in_tx = db.in_transaction
+        active_ids = active_scanner_run_ids()
+        placeholders = ",".join("?" for _ in active_ids)
+        active_clause = f" AND id NOT IN ({placeholders})" if active_ids else ""
         result = db.execute(
             "UPDATE universe_scanner_runs SET status = 'timed_out', "
             "completed_at = datetime('now') "
             "WHERE status = 'running' "
-            "AND datetime(started_at) < datetime('now', '-12 minutes')",
+            "AND datetime(started_at) < datetime('now', '-12 minutes')" + active_clause,
+            tuple(active_ids),
         )
         rows = result.rowcount if result else 0
         if rows:
@@ -3701,7 +3721,11 @@ def _run_universe_refresh():
         logger.info("universe_refresh skipped: universe.enabled=False in config")
         return
     try:
-        _run_async_with_timeout("universe_refresh", _async_universe_refresh())
+        _run_async_with_timeout(
+            "universe_refresh",
+            _async_universe_refresh(),
+            drain_on_timeout=True,
+        )
         _record_job_success("universe_refresh")
     except TimeoutError:
         logger.warning(

@@ -803,6 +803,7 @@ async def test_refresh_cancellation_terminalizes_scanner_after_worker_drain(monk
     with pytest.raises(asyncio.CancelledError):
         await service.UniverseService().refresh()
 
+    assert service.active_scanner_run_ids() == frozenset()
     assert updates[-1]["status"] == "failed"
     assert updates[-1]["completed_at"]
     assert json.loads(updates[-1]["errors"]) == ["candidate_selection_refresh_cancelled"]
