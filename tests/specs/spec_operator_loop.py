@@ -17,11 +17,11 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _OPERATOR_LOOP_SRC = (
     Path(__file__).parent.parent.parent
-    / "aletheia" / "agent_shell" / "operator_loop.py"
+    / "core" / "aletheia" / "agent_shell" / "operator_loop.py"
 )
 _SCHEDULER_SRC = (
     Path(__file__).parent.parent.parent
-    / "aletheia" / "agent_runtime" / "scheduler.py"
+    / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
 )
 
 # ---------------------------------------------------------------------------

@@ -1007,6 +1007,7 @@ def test_market_aware_settings_describes_wake_only_authority():
 
     manager = (
         Path(__file__).resolve().parents[2]
+        / "core"
         / "aletheia"
         / "portfolio"
         / "position_manager.py"

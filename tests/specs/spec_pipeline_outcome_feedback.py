@@ -963,6 +963,7 @@ def test_scheduler_registers_outcome_hook_replay_as_essential_io_work():
 
     source = (
         Path(__file__).parent.parent.parent
+        / "core"
         / "aletheia"
         / "agent_runtime"
         / "scheduler.py"

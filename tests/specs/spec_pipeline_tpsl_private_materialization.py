@@ -752,7 +752,7 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     )
 )
 def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
-    monkeypatch,
+    monkeypatch, installed_learning_consumers,
 ):
     from aletheia.agent_runtime import scheduler
     from aletheia.execution import exchange_materialization

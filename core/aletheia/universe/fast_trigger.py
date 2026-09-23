@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from aletheia.config.exchanges import is_live_execution_mode
 from aletheia.data.symbols import InstrumentId
 from aletheia.universe.fast_stream import (
     FastMarketEvent,
@@ -53,7 +54,7 @@ def validate_fast_trigger_stream(cfg) -> str | None:
     if cfg.agent.permission_mode not in {"Paper", "Full"}:
         return "entry_plan_permission_revoked"
     mode = str(cfg.exchange.paper_execution_mode or "")
-    if "live" in mode:
+    if is_live_execution_mode(mode):
         return "fast_trigger_live_forbidden"
     if not fast_market_stream_available_for_config(cfg):
         venue = fast_market_data_venue_for_config(cfg)

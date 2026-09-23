@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
+from aletheia.config.exchanges import is_live_execution_mode
+
 
 _CORE_TABLES = ("trade_proposals",)
 _OPTIONAL_TABLES = ("pi_decisions", "positions", "orders", "fills", "risk_decisions")
@@ -295,7 +297,7 @@ def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> i
     return sum(
         1 for row in rows
         if str(row.get("strategy_id") or "") == strategy_id
-        and "live" not in str(row.get("execution_mode") or "")
+        and not is_live_execution_mode(row.get("execution_mode"))
     )
 
 
