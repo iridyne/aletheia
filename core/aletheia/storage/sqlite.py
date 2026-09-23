@@ -278,6 +278,15 @@ def _is_mutating_sql(sql: str) -> bool:
     return False
 
 
+def _release_direct_write_lock(started_at: float, origin: str) -> None:
+    release_write_lock()
+    held_ms = (time.perf_counter() - started_at) * 1000.0
+    if held_ms >= 500.0:
+        _logger.warning(
+            "sqlite_direct_write_slow held_ms=%.1f origin=%s",
+            held_ms,
+            origin,
+        )
 class _SerializedConnection(sqlite3.Connection):
     """Guard legacy direct writes that have not yet moved to the writer lane."""
 
@@ -309,35 +318,41 @@ class _SerializedConnection(sqlite3.Connection):
         if self.in_transaction or not _is_mutating_sql(sql):
             return super().execute(sql, parameters)
         wait_ms = acquire_write_lock()
+        started_at = time.perf_counter()
+        frame = traceback.extract_stack(limit=2)[0]
+        origin = f"{frame.filename}:{frame.lineno}:{frame.name}"
         try:
             _record_writer_metric("legacy_direct_writes", 1)
             _record_writer_max("max_lock_wait_ms", wait_ms)
             return super().execute(sql, parameters)
         finally:
-            release_write_lock()
-
+            _release_direct_write_lock(started_at, origin)
     def executemany(self, sql, seq_of_parameters, /):
         if self.in_transaction or not _is_mutating_sql(sql):
             return super().executemany(sql, seq_of_parameters)
         wait_ms = acquire_write_lock()
+        started_at = time.perf_counter()
+        frame = traceback.extract_stack(limit=2)[0]
+        origin = f"{frame.filename}:{frame.lineno}:{frame.name}"
         try:
             _record_writer_metric("legacy_direct_writes", 1)
             _record_writer_max("max_lock_wait_ms", wait_ms)
             return super().executemany(sql, seq_of_parameters)
         finally:
-            release_write_lock()
-
+            _release_direct_write_lock(started_at, origin)
     def executescript(self, sql_script, /):
         if self.in_transaction:
             return super().executescript(sql_script)
         wait_ms = acquire_write_lock()
+        started_at = time.perf_counter()
+        frame = traceback.extract_stack(limit=2)[0]
+        origin = f"{frame.filename}:{frame.lineno}:{frame.name}"
         try:
             _record_writer_metric("legacy_direct_writes", 1)
             _record_writer_max("max_lock_wait_ms", wait_ms)
             return super().executescript(sql_script)
         finally:
-            release_write_lock()
-
+            _release_direct_write_lock(started_at, origin)
     def commit(self):
         try:
             return super().commit()
