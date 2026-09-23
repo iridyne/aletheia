@@ -322,6 +322,7 @@ def test_still_open_order_left_alone(tmp_path, monkeypatch):
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
     assert result["filled"] == 0
+    assert result["inconclusive"] == 0
     assert repo.list_orders()[0]["status"] == "submitted"
 
 
@@ -378,3 +379,49 @@ def test_unmapped_or_changed_account_preserves_order_without_private_reads(tmp_p
     assert result["inconclusive"] == 1
     assert repo.get_order(order.id)["status"] == "submission_unknown"
     assert repo.get_order(order.id)["uta_account_identity_json"] == stored_identity
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_typed_open_order_recovers_venue_identity(tmp_path, monkeypatch, complete):
+    from datetime import datetime, timezone
+    from aletheia.execution import reconciliation as recon
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import (
+        FillListReport, OrderListReport, OrderStatusReport, ReadCompleteness,
+    )
+
+    setup_env(tmp_path, monkeypatch)
+    order = Order(
+        source="adopted", symbol="BTC/USDT", market_type="spot",
+        direction="long", order_type="limit", quantity=0.001, price=60000,
+        execution_mode=ACCOUNT.execution_mode,
+        uta_account_identity_json=ACCOUNT.model_dump_json(),
+        client_order_id="lost-ack-client", status="submitted",
+    )
+    repo.insert_order(order)
+    now = datetime.now(timezone.utc)
+
+    async def query(_mode, operation, request, **_kwargs):
+        envelope = dict(identity=ACCOUNT, scope=request.scope, received_at=now,
+                        profile_version="1", completeness=ReadCompleteness.COMPLETE)
+        if operation == "get_open_orders":
+            if not complete:
+                envelope.update(completeness=ReadCompleteness.PARTIAL,
+                                reason_code="page_limit")
+            return OrderListReport(**envelope, orders=(OrderStatusReport(
+                identity=ACCOUNT, instrument=instrument_from_local("BTC/USDT", "spot"),
+                client_order_id=order.client_order_id, venue_order_id="VENUE-OPEN",
+                side="buy", order_type="limit", original_quantity="0.001",
+                filled_quantity="0", state="open", received_at=now,
+            ),))
+        assert operation == "get_fills"
+        return FillListReport(**envelope)
+
+    monkeypatch.setattr(recon, "query_uta", query)
+    result = recon.reconcile()
+    stored = repo.get_order(order.id)
+    assert stored["exchange_order_id"] == ("VENUE-OPEN" if complete else None)
+    assert stored["status"] == "submitted"
+    assert result["inconclusive"] == (0 if complete else 1)
+    assert result["filled"] == 0
+    assert bool(result["errors"]) is not complete
