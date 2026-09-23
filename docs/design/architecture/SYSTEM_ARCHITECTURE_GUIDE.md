@@ -183,7 +183,8 @@ RuleSet、Strategy Designer、backtest orchestrator 和 Optuna 策略变体路�
 
 当前 System Operator 的受支持交易职责是：读取一个确切 Planning Generation 的有界上下文，产生
 `ENTRY_PLAN` 或 `NO_PLAN`；只有完整 Entry Plan 才能进入不可变 Proposal、Risk 和 Execution Gateway。
-Python Operator assessment 只保留有界配置调整、通知和仍存在的一次性委派。
+TS operator-shell 是唯一运行时 Operator；独立 Entry Planner 交易职责不变。Python
+Operator assessment 及其配置写入、调度、手动触发已退役，仅保留历史评估读取。
 历史 `recommend_promote` / `recommend_retire` / `recommend_demote` 没有可达的策略
 生命周期消费者，不得从表中存在旧记录推断功能仍可用。
 
