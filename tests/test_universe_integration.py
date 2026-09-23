@@ -131,7 +131,6 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
                 "daily-semiconductor-bull-bear-3x-etfs"
             ],
         }
-
     assert assets["GOLD/USDT"].blacklist_reason == (
         "unsupported_analysis_context:tradifi_perpetual"
     )
@@ -141,6 +140,51 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     assert assets["MYSTERY/USDT"].blacklist_reason == (
         "instrument_background_unresolved"
     )
+
+
+@pytest.mark.asyncio
+async def test_okx_demo_registry_sync_does_not_fetch_sandbox_catalog(monkeypatch):
+    """Registry sync consumes normalized listings without a mode-specific catalog read."""
+    class FakeExchange:
+        async def load_markets(self):
+            self.markets = {
+                "BTC/USDT": {
+                    "id": "BTC-USDT",
+                    "symbol": "BTC/USDT",
+                    "base": "BTC",
+                    "quote": "USDT",
+                    "active": True,
+                    "spot": True,
+                    "info": {},
+                },
+            }
+
+    captured = {}
+
+    def fake_sync(assets, **_kwargs):
+        captured["assets"] = assets
+        return len(assets), 0, 0
+
+    cfg = MagicMock()
+    cfg.market_data.ccxt_exchange = "okx"
+    cfg.market_data.ccxt_fallback = None
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    cfg.exchange.enabled_markets = {"usdt_futures": False}
+    cfg.universe.blacklist = []
+
+    monkeypatch.setattr(
+        "extensions.data.ccxt_provider.CCXTProvider._ensure_primary",
+        lambda self: FakeExchange(),
+    )
+    monkeypatch.setattr(
+        "extensions.data.ccxt_provider.CCXTProvider.get_public_market_capabilities",
+        lambda *args, **kwargs: pytest.fail("mode-specific sandbox catalog must not be read"),
+        raising=False,
+    )
+    monkeypatch.setattr("aletheia.universe.registry.repo.sync_universe_assets", fake_sync)
+
+    assert await sync_registry(cfg) == 1
+    assert [asset.symbol for asset in captured["assets"]] == ["BTC/USDT"]
 
 
 def test_background_preserves_bitget_stock_token_boundary():

@@ -101,7 +101,6 @@ _EXECUTOR_WORKERS = {
 | 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
 | 27 | `ohlcv_nightly_backfill` | 457 | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | io | 3600 | 600 |
-| 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
 | 29 | `daily_summary` | 471 | cron | hour=cfg.telegram.daily_summary_hour_cst (default 8), minute=0, tz=Asia/Shanghai | io | 60 | 600 |
 | 30 | `pi_operator_loop` | 477 | cron | hour=0,4,8,12,16,20, minute=15, tz=Asia/Shanghai | agents | 120 | 600 |
 

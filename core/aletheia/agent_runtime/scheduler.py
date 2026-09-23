@@ -148,7 +148,6 @@ _ESSENTIAL_JOBS: set[str] = {
     "health_check",
     "cleanup",
     "news_fetch",
-    "okx_demo_symbols",
     "reconciliation",
     "position_reconcile",
     "tpsl_fill_check",
@@ -1621,12 +1620,6 @@ def init_scheduler() -> BackgroundScheduler | None:
             next_run_time=datetime.now() + timedelta(minutes=3),
             executor="maintenance_io",
         )
-    # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
-    _scheduler.add_job(
-        _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
-        id="okx_demo_symbols", misfire_grace_time=600, executor="io",
-        next_run_time=datetime.now() + timedelta(seconds=45),
-    )
     # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
     _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
     _scheduler.add_job(
@@ -3989,16 +3982,6 @@ def _ohlcv_backfill_body():
                 logger.debug("nightly_backfill skip %s/%s: %s", instrument, tf, e)
     logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
                 len(instruments), total_bars)
-
-
-def _run_okx_demo_symbols():
-    try:
-        from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
-        count = refresh_okx_demo_symbols()
-        logger.info("okx_demo_symbols refreshed: %d symbols", count)
-    except Exception as e:
-        logger.warning("okx_demo_symbols refresh failed: %s", e)
-        _record_job_failure("okx_demo_symbols", str(e))
 
 
 async def _async_universe_refresh():

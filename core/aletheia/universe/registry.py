@@ -1,8 +1,4 @@
-"""Asset registry admission and persistence from normalized venue listing facts.
-
-When running in demo mode (e.g. okx_demo), the registry is narrowed to only
-symbols actually supported on the demo environment — no wasted scanning.
-"""
+"""Asset registry admission and persistence from normalized venue listing facts."""
 
 from __future__ import annotations
 
@@ -45,26 +41,6 @@ def _is_excluded(instrument: MarketInstrument) -> bool:
     return False
 
 
-async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
-    """Load the demo symbol whitelist for the active execution mode.
-
-    Returns None if no demo filtering is needed (live mode or full-access demos).
-
-    The shared execution capability seam returns {"swap": frozenset,
-    "spot": frozenset}. Collapse to a single frozenset so callers can do
-    `symbol in whitelist`.
-    """
-    if paper_execution_mode == "okx_demo":
-        from aletheia.execution.venue_capabilities import fetch_venue_capabilities
-
-        markets = await fetch_venue_capabilities(paper_execution_mode)
-        if markets is None:
-            return None
-        return markets.get("swap", frozenset()) | markets.get("spot", frozenset())
-    # bitget_demo and binance_testnet support their full perp list — no extra filter
-    return None
-
-
 def _invalidate_stale_pipeline_data() -> None:
     """Flush stale universe pipeline data after a venue/strategy change.
 
@@ -96,12 +72,6 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
     sync_started_at = datetime.now(timezone.utc).isoformat()
 
     try:
-        # Load demo whitelist if applicable
-        demo_whitelist = await _load_demo_whitelist(cfg.exchange.paper_execution_mode)
-        if demo_whitelist is not None:
-            logger.info("Demo whitelist active: %d symbols for %s",
-                        len(demo_whitelist), cfg.exchange.paper_execution_mode)
-
         read_instruments = getattr(provider, "get_market_instruments", None)
         if not callable(read_instruments):
             raise RuntimeError("market_instruments_unavailable")
@@ -135,14 +105,6 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             # Keep unsupported products visible with an honest background.
             # Ordinary crypto exclusions remain absent altogether.
             if _is_excluded(instrument) and asset_class == "crypto":
-                continue
-
-            # Demo whitelist filter: skip symbols not executable on demo
-            if demo_whitelist is not None and canonical not in demo_whitelist:
-                # US-14: was a silent continue. Debug-log so an unexpectedly empty
-                # demo universe (whitelist-format mismatch) is diagnosable.
-                logger.debug("demo_whitelist: skip %s (not executable on %s)",
-                             canonical, cfg.exchange.paper_execution_mode)
                 continue
 
             config_blacklisted = canonical in cfg.universe.blacklist

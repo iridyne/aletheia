@@ -6,8 +6,6 @@ import logging
 import threading
 import time
 
-from aletheia.async_utils import run_coro_from_sync
-
 logger = logging.getLogger("aletheia.execution.venue_capabilities")
 
 
@@ -21,8 +19,7 @@ def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
       `binance_demo` — so composition yields a mode no registry, profile, or Risk
       pool recognizes;
     * `config.exchanges.EXECUTION_MODE_VENUES` is the single registered identity
-      list. `okx_demo` still uses the dedicated CCXT sandbox capability seam
-      below, but it shares the same physical venue identity.
+      list.
     """
     from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
     from aletheia.uta.manager import UTA_EXECUTION_MODES
@@ -53,7 +50,7 @@ def entry_execution_minimum_permission(execution_mode: str | None) -> str | None
     """Return the registered Entry Plan permission for one execution identity."""
     return ENTRY_EXECUTION_MINIMUM_PERMISSION.get(str(execution_mode or "").strip())
 
-_REGISTRY_CACHE_TTL = 14400  # 4h — same cadence as the OKX demo capability cache
+_REGISTRY_CACHE_TTL = 14400  # 4h
 # universe_registry.market_type is free TEXT and is populated with the universe
 # vocabulary ("perp"/"spot"); every consumer of this cache indexes it with the
 # execution vocabulary ("usdt_futures"/"spot") that Proposals and Orders carry.
@@ -105,110 +102,14 @@ def load_registry_symbols(venue: str) -> dict | None:
         return None
 
 
-_okx_demo_symbols: dict | None = None  # {"swap": frozenset, "spot": frozenset}
-_okx_demo_symbols_loaded_at: float = 0.0
-_OKX_SYMBOLS_TTL = 14400  # 4h
-_symbols_lock = threading.Lock()
-
-
-def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset:
-    """Return cached OKX demo symbols for the given market_type, loading lazily.
-
-    market_type "usdt_futures" / "perp" → swap frozenset
-    market_type "spot"                  → spot frozenset
-
-    Refresh failures propagate so an unavailable whitelist fails closed before order
-    submission. An empty frozenset means the venue loaded successfully but has no
-    products of the requested market type.
-    """
-    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
-    key = "spot" if market_type == "spot" else "swap"
-    if _okx_demo_symbols is not None and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL:
-        return _okx_demo_symbols.get(key, frozenset())
-    # Cache missing or stale — trigger a synchronous refresh
-    refresh_okx_demo_symbols()
-    if _okx_demo_symbols is None:
-        raise RuntimeError("okx_demo_symbol_refresh_unavailable")
-    return _okx_demo_symbols.get(key, frozenset())
-
-
-def refresh_okx_demo_symbols() -> int:
-    """Refresh the OKX demo symbol cache. Called by scheduler every 4h.
-
-    Returns the total number of supported symbols loaded (swap + spot).
-    """
-    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
-
-    async def _load():
-        return await fetch_venue_capabilities("okx_demo")
-
-    with _symbols_lock:
-        if (
-            _okx_demo_symbols is not None
-            and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL
-        ):
-            return sum(len(_okx_demo_symbols.get(key, frozenset())) for key in ("swap", "spot"))
-        result = run_coro_from_sync(_load())
-        if not isinstance(result, dict):
-            raise RuntimeError("okx_demo_symbol_refresh_unavailable")
-        _okx_demo_symbols = result
-        _okx_demo_symbols_loaded_at = time.time()
-        total = len(result.get("swap", frozenset())) + len(result.get("spot", frozenset()))
-        logger.info("OKX demo symbols refreshed: %d swap + %d spot",
-                    len(result.get("swap", frozenset())), len(result.get("spot", frozenset())))
-        return total
-
-
 def load_venue_capabilities(execution_mode: str) -> dict | None:
-    """Return normalized read-only capability facts for an execution mode.
-
-    OKX demo keeps the existing cache/source semantics. Other exchange
-    modes use the existing ``universe_registry`` truth. ``None`` is unknown or
-    unavailable; an empty set inside a loaded mapping remains known unavailable.
-    """
-    if execution_mode == "okx_demo":
-        swap = _get_demo_symbols("usdt_futures")
-        spot = _get_demo_symbols("spot")
-        if swap is None or spot is None:
-            return None
-        return {"swap": swap, "spot": spot}
-
+    """Return normalized registry facts for an execution mode's venue."""
     from aletheia.config.exchanges import execution_mode_venue
 
     venue = execution_mode_venue(execution_mode)
     if venue is None:
         return None
     return load_registry_symbols(venue)
-
-
-async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
-    """Fetch fresh read-only capability facts when a caller owns a refresh.
-
-    Universe synchronization historically fetched the OKX sandbox list on every
-    sync. Keep that freshness contract while routing the concrete client through
-    this same boundary; cached execution checks continue using
-    :func:`load_venue_capabilities`.
-    """
-    if execution_mode == "okx_demo":
-        from aletheia.data.providers import get_market_data_provider
-
-        provider = get_market_data_provider("okx", exact_venue=True)
-        try:
-            read = getattr(provider, "get_public_market_capabilities", None)
-            if not callable(read):
-                raise RuntimeError("market capabilities unavailable")
-            capabilities = await read(sandbox=True)
-            if not isinstance(capabilities, dict) or any(
-                key not in {"spot", "swap"}
-                or not isinstance(symbols, frozenset)
-                or any(not isinstance(symbol, str) or not symbol.strip() for symbol in symbols)
-                for key, symbols in capabilities.items()
-            ):
-                raise ValueError("market capabilities invalid")
-            return capabilities
-        finally:
-            await provider.close()
-    return load_venue_capabilities(execution_mode)
 
 
 def get_supported_symbols(
@@ -219,8 +120,4 @@ def get_supported_symbols(
     capabilities = load_venue_capabilities(execution_mode)
     if capabilities is None:
         return None
-    if execution_mode == "okx_demo":
-        key = "spot" if market_type == "spot" else "swap"
-    else:
-        key = market_type
-    return capabilities.get(key, frozenset())
+    return capabilities.get(market_type, frozenset())

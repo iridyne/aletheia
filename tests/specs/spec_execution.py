@@ -528,49 +528,37 @@ def test_symbol_availability_check_structure():
 @spec_claim(
     SpecClaim(
         "EX-B11", "execution_contract", "§3.2 symbol filter", "L2b",
-        "When the OKX demo symbol sets are loaded and a symbol is absent for the "
-        "given market_type, _check_symbol_availability returns a non-empty reason; "
-        "a present symbol returns None; market_type-awareness blocks swap-absent symbols",
+        "OKX demo resolves the same normalized venue registry as other execution "
+        "modes and does not fetch a venue-specific sandbox catalog",
     ),
 )
-def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
+def test_symbol_check_okx_demo_uses_normalized_registry(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.execution.venue_capabilities as capabilities
+    import aletheia.storage.repositories as repo
 
-    # New structure: {"swap": frozenset, "spot": frozenset}
-    # WLD/USDT is spot-only on OKX demo — absent from swap, present in spot.
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
-        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
-        "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
-    })
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols_loaded_at", float("inf"))
+    capabilities._registry_symbol_cache.clear()
+    calls = []
 
-    # WLD is in spot but NOT in swap → perp order must be rejected
-    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo", "usdt_futures")
-    assert reason is not None, "Absent-from-swap symbol must produce a rejection reason"
-    assert "WLD" in reason or "not available" in reason.lower()
+    def list_assets(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [{"symbol": "BTC/USDT", "market_type": "spot"}]
 
-    # WLD spot order must pass
-    assert gw._check_symbol_availability("WLDUSDT", "okx_demo", "spot") is None
-
-    # BTC is in swap → perp order passes
-    assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is None
-
-    # Loaded cache contains only "swap" key — spot requests must be rejected (issue #1222)
-    # _get_demo_symbols now returns frozenset() (not None) for a missing key in a loaded dict.
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
-        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
-    })
-    reason_no_spot = gw._check_symbol_availability("BTCUSDT", "okx_demo", "spot")
-    assert reason_no_spot is not None, (
-        "Loaded OKX demo cache with no spot key must reject spot orders (issue #1222)"
+    monkeypatch.setattr(repo, "list_universe_assets", list_assets)
+    monkeypatch.setattr(
+        "aletheia.data.providers.get_market_data_provider",
+        lambda *args, **kwargs: pytest.fail("venue-specific provider catalog must not be fetched"),
     )
+
+    assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "spot") is None
+    assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is not None
+    assert calls == [((), {"venue": "okx", "active_only": True, "limit": None})]
 
 
 @spec_claim(
     SpecClaim(
         "EX-B12", "execution_contract", "§3.2 symbol filter", "L2b",
-        "For registry-based modes (bitget, binance): absent symbol → rejection reason; "
+        "For all modes: absent symbol → rejection reason; "
         "spot-only symbol rejects a perp order (market-type-aware); "
         "empty/unsynced registry → None (fail-open, never blocks legitimate orders)",
     ),

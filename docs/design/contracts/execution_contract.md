@@ -122,10 +122,7 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
 
 | 模式 | 标的来源 | 缓存 TTL |
 |------|---------|---------|
-| `okx_demo` | `execution.venue_capabilities.load_venue_capabilities()`（sandbox 公共行情列表） | 4h |
-| `okx_live_limited` | `universe_registry`（venue=`"okx"`） | 4h |
-| `bitget_demo` / `bitget_live_limited` | `universe_registry`（venue=`"bitget"`） | 4h |
-| `binance_testnet` / `binance_live_limited` | `universe_registry`（venue=`"binance"`） | 4h |
+| all registered modes | `universe_registry` for the normalized venue identity | 4h |
 
 **Fail-open**：缓存未就绪或 registry 为空时返回 `None`，不阻塞下单（避免首次启动 / registry 未同步时误伤）。
 
@@ -138,7 +135,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 1. 在 `config.exchanges` 的执行模式、环境和 venue 注册表中登记 `"hyperliquid_demo": "hyperliquid"`
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
-**Spec claims**：`EX-S07`（结构）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
+**Spec claims**：`EX-S07`（结构）/ `EX-B11`（all modes use normalized venue registry）/ `EX-B12`（market-type partitions + fail-open）。`gateway.py:85-165`。
 
 ### 3.4 Worktree preview runtime（fail-closed）
 
