@@ -4,6 +4,9 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -16,6 +19,27 @@ def _isolate_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(jmod, "_last_audit_hash", None)
     monkeypatch.setattr(jmod, "_log_dir", lambda: tmp_path)
     yield
+
+def test_audit_rotation_does_not_run_config_migration(tmp_path):
+    config = "webhook:\n  enabled: true\n  url: ''\n"
+    (tmp_path / "config.yaml").write_text(config, encoding="utf-8")
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "audit.jsonl").touch()
+    # A real migration emits an audit event; doing that under the audit lock
+    # deadlocks. Isolate the process so a regression cannot hang the suite.
+    subprocess.run(
+        [sys.executable, "-c", """
+from aletheia.files.jsonl import write_audit, verify_audit_chain
+assert write_audit({"action": "rotation-read"}, mirror_db=False)
+assert verify_audit_chain()["valid"]
+"""],
+        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
+        check=True, timeout=10, capture_output=True, text=True,
+    )
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == config
+    records = [json.loads(line) for line in (logs / "audit.jsonl").read_text().splitlines()]
+    assert [record["action"] for record in records] == ["rotation-read"]
 
 
 def test_first_record_has_genesis_prev_hash(tmp_path):
