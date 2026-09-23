@@ -30,7 +30,7 @@ def test_historical_equities_decode_once_and_explicit_clear_survives_reload(cano
     if canonical is not None:
         raw["observed_equities"] = canonical
     cfg = MarketDataConfig.model_validate(raw, extra="forbid")
-    assert cfg.observed_equities == (canonical or ["TSLA"])
+    assert cfg.observed_equities == (["TSLA"] if canonical is None else canonical)
     assert raw["observed_stocks"] == ["TSLA"]
     assert not hasattr(cfg, "observed_stocks")
     cfg.observed_equities = []
