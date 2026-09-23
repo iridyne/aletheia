@@ -8,6 +8,7 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
@@ -406,6 +407,8 @@ def transaction(*, immediate: bool = False, savepoint: bool = False):
     # locked" OperationalErrors cannot occur during normal operation.  Any timeout
     # here means a caller is holding a write transaction open across I/O — a bug,
     # not a concurrency problem.
+    frame = traceback.extract_stack(limit=3)[0]
+    origin = f"{frame.filename}:{frame.lineno}:{frame.name}"
     wait_ms = acquire_write_lock()
     acquired_at = time.perf_counter()
     outcome = "begin_failed"
@@ -431,15 +434,15 @@ def transaction(*, immediate: bool = False, savepoint: bool = False):
             "yes",
             "on",
         }
-        log_args = (wait_ms, held_ms, immediate, outcome)
+        log_args = (wait_ms, held_ms, immediate, outcome, origin)
         if wait_ms >= 100.0 or held_ms >= 500.0:
             _sqlite_logger.warning(
-                "sqlite_write_transaction_slow wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s",
+                "sqlite_write_transaction_slow wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s origin=%s",
                 *log_args,
             )
         elif verbose:
             _sqlite_logger.info(
-                "sqlite_write_transaction wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s",
+                "sqlite_write_transaction wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s origin=%s",
                 *log_args,
             )
 

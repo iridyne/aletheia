@@ -108,6 +108,7 @@ def test_sqlite_transaction_timing_can_be_enabled_without_logging_values(
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("sqlite_write_transaction wait_ms=" in message for message in messages)
+    assert any("origin=" in message and __file__ in message for message in messages)
     assert all("SENSITIVE/SYMBOL" not in message for message in messages)
     reset_db()
 
