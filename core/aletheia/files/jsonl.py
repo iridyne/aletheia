@@ -41,7 +41,8 @@ def _max_bytes() -> int:
             return val
     try:
         from aletheia.config.loader import load_config
-        val = int(load_config().retention.jsonl_max_mb * 1024 * 1024)
+        # Rotation reads must not migrate config and recursively emit audit.
+        val = int(load_config(persist_migrations=False).retention.jsonl_max_mb * 1024 * 1024)
     except Exception:
         val = 50 * 1024 * 1024
     _max_bytes_cache = (time.monotonic(), val)
