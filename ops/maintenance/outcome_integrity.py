@@ -19,12 +19,14 @@ from aletheia.analytics.outcome_integrity import (
     ADMINISTRATIVE_CLOSE_REASONS,
     MAINTENANCE_CLOSE_REASONS,
 )
-
+from aletheia.utils.dt import parse_utc
 
 _REMEDIATION_SEMANTICS_VERSION = "oi-v1"
 _REMEDIATION_ANCHOR_ID = "outcome-integrity-v1-2026-07-12"
 _REMEDIATION_ANCHOR_ISO = "2026-07-12T07:10:00+00:00"
 _REMEDIATION_RETIRED_AT_ISO = "2026-09-23T16:43:35+00:00"
+_REMEDIATION_ANCHOR = datetime.fromisoformat(_REMEDIATION_ANCHOR_ISO)
+_REMEDIATION_RETIRED_AT = datetime.fromisoformat(_REMEDIATION_RETIRED_AT_ISO)
 REMEDIATION_BATCH_ID = f"{_REMEDIATION_ANCHOR_ID}:{_REMEDIATION_SEMANTICS_VERSION}"
 _DERIVED_ITEM_TYPES = frozenset({
     "calibration_report",
@@ -218,10 +220,10 @@ def _archive_plan(db) -> list[dict[str, str]]:
 
 
 def _derived_archive_reason(row: dict[str, Any]) -> str | None:
-    created_at = str(row.get("created_at") or "")
-    if created_at >= _REMEDIATION_RETIRED_AT_ISO:
+    created_at = parse_utc(row.get("created_at"))
+    if created_at is not None and created_at >= _REMEDIATION_RETIRED_AT:
         return None
-    if created_at and created_at < _REMEDIATION_ANCHOR_ISO:
+    if created_at is not None and created_at < _REMEDIATION_ANCHOR:
         return "pre_clean_window_derived_artifact"
     if row.get("item_type") == "operator_assessment":
         return None

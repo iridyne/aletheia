@@ -1203,7 +1203,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
         CANDIDATE_SELECTION_OUTCOME_VERSION,
     )
 
-    start = datetime(2026, 9, 3, tzinfo=timezone.utc)
+    start = datetime(2026, 9, 24, tzinfo=timezone.utc)
     cutoff = start.isoformat()
     policy_epoch = "candidate-selection-utility:fixed-policy"
     behavior_hash = "f" * 64

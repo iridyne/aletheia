@@ -81,7 +81,7 @@ def test_format_smoke():
     stats = compare_exit_outcomes([_row("operator_close", 10.0), _row("stop_loss", -5.0)])
     out = format_comparison(stats)
     assert "operator" in out and "rule" in out and "win%" in out
-    assert "eligible" in out and "oi-v1" in out
+    assert "eligible" in out and "oi-v2" in out
 
 
 def test_shadow_report_uses_central_eligible_cohort(monkeypatch):
