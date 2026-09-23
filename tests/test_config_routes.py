@@ -971,10 +971,9 @@ async def test_settings_response_covers_sanitized_config_schema(client):
 
 @pytest.mark.anyio
 async def test_get_settings_masks_inline_secret_fields(client):
-    """Regression #1: GET /api/settings must not return coinalyze_api_key or proxy credentials raw."""
+    """GET /api/settings omits the retired key and redacts proxy credentials."""
     from aletheia.config.loader import save_config
     cfg = AletheiaConfig()
-    cfg.market_data.coinalyze_api_key = "COINALYZESECRET12345"
     cfg.network.proxy_url = "http://myuser:mypassword@127.0.0.1:7890"
     save_config(cfg)
 
@@ -985,9 +984,7 @@ async def test_get_settings_masks_inline_secret_fields(client):
     assert "mypassword" not in raw and "myuser" not in raw
 
     data = resp.json()
-    # Key stays present (UI reads the section) but the value is masked.
-    assert "coinalyze_api_key" in data["market_data"]
-    assert data["market_data"]["coinalyze_api_key"] != "COINALYZESECRET12345"
+    assert "coinalyze_api_key" not in data["market_data"]
     # Proxy host/port kept for diagnostics; only the user:pass is stripped.
     assert "127.0.0.1:7890" in data["network"]["proxy_url"]
 

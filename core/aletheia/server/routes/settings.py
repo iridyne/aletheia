@@ -90,17 +90,7 @@ def _reject_live_identity_change(cfg, *, changed: bool) -> None:
 
 # --- Inline-secret redaction ---------------------------------------------------
 # Secrets must never leave the backend via a GET response, an echoed POST body,
-# or an audit record. `config.yaml` can hold credential-bearing fields (a proxy
-# URL with user:pass, or the legacy market_data.coinalyze_api_key), so every
-# surface that serializes those config sections runs them through these helpers.
-def _mask_secret(value):
-    """Mask a secret-bearing string for display, keeping only the last 4 chars."""
-    if not value:
-        return value
-    s = str(value)
-    return f"***{s[-4:]}" if len(s) > 4 else "***"
-
-
+# or an audit record. `config.yaml` can hold a credential-bearing proxy URL.
 def _redact_proxy_url(url):
     """Strip embedded credentials from a proxy URL: scheme://user:pass@host -> scheme://***@host."""
     if not url:
@@ -116,13 +106,6 @@ def _redact_proxy_url(url):
     except Exception:  # noqa: BLE001 — never let redaction raise into a response
         return "***"
     return url
-
-
-def _redacted_market_data(md: dict) -> dict:
-    md = dict(md)
-    if md.get("coinalyze_api_key"):
-        md["coinalyze_api_key"] = _mask_secret(md["coinalyze_api_key"])
-    return md
 
 
 def _redacted_network(net: dict) -> dict:
@@ -437,7 +420,7 @@ def get_settings() -> SettingsResponse:
             "last_delivery": webhook_delivery_status(),
             "secret_configured": bool(cfg.webhook.secret),
         },
-        "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
+        "market_data": cfg.market_data.model_dump(mode="json"),
         "universe": cfg.universe.model_dump(mode="json"),
         "fast_trigger": cfg.fast_trigger.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
@@ -2376,11 +2359,8 @@ class MarketDataConfigUpdate(SettingsRequest):
     enable_hyperliquid: Optional[bool] = None
     derivatives_comparison_venues: Optional[list[DerivativesComparisonVenue]] = Field(default=None, max_length=3)
     enable_defillama: Optional[bool] = None
-    # #35 fix: fields present in MarketDataConfig but previously missing from
-    # the update surface — a settings-page save silently dropped edits to
-    # these because the API model didn't accept them. Adding the safe
-    # scalars here; `coinalyze_api_key` is a SECRET and stays with the
-    # dedicated credential route, never in bulk-update payloads.
+    # Safe, non-secret scalars from MarketDataConfig; Data credentials are not
+    # part of this Core settings surface.
     provider: Optional[str] = None
     enable_crypto_fallback: Optional[bool] = None
     enable_coinalyze: Optional[bool] = None

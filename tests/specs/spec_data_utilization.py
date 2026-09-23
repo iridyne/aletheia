@@ -681,16 +681,15 @@ def test_regime_is_inline_not_separate_collector():
 
 
 # ---------------------------------------------------------------------------
-# DU-S06 — CoinalyzeCollector is registered in scheduler + config fields exist
+# DU-S06 — CoinalyzeCollector is registered and enabled without Core credentials
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "DU-S06", _CONTRACT, "§coinalyze scheduler + config", "L2a",
         "CoinalyzeCollector 已被 scheduler.py 注册到 _async_data_collector_context job "
-        "（仿 HyperliquidCollector 模式），且 config/schema.py 定义了 "
-        "enable_coinalyze（bool）和 coinalyze_api_key（str|None）字段。"
-        "两个结构断言共同保证：采集器不仅存在，还被实际调度，且可通过配置启停。",
+        "（仿 HyperliquidCollector 模式）；Core config 只定义 enable_coinalyze，"
+        "collector 仅通过 extension-scoped Secret Store 引用获取自己的可选凭据。",
         status="implemented",
     ),
 )
@@ -707,13 +706,12 @@ def test_coinalyze_registered_in_scheduler_and_config():
         "(it should be registered in _async_data_collector_context, see DU-S06)"
     )
 
-    # 2) config schema 定义 enable_coinalyze + coinalyze_api_key
-    schema_src = inspect.getsource(schema_mod)
-    assert "enable_coinalyze" in schema_src, (
+    # 2) Core config owns only the non-secret enable flag.
+    assert "enable_coinalyze" in schema_mod.MarketDataConfig.model_fields, (
         "config/schema.py must define enable_coinalyze field (DU-S06)"
     )
-    assert "coinalyze_api_key" in schema_src, (
-        "config/schema.py must define coinalyze_api_key field (DU-S06)"
+    assert "coinalyze_api_key" not in schema_mod.MarketDataConfig.model_fields, (
+        "raw Coinalyze credentials must not be part of Core config (DU-S06)"
     )
 
 
