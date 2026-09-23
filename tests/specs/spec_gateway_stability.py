@@ -737,7 +737,7 @@ def test_universe_refresh_none_is_agent_and_scheduler_failure(monkeypatch):
     async def no_snapshot(_self):
         return None
 
-    def run_inline(_job_id, awaitable):
+    def run_inline(_job_id, awaitable, **_kwargs):
         return asyncio.run(awaitable)
 
     monkeypatch.setattr(UniverseService, "refresh", no_snapshot)

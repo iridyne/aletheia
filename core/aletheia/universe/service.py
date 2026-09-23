@@ -41,7 +41,15 @@ _CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC = 60.0
 _candidate_selection_executor = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="candidate-selection"
 )
+_active_scanner_runs_lock = threading.Lock()
+_active_scanner_runs: set[str] = set()
 _regime_refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None = None
+
+
+def active_scanner_run_ids() -> frozenset[str]:
+    """Return scanner rows still owned by this process."""
+    with _active_scanner_runs_lock:
+        return frozenset(_active_scanner_runs)
 
 
 def configure_regime_refresh(refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None) -> None:
@@ -653,6 +661,8 @@ class UniverseService:
         run = UniverseScannerRun()
         with repo.transaction():
             repo.insert_universe_scanner_run(run)
+        with _active_scanner_runs_lock:
+            _active_scanner_runs.add(run.id)
         data_diagnostics: dict[str, object] = {}
         path_metrics = {
             "selection_policy": cfg.universe.candidate_selection_policy,
@@ -1150,6 +1160,9 @@ class UniverseService:
                 metrics=json.dumps({"candidate_path": path_metrics}),
             )
             return None
+        finally:
+            with _active_scanner_runs_lock:
+                _active_scanner_runs.discard(run.id)
 
     def fallback_static_universe(self) -> list[str]:
         """Return the static fallback symbol list."""

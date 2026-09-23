@@ -11,9 +11,10 @@ import pytest
 pytestmark = pytest.mark.usefixtures("installed_learning_consumers")
 
 
-def test_stale_scanner_cleanup_parses_iso_timestamps():
+def test_stale_scanner_cleanup_parses_iso_timestamps(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe import service
 
     now = datetime.now(timezone.utc)
     db = get_db()
@@ -22,11 +23,13 @@ def test_stale_scanner_cleanup_parses_iso_timestamps():
         "VALUES (?, ?, 'running')",
         (
             ("old-run", (now - timedelta(minutes=30)).isoformat()),
+            ("active-run", (now - timedelta(minutes=30)).isoformat()),
             ("fresh-run", (now - timedelta(minutes=1)).isoformat()),
         ),
     )
     db.commit()
 
+    monkeypatch.setattr(service, "active_scanner_run_ids", lambda: frozenset({"active-run"}))
     scheduler._cleanup_stale_scanner_runs()
 
     rows = {
@@ -37,6 +40,8 @@ def test_stale_scanner_cleanup_parses_iso_timestamps():
     }
     assert rows["old-run"]["status"] == "timed_out"
     assert rows["old-run"]["completed_at"]
+    assert rows["active-run"]["status"] == "running"
+    assert rows["active-run"]["completed_at"] is None
     assert rows["fresh-run"]["status"] == "running"
 
 
@@ -647,6 +652,49 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     assert ("defillama", "empty") in health
     assert ("hyperliquid", "skipped_budget") not in health
     assert ("defillama", "skipped_budget") not in health
+
+
+def test_owned_async_timeout_waits_for_terminal_worker_state(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    class PendingFuture:
+        def __init__(self):
+            self.calls = 0
+            self.cancelled = False
+
+        def result(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError
+            assert timeout is None
+            raise scheduler._AsyncJobDeadline
+
+        def cancel(self):
+            self.cancelled = True
+
+    pending = PendingFuture()
+
+    class Worker:
+        def submit(self, guarded):
+            guarded.close()
+            return pending
+
+    class Awaitable:
+        def __await__(self):
+            yield
+
+    monkeypatch.setattr(scheduler, "_async_timeout_worker", Worker())
+    monkeypatch.setattr(scheduler, "_ensure_timeout_workers_ready", lambda: None)
+
+    with pytest.raises(TimeoutError, match="job universe_refresh timed out"):
+        scheduler._run_async_with_timeout(
+            "universe_refresh",
+            Awaitable(),
+            drain_on_timeout=True,
+        )
+
+    assert pending.calls == 2
+    assert pending.cancelled is False
 
 
 def test_async_timeout_worker_reuses_one_thread(monkeypatch):
