@@ -77,7 +77,7 @@ def test_clean_window_cutoff_behavior():
     # rolling cutoff BEFORE the floor -> clamped up to the floor (dirty data excluded)
     assert clean_window_cutoff("2026-05-01T00:00:00+00:00") == LEARNING_DATA_FLOOR_ISO
     # rolling cutoff AFTER the floor -> returned unchanged (floor is a no-op)
-    after = "2026-08-01T00:00:00+00:00"
+    after = "2026-10-01T00:00:00+00:00"
     assert clean_window_cutoff(after) == after
     # exactly at the floor -> floor
     assert clean_window_cutoff(LEARNING_DATA_FLOOR_ISO) == LEARNING_DATA_FLOOR_ISO
@@ -141,9 +141,9 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     memo = {
         "generated_at": gen,
         "execution_mode": "bitget_demo",
-        "outcome_semantics_version": "oi-v1",
-        "clean_window_anchor_id": "outcome-integrity-v1-2026-07-12",
-        "clean_window_anchor_iso": "2026-07-12T07:10:00+00:00",
+        "outcome_semantics_version": "oi-v2",
+        "clean_window_anchor_id": "outcome-integrity-v2-2026-09-23",
+        "clean_window_anchor_iso": "2026-09-23T16:43:35+00:00",
         "cohort_complete": True,
         "ordered_source_digest": "memo-cohort-digest",
         "valid_until": (now + timedelta(hours=60)).isoformat(),

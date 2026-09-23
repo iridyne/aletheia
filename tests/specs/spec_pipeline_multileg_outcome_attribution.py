@@ -138,7 +138,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         exit_fill_verified=True,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
+        outcome_semantics_version="oi-v2",
     )
     repo.insert_position(position)
     return position.model_dump()

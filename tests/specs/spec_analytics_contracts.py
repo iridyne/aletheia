@@ -288,7 +288,7 @@ def test_scorecard_excludes_synthetic_closes(monkeypatch):
                 realized_pnl=pnl,
                 execution_mode="bitget_demo",
                 close_reason=reason,
-                closed_at="2026-07-12T08:00:00+00:00",
+                closed_at="2026-09-23T17:00:00+00:00",
             )
             return
         repo.insert_position(Position(
@@ -296,12 +296,12 @@ def test_scorecard_excludes_synthetic_closes(monkeypatch):
             symbol=symbol, market_type="usdt_futures", direction=direction,
             quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
             status="closed", realized_pnl=pnl, close_reason=reason,
-            closed_at="2026-07-12T08:00:00+00:00",
+            closed_at="2026-09-23T17:00:00+00:00",
             current_price=100.0 - pnl,
             close_category="administrative",
             outcome_eligible=False,
             outcome_exclusion_reason="administrative_close",
-            outcome_semantics_version="oi-v1",
+            outcome_semantics_version="oi-v2",
         ))
 
     # Genuine cohort: 2 wins (+10 each), 1 loss (-5) → WR 66.7%, PF 20/5 = 4.0

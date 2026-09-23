@@ -81,7 +81,7 @@ def test_perp_requires_public_positioning_inputs():
     assert record.invalid_reason == "missing_top_trader_position_ratio"
 
 
-def test_relative_rank_persists_isolated_cluster_and_outcome():
+def test_relative_rank_persists_isolated_cluster_and_outcome(monkeypatch):
     from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
     from extensions.analytics.relative_rank_experiment import (
         build_prospective_relative_rank_bundle,
@@ -113,7 +113,7 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
         provider_id="ccxt:binance",
         outcome_venue="binance",
         regime_state="sideways",
-        captured_at="2026-08-10T00:00:00+00:00",
+        captured_at="2026-09-24T00:00:00+00:00",
     )
 
     assert (
@@ -147,11 +147,17 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
         "cost_model_version='test-v1', settled_at=due_at WHERE id=?",
         (bundle.outcomes[0].id,),
     )
-    from aletheia.universe.relative_rank_evaluation import (
-        evaluate_relative_rank_shadow_epoch,
-    )
+    import aletheia.universe.relative_rank_evaluation as relative_rank_evaluation
 
-    report = evaluate_relative_rank_shadow_epoch(bundle.batch.policy_epoch_id)
+    class _Clock(__import__("datetime").datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromisoformat("2026-09-25T00:00:00+00:00")
+
+    monkeypatch.setattr(relative_rank_evaluation, "datetime", _Clock)
+    report = relative_rank_evaluation.evaluate_relative_rank_shadow_epoch(
+        bundle.batch.policy_epoch_id
+    )
     assert report["complete_cluster_n"] == 1
     assert report["verdict"] == "insufficient_data"
     assert report["promotion_eligible"] is False
@@ -189,7 +195,7 @@ def test_relative_rank_excludes_temporally_invalid_settled_outcomes():
         provider_id="ccxt:binance",
         outcome_venue="binance",
         regime_state="sideways",
-        captured_at="2026-08-10T00:00:00+00:00",
+        captured_at="2026-09-24T00:00:00+00:00",
     )
     repo.insert_relative_rank_shadow_bundle(
         bundle.batch,

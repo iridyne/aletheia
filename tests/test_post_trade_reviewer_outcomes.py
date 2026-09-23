@@ -64,7 +64,7 @@ def _seed_position(
         exit_fill_verified=True,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
+        outcome_semantics_version="oi-v2",
     )
     if case == "open":
         common.update(

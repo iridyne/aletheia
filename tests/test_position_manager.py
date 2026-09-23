@@ -156,7 +156,7 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     assert row["exit_fill_verified"] == 1
     assert row["outcome_eligible"] == 1
     assert row["outcome_exclusion_reason"] == "eligible"
-    assert row["outcome_semantics_version"] == "oi-v1"
+    assert row["outcome_semantics_version"] == "oi-v2"
     assert len(repo.list_positions(status="open")) == 0
 
     from aletheia.server.routes.analytics import get_equity_curve

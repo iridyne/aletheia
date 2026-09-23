@@ -15,18 +15,17 @@ import json
 from typing import Any
 from aletheia.files.knowledge_document import canonicalize_inline_document
 
-from aletheia.analytics.learning_window import (
-    CLEAN_WINDOW_ANCHOR_ID,
-    CLEAN_WINDOW_ANCHOR_ISO,
-)
 from aletheia.analytics.outcome_integrity import (
     ADMINISTRATIVE_CLOSE_REASONS,
     MAINTENANCE_CLOSE_REASONS,
-    OUTCOME_SEMANTICS_VERSION,
 )
 
 
-REMEDIATION_BATCH_ID = f"{CLEAN_WINDOW_ANCHOR_ID}:{OUTCOME_SEMANTICS_VERSION}"
+_REMEDIATION_SEMANTICS_VERSION = "oi-v1"
+_REMEDIATION_ANCHOR_ID = "outcome-integrity-v1-2026-07-12"
+_REMEDIATION_ANCHOR_ISO = "2026-07-12T07:10:00+00:00"
+_REMEDIATION_RETIRED_AT_ISO = "2026-09-23T16:43:35+00:00"
+REMEDIATION_BATCH_ID = f"{_REMEDIATION_ANCHOR_ID}:{_REMEDIATION_SEMANTICS_VERSION}"
 _DERIVED_ITEM_TYPES = frozenset({
     "calibration_report",
     "reasoning_feedback",
@@ -71,9 +70,9 @@ def remediate_outcome_history(
         compensation_candidates = _compensation_candidates(db)
         result = {
             "batch_id": REMEDIATION_BATCH_ID,
-            "semantics_version": OUTCOME_SEMANTICS_VERSION,
-            "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
-            "clean_window_anchor_iso": CLEAN_WINDOW_ANCHOR_ISO,
+            "semantics_version": _REMEDIATION_SEMANTICS_VERSION,
+            "clean_window_anchor_id": _REMEDIATION_ANCHOR_ID,
+            "clean_window_anchor_iso": _REMEDIATION_ANCHOR_ISO,
             "dry_run": dry_run,
             "classification": {
                 "planned": len(classifications),
@@ -103,19 +102,20 @@ def remediate_outcome_history(
             db.execute(
                 "UPDATE positions SET close_category=?, exit_price_source='unavailable', "
                 "exit_fill_verified=0, outcome_eligible=0, outcome_exclusion_reason=?, "
-                "outcome_semantics_version=? WHERE id=? AND outcome_semantics_version IS NULL",
+                "outcome_semantics_version=? WHERE id=? AND outcome_semantics_version IS NULL "
+                "AND closed_at < ?",
                 (
                     item["close_category"], item["outcome_exclusion_reason"],
-                    OUTCOME_SEMANTICS_VERSION, item["id"],
+                    _REMEDIATION_SEMANTICS_VERSION, item["id"], _REMEDIATION_RETIRED_AT_ISO,
                 ),
             )
         for item in archives:
             marker_id = _marker_id(item["id"])
             marker = {
                 "batch_id": REMEDIATION_BATCH_ID,
-                "semantics_version": OUTCOME_SEMANTICS_VERSION,
+                "semantics_version": _REMEDIATION_SEMANTICS_VERSION,
                 "supersedes_id": item["id"],
-                "superseded_by": f"clean-window:{CLEAN_WINDOW_ANCHOR_ID}",
+                "superseded_by": f"clean-window:{_REMEDIATION_ANCHOR_ID}",
                 "reason": item["reason"],
                 "archive": True,
             }
@@ -178,7 +178,8 @@ def remediate_outcome_history(
 def _classification_plan(db) -> list[dict[str, str]]:
     rows = db.execute(
         "SELECT id, close_reason FROM positions WHERE status='closed' "
-        "AND outcome_semantics_version IS NULL ORDER BY id"
+        "AND outcome_semantics_version IS NULL AND closed_at < ? ORDER BY id",
+        (_REMEDIATION_RETIRED_AT_ISO,),
     ).fetchall()
     plan: list[dict[str, str]] = []
     for row in rows:
@@ -218,7 +219,9 @@ def _archive_plan(db) -> list[dict[str, str]]:
 
 def _derived_archive_reason(row: dict[str, Any]) -> str | None:
     created_at = str(row.get("created_at") or "")
-    if created_at and created_at < CLEAN_WINDOW_ANCHOR_ISO:
+    if created_at >= _REMEDIATION_RETIRED_AT_ISO:
+        return None
+    if created_at and created_at < _REMEDIATION_ANCHOR_ISO:
         return "pre_clean_window_derived_artifact"
     if row.get("item_type") == "operator_assessment":
         return None
@@ -230,9 +233,9 @@ def _derived_archive_reason(row: dict[str, Any]) -> str | None:
         return "unreadable_derived_artifact"
     if not isinstance(payload, dict):
         return "unreadable_derived_artifact"
-    if payload.get("outcome_semantics_version") != OUTCOME_SEMANTICS_VERSION:
+    if payload.get("outcome_semantics_version") != _REMEDIATION_SEMANTICS_VERSION:
         return "unknown_semantics_version"
-    if payload.get("clean_window_anchor_id") != CLEAN_WINDOW_ANCHOR_ID:
+    if payload.get("clean_window_anchor_id") != _REMEDIATION_ANCHOR_ID:
         return "unknown_clean_window_anchor"
     return None
 

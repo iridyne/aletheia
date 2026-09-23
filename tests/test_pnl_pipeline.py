@@ -879,7 +879,7 @@ class TestEquityCurveEndpoint:
 
     async def test_filters_by_days(self, client):
         c, _ = client
-        now = datetime.now(timezone.utc)
+        now = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(minutes=2)
         pre_clean_window = (
             datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) - timedelta(minutes=1)
         )
@@ -905,7 +905,7 @@ class TestEquityCurveEndpoint:
         # Raw recorded account history remains available on its separately labelled curve.
         assert body["points"][0]["cumulative_pnl"] == 3.0
         assert body["total_realized"] == 3.0
-        assert body["raw_recorded_points"][0]["cumulative_pnl"] == 8.0
+        assert [point["cumulative_pnl"] for point in body["raw_recorded_points"]] == [5.0, 8.0]
 
     async def test_respects_limit(self, client):
         c, _ = client

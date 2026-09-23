@@ -89,13 +89,13 @@ def test_cohort_summary_counts_raw_verified_and_exclusion_reasons():
             "administrative_close": 1,
             "legacy_unverified_close": 1,
         },
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": "oi-v2",
         "cohort_state": "available",
         "raw_recorded_realized_pnl": -994.0,
         "raw_economics_unavailable_count": 1,
         "eligible_realized_pnl": 5.0,
-        "clean_window_anchor_id": "outcome-integrity-v1-2026-07-12",
-        "clean_window_anchor_iso": "2026-07-12T07:10:00+00:00",
+        "clean_window_anchor_id": "outcome-integrity-v2-2026-09-23",
+        "clean_window_anchor_iso": "2026-09-23T16:43:35+00:00",
     }
 
 
@@ -184,7 +184,7 @@ def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
         assert payload["raw_event_count"] == 3
         assert payload["eligible_outcome_count"] == 1
         assert payload["excluded_outcome_count"] == 2
-        assert payload["outcome_semantics_version"] == "oi-v1"
+        assert payload["outcome_semantics_version"] == "oi-v2"
     assert stats["totals"]["trade_count"] == 1
     assert stats["totals"]["total_pnl"] == 5.0
     assert curve["default_curve"] == "genuine_verified"

@@ -38,7 +38,7 @@ def _closed_row(**overrides) -> dict:
         "exit_fill_verified": True,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": "oi-v2",
     }
     row.update(overrides)
     return row
@@ -87,7 +87,7 @@ def test_archived_fill_models_preserve_economics_without_current_learning_author
     archived = _closed_row(
         execution_mode="paper_internal", funding_source="local_simulation",
         entry_price_source="local_fill", exit_price_source="local_fill",
-        closed_at="2026-07-12T08:00:00+00:00",
+        closed_at="2026-09-23T17:00:00+00:00",
         _paper_fill_model_version=fill_model_version,
     )
     original = archived.copy()
@@ -228,8 +228,8 @@ def test_explicit_read_models_partition_closed_positions():
         "execution_mode": "bitget_demo", "status": "closed",
     }
     for position_id, mode, closed_at in (
-        ("eligible", "bitget_demo", "2026-07-12T08:00:00+00:00"),
-        ("other-mode", "okx_demo", "2026-07-12T08:00:30+00:00"),
+        ("eligible", "bitget_demo", "2026-09-23T17:00:00+00:00"),
+        ("other-mode", "okx_demo", "2026-09-23T17:00:30+00:00"),
     ):
         _insert_closed_position_via_producer(
             position_id=position_id, symbol="BTC/USDT", market_type="usdt_futures",
@@ -239,15 +239,15 @@ def test_explicit_read_models_partition_closed_positions():
     rows = [
         Position(
             **common, id="admin", close_reason="reconciled_gone",
-            closed_at="2026-07-12T08:01:00+00:00",
+            closed_at="2026-09-23T17:01:00+00:00",
         ),
         Position(
             **common, id="maintenance", close_reason="units_bug_cleanup",
-            closed_at="2026-07-12T08:02:00+00:00",
+            closed_at="2026-09-23T17:02:00+00:00",
         ),
         Position(
             **common, id="unknown", close_reason="manual",
-            closed_at="2026-07-12T08:03:00+00:00",
+            closed_at="2026-09-23T17:03:00+00:00",
         ),
     ]
     for row in rows:
@@ -255,8 +255,8 @@ def test_explicit_read_models_partition_closed_positions():
 
     kwargs = {
         "execution_mode": "bitget_demo",
-        "closed_after": "2026-07-12T08:00:00+00:00",
-        "closed_before": "2026-07-12T08:04:00+00:00",
+        "closed_after": "2026-09-23T17:00:00+00:00",
+        "closed_before": "2026-09-23T17:04:00+00:00",
     }
     assert {row["id"] for row in raw_account_events(**kwargs)} == {
         "eligible", "admin", "maintenance", "unknown",

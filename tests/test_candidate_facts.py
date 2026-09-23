@@ -71,12 +71,12 @@ def _db() -> sqlite3.Connection:
                 index,
                 "passed",
                 "eligible",
-                f"2026-08-13T00:0{index}:00+00:00",
+                f"2026-09-24T00:0{index}:00+00:00",
             ),
         )
         db.execute(
             "INSERT INTO opportunities VALUES (?,?)",
-            (opportunity_id, f"2026-08-13T00:0{index}:01+00:00"),
+            (opportunity_id, f"2026-09-24T00:0{index}:01+00:00"),
         )
     db.execute(
         "INSERT INTO filter_decision_batches VALUES (?,?,?,?,?,?,?,?,?)",
@@ -98,43 +98,43 @@ def _db() -> sqlite3.Connection:
             ),
             "liquidity-v1",
             "commit-a",
-            "2026-08-13T00:00:30+00:00",
+            "2026-09-24T00:00:30+00:00",
         ),
     )
     db.execute(
         "INSERT INTO pi_decisions VALUES "
-        "('pi-traded','opp-traded','proposal-traded','trade','2026-08-13T00:00:10+00:00')"
+        "('pi-traded','opp-traded','proposal-traded','trade','2026-09-24T00:00:10+00:00')"
     )
-    db.execute("INSERT INTO pi_decisions VALUES ('pi-skip','opp-skip',NULL,'skip','2026-08-13T00:01:10+00:00')")
+    db.execute("INSERT INTO pi_decisions VALUES ('pi-skip','opp-skip',NULL,'skip','2026-09-24T00:01:10+00:00')")
     db.execute(
-        "INSERT INTO pi_decisions VALUES ('pi-risk','opp-risk','proposal-risk','trade','2026-08-13T00:02:10+00:00')"
+        "INSERT INTO pi_decisions VALUES ('pi-risk','opp-risk','proposal-risk','trade','2026-09-24T00:02:10+00:00')"
     )
-    db.execute("INSERT INTO trade_proposals VALUES ('proposal-traded','opp-traded','2026-08-13T00:00:20+00:00')")
-    db.execute("INSERT INTO trade_proposals VALUES ('proposal-risk','opp-risk','2026-08-13T00:02:20+00:00')")
-    db.execute(
-        "INSERT INTO risk_decisions VALUES "
-        "('risk-traded','proposal-traded',1,'authoritative','2026-08-13T00:00:30+00:00')"
-    )
+    db.execute("INSERT INTO trade_proposals VALUES ('proposal-traded','opp-traded','2026-09-24T00:00:20+00:00')")
+    db.execute("INSERT INTO trade_proposals VALUES ('proposal-risk','opp-risk','2026-09-24T00:02:20+00:00')")
     db.execute(
         "INSERT INTO risk_decisions VALUES "
-        "('risk-reject','proposal-risk',0,'authoritative','2026-08-13T00:02:30+00:00')"
+        "('risk-traded','proposal-traded',1,'authoritative','2026-09-24T00:00:30+00:00')"
+    )
+    db.execute(
+        "INSERT INTO risk_decisions VALUES "
+        "('risk-reject','proposal-risk',0,'authoritative','2026-09-24T00:02:30+00:00')"
     )
     db.execute(
         "INSERT INTO orders VALUES "
         "('order-traded','proposal-traded','risk-traded','position-traded',NULL,'filled',"
-        "'2026-08-13T00:00:40+00:00')"
+        "'2026-09-24T00:00:40+00:00')"
     )
-    db.execute("INSERT INTO positions VALUES ('position-traded','2026-08-13T00:00:50+00:00')")
+    db.execute("INSERT INTO positions VALUES ('position-traded','2026-09-24T00:00:50+00:00')")
     for index, key in enumerate(("outcome-traded", "outcome-skip", "outcome-risk", "outcome-filtered")):
-        settled_at = "2026-08-14T00:00:00+00:00" if key != "outcome-filtered" else "2026-08-15T00:00:00+00:00"
+        settled_at = "2026-09-25T00:00:00+00:00" if key != "outcome-filtered" else "2026-09-26T00:00:00+00:00"
         db.execute(
             "INSERT INTO filter_candidate_outcomes VALUES (?,?,?,?,?,?,?,?)",
             (
                 f"fixed-{index}",
                 key,
                 "24h",
-                "2026-08-13T00:00:00+00:00",
-                "2026-08-14T00:00:00+00:00",
+                "2026-09-24T00:00:00+00:00",
+                "2026-09-25T00:00:00+00:00",
                 settled_at,
                 "settled",
                 float(index),
@@ -148,7 +148,7 @@ def test_candidate_facts_preserve_traded_skip_reject_and_filtered_units():
     db = _db()
     before = db.total_changes
 
-    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db)
 
     assert db.total_changes == before
     facts = {fact["fact_id"]: fact for fact in report["facts"]}
@@ -194,7 +194,7 @@ def test_default_candidate_facts_never_enters_the_writer_lane(tmp_path, monkeypa
     try:
         report = candidate_facts.build_candidate_facts(
             horizon="24h",
-            as_of_at="2026-08-14T12:00:00+00:00",
+            as_of_at="2026-09-25T12:00:00+00:00",
         )
     finally:
         sqlite_store.reset_db()
@@ -208,8 +208,8 @@ def test_default_candidate_facts_never_enters_the_writer_lane(tmp_path, monkeypa
     [
         ("settled_at", None, "missing_settled_at"),
         ("settled_at", "not-a-time", "malformed_settled_at"),
-        ("due_at", "2026-08-12T23:59:59+00:00", "due_before_entry"),
-        ("settled_at", "2026-08-15T00:00:00+00:00", "settlement_after_as_of"),
+        ("due_at", "2026-09-23T23:59:59+00:00", "due_before_entry"),
+        ("settled_at", "2026-09-26T00:00:00+00:00", "settlement_after_as_of"),
     ],
 )
 def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
@@ -217,7 +217,7 @@ def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
 ):
     db = _db()
     baseline_report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db,
     )
     baseline_reason_count = baseline_report["unavailable_reasons"].get(reason, 0)
 
@@ -233,7 +233,7 @@ def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
     )
 
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db,
     )
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
@@ -249,8 +249,8 @@ def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
         db,
         fact,
         layer="Risk",
-        cutoff=datetime.fromisoformat("2026-08-14T12:00:00+00:00"),
-        epoch_start=datetime.fromisoformat("2026-08-12T00:00:00+00:00"),
+        cutoff=datetime.fromisoformat("2026-09-25T12:00:00+00:00"),
+        epoch_start=datetime.fromisoformat("2026-09-23T00:00:00+00:00"),
         cost_model_id="v1",
         epoch_id="epoch-1",
     )
@@ -272,7 +272,7 @@ def test_candidate_facts_keep_pending_visible_without_counting_it_as_settled():
     )
 
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db,
     )
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
@@ -310,7 +310,7 @@ def test_candidate_facts_decode_current_compressed_batches():
         (payload,),
     )
 
-    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db)
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "compressed-outcome")
     assert fact["terminal_state"] == "filtered"
@@ -324,7 +324,7 @@ def test_candidate_facts_preserve_malformed_plain_json_as_unavailable_evidence()
     )
 
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db
     )
 
     assert report["candidate_count"] == 3
@@ -334,7 +334,7 @@ def test_candidate_facts_preserve_malformed_plain_json_as_unavailable_evidence()
         {
             "source_table": "filter_decision_batches",
             "source_batch_id": "batch-filtered",
-            "event_at": "2026-08-13T00:00:30+00:00",
+            "event_at": "2026-09-24T00:00:30+00:00",
             "availability": "unavailable",
             "unavailable_reason": "malformed_candidate_facts_json",
         }
@@ -359,7 +359,7 @@ def test_candidate_facts_reject_decoded_batch_count_mismatch():
     )
 
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db
     )
 
     assert report["unavailable_count"] == 1
@@ -368,7 +368,7 @@ def test_candidate_facts_reject_decoded_batch_count_mismatch():
         {
             "source_table": "filter_decision_batches",
             "source_batch_id": "batch-filtered",
-            "event_at": "2026-08-13T00:00:30+00:00",
+            "event_at": "2026-09-24T00:00:30+00:00",
             "availability": "unavailable",
             "unavailable_reason": "candidate_fact_count_mismatch",
             "declared_candidate_count": 2,
@@ -384,10 +384,10 @@ def test_candidate_exact_pi_identity_does_not_join_other_retry():
         "candidate_kind='pi_decision' WHERE id='filter-skip'"
     )
     db.execute(
-        "INSERT INTO pi_decisions VALUES ('pi-retry','opp-skip','proposal-risk','trade','2026-08-13T00:01:11+00:00')"
+        "INSERT INTO pi_decisions VALUES ('pi-retry','opp-skip','proposal-risk','trade','2026-09-24T00:01:11+00:00')"
     )
 
-    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db)
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-skip")
     assert fact["identity"]["pi_decision_id"] == "pi-skip"
@@ -398,21 +398,21 @@ def test_candidate_facts_resolve_serenity_opportunity_by_decision_source():
     db = _db()
     db.execute("ALTER TABLE pi_decisions ADD COLUMN signal_source TEXT")
     db.execute("CREATE TABLE serenity_opportunities (id TEXT PRIMARY KEY, created_at TEXT)")
-    db.execute("INSERT INTO serenity_opportunities VALUES ('serenity-1','2026-08-13T00:03:01+00:00')")
+    db.execute("INSERT INTO serenity_opportunities VALUES ('serenity-1','2026-09-24T00:03:01+00:00')")
     db.execute(
         "INSERT INTO filter_decisions VALUES "
         "('serenity-filter','pi_decision:serenity-decision','pi_decision',"
         "'serenity-outcome','serenity-1',NULL,'operator','decision',0,'passed',"
-        "'eligible','2026-08-13T00:03:00+00:00')"
+        "'eligible','2026-09-24T00:03:00+00:00')"
     )
     db.execute(
         "INSERT INTO pi_decisions "
         "(id,opportunity_id,proposal_id,action,created_at,signal_source) VALUES "
         "('serenity-decision','serenity-1',NULL,'skip',"
-        "'2026-08-13T00:03:10+00:00','serenity')"
+        "'2026-09-24T00:03:10+00:00','serenity')"
     )
 
-    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db)
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "serenity-outcome")
     assert fact["funnel"]["opportunity_reached"] is True
@@ -422,8 +422,8 @@ def test_candidate_facts_resolve_serenity_opportunity_by_decision_source():
 def test_candidate_facts_utc_sort_prefers_earlier_utc_row_over_later_offset_string():
     """#1266 — two rows with same candidate_key but offset timestamps: earlier UTC wins."""
     db = _db()
-    # "2026-08-12T23:59:00-00:30" = 2026-08-13T00:29:00Z (lexically "-00:30" sorts BEFORE "+00:00")
-    # "2026-08-13T00:01:00+00:00" = 2026-08-13T00:01:00Z  (UTC-earlier — should be first_exposure)
+    # "2026-09-23T23:59:00-00:30" = 2026-09-24T00:29:00Z (lexically "-00:30" sorts BEFORE "+00:00")
+    # "2026-09-24T00:01:00+00:00" = 2026-09-24T00:01:00Z  (UTC-earlier — should be first_exposure)
     db.execute(
         "INSERT INTO filter_decisions "
         "(id, candidate_key, candidate_kind, outcome_candidate_key, opportunity_id, proposal_id,"
@@ -432,7 +432,7 @@ def test_candidate_facts_utc_sort_prefers_earlier_utc_row_over_later_offset_stri
             "filter-tz-late", "candidate-tz", "opportunity",
             "outcome-tz", None, None,
             "ranker", "selection", 10, "passed", "eligible",
-            "2026-08-12T23:59:00-00:30",  # UTC 00:29:00 — lexically first "-" < "+" but UTC-later
+            "2026-09-23T23:59:00-00:30",  # UTC 00:29:00 — lexically first "-" < "+" but UTC-later
         ),
     )
     db.execute(
@@ -443,11 +443,11 @@ def test_candidate_facts_utc_sort_prefers_earlier_utc_row_over_later_offset_stri
             "filter-tz-early", "candidate-tz", "opportunity",
             "outcome-tz", None, None,
             "ranker", "selection", 0, "passed", "eligible",
-            "2026-08-13T00:01:00+00:00",  # UTC 00:01:00 — UTC-earlier, must be first_exposure
+            "2026-09-24T00:01:00+00:00",  # UTC 00:01:00 — UTC-earlier, must be first_exposure
         ),
     )
 
-    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db)
 
     fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-tz")
     # first_exposure must be the UTC-earlier row (00:01), not the lexically-earlier "-00:30" row
@@ -460,12 +460,12 @@ def test_candidate_facts_scrubs_post_cutoff_fill_from_order():
     # Replace the existing order so filled_at is after our cutoff
     db.execute("ALTER TABLE orders ADD COLUMN filled_at TEXT")
     db.execute(
-        "UPDATE orders SET filled_at='2026-08-13T01:00:00+00:00' WHERE id='order-traded'"
+        "UPDATE orders SET filled_at='2026-09-24T01:00:00+00:00' WHERE id='order-traded'"
     )
 
     # Use cutoff at 00:30 — order created at 00:00:40 is visible, filled_at 01:00 is after cutoff
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-13T00:30:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-24T00:30:00+00:00", db=db
     )
 
     fact = next(item for item in report["facts"] if "traded" in item["fact_id"])
@@ -478,7 +478,7 @@ def test_candidate_facts_missing_position_open_time_fails_closed():
     db.execute("UPDATE positions SET opened_at=NULL WHERE id='position-traded'")
 
     report = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db
     )
 
     traded = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
@@ -500,11 +500,11 @@ def test_candidate_facts_snapshot_consistency():
     """#1262 — two calls on same DB must observe same row counts (snapshot isolation)."""
     db = _db()
     report1 = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db
     )
     # A second call must return the same candidate_count (snapshot seen consistently)
     report2 = candidate_facts.build_candidate_facts(
-        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+        horizon="24h", as_of_at="2026-09-25T12:00:00+00:00", db=db
     )
     assert report1["candidate_count"] == report2["candidate_count"]
     assert report1["facts"][0]["fact_id"] == report2["facts"][0]["fact_id"]

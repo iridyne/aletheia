@@ -260,7 +260,7 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
 
     db = get_db()
     entry = _iso(1)
-    due_at = (datetime.fromisoformat(entry) + timedelta(hours=4)).isoformat()
+    due_at = (datetime.fromisoformat(entry) + timedelta(minutes=1)).isoformat()
     snapshot = json.dumps({"guard_ids": [guard.guard_id]})
     import aletheia.analytics.outcome_semantics as outcomes
 
@@ -307,7 +307,7 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
 
 
 def _iso(days_ago: int) -> str:
-    anchor = datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+    anchor = datetime.fromisoformat("2026-09-23T16:44:01+00:00")
     return (anchor + timedelta(seconds=(30 - days_ago) * 10)).isoformat()
 
 
@@ -332,7 +332,7 @@ def test_learning_alpha_cannot_manufacture_confidence_from_duplicate_lessons(mon
     import aletheia.analytics.alpha_attribution as alpha_attribution
     from aletheia.storage.sqlite import get_db
 
-    audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
+    audit_now = datetime.fromisoformat("2026-09-25T07:10:01+00:00")
     monkeypatch.setattr(alpha_attribution, "_utcnow", lambda: audit_now)
 
     db = get_db()

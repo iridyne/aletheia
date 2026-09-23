@@ -208,7 +208,7 @@ def _seed_filled_short(strategy_id: str = "s1") -> None:
         exit_fill_verified=True,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
+        outcome_semantics_version="oi-v2",
     ))
 
 

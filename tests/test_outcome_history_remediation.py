@@ -23,6 +23,12 @@ def _seed_polluted_history() -> None:
         **common, id="ambiguous-close", realized_pnl=-4.0,
         close_reason="manual",
     ).model_dump())
+    repo._insert("positions", Position(**(common | {
+        "id": "current-null-semantics",
+        "closed_at": "2026-09-23T17:00:00+00:00",
+        "realized_pnl": 3.0,
+        "close_reason": "reconciled_gone",
+    })).model_dump())
     repo._insert("paper_account_events", dict(
         id="cash-admin", action="position_closed", amount_usdt=12.0,
         cash_balance_before_usdt=1000.0, cash_balance_after_usdt=1012.0,
@@ -39,6 +45,15 @@ def _seed_polluted_history() -> None:
         title="old operator assessment", status="active",
         content="historical assessment based on the polluted outcome window",
         created_at="2026-07-10T12:00:00+00:00",
+    ))
+    repo.insert_knowledge_item(KnowledgeItem(
+        id="current-calibration", item_type="calibration_report",
+        title="current calibration", status="active",
+        content=json.dumps({
+            "outcome_semantics_version": "oi-v2",
+            "clean_window_anchor_id": "outcome-integrity-v2-2026-09-23",
+        }),
+        created_at="2026-09-23T17:00:00+00:00",
     ))
 
 
@@ -87,6 +102,11 @@ def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
     ambiguous = dict(db.execute("SELECT * FROM positions WHERE id='ambiguous-close'").fetchone())
     assert ambiguous["close_category"] == "unknown"
     assert ambiguous["outcome_semantics_version"] is None
+    current = dict(db.execute(
+        "SELECT * FROM positions WHERE id='current-null-semantics'"
+    ).fetchone())
+    assert current["close_category"] == "unknown"
+    assert current["outcome_semantics_version"] is None
 
     assert [dict(row) for row in db.execute(
         "SELECT id, realized_pnl, closed_at FROM positions ORDER BY id"
@@ -119,10 +139,14 @@ def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
         "SELECT COUNT(*) FROM knowledge_items "
         "WHERE item_type='outcome_remediation_supersession'"
     ).fetchone()[0] == 2
+    assert db.execute(
+        "SELECT status FROM knowledge_items WHERE id='current-calibration'"
+    ).fetchone()[0] == "active"
     assert db.execute("SELECT COUNT(*) FROM capital_events").fetchone()[0] == 0
 
 
 def test_versioned_clean_window_excludes_pre_anchor_incident_and_unknown_version():
+    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
     from aletheia.analytics.learning_window import (
         CLEAN_WINDOW_ANCHOR_ID,
         CLEAN_WINDOW_ANCHOR_ISO,
@@ -131,13 +155,15 @@ def test_versioned_clean_window_excludes_pre_anchor_incident_and_unknown_version
 
     base = {
         "closed_at": CLEAN_WINDOW_ANCHOR_ISO,
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
-    assert CLEAN_WINDOW_ANCHOR_ID.startswith("outcome-integrity-")
+    assert OUTCOME_SEMANTICS_VERSION == "oi-v2"
+    assert CLEAN_WINDOW_ANCHOR_ID == "outcome-integrity-v2-2026-09-23"
+    assert assess_outcome_window({**base, "outcome_semantics_version": "oi-v1"}) == "unknown_semantics_version"
     assert assess_outcome_window({**base, "closed_at": "2026-07-10T00:00:00+00:00"}) == "pre_clean_window"
     assert assess_outcome_window({**base, "closed_at": "2026-07-12T06:00:00+00:00"}) == "incident_window"
     assert assess_outcome_window({**base, "outcome_semantics_version": "oi-v0"}) == "unknown_semantics_version"
-    assert assess_outcome_window({**base, "closed_at": "2026-07-12T08:00:00+00:00"}) == "eligible"
+    assert assess_outcome_window(base) == "eligible"
 
 
 def test_apply_rolls_back_classification_when_archive_step_fails():
