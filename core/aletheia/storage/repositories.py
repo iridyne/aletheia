@@ -56,6 +56,7 @@ from aletheia.storage.sqlite import (
     execute_write,
     get_db,
     iso_instant_us,
+    readonly_db,
     register_instant_us,
     release_write_lock,
 )
@@ -8214,8 +8215,9 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
         "issues": [], "blocking_reason_counts": {}, "shadow_capture_status": None,
         "shadow_capture_reason": None,
     }
-    with transaction():
-        db = get_db()
+    with readonly_db() as db:
+        if not db.in_transaction:
+            db.execute("BEGIN")
         latest = db.execute("SELECT * FROM universe_scanner_runs ORDER BY started_at DESC,id DESC LIMIT 1").fetchone()
         success = db.execute("SELECT * FROM universe_scanner_runs WHERE status='completed' "
                              "ORDER BY completed_at DESC,id DESC LIMIT 1").fetchone()
