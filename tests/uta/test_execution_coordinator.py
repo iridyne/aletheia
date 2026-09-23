@@ -227,6 +227,7 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
         execution_mode="binance_testnet",
         stop_price=95.0,
         take_profit_price=110.0,
+        native_tpsl_enabled=True,
         time_in_force="GTC",
         post_only=True,
         entry_plan_id="entry-plan-1",

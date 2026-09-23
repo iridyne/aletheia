@@ -684,7 +684,10 @@ def test_bitget_success_without_order_id_is_unknown_through_gateway_and_not_retr
     monkeypatch.setattr(
         gateway,
         "load_config",
-        lambda: SimpleNamespace(live=SimpleNamespace(state="live_disabled")),
+        lambda: SimpleNamespace(
+            live=SimpleNamespace(state="live_disabled"),
+            trading=SimpleNamespace(exchange_tpsl_enabled=False),
+        ),
     )
     monkeypatch.setattr(
         gateway,

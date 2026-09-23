@@ -111,20 +111,21 @@ def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, val
         "pipeline_bitget_preset_protection",
         "approved broker forwarding",
         "L2b",
-        "The Bitget broker forwards only the stop and take-profit committed in the "
-        "approved Proposal; a caller cannot replace either value.",
+        "The Bitget broker forwards Proposal protection only when native TPSL is "
+        "enabled at execution time; a caller cannot replace either value.",
         status="implemented",
     )
 )
-def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
+@pytest.mark.parametrize("native_tpsl_enabled", [False, True])
+def test_bitget_broker_gates_approved_proposal_protection(monkeypatch, native_tpsl_enabled):
     from aletheia.execution import coordinator
     from tests.uta.test_execution_coordinator import _Adapter, _ack
     from aletheia.uta.models import UTACapabilities, CapabilitySupport
     from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
-        proposal_id="proposal-bitget-preset",
-        risk_decision_id="risk-bitget-preset",
+        proposal_id=f"proposal-bitget-preset-{native_tpsl_enabled}",
+        risk_decision_id=f"risk-bitget-preset-{native_tpsl_enabled}",
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
@@ -136,13 +137,18 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
         take_profit=62_000.0,
     )
     captured = []
+    audits = []
 
     async def submit(command):
         captured.append(command)
         return _ack(command)
+
     adapter = _Adapter(submit, "bitget_demo")
-    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
+    adapter.capabilities = UTACapabilities(
+        native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test"
+    )
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(coordinator, "write_post_commit_audit", audits.append)
     coordinator.execute_order(
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
@@ -155,13 +161,16 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
         execution_mode=proposal.execution_mode,
         stop_price=proposal.stop_price,
         take_profit_price=proposal.take_profit,
+        native_tpsl_enabled=native_tpsl_enabled,
         leverage=10,
     )
 
     assert len(captured) == 1
-    assert captured[0].stop_loss_price == proposal.stop_price
-    assert captured[0].take_profit_price == proposal.take_profit
-
+    expected_stop = proposal.stop_price if native_tpsl_enabled else None
+    expected_take = proposal.take_profit if native_tpsl_enabled else None
+    assert captured[0].stop_loss_price == expected_stop
+    assert captured[0].take_profit_price == expected_take
+    assert audits[0]["after"]["native_tpsl_enabled"] is native_tpsl_enabled
 
 def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
     from aletheia.execution import coordinator
@@ -210,6 +219,7 @@ def _run_gateway_with_captured_broker(
     *,
     execution_mode: str,
     take_profit: float | None,
+    native_tpsl_enabled: bool = False,
     position_id: str | None = None,
 ) -> tuple[dict, list[dict]]:
     from aletheia.execution import coordinator, gateway
@@ -282,7 +292,10 @@ def _run_gateway_with_captured_broker(
 
     cfg = SimpleNamespace(
         live=SimpleNamespace(state="live_limited"),
-        trading=SimpleNamespace(default_take_profit_pct=37.0),
+        trading=SimpleNamespace(
+            default_take_profit_pct=37.0,
+            exchange_tpsl_enabled=native_tpsl_enabled,
+        ),
     )
     monkeypatch.setattr(gateway, "load_config", lambda: cfg)
     monkeypatch.setattr(gateway, "evaluate_proposal", _risk_result)
@@ -307,22 +320,27 @@ def _run_gateway_with_captured_broker(
         "pipeline_bitget_preset_protection",
         "gateway approved-value routing",
         "L2c",
-        "Bitget demo and limited-live dispatch receive the authoritative execution "
-        "Proposal's explicit take-profit; other brokers do not gain this behavior.",
+        "Gateway snapshots the native-TPSL toggle with the authoritative Proposal "
+        "values for Bitget demo and limited-live dispatch.",
         status="implemented",
     )
 )
-def test_gateway_passes_explicit_take_profit_only_to_bitget(monkeypatch, execution_mode):
+@pytest.mark.parametrize("native_tpsl_enabled", [False, True])
+def test_gateway_passes_native_tpsl_policy(
+    monkeypatch, execution_mode, native_tpsl_enabled
+):
     result, captured = _run_gateway_with_captured_broker(
         monkeypatch,
         execution_mode=execution_mode,
         take_profit=62_000.0,
+        native_tpsl_enabled=native_tpsl_enabled,
     )
 
     assert result["status"] == "submitted"
     assert len(captured) == 1
     assert captured[0]["stop_price"] == 59_000.0
     assert captured[0]["take_profit_price"] == 62_000.0
+    assert captured[0]["native_tpsl_enabled"] is native_tpsl_enabled
 
 
 
