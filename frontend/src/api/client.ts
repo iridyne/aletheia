@@ -1792,8 +1792,6 @@ export const api = {
 			"/settings/learning",
 			body,
 		),
-	updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
-		post<{ updated: Record<string, any> }>("/settings/operator", body),
 	updateGuardConfig: (
 		body: components["schemas"]["GuardConfigUpdate"],
 	) => post<{ updated: Record<string, any> }>("/settings/guard", body),

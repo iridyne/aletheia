@@ -358,7 +358,6 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
 | POST | `/settings/guard` | Current guard config (`enabled`, `enforce_in_paper_ranker`, `max_score_penalty`). Retired `auto_promote_enabled` / `min_matching_trades` writes return 422; historical values remain readable. |
-| POST | `/settings/operator` | Operator loop config |
 | POST | `/settings/regime` | Regime classifier config |
 | POST | `/settings/health-config` | Health check thresholds |
 | POST | `/settings/retention` | Data retention policies. `agent_runs_days`, `tool_calls_days`, and `runtime_sessions_days` each accept 1–90 days (default 90); other retention fields keep their own bounds. |
@@ -558,8 +557,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/operator/extensions/{extension_id}` | Operator extension detail |
 | POST | `/operator/extensions/{extension_id}/enable` | Enable an operator extension |
 | GET | `/operator/recommendations` | Operator recommendations/advisory queue |
-| GET | `/operator/loop/latest` | Latest operator loop assessment |
-| POST | `/operator/loop/trigger` | Manually trigger operator loop |
+| GET | `/operator/loop/latest` | Read historical Python Operator assessments (producer retired) |
 | GET | `/operator/events` | Operator event feed snapshot |
 | GET | `/operator/events/stream` | Operator SSE event stream |
 | POST | `/operator/pause` | Pause operator loop |

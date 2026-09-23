@@ -1,5 +1,11 @@
 # System Operator 设计决策书
 
+> **#3134 retirement (2026-09-23):** The Python assessment/config-action loop,
+> its cron/manual triggers and fallback selector are retired. References to that
+> loop and its proposed event triggers below are historical, not active support.
+> TS operator-shell and the separate trading daemon retain their existing roles.
+> Current authority: [Agent Contracts](../contracts/agent_contracts.md).
+
 > 2026-06-21 | 基于 codebase 约束 + 竞品分析 + 控制论原则
 > **命名更新（2026-07-01）**：原标题"PI Operator"已统一为"System Operator"。
 > 详见 [`Architecture Decision Log`](../../governance/decisions/DECISIONS.md) 的

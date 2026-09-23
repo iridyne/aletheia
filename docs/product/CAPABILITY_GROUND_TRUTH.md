@@ -17,6 +17,11 @@ complete.
 Risk approval must precede Gateway submission; genuine outcomes require verified
 economic evidence.
 
+The TS operator-shell is the sole runtime Operator. The former Python assessment
+loop and its fallback configuration/manual trigger are retired under #3134;
+historical assessments remain readable. This does not replace the separate
+Entry Planner daemon or expand shell permissions.
+
 ## How to read project truth
 
 This file is the canonical capability boundary; [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md)

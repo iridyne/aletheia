@@ -939,11 +939,6 @@ export interface components {
              */
             heartbeat_stale_after_sec: number;
             /**
-             * Loop Enabled
-             * @default true
-             */
-            loop_enabled: boolean;
-            /**
              * Main Session Id
              * @default operator-main
              */

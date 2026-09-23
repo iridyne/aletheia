@@ -341,7 +341,6 @@ def test_legacy_enabled_webhook_with_invalid_url_is_safely_disabled(
 
     config_file = tmp_path / "config.yaml"
     raw = AletheiaConfig().model_dump(mode="json")
-    raw["operator"]["loop_enabled"] = False
     raw["webhook"].update({
         "enabled": True,
         "url": legacy_url,

@@ -1332,33 +1332,6 @@ async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
     assert close_calls == []
 
 
-def test_operator_assessment_counts_all_open_positions_above_one_hundred(
-    tmp_path, monkeypatch
-):
-    """The deterministic Operator assessment must not report its query cap as truth."""
-    _init_agent_shell_db(tmp_path, monkeypatch)
-    from aletheia.agent_shell.operator_loop import build_system_assessment
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
-
-    cfg = load_config()
-    cfg.risk.max_open_positions_demo = 200
-    save_config(cfg)
-    for index in range(101):
-        insert_position(Position(
-            id=f"operator-count-{index:03d}",
-            symbol=f"COUNT{index}/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            execution_mode="bitget_demo",
-        ))
-
-    assessment = build_system_assessment()
-
-    assert assessment.open_positions == 101
 
 
 # --- Registry tests ---
@@ -1967,6 +1940,7 @@ async def test_runtime_explains_why_proposal_failed_from_risk_decision(tmp_path,
         market_type="spot",
         direction="short",
         status="rejected",
+        execution_mode="bitget_demo",
         agent_rationale="Funding reversal thesis.",
     )
     insert_trade_proposal(proposal)

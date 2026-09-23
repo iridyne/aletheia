@@ -26,7 +26,6 @@
 | 13 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
 | 14 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
 | 15 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
-| 16 | pi_operator_loop | cron 每4h:15 CST + boot 2min catch-up | agents | High-level operator assessment loop; persisted assessment freshness prevents restart duplicates |
 | 17 | health_check | 10min | io | Doctor health probe |
 | 18 | cleanup | cron 03:17 CST | io | Data retention cleanup |
 | 19 | exchange_sync | 5min | io | Refresh exchange account cache |
@@ -440,20 +439,13 @@ Execution, exchange or Live state. The broader `lco-v1` design remains the
 
 ---
 
-### E. Operator Agent
+### E. Operator runtime
 
-#### pi_operator_loop
-
-- **Trigger**: cron every 4 hours at `:15` CST plus a startup attempt after 2 minutes
-- **Deduplication**: scheduled runs require the latest persisted `operator_assessment` to be at least 3h45m old; missing/malformed history fails open because action permission and daily rate limits remain authoritative
-- **Inputs**: Portfolio state, strategy performance, market regime, system health
-- **LLM**: No direct model call; methodology research is not scheduled by this loop
-- **Outputs**: `operator_assessment`, bounded config actions/proposals and notifications
-- **Side effects**: 
-  - Level 1: bounded tightening/recovery and notification actions
-  - Level 2: loosening and unknown actions become proposals; no direct execution
-  - Level 3: live, credentials, permissions and hard-risk changes are forbidden, not confirmable by this loop
-- **Key invariant**: Level 1 cannot expand risk; Level 2 requires a proposal path; Level 3 never executes
+The TS operator-shell is the sole runtime Operator. Under the owner-approved
+#3134 retirement, the Python `pi_operator_loop`, its scheduler/manual trigger,
+config-action writer and fallback selector are removed. Disabling operator-shell
+does not activate another Operator. Historical `operator_assessment` and audit
+records remain readable; they grant no current execution authority.
 
 ---
 

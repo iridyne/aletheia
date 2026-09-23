@@ -478,7 +478,6 @@ class OperatorConfig(BaseModel):
     heartbeat_stale_after_sec: int = 45
     restart_after_sec: int = 90
     max_restart_failures: int = 3
-    loop_enabled: bool = True
     main_session_id: str = "operator-main"
 
     @field_validator("bind_host")
@@ -1031,10 +1030,8 @@ class RiskConfig(BaseModel):
         """Refresh the flat legacy aliases from the nested policies they alias.
 
         `__setattr__` syncs flat -> nested, but nothing synced the other way, and
-        five writers persist a nested block with no flat write: the autonomous
-        operator loop's `reduce_sizing` (`operator_loop.py:590`, `:621`) and the
-        copy / replace / reset-defaults risk-policy routes (`settings.py:2201`,
-        `:2237`, `:2273`).  `_save_config_locked` dumps the full model, and
+        the copy / replace / reset-defaults risk-policy routes persist a nested
+        block with no flat write. `_save_config_locked` dumps the full model, and
         `migrate_flat_policies` lets the nested override win on the next load, so
         the flat attribute kept its stale default forever after.
 

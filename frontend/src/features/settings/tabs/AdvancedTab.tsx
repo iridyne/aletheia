@@ -88,7 +88,6 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'health.startup_behavior_gate_enabled', 'health.startup_gate_recheck_interval_sec',  // Startup Behavior Gate
     'network.proxy_protocol', 'network.proxy_host', 'network.proxy_port',
     'network.enforce', 'network.proxy_url', 'network.no_proxy',
-    'operator.loop_enabled',
     'guard.auto_promote_enabled',
   ])
   const readOnlyPrefixes = [

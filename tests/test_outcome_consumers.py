@@ -164,22 +164,6 @@ def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monke
     assert fsc.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
 
 
-def test_operator_strategy_performance_ignores_administrative_rows():
-    from aletheia.agent_shell.operator_loop import _get_strategy_performance
-
-    _insert_closed("verified", 8.0, eligible=True)
-    _insert_closed("administrative", -1_000.0, eligible=False)
-
-    performance = _get_strategy_performance("strategy-1")
-    assert {key: performance[key] for key in (
-        "trade_count", "win_rate", "expectancy", "total_pnl",
-    )} == {
-        "trade_count": 1,
-        "win_rate": 100.0,
-        "expectancy": 8.0,
-        "total_pnl": 8.0,
-    }
-    assert performance["outcome_semantics_version"] == "oi-v1"
 
 
 def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows(optional_evidence_jobs):

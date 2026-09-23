@@ -52,13 +52,10 @@ assert repo.insert_knowledge_item_if_absent(item, title_window_hours=1)[0] is Fa
 assert read_knowledge_document({"content": "Historical body"}).state == "legacy_body_only"
 assert read_knowledge_document(dict(row, content="tampered")).state == "integrity_conflict"
 
-from aletheia.agent_shell.operator_loop import _persist_assessment
-_persist_assessment({"timestamp": "2026-09-22T00:00:00Z", "actions_decided": 0,
-                     "assessment": {"state": "bounded test"}})
-assert db.execute("SELECT COUNT(*) FROM knowledge_items WHERE item_type='operator_assessment'").fetchone()[0] == 2
-assert db.execute("SELECT COUNT(*) FROM knowledge_fts WHERE item_type='operator_assessment'").fetchone()[0] == 1
+# Retired Operator rows remain rebuildable without their former producer.
 _apply_startup_dataset_boundary_v3(db)
-assert db.execute("SELECT COUNT(*) FROM knowledge_fts WHERE item_type='operator_assessment'").fetchone()[0] == 2
+assert db.execute("SELECT COUNT(*) FROM knowledge_fts WHERE item_type='operator_assessment'").fetchone()[0] == 1
+assert db.execute("SELECT body FROM knowledge_fts WHERE item_id=?", (item.id,)).fetchone()[0] == "Durable inline evidence."
 
 # A strict rebuild must propagate failure and roll back its own transaction.
 db.commit()

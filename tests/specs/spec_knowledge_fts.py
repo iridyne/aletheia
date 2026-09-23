@@ -9,7 +9,8 @@ Root Cause A — "Bypass manager" anti-pattern:
   analytics/reasoning_feedback, analytics/insight_synthesizer, agent_shell/commands)
   directly called `insert_knowledge_item()` without going through manager.py.
   Since _index() only lives in manager.py, these items were NEVER added to FTS.
-  Fix: operator_loop._persist_assessment now calls _index() explicitly (commit 6253679).
+  Historical fix: the former Operator producer called _index() explicitly.
+  That producer is retired; stored assessments remain rebuildable by Core.
   Status for the remaining four sites (trading_memo / reasoning_feedback /
   calibration_report / system_action): these are either non-high_confidence by design
   (system_action → medium implied), or their primary consumption path is NOT FTS-based
@@ -42,7 +43,6 @@ _ROOT = Path(__file__).parent.parent.parent
 _MANAGER = _ROOT / "extensions" / "knowledge" / "manager.py"
 _RETRIEVAL = _ROOT / "extensions" / "knowledge" / "retrieval.py"
 _INDEX = _ROOT / "core" / "aletheia" / "storage" / "knowledge_index.py"
-_OPERATOR_LOOP = _ROOT / "core" / "aletheia" / "agent_shell" / "operator_loop.py"
 
 
 # ---------------------------------------------------------------------------
@@ -93,37 +93,8 @@ def test_index_is_sole_fts_write_gate():
     )
 
 
-# ---------------------------------------------------------------------------
-# KF-S02 — operator_assessment _persist_assessment calls _index
-# ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "KF-S02", _CONTRACT, "§C operator_assessment FTS body + DB content", "L2a",
-        "_persist_assessment() in operator_loop.py must (1) call _index(item, content) "
-        "after insert_knowledge_item() so operator assessments are FTS-searchable, AND "
-        "(2) store content in KnowledgeItem.content so reindex_all() can rebuild FTS "
-        "without disk files (operator_assessment has no file_path). "
-        "Root Cause C: it previously inserted with no _index call — FTS rows had "
-        "empty body, invisible to retrieve_lessons() BM25 queries.",
-    ),
-)
-def test_persist_assessment_calls_index():
-    src = _OPERATOR_LOOP.read_text(encoding="utf-8")
-    assert "_persist_assessment" in src, "operator_loop.py missing _persist_assessment"
-    assert "from aletheia.storage.knowledge_index import _index" in src, (
-        "_persist_assessment must import and call _index() to write FTS body"
-    )
-    assert "_index(item, content)" in src, (
-        "_persist_assessment must call _index(item, content) after insert_knowledge_item()"
-    )
-    # content= must be passed to KnowledgeItem so reindex_all() can recover FTS
-    # without disk files (operator_assessment stores no file_path).
-    assert "content=content" in src, (
-        "_persist_assessment must pass content= to KnowledgeItem so reindex_all() "
-        "can rebuild FTS from DB when disk files are absent"
-    )
 
 
 # ---------------------------------------------------------------------------

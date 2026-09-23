@@ -1,5 +1,9 @@
 # Aletheia Trading OS — System Operator Layer Design
 
+> **#3134 retirement (2026-09-23):** Python `pi_operator_loop` and its configuration
+> writer/fallback controls are removed. Older Python-loop examples below are
+> historical design only. Current authority is [Agent Contracts](../contracts/agent_contracts.md).
+
 > **命名说明（2026-07-01）**：本文档历史文件名 / 原标题含"Pi Agent"，现统一更名为
 > "System Operator"。代码层文件名（`pi_daemon.py`、`pi_runtime_adapter.ts`）因触 trust
 > boundary 保持不变，但在文档、注释、会话交流中一律使用"System Operator"。
@@ -12,9 +16,10 @@
 
 ---
 
-> ## [必看] System Operator = 三个不同的组件,别混(2026-06-28)
+> ## Current component boundary (#3134)
 >
-> 历次审计反复把三者当成同一个(7 路审计 A2/A4 误报根因)。三个独立组件,语言/进程/职责不同:
+> TS operator-shell is the runtime Operator; Python pi_daemon owns the existing
+> trading wake path. The former Python assessment/config-action loop is retired.
 >
 > ```text
 > +----------------------------------------------------------------------+
@@ -24,9 +29,8 @@
 > |     [!] 自己不跑 LLM, 经 HTTP 调 Python /api/operator/internal/llm     |
 > |     [!] agent_shell_heartbeats 里 agent_id=operator 心跳是它写的       |
 > +----------------------------------------------------------------------+
-> | (2) aletheia/agent_shell/operator_loop.py (Python, 每 4h cron)        |
-> |     = 旧治理脚本, 已收敛为只做动态 config 调参                        |
-> |     [!] 不再产生 retire/demote/backfill, 收敛归 (1) command registry  |
+> | (2) Historical Python assessment loop — retired under #3134        |
+> |     No cron, manual trigger, config writes or fallback selector     |
 > +----------------------------------------------------------------------+
 > | (3) aletheia/agent_runtime/pi_daemon.py (Python daemon)              |
 > |     = 交易决策 daemon, 与治理无关, 不写 operator 心跳(A2 误报源)      |
@@ -91,26 +95,19 @@
 > proposal fail closed。未来恢复任一动作时，必须同时落地独立批准来源、精确目标、
 > 真实副作用所有者、完成验证和失败状态，不得仅靠审计记录宣称执行成功。
 
-#### L2 动作类型说明（`_LEVEL_2_ACTIONS` 注册要求）
+#### Retired Python self-heal dispatcher
 
-L2 自愈档位包含三个专属动作类型，必须注册到 `operator_loop._LEVEL_2_ACTIONS`，dispatcher 才能将其路由到 `_create_proposal`，人工确认门控才能接管：
+The Python `_LEVEL_2_ACTIONS` / `_create_proposal` dispatcher and its specs are
+retired under the owner-approved #3134 cutover. Its former action descriptions
+are not executable requirements or permission to restore a fallback.
 
-| 动作类型 | 含义 | 影响范围 |
-|----------|------|----------|
-| `clear_signal_pending` | 清除 signal_pending 队列中的悬挂信号 | trading loop 状态 |
-| `modify_prompt_fragment` | 修改 PI 系统 prompt 中的某个片段 | LLM 决策行为 |
-| `modify_config_fragment` | 修改运行配置中的某个字段 | 系统参数 |
+### Invariants for surviving self-heal paths
 
-**可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l2_selfheal_action_types_registered` (SH-S01, L2a, status=missing — 未注册则 RED)
-
-### 不变式
-
-1. **独立批准前置**：任何 L1/L2 自愈操作执行前，必须由执行器之外的权威来源输出“批准/拒绝 + 理由”。动作不能自行创建满足自身前置条件的批准记录。当前没有该消费者，因此 Python Level-1 dispatcher 不包含上述三个自愈动作。
-   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l1_selfheal_pi_approval_gate_in_execute`（SH-C02）与 `test_l1_selfheal_requires_pi_approval`（OL-C08）。
-2. **结构化日志强制**：每次自愈操作必须写结构化日志，字段包含：`operation_type` / `trigger_reason` / `result` / `before_state` / `after_state`。
-3. **交易时隔离例外**：自愈操作可在系统正在交易时执行，但 L2 操作（涉及 signal_pending 或 prompt/配置）即使 PI 批准也必须等人类确认。
-   - 实现要求：`_create_proposal` 写入 `create_artifact` 的 content dict 必须含 `human_confirm_required` 键且值为 `True`，作为前端/通知路径的识别依据。
-   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l2_proposal_artifact_carries_human_confirm_required` (SH-B03, L2b, xfail — 字段未实现时持续 RED)
+1. Independent approval must precede any action that requires it; an executor
+   cannot manufacture its own authorization.
+2. Executed operations require structured before/after/result audit evidence.
+3. Human-gated changes remain human-gated; retirement grants no new shell,
+   credential, Risk or trading authority.
 4. **system_action 审计**：未来获批并实际完成的 L1/L2 操作应在
    `knowledge_items (item_type=system_action)` 写入结果审计；审计记录本身不是执行证据。
 

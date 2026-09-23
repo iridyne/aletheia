@@ -331,7 +331,7 @@ are:
 | `trading_guard` | Guard promotion flow (human-confirmed or seeded) | Active behavioral rules enforced at decision time |
 | `guard_candidate` | Dreaming Agent or operator review | Provisional guard pattern pending human confirmation |
 | `system_action` | Self-heal layer (`commands._emit_self_heal_action`) | Audit trail for automated system-corrective actions |
-| `operator_assessment` | Operator loop (`operator_loop.py`) | Periodic operator review summaries of agent decisions and execution |
+| `operator_assessment` | Retired Python Operator; historical rows only | Read-only prior assessment summaries; no current producer |
 | `trading_memo` | Insight synthesizer (`analytics/insight_synthesizer.py`) | Rolling tactical memo synthesized from recent trade signals |
 | `reasoning_feedback` | Reasoning feedback tracker (`analytics/reasoning_feedback.py`) | Calibration records comparing predicted vs actual outcomes |
 | `calibration_report` | Confidence calibration engine (`analytics/confidence_calibration.py`) | Periodic confidence scoring accuracy reports |
@@ -420,9 +420,9 @@ Adding a new item type requires 5 synchronised updates:
 
 `operator_assessment`
 
-- Source: Operator loop (`aletheia/agent_shell/operator_loop.py`).
-- Purpose: periodic structured summary of operator-loop decisions and execution
-  outcomes; used for drift detection and performance review.
+- Source: historical Python Operator assessments; producer retired under #3134.
+- Purpose: immutable inspection of prior decisions and execution outcomes.
+- No current scheduling, config mutation or fallback authority.
 
 `trading_memo`
 

@@ -38,7 +38,6 @@ cfg = loader.bootstrap()
 cfg.runtime.scheduler_enabled = False
 cfg.runtime.paused = True
 cfg.pi_daemon.enabled = False
-cfg.operator.loop_enabled = False
 cfg.network.proxy_host = ""
 cfg.network.recompose_proxy_url()
 loader.save_config(cfg)
