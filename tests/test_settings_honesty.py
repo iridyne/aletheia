@@ -22,15 +22,10 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 
-def test_legacy_coinalyze_secret_is_not_materialized_in_core_config():
+def test_coinalyze_secret_is_not_a_core_config_field():
     from aletheia.config.schema import MarketDataConfig
 
-    legacy = {"coinalyze_api_key": "synthetic-not-a-credential"}
-    cfg = MarketDataConfig.model_validate(legacy, extra="forbid")
-
     assert "coinalyze_api_key" not in MarketDataConfig.model_fields
-    assert "coinalyze_api_key" not in cfg.model_dump()
-    assert legacy["coinalyze_api_key"] == "synthetic-not-a-credential"
 
 
 @pytest.mark.parametrize("canonical", [None, [], ["AAPL"]])

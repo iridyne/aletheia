@@ -689,7 +689,7 @@ def test_regime_is_inline_not_separate_collector():
         "DU-S06", _CONTRACT, "§coinalyze scheduler + config", "L2a",
         "CoinalyzeCollector 已被 scheduler.py 注册到 _async_data_collector_context job "
         "（仿 HyperliquidCollector 模式）；Core config 只定义 enable_coinalyze，"
-        "collector 仅通过 extension-scoped Secret Store 引用获取自己的可选凭据。",
+        "collector 仅解析自身 Secret Store reference 或专属环境回退；Core 不含原始凭据。",
         status="implemented",
     ),
 )

@@ -350,10 +350,7 @@ class MarketDataConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def decode_historical_observation_lists(cls, value):
-        """Discard the retired raw key and decode historical observation lists."""
-        if isinstance(value, Mapping) and "coinalyze_api_key" in value:
-            value = dict(value)
-            value.pop("coinalyze_api_key", None)
+        """Decode historical observation lists."""
         if isinstance(value, Mapping) and "observed_stocks" in value:
             value = dict(value)
             legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_stocks"))
@@ -446,8 +443,8 @@ class MarketDataConfig(BaseModel):
     enable_crypto_fallback: bool = True
     # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).
     # Replaces the dead CoinGlass/CCXT/Bitget-OI paths. Free tier: 100 req/day.
-    # The Data Extension resolves its scoped Secret Store reference; Core owns
-    # only the non-secret enable flag.
+    # The Data Extension resolves its own credential source; Core owns only the
+    # non-secret enable flag.
     enable_coinalyze: bool = True
     # Cross-source price divergence detection.
     price_divergence_threshold_pct: float = 2.0
