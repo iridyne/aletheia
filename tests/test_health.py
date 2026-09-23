@@ -27,6 +27,28 @@ def test_candidate_progress_observe_only_and_missing_profiles_are_not_stalls(tmp
     assert repo.get_candidate_path_progress(now=start+timedelta(seconds=481))["ready_planning_count"] == 0
 
 
+def test_candidate_progress_does_not_hold_writer_permit(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from aletheia.storage.sqlite import write_lock_held_by_current_thread
+    from tests.test_entry_planner import _typed_candidate
+
+    setup_env(tmp_path, monkeypatch)
+    now = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    candidate = _typed_candidate(mechanism="continuation", family="momentum")
+    repo.ensure_candidate_planning_generation(candidate.id, now=now)
+    writer_states = []
+
+    def profiles(_mechanism):
+        writer_states.append(write_lock_held_by_current_thread())
+        return ("resting_maker",)
+
+    monkeypatch.setattr("aletheia.trading.entry_profiles.compatible_entry_profiles", profiles)
+    repo.get_candidate_path_progress(now=now)
+
+    assert writer_states and not any(writer_states)
+
+
 def test_candidate_progress_exact_epoch_and_entry_outcome_debt(tmp_path, monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
