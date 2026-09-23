@@ -14,7 +14,6 @@ _MIB = 1024 * 1024
 _CAPACITY_LOG = "database_capacity.jsonl"
 _WAL_RETAINED_LIMIT_BYTES = 64 * _MIB
 _WAL_AUTOCHECKPOINT_PAGES = 1_000
-_ONLINE_VACUUM_MAX_PAGES = 64
 _logger = logging.getLogger("aletheia.maintenance.database_capacity")
 
 
@@ -329,7 +328,7 @@ def reclaim_incremental_freelist(
     before = int(db.execute("PRAGMA freelist_count").fetchone()[0])
     mode = int(db.execute("PRAGMA auto_vacuum").fetchone()[0])
     max_pages = max(1, int(max_mb) * _MIB // max(1, page_size))
-    requested = min(before, max_pages, _ONLINE_VACUUM_MAX_PAGES)
+    requested = min(before, max_pages)
     if mode != 2 or requested <= 0:
         return {
             "enabled": mode == 2,
