@@ -80,7 +80,7 @@ def _configure_runtime() -> None:
         from extensions.counterfactual.trades import resolve_stale_shadows
         from extensions.counterfactual.family_scorecard import read_shadow_cohort
     except ModuleNotFoundError as exc:
-        if exc.name not in {"extensions", "extensions.counterfactual"}:
+        if exc.name not in {"extensions", "extensions.counterfactual", "extensions.counterfactual.trades", "extensions.counterfactual.family_scorecard"}:
             raise
         resolve_stale_shadows = read_shadow_cohort = None
     try:
