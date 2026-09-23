@@ -77,6 +77,15 @@ _RAW_POSITION_UPDATE_ALLOWED = {
     "ops/maintenance/repair_doge_adoption_overlap.py",
 }
 
+_POSITION_WRITER_CALLERS = {
+    "insert_position": {"execution/exchange_materialization.py", "portfolio/position_reconciler.py"},
+    "update_open_position_materialization": {"execution/exchange_materialization.py", "portfolio/position_reconciler.py"},
+    "update_open_position_exit_plan": {"execution/coordinator.py", "execution/exchange_materialization.py", "portfolio/exit_plan.py", "portfolio/position_manager.py", "portfolio/position_reconciler.py"},
+    "update_open_position_observation": {"portfolio/exit_plan.py", "portfolio/pnl.py", "portfolio/position_manager.py"},
+    "claim_position_close": {"execution/coordinator.py", "execution/exchange_materialization.py"},
+    "update_position_close_claim": {"execution/exchange_materialization.py", "execution/pending_close_recovery.py", "storage/repositories.py"},
+}
+
 
 def _without_sql_comments(sql: str) -> str:
     # Preserve quoted values/identifiers so comment markers inside them are inert.
@@ -97,26 +106,29 @@ def _assert_raw_position_writes(root: Path):
     )
     for directory in ("aletheia", "core", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
-            if path.relative_to(root).as_posix() in allowed:
-                continue
+            raw_allowed = path.relative_to(root).as_posix() in allowed
             tree = ast.parse(path.read_text(encoding="utf-8"))
             parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             aliases = {
                 alias.asname or alias.name: alias.name
                 for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-                for alias in node.names if alias.name in {"_insert", "_insert_many", "_update"}
+                for alias in node.names if alias.name in {"_insert", "_insert_many", "_update"} | _POSITION_WRITER_CALLERS.keys()
             }
             for node in ast.walk(tree):
-                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if not raw_allowed and isinstance(node, ast.Constant) and isinstance(node.value, str):
                     assert not writes.search(_without_sql_comments(node.value)), (path, node.lineno)
                 if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
                     name = node.attr if isinstance(node, ast.Attribute) else aliases.get(node.id, node.id)
-                    if name in {"_insert", "_insert_many", "_update"}:
+                    if name in _POSITION_WRITER_CALLERS:
+                        assert path in {root / "core/aletheia" / owner for owner in _POSITION_WRITER_CALLERS[name]}, (path, node.lineno, name)
+                        call = parents.get(node)
+                        assert isinstance(call, ast.Call) and call.func is node, (path, node.lineno, "writer alias")
+                    if not raw_allowed and name in {"_insert", "_insert_many", "_update"}:
                         call = parents.get(node)
                         assert isinstance(call, ast.Call) and call.func is node, (path, node.lineno)
                 if isinstance(node, ast.Call):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else aliases.get(node.func.id, node.func.id) if isinstance(node.func, ast.Name) else None
-                    if name in {"_insert", "_insert_many", "_update"}:
+                    if not raw_allowed and name in {"_insert", "_insert_many", "_update"}:
                         assert not any(isinstance(arg, ast.Starred) for arg in node.args), (path, node.lineno)
                         assert all(kw.arg is not None for kw in node.keywords), (path, node.lineno)
                         table = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
@@ -138,6 +150,9 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
 
 @pytest.mark.parametrize("directory", ["aletheia", "core", "extensions", "legacy", "ops", "scripts"])
 @pytest.mark.parametrize("source", [
+    "repo.insert_position(position)",
+    "repo.update_open_position_materialization('id', quantity=2)",
+    "from aletheia.storage.repositories import insert_position as persist\npersist(position)",
     "db.execute('update [positions] SET realized_pnl=1')",
     "db.execute('UPDATE OR REPLACE positions SET realized_pnl=1')",
     "db.execute('UPDATE OR IGNORE main.[positions] SET realized_pnl=1')",
