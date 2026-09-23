@@ -4010,15 +4010,17 @@ def _record_collector_health(
         return
     try:
         from aletheia.data.collector_health import record_collector_status
+        from aletheia.storage import repositories as repo
 
-        record_collector_status(
-            label,
-            status,
-            tick=tick,
-            duration_ms=duration_ms,
-            error_code=error_code,
-            derivatives_coverage=derivatives_coverage,
-        )
+        with repo.transaction():
+            record_collector_status(
+                label,
+                status,
+                tick=tick,
+                duration_ms=duration_ms,
+                error_code=error_code,
+                derivatives_coverage=derivatives_coverage,
+            )
     except Exception as exc:
         logger.debug("data_collectors: health state write failed for %s: %s", label, exc)
 
