@@ -913,9 +913,10 @@ This change performs no migration, eligibility backfill, payload/hash rewrite or
 measurement-window replay. Previously persisted negative eligibility remains
 negative on reads. Existing retryable producer-owned evidence recovery may still
 reassess a record under its original recovery authority; this is not permission
-to reopen completed hook jobs or historical experiments. The existing `oi-v1`
-closure/economic evidence format and clean-window anchor remain unchanged;
-source ancestry admission is the explicit D1 delta here.
+to reopen completed hook jobs or historical experiments. Same-EntryPlan source
+ancestry uses `oi-v2` and a from-zero clean window beginning at the completed
+attribution-invariant cutover. Earlier `oi-v1` rows and artifacts remain immutable
+history and cannot authorize or mix into the current cohort.
 
 Executable proof: `tests/e2e/test_pipeline_universe_outcome.py` (PL-OF-20), with
 existing Outcome/Serenity/multileg/account/settlement regressions. Offline venue

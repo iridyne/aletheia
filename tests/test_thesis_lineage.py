@@ -64,7 +64,7 @@ def test_thesis_lineage_read_model_does_not_call_llm_or_agents():
 
 
 def _iso(hours_ago: int = 1) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    return (datetime(2026, 9, 23, 19, tzinfo=timezone.utc) - timedelta(hours=hours_ago)).isoformat()
 
 
 def _insert_opp(db, idx: int, *, direction: str = "long", family: str = "momentum") -> str:
@@ -182,7 +182,7 @@ def _insert_order_fill_position(
         "outcome_semantics_version) "
         "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 0.2, 100, ?, 0, ?, 0, 0, 0, 'broker_ledger', "
         "'bitget_demo', NULL, ?, ?, ?, ?, 'take_profit', ?, ?, 'strategy', 'broker_fill', 1, 'broker_fill', 1, "
-        "1, 'eligible', 'oi-v1')",
+        "1, 'eligible', 'oi-v2')",
         (
             position_id,
             current_price,

@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 def _freeze_alpha_audit_clock(monkeypatch):
     """Keep fixed evidence timestamps inside the audit window."""
 
-    audit_now = datetime.fromisoformat("2026-07-13T09:10:01+00:00")
+    audit_now = datetime.fromisoformat("2026-09-25T09:10:01+00:00")
     monkeypatch.setattr("aletheia.analytics.alpha_attribution._utcnow", lambda: audit_now)
 
 
@@ -34,7 +34,7 @@ def test_measured_negative_suspect_modules_resolve_to_current_owners(layer):
 
 
 def _iso(days_ago: int = 0, hours_after: int = 0) -> str:
-    anchor = datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+    anchor = datetime.fromisoformat("2026-09-23T16:44:01+00:00")
     return (anchor + timedelta(seconds=(30 - days_ago) * 10, hours=hours_after)).isoformat()
 
 
@@ -72,7 +72,7 @@ def _insert_shadow(
     hours_after: int = 0,
 ) -> None:
     entry = (
-        datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+        datetime.fromisoformat("2026-09-23T16:44:01+00:00")
         + timedelta(hours=hours_after)
     ).isoformat()
     due_at = (datetime.fromisoformat(entry) + timedelta(hours=24)).isoformat()
@@ -134,7 +134,7 @@ def _insert_operator_candidate(
     decision_id = f"operator-{decision}-{idx}"
     key = f"pi_decision:{decision_id}"
     entry = (
-        datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+        datetime.fromisoformat("2026-09-23T16:44:01+00:00")
         + timedelta(hours=hours_after)
     ).isoformat()
     due_at = (datetime.fromisoformat(entry) + timedelta(hours=24)).isoformat()
@@ -685,7 +685,7 @@ def test_alpha_audit_twin_projection_never_promotes_complete_invalid_or_failed_e
     from aletheia.storage import repositories as repo
     from tests.test_universe_twin_experiment import _bundle
 
-    bundle = _bundle("alpha-twin-states", captured_at="2026-08-08T00:00:00+00:00")
+    bundle = _bundle("alpha-twin-states", captured_at="2026-09-24T00:00:00+00:00")
     repo.insert_universe_twin_shadow_bundle(
         bundle.batch,
         bundle.evidence,
@@ -737,7 +737,7 @@ def test_alpha_audit_does_not_truncate_twin_epoch_across_requested_window():
 
     for run_id, captured_at in (
         ("alpha-twin-old", "2026-06-01T00:00:00+00:00"),
-        ("alpha-twin-current", "2026-08-08T00:00:00+00:00"),
+        ("alpha-twin-current", "2026-09-24T00:00:00+00:00"),
     ):
         bundle = _bundle(run_id, captured_at=captured_at)
         repo.insert_universe_twin_shadow_bundle(

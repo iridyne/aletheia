@@ -17,7 +17,7 @@ from typing import Any, Literal
 from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.uta.models import UTAAccountIdentity
 
-OUTCOME_SEMANTICS_VERSION = "oi-v1"
+OUTCOME_SEMANTICS_VERSION = "oi-v2"
 
 ClosureCategory = Literal["strategy", "administrative", "maintenance", "unknown"]
 

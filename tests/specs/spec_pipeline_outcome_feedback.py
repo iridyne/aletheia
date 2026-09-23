@@ -237,7 +237,7 @@ def test_outcome_consumer_rejects_inconsistent_net_economics():
         "exit_fill_verified": True,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": "oi-v2",
     })
 
     assert assessment.eligible is False
@@ -285,7 +285,7 @@ def test_verified_exit_cannot_mask_an_unverified_entry_fill():
         "exit_fill_verified": True,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": "oi-v2",
     })
 
     assert assessment.eligible is False

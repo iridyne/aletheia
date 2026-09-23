@@ -260,7 +260,7 @@ def test_temporally_future_settlement_cannot_drive_skip_action(tmp_path, monkeyp
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
     from aletheia.storage.sqlite import get_db
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     candidate_at = now - timedelta(hours=25)
     _add_candidate(
         key="pi_decision:future-settlement", action="rejected", net=1.0,
@@ -284,7 +284,7 @@ def test_impossible_temporal_outcome_is_recording_incident(tmp_path, monkeypatch
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
     from aletheia.storage.sqlite import get_db
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     candidate_at = now - timedelta(hours=25)
     candidate_key = "pi_decision:impossible-due"
     _add_candidate(
@@ -311,7 +311,7 @@ def test_negative_complete_skip_cohort_is_protective_not_a_bypass(tmp_path, monk
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:protective-{index}", action="rejected", net=-1.0,
@@ -328,7 +328,7 @@ def test_positive_skip_cohort_with_comparable_pass_is_overrestriction_suspect(tm
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:skip-positive-{index}", action="rejected", net=1.0,
@@ -350,7 +350,7 @@ def test_repeated_complete_skips_without_comparable_pass_are_liveness_incident(t
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:liveness-{index}", action="rejected", net=1.0,
@@ -407,7 +407,7 @@ def test_recent_unsettled_skips_do_not_block_a_mature_protective_cohort(
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:mature-protective-{index}",

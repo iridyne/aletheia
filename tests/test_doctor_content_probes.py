@@ -90,9 +90,9 @@ def test_memo_quality_valid_is_ok(db):
     _ins(db, "knowledge_items", id="m2", item_type="trading_memo", title="memo",
          tags=json.dumps({"valid_until": _ahead(days=1)}),
          content=json.dumps({"regime_playbook": [{"r": 1}], "valid_until": _ahead(days=1),
-                             "generated_at": generated_at, "outcome_semantics_version": "oi-v1",
-                             "clean_window_anchor_id": "outcome-integrity-v1-2026-07-12",
-                             "clean_window_anchor_iso": "2026-07-12T07:10:00+00:00"}),
+                             "generated_at": generated_at, "outcome_semantics_version": "oi-v2",
+                             "clean_window_anchor_id": "outcome-integrity-v2-2026-09-23",
+                             "clean_window_anchor_iso": "2026-09-23T16:43:35+00:00"}),
          created_at=generated_at)
     assert _verdict(dx._probe_content_memo_quality).severity == "ok"
 

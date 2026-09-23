@@ -94,7 +94,7 @@ def test_trade_and_strategy_stats_ignore_administrative_rows():
     assert {key: strategy[key] for key in ("trade_count", "win_rate", "total_pnl")} == {
         "trade_count": 2, "win_rate": 50.0, "total_pnl": 5.0,
     }
-    assert strategy["outcome_semantics_version"] == "oi-v1"
+    assert strategy["outcome_semantics_version"] == "oi-v2"
 
 
 def test_trade_stats_resolves_eligible_outcomes_through_source_module(monkeypatch):
@@ -177,7 +177,7 @@ def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows(option
     assert len(families) == 1
     assert families[0]["trade_count"] == 1
     assert families[0]["win_rate"] == 100.0
-    assert families[0]["outcome_semantics_version"] == "oi-v1"
+    assert families[0]["outcome_semantics_version"] == "oi-v2"
 
     assert _genuine_closed_pnls() == [7.0]
 
@@ -210,7 +210,7 @@ def test_calibration_build_uses_only_verified_current_semantics_outcomes():
     assert report is not None
     assert report["total_executed"] == 5
     assert report["overall_win_rate"] == 1.0
-    assert report["outcome_semantics_version"] == "oi-v1"
+    assert report["outcome_semantics_version"] == "oi-v2"
 
 
 def test_old_or_stale_calibration_report_is_rejected_before_pi_consumption():

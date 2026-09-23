@@ -9,7 +9,7 @@ import pytest
 
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
-_BASE = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+_BASE = datetime(2026, 9, 24, 12, tzinfo=timezone.utc)
 
 
 def _iso(days: int = 0, minutes: int = 0) -> str:
@@ -394,6 +394,7 @@ def _cohorts(experiment_id, **kwargs):
     rows = [dict(row) for row in db.execute(
         "SELECT * FROM learning_exposures WHERE experiment_id=?", (experiment_id,),
     )]
+    kwargs.setdefault("as_of_at", _iso(8))
     return build_experiment_cohorts(
         experiment_id, _source_rows=rows, _source_experiment=experiment,
         _source_hypothesis=hypothesis,
@@ -1206,7 +1207,15 @@ def test_mixed_cost_model_versions_make_cohort_invalid_and_auditable():
 
 
 @pytest.mark.parametrize("outcome_source", ["universe", "filter"])
-def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source):
+def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source, monkeypatch):
+    import datetime as datetime_module
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _BASE + timedelta(days=8)
+
+    monkeypatch.setattr(datetime_module, "datetime", _Clock)
     from extensions.learning.ledger import linked_settled_exposure_counts
 
     hypothesis, experiment = _experiment()
@@ -1829,7 +1838,7 @@ def test_pending_outcomes_preserve_exposed_intervention_units():
     )
     _filter_outcome(
         "future-control",
-        entry_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        entry_at=_iso(9),
     )
 
     verdict = _run(experiment.experiment_id)[0]

@@ -321,14 +321,14 @@ def test_builder_filters_before_display_limit_beyond_500_and_exposes_cohort(monk
         {
             "position_id": f"eth-{index}", "closed_at": (now - timedelta(seconds=index)).isoformat(),
             "symbol": "ETH/USDT", "outcome_eligible": 1,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v2",
         }
         for index in range(501)
     ]
     rows.append({
         "position_id": "btc", "closed_at": (now - timedelta(minutes=20)).isoformat(),
         "symbol": "BTC/USDT", "outcome_eligible": 1,
-        "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
+        "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v2",
     })
     captured = {}
     def fake_paths(**kwargs):
@@ -342,7 +342,7 @@ def test_builder_filters_before_display_limit_beyond_500_and_exposes_cohort(monk
     assert [row["position_id"] for row in report["rows"]] == ["btc"]
     assert report["cohort_identity"] == {
         "basis": "current_eligible_strategy_outcomes_closed_in_window",
-        "outcome_semantics_version": "oi-v1",
+        "outcome_semantics_version": "oi-v2",
         "symbol": "BTC/USDT",
     }
     assert report["cohort_eligible_count"] == 1

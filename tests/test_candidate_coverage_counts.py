@@ -15,8 +15,8 @@ import aletheia.analytics.candidate_facts as candidate_facts
 from aletheia.storage import sqlite as sq
 
 
-LOWER = datetime(2026, 8, 1, tzinfo=timezone.utc)
-UPPER = datetime(2026, 8, 10, tzinfo=timezone.utc)
+LOWER = datetime(2026, 9, 24, tzinfo=timezone.utc)
+UPPER = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
 
 def _decision(
@@ -117,15 +117,15 @@ def _outcome(
 def test_window_counts_use_first_exposure():
     db = sq.get_db()
     # A: two rows in window under one identity -> 1 unit
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
-    _decision(db, "a2", "2026-08-03T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a2", "2026-09-26T00:00:00+00:00", outcome_key="cand-a")
     # B: first exposure before the window -> excluded despite an in-window row
     _decision(db, "b1", "2026-07-20T00:00:00+00:00", outcome_key="cand-b")
-    _decision(db, "b2", "2026-08-04T00:00:00+00:00", outcome_key="cand-b")
+    _decision(db, "b2", "2026-09-27T00:00:00+00:00", outcome_key="cand-b")
     # C: fully inside the window -> 1 unit
-    _decision(db, "c1", "2026-08-05T00:00:00+00:00", outcome_key="cand-c")
+    _decision(db, "c1", "2026-09-28T00:00:00+00:00", outcome_key="cand-c")
     # D: after the window -> excluded
-    _decision(db, "d1", "2026-09-01T00:00:00+00:00", outcome_key="cand-d")
+    _decision(db, "d1", "2026-10-24T00:00:00+00:00", outcome_key="cand-d")
 
     counts = candidate_facts.candidate_coverage_counts(
         db, horizon="24h", lower=LOWER, upper=UPPER
@@ -140,24 +140,24 @@ def test_batches_stream_counted_with_exclusions():
     _batch(
         db,
         "batch-ok",
-        "2026-08-02T01:00:00+00:00",
+        "2026-09-25T01:00:00+00:00",
         [
-            {"candidate_key": "bk-1", "evaluated_at": "2026-08-02T01:00:00+00:00"},
+            {"candidate_key": "bk-1", "evaluated_at": "2026-09-25T01:00:00+00:00"},
             {"filter_name": "ranker"},  # falls back to batch id identity
         ],
     )
-    _batch(db, "batch-malformed", "2026-08-03T01:00:00+00:00", "not-json{{")
+    _batch(db, "batch-malformed", "2026-09-26T01:00:00+00:00", "not-json{{")
     _batch(
         db,
         "batch-mismatch",
-        "2026-08-04T01:00:00+00:00",
+        "2026-09-27T01:00:00+00:00",
         [{"candidate_key": "bk-x"}],
         candidate_count=5,
     )
     _batch(
         db,
         "batch-outside",
-        "2026-09-02T01:00:00+00:00",
+        "2026-10-25T01:00:00+00:00",
         [{"candidate_key": "bk-out"}],
     )
 
@@ -180,7 +180,7 @@ def test_window_counts_do_not_return_historical_identity_rows():
     _decision(
         db,
         "current",
-        "2026-08-05T00:00:00+00:00",
+        "2026-09-28T00:00:00+00:00",
         outcome_key="current-candidate",
     )
 
@@ -227,7 +227,7 @@ def test_historical_batch_count_mismatch_does_not_hide_current_identity():
     _decision(
         db,
         "current-reused",
-        "2026-08-05T00:00:00+00:00",
+        "2026-09-28T00:00:00+00:00",
         outcome_key="reused",
     )
 
@@ -244,7 +244,7 @@ def test_pre_window_batch_uses_embedded_fact_timestamp():
         db,
         "historical-container",
         "2026-07-20T00:00:00+00:00",
-        [{"candidate_key": "embedded-window", "evaluated_at": "2026-08-05T00:00:00+00:00"}],
+        [{"candidate_key": "embedded-window", "evaluated_at": "2026-09-28T00:00:00+00:00"}],
     )
 
     counts = candidate_facts.candidate_coverage_counts(
@@ -263,7 +263,7 @@ def test_prior_decision_fallback_id_matches_canonical_identity():
     _decision(
         db,
         "current-row",
-        "2026-08-05T00:00:00+00:00",
+        "2026-09-28T00:00:00+00:00",
         outcome_key="legacy-id",
     )
 
@@ -294,8 +294,8 @@ def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
         db,
         "outcome-boundary",
         "cand-boundary",
-        entry_ts="2026-08-01T00:30:00+00:00",
-        settled_at="2026-08-02T00:30:00+00:00",
+        entry_ts="2026-09-24T00:30:00+00:00",
+        settled_at="2026-09-25T00:30:00+00:00",
     )
     db.commit()
 
@@ -333,9 +333,9 @@ def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
 
 def test_candidate_facts_epoch_start_uses_subsecond_batch_boundary():
     db = sq.get_db()
-    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
-    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
-    _batch(db, "old-bad", "2026-08-01T00:00:00.100000+00:00", "{not-json")
+    lower = datetime(2026, 9, 24, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 9, 24, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    _batch(db, "old-bad", "2026-09-24T00:00:00.100000+00:00", "{not-json")
     _batch(
         db,
         "boundary-good",
@@ -374,18 +374,18 @@ def test_candidate_facts_epoch_start_uses_subsecond_batch_boundary():
 
 def test_candidate_facts_epoch_start_uses_global_explicit_first_exposure():
     db = sq.get_db()
-    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
-    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    lower = datetime(2026, 9, 24, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 9, 24, 0, 0, 0, 900000, tzinfo=timezone.utc)
     _decision(
         db,
         "old",
-        "2026-08-01T00:00:00.100000+00:00",
+        "2026-09-24T00:00:00.100000+00:00",
         outcome_key="cand-reused",
     )
     _decision(
         db,
         "new",
-        "2026-08-01T00:00:00.600000+00:00",
+        "2026-09-24T00:00:00.600000+00:00",
         outcome_key="cand-reused",
     )
     _decision(
@@ -420,38 +420,38 @@ def test_candidate_facts_epoch_start_uses_global_explicit_first_exposure():
 
 def test_candidate_facts_epoch_start_uses_global_batch_first_exposure():
     db = sq.get_db()
-    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
-    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    lower = datetime(2026, 9, 24, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 9, 24, 0, 0, 0, 900000, tzinfo=timezone.utc)
     _batch(
         db,
         "old-batch",
-        "2026-08-01T00:00:00.100000+00:00",
+        "2026-09-24T00:00:00.100000+00:00",
         [
             {
                 "candidate_key": "cand-reused",
-                "evaluated_at": "2026-08-01T00:00:00.100000+00:00",
+                "evaluated_at": "2026-09-24T00:00:00.100000+00:00",
             }
         ],
     )
     _batch(
         db,
         "new-batch",
-        "2026-08-01T00:00:00.600000+00:00",
+        "2026-09-24T00:00:00.600000+00:00",
         [
             {
                 "candidate_key": "cand-reused",
-                "evaluated_at": "2026-08-01T00:00:00.600000+00:00",
+                "evaluated_at": "2026-09-24T00:00:00.600000+00:00",
             }
         ],
     )
     _batch(
         db,
         "fresh-batch",
-        "2026-08-01T00:00:00.700000+00:00",
+        "2026-09-24T00:00:00.700000+00:00",
         [
             {
                 "candidate_key": "cand-fresh",
-                "evaluated_at": "2026-08-01T00:00:00.700000+00:00",
+                "evaluated_at": "2026-09-24T00:00:00.700000+00:00",
             }
         ],
     )
@@ -472,15 +472,15 @@ def test_candidate_facts_epoch_start_uses_global_batch_first_exposure():
 
 def test_settled_outcome_intersection():
     db = sq.get_db()
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
-    _decision(db, "c1", "2026-08-05T00:00:00+00:00", outcome_key="cand-c")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "c1", "2026-09-28T00:00:00+00:00", outcome_key="cand-c")
     # in-window identity, settled within cutoff -> counted
     _outcome(
         db,
         "o1",
         "cand-a",
-        entry_ts="2026-08-02T00:30:00+00:00",
-        settled_at="2026-08-03T00:30:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
+        settled_at="2026-09-26T00:30:00+00:00",
     )
     # pending outcome -> not settled
     _outcome(
@@ -488,23 +488,23 @@ def test_settled_outcome_intersection():
         "o2",
         "cand-c",
         status="pending",
-        entry_ts="2026-08-05T00:30:00+00:00",
+        entry_ts="2026-09-28T00:30:00+00:00",
     )
     # settled after the cutoff -> not counted
-    _decision(db, "e1", "2026-08-06T00:00:00+00:00", outcome_key="cand-e")
+    _decision(db, "e1", "2026-09-29T00:00:00+00:00", outcome_key="cand-e")
     _outcome(
         db,
         "o3",
         "cand-e",
-        entry_ts="2026-08-06T00:30:00+00:00",
-        settled_at="2026-08-20T00:30:00+00:00",
+        entry_ts="2026-09-29T00:30:00+00:00",
+        settled_at="2026-10-13T00:30:00+00:00",
     )
     # outcome for a key with no window candidate -> ignored
     _outcome(
         db,
         "o4",
         "cand-ghost",
-        entry_ts="2026-08-07T00:30:00+00:00",
+        entry_ts="2026-09-30T00:30:00+00:00",
     )
     # other horizon -> ignored
     _outcome(
@@ -512,7 +512,7 @@ def test_settled_outcome_intersection():
         "o5",
         "cand-a",
         horizon="1h",
-        entry_ts="2026-08-02T00:30:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
     )
 
     counts = candidate_facts.candidate_coverage_counts(
@@ -525,25 +525,25 @@ def test_settled_outcome_intersection():
 
 def test_settled_outcome_units_require_canonical_temporal_validity():
     db = sq.get_db()
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
-    _decision(db, "b1", "2026-08-02T00:01:00+00:00", outcome_key="cand-b")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "b1", "2026-09-25T00:01:00+00:00", outcome_key="cand-b")
     _outcome(
         db,
         "valid",
         "cand-a",
-        entry_ts="2026-08-02T00:30:00+00:00",
-        settled_at="2026-08-02T00:31:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
+        settled_at="2026-09-25T00:31:00+00:00",
     )
     _outcome(
         db,
         "missing-due",
         "cand-b",
-        entry_ts="2026-08-02T00:30:00+00:00",
-        settled_at="2026-08-02T00:31:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
+        settled_at="2026-09-25T00:31:00+00:00",
     )
     db.execute(
         "UPDATE filter_candidate_outcomes SET due_at=? WHERE id='missing-due'",
-        ("2026-08-03T00:31:00+00:00",),
+        ("2026-09-26T00:31:00+00:00",),
     )
 
     counts = candidate_facts.candidate_coverage_counts(
@@ -560,7 +560,7 @@ def test_settled_outcome_units_require_canonical_temporal_validity():
 
 def test_unknown_timestamp_units_are_table_wide():
     db = sq.get_db()
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
     _decision(db, "empty-ts", "", outcome_key="cand-empty")
     _decision(db, "bad-ts", "not-a-timestamp", outcome_key="cand-bad")
 
@@ -573,24 +573,24 @@ def test_unknown_timestamp_units_are_table_wide():
 
 def test_parity_with_full_report_on_window():
     db = sq.get_db()
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
-    _decision(db, "a2", "2026-08-03T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a2", "2026-09-26T00:00:00+00:00", outcome_key="cand-a")
     _decision(db, "b1", "2026-07-20T00:00:00+00:00", outcome_key="cand-b")
-    _decision(db, "b2", "2026-08-04T00:00:00+00:00", outcome_key="cand-b")
-    _decision(db, "c1", "2026-08-05T00:00:00+00:00", outcome_key="cand-c")
+    _decision(db, "b2", "2026-09-27T00:00:00+00:00", outcome_key="cand-b")
+    _decision(db, "c1", "2026-09-28T00:00:00+00:00", outcome_key="cand-c")
     _outcome(
         db,
         "o1",
         "cand-a",
-        entry_ts="2026-08-02T00:30:00+00:00",
-        settled_at="2026-08-03T00:30:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
+        settled_at="2026-09-26T00:30:00+00:00",
     )
     _outcome(
         db,
         "o2",
         "cand-c",
         status="pending",
-        entry_ts="2026-08-05T00:30:00+00:00",
+        entry_ts="2026-09-28T00:30:00+00:00",
     )
 
     report = candidate_facts.build_candidate_facts(
@@ -618,13 +618,13 @@ def test_parity_with_full_report_on_window():
 
 def test_profit_loop_coverage_probe_never_builds_full_facts(monkeypatch):
     db = sq.get_db()
-    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "a1", "2026-09-25T00:00:00+00:00", outcome_key="cand-a")
     _outcome(
         db,
         "o1",
         "cand-a",
-        entry_ts="2026-08-02T00:30:00+00:00",
-        settled_at="2026-08-03T00:30:00+00:00",
+        entry_ts="2026-09-25T00:30:00+00:00",
+        settled_at="2026-09-26T00:30:00+00:00",
     )
 
     def _boom(**_kwargs):
@@ -637,8 +637,8 @@ def test_profit_loop_coverage_probe_never_builds_full_facts(monkeypatch):
     import aletheia.cli.control_cmd as control_cmd
 
     result = control_cmd._profit_loop_coverage(
-        registration_at="2026-08-01T00:00:00+00:00",
-        cutoff_at="2026-08-10T00:00:00+00:00",
+        registration_at="2026-09-24T00:00:00+00:00",
+        cutoff_at="2026-10-03T00:00:00+00:00",
     )
     assert result["availability"] == "available"
     assert result["candidate"]["units"] == 1

@@ -299,7 +299,7 @@ def _closed(
     entry=100.0,
     qty=1.0,
     *,
-    closed_at="2026-07-12T08:00:00+00:00",
+    closed_at="2026-09-23T17:00:00+00:00",
     sizing_manifest=None,
 ):
     from tests.test_outcome_closure import _insert_entry_chain
@@ -334,7 +334,7 @@ def _closed(
         exit_fill_verified=not synthetic,
         outcome_eligible=not synthetic,
         outcome_exclusion_reason="administrative_close" if synthetic else "eligible",
-        outcome_semantics_version="oi-v1",
+        outcome_semantics_version="oi-v2",
         opportunity_id=opportunity_id,
         proposal_id=proposal_id,
         order_id=order_id,
@@ -488,7 +488,7 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     # An established database still cannot authorize a fresh rollout.
     for _ in range(12):
         _closed(repo, Position, "bull", pnl=1.0)
-    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    anchor = datetime(2026, 9, 24, tzinfo=timezone.utc)
     start_persona_rollout(cfg, now=anchor)
     assert effective_operator_decidable(roll, cfg) == {}
 
@@ -556,7 +556,7 @@ def test_progressive_rollout_identity_is_restart_safe_and_switching_refreezes(tm
     cfg.trading.persona_progressive_unlock_enabled = True
     cfg.trading.active_persona = "roll"
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    anchor = datetime(2026, 9, 24, tzinfo=timezone.utc)
 
     first = start_persona_rollout(cfg, now=anchor)
     assert first and first["status"] == "observing"
@@ -595,7 +595,7 @@ def test_progressive_rollout_disable_fence_survives_process_restart(tmp_path, mo
     cfg.trading.persona_progressive_unlock_enabled = True
     cfg.trading.active_persona = "roll"
     first = persona_rollout.start_persona_rollout(
-        cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc)
+        cfg, now=datetime(2026, 9, 24, tzinfo=timezone.utc)
     )
     assert first
 
@@ -605,7 +605,7 @@ def test_progressive_rollout_disable_fence_survives_process_restart(tmp_path, mo
     monkeypatch.setattr(persona_rollout, "_pending_refreeze_reason", None)
 
     restarted = persona_rollout.current_persona_rollout(
-        restarted_cfg, create=True, now=datetime(2026, 8, 2, tzinfo=timezone.utc)
+        restarted_cfg, create=True, now=datetime(2026, 9, 25, tzinfo=timezone.utc)
     )
 
     assert restarted and restarted["rollout_id"] != first["rollout_id"]
@@ -643,7 +643,7 @@ def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypat
         "aletheia.trading.sizing_policy.assess_persona_distress",
         lambda cfg=None: "healthy",
     )
-    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    anchor = datetime(2026, 9, 24, tzinfo=timezone.utc)
     start_persona_rollout(cfg, now=anchor)
     state = current_persona_rollout(cfg)
     manifest = serialize_sizing_manifest(build_sizing_manifest(cfg, state=state))
@@ -917,7 +917,7 @@ def test_persona_rollout_failed_invalidation_stays_fail_closed_until_retry(
         "aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: True
     )
     started = persona_rollout.start_persona_rollout(
-        cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc)
+        cfg, now=datetime(2026, 9, 24, tzinfo=timezone.utc)
     )
     assert started
     conn.execute(
@@ -972,7 +972,7 @@ def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, mon
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **k: False, raising=False)
 
-    started = start_persona_rollout(cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    started = start_persona_rollout(cfg, now=datetime(2026, 9, 24, tzinfo=timezone.utc))
     assert started and started["status"] == "refrozen"
     current = current_persona_rollout(cfg)
     assert current and current["status"] == "refrozen"
