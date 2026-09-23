@@ -4512,79 +4512,78 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
 
     def _persist_domain(domain: str, operation) -> None:
         try:
-            # One outer COMMIT for the tick; savepoints retain the previous
-            # best-effort isolation between independent public data sources.
-            with repo.transaction(savepoint=True):
+            # Commit each independent source separately so a large context tick cannot
+            # monopolize SQLite's cross-process writer permit.
+            with repo.transaction():
                 operation()
         except Exception as exc:
             code = f"{domain}_persist_failed"
             context_error_codes.append(code)
             logger.debug("%s persist failed: %s", domain, exc)
 
-    with repo.transaction():
-        if volume_result.get("top_symbols"):
-            _persist_domain(
-                "volume_scanner",
-                lambda: repo.save_volume_ranking_snapshot(
-                    volume_result["top_symbols"], volume_result["observed_at"]
-                ),
-            )
-        if hyperliquid_funding or hyperliquid_oi:
-            _persist_domain(
-                "hyperliquid",
-                lambda: repo.insert_collector_snapshot_batch(
-                    funding=hyperliquid_funding,
-                    open_interest=hyperliquid_oi,
-                ),
-            )
-        if hyperliquid_result.get('prices'):
-            _persist_domain('hyperliquid', lambda: [
-                repo.insert_perp_price_snapshot(row) for row in hyperliquid_result['prices']
-            ])
-        if comparison_result:
-            def persist_comparison():
-                repo.insert_collector_snapshot_batch(funding=comparison_result.get('funding', []),
-                    open_interest=comparison_result.get('open_interest', []))
-                for row in comparison_result.get('prices', []):
-                    repo.insert_perp_price_snapshot(row)
-            _persist_domain('derivatives_comparison', persist_comparison)
-        if onchain_rows:
-            _persist_domain(
-                "defillama",
-                lambda: repo.insert_onchain_snapshot_batch(onchain_rows),
-            )
-        if cg_result.get("rows"):
-            _persist_domain(
-                "coingecko_top",
-                lambda: repo.insert_coingecko_top_rows(cg_result["rows"]),
-            )
-        if macro_row:
-            _persist_domain("macro", lambda: repo.insert_macro_snapshot(macro_row))
-        if macro_result.get("fred_source_batches"):
-            _persist_domain("macro", lambda: [repo.insert_fred_source_batch(row)
-                for row in macro_result["fred_source_batches"]])
-        if coinalyze_oi or coinalyze_liquidations:
-            _persist_domain(
-                "coinalyze",
-                lambda: repo.insert_collector_snapshot_batch(
-                    open_interest=coinalyze_oi,
-                    liquidations=coinalyze_liquidations,
-                ),
-            )
-        if options_snapshots:
-            _options_snapshots = options_snapshots
-            _persist_domain(
-                "options_structure",
-                lambda: [
-                    repo.insert_options_structure_snapshot(row)
-                    for row in _options_snapshots
-                ],
-            )
-        if options_volatility:
-            _persist_domain(
-                "options_structure",
-                lambda: [repo.insert_options_volatility_snapshot(row) for row in options_volatility],
-            )
+    if volume_result.get("top_symbols"):
+        _persist_domain(
+            "volume_scanner",
+            lambda: repo.save_volume_ranking_snapshot(
+                volume_result["top_symbols"], volume_result["observed_at"]
+            ),
+        )
+    if hyperliquid_funding or hyperliquid_oi:
+        _persist_domain(
+            "hyperliquid",
+            lambda: repo.insert_collector_snapshot_batch(
+                funding=hyperliquid_funding,
+                open_interest=hyperliquid_oi,
+            ),
+        )
+    if hyperliquid_result.get('prices'):
+        _persist_domain('hyperliquid', lambda: [
+            repo.insert_perp_price_snapshot(row) for row in hyperliquid_result['prices']
+        ])
+    if comparison_result:
+        def persist_comparison():
+            repo.insert_collector_snapshot_batch(funding=comparison_result.get('funding', []),
+                open_interest=comparison_result.get('open_interest', []))
+            for row in comparison_result.get('prices', []):
+                repo.insert_perp_price_snapshot(row)
+        _persist_domain('derivatives_comparison', persist_comparison)
+    if onchain_rows:
+        _persist_domain(
+            "defillama",
+            lambda: repo.insert_onchain_snapshot_batch(onchain_rows),
+        )
+    if cg_result.get("rows"):
+        _persist_domain(
+            "coingecko_top",
+            lambda: repo.insert_coingecko_top_rows(cg_result["rows"]),
+        )
+    if macro_row:
+        _persist_domain("macro", lambda: repo.insert_macro_snapshot(macro_row))
+    if macro_result.get("fred_source_batches"):
+        _persist_domain("macro", lambda: [repo.insert_fred_source_batch(row)
+            for row in macro_result["fred_source_batches"]])
+    if coinalyze_oi or coinalyze_liquidations:
+        _persist_domain(
+            "coinalyze",
+            lambda: repo.insert_collector_snapshot_batch(
+                open_interest=coinalyze_oi,
+                liquidations=coinalyze_liquidations,
+            ),
+        )
+    if options_snapshots:
+        _options_snapshots = options_snapshots
+        _persist_domain(
+            "options_structure",
+            lambda: [
+                repo.insert_options_structure_snapshot(row)
+                for row in _options_snapshots
+            ],
+        )
+    if options_volatility:
+        _persist_domain(
+            "options_structure",
+            lambda: [repo.insert_options_volatility_snapshot(row) for row in options_volatility],
+        )
 
     from aletheia.data.collector_health import classify_collector_result
 
