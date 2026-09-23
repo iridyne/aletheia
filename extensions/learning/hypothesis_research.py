@@ -264,6 +264,7 @@ def _assemble_t0_envelope_context(
     envelopes: list[T0ContextEnvelopeV1],
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     contract = get_t0_coverage_contract(path_id)
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from aletheia.storage import repositories as repo
     if not envelopes:
         return {}, ["canonical_t0_envelope_unavailable"], [], []
@@ -326,19 +327,19 @@ def _assemble_t0_envelope_context(
                         "opportunity:"
                     )
                 ).strip()
-        position_id = (
-            envelope.root_causal_identity.removeprefix("position:")
-            if envelope.root_causal_identity.startswith("position:")
-            else ""
-        )
-        opened_at = envelope.anchor_at
-        if position_id:
-            position = repo.get_position(position_id)
-            opened = parse_utc((position or {}).get("opened_at"))
-            if opened is None:
-                missing.append(f"position_opened_at_unavailable:{source_artifact_id}")
-                continue
-            opened_at = opened.isoformat()
+        position_id = envelope.root_causal_identity.removeprefix("position:")
+        position = repo.get_position(position_id)
+        outcome = assess_realized_position(position or {})
+        if not outcome.eligible:
+            missing.append(
+                f"ineligible_realized_outcome:{source_artifact_id}:{outcome.reason}"
+            )
+            continue
+        opened = parse_utc((position or {}).get("opened_at"))
+        if opened is None:
+            missing.append(f"position_opened_at_unavailable:{source_artifact_id}")
+            continue
+        opened_at = opened.isoformat()
         outcome_ids.append(envelope.root_causal_identity)
         cases.append({
             "source_artifact_id": source_artifact_id,
