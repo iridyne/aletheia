@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import time
+import traceback
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -281,6 +282,8 @@ class _SerializedConnection(sqlite3.Connection):
     """Guard legacy direct writes that have not yet moved to the writer lane."""
 
     _owns_transaction_lock = False
+    _transaction_lock_started_at: float | None = None
+    _transaction_lock_origin: str | None = None
 
     def execute(self, sql, parameters=(), /):
         token = _sql_token(sql)
@@ -289,6 +292,9 @@ class _SerializedConnection(sqlite3.Connection):
                 return super().execute(sql, parameters)
             acquire_write_lock()
             self._owns_transaction_lock = True
+            self._transaction_lock_started_at = time.perf_counter()
+            frame = traceback.extract_stack(limit=2)[0]
+            self._transaction_lock_origin = f"{frame.filename}:{frame.lineno}:{frame.name}"
             try:
                 return super().execute(sql, parameters)
             except BaseException:
@@ -360,8 +366,17 @@ class _SerializedConnection(sqlite3.Connection):
     def _release_owned_lock(self) -> None:
         if self._owns_transaction_lock:
             self._owns_transaction_lock = False
+            started_at = self._transaction_lock_started_at
+            origin = self._transaction_lock_origin
+            self._transaction_lock_started_at = None
+            self._transaction_lock_origin = None
             release_write_lock()
-
+            held_ms = (time.perf_counter() - started_at) * 1000.0 if started_at else 0.0
+            if held_ms >= 500.0:
+                _logger.warning(
+                    "sqlite_direct_transaction_slow held_ms=%.1f origin=%s",
+                    held_ms, origin or "unknown",
+                )
 
 def _open_connection(path: Path) -> sqlite3.Connection:
     initialize_incremental_vacuum = not path.exists() or path.stat().st_size == 0
