@@ -2830,9 +2830,9 @@ def test_monitor_cap_tracks_a_nested_only_policy_write(monkeypatch):
 
     Every other account-leverage spec writes the FLAT key, which `__setattr__` syncs
     down into nested, so all of them passed while `check_account_leverage` reported a
-    stale cap to `GET /api/risk/account-leverage`. The autonomous operator loop
-    (`operator_loop.py:590`) and the risk-policy copy/replace/reset routes write
-    nested directly, so this is the shape the divergence actually took.
+    stale cap to `GET /api/risk/account-leverage`. The risk-policy
+    copy/replace/reset routes write nested directly, so this remains a current
+    write shape.
     """
     from types import SimpleNamespace
 

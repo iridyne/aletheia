@@ -82,7 +82,7 @@ results can influence a later trading judgment, even when it lives outside `exte
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
 | Contribution/health | measured Learning ledger/evaluator plus `lco-v1`, alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | bounded cached `lco-v1` summary and measured-path selection are shipped with timing/responsive accessibility proof; detail/pagination and the broader five-tab workbench remain future slices |
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
-| Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
+| Historical Operator assessments | persisted `operator_assessment` records | Python control loop retired under #3134; no current config writer or fallback authority |
 
 Core `trading.sizing_policy.resolve_learned_notional` retains the static notional
 and trace contract. Optional `learning.sizing_evidence` owns the existing

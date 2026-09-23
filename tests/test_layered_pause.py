@@ -233,6 +233,6 @@ class TestEssentialJobsCoverage:
         ai_jobs = {
             "market_observer", "paper_trader", "pi_trading_decision",
             "dreaming_daily", "post_trade_reviewer", "risk_critic",
-            "pi_operator_loop", "insight_synthesizer", "lesson_reviewer",
+            "insight_synthesizer", "lesson_reviewer",
         }
         assert _ESSENTIAL_JOBS.isdisjoint(ai_jobs)

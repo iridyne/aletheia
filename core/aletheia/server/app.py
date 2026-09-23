@@ -909,7 +909,6 @@ _PROTECTED_PATHS = {
     "/api/operator/pause",
     "/api/operator/resume",
     "/api/operator/wake",
-    "/api/operator/loop/trigger",
     # Capital events (deposit/withdraw) alter the capital baseline used by drawdown
     # and kill-switch calculations — fabricating one lowers the safety net.
     "/api/capital/events",

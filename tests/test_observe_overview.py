@@ -169,19 +169,12 @@ def test_collect_overview_does_not_persist_legacy_config_migration(
     config.write_text(original, encoding="utf-8")
     monkeypatch.setattr(loader, "CONFIG_PATH", config)
     loader._invalidate_config_cache()
-    audit_calls = []
-    monkeypatch.setattr(
-        loader,
-        "_audit_operator_authority_migration",
-        lambda **kwargs: audit_calls.append(kwargs),
-    )
     monkeypatch.setattr(observe_cmd, "_collect_worker_status", _worker_status)
 
     payload = _collect_overview()
 
     assert payload["execution_owner"] == "main"
     assert config.read_text(encoding="utf-8") == original
-    assert audit_calls == []
 
 
 def test_collect_overview_shape_on_empty_existing_lab(monkeypatch):

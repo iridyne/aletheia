@@ -191,82 +191,15 @@ def _migrate_removed_agent_config_keys(raw: dict) -> bool:
     return bool(removed)
 
 
-def operator_shell_process_active() -> bool:
-    """Return whether the durable PID belongs to the current TS operator shell.
-
-    This is deliberately a runtime fact rather than a config fact.  During an
-    owner handoff, ``operator.enabled`` can already be false on disk while the
-    gateway supervisor still owns a shell process created from its startup
-    config.  The legacy Python loop must remain ineffective until that process
-    is actually gone (normally after a gateway restart).
-    """
-    pid_path = DATA_DIR / "operator-shell.pid"
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    try:
-        import psutil
-
-        process = psutil.Process(pid)
-        if not process.is_running():
-            return False
-        cmdline = " ".join(process.cmdline()).replace("\\", "/").lower()
-    except Exception:
-        return False
-    return (
-        "operator-shell" in cmdline
-        and "index.ts" in cmdline
-        and "--once" not in cmdline
-    )
 
 
-def _enforce_single_operator_authority(cfg: AletheiaConfig) -> bool:
-    """Resolve a persisted dual-owner config in favour of operator-shell."""
-    if cfg.operator.enabled and cfg.operator.loop_enabled:
-        cfg.operator.loop_enabled = False
-        return True
-    return False
 
 
-def _apply_runtime_operator_authority(cfg: AletheiaConfig) -> bool:
-    """Fail closed while a shell process still exists during owner handoff.
-
-    This projection is intentionally not persisted.  An owner may stage the
-    legacy fallback as ``enabled=false, loop_enabled=true`` and restart the
-    gateway; until the old shell process exits, readers see the legacy loop as
-    ineffective.  After restart the desired fallback value becomes effective.
-    """
-    if cfg.operator.loop_enabled and operator_shell_process_active():
-        cfg.operator.loop_enabled = False
-        return True
-    return False
 
 
-def _audit_operator_authority_migration(
-    *,
-    before: dict,
-    after: dict,
-    reason: str,
-) -> None:
-    """Best-effort durable audit for automatic authority migration."""
-    try:
-        from aletheia.files.jsonl import write_audit
 
-        write_audit({
-            "actor": "system",
-            "source": "config_loader",
-            "event_type": "operator_authority_migrated",
-            "entity_type": "operator_config",
-            "entity_id": "operator",
-            "before": before,
-            "after": after,
-            "message": reason,
-        })
-    except Exception:
-        pass
+
+
 
 
 def _audit_webhook_config_migration() -> None:
@@ -286,40 +219,8 @@ def _audit_webhook_config_migration() -> None:
         pass
 
 
-def _raise_operator_authority_conflict(reason: str) -> None:
-    """Reject a write that could make both System Operator owners effective."""
-    try:
-        from fastapi import HTTPException
-    except ImportError as exc:  # pragma: no cover - FastAPI is a core dependency
-        raise RuntimeError(reason) from exc
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "error": "operator_authority_conflict",
-            "message": reason,
-            "required_action": (
-                "Keep operator-shell enabled and the legacy loop disabled. "
-                "The legacy implementation remains a compatibility/simulation fallback, "
-                "not a hot-switchable second owner."
-            ),
-        },
-    )
 
 
-def _persisted_operator_shell_owner_selected() -> bool:
-    """Return whether the durable config already chose shell-only ownership."""
-    if not CONFIG_PATH.exists():
-        return False
-    try:
-        raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return False
-    operator = raw.get("operator")
-    if not isinstance(operator, dict):
-        return False
-    return bool(operator.get("enabled", True)) and not bool(
-        operator.get("loop_enabled", True)
-    )
 
 
 class ConfigConflictError(RuntimeError):
@@ -484,7 +385,11 @@ def load_config(
         removed_runtime_keys = retired_runtime_keys.intersection(runtime) if isinstance(runtime, dict) else set()
         for key in removed_runtime_keys:
             del runtime[key]
-        operator_section_present = isinstance(raw.get("operator"), dict)
+        operator = raw.get("operator")
+        operator_section_present = isinstance(operator, dict)
+        removed_operator_loop = operator_section_present and "loop_enabled" in operator
+        if removed_operator_loop:
+            del operator["loop_enabled"]
         webhook = raw.get("webhook")
         webhook_migrated = (
             isinstance(webhook, dict)
@@ -530,14 +435,13 @@ def load_config(
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
         changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
                    or removed_serenity_stop or removed_strategy_factory
-                   or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
+                   or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated
+                   or removed_operator_loop)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
         if cfg.risk.schema_version != raw_risk_version:
             changed = True
-        authority_before = cfg.operator.model_dump(mode="json")
-        authority_reason: str | None = None
         if cfg.agent.permission_mode in _MODE_MIGRATION:
             cfg.agent.permission_mode = _MODE_MIGRATION[cfg.agent.permission_mode]
             changed = True
@@ -545,35 +449,14 @@ def load_config(
             cfg.operator.permission_mode = _OPERATOR_MODE_MIGRATION[cfg.operator.permission_mode]
             changed = True
         if not operator_section_present:
-            # Configs written before operator-shell existed implicitly belong to
-            # the legacy Python supervisor. Preserve that owner instead of
-            # silently activating the newer shell through schema defaults.
+            # Historical configurations did not authorize the shell. Retiring
+            # the Python owner must not silently activate a replacement.
             cfg.operator.enabled = False
-            cfg.operator.loop_enabled = True
             changed = True
-            authority_reason = (
-                "Migrated pre-operator-shell config to the legacy Python System "
-                "Operator owner; no second authority was activated."
-            )
-        elif _enforce_single_operator_authority(cfg):
-            changed = True
-            authority_reason = (
-                "Resolved dual System Operator configuration in favour of "
-                "operator-shell; the legacy Python loop was disabled."
-            )
         if changed and persist_migrations:
-            save_config(cfg, allow_operator_handoff=True)
+            save_config(cfg)
             if webhook_migrated:
                 _audit_webhook_config_migration()
-            if authority_reason:
-                _audit_operator_authority_migration(
-                    before=authority_before,
-                    after=cfg.operator.model_dump(mode="json"),
-                    reason=authority_reason,
-                )
-        if _apply_runtime_operator_authority(cfg):
-            # Runtime-only projection; do not overwrite a legacy fallback on disk.
-            pass
         if changed and not persist_migrations:
             return cfg.model_copy(deep=True)
         if use_cache:
@@ -581,39 +464,15 @@ def load_config(
         return cfg.model_copy(deep=True)
     cfg = AletheiaConfig()
     _normalize_candidate_selection(cfg)
-    cfg.operator.loop_enabled = False
-    _apply_runtime_operator_authority(cfg)
     if use_cache:
         _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
     return cfg.model_copy(deep=True)
 
 
-def _save_config_locked(
-    cfg: AletheiaConfig,
-    *,
-    allow_operator_handoff: bool = False,
-) -> None:
+def _save_config_locked(cfg: AletheiaConfig) -> None:
     """Persist config while the process-wide config write lock is held."""
     _invalidate_config_cache()
     ensure_data_dirs()
-    if cfg.operator.enabled and cfg.operator.loop_enabled:
-        if not allow_operator_handoff and _persisted_operator_shell_owner_selected():
-            _raise_operator_authority_conflict(
-                "operator-shell is the persisted System Operator owner; the legacy Python loop cannot be enabled concurrently"
-            )
-        # New/default config construction still carries the historical schema
-        # default loop_enabled=True. Normalize that compatibility default to the
-        # shell-only product default instead of turning ordinary saves into 409s.
-        cfg.operator.loop_enabled = False
-    if (
-        not allow_operator_handoff
-        and not cfg.operator.enabled
-        and cfg.operator.loop_enabled
-        and operator_shell_process_active()
-    ):
-        _raise_operator_authority_conflict(
-            "The operator-shell process is still running; legacy fallback cannot become effective until that process is gone"
-        )
     _normalize_candidate_selection(cfg)
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = AletheiaConfig.model_validate(cfg.model_dump(mode="python")).model_dump(
@@ -670,7 +529,6 @@ def _sync_config_directory() -> None:
 def save_config(
     cfg: AletheiaConfig,
     *,
-    allow_operator_handoff: bool = False,
     expected_hash: "str | None" = None,
 ) -> None:
     """Persist config to disk (atomic write + cross-process lock).
@@ -688,7 +546,7 @@ def save_config(
                         f"config modified by another writer "
                         f"(expected {expected_hash[:8]}, got {current and current[:8]})"
                     )
-            _save_config_locked(cfg, allow_operator_handoff=allow_operator_handoff)
+            _save_config_locked(cfg)
         finally:
             _release_config_file_lock(file_fd)
     _emit_consistency_events(cfg)
@@ -745,7 +603,6 @@ def bootstrap() -> AletheiaConfig:
         logging.getLogger("aletheia.config").warning("bootstrap: seed_playbooks failed: %s", e)
     if not CONFIG_PATH.exists():
         cfg = AletheiaConfig()
-        cfg.operator.loop_enabled = False
         save_config(cfg)
         return cfg
     return load_config()

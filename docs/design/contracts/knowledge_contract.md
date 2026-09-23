@@ -67,7 +67,7 @@
 | `trading_guard` | 人工确认或 seed 流程 | 决策时实际执行的行为约束规则 |
 | `guard_candidate` | Dreaming Agent / Operator | 待确认的临时 guard，`medium_confidence`，不参与检索 |
 | `system_action` | Self-heal 层 (`commands._emit_self_heal_action`) | 无人工触发的自动修正操作审计记录 |
-| `operator_assessment` | Operator loop (`operator_loop.py`) | Operator 循环的周期性决策评估摘要 |
+| `operator_assessment` | Historical Python Operator loop (retired under #3134) | 历史评估摘要只读；不再调度生产或授权配置写入 |
 | `trading_memo` | Insight Synthesizer (`insight_synthesizer.py`) | 近期信号滚动战术摘要，注入 AI 决策上下文 |
 | `reasoning_feedback` | Reasoning feedback tracker (`reasoning_feedback.py`) | 预测结果 vs 实际结果的校准记录 |
 | `calibration_report` | Confidence Calibration Engine (`confidence_calibration.py`) | 置信度评分准确性周期性报告 |
@@ -310,7 +310,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 | `insight_synthesizer` | `trading_memo` / `reasoning_feedback` piggyback | `agent_contracts.md:201` |
 | `confidence_calibration` | `calibration_report` | `agent_contracts.md:208` |
 | legacy `strategy_designer` | `strategy_memory` | Removed with rules engine Position C; historical rows may remain |
-| `pi_operator_loop` | `operator_assessment` | `trust_and_change_control.md §4.1` |
+| retired Python Operator | historical `operator_assessment` | Read-only retained history; no current producer (#3134) |
 | Self-heal layer | `system_action` | `commands._emit_self_heal_action` |
 
 ### 7.2 知识消费方（消费侧文件:行锚点）

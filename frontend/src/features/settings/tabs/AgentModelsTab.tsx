@@ -108,11 +108,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Runtime config'),
   })
-  const operatorMut = useMutation({
-    mutationFn: (body: any) => api.updateOperatorConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
-    onError: onSaveError('Operator config'),
-  })
   const piDaemonMut = useMutation({
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
     onSuccess: () => setSaveErr(null),
@@ -139,7 +134,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
   const autoLearn = !!agent.autonomous_learning
   const bypassDistressGate = !!agent.bypass_distress_gate
   const schedulerEnabled = runtime.scheduler_enabled !== false
-  const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
   const piDaemon = settings?.pi_daemon ?? {}
   const piDaemonEnabled = piDaemon.enabled !== false
   const piDaemonRuntime = settings?.pi_daemon_runtime ?? {}
@@ -510,20 +504,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
               runtimeMut.mutate({ scheduler_enabled: v })
             }}
             disabled={runtimeMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Operator loop"
-          hint="When enabled, the System Operator runs system-level assessments every 4h and takes Level 1 actions automatically."
-        >
-          <Toggle
-            checked={operatorLoopEnabled}
-            persistence="immediate"
-            onChange={async v => {
-              if (!v && !(await confirm({ title: 'Disable the operator loop?', description: 'Automated system governance will stop.', confirmLabel: 'Disable', variant: 'danger' }))) return
-              operatorMut.mutate({ loop_enabled: v })
-            }}
-            disabled={operatorMut.isPending}
           />
         </Row>
         <Row

@@ -2357,40 +2357,10 @@ def _probe_startup_behavior_gate(report: Report) -> None:
         report.add("startup_gate.status", "info", f"startup gate probe error: {e}")
 
 
-def _probe_operator_loop(report: Report) -> None:
-    """System Operator governance loop liveness — checks if it has run within expected cadence."""
-    try:
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        if not cfg.operator.loop_enabled:
-            report.add("operator.loop", "info", "operator loop disabled in config")
-            return
-
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        row = db.execute(
-            "SELECT tags, created_at FROM knowledge_items "
-            "WHERE item_type='operator_assessment' ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            report.add("operator.loop", "info", "no operator assessment yet (first run pending)")
-            return
-
-        age = _age_minutes(row["created_at"])
-        if age is None:
-            report.add("operator.loop", "info", "cannot parse last assessment timestamp")
-        elif age > 300:  # 5h — missed at least one 4h cadence
-            report.add("operator.loop", "warn",
-                       f"last operator assessment {_fmt_age(age)} — missed scheduled cadence",
-                       "pi_operator_loop runs every 4h plus a deduplicated startup catch-up; check scheduler/gateway")
-        else:
-            report.add("operator.loop", "ok", f"last assessment {_fmt_age(age)}")
-    except Exception as e:
-        report.add("operator.loop", "info", f"probe error: {e}")
 
 
 def _probe_operator_shell(report: Report) -> None:
-    """Report command-shell liveness separately from the four-hour assessment loop."""
+    """Report the System Operator shell liveness."""
     try:
         from aletheia.agent_shell.operator_store import get_latest_heartbeat
         from aletheia.config.loader import load_config
@@ -4036,7 +4006,6 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_health,
         _probe_startup_behavior_gate,
         _probe_operator_shell,
-        _probe_operator_loop,
         _probe_pi_daemon,
         _probe_webui_static,
         _probe_git_hooks,

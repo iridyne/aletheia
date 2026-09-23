@@ -984,7 +984,7 @@ def operator_recommendations(limit: int = 10):
 
 @router.get("/loop/latest")
 def operator_loop_latest(limit: int = 5):
-    """Get the most recent operator loop assessments."""
+    """Read stored assessments from the retired Python Operator."""
     from aletheia.storage.repositories import list_knowledge_items
     items = list_knowledge_items(item_type="operator_assessment", limit=limit)
     results = []
@@ -1002,13 +1002,6 @@ def operator_loop_latest(limit: int = 5):
     return results
 
 
-@router.post("/loop/trigger")
-async def operator_loop_trigger():
-    """Manually trigger an operator loop run."""
-    import asyncio
-    from aletheia.agent_shell.operator_loop import run_operator_loop
-    summary = await asyncio.to_thread(run_operator_loop, trigger="manual")
-    return summary
 
 
 @router.get("/events")

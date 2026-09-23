@@ -368,12 +368,7 @@ FORBIDDEN_INTENTS = frozenset([
     "enable_live", "modify_credentials", "bypass_risk",
     "place_live_order", "modify_execution_gateway", "delete_knowledge",
     "change_risk_limits",
-    # Defense-in-depth double-lock for the two Level-3 operator actions that
-    # previously had NO permission-layer block (operator_loop._LEVEL_3_ACTIONS
-    # classified them L3, but check_permission never rejected them). A Level-3
-    # classification alone is not a hard wall — these must also be permanently
-    # forbidden intents so no permission_mode can ever reach them. (CR-RE/OL-C03,
-    # BACKEND_ISSUES §15.1, 2026-06-23.)
+    # These human-only safety controls remain forbidden in every permission mode.
     "deactivate_kill_switch", "modify_permissions",
     # PI Constitution invariant (PCI-G01, 2026-06-30): PI must NEVER modify its
     # own system prompt base layer. propose_prompt_change exists as a

@@ -1,5 +1,9 @@
 # 设计：System-Operator 集成的动态仓位决策 + 交易 Persona + Learning 策略域
 
+> **#3134 retirement (2026-09-23):** The Python `operator_loop` configuration writer
+> is removed; references below describe historical design, not a current owner.
+> Existing sizing/Persona contracts and their independent consumers are unchanged.
+
 > **STATUS: P0–P2 已有生产消费者；P3–P4 为实验或 helper（2026-07-28 能力事实复核）。**
 > 金字塔当前只有经测试的纯 `pyramid_plan` helper，没有 Scheduler/Operator 生产调用者，也没有
 > paper/demo/live 的 Risk→Order→Fill→Position materializer。Settings/API 已阻止新开启。

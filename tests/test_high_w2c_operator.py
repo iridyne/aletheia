@@ -17,7 +17,6 @@ def test_operator_routes_no_blocking_async():
     # Routes that MUST be `async def` (they have awaits or are async generators)
     allowed_async = {
         "operator_status",  # await asyncio.to_thread(...)
-        "operator_loop_trigger",  # await asyncio.to_thread(...)
         "operator_events_stream",  # async generator
         "operator_pause",  # await _set_paused(...)
         "operator_resume",  # await _set_paused(...)

@@ -2637,31 +2637,11 @@ export interface paths {
         };
         /**
          * Operator Loop Latest
-         * @description Get the most recent operator loop assessments.
+         * @description Read stored assessments from the retired Python Operator.
          */
         get: operations["operator_loop_latest_api_operator_loop_latest_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/loop/trigger": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Operator Loop Trigger
-         * @description Manually trigger an operator loop run.
-         */
-        post: operations["operator_loop_trigger_api_operator_loop_trigger_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5063,23 +5043,6 @@ export interface paths {
         put?: never;
         /** Set Okx Credentials */
         post: operations["set_okx_credentials_api_settings_okx_credentials_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/operator": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Update Operator Config */
-        post: operations["update_operator_config_api_settings_operator_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9640,11 +9603,6 @@ export interface components {
              */
             heartbeat_stale_after_sec: number;
             /**
-             * Loop Enabled
-             * @default true
-             */
-            loop_enabled: boolean;
-            /**
              * Main Session Id
              * @default operator-main
              */
@@ -9669,11 +9627,6 @@ export interface components {
              * @default 90
              */
             restart_after_sec: number;
-        };
-        /** OperatorConfigUpdate */
-        OperatorConfigUpdate: {
-            /** Loop Enabled */
-            loop_enabled?: boolean | null;
         };
         /** OperatorContextQueryRequest */
         OperatorContextQueryRequest: {
@@ -17187,26 +17140,6 @@ export interface operations {
             };
         };
     };
-    operator_loop_trigger_api_operator_loop_trigger_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     operator_pause_api_operator_pause_post: {
         parameters: {
             query?: never;
@@ -21276,39 +21209,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OkxCredentialsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_operator_config_api_settings_operator_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OperatorConfigUpdate"];
             };
         };
         responses: {

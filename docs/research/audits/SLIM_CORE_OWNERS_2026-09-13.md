@@ -15,6 +15,15 @@ resource roots, nonempty authority scans, optional-absence checks and unchanged
 canonical writer assertions. Local checks do not establish Fedora deployment,
 runtime qualification or economics; #1884/#3135/#2899 evidence remains separate.
 
+### Operator fallback retirement (#3134, owner decision 2026-09-23)
+
+TS operator-shell remains the sole runtime Operator. The former Python
+`pi_operator_loop` scheduler/manual producer, config-action writer and
+`operator.loop_enabled` fallback selector are retired. Existing assessments and
+audit rows remain read-only history; no data migration or substitute writer is
+introduced. Older references to that Python producer below are historical.
+The separate Entry Planner daemon and its existing permissions are unchanged.
+
 ## Explicit Ops and inert Legacy owners
 
 Human-triggered update, backup/restore, compaction and bounded historical repair

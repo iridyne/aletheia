@@ -221,5 +221,4 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 | Candidate Selection / Universe refresh | 10 min + source publication | 确定性准入 → 发布 Candidate Planning Generation |
 | System Operator Entry Planner | event-driven + ~15 min heartbeat | 读取确切 Planning Generation → `ENTRY_PLAN` / `NO_PLAN` |
 | Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
-| Python Operator assessment | 4 h | 有界 config 调整、通知和当前委派 |
 | TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |

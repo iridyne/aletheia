@@ -217,7 +217,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
     "ohlcv_active_backfill": 300.0,
-    "pi_operator_loop": 120.0,
     "insight_synthesizer": 120.0,
     "confidence_calibration": 30.0,
     "reasoning_feedback": 60.0,
@@ -1154,39 +1153,6 @@ def _run_serenity_startup_catchup() -> None:
         _record_job_failure("serenity_startup_catchup", str(exc))
 
 
-def _operator_assessment_due(
-    now: datetime | None = None,
-    min_interval_minutes: int = 225,
-) -> bool:
-    """Return whether persisted Operator output is old enough for another run.
-
-    The cron is four-hourly, but prior runs can start several minutes late while
-    waiting for the serial agents executor. A 3h45m floor preserves the next
-    nominal cron while deduplicating restart catch-ups and closely spaced runs.
-    Missing, malformed, or unreadable history fails open: the Operator retains
-    its own permission and per-action rate limits.
-    """
-    current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    current = current.astimezone(timezone.utc)
-    try:
-        from aletheia.storage import repositories as repo
-
-        rows = repo.list_knowledge_items(
-            item_type="operator_assessment",
-            status="active",
-            limit=1,
-        )
-        if not rows:
-            return True
-        latest = _parse_scheduler_timestamp(rows[0].get("created_at"))
-        if latest is None or latest > current + timedelta(minutes=5):
-            return True
-        return current - latest >= timedelta(minutes=min_interval_minutes)
-    except Exception as exc:
-        logger.warning("Operator assessment freshness check failed open: %s", exc)
-        return True
 
 
 def _run_pricing_reference_refresh() -> None:
@@ -1634,14 +1600,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
 
-    # System Operator governance loop — system assessment + auto-actions every 4h.
-    _scheduler.add_job(
-        _guarded("pi_operator_loop", _run_operator_loop), "cron",
-        hour="0,4,8,12,16,20", minute=15,
-        id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
-        next_run_time=datetime.now() + timedelta(minutes=2),
-        timezone="Asia/Shanghai",
-    )
 
     try:
         _ensure_timeout_workers_ready()
@@ -2513,40 +2471,6 @@ def _run_pi_trading_decision():
         _record_job_failure("pi_trading_decision", str(e))
 
 
-def _run_operator_loop():
-    """System Operator governance loop — system-level assessment + auto-actions (4h cadence)."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    if not cfg.operator.loop_enabled:
-        return
-    if cfg.agent.permission_mode not in ("Paper", "Full"):
-        return
-    if not _operator_assessment_due():
-        logger.debug("pi_operator_loop: skipped — recent assessment is still current")
-        return
-    try:
-        from aletheia.agent_shell.operator_loop import run_operator_loop
-        summary = _run_sync_with_timeout("pi_operator_loop", lambda: run_operator_loop(trigger="scheduled"))
-        if not summary:
-            logger.debug("pi_operator_loop: no summary returned")
-            return
-        status = summary.get("status", "") if summary else ""
-        if status == "skipped":
-            logger.debug("pi_operator_loop: skipped — %s", summary.get("reason"))
-        else:
-            logger.info(
-                "pi_operator_loop: %d actions decided, %d executed, %d proposed",
-                summary.get("actions_decided", 0),
-                summary.get("actions_executed", 0),
-                summary.get("actions_proposed", 0),
-            )
-    except TimeoutError:
-        logger.warning("pi_operator_loop timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_operator_loop", 120))
-        _record_job_failure("pi_operator_loop", "timeout")
-    except Exception as e:
-        logger.warning("pi_operator_loop job failed: %s", e)
-        _record_job_failure("pi_operator_loop", str(e))
 
 
 def _run_position_manager():
