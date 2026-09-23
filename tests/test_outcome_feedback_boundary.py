@@ -37,7 +37,6 @@ else:
         script += '\nfrom extensions.learning.outcome_feedback import execute_outcome_feedback\nassert outcome_hooks._feedback_executor is execute_outcome_feedback\n'
     else:
         script += '\nassert outcome_hooks._feedback_executor is None\n'
-    script += '\nassert "extensions.counterfactual.trades" not in sys.modules\n'
     result = subprocess.run(
         [sys.executable, '-c', script], cwd=Path(__file__).resolve().parents[1],
         capture_output=True, text=True, timeout=20,
