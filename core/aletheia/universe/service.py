@@ -622,7 +622,8 @@ class UniverseService:
         # Settle any overdue forward outcomes before producing new ones.
         # Clean outlier rows first (idempotent — fast no-op after first pass).
         try:
-            cleaned = repo.mark_outlier_outcomes_failed()
+            with repo.transaction():
+                cleaned = repo.mark_outlier_outcomes_failed()
             if cleaned:
                 logger.info("Cleaned %d outlier forward outcome rows", cleaned)
             await settle_due()
@@ -639,7 +640,8 @@ class UniverseService:
                 raise RuntimeError("regime_refresher_unavailable")
             current_regime = await _regime_refresher(cfg.regime.min_hold_periods)
             if current_regime is not None:
-                repo.insert_market_regime(current_regime)
+                with repo.transaction():
+                    repo.insert_market_regime(current_regime)
                 logger.info(
                     "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
                     current_regime.state, current_regime.confidence,
@@ -649,7 +651,8 @@ class UniverseService:
             logger.warning("Regime detection failed (non-fatal): %s", e)
 
         run = UniverseScannerRun()
-        repo.insert_universe_scanner_run(run)
+        with repo.transaction():
+            repo.insert_universe_scanner_run(run)
         data_diagnostics: dict[str, object] = {}
         path_metrics = {
             "selection_policy": cfg.universe.candidate_selection_policy,
@@ -674,7 +677,8 @@ class UniverseService:
                 assets = priority_assets + [
                     asset for asset in assets if str(asset.get("id") or "") not in priority_asset_ids
                 ]
-            repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
+            with repo.transaction():
+                repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             # Inject volume-ranking symbols as additional candidates
             try:
@@ -741,10 +745,11 @@ class UniverseService:
 
                 def record_worker_lifecycle(_state: str) -> None:
                     try:
-                        repo.update_universe_scanner_run(
-                            run.id,
-                            metrics=json.dumps({"candidate_path": path_metrics}),
-                        )
+                        with repo.transaction():
+                            repo.update_universe_scanner_run(
+                                run.id,
+                                metrics=json.dumps({"candidate_path": path_metrics}),
+                            )
                     except Exception as exc:
                         logger.warning("Candidate worker lifecycle persistence failed: %s", exc)
 
@@ -760,13 +765,14 @@ class UniverseService:
                         lifecycle_observer=record_worker_lifecycle,
                     )
                 except asyncio.CancelledError:
-                    repo.update_universe_scanner_run(
-                        run.id,
-                        status="failed",
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        errors=json.dumps(["candidate_selection_refresh_cancelled"]),
-                        metrics=json.dumps({"candidate_path": path_metrics}),
-                    )
+                    with repo.transaction():
+                        repo.update_universe_scanner_run(
+                            run.id,
+                            status="failed",
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            errors=json.dumps(["candidate_selection_refresh_cancelled"]),
+                            metrics=json.dumps({"candidate_path": path_metrics}),
+                        )
                     raise
                 if (
                     candidate_selection_authority_bundle.batch.policy_epoch_id
