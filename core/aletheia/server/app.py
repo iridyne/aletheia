@@ -962,7 +962,9 @@ _PUBLIC_PATHS = frozenset(
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
     """Enforce owner or scoped Operator-service auth for private API routes.
-
+    Unsafe browser requests also require same-origin or an existing Dashboard
+    origin. Originless non-browser clients retain their existing auth policy;
+    browser metadata without Origin must explicitly establish same-origin.
     Policy (tunnel.enabled=True or remote_control.require_token=True):
       - Paths in _PUBLIC_PATHS are always accessible anonymously (minimal liveness).
       - The supervised Operator Shell may authenticate with its independent
@@ -981,6 +983,27 @@ async def _tunnel_auth_guard(request, call_next):
     _is_private = (path.startswith("/api/") or path.startswith("/_infra/")) and path not in _PUBLIC_PATHS
 
     if _is_private:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origins = request.headers.getlist("origin")
+            if origins:
+                # Exact serialized origins reject null, malformed URLs and
+                # duplicate headers without permissive URL parsing of input.
+                target = request.url.replace(path="", query="", fragment="")
+                default_port = {"http": 80, "https": 443}[target.scheme]
+                same_origins = (
+                    (str(target.replace(port=None)), str(target.replace(port=default_port)))
+                    if target.port in (None, default_port) else (str(target),)
+                )
+                allowed = len(origins) == 1 and (
+                    origins[0] in same_origins or origins[0] in _loopback_origins
+                )
+            else:
+                allowed = request.headers.get("sec-fetch-site") == "same-origin" or not any(
+                    name.startswith("sec-fetch-") or name == "referer" for name in request.headers
+                )
+            if not allowed:
+                return JSONResponse({"detail": "Untrusted browser origin"}, status_code=403)
+
         # persist_migrations=False: the auth guard is read-only; it must not
         # trigger a config rewrite as a side effect of checking tunnel.enabled.
         cfg = load_config(persist_migrations=False)
@@ -999,7 +1022,6 @@ async def _tunnel_auth_guard(request, call_next):
                 return await call_next(request)
 
             from aletheia.config.secrets import get_secret
-            from fastapi.responses import JSONResponse
 
             # remote_control_api_token is the independent name for private-network
             # API access. The legacy tunnel name remains valid for existing installs.
