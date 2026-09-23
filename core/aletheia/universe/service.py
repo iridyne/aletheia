@@ -34,7 +34,8 @@ from aletheia.universe.candidate_opportunity import (
 
 logger = logging.getLogger("aletheia.universe")
 
-_TWIN_SHADOW_TIMEOUT_SEC = 10.0
+# This bundle now owns candidate admission and reads the full eligible training history.
+_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC = 60.0
 _regime_refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None = None
 
 
@@ -683,7 +684,7 @@ class UniverseService:
                         qualification_evidence=qualification,
                         training_diagnostics_out=data_diagnostics,
                     ),
-                    timeout=_TWIN_SHADOW_TIMEOUT_SEC,
+                    timeout=_CANDIDATE_SELECTION_BUNDLE_TIMEOUT_SEC,
                 )
                 if (
                     candidate_selection_authority_bundle.batch.policy_epoch_id
