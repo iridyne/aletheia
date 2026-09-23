@@ -171,6 +171,35 @@ def test_context_collector_releases_writer_between_domains(tmp_path, monkeypatch
     reset_db()
 
 
+def test_universe_refresh_releases_writer_before_provider_awaits(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.universe import outcome_recorder, registry, service
+
+    writer_free = []
+
+    async def settle_due():
+        writer_free.append(not get_db().in_transaction)
+
+    async def sync_registry(_cfg):
+        writer_free.append(not get_db().in_transaction)
+        raise RuntimeError("stop_after_boundary_proof")
+
+    cfg = SimpleNamespace(
+        regime=SimpleNamespace(enabled=False),
+        universe=SimpleNamespace(
+            candidate_selection_policy="candidate_selection_utility_v1",
+            candidate_selection_policy_epoch="test",
+        ),
+    )
+    monkeypatch.setattr(service, "load_config", lambda: cfg)
+    monkeypatch.setattr(outcome_recorder, "settle_due", settle_due)
+    monkeypatch.setattr(registry, "sync_registry", sync_registry)
+
+    assert asyncio.run(service.UniverseService().refresh()) is None
+    assert writer_free == [True, True]
+    reset_db()
+
+
 def test_feature_snapshots_use_one_executemany_transaction(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     db = get_db()
