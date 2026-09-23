@@ -3071,31 +3071,6 @@ def _run_cleanup():
             # Fill or open Position. Returns a summary dict, not a bare count.
             "stale_orders": cleanup_stale_orphan_orders(),
         }
-        # Reclaim a bounded amount of freed space. Normal operation caps this
-        # maintenance write at 16 MiB; capacity pressure raises it to 64 MiB.
-        # This changes file allocation only, never retained rows.
-        try:
-            from aletheia.maintenance.database_capacity import (
-                reclaim_incremental_freelist,
-            )
-            from aletheia.storage.sqlite import db_path
-
-            database_file = db_path()
-            wal_file = database_file.with_name(database_file.name + "-wal")
-            physical_bytes = (
-                (database_file.stat().st_size if database_file.exists() else 0)
-                + (wal_file.stat().st_size if wal_file.exists() else 0)
-            )
-            budget_bytes = int(r.app_db_capacity_mb) * 1024 * 1024
-            reclaim_max_mb = (
-                64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
-            )
-            counts["incremental_vacuum"] = reclaim_incremental_freelist(
-                get_db(),
-                max_mb=reclaim_max_mb,
-            )
-        except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
-            logger.debug("incremental_vacuum skipped: %s", vac_err)
         try:
             from aletheia.maintenance.database_capacity import optimize_query_planner
 

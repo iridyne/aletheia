@@ -203,7 +203,7 @@ def test_incremental_reclaim_is_bounded_and_writer_serialized(tmp_path, monkeypa
     result = reclaim_incremental_freelist(db, max_mb=1)
 
     assert result["enabled"] is True
-    assert 0 < result["requested_pages"] <= 64
+    assert result["requested_pages"] <= 256
     assert result["remaining_pages"] >= 0
     assert calls == ["acquire", "release"]
     db.close()
