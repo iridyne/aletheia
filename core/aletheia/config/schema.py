@@ -350,11 +350,11 @@ class MarketDataConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def decode_historical_observation_lists(cls, value):
-        """Preserve the historical workset without retaining a runtime alias."""
+        """Use the historical workset only when the canonical field is absent."""
         if isinstance(value, Mapping) and "observed_stocks" in value:
             value = dict(value)
             legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_stocks"))
-            if "observed_equities" not in value or value["observed_equities"] == []:
+            if "observed_equities" not in value:
                 value["observed_equities"] = legacy
         if isinstance(value, Mapping) and "observed_xstocks" in value:
             value = dict(value)

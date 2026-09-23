@@ -25,9 +25,9 @@ policy.
 
 `observed_equities` is the sole runtime equity-ticker workset. Historical config
 decoding validates and consumes `observed_stocks`, using it only when the canonical
-list is absent or empty, preserving the former effective workset. Decoding does
-not write the source file. Runtime objects and normal saves contain no legacy
-field, so an explicit empty canonical save remains empty after reload.
+field is absent. A present canonical list, including an empty list, takes precedence.
+Decoding does not write the source file. Runtime objects and normal saves contain
+no legacy field, so an explicit empty canonical save remains empty after reload.
 
 `POST /api/settings/equities` owns normalized equity edits through the existing
 locked config mutation. The generic market-data endpoint rejects both the retired
