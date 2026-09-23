@@ -4,6 +4,7 @@ The shared ancestry/closure/read-cohort and consumer code is never mocked.
 Account/fill/funding transport qualification remains owned by its existing suites.
 """
 
+import json
 from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 import pytest
 
@@ -194,12 +195,36 @@ def test_executed_ancestry_survives_candidate_expiry_and_generation_supersession
     "matching Plan, source, instrument and exact account evidence; unrelated legs remain excluded.",
     status="implemented",
 ))
-@pytest.mark.parametrize("universe_position", [{"entry_fill_fraction": 0.4}], indirect=True)
-@pytest.mark.parametrize("broken_link", [None, "proposal_plan", "order_plan", "account", "missing_account"])
+@pytest.mark.parametrize(
+    "universe_position",
+    [{"entry_fill_fraction": 0.4, "source_kind": "serenity", "trade_school": "serenity"}],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    ("broken_link", "expected"),
+    [
+        (None, True),
+        ("equivalent_identity_encoding", True),
+        ("proposal_plan", False),
+        ("primary_plan_null", False),
+        ("primary_plan_wrong", False),
+        ("secondary_plan_wrong", False),
+        ("empty_identity", False),
+        ("malformed_identity", False),
+        ("partial_identity", False),
+        ("wrong_mode_identity", False),
+        ("distinct_identity", False),
+        ("missing_identity", False),
+    ],
+)
 def test_same_plan_two_proposals_reach_realized_outcome(
-    universe_position, monkeypatch, e2e_db, broken_link,
+    universe_position, monkeypatch, e2e_db, broken_link, expected,
 ):
-    from aletheia.analytics.outcome_integrity import attribution_chain_complete, raw_account_events
+    from aletheia.analytics.outcome_integrity import (
+        attribution_chain_complete,
+        outcome_write_eligibility,
+        raw_account_events,
+    )
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
     from aletheia.storage.models import Order, RiskDecision, TradeProposal
     from tests.e2e.test_pipeline_exchange_entry_to_position import _private_entry_fill
@@ -207,11 +232,21 @@ def test_same_plan_two_proposals_reach_realized_outcome(
     _, position = universe_position
     first = repo.get_order(position["order_id"])
     repo.transition_order(first["id"], status="cancelled")
-    second = TradeProposal.model_validate(repo.get_trade_proposal(first["proposal_id"])).model_copy(update={
-        "id": "second-leg", "entry_leg_index": 1, "quantity": first["quantity"] * 0.6,
-        "status": "approved", "commit_hash": None, "parent_hash": None,
+    primary = TradeProposal.model_validate(repo.get_trade_proposal(first["proposal_id"]))
+    second = primary.model_copy(update={
+        "id": "second-leg", "opportunity_id": None, "entry_leg_index": 1,
+        "quantity": first["quantity"] * 0.6, "status": "approved",
+        "commit_hash": None, "parent_hash": None,
     })
     repo.insert_trade_proposal(second)
+    second = TradeProposal.model_validate(repo.get_trade_proposal(second.id)).model_copy(
+        update={"opportunity_id": primary.opportunity_id}
+    )
+    second.commit_hash = repo._compute_proposal_hash(second)
+    e2e_db.execute(
+        "UPDATE trade_proposals SET opportunity_id=?, commit_hash=? WHERE id=?",
+        (second.opportunity_id, second.commit_hash, second.id),
+    )
     decision = RiskDecision(
         proposal_id=second.id, approved=True, decision_role="authoritative",
         allowed_execution_mode=second.execution_mode, proposal_execution_mode=second.execution_mode,
@@ -227,17 +262,60 @@ def test_same_plan_two_proposals_reach_realized_outcome(
     repo.insert_order(order)
     result = materialize_bitget_entry(order.id, [_private_entry_fill(order.model_dump())])
     assert result.position_id == position["id"] and result.state == "filled"
-    if broken_link == "proposal_plan":
-        e2e_db.execute("UPDATE trade_proposals SET entry_plan_id='unrelated' WHERE id=?", (second.id,))
-    elif broken_link == "order_plan":
-        e2e_db.execute("UPDATE orders SET entry_plan_id='unrelated' WHERE id=?", (order.id,))
-    elif broken_link == "account":
-        e2e_db.execute("UPDATE orders SET uta_account_identity_json=json_set(uta_account_identity_json, '$.account_id', 'unrelated') WHERE id=?", (order.id,))
-    elif broken_link == "missing_account":
-        e2e_db.execute("UPDATE orders SET uta_account_identity_json=NULL WHERE id=?", (order.id,))
+    _close(monkeypatch, repo.get_position(position["id"]))
+    if broken_link == "equivalent_identity_encoding":
+        identity = json.loads(order.uta_account_identity_json)
+        e2e_db.execute(
+            "UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+            (json.dumps(identity, sort_keys=True, indent=2), order.id),
+        )
+    elif broken_link == "proposal_plan":
+        e2e_db.execute(
+            "UPDATE trade_proposals SET entry_plan_id='unrelated' WHERE id=?",
+            (second.id,),
+        )
+    elif broken_link == "primary_plan_null":
+        e2e_db.execute(
+            "UPDATE orders SET entry_plan_id=NULL WHERE id=?", (first["id"],)
+        )
+    elif broken_link == "primary_plan_wrong":
+        e2e_db.execute(
+            "UPDATE orders SET entry_plan_id='unrelated' WHERE id=?", (first["id"],)
+        )
+    elif broken_link == "secondary_plan_wrong":
+        e2e_db.execute(
+            "UPDATE orders SET entry_plan_id='unrelated' WHERE id=?", (order.id,)
+        )
+    elif broken_link in {"empty_identity", "malformed_identity", "partial_identity"}:
+        invalid = {"empty_identity": "", "malformed_identity": "{", "partial_identity": "{}"}[
+            broken_link
+        ]
+        e2e_db.execute(
+            "UPDATE orders SET uta_account_identity_json=? WHERE id IN (?, ?)",
+            (invalid, first["id"], order.id),
+        )
+    elif broken_link == "wrong_mode_identity":
+        e2e_db.execute(
+            "UPDATE orders SET uta_account_identity_json="
+            "json_set(uta_account_identity_json, '$.execution_mode', 'wrong') "
+            "WHERE id IN (?, ?)",
+            (first["id"], order.id),
+        )
+    elif broken_link == "distinct_identity":
+        e2e_db.execute(
+            "UPDATE orders SET uta_account_identity_json="
+            "json_set(uta_account_identity_json, '$.account_id', 'unrelated') WHERE id=?",
+            (order.id,),
+        )
+    elif broken_link == "missing_identity":
+        e2e_db.execute(
+            "UPDATE orders SET uta_account_identity_json=NULL WHERE id=?", (order.id,)
+        )
     current = repo.get_position(position["id"])
-    assert attribution_chain_complete(current) is (broken_link is None)
-    closed = _close(monkeypatch, current)
-    assert bool(closed["outcome_eligible"]) is (broken_link is None)
+    assert attribution_chain_complete(current) is expected
+    assert outcome_write_eligibility(current, exit_fill_verified=True) == (
+        expected,
+        "eligible" if expected else "missing_attribution",
+    )
     [snapshot] = raw_account_events()
-    assert bool(snapshot["_attribution_complete"]) is (broken_link is None)
+    assert bool(snapshot["_attribution_complete"]) is expected

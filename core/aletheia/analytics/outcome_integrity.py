@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
+from aletheia.uta.models import UTAAccountIdentity
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
 
@@ -193,6 +194,25 @@ def outcome_write_eligibility(
     return assessment.eligible, assessment.reason
 
 
+def _canonical_uta_account_identity(
+    value: Any, execution_mode: Any
+) -> str | None:
+    try:
+        identity = UTAAccountIdentity.model_validate_json(value or "")
+    except (TypeError, ValueError):
+        return None
+    if identity.execution_mode != execution_mode:
+        return None
+    return identity.model_dump_json()
+
+
+def _register_attribution_scalar(connection: Any) -> None:
+    connection.create_function(
+        "aletheia_uta_account_identity",
+        2,
+        _canonical_uta_account_identity,
+        deterministic=True,
+    )
 # One relational rule for prospective close writes and snapshot cohort reads.
 # ``p`` is a persisted Position or the prospective Position supplied by a producer.
 _ATTRIBUTION_SQL = """
@@ -249,6 +269,7 @@ _ATTRIBUTION_SQL = """
                         SELECT 1 FROM trade_proposals leg_tp
                         WHERE leg_tp.id = leg.proposal_id
                           AND tp.entry_plan_id IS NOT NULL
+                          AND o.entry_plan_id = tp.entry_plan_id
                           AND leg_tp.entry_plan_id = tp.entry_plan_id
                           AND leg.entry_plan_id = tp.entry_plan_id
                           AND leg_tp.entry_leg_index IN (0, 1)
@@ -259,8 +280,11 @@ _ATTRIBUTION_SQL = """
                           AND leg_tp.direction = tp.direction AND leg.direction = o.direction
                           AND leg_tp.execution_mode = tp.execution_mode
                           AND leg.execution_mode = o.execution_mode
-                          AND o.uta_account_identity_json IS NOT NULL
-                          AND leg.uta_account_identity_json = o.uta_account_identity_json
+                          AND aletheia_uta_account_identity(
+                              o.uta_account_identity_json, o.execution_mode
+                          ) = aletheia_uta_account_identity(
+                              leg.uta_account_identity_json, leg.execution_mode
+                          )
                     ))
                 )
           )
@@ -286,6 +310,7 @@ def attribution_chain_complete(row: dict[str, Any], *, db: Any = None) -> bool:
 
         db = get_db()
     try:
+        _register_attribution_scalar(db)
         matched = db.execute(
             "SELECT " + _ATTRIBUTION_SQL + " FROM "
             "(SELECT ? AS id, ? AS proposal_id, ? AS order_id, ? AS opportunity_id) p",
@@ -494,6 +519,7 @@ def raw_account_events(
 
     connection = db if db is not None else get_db()
     register_instant_us(connection)
+    _register_attribution_scalar(connection)
     conditions = ["p.status = 'closed'"]
     params: list[object] = []
     if execution_mode is not None:
