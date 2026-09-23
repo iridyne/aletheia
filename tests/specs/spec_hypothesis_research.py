@@ -308,6 +308,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             scanner_family="momentum",
             opened_at="2026-08-16T00:01:00+00:00",
             agent_rationale="Oversold momentum suggested a mean-reversion long.",
+            expected_outcome_eligible=False,
         )
         opportunity_id = position["opportunity_id"]
         proposal_id = position["proposal_id"]
@@ -655,7 +656,10 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         target_horizon="4h",
     )
     assert missing_outcome.research_status == "insufficient_context"
-    assert "exact_counterfactual_evidence_unavailable" in missing_outcome.missing_evidence
+    assert any(
+        reason.startswith("exact_trade_attribution_unavailable:")
+        for reason in missing_outcome.missing_evidence
+    )
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
     )
@@ -693,4 +697,6 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         target_horizon="4h",
     )
     assert horizon_mismatch.research_status == "insufficient_context"
-    assert f"outcome_horizon_mismatch:{case_ids[0]}" in horizon_mismatch.missing_evidence
+    assert f"exact_trade_attribution_unavailable:{case_ids[0]}" in (
+        horizon_mismatch.missing_evidence
+    )

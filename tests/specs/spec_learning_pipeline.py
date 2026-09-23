@@ -305,7 +305,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provid
     from extensions.policies.store import PolicyStore
     from aletheia.storage.models import new_id
     from aletheia.storage.sqlite import get_db
-    _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    _ts = "2026-09-23T18:00:00+00:00"
 
     db = get_db()
     # Seed >= _MIN_SETTLED_EVIDENCE settled outcomes so the deterministic floor passes.

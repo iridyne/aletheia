@@ -679,7 +679,7 @@ def test_skip_halt_judges_mature_cohort_while_recent_skips_settle(tmp_path, monk
     setup_env(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 25, 18, tzinfo=timezone.utc)
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:spec-mature-protective-{index}",

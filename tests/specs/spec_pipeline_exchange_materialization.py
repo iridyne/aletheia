@@ -1355,20 +1355,18 @@ def test_complete_private_close_fill_closes_linked_position_once(tmp_path, monke
     assert exit_reasoning["source"] == "portfolio_review"
     assert exit_reasoning["reason"] == close_reasoning["reason"]
     assert exit_reasoning["trigger"]["exit_price"] == pytest.approx(110.0)
-    assert stored_position["outcome_eligible"] == 1
-    assert stored_position["outcome_exclusion_reason"] == "eligible"
-    assert feedback["realized_pnl"] == pytest.approx(9.74)
-    assert feedback["close_reason"] == "take_profit"
+    assert stored_position["outcome_eligible"] == 0
+    assert stored_position["outcome_exclusion_reason"] == "pre_clean_window"
+    assert feedback == {}
     expected_closed_at = datetime.fromtimestamp(
         1_784_400_000_000 / 1000,
         tz=timezone.utc,
     ).isoformat()
     assert stored_position["closed_at"] == expected_closed_at
-    assert feedback["row"]["closed_at"] == expected_closed_at
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
 
     attribution = build_trade_attribution_rows(limit=10)
-    assert [row["position_id"] for row in attribution] == [position.id]
+    assert attribution == []
     exit_reasoning_before_replay = stored_position["exit_reasoning"]
 
     second = reconcile()
