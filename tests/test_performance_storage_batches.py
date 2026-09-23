@@ -117,7 +117,7 @@ def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
     reset_db()
 
 
-def test_context_collector_defers_network_results_into_one_transaction(tmp_path, monkeypatch):
+def test_context_collector_releases_writer_between_domains(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
     from extensions.data.collectors.defillama import DefiLlamaCollector
@@ -163,8 +163,8 @@ def test_context_collector_defers_network_results_into_one_transaction(tmp_path,
     result = asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
 
     assert result == {"status": "success", "error_codes": []}
-    assert sum(statement == "BEGIN" for statement in trace) == 1
-    assert sum(statement == "COMMIT" for statement in trace) == 1
+    assert sum(statement == "BEGIN" for statement in trace) == 2
+    assert sum(statement == "COMMIT" for statement in trace) == 2
     assert db.execute("SELECT COUNT(*) FROM onchain_snapshots").fetchone()[0] == 1
     assert db.execute("SELECT COUNT(*) FROM macro_snapshots").fetchone()[0] == 1
     reset_db()
