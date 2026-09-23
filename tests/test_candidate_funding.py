@@ -253,7 +253,7 @@ def test_scoped_cutover_keeps_spot_and_current_incomplete_denominator():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interval", [3600, None])
-async def test_canonical_settler_uses_frozen_proof_and_preserves_near_due_mae(monkeypatch, interval):
+async def test_canonical_settler_defers_until_path_evidence_is_available(monkeypatch, interval):
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
     from aletheia.storage import repositories as repo
     from aletheia.universe import outcome_recorder
@@ -275,6 +275,14 @@ async def test_canonical_settler_uses_frozen_proof_and_preserves_near_due_mae(mo
         funding_evidence_json=proof(interval=interval),
     )
     repo.insert_filter_candidate_outcomes_batch(rows)
+    observation = dict(
+        exit_price=101,
+        price_quality_ok=True,
+        price_source="near_due_ticker",
+        range_high=None,
+        range_low=None,
+        settlement_lag_sec=1,
+    )
     monkeypatch.setattr(
         repo,
         "candidate_selection_cost_assumptions",
@@ -283,30 +291,25 @@ async def test_canonical_settler_uses_frozen_proof_and_preserves_near_due_mae(mo
     monkeypatch.setattr(
         outcome_recorder,
         "local_market_observations",
-        lambda rows, **kw: (
-            {
-                r["id"]: dict(
-                    exit_price=101,
-                    price_quality_ok=True,
-                    price_source="near_due_ticker",
-                    range_high=None,
-                    range_low=None,
-                    settlement_lag_sec=1,
-                )
-                for r in rows
-            },
-            [],
-            {},
-        ),
+        lambda rows, **kw: ({r["id"]: observation for r in rows}, [], {}),
+    )
+
+    assert await settle_due_filter_outcomes() == 0
+    stored = dict(repo.get_db().execute("select * from filter_candidate_outcomes where id=?", (rows[0].id,)).fetchone())
+    assert stored["mae_pct"] is None and stored["status"] == "pending"
+
+    observation.update(
+        price_source="horizon_ohlcv",
+        range_high=102,
+        range_low=99,
     )
     assert await settle_due_filter_outcomes() == 1
     stored = dict(repo.get_db().execute("select * from filter_candidate_outcomes where id=?", (rows[0].id,)).fetchone())
-    assert stored["mae_pct"] is None and stored["status"] == "settled"  # #3073 remains unchanged.
+    assert stored["mae_pct"] == pytest.approx(-1.0) and stored["status"] == "settled"
     assert (
-        stored["estimated_funding_pct"] == pytest.approx(0.4) if interval else stored["estimated_funding_pct"] is None
+        stored["estimated_funding_pct"] == pytest.approx(0.4)
+        if interval
+        else stored["estimated_funding_pct"] is None
     )
     assert stored["funding_evidence_json"] == rows[0].funding_evidence_json
     assert await settle_due_filter_outcomes() == 0
-    assert stored == dict(
-        repo.get_db().execute("select * from filter_candidate_outcomes where id=?", (rows[0].id,)).fetchone()
-    )

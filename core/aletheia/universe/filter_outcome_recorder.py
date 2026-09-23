@@ -257,6 +257,11 @@ async def settle_due_filter_outcomes(
             price_quality_ok=True,
             **funding_kwargs,
         )
+        if (
+            row.get("scanner_family") == "candidate_selection_utility"
+            and economics.get("mae_pct") is None
+        ):
+            return _DEFERRED
         won = repo.settle_filter_candidate_outcome(
             row["id"],
             exit_price=exit_price,
