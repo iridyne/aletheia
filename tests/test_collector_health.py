@@ -34,6 +34,22 @@ def test_collector_health_keeps_one_durable_row_per_domain(collector_db):
     assert rows[0]["empty_results"] == 1
 
 
+def test_scheduler_health_write_releases_writer_permit(collector_db):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage.repositories import list_collector_health_states
+    from aletheia.storage.sqlite import get_db
+
+    token = scheduler._DC_HEALTH_TICK.set(1)
+    try:
+        scheduler._record_collector_health("macro", "success")
+    finally:
+        scheduler._DC_HEALTH_TICK.reset(token)
+
+    assert list_collector_health_states()[0]["domain"] == "macro"
+
+    assert get_db().in_transaction is False
+
+
 def test_three_consecutive_collector_problems_emit_one_operator_warning(
     collector_db, monkeypatch
 ):

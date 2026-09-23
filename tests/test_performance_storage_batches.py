@@ -120,6 +120,7 @@ def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
 def test_context_collector_releases_writer_between_domains(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
+    monkeypatch.setattr(scheduler, "_record_collector_health", lambda *args, **kwargs: None)
     from extensions.data.collectors.defillama import DefiLlamaCollector
     from extensions.data.collectors.macro import MacroCollector
     from aletheia.data.models import MacroSnapshot
