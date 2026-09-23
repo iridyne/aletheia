@@ -55,7 +55,15 @@ def _seed_polluted_history() -> None:
         }),
         created_at="2026-09-23T17:00:00+00:00",
     ))
-
+    repo.insert_knowledge_item(KnowledgeItem(
+        id="current-offset-calibration", item_type="calibration_report",
+        title="current offset calibration", status="active",
+        content=json.dumps({
+            "outcome_semantics_version": "oi-v2",
+            "clean_window_anchor_id": "outcome-integrity-v2-2026-09-23",
+        }),
+        created_at="2026-09-23T12:44:00-04:00",
+    ))
 
 def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
     from ops.maintenance.outcome_integrity import remediate_outcome_history
@@ -142,8 +150,10 @@ def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
     assert db.execute(
         "SELECT status FROM knowledge_items WHERE id='current-calibration'"
     ).fetchone()[0] == "active"
+    assert db.execute(
+        "SELECT status FROM knowledge_items WHERE id='current-offset-calibration'"
+    ).fetchone()[0] == "active"
     assert db.execute("SELECT COUNT(*) FROM capital_events").fetchone()[0] == 0
-
 
 def test_versioned_clean_window_excludes_pre_anchor_incident_and_unknown_version():
     from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION

@@ -562,7 +562,7 @@ PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strate
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
 
 `core/aletheia/analytics/outcome_integrity.py` 是不依赖 Learning、Risk、Execution、exchange 或 agent shell
-的中央语义层，版本为 `oi-v1`。它提供三个不可互换的入口：
+的中央语义层，版本为 `oi-v2`。它提供三个不可互换的入口：
 
 - `raw_account_events()`：所有 closed 状态事件，只用于账本、审计、诊断和明确标注的 raw 展示；
 - `eligible_strategy_outcomes()`：仅当前版本、strategy category、真实 fill 已验证、价格来源可信、
