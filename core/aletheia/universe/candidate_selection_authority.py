@@ -171,7 +171,7 @@ def candidate_selection_semantic_manifest() -> dict[str, str]:
         "outcome_contract": CANDIDATE_SELECTION_OUTCOME_VERSION,
         "cost_model": COST_MODEL_VERSION,
         "candidate_selection": CANDIDATE_SELECTION_UTILITY_VERSION,
-        "actionability": "supported-mechanism-and-fast-route-before-capacity/v2",
+        "actionability": "supported-mechanism-and-fast-route-before-capacity/v3",
     }
 
 

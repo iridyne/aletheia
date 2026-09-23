@@ -38,6 +38,32 @@ def test_fast_route_actionability_does_not_require_slow_snapshots(monkeypatch):
     assert all(row["execution_eligible"] for row in selected)
     route_reason = "fast_market_route_unsupported"
     assert select() == []
+def test_spot_short_is_not_admitted_for_planning():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+        target_candidates_from_bundle,
+    )
+
+    population = [_feature(
+        return_1h=-1.0,
+        return_4h=-3.0,
+        return_24h=-8.0,
+        relative_strength_24h=-5.0,
+        rsi_14=40.0,
+    )]
+    bundle = build_candidate_selection_shadow_bundle(
+        population,
+        scanner_run_id="spot-short",
+        captured_at="2026-09-02T00:00:00+00:00",
+        universe_config=UniverseConfig(max_candidates=1),
+        action_route_reasons={("feature-0", "okx", "spot", "COIN0/USDT"): None},
+        historical_outcomes=(),
+        selection_policy=candidate_selection_policy_identity(AletheiaConfig()),
+    )
+
+    assert target_candidates_from_bundle(bundle, population) == []
 
 
 def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch):
@@ -82,7 +108,7 @@ def test_actionability_manifest_rotates_existing_policy_epoch(tmp_path, monkeypa
     cfg = load_config()
     current = candidate_selection_policy_identity(cfg)
     old = {**current, "semantic_manifest": {**current["semantic_manifest"],
-        "actionability": "supported-mechanism-and-exact-snapshot-before-capacity/v1"}}
+        "actionability": "supported-mechanism-and-fast-route-before-capacity/v2"}}
     old_epoch = canonical_fingerprint(old)
     cfg.universe.candidate_selection_policy_epoch = old_epoch
     save_config(cfg)
@@ -705,18 +731,20 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
     from aletheia.universe.opportunity_evidence import build_opportunity_evidence
 
     cfg = UniverseConfig(max_candidates=30)
+    feature = _feature(market_type="perp")
     gate = evaluate_hard_gate(
-        _feature(), cfg, candidate_key="candidate-select", evaluated_at="2026-09-02T00:00:00+00:00"
+        feature, cfg, candidate_key="candidate-select", evaluated_at="2026-09-02T00:00:00+00:00"
     )
     evidence = build_opportunity_evidence(
-        _feature(), candidate_key="candidate-select", source_cutoff_at="2026-09-02T00:00:00+00:00"
+        feature, candidate_key="candidate-select", source_cutoff_at="2026-09-02T00:00:00+00:00"
     )
+    outcomes = [{**item, "market_type": "perp"} for item in _outcomes()]
     long = estimate_economic_utility(
         candidate_key="candidate-select", mechanism_id="continuation", direction="long",
         venue="okx",
-        market_type="spot", strength_percentile=0.9, outcomes=_outcomes(),
+        market_type="perp", strength_percentile=0.9, outcomes=outcomes,
         source_cutoff_at="2026-09-02T00:00:00+00:00",
-        cost_assumptions=_outcomes()[0]["cost_assumptions"],
+        cost_assumptions=outcomes[0]["cost_assumptions"],
     )
     decision = build_candidate_selection_utility(
         hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(long,),
@@ -1626,13 +1654,13 @@ def test_startup_direction_conflict_and_zero_signal_do_not_hide_economic_rejecti
     from aletheia.universe.economic_utility import estimate_economic_utility
     from aletheia.universe.candidate_selection_utility import build_candidate_selection_utility
     cutoff = "2026-09-02T00:00:00+00:00"
-    feature = _feature()
+    feature = _feature(market_type="perp")
     gate = evaluate_hard_gate(feature, UniverseConfig(), candidate_key="x", evaluated_at=cutoff)
     evidence = build_opportunity_evidence(feature, candidate_key="x", source_cutoff_at=cutoff)
     long = next(item for item in evidence.mechanisms if item.mechanism_id == "continuation")
     short = replace(long, mechanism_id="reversal", direction="short", pessimistic_strength=0.0)
     long_estimate = estimate_economic_utility(candidate_key="x", mechanism_id="continuation", direction="long",
-        venue="okx", market_type="spot", strength_percentile=None, source_cutoff_at=cutoff)
+        venue="okx", market_type="perp", strength_percentile=None, source_cutoff_at=cutoff)
     short_estimate = replace(long_estimate, mechanism_id="reversal", direction="short")
     def decide(short, short_estimate):
         return build_candidate_selection_utility(hard_gate=gate,

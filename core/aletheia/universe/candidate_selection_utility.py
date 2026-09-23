@@ -6,6 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Literal, Sequence
 
+from aletheia.trading.entry_plan import entry_instrument_violation
 from aletheia.universe.candidate_eligibility import HardGateDecisionV1, canonical_fingerprint
 from aletheia.universe.economic_utility import EconomicUtilityEstimateV2
 from aletheia.universe.opportunity_evidence import OpportunityEvidenceBundleV1
@@ -55,6 +56,9 @@ def build_candidate_selection_utility(
         (item.mechanism_id, item.direction) for item in opportunity_evidence.mechanisms
         if item.applicability == "applicable" and not item.capability_gaps
         and item.direction in ({"long", "short"} if short_enabled else {"long"})
+        and entry_instrument_violation(
+            str(opportunity_evidence.instrument["market_type"]), item.direction
+        ) is None
     }
     available = [
         item for item in economic_estimates
