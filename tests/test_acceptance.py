@@ -25,7 +25,9 @@ async def client(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("exchange:\n  paper_execution_mode: bitget_demo\n", encoding="utf-8")
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
