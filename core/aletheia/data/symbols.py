@@ -167,17 +167,28 @@ _XSTOCK_BASE_TO_TICKER: dict[str, str] = {
 
 
 def _is_r_series_base(base: str) -> bool:
-    """True for Bitget r-series token base coins: lowercase 'r' + 2-5 uppercase chars.
+    """True for Bitget r-series token base coins: lowercase 'r' + an uppercase ticker.
 
-    Examples: 'rNVDA' (True), 'rTSLA' (True), 'rT' (False — too short),
-    'rTMUS' (True), 'rCMCSA' (False — 5 uppercase chars after 'r' → would be 6 → actually
-    CMCSA is 5 chars → True).  The rule mirrors Bitget's naming convention where the
-    base coin is a literal 'r' prepended to the standard stock/ETF ticker.
+    Examples: 'rNVDA' (True), 'rTSLA' (True), 'rV' (True — Visa), 'rT' (True —
+    AT&T), 'rCMCSA' (True), 'reth' (False — stem not uppercase).
+
+    The stem may be a single character: one-letter NYSE tickers are real listings
+    (V, T, C, O, A, F, K) and Bitget lists them as rV/USDT, rT/USDT and so on. The
+    former two-character floor silently classified those as ordinary crypto, which
+    put thin tokenized-equity markets into the crypto candidate pool — they showed
+    up with real volume and no orderbook depth at all.
+
+    Verified against Bitget's live spot listing: 2587 of 3172 symbols carry a
+    lowercase-r base coin, and every one of them is an equity/ETF token. No
+    lowercase-r crypto asset (rETH, rSOL, rUSD) is listed there, so the rule does
+    not currently collide with one; a future collision belongs in
+    ``_STOCK_TOKEN_REGISTRY`` as an explicit entry rather than as a length bound,
+    because length never distinguished the two.
     """
     if not base or base[0] != "r":
         return False
     stem = base[1:]
-    return stem.isupper() and 2 <= len(stem) <= 6
+    return bool(stem) and stem.isupper() and len(stem) <= 6
 
 
 def stock_token_to_ticker(symbol: str) -> str | None:

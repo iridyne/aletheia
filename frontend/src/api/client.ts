@@ -2461,6 +2461,7 @@ export const api = {
 			entry_ttl_sec: number;
 			candidate_max_continuous_age_sec: number;
 			blacklist: string[];
+			allowlist: string[];
 			fallback_symbols: string[];
 			market_type: string;
 		}>,

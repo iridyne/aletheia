@@ -852,22 +852,23 @@ def test_gold_backed_assets_are_not_in_stablecoin_exclusion_set():
     )
 )
 def test_directionless_universe_filters_are_report_only():
-    from extensions.analytics.filter_registry import filter_by_name
+    from extensions.analytics.filter_registry import FILTER_REGISTRY, filter_by_name
 
+    # Derived from the registry, not restated here: a hardcoded list silently
+    # stops covering the next gate someone adds, which is exactly the class of
+    # gap this claim exists to prevent.
     names = {
-        "ticker_availability",
-        "ticker_volume_prefilter",
-        "tradability_stablecoin",
-        "tradability_blacklist",
-        "tradability_volume",
-        "tradability_spread",
-        "tradability_freshness",
+        spec.name for spec in FILTER_REGISTRY
+        if spec.stage in {"ticker_prefilter", "tradability_filter"}
     }
-    for name in names:
+    assert {"ticker_availability", "tradability_stablecoin", "tradability_blacklist"} <= names, (
+        "registry no longer carries the directionless gates this claim governs"
+    )
+    for name in sorted(names):
         spec = filter_by_name(name)
-        assert spec is not None
-        assert spec.feedback_source == "none"
-        assert spec.auto_tunable is False
+        assert spec is not None, name
+        assert spec.feedback_source == "none", name
+        assert spec.auto_tunable is False, name
 
 
 @spec_claim(

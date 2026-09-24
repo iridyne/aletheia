@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 from importlib.metadata import version
+import re
 from typing import Any
 
 from aletheia.uta.errors import UTAError, UTAErrorCode
@@ -1075,6 +1076,24 @@ class CCXTUTAAdapter:
             return UTAErrorCode.RATE_LIMIT
         return UTAErrorCode.VENUE_REJECTED
 
+    def _venue_rejected_reason(self, exc: BaseException) -> str:
+        """`venue_rejected_command`, suffixed with the venue's code when it has one.
+
+        The bare reason is not diagnosable after the fact: the raw payload never
+        reaches the order row, so two rejections for entirely different causes are
+        indistinguishable. The suffix keeps the stored reason actionable while
+        staying inside the sanitized taxonomy.
+        """
+        base = "venue_rejected_command"
+        try:
+            code = self._profile.venue_rejection_code(exc)
+        except Exception:  # noqa: BLE001 - diagnosis must never mask the rejection.
+            return base
+        if not code:
+            return base
+        candidate = f"{base}_{code}"
+        return candidate if re.fullmatch(r"[a-z][a-z0-9_]{0,127}", candidate) else base
+
     @staticmethod
     def _command_error_kind(exc: BaseException) -> str:
         """Classify a driver error without importing that concrete driver."""
@@ -1123,7 +1142,7 @@ class CCXTUTAAdapter:
                 report_type,
                 CommandEvidence.VENUE_REJECTED,
                 error_code=code.value,
-                reason_code="venue_rejected_command",
+                reason_code=self._venue_rejected_reason(exc),
             )
         code = (
             self._venue_error_code(exc)

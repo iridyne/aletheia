@@ -45,10 +45,14 @@ class OrderConstraints:
     min_notional: Decimal | None
 
 
-_constraints_reader: Callable[[str, str, str], Awaitable[OrderConstraints]] | None = None
+# (execution_mode, venue, symbol, market_type) -> constraints. The mode is part
+# of the contract because a demo venue is a different listing set from its live
+# counterpart: reading live rules for a demo order lets a symbol that the demo
+# venue does not list pass pre-trade validation and fail at submission instead.
+_constraints_reader: Callable[[str, str, str, str], Awaitable[OrderConstraints]] | None = None
 
 
-def configure_order_constraints_reader(reader: Callable[[str, str, str], Awaitable[OrderConstraints]] | None) -> None:
+def configure_order_constraints_reader(reader: Callable[[str, str, str, str], Awaitable[OrderConstraints]] | None) -> None:
     """Composition binds external acquisition; cached rules never survive unbinding."""
     global _constraints_reader
     with _cache_lock:
@@ -123,13 +127,17 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     reader = _constraints_reader
     if reader is None:
         raise ConstraintUnavailable("executable venue rules unavailable")
-    key = (venue, symbol.upper(), market_type)
+    # Keyed by execution_mode, not venue: bitget_demo and live bitget list
+    # different symbols, so one shared entry would serve live rules to a demo
+    # order (that is how RENDER passed validation and then died at submission
+    # with contract_size_unavailable).
+    key = (execution_mode, symbol.upper(), market_type)
     now = time.monotonic()
     with _cache_lock:
         cached = _cache.get(key)
         if cached and now - cached[1] < _CACHE_TTL_SECONDS:
             return cached[0]
-    constraints = _run(reader(venue, symbol, market_type))
+    constraints = _run(reader(execution_mode, venue, symbol, market_type))
     with _cache_lock:
         _cache[key] = (constraints, time.monotonic())
     return constraints

@@ -39,7 +39,9 @@ def test_exchange_normalizes_dependency_failure_without_changing_quantity_gate(m
     async def close():
         closed.append(True)
 
-    monkeypatch.setattr(net, "make_ccxt", lambda *args, **kwargs: (SimpleNamespace(load_markets=load, close=close), None))
+    monkeypatch.setattr(net, "make_ccxt", lambda *args, **kwargs: (SimpleNamespace(
+        load_markets=load, close=close, set_sandbox_mode=lambda _value: None,
+    ), None))
     monkeypatch.setattr(rules, "_constraints_reader", read_order_constraints)
     monkeypatch.setattr(rules, "_cache", {})
     if temporary and not allow_increase:

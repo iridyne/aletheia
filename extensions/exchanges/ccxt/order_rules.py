@@ -83,13 +83,44 @@ def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]
     raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue")
 
 
-async def read_order_constraints(venue: str, symbol: str, market_type: str) -> OrderConstraints:
+def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object]]:
+    """The sandbox flag and extra options that define this mode's listing set.
+
+    Resolved from the same profile class that submits the order, so pre-trade
+    validation reads the venue the order will actually meet. An unresolvable mode
+    yields the plain production view — the previous behavior — rather than
+    guessing a sandbox.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        from extensions.exchanges.composition import _profile_spec
+
+        *_rest, profile_type = _profile_spec(load_config(), execution_mode)
+        return bool(getattr(profile_type, "sandbox", False)), dict(
+            getattr(profile_type, "listing_options", {}) or {}
+        )
+    except Exception:
+        return False, {}
+
+
+async def read_order_constraints(
+    execution_mode: str, venue: str, symbol: str, market_type: str
+) -> OrderConstraints:
     from aletheia.net import make_ccxt
 
     exchange_id = "binanceusdm" if venue == "binance" else venue
     default_type = "spot" if market_type == "spot" else "swap"
-    exchange, session = make_ccxt(exchange_id, options={"defaultType": default_type})
+    # A demo venue lists a different symbol set than its live counterpart. Reading
+    # the live listing for a demo order let RENDER pass validation and then fail
+    # at submission with contract_size_unavailable, because the demo market map
+    # had no entry for it at all.
+    sandbox, extra = _listing_view(execution_mode)
+    exchange, session = make_ccxt(
+        exchange_id, options={"defaultType": default_type, **extra}
+    )
     try:
+        if sandbox:
+            exchange.set_sandbox_mode(True)
         await exchange.load_markets()
         market = _find_market(exchange, symbol, market_type)
         return constraints_from_market(

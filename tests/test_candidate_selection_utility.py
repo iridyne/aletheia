@@ -1874,3 +1874,71 @@ def test_no_module_reimplements_the_reason_classification_from_literals():
         "these modules restate the economic-reason classification instead of calling "
         "reason_proves_evidence_absent(): " + "; ".join(offenders)
     )
+
+
+def test_allowlist_bounds_admission_at_the_binding_gate():
+    """A configured allowlist must actually block, not merely be reported.
+
+    The tradability funnel in `universe/filters.py` is research capture — its only
+    production caller is a non-fatal benchmark — so a rule added only there is
+    visible and non-binding. `evaluate_hard_gate` is what decides admission.
+    """
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+
+    cfg = UniverseConfig()
+    at = "2026-09-02T00:00:00+00:00"
+    admitted = _feature(0, symbol="BTC/USDT")
+    refused = _feature(1, symbol="AAPL/USDT")
+
+    # Empty allowlist keeps the prior unrestricted behavior for both.
+    for feature in (admitted, refused):
+        decision = evaluate_hard_gate(feature, cfg, candidate_key="k", evaluated_at=at)
+        assert decision.status == "eligible"
+        check = next(item for item in decision.checks if item.check_id == "allowlist")
+        assert check.status == "passed"
+        assert check.reason_code == "allowlist_unrestricted"
+
+    cfg.allowlist = ["BTC/USDT"]
+    inside = evaluate_hard_gate(admitted, cfg, candidate_key="k", evaluated_at=at)
+    assert inside.status == "eligible"
+    assert inside.actionability == "actionable"
+    assert next(i for i in inside.checks if i.check_id == "allowlist").reason_code == "allowlisted"
+
+    outside = evaluate_hard_gate(refused, cfg, candidate_key="k", evaluated_at=at)
+    assert outside.status == "ineligible"
+    assert outside.actionability == "none"
+    assert "not_allowlisted" in outside.reason_codes
+
+    # Case-insensitive, and the bound is part of the hashed policy so the cohort
+    # rotates rather than mixing pre- and post-narrowing evidence.
+    cfg.allowlist = ["btc/usdt"]
+    assert evaluate_hard_gate(admitted, cfg, candidate_key="k", evaluated_at=at).status == "eligible"
+    cfg_wide = UniverseConfig()
+    assert inside.policy_fingerprint != evaluate_hard_gate(
+        admitted, cfg_wide, candidate_key="k", evaluated_at=at
+    ).policy_fingerprint
+
+
+def test_allowlist_is_visible_in_the_tradability_funnel_with_a_complete_denominator():
+    """The funnel must show the allowlist decision for every candidate.
+
+    `filter_evidence_contract` requires each candidate's row up to its first
+    rejection; a gate that drops assets without evidence makes the funnel read as
+    if they were never considered.
+    """
+    from aletheia.universe.filters import _TRADABILITY_FILTERS, apply_coarse_tradability_filters
+
+    cfg = UniverseConfig()
+    cfg.allowlist = ["COIN0/USDT"]
+    population = [_feature(0), _feature(1), _feature(2)]
+
+    assert "tradability_allowlist" in _TRADABILITY_FILTERS
+    # The coarse pass runs every gate; the fine pass only re-applies per-family spread.
+    kept = apply_coarse_tradability_filters(population, cfg, scanner_run_id="allowlist-run")
+    assert [item["symbol"] for item in kept] == ["COIN0/USDT"]
+
+    # Ordering matters: the allowlist is the outer bound, so it answers before the
+    # exclusion list rather than after it.
+    assert _TRADABILITY_FILTERS.index("tradability_allowlist") < _TRADABILITY_FILTERS.index(
+        "tradability_blacklist"
+    )

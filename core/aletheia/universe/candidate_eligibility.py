@@ -14,7 +14,7 @@ from aletheia.config.schema import UniverseConfig
 
 
 HARD_GATE_VERSION = "universe-hard-gate/v1"
-HARD_GATE_POLICY_VERSION = "universe-hard-gate-policy/v1"
+HARD_GATE_POLICY_VERSION = "universe-hard-gate-policy/v2"
 _MAX_FRESHNESS_SEC = 7200.0
 _STABLECOINS = frozenset({
     "USDC", "USDT", "DAI", "TUSD", "BUSD", "FDUSD", "USDP", "PYUSD",
@@ -106,6 +106,17 @@ def evaluate_hard_gate(
     else:
         checks.append(HardGateCheckV1("stablecoin", "passed", base, reason_code="non_stablecoin_base"))
 
+    # An empty allowlist stays unrestricted. A configured one is the outer bound
+    # of the tradable universe, so it is answered before the exclusion list.
+    allowlist = {str(item).upper() for item in getattr(cfg, "allowlist", None) or ()}
+    admitted_by_allowlist = not allowlist or symbol in allowlist
+    checks.append(HardGateCheckV1(
+        "allowlist", "passed" if admitted_by_allowlist else "failed",
+        admitted_by_allowlist, bool(allowlist),
+        "allowlist_unrestricted" if not allowlist
+        else ("allowlisted" if admitted_by_allowlist else "not_allowlisted"),
+    ))
+
     blacklisted = symbol in {str(item).upper() for item in cfg.blacklist}
     checks.append(HardGateCheckV1(
         "blacklist", "failed" if blacklisted else "passed", blacklisted, False,
@@ -179,6 +190,7 @@ def evaluate_hard_gate(
         "max_freshness_sec": _MAX_FRESHNESS_SEC,
         "stablecoins": sorted(_STABLECOINS),
         "blacklist": sorted(str(item).upper() for item in cfg.blacklist),
+        "allowlist": sorted(str(item).upper() for item in getattr(cfg, "allowlist", None) or ()),
     }
     return HardGateDecisionV1(
         HARD_GATE_VERSION,

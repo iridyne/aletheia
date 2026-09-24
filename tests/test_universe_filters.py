@@ -139,13 +139,22 @@ def test_tradability_evidence_records_first_rejection_then_not_applicable(cfg):
         "FROM filter_decision_batches WHERE run_id=? ORDER BY filter_name",
         ("tradability-run",),
     ).fetchall()
-    assert len(rows) == 6
+    # Derived, not hardcoded: every declared gate must write a batch, so adding a
+    # gate cannot quietly drop out of the evidence check.
+    from aletheia.universe.filters import _TRADABILITY_FILTERS
+
+    assert {row["filter_name"] for row in rows} == set(_TRADABILITY_FILTERS)
     facts_by_filter = {
         row["filter_name"]: decode_filter_decision_batch(row["candidate_facts"])
         for row in rows
     }
     stablecoin_facts = facts_by_filter["tradability_stablecoin"]
     assert [fact["decision"] for fact in stablecoin_facts] == ["passed", "rejected"]
+    # An unconfigured allowlist admits both, and the stablecoin rejection above
+    # still carries forward as not_applicable.
+    assert [fact["decision"] for fact in facts_by_filter["tradability_allowlist"]] == [
+        "passed", "not_applicable",
+    ]
     blacklist_facts = facts_by_filter["tradability_blacklist"]
     assert [fact["decision"] for fact in blacklist_facts] == [
         "passed", "not_applicable",

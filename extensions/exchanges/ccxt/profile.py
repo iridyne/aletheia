@@ -39,9 +39,18 @@ def decimal_value(value: object) -> Decimal | None:
 def venue_contract_quantity(command, *, instrument=None) -> Decimal:
     """Convert a UTA quantity into venue contracts for a contract-sized market.
 
-    Spot passes through untouched. A contract market requires an exact whole
-    multiple of ``contract_size``: a fractional or non-positive result is a
-    caller error, not something to round, so it fails before the order is sent.
+    Spot passes through untouched. A contract market requires the quantity to sit
+    on the venue's own size grid: fractional-of-grid or non-positive is a caller
+    error, not something to round, so it fails before the order is sent.
+
+    The grid is the venue's published quantity step (``sizeMultiplier`` /
+    ``precision.amount``), not one whole contract. Bitget reports
+    ``contractSize = 1`` for every perpetual while trading e.g. HYPE in 0.01
+    steps, so requiring a whole contract would reject venue-legal sizes. The step
+    is the same grid ``order_constraints.normalize_quantity`` already rounds onto
+    upstream; disagreeing grids is what rejected a legal 2.5 HYPE order.
+    Absent step (older callers, profiles that do not populate it) falls back to
+    ``contract_size``, preserving the previous behavior.
 
     Not a ``CCXTProfile`` method — Binance submits ``command.quantity`` directly
     and must not inherit contract conversion. Profiles that need it bind it
@@ -59,7 +68,9 @@ def venue_contract_quantity(command, *, instrument=None) -> Decimal:
             command_evidence=CommandEvidence.NOT_SENT,
         )
     contracts = quantity / contract_size
-    if contracts != contracts.to_integral_value() or contracts <= 0:
+    step = selected.quantity_precision
+    grid = step / contract_size if step is not None and step > 0 else Decimal(1)
+    if contracts <= 0 or (contracts / grid) != (contracts / grid).to_integral_value():
         raise UTAError(
             UTAErrorCode.INVALID_ORDER,
             "quantity_not_exact_contract_multiple",
@@ -90,6 +101,10 @@ class CCXTProfile:
     expected_execution_mode = ""
     exchange_name = ""
     sandbox = False
+    # Extra CCXT options that change which symbols `load_markets` returns. The
+    # pre-trade rules reader must apply the same ones as submission, or it
+    # validates against a different listing set than the order will meet.
+    listing_options: dict[str, object] = {}
     balance_requests: tuple[dict[str, object], ...] = ({},)
     position_params: dict[str, object] = {}
     open_order_requests: tuple[dict[str, object], ...] = ({},)
@@ -187,6 +202,19 @@ class CCXTProfile:
 
     def close_position_absent(self, error: BaseException) -> bool:
         return False
+
+    def venue_rejection_code(self, error: BaseException) -> str | None:
+        """The venue's own rejection code, for diagnosis. None when unavailable.
+
+        A rejection recorded only as ``venue_rejected_command`` cannot be told
+        apart afterwards: insufficient margin, a symbol not tradable in demo and a
+        notional minimum all look identical, and the raw payload is out of scope
+        by the time the order row is written. Returning the venue's short code
+        makes the stored reason actionable. Implementations must return a bare
+        token — the caller appends it to the reason code, which is constrained to
+        ``^[a-z][a-z0-9_]{0,127}$``; never return raw payload text.
+        """
+        return None
 
     def validate_identity(self, identity: UTAAccountIdentity) -> None:
         expected = (
