@@ -64,7 +64,10 @@ def test_thesis_lineage_read_model_does_not_call_llm_or_agents():
 
 
 def _iso(hours_ago: int = 1) -> str:
-    return (datetime(2026, 9, 23, 19, tzinfo=timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    """Clock-relative timestamp. An absolute anchor rots: this was pinned to
+    2026-09-23T19:00Z, so two days later every seeded record crossed the 25-hour
+    maturity threshold and the "mature_* == 0" assertions started failing."""
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
 
 
 def _insert_opp(db, idx: int, *, direction: str = "long", family: str = "momentum") -> str:
