@@ -771,6 +771,15 @@ class RiskCheckResult:
             "max_total_demo_exposure_exceeded", "max_total_live_exposure_exceeded",
             "exceeds_demo_position_margin", "exceeds_max_position_margin",
             "sector_concentration", "portfolio_beta", "exceeds_per_symbol_notional",
+            # Authority reads/writes that failed rather than measured a refusal.
+            # "Cannot prove safe right now" is not "proven unsafe forever": the
+            # Plan retries under its own expires_at instead of being failed.
+            # Prefixes whose only variants are transient; mixed prefixes
+            # (account_leverage_check_error, account_exposure_check_error) stay
+            # terminal because durable row corruption shares their first segment.
+            "demo_entry_quality_unavailable",
+            "unresolved_entry_exposure_unavailable", "entry_risk_reservation_unavailable",
+            "lesson_check_error", "correlation_check_error",
         }
         if self.violations and all(str(value).partition(":")[0] in temporary for value in self.violations):
             return "DEFER"
