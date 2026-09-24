@@ -10158,6 +10158,18 @@ def finalize_universe_discovery_benchmark(
         )
         return bool(cur.rowcount == 1)
 
+# A row is provably unreachable only when the discovery-benchmark registry records
+# its benchmark as explicitly non-active. A window the registry has never heard of
+# is NOT unreachable: the Observation Lab owns that window's liveness and the
+# discovery priority path can still select it. Narrowing to "explicitly dead" is
+# what keeps this a strict subtraction from backlog instead of a guess about it.
+FILTER_OUTCOME_BENCHMARK_DEAD_SQL = (
+    "(benchmark_window_id IS NOT NULL AND EXISTS ("
+    "SELECT 1 FROM universe_discovery_benchmarks b "
+    "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status<>'active'))"
+)
+
+
 def list_pending_filter_candidate_outcomes(
     before_ts: str,
     limit: int = 200,
@@ -10194,6 +10206,55 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
         .fetchone()
     )
     return int(row["n"] or 0)
+
+
+def count_pending_filter_candidate_outcomes_unreachable_benchmark(before_ts: str) -> int:
+    """Due pending rows whose discovery benchmark is recorded as non-active.
+
+    Both the selector and the terminal-write guard refuse these rows, so they are
+    not settler backlog: nothing will ever drain them. Counted separately so neither
+    the settler log nor doctor reports them as a stalled settler.
+    """
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
+            "WHERE status = 'pending' AND due_at <= ? "
+            f"AND {FILTER_OUTCOME_BENCHMARK_DEAD_SQL}",
+            (before_ts,),
+        )
+        .fetchone()
+    )
+    return int(row["n"] or 0)
+
+
+def close_pending_filter_outcomes_for_inactive_benchmarks(*, at: str) -> int:
+    """Give a terminal disposition to pending rows no settler can ever reach.
+
+    A discovery benchmark the registry records as non-active can never settle its
+    outcomes: both the selector and the terminal write guard refuse them. Leaving
+    those rows ``pending`` is a claim that they are backlog that drains on its own,
+    and they never will — so they move to ``invalidated``.
+
+    Not bounded by ``due_at``: a row whose benchmark is already dead is unreachable
+    whether or not its horizon has elapsed. Never writes an economics column and
+    never deletes history — the row keeps its identity, prices, entry and due
+    timestamps; only ``status`` changes. ``settled_at`` is deliberately left NULL:
+    these rows were never settled, and stamping them as if they had been is the same
+    class of lie this repair exists to remove.
+
+    Idempotent: the predicate is ``status='pending'``, so a second pass matches
+    nothing. ``at`` is accepted for call-site symmetry and audit context; the table
+    has no invalidation-timestamp column to carry it.
+    """
+    del at
+    with transaction(immediate=True, savepoint=True):
+        cursor = execute_write(
+            "UPDATE filter_candidate_outcomes SET status='invalidated' "
+            "WHERE status='pending' "
+            f"AND {FILTER_OUTCOME_BENCHMARK_DEAD_SQL}",
+        )
+        return int(cursor.rowcount or 0)
 
 
 def list_observation_filter_outcome_priority_keys(*, deadline: float) -> tuple[set[str], set[str]]:
@@ -10329,6 +10390,7 @@ def list_pending_filter_candidate_outcomes_for_keys(
             "SELECT id, outcome_candidate_key, horizon, due_at "
             "FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at <= ? "
+            f"AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
             "AND typeof(venue) = 'text' "
             f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
             "AND (due_at > ? OR (due_at = ? AND id > ?)) "
