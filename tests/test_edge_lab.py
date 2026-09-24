@@ -1,9 +1,15 @@
 """Tests for Edge Lab features: shadow trades, BTC benchmark and family scorecard."""
 
 import json
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
@@ -84,7 +90,8 @@ class TestBTCBenchmark:
         row = _insert_closed_position_via_producer(
             position_id="benchmark-close", symbol="ETH/USDT", market_type="spot",
             direction="long", quantity=1.0, entry_price=2000.0, realized_pnl=100.0,
-            execution_mode="bitget_demo", closed_at="2026-07-12T08:00:00+00:00",
+            execution_mode="bitget_demo",
+            closed_at=(_ANCHOR + timedelta(hours=2)).isoformat(),
             close_reason="take_profit", btc_entry_price=60000.0,
         )
 
@@ -108,8 +115,10 @@ class TestFamilyScorecard:
         _insert_closed_position_via_producer(
             position_id="scorecard-close", symbol="BTC/USDT", market_type="spot",
             direction="long", quantity=0.01, entry_price=60000.0, realized_pnl=50.0,
-            execution_mode="bitget_demo", opened_at="2026-07-12T07:30:00+00:00",
-            closed_at="2026-07-12T08:00:00+00:00", close_reason="take_profit",
+            execution_mode="bitget_demo",
+            opened_at=(_ANCHOR + timedelta(hours=1)).isoformat(),
+            closed_at=(_ANCHOR + timedelta(hours=1, minutes=30)).isoformat(),
+            close_reason="take_profit",
             scanner_family="momentum", btc_entry_price=60000.0,
         )
 

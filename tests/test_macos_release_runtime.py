@@ -28,9 +28,11 @@ requires-python = ">=3.12"
 """,
     )
     _write(root / "uv.lock", "version = 1\n")
-    _write(root / "aletheia" / "__init__.py", '__version__ = "1.2.3"\n')
+    _write(root / "core" / "aletheia" / "__init__.py", '__version__ = "1.2.3"\n')
     _write(root / "extensions" / "__init__.py", "")
-    _write(root / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
+    _write(root / "ops" / "__init__.py", "")
+    _write(root / "legacy" / "__init__.py", "")
+    _write(root / "core" / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
     runtime_source = Path("scripts/runtime")
     for name in ("install-release.sh", "start-release.sh", "health-check.sh"):
         _write(root / runtime_source / name, (runtime_source / name).read_text(encoding="utf-8"))

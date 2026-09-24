@@ -1,11 +1,15 @@
 """Tests for guard effectiveness analytics and promotion pipeline."""
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from extensions.analytics.guard_effectiveness import (
     compute_guard_stats,
     _row_to_guard_context,
 )
+
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
 
 
 class TestRowToGuardContext:
@@ -59,17 +63,20 @@ class TestComputeGuardStats:
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],
             applies_to=GuardAppliesTo(asset_class=["crypto"]),
         )]
+        # Rows must close after the clean-window anchor (compute_guard_stats uses
+        # _clean_rows, which drops rows with closed_at < LEARNING_DATA_FLOOR_ISO).
+        post_anchor_close = (_ANCHOR + timedelta(hours=2)).isoformat()
         mock_rows.return_value = [
             {"symbol": "BTC/USDT", "direction": "long", "late_entry_penalty": 25,
              "realized_pnl": -5, "realized_pnl_pct": -2.5, "risk_flags": [],
              "scanner_family": "momentum", "confidence": "high", "confidence_score": 70,
              "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3,
-             "closed_at": "2026-07-12T08:00:00+00:00"},
+             "closed_at": post_anchor_close},
             {"symbol": "ETH/USDT", "direction": "long", "late_entry_penalty": 30,
              "realized_pnl": 3, "realized_pnl_pct": 1.5, "risk_flags": [],
              "scanner_family": "momentum", "confidence": "high", "confidence_score": 70,
              "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3,
-             "closed_at": "2026-07-12T08:00:00+00:00"},
+             "closed_at": post_anchor_close},
         ]
         result = compute_guard_stats()
         assert len(result) == 1

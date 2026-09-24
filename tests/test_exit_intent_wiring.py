@@ -12,6 +12,7 @@ def test_trade_proposal_persists_exit_intent():
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
+        execution_mode="bitget_demo",
         expected_horizon_hours=8.0,
         stop_source="operator",
     )
