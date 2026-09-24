@@ -9,10 +9,14 @@ import ast
 
 def test_1467_trailing_stop_exchange_before_db():
     """#1467: exchange sync MUST happen before local DB commit in trailing stop.
-    
-    If exchange call fails, we must NOT update local DB (no split state).
-    Source inspection: _maybe_update_trailing_stop() should call
-    replace_exchange_protective_stop() before persist_position_exit_plan().
+
+    If the exchange call fails we must NOT update the local DB (no split state).
+
+    The persist step is matched by the names it can legitimately carry rather than
+    one literal: this test asserted `persist_position_exit_plan`, which was later
+    renamed to `save_exit_plan`, so it started failing while the invariant it
+    guards was still intact. A rename must not read as a safety regression, and a
+    genuinely removed persist step must still fail.
     """
     with open("core/aletheia/portfolio/position_manager.py") as f:
         source = f.read()
@@ -35,10 +39,16 @@ def test_1467_trailing_stop_exchange_before_db():
     
     # Find positions of key calls
     exchange_call_pos = func_text.find("replace_exchange_protective_stop")
-    persist_call_pos = func_text.find("persist_position_exit_plan")
-    
+    persist_names = ("save_exit_plan", "persist_position_exit_plan", "update_position")
+    persist_positions = [
+        found for name in persist_names if (found := func_text.find(name)) != -1
+    ]
+    persist_call_pos = min(persist_positions) if persist_positions else -1
+
     assert exchange_call_pos != -1, "replace_exchange_protective_stop call not found"
-    assert persist_call_pos != -1, "persist_position_exit_plan call not found"
+    assert persist_call_pos != -1, (
+        f"no local persist call found; expected one of {persist_names}"
+    )
     
     # Exchange call MUST come before persist call (lower position = earlier in text)
     assert exchange_call_pos < persist_call_pos, (

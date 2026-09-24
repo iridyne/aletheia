@@ -35,9 +35,13 @@ def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None
     """Overview keeps account equity separate from verified strategy PnL."""
     chart = (ROOT / "frontend/src/charts/PnLChart.tsx").read_text(encoding="utf-8")
     overview_chart = (ROOT / "frontend/src/charts/AccountEquityChart.tsx").read_text(encoding="utf-8")
-    client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+    # The live mark reaches the client through the generated OpenAPI types, not a
+    # hand-written body type: #3c1d3ad40 bound Analytics endpoints to Pydantic
+    # models, so `client.ts` now references components["schemas"]["EquityCurveResponse"]
+    # and asserting against client.ts kept passing only until that migration.
+    generated = (ROOT / "frontend/src/api/generated/api.d.ts").read_text(encoding="utf-8")
 
-    assert "current_mark_point" in client
+    assert "current_mark_point" in generated
     # PnLChart shows a single verified baseline; raw/live-mark series removed.
     assert "No verified strategy outcomes yet" in chart
     assert "genuine_points" in chart
