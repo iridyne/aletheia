@@ -2530,7 +2530,17 @@ def update_universe_config(req: UniverseConfigUpdate):
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         if field in {"blacklist", "allowlist", "fallback_symbols"}:
-            value = list(dict.fromkeys(str(s).strip().upper() for s in value if str(s).strip()))
+            from aletheia.data.symbols import to_canonical
+            canonicalized = []
+            for s in value:
+                s_str = str(s).strip()
+                if not s_str:
+                    continue
+                canonical = to_canonical(s_str)
+                if "/" not in canonical:
+                    raise HTTPException(400, f"'{s_str}' is not a valid symbol for '{field}'")
+                canonicalized.append(canonical)
+            value = list(dict.fromkeys(canonicalized))
             if field == "fallback_symbols" and not value:
                 raise HTTPException(400, "fallback_symbols must not be empty")
         if field == "market_type" and value not in _VALID_MARKET_TYPES:

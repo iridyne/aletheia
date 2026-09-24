@@ -1746,6 +1746,68 @@ async def test_settings_update_controls_persist_new_config_fields(client):
 
 
 @pytest.mark.anyio
+async def test_universe_symbol_lists_canonicalize_and_dedupe_equivalent_inputs(client):
+    """#3447: allowlist/blacklist/fallback_symbols must persist canonical BASE/QUOTE
+    form so they actually match the canonical symbols candidate admission compares
+    against, not the raw venue/presentation form the operator typed."""
+    resp = await client.post(
+        "/api/settings/universe",
+        json={
+            "allowlist": ["BTCUSDT", "btc/usdt", "BTC-USDT", "BTC/USDT:USDT"],
+            "blacklist": ["ETHUSDT", "eth-usdt"],
+            "fallback_symbols": ["solusdt", "SOL/USDT"],
+        },
+    )
+    assert resp.status_code == 200
+    universe = resp.json()["universe"]
+    assert universe["allowlist"] == ["BTC/USDT"]
+    assert universe["blacklist"] == ["ETH/USDT"]
+    assert universe["fallback_symbols"] == ["SOL/USDT"]
+
+
+@pytest.mark.anyio
+async def test_universe_symbol_lists_reject_unsplittable_symbols(client):
+    """#3447: a symbol `to_canonical()` cannot split into BASE/QUOTE must be
+    rejected outright rather than silently persisted as an ineffective bound."""
+    resp = await client.post(
+        "/api/settings/universe",
+        json={"allowlist": ["NOTASYMBOL"]},
+    )
+    assert resp.status_code == 400
+    assert "NOTASYMBOL" in resp.json()["detail"]
+
+    from aletheia.config.loader import load_config
+    assert load_config().universe.allowlist != ["NOTASYMBOL"]
+
+
+def test_universe_allowlist_hard_gate_admits_canonical_member_and_excludes_non_member():
+    """#3447 regression proof item 4: the persisted (canonicalized) allowlist
+    actually admits the intended canonical candidate and excludes a non-member."""
+    from aletheia.config.schema import UniverseConfig
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+    from tests.test_candidate_selection_utility import _feature
+
+    cfg = UniverseConfig(allowlist=["BTC/USDT"])
+    admitted = evaluate_hard_gate(
+        _feature(symbol="BTC/USDT"),
+        cfg,
+        candidate_key="candidate-allow",
+        evaluated_at="2026-09-02T00:00:00+00:00",
+    )
+    assert admitted.status == "eligible"
+    assert "not_allowlisted" not in admitted.reason_codes
+
+    excluded = evaluate_hard_gate(
+        _feature(symbol="ETH/USDT"),
+        cfg,
+        candidate_key="candidate-disallow",
+        evaluated_at="2026-09-02T00:00:00+00:00",
+    )
+    assert excluded.status == "ineligible"
+    assert "not_allowlisted" in excluded.reason_codes
+
+
+@pytest.mark.anyio
 async def test_uta_profile_change_advances_account_generation(client):
     from aletheia.config.loader import load_config
 
