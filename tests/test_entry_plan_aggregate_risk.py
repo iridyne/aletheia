@@ -49,6 +49,25 @@ def test_same_plan_fills_and_unresolved_remainder_share_caps(monkeypatch, state,
     (["entry_plan_risk_authority_revoked"], "REJECT"),
     (["unknown_future_condition:retry please"], "REJECT"),
     ([], "REJECT"),
+    # An unevaluated gate is not a refused one: the Plan retries under its own
+    # expires_at instead of being failed. DEFER still admits no trade.
+    (["demo_entry_quality_unavailable:policy_epoch"], "DEFER"),
+    (["demo_entry_quality_unavailable:regime"], "DEFER"),
+    (["unresolved_entry_exposure_unavailable", "entry_risk_reservation_unavailable"], "DEFER"),
+    (["lesson_check_error:internal_failure"], "DEFER"),
+    (["correlation_check_error:internal_failure"], "DEFER"),
+    # Measured refusals and permanent states stay terminal.
+    (["demo_entry_quality_unavailable:regime", "kill_switch_active"], "REJECT"),
+    (["regime_sideways_standdown:state=sideways"], "REJECT"),
+    (["family_not_demo_eligible:momentum:long:n=20:exp=-1.0<0.0"], "REJECT"),
+    # A superseded generation can never become current again, so retrying it
+    # would only spin until expiry.
+    (["entry_plan_generation_superseded"], "REJECT"),
+    (["stop_distance_below_vol_target:0.2532<1.5000"], "REJECT"),
+    # Durable row corruption shares the first segment with the transient
+    # :internal_failure variant, so the whole prefix stays terminal.
+    (["account_leverage_check_error:invalid_position_exposure:position=p:field=quantity"], "REJECT"),
+    (["account_exposure_check_error:non_finite_projected_exposure"], "REJECT"),
 ])
 def test_risk_owns_retry_classification_including_durable_reload(violations, expected):
     import json

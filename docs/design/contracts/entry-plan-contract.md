@@ -604,8 +604,11 @@ existing position slot; unrelated same-symbol positions and all exposure limits
 remain binding. Price/quantity intent remains immutable per leg.
 
 Risk owns the `APPROVED` / `DEFER` / `REJECT` disposition derived from its explicit
-violation codes. Temporary market/account/capacity conditions keep Bitget Demo Entry Proposal
+violation codes. Temporary market/account/capacity conditions, and authority
+read/write or internal-check failures that leave a gate unevaluated rather than
+refused, keep Bitget Demo Entry Proposal
 pending and release preparation ownership; hard or unknown violations reject.
+A failure whose violation prefix also covers durable corruption is not temporary.
 Gateway consumes this disposition without classifying freeform Risk messages.
 The original RiskDecision and violations remain the persisted evidence.
 
