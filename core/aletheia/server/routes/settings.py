@@ -2454,6 +2454,7 @@ class UniverseConfigUpdate(SettingsRequest):
     entry_ttl_sec: Optional[int] = None
     candidate_max_continuous_age_sec: Optional[int] = None
     blacklist: Optional[list[str]] = None
+    allowlist: Optional[list[str]] = None
     fallback_symbols: Optional[list[str]] = None
     market_type: Optional[str] = None
 
@@ -2528,7 +2529,7 @@ def update_universe_config(req: UniverseConfigUpdate):
             lo, hi = _UNIVERSE_BOUNDS[field]
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        if field in {"blacklist", "fallback_symbols"}:
+        if field in {"blacklist", "allowlist", "fallback_symbols"}:
             value = list(dict.fromkeys(str(s).strip().upper() for s in value if str(s).strip()))
             if field == "fallback_symbols" and not value:
                 raise HTTPException(400, "fallback_symbols must not be empty")

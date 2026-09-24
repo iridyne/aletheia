@@ -1719,6 +1719,14 @@ class UniverseConfig(BaseModel):
                      "mean_reversion": 0.15, "event": 0.05, "short_bias": 0.05},
     })
     blacklist: list[str] = Field(default_factory=list)
+    # Canonical symbols admitted to candidate selection. Empty means unrestricted
+    # (the prior behavior); a non-empty list admits only its members and is
+    # evaluated before the blacklist, so a symbol absent here never needs naming
+    # there. An exclusion list cannot keep up with a venue that continuously adds
+    # instrument families — Bitget lists 339 RWA perpetuals and 2587 r-series
+    # equity spot markets — so narrowing by inclusion is the only bound that holds
+    # without maintenance.
+    allowlist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     snapshot_ttl_enabled: bool = True
     snapshot_ttl_hours: float = 24.0

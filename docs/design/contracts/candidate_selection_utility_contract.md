@@ -38,7 +38,15 @@ The current chain is:
 1. `universe-hard-gate/v1` records exact physical/data eligibility as
    `eligible`, `ineligible`, or `unavailable`, separately from actionability.
    Missing volume, spread, depth, freshness, price, provenance, or identity is
-   unavailable. Volatility is never a Hard Gate.
+   unavailable. Volatility is never a Hard Gate. An operator instrument bound is
+   part of this gate: a configured `universe.allowlist` admits only its members
+   and is answered before `universe.blacklist`, so a symbol absent from the
+   allowlist never needs naming in the blacklist. An empty allowlist is
+   unrestricted. Both lists are hashed into the policy fingerprint, so narrowing
+   the universe rotates the cohort instead of mixing pre- and post-narrowing
+   evidence. Neither list is ever widened automatically: a venue that keeps
+   listing new instrument families would reopen the universe faster than evidence
+   can close it.
 2. `universe-opportunity-evidence/v2` projects the existing six families into
    Continuation, Reversal, Positioning/Forced Flow, and Information/Catalyst,
    with volatility/regime/shock as context. Mechanism strengths are ordinal,

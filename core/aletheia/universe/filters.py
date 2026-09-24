@@ -35,6 +35,7 @@ _STABLECOIN_BASES = {
 
 _TRADABILITY_FILTERS = (
     "tradability_stablecoin",
+    "tradability_allowlist",
     "tradability_blacklist",
     "tradability_volume",
     "tradability_spread",
@@ -159,8 +160,15 @@ def _record_tradability_batches(
 
     blacklist = sorted(str(symbol) for symbol in cfg.blacklist)
     blacklist_hash = hashlib.sha256("\n".join(blacklist).encode("utf-8")).hexdigest()[:16]
+    allowlist = sorted(str(symbol).upper() for symbol in getattr(cfg, "allowlist", None) or ())
+    allowlist_hash = hashlib.sha256("\n".join(allowlist).encode("utf-8")).hexdigest()[:16]
     parameters = {
         "tradability_stablecoin": {"excluded_bases": sorted(_STABLECOIN_BASES)},
+        "tradability_allowlist": {
+            "allowlist_count": len(allowlist),
+            "allowlist_hash": allowlist_hash,
+            "restricted": bool(allowlist),
+        },
         "tradability_blacklist": {
             "blacklist_count": len(blacklist),
             "blacklist_hash": blacklist_hash,
@@ -218,6 +226,30 @@ def _run_filter_pass(
                 reason_code="non_stablecoin_base",
                 inputs={"base": base},
             ))
+
+        # Allowlist: the outer bound of the tradable universe, so it answers before
+        # the exclusion list. Empty means unrestricted, preserving prior behavior.
+        allowed_symbols = {str(item).upper() for item in getattr(cfg, "allowlist", None) or ()}
+        if not active:
+            facts_by_filter["tradability_allowlist"].append(_candidate_fact(
+                feat, decision="not_applicable", reason_code="prior_gate_rejected",
+            ))
+        elif not allowed_symbols:
+            facts_by_filter["tradability_allowlist"].append(_candidate_fact(
+                feat, decision="passed", reason_code="allowlist_unrestricted",
+                inputs={"restricted": False},
+            ))
+        elif symbol.upper() in allowed_symbols:
+            facts_by_filter["tradability_allowlist"].append(_candidate_fact(
+                feat, decision="passed", reason_code="allowlisted",
+                inputs={"restricted": True},
+            ))
+        else:
+            facts_by_filter["tradability_allowlist"].append(_candidate_fact(
+                feat, decision="rejected", reason_code="not_allowlisted",
+                inputs={"restricted": True},
+            ))
+            active = False
 
         # Blacklist check
         if not active:

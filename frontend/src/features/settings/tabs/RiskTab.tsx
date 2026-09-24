@@ -116,6 +116,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [candidateSoftLease, setCandidateSoftLease] = useState('900')
   const [candidateMaxAge, setCandidateMaxAge] = useState('3600')
   const [blacklist, setBlacklist] = useState('')
+  const [allowlist, setAllowlist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [marketType, setMarketType] = useState('crypto')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -139,6 +140,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setCandidateSoftLease(String(universe.entry_ttl_sec ?? 900))
       setCandidateMaxAge(String(universe.candidate_max_continuous_age_sec ?? 3600))
       setBlacklist(listToCsv(universe.blacklist))
+      setAllowlist(listToCsv(universe.allowlist))
       setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
       setMarketType(universe.market_type || 'crypto')
     },
@@ -158,6 +160,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         entry_ttl_sec: parseInt(candidateSoftLease),
         candidate_max_continuous_age_sec: parseInt(candidateMaxAge),
         blacklist: parseCsvList(blacklist),
+        allowlist: parseCsvList(allowlist),
         fallback_symbols: parseCsvList(fallbackSymbols),
         market_type: marketType,
       })
@@ -227,6 +230,13 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         </label>
       </div>
       <div className="form-grid mb-3">
+        <label>
+          <span>Universe allowlist</span>
+          <input value={allowlist} placeholder="empty = all symbols"
+            onChange={e => { setAllowlist(e.target.value); setChanged(true); setMsg(null) }}
+            className="mono" />
+          <span className="hint m-0">Empty admits every symbol. Listing any restricts the universe to exactly those.</span>
+        </label>
         <label>
           <span>Universe blacklist</span>
           <input value={blacklist} placeholder="DOGE/USDT, PEPE/USDT"

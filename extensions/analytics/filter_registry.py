@@ -515,6 +515,23 @@ _HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Asset-class classification rule, not an alpha threshold.",
     ),
     FilterSpec(
+        name="tradability_allowlist",
+        stage="tradability_filter",
+        drop_reason_codes=("not_allowlisted",),
+        config_path="universe.allowlist",
+        hardcoded_at="",
+        current_value="empty = unrestricted; non-empty = only these canonical symbols",
+        loosen_direction="n/a",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        authority_class="risk_or_safety",
+        note="Intentional operator inclusion bound. Never auto-add an asset to the "
+             "allowlist: a venue that keeps listing new instrument families would "
+             "reopen the universe faster than evidence can close it.",
+    ),
+    FilterSpec(
         name="tradability_blacklist",
         stage="tradability_filter",
         drop_reason_codes=("configured_blacklist",),

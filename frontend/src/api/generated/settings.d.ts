@@ -2276,6 +2276,8 @@ export interface components {
         };
         /** UniverseConfig */
         UniverseConfig: {
+            /** Allowlist */
+            allowlist?: string[];
             /** Blacklist */
             blacklist?: string[];
             /**
