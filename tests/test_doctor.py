@@ -900,6 +900,40 @@ def test_doctor_reports_directionless_filter_batches_during_warmup(tmp_path, mon
     assert "batch_candidates=1" in check.detail
 
 
+def test_doctor_reports_the_retired_observe_path_as_history_not_a_live_failure(tmp_path, monkeypatch):
+    """market_observer is enrichment-only since its emitter was deleted (#2945).
+
+    The Universe Opportunity table therefore stops advancing by design. Reporting
+    its age as "observe stage not producing" plus "observer should fire every ~15min"
+    tells every operator and every agent that a retired mechanism is a live failure —
+    which is what sent the 2026-09-24 handover after work that was already done.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO opportunities (id, symbol, market, direction_bias, thesis, "
+        "confidence_score, source_agent, created_at, status) "
+        "VALUES ('opp-old','BTC/USDT','usdt_futures','long','t',78,'universe_scanner',"
+        "datetime('now','-40 days'),'open')"
+    )
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id, started_at) "
+        "VALUES ('rs-retired-observe', datetime('now','-2 hours'))"
+    )
+    db.commit()
+
+    report = dx.Report(generated_at="t")
+    dx._probe_trading_loop(report)
+    check = {c.name: c for c in report.checks}["loop.newest_opportunity"]
+
+    assert check.severity == "info", check.detail
+    assert "data.candidate_planning" in (check.fix_hint or "")
+    assert "observe stage not producing" not in check.detail
+    assert "should fire" not in (check.fix_hint or "")
+
+
 def test_doctor_orderbook_ok_when_rows_are_fresh(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.sqlite import get_db
