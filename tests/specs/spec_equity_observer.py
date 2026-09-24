@@ -49,9 +49,21 @@ def test_stock_token_functions_exist():
     assert is_stock_token("AAPLON/USDT"), "AAPLON/USDT must be a stock token"
     assert is_stock_token("TSLAON/USDT"), "TSLAON/USDT must be a stock token"
 
+    # Single-letter NYSE tickers are real listings and Bitget lists them as
+    # rV/rT/rC. A two-character floor classified them as ordinary crypto, which
+    # put thin tokenized-equity markets into the crypto candidate pool.
+    assert is_stock_token("rV/USDT"), "rV/USDT (Visa) must be a stock token"
+    assert is_stock_token("rT/USDT"), "rT/USDT (AT&T) must be a stock token"
+    assert is_stock_token("rC/USDT"), "rC/USDT (Citigroup) must be a stock token"
+    assert stock_token_to_ticker("rV/USDT") == "V"
+
     # Non-token NOT recognised
     assert not is_stock_token("BTC/USDT"), "BTC/USDT is not a stock token"
     assert not is_stock_token("ETH/USDT"), "ETH/USDT is not a stock token"
+    # The rule keys on a lowercase r before an uppercase ticker, not on length:
+    # a lowercase stem is not a ticker.
+    assert not is_stock_token("reth/USDT"), "reth/USDT is not a stock token"
+    assert not is_stock_token("RENDER/USDT"), "RENDER/USDT is not a stock token"
 
     # ticker lookup works for both series
     assert stock_token_to_ticker("rNVDA/USDT") == "NVDA"
