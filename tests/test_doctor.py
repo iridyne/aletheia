@@ -814,6 +814,63 @@ def test_doctor_warns_for_filter_outcomes_past_settler_grace(tmp_path, monkeypat
     assert "stale_overdue=52" in check.detail
 
 
+def test_doctor_separates_unreachable_outcomes_from_settler_backlog(tmp_path, monkeypatch):
+    """A row the settler can never reach is not settler backlog.
+
+    ``stale_overdue`` is defined as rows the settler will still get to
+    (test_settlement_deferral.py). A due outcome whose discovery benchmark is no
+    longer active is refused by both the selector and the terminal write guard, so
+    counting it as stale_overdue blames the settler for a state only an operator
+    decision can clear.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO filter_decision_batches (id, dedup_key, run_id, candidate_kind, "
+        "filter_name, stage, candidate_count, passed_count, rejected_count, "
+        "not_applicable_count, error_count, filter_version, evaluated_at) "
+        "VALUES ('batch-unreach','dk-batch-unreach','run-unreach','test','f','s',2,2,0,0,0,"
+        "'v',datetime('now','-5 minutes'))"
+    )
+    db.execute(
+        "INSERT INTO filter_decisions (id, dedup_key, candidate_key, candidate_kind, "
+        "symbol, filter_name, filter_version, stage, decision, reason_code, "
+        "outcome_candidate_key, evaluated_at) "
+        "VALUES ('dec-unreach','dk-dec-unreach','cand-unreach','test','BTC/USDT','f','v','s',"
+        "'passed','ok','key-unreach',datetime('now','-5 minutes'))"
+    )
+    db.execute(
+        "INSERT INTO universe_discovery_benchmarks (id, status, contract_json, contract_hash, "
+        "code_commit, started_at, capture_ends_at, finalize_not_before, created_at, "
+        "invalidated_at, invalidation_reason) "
+        "VALUES ('bench-dead','invalidated','{}','h','c',datetime('now','-10 days'),"
+        "datetime('now','-3 days'),datetime('now','-3 days'),datetime('now','-10 days'),"
+        "datetime('now','-4 days'),'superseded')"
+    )
+    for row_id, window in (("fco-reachable", None), ("fco-unreachable", "bench-dead")):
+        db.execute(
+            "INSERT INTO filter_candidate_outcomes (id, outcome_candidate_key, venue, "
+            "symbol, market_type, direction, scanner_family, horizon, entry_price_usd, "
+            "entry_ts, due_at, status, benchmark_window_id) "
+            "VALUES (?,?,'binance','BTC/USDT','spot','long','momentum','1h',100.0,"
+            "datetime('now','-3 hours'),datetime('now','-2 hours'),'pending',?)",
+            (row_id, f"key-{row_id}", window),
+        )
+    db.commit()
+
+    report = dx.Report(generated_at="t")
+    dx._probe_filter_evidence(report)
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+
+    assert "stale_overdue=1" in check.detail, check.detail
+    assert "unreachable_pending=1" in check.detail, check.detail
+    assert check.severity == "warn"
+    assert "discovery benchmark" in check.fix_hint
+    assert "cadence" not in check.fix_hint
+
+
 def test_doctor_reports_directionless_filter_batches_during_warmup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.analytics.filter_evidence import record_filter_decision_batch

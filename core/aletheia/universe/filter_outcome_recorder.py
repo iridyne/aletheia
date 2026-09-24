@@ -82,6 +82,16 @@ async def settle_due_filter_outcomes(
             "(missing venue); they remain pending and are excluded from settlement",
             identity_unavailable,
         )
+    benchmark_inactive = repo.count_pending_filter_candidate_outcomes_unreachable_benchmark(
+        now_iso
+    )
+    if benchmark_inactive:
+        logger.warning(
+            "filter outcome settler: %d due rows belong to an inactive discovery "
+            "benchmark; the selector and the terminal write guard both refuse them, so "
+            "they remain pending and are excluded from settlement",
+            benchmark_inactive,
+        )
     cfg = load_config()
     processed = 0
     settled = 0

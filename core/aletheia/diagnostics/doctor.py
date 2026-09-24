@@ -3551,7 +3551,11 @@ def _probe_outcome_economics(report: Report) -> None:
 def _probe_filter_evidence(report: Report) -> None:
     """Report whether filter pass/reject facts and their net outcomes are connected."""
     try:
-        from aletheia.storage.repositories import complete_outcome_economics_sql
+        from aletheia.storage.repositories import (
+            FILTER_OUTCOME_SETTLER_REACHABLE_SQL,
+            complete_outcome_economics_sql,
+            count_pending_filter_candidate_outcomes_unreachable_benchmark,
+        )
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -3611,8 +3615,10 @@ def _probe_filter_evidence(report: Report) -> None:
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
+            f"  AND {FILTER_OUTCOME_SETTLER_REACHABLE_SQL} "
             "  THEN 1 ELSE 0 END) AS overdue, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
+            f"  AND {FILTER_OUTCOME_SETTLER_REACHABLE_SQL} "
             "  THEN 1 ELSE 0 END) AS stale_overdue "
             "FROM filter_candidate_outcomes",
             (now_iso, stale_before),
@@ -3648,6 +3654,13 @@ def _probe_filter_evidence(report: Report) -> None:
         )
 
         unobserved_failed = sum(count_unobserved_failed_outcomes().values())
+        # A second class of rows the settler will never reach: their discovery
+        # benchmark is no longer active, so both the selector and the terminal
+        # write guard refuse them.  Like the write-offs above, they do not drain
+        # on their own, so they must not be reported as settler backlog.
+        unreachable_pending = count_pending_filter_candidate_outcomes_unreachable_benchmark(
+            now_iso
+        )
         detail = (
             f"decisions={total} (pass={int(decisions['passed'] or 0)}, "
             f"reject={int(decisions['rejected'] or 0)}); "
@@ -3657,6 +3670,7 @@ def _probe_filter_evidence(report: Report) -> None:
             f"settled={settled}, net_complete={net_complete}, "
             f"temporal_invalid_settled={temporal_invalid_settled}, overdue={overdue}, "
             f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}, "
+            f"unreachable_pending={unreachable_pending}, "
             f"unobserved_failed={unobserved_failed}"
         )
         if unobserved_failed:
@@ -3669,6 +3683,17 @@ def _probe_filter_evidence(report: Report) -> None:
                 "and nothing revisits them. Reclaim with "
                 "`aletheia data requeue-unobserved-settlements --apply` "
                 "(dry-run without --apply)",
+            )
+        elif unreachable_pending:
+            report.add(
+                "data.filter_evidence",
+                "warn",
+                detail,
+                f"{unreachable_pending} due outcomes belong to a discovery benchmark that "
+                "is no longer active; the settler can neither select nor write them, so "
+                "they are not settler backlog and will never drain while the benchmark "
+                "stays inactive. Decide their terminal disposition or reactivate the "
+                "benchmark window",
             )
         elif malformed_batches:
             report.add(

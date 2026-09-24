@@ -10158,6 +10158,25 @@ def finalize_universe_discovery_benchmark(
         )
         return bool(cur.rowcount == 1)
 
+# One predicate, three consumers: the settler selector, the terminal-write guard
+# and the diagnostics must agree on which due rows the settler can actually
+# reach.  A row outside `FILTER_OUTCOME_SETTLER_REACHABLE_SQL` is not backlog —
+# it can never drain — so it must never be reported as one.  Duplicating this
+# text is what let `stale_overdue` count rows no job would ever select.
+_FILTER_OUTCOME_BENCHMARK_ACTIVE_SQL = (
+    "(benchmark_window_id IS NULL OR EXISTS ("
+    "SELECT 1 FROM universe_discovery_benchmarks b "
+    "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status='active'))"
+)
+_FILTER_OUTCOME_VENUE_PRESENT_SQL = (
+    "typeof(venue) = 'text' "
+    f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+)
+FILTER_OUTCOME_SETTLER_REACHABLE_SQL = (
+    f"{_FILTER_OUTCOME_BENCHMARK_ACTIVE_SQL} AND {_FILTER_OUTCOME_VENUE_PRESENT_SQL}"
+)
+
+
 def list_pending_filter_candidate_outcomes(
     before_ts: str,
     limit: int = 200,
@@ -10166,11 +10185,7 @@ def list_pending_filter_candidate_outcomes(
         "filter_candidate_outcomes",
         where=(
             "status = 'pending' AND due_at <= ? "
-            "AND (benchmark_window_id IS NULL OR EXISTS ("
-            "SELECT 1 FROM universe_discovery_benchmarks b "
-            "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status='active')) "
-            "AND typeof(venue) = 'text' "
-            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+            f"AND {FILTER_OUTCOME_SETTLER_REACHABLE_SQL}"
         ),
         params=(before_ts,),
         order="due_at ASC",
@@ -10184,11 +10199,29 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
         .execute(
             "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
             "WHERE status = 'pending' AND due_at <= ? "
-            "AND (benchmark_window_id IS NULL OR EXISTS ("
-            "SELECT 1 FROM universe_discovery_benchmarks b "
-            "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status='active')) AND ("
-            "typeof(venue) <> 'text' "
-            f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
+            f"AND {_FILTER_OUTCOME_BENCHMARK_ACTIVE_SQL} "
+            f"AND NOT ({_FILTER_OUTCOME_VENUE_PRESENT_SQL})",
+            (before_ts,),
+        )
+        .fetchone()
+    )
+    return int(row["n"] or 0)
+
+
+def count_pending_filter_candidate_outcomes_unreachable_benchmark(before_ts: str) -> int:
+    """Due pending rows whose discovery benchmark is no longer active.
+
+    The selector and the terminal-write guard both refuse these rows, so they are
+    not settler backlog and never will be until the benchmark is reactivated or
+    the rows are given a terminal disposition.  Counted separately so neither the
+    settler log nor doctor reports them as a stalled settler.
+    """
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
+            "WHERE status = 'pending' AND due_at <= ? "
+            f"AND NOT ({_FILTER_OUTCOME_BENCHMARK_ACTIVE_SQL})",
             (before_ts,),
         )
         .fetchone()
@@ -10329,6 +10362,7 @@ def list_pending_filter_candidate_outcomes_for_keys(
             "SELECT id, outcome_candidate_key, horizon, due_at "
             "FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at <= ? "
+            f"AND {_FILTER_OUTCOME_BENCHMARK_ACTIVE_SQL} "
             "AND typeof(venue) = 'text' "
             f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
             "AND (due_at > ? OR (due_at = ? AND id > ?)) "
