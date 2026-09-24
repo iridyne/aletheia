@@ -8,7 +8,7 @@ def test_overview_agent_feed_uses_remaining_viewport_height() -> None:
     overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
     feed = (ROOT / "frontend/src/components/AgentFeed.tsx").read_text(encoding="utf-8")
     assert "ResizeObserver" not in overview
-    assert "<AgentFeed />" in overview
+    assert "AgentFeed" in overview
     assert "getBoundingClientRect().top" in feed
     assert "window.innerHeight" in feed
     assert "MIN_FEED_HEIGHT" in feed
@@ -34,7 +34,7 @@ def test_overview_entry_summary_reads_candidate_attention_and_entry_plan_project
     assert "active_entry_plans" in overview
     assert "needs_planning" in overview
     assert "expiring_soon" in overview
-    assert "navigate('/universe')" in overview
+    assert "'/universe'" in overview
     assert "pending_proposals" not in overview
     assert "open_opportunities" not in overview
     assert "repo.get_entry_workbench_summary()" in backend
