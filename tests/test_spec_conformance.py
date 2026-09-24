@@ -162,7 +162,12 @@ class TestConformanceStructure:
         # tests as direct executable proof. LCO-C05 also remains partial until
         # the executable claim runs its existing component-level behavior proof.
         MAX_PARTIAL = 15
-        MAX_SUPERSEDED = 1
+        # Two superseded claims, both legitimate retirements whose tests still
+        # prove the mechanism stays gone: PI-S04 (the PI promotion gate deleted by
+        # Position C) and DU-S23 (the local-paper funding settler, retired
+        # 2026-07-23). The budget was not raised when DU-S23 landed, so this
+        # assertion sat red for two months and stopped guarding new supersessions.
+        MAX_SUPERSEDED = 2
 
         missing = counts.get("missing", 0)
         partial = counts.get("partial", 0)
