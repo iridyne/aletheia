@@ -10,7 +10,9 @@ into real orders by applying a test marker. Native Bitget protection is read-onl
 """
 
 import os
+import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -252,7 +254,49 @@ def _configure_xdist_runtime_dir(config) -> None:
     loader._invalidate_config_cache()
 
 
+def _configure_test_data_dir(config) -> None:
+    """Root the test process away from the production data directory.
+
+    ``ALETHEIA_DATA_DIR`` is what CI sets per regression tier. When it is unset,
+    every path that resolves the data dir *before* a test's ``tmp_path``
+    monkeypatch is installed — import-time config, scheduler and auto-resume
+    state — lands on the per-user state root, i.e. the real ``~/.aletheia``. That
+    is the mechanism behind the standing "do not run two suites concurrently"
+    rule: two test processes owning one production directory.
+
+    So when the variable is unset, root the session to a fresh temporary
+    directory and say so. An explicitly set value is respected, but pointing it at
+    the production directory is called out rather than obeyed silently.
+    """
+    from aletheia.runtime_paths import default_runtime_home
+
+    configured = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+    production = default_runtime_home().resolve()
+    if not configured:
+        session_root = Path(tempfile.mkdtemp(prefix="aletheia-pytest-")).resolve()
+        os.environ["ALETHEIA_DATA_DIR"] = str(session_root)
+        config._aletheia_session_root = session_root
+        print(
+            f"\n[conftest] ALETHEIA_DATA_DIR was unset; rooted tests to {session_root} "
+            f"so no test process can write {production}."
+        )
+        return
+    if Path(configured).resolve() == production:
+        print(
+            f"\n[conftest] WARNING: ALETHEIA_DATA_DIR is the production data directory "
+            f"({production}); this run can modify real runtime state."
+        )
+
+
+def pytest_unconfigure(config) -> None:
+    session_root = getattr(config, "_aletheia_session_root", None)
+    if session_root is None:
+        return
+    shutil.rmtree(session_root, ignore_errors=True)
+
+
 def pytest_configure(config):
+    _configure_test_data_dir(config)
     _configure_xdist_runtime_dir(config)
     for marker in _PYTEST_MARKERS:
         config.addinivalue_line("markers", marker)
