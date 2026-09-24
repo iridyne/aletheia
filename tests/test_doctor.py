@@ -1070,6 +1070,8 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
 def test_doctor_fetch_failure_is_machine_visible_and_nonzero(monkeypatch):
     import json
 
+    import ops.update.git_ops as ops_git_ops
+
     from aletheia.main import app
     from aletheia.update import git_ops
     from typer.testing import CliRunner
@@ -1077,7 +1079,7 @@ def test_doctor_fetch_failure_is_machine_visible_and_nonzero(monkeypatch):
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(
-        git_ops,
+        ops_git_ops,
         "fetch",
         lambda _branch: {
             "ok": False,

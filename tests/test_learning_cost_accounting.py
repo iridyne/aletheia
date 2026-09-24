@@ -4,10 +4,11 @@ from tests.test_learning_hypothesis_nominations import _envelope
 
 
 def test_nomination_manifest_cost_is_reported_without_fabricated_runtime_cost():
-    from extensions.learning.hypothesis_compiler import (
-        admit_nomination_to_shadow,
-        assess_experimentability,
-    )
+    """Shadow admission was retired; Knowledge Yield now reports unavailable
+    via Observation Lab authority (not yet wired). Verify cost accounting
+    does not fabricate runtime cost when unavailable.
+    """
+    from extensions.learning.hypothesis_compiler import assess_experimentability
     from extensions.learning.hypotheses import publish_hypothesis_nomination
     from extensions.learning.knowledge_yield import build_knowledge_yield_report
 
@@ -26,18 +27,15 @@ def test_nomination_manifest_cost_is_reported_without_fabricated_runtime_cost():
         required_samples_per_arm=50,
         required_market_days=7,
     )
-    assert admit_nomination_to_shadow(nomination.nomination_id, preflight) is not None
+    assert preflight.status in {"ready", "slow_but_viable", "not_experimentable_now"}
 
     report = build_knowledge_yield_report(
         window_start="2000-01-01T00:00:00+00:00",
         window_end="2999-01-01T00:00:00+00:00",
         path_id="ranker_case_score",
     )
-    assert len(report.slices) == 1
-    result = report.slices[0]
-    assert result.hypotheses_entering_prospective_test_n == 1
-    assert result.qualified_economic_knowledge_n == 0
-    assert result.knowledge_yield == 0.0
-    assert result.estimated_generation_cost_usd == 0.01
-    assert result.availability == "complete"
-    assert result.unavailable_reasons == []
+    assert report.slices == []
+    assert report.availability == "unavailable"
+    assert "canonical_lab" in report.unavailable_reasons[0]
+    assert report.generation_cost_availability == "unavailable"
+    assert report.total_recorded_generation_cost_usd is None
