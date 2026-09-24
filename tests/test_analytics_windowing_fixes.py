@@ -19,9 +19,14 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
 
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
@@ -55,14 +60,13 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
-    """Seed ordered verified external closes through the shared outcome producer."""
-    from datetime import datetime, timedelta, timezone
+def _seed_positions(hours_after_anchor_list: list[int], pnl: float = 1.0) -> None:
+    """Seed ordered verified external closes after the anchor. All positions
+    are eligible (`outcome_eligible=True`) because they close after the floor."""
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    now = datetime.now(timezone.utc)
-    for i, days_ago in enumerate(days_ago_list):
-        closed_at = (now - timedelta(days=days_ago) + timedelta(minutes=i)).isoformat()
+    for i, hours_offset in enumerate(hours_after_anchor_list):
+        closed_at = (_ANCHOR + timedelta(hours=hours_offset, minutes=i)).isoformat()
         _insert_closed_position_via_producer(
             position_id=f"window-position-{i}", symbol=f"SEED{i}/USDT",
             market_type="spot", direction="long", quantity=1.0, entry_price=100.0,
@@ -80,8 +84,8 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     """#124: with more closes than the LIMIT, the ASC-limit SQL used to keep
     the oldest rows — the equity curve froze. Now we keep the newest."""
     _setup_env(tmp_path, monkeypatch)
-    # Seed 10 ordered closes after the versioned clean-window anchor.
-    _seed_positions(days_ago_list=list(range(30, 0, -3)))  # 30, 27, 24, ..., 3
+    # Seed 10 ordered closes after the anchor, spanning 1 to 10 hours.
+    _seed_positions(hours_after_anchor_list=list(range(10, 0, -1)))
 
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
@@ -89,19 +93,15 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # limit=3 forces truncation — we should get the 3 MOST RECENT closes,
-        # not the 3 oldest. The response may include the cumulative baseline
-        # immediately before the selected closes, so use a 15-day boundary:
-        # it still distinguishes the recent 9/6/3-day window from 30/27/24.
+        # not the 3 oldest. The boundary distinguishes the recent 3-hour window
+        # (3h, 2h, 1h after anchor) from the old 10/9/8-hour window.
         r = await client.get("/api/analytics/equity-curve?limit=3")
 
     assert r.status_code == 200
     points = r.json()["points"]
     assert len(points) == 3, f"expected 3 points; got {len(points)}"
 
-    from datetime import datetime, timedelta, timezone
-    recent_window_start = (
-        datetime.now(timezone.utc) - timedelta(days=15)
-    ).isoformat()
+    recent_window_start = (_ANCHOR + timedelta(hours=5)).isoformat()
     for p in points:
         assert p["time"] > recent_window_start, (
             f"equity-curve returned an OLD point {p['time']!r} under limit=3 — "

@@ -10,6 +10,9 @@ from aletheia.analytics.factor_feedback import (
     _compute_group_stats,
     _max_consecutive_losses,
 )
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
 
 
 def _eligible_factor_row(
@@ -245,13 +248,13 @@ def test_build_factor_feedback_groups():
         _eligible_factor_row(
             position_id="g1", symbol="BTC/USDT", direction="long",
             realized_pnl=10.0, holding_hours=4.0, close_reason="take_profit",
-            closed_at="2026-07-12T08:01:00+00:00", confidence_score=75,
+            closed_at=(_ANCHOR + timedelta(hours=1)).isoformat(), confidence_score=75,
             confidence="high", late_entry_penalty=5.0,
         ),
         _eligible_factor_row(
             position_id="g2", symbol="ETH/USDT", direction="short",
             realized_pnl=-2.0, holding_hours=1.0, close_reason="stop_loss",
-            closed_at="2026-07-12T08:02:00+00:00", confidence_score=60,
+            closed_at=(_ANCHOR + timedelta(hours=2)).isoformat(), confidence_score=60,
             confidence="medium", late_entry_penalty=0.0,
         ),
     ]
