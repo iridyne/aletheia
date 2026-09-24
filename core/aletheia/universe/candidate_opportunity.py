@@ -10,6 +10,8 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from aletheia.universe.economic_utility import reason_proves_evidence_absent
+
 
 CANDIDATE_OPPORTUNITY_CONTEXT_VERSION = "candidate-opportunity-context/v1"
 OPPORTUNITY_HORIZON = "4h"
@@ -106,9 +108,7 @@ class CandidateOpportunityContextV1(BaseModel):
             if (
                 selection.get("policy") != "candidate_selection_utility_v1"
                 or selection.get("decision_version") != "candidate-selection-utility/v2"
-                or startup_reason not in {
-                    "no_history", "parent_sample_insufficient", "child_sample_insufficient",
-                }
+                or not reason_proves_evidence_absent(startup_reason)
                 or utility is not None
                 or opportunity.get("mechanism_source") != "target_authority"
                 or opportunity.get("capability_status") != "supported"

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import random
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.config.schema import UniverseConfig
 from extensions.learning.registry import get_learning_path
 from aletheia.storage import repositories as repo
@@ -92,13 +94,26 @@ def _input(
     )
 
 
+def _after_anchor(**delta) -> str:
+    """A capture time inside the clean window.
+
+    Twin-shadow evaluation only counts clusters at or after the clean-window
+    anchor, and that anchor moves whenever attribution integrity is re-anchored.
+    Absolute literals silently drop out of the window at the next re-anchor and the
+    cohort reads as empty (`complete_cluster_n == 0`), so capture times are derived
+    from the anchor.
+    """
+    return (datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(**delta)).isoformat()
+
+
 def _bundle(
     scanner_run_id: str,
     *,
-    captured_at: str = "2026-08-08T00:00:00+00:00",
+    captured_at: str | None = None,
     no_chase: bool = False,
     include_directionless: bool = False,
 ):
+    captured_at = captured_at or _after_anchor(minutes=1)
     inputs = [
         _input(feature_id=f"{scanner_run_id}-1", symbol="BTC/USDT"),
         _input(
@@ -347,7 +362,7 @@ def test_task6_bundle_persistence_is_atomic_with_outcome_registration() -> None:
     assert repo.list_open_universe_twin_outcome_candidate_keys() == pending_keys
     repo.get_db().execute(
         "UPDATE learning_policy_epochs SET ended_at=? WHERE epoch_id=?",
-        ("2026-08-08T01:00:00+00:00", bundle.batch.policy_epoch_id),
+        (_after_anchor(hours=1, minutes=1), bundle.batch.policy_epoch_id),
     )
     assert repo.list_open_universe_twin_outcome_candidate_keys() == pending_keys
     assert all(bool(row["allocation_selected"]) for row in rows)
@@ -400,7 +415,7 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote(monkeyp
     while arms != {"control", "treatment"} and index < 100:
         bundle = _bundle(
             f"run-eval-{index}",
-            captured_at=f"2026-08-08T{index % 24:02d}:00:00+00:00",
+            captured_at=_after_anchor(minutes=1, hours=index % 24),
         )
         bundles.append(bundle)
         arms.add(bundle.batch.assignment_arm)

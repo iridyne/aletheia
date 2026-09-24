@@ -176,6 +176,53 @@ def test_versioned_clean_window_excludes_pre_anchor_incident_and_unknown_version
     assert assess_outcome_window(base) == "eligible"
 
 
+def test_clean_window_dependent_fixtures_derive_timestamps_from_the_anchor():
+    """Fixtures gated by the clean window must anchor, not hardcode a date.
+
+    The anchor is a real moving boundary: it advances whenever attribution
+    integrity is re-anchored. A fixture timestamp written as an absolute literal
+    sits inside the window only until the next bump, then falls out — and the
+    failure is silent and misleading, because the cohort simply reads as empty.
+    That is exactly how test_universe_calibration, test_universe_twin_experiment
+    and three test_filter_shadow_experiments cases went red for weeks
+    (KeyError on a present cohort, `complete_cluster_n == 0`,
+    `insufficient_data` instead of `positive`) and read as regressions.
+
+    Any test module that imports the anchor is asserting clean-window behavior,
+    so its own fixture timestamps must be derived from the anchor.
+    """
+    import ast
+    from datetime import datetime
+    from pathlib import Path
+
+    from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+    anchor = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
+    tests_root = Path(__file__).parent
+    offenders = []
+    for path in sorted(tests_root.glob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "CLEAN_WINDOW_ANCHOR_ISO" not in source and "LEARNING_DATA_FLOOR_ISO" not in source:
+            continue  # not a clean-window-dependent module
+        for node in ast.walk(ast.parse(source)):
+            # `datetime(2026, 7, 20, ...)` built from integer literals
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "datetime" and len(node.args) >= 3
+                    and all(isinstance(a, ast.Constant) and isinstance(a.value, int) for a in node.args[:3])):
+                year, month, day = (a.value for a in node.args[:3])
+                try:
+                    built = datetime(year, month, day, tzinfo=anchor.tzinfo)
+                except ValueError:
+                    continue
+                if built < anchor.replace(hour=0, minute=0, second=0, microsecond=0):
+                    offenders.append(f"{path.name}:{node.lineno} datetime({year}, {month}, {day}, ...)")
+    assert not offenders, (
+        "these clean-window-dependent fixtures hardcode a pre-anchor date and will "
+        "silently fall out of the window at the next re-anchor; derive them from "
+        f"CLEAN_WINDOW_ANCHOR_ISO instead: {offenders}"
+    )
+
+
 def test_apply_rolls_back_classification_when_archive_step_fails():
     from ops.maintenance.outcome_integrity import remediate_outcome_history
     from aletheia.storage.sqlite import get_db

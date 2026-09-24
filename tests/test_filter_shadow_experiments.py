@@ -4,6 +4,21 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+
+def _anchor(**delta) -> datetime:
+    """A start time inside the clean window.
+
+    Shadow evaluation only counts exposures at or after the clean-window anchor,
+    and that anchor moves whenever attribution integrity is re-anchored. A start
+    written as an absolute literal silently falls out of the window at the next
+    re-anchor: the cohort reads as empty and the verdict degrades to
+    `insufficient_data`. Anchoring keeps each test's relative spacing while staying
+    inside the window.
+    """
+    return datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(**delta)
+
 
 @pytest.fixture(autouse=True)
 def lab_authority():
@@ -137,7 +152,7 @@ def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
     from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    started_at = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    started_at = _anchor(minutes=1)
     first = register_replay_ready_experiments([_ready_replay(filter_version="fixed-v1")], now=started_at)
     second = register_replay_ready_experiments(
         [_ready_replay(filter_version="fixed-v1", ttl_sec=7200)], now=started_at + timedelta(hours=1),
@@ -159,7 +174,7 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
     )
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    start = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _record_ttl_candidate(
         key="opportunity:historical-version-source",
         # This row exists before registration at the exact same timestamp. A
@@ -216,7 +231,7 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-canonical-test")
-    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _record_ttl_candidate(
         key="opportunity:lab-filter-history",
         evaluated_at=start,
@@ -340,7 +355,7 @@ def test_lab_filter_shadow_registration_reports_idempotent_repeat():
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-registration-test")
-    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     replay = _ready_replay(filter_version="lab-repeat-v1")
 
     assert register_replay_ready_experiments([replay], now=start) == {
@@ -365,7 +380,7 @@ def test_lab_filter_shadow_respects_half_open_collect_interval():
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-half-open-test")
-    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _record_ttl_candidate(
         key="opportunity:at-collect-until",
         evaluated_at=start + timedelta(hours=1),
@@ -413,7 +428,7 @@ def test_lab_filter_shadow_rejects_malformed_source_time():
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="filter-shadow-invalid-time-test")
-    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _record_ttl_candidate(
         key="opportunity:malformed-source-time",
         evaluated_at=start + timedelta(minutes=1),
@@ -503,7 +518,7 @@ def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
 
     reset_lab_db()
     set_authority_source("lab", actor="owner", reason="observer-filter-shadow-canonical-test")
-    start = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
 
     def add_candidate(key: str, when: datetime, decision: str, inputs: dict) -> str:
         record_filter_decision(
@@ -622,7 +637,7 @@ def test_observer_pre_filter_replay_registers_least_permissive_winner():
     )
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    started_at = _anchor(minutes=1)
     replay = _ready_observer_replay(filter_version="obs-fixed-v1")
 
     summary = register_replay_ready_experiments([replay], now=started_at)
@@ -650,7 +665,7 @@ def test_observer_replay_without_ready_alternatives_is_skipped():
     )
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    started_at = _anchor(minutes=1)
     replay = _ready_observer_replay(filter_version="obs-empty-v1")
     for alt in replay["alternatives"]:
         alt["readiness"] = "no_support"
@@ -682,7 +697,7 @@ def test_shadow_experiment_invalidates_when_production_filter_version_changes():
     )
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    start = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _record_ttl_candidate(
         key="opportunity:version-source",
         evaluated_at=start - timedelta(minutes=1),
@@ -802,17 +817,22 @@ def test_frozen_units_use_exact_first_exposure_within_same_second():
     from extensions.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
-    started_at = datetime(2026, 8, 30, 10, 0, 0, 50_000, tzinfo=timezone.utc)
+    # Registration must precede both exposures, and the two exposures must land in
+    # the same second so this test still exercises sub-second first-exposure
+    # ordering. Both are derived from the anchor so the pair moves together.
+    started_at = _anchor(minutes=1)
+    newer_at = _anchor(minutes=1, seconds=1, microseconds=900_000).isoformat()
+    older_at = _anchor(minutes=1, seconds=1, microseconds=100_000).isoformat()
     register_replay_ready_experiments([_ready_ranker_replay()], now=started_at)
     db = get_db()
     rows = [
         (
             "frozen-newer", "frozen-newer", "frozen-newer", "rejected",
-            "2026-08-30T10:00:00.900000+00:00", '{"minimum_confidence":"high"}',
+            newer_at, '{"minimum_confidence":"high"}',
         ),
         (
             "frozen-older", "frozen-older", "frozen-older", "passed",
-            "2026-08-30T10:00:00.100000+00:00", '{"minimum_confidence":"high"}',
+            older_at, '{"minimum_confidence":"high"}',
         ),
     ]
     db.executemany(
@@ -831,7 +851,7 @@ def test_frozen_units_use_exact_first_exposure_within_same_second():
         "SELECT assignment, exposed_at FROM observation_exposures WHERE observation_id=?", (root,),
     )]
     assert [(unit["assignment"], unit["exposed_at"]) for unit in units] == [
-        ("control", "2026-08-30T10:00:00.100000+00:00")
+        ("control", older_at)
     ]
 
 
@@ -872,7 +892,7 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
     )
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _seed_ranker_cohort(start, count=20)
 
@@ -910,7 +930,7 @@ def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze()
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
     from extensions.observation_lab.db import get_lab_db
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _record_ranker_candidate(
         key="opportunity:mean_reversion:compatible",
@@ -951,7 +971,7 @@ def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
     from aletheia.storage.sqlite import get_db
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _record_ranker_candidate(
         key="opportunity:mean_reversion:malformed-parameters",
@@ -978,7 +998,7 @@ def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
     from extensions.counterfactual import filter_experiments as fe
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _seed_ranker_cohort(start, count=5)  # small — semantics change, no need for gate
     experiment = list_filter_shadow_observations()[0]
@@ -1007,7 +1027,7 @@ def test_two_ranker_experiments_collect_independently():
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
     from extensions.observation_lab.db import get_lab_db
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     for family in ("mean_reversion", "momentum"):
         register_replay_ready_experiments([_ready_ranker_replay(scanner_family=family)], now=start)
     _seed_ranker_cohort(start, count=10, scanner_family="mean_reversion")
@@ -1029,7 +1049,7 @@ def test_controller_lab_pass_advances_canonical_observation():
     from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.db import get_lab_db
 
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    start = _anchor(minutes=1)
     version = _seed_ranker_cohort(start, count=20)
     register_replay_ready_experiments([_ready_ranker_replay(filter_version=version)], now=start)
     lab = get_lab_db()

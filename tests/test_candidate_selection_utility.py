@@ -1833,3 +1833,44 @@ def test_admission_consumes_estimator_classification_not_its_own_literals():
         assert decision.admission_basis is None
     # An unclassified reason fails closed.
     assert decide("unknown_future_reason").admission_status == "unavailable"
+
+
+def test_no_module_reimplements_the_reason_classification_from_literals():
+    """The classification has exactly one owner.
+
+    Four modules had each hardcoded the same three-literal scarcity set. Admission
+    consulted one, the shadow target projection a second, the Opportunity context
+    validator a third, so fixing one site left the others contradicting it: the
+    live runtime admitted 21 Candidates and then failed the whole scan with
+    `candidate_opportunity_startup_invalid`. Any module deciding startup lawfulness
+    must call `reason_proves_evidence_absent` instead of restating the members.
+    """
+    import ast
+    from pathlib import Path
+
+    from aletheia.universe import economic_utility as eu
+
+    owner = Path(eu.__file__).resolve()
+    root = owner.parent.parent  # core/aletheia
+    scarcity_markers = {"no_history", "parent_sample_insufficient", "child_sample_insufficient"}
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path.resolve() == owner:
+            continue  # the owner is allowed to name its own members
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Set, ast.FrozenSet) if hasattr(ast, "FrozenSet") else ast.Set):
+                continue
+            members = {e.value for e in node.elts
+                       if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            # A set literal that reproduces two or more scarcity reasons is a
+            # second implementation of the classification.
+            if len(members & scarcity_markers) >= 2:
+                offenders.append(f"{path.relative_to(root)}:{node.lineno} -> {sorted(members & scarcity_markers)}")
+    assert not offenders, (
+        "these modules restate the economic-reason classification instead of calling "
+        "reason_proves_evidence_absent(): " + "; ".join(offenders)
+    )
