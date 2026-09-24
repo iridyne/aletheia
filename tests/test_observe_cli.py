@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from aletheia.cli.observe_cmd import observe_app
+
+
+def _collecting_window_times() -> tuple[str, str, str]:
+    """A window whose phase is `collecting` whenever the test runs.
+
+    `_phase` compares collect_until against the clock, so a window pinned to
+    2026-09-15 reported `collecting` only until that date and then flipped to
+    `ready_to_finalize`. The assertion had nothing to do with calendar dates, so
+    the bounds are relative to now.
+    """
+    now = datetime.now(timezone.utc)
+    return (
+        (now - timedelta(days=14)).isoformat(),
+        (now + timedelta(days=14)).isoformat(),
+        (now + timedelta(days=15)).isoformat(),
+    )
 
 
 @pytest.fixture()
@@ -130,9 +147,9 @@ def test_observe_status_bootstraps_builtin_handlers_without_writing_window(
         slot_key="universe_discovery_benchmark",
         authority_mode="observe_only",
         spec={"contract": "frozen"},
-        started_at="2026-09-01T00:00:00+00:00",
-        collect_until="2026-09-15T00:00:00+00:00",
-        finalize_not_before="2026-09-16T06:00:00+00:00",
+        started_at=_collecting_window_times()[0],
+        collect_until=_collecting_window_times()[1],
+        finalize_not_before=_collecting_window_times()[2],
     )
     before = get_lab_db().execute(
         "SELECT last_error,last_advanced_at FROM observation_windows "
@@ -185,9 +202,9 @@ def test_observe_status_keeps_unknown_durable_handler_unavailable(
         slot_key="unknown-domain",
         authority_mode="observe_only",
         spec={},
-        started_at="2026-09-01T00:00:00+00:00",
-        collect_until="2026-09-15T00:00:00+00:00",
-        finalize_not_before="2026-09-16T06:00:00+00:00",
+        started_at=_collecting_window_times()[0],
+        collect_until=_collecting_window_times()[1],
+        finalize_not_before=_collecting_window_times()[2],
     )
     kernel._HANDLERS.clear()
 

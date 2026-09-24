@@ -1,5 +1,7 @@
 """Executable boundary claims for the current Learning contract."""
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -113,3 +115,35 @@ def test_entry_learning_projection_is_read_only_and_full_denominator():
     )
     assert empty.status == "unavailable"
     assert empty.evidence_refs == ()
+
+
+@spec_claim(SpecClaim(
+    "LC-S04", _CONTRACT, "§numeric treatment authority", "L2a",
+    "A numeric Learning treatment rejects non-finite values: NaN or infinity "
+    "cannot become a multiplier a consumer applies to live scoring.",
+    status="implemented",
+))
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_numeric_treatment_rejects_non_finite_values(invalid):
+    """Moved here from tests/specs/spec_learning_authority.py.
+
+    That module lived under tests/specs/ but registered no SpecClaim, so the
+    conformance matrix collected it and reported a permanent gap while the test
+    itself passed. A guard in the spec directory has to carry a claim; otherwise it
+    is an ordinary unit test sitting in the wrong place and it makes the matrix lie.
+    """
+    from extensions.learning.experiments import apply_numeric_treatment
+
+    with pytest.raises(ValueError, match="must be finite"):
+        apply_numeric_treatment(
+            path_id="universe_family_calibration",
+            scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+            action={"type": "opportunity_multiplier", "multiplier": 1.1},
+            source_cohort="universe_forward_outcomes:clean_net:v2",
+            target_horizon="4h",
+            candidate_key="non-finite-candidate",
+            baseline=0.0,
+            treatment=invalid,
+            consumer="universe_allocator",
+            consumer_stage="opportunity_score",
+        )

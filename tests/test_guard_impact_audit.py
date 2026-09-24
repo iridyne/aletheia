@@ -155,7 +155,13 @@ def _insert_keyed_shadow_with_canonical(
 
 
 def test_guard_impact_read_model_has_no_llm_http_or_exchange_calls():
-    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "guard_impact.py"
+    # Resolved from the module rather than a hardcoded path. #3134 moved this
+    # read model from core/ into extensions/, and the literal path then raised
+    # FileNotFoundError — so this audit silently stopped checking its invariant
+    # instead of failing loudly about the move.
+    from extensions.analytics import guard_impact
+
+    src_path = Path(guard_impact.__file__)
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {

@@ -94,7 +94,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
 
 @spec_claim(
     SpecClaim(
-        "EX-B20",
+        "EX-B21",
         "execution_contract",
         "§11.6 UTA identity resolved from position order_id",
         "L2b",
