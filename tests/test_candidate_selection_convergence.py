@@ -205,6 +205,34 @@ def test_candidate_ranking_matches_frozen_a_baseline(with_history):
         assert actual_row["candidate"] == expected_row["candidate"]
 
 
+def test_frozen_baseline_cannot_encode_structurally_impossible_candidates():
+    """A frozen expectation is only authoritative if it is physically possible.
+
+    The startup arm used to freeze spot+short rows at ranks 2 and 3. Spot has no
+    native short-entry capability, so the fixture was preserving a defect: when
+    #8d2968e91 started rejecting those Candidates the test went red and read as a
+    regression. Rank order and economics stay frozen; what cannot be frozen is an
+    instrument/direction pair the entry layer refuses outright.
+    """
+    import json
+    from pathlib import Path
+
+    from aletheia.trading.entry_plan import entry_instrument_violation
+
+    golden = json.loads((Path(__file__).parent / "fixtures/candidate_planning_a4a4074f7.json").read_text())
+    for arm in ("measured", "startup"):
+        for row in golden[arm]:
+            candidate = row["candidate"]
+            violation = entry_instrument_violation(
+                str(candidate["market_type"]), str(candidate["scanner_direction"])
+            )
+            assert violation is None, (
+                f"{arm} baseline rank {row['rank']} freezes {candidate['symbol']} as "
+                f"{candidate['market_type']}/{candidate['scanner_direction']}, which entry "
+                f"refuses ({violation}). Re-freeze the arm from real output instead."
+            )
+
+
 def test_runtime_commit_is_attested_provenance_not_causal_identity():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RuntimeSession
