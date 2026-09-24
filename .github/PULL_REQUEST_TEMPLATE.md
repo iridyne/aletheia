@@ -34,7 +34,10 @@ For D0, the canonical Contract / SpecClaim / Proposal rows are normally not appl
 - [ ] D2: This change is covered by an accepted `docs/design/proposals/` Proposal.
 - [ ] Product Capability Ground Truth updated — only if a production capability
       genuinely changed (test-level conformance alone does not qualify).
-- [ ] Runtime / economic qualification required: _describe or link_ / Not required.
+- [ ] Runtime evidence — pick exactly one; an empty answer is not acceptable:
+      - [ ] Observed: _Fedora cycle / order id / Outcome — the actual observation._
+      - [ ] Not applicable because: _why this change cannot produce runtime evidence._
+      - [ ] Blocked on: _exactly what is missing, and who can unblock it — file or link the Issue._
 - [ ] `uv run python scripts/check_docs.py` passes.
 
 ## Non-goals / out-of-scope
@@ -50,7 +53,8 @@ D0 — Conformance Repair:
   Existing Contract: "Incomplete realized economics MUST fail closed."
   SDD Depth: D0 | Contract Delta: NONE
   Fix: code returned partial numeric PnL; corrected + regression test added.
-  Runtime qualification: Not required.
+  Runtime evidence: Not applicable because — the correction is a pure function of
+  inputs already covered by the regression; no runtime path changes.
 
 D1 — Semantics Change:
   SDD Depth: D1
