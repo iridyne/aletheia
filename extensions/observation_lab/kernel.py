@@ -118,6 +118,27 @@ def active_window(
     return dict(result) if result else None
 
 
+def active_window_ids(*, kind: str | None = None, db=None) -> tuple[str, ...]:
+    """Every observation_id with an ``active`` window.
+
+    ``active`` is the Lab's only non-terminal status, so this is the set of Lab
+    windows that still own their pending evidence. Callers that must decide
+    whether stored evidence can still be settled need the whole set, not just the
+    most recent window ``active_window`` returns.
+    """
+    clauses = ["status='active'"]
+    params: list[Any] = []
+    if kind is not None:
+        clauses.append("kind=?")
+        params.append(kind)
+    rows = (db or get_lab_db()).execute(
+        f"SELECT DISTINCT observation_id FROM observation_windows "
+        f"WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchall()
+    return tuple(str(row[0]) for row in rows)
+
+
 def start_window(
     *,
     observation_id: str,
@@ -859,6 +880,7 @@ __all__ = [
     "abort_window",
     "active_retention_claims",
     "active_window",
+    "active_window_ids",
     "advance_windows",
     "capture_event",
     "finalize_window",

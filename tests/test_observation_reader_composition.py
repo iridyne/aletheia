@@ -143,7 +143,7 @@ except ModuleNotFoundError as exc:
     assert missing == "broken_lab_dependency" and exc.name == missing
 else:
     assert missing != "broken_lab_dependency"
-    bindings = [repo._lab_authority, repo._lab_retention_floor, repo._lab_retention_refs, repo._lab_priority_keys, repo._lab_active_benchmark, repo._lab_outcome_guard]
+    bindings = [repo._lab_authority, repo._lab_retention_floor, repo._lab_retention_refs, repo._lab_priority_keys, repo._lab_active_benchmark, repo._lab_outcome_guard, repo._lab_live_window_ids]
     assert all(callback is None for callback in bindings) if missing else all(callable(callback) for callback in bindings)
 '''
     result = subprocess.run(

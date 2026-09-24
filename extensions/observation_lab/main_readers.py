@@ -129,3 +129,25 @@ def outcome_write_guard(window_id: str):
             except KeyError:
                 allowed = False
         yield allowed
+
+
+def live_benchmark_window_ids() -> frozenset[str]:
+    """Window ids ``outcome_write_guard`` would still allow.
+
+    The guard resolves a window through two authorities: the legacy registry for
+    windows it knows, the Lab for everything else — and refuses a window neither
+    of them has heard of. Batch callers (a close, a diagnostic) need the same
+    answer for many rows at once, so this returns it as a set instead of one
+    guard acquisition per row.
+
+    Raises ``ExperimentStateReadError`` when the Lab cannot be read, so a caller
+    never mistakes "the Lab is unavailable" for "no Lab window is live" and closes
+    evidence that is still owned.
+    """
+    from extensions.observation_lab.kernel import active_window_ids
+
+    ids = set(active_window_ids())
+    legacy = get_universe_discovery_benchmark()
+    if legacy is not None and str(legacy.get("status")) == "active":
+        ids.add(str(legacy["id"]))
+    return frozenset(ids)

@@ -1147,7 +1147,7 @@ try:
     from extensions.observation_lab.main_readers import (
         _canonical_lab_authority, _observation_retention_floor,
         _active_observation_claim_refs, list_observation_filter_outcome_priority_keys,
-        active_benchmark, outcome_write_guard,
+        active_benchmark, outcome_write_guard, live_benchmark_window_ids,
     )
 except ModuleNotFoundError as exc:
     if exc.name not in {"extensions", "extensions.observation_lab", "extensions.observation_lab.main_readers"}:
@@ -1159,6 +1159,7 @@ else:
         retention_refs=_active_observation_claim_refs,
         priority_keys=list_observation_filter_outcome_priority_keys,
         active_benchmark=active_benchmark, outcome_guard=outcome_write_guard,
+        live_window_ids=live_benchmark_window_ids,
     )
 
 

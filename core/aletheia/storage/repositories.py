@@ -97,21 +97,25 @@ _lab_retention_refs: Callable[[str], tuple[str, ...]] | None = None
 _lab_priority_keys: Callable[..., tuple[set[str], set[str]]] | None = None
 _lab_active_benchmark: Callable[[], dict | None] | None = None
 _lab_outcome_guard: Callable[[str], AbstractContextManager[bool]] | None = None
+_lab_live_window_ids: Callable[[], frozenset[str]] | None = None
 
 
 def configure_observation_readers(
     *, authority=None, retention_floor=None, retention_refs=None,
     priority_keys=None, active_benchmark=None, outcome_guard=None,
+    live_window_ids=None,
 ) -> None:
     """Compose optional Lab operations without querying runtime state."""
     global _lab_authority, _lab_retention_floor, _lab_retention_refs
     global _lab_priority_keys, _lab_active_benchmark, _lab_outcome_guard
+    global _lab_live_window_ids
     _lab_authority = authority
     _lab_retention_floor = retention_floor
     _lab_retention_refs = retention_refs
     _lab_priority_keys = priority_keys
     _lab_active_benchmark = active_benchmark
     _lab_outcome_guard = outcome_guard
+    _lab_live_window_ids = live_window_ids
 
 
 def _canonical_lab_authority() -> bool:
@@ -10158,16 +10162,42 @@ def finalize_universe_discovery_benchmark(
         )
         return bool(cur.rowcount == 1)
 
-# A row is provably unreachable only when the discovery-benchmark registry records
-# its benchmark as explicitly non-active. A window the registry has never heard of
-# is NOT unreachable: the Observation Lab owns that window's liveness and the
-# discovery priority path can still select it. Narrowing to "explicitly dead" is
-# what keeps this a strict subtraction from backlog instead of a guess about it.
+# A row is unreachable when the outcome write guard would refuse its window. The
+# guard resolves a window through two authorities — the legacy registry for windows
+# it knows, the Lab for everything else — and refuses a window neither has heard of.
+# "The registry has no active row" alone is NOT that question: it also matches a live
+# Lab-native window, and closing on it destroyed 96 live rows in
+# tests/test_universe_discovery_benchmark.py. So the narrow registry-only form below
+# is only the fallback for when the Lab reader is unavailable.
 FILTER_OUTCOME_BENCHMARK_DEAD_SQL = (
     "(benchmark_window_id IS NOT NULL AND EXISTS ("
     "SELECT 1 FROM universe_discovery_benchmarks b "
     "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status<>'active'))"
 )
+
+
+def filter_outcome_unreachable_predicate() -> tuple[str, tuple]:
+    """``(sql, params)`` for "this pending row can never be settled".
+
+    Mirrors ``outcome_write_guard`` as a set question so a batch caller asks it
+    once instead of once per row. When the Lab reader is unavailable the answer
+    degrades to the registry-only form, which treats a window the registry has
+    never seen as *reachable*: guessing the other way closes evidence a live Lab
+    window still owns.
+    """
+    live: frozenset[str] | None = None
+    if _lab_live_window_ids is not None:
+        try:
+            live = frozenset(_lab_live_window_ids())
+        except Exception:
+            live = None
+    if live is None:
+        return FILTER_OUTCOME_BENCHMARK_DEAD_SQL, ()
+    placeholders = ", ".join("?" for _ in live) or "''"
+    return (
+        f"(benchmark_window_id IS NOT NULL AND benchmark_window_id NOT IN ({placeholders}))",
+        tuple(sorted(live)),
+    )
 
 
 def list_pending_filter_candidate_outcomes(
@@ -10209,19 +10239,20 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
 
 
 def count_pending_filter_candidate_outcomes_unreachable_benchmark(before_ts: str) -> int:
-    """Due pending rows whose discovery benchmark is recorded as non-active.
+    """Due pending rows no settler can ever reach.
 
     Both the selector and the terminal-write guard refuse these rows, so they are
     not settler backlog: nothing will ever drain them. Counted separately so neither
     the settler log nor doctor reports them as a stalled settler.
     """
+    predicate, predicate_params = filter_outcome_unreachable_predicate()
     row = (
         get_db()
         .execute(
             "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
             "WHERE status = 'pending' AND due_at <= ? "
-            f"AND {FILTER_OUTCOME_BENCHMARK_DEAD_SQL}",
-            (before_ts,),
+            f"AND {predicate}",
+            (before_ts, *predicate_params),
         )
         .fetchone()
     )
@@ -10231,12 +10262,11 @@ def count_pending_filter_candidate_outcomes_unreachable_benchmark(before_ts: str
 def close_pending_filter_outcomes_for_inactive_benchmarks(*, at: str) -> int:
     """Give a terminal disposition to pending rows no settler can ever reach.
 
-    A discovery benchmark the registry records as non-active can never settle its
-    outcomes: both the selector and the terminal write guard refuse them. Leaving
-    those rows ``pending`` is a claim that they are backlog that drains on its own,
-    and they never will — so they move to ``invalidated``.
+    A window the outcome write guard refuses can never settle its outcomes, so
+    leaving those rows ``pending`` is a claim that they are backlog that drains on
+    its own, and they never will — so they move to ``invalidated``.
 
-    Not bounded by ``due_at``: a row whose benchmark is already dead is unreachable
+    Not bounded by ``due_at``: a row whose window is already dead is unreachable
     whether or not its horizon has elapsed. Never writes an economics column and
     never deletes history — the row keeps its identity, prices, entry and due
     timestamps; only ``status`` changes. ``settled_at`` is deliberately left NULL:
@@ -10248,11 +10278,13 @@ def close_pending_filter_outcomes_for_inactive_benchmarks(*, at: str) -> int:
     has no invalidation-timestamp column to carry it.
     """
     del at
+    predicate, predicate_params = filter_outcome_unreachable_predicate()
     with transaction(immediate=True, savepoint=True):
         cursor = execute_write(
             "UPDATE filter_candidate_outcomes SET status='invalidated' "
             "WHERE status='pending' "
-            f"AND {FILTER_OUTCOME_BENCHMARK_DEAD_SQL}",
+            f"AND {predicate}",
+            predicate_params,
         )
         return int(cursor.rowcount or 0)
 
@@ -10374,6 +10406,7 @@ def list_pending_filter_candidate_outcomes_for_keys(
     matched_ids: list[str] = []
     scanned = 0
     truncated = False
+    unreachable_sql, unreachable_params = filter_outcome_unreachable_predicate()
     # Keyset pagination over (due_at, id) so each batch is an ordered index range
     # read rather than a growing OFFSET scan. Only the four columns needed to test
     # membership are read here; full rows are fetched for matches alone.
@@ -10390,12 +10423,12 @@ def list_pending_filter_candidate_outcomes_for_keys(
             "SELECT id, outcome_candidate_key, horizon, due_at "
             "FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at <= ? "
-            f"AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
+            f"AND NOT {unreachable_sql} "
             "AND typeof(venue) = 'text' "
             f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
             "AND (due_at > ? OR (due_at = ? AND id > ?)) "
             "ORDER BY due_at ASC, id ASC LIMIT ?",
-            (before_ts, last_due, last_due, last_id, _PRIORITY_SCAN_BATCH_ROWS),
+            (before_ts, *unreachable_params, last_due, last_due, last_id, _PRIORITY_SCAN_BATCH_ROWS),
         ).fetchall()
         if not rows:
             break

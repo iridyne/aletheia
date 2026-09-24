@@ -737,6 +737,69 @@ def test_settler_closes_outcomes_whose_benchmark_can_never_settle():
     assert repo.close_pending_filter_outcomes_for_inactive_benchmarks(at="t") == 0
 
 
+def _insert_windowed_outcome(row_id: str, window: str | None) -> None:
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "INSERT INTO filter_candidate_outcomes (id, outcome_candidate_key, venue, "
+        "symbol, market_type, direction, scanner_family, horizon, entry_price_usd, "
+        "entry_ts, due_at, status, benchmark_window_id) "
+        "VALUES (?,?,'binance','BTC/USDT','spot','long','momentum','1h',100.0,"
+        "datetime('now','-3 hours'),datetime('now','-2 hours'),'pending',?)",
+        (row_id, f"key-{row_id}", window),
+    )
+    get_db().commit()
+
+
+def _statuses() -> dict[str, str]:
+    from aletheia.storage.sqlite import get_db
+
+    return {
+        str(row["id"]): str(row["status"])
+        for row in get_db().execute("SELECT id, status FROM filter_candidate_outcomes")
+    }
+
+
+def test_close_treats_a_window_no_authority_owns_as_unreachable(monkeypatch):
+    """A window neither the registry nor the Lab owns can never be written.
+
+    ``outcome_write_guard`` refuses a window neither authority knows, so leaving
+    those rows pending is the same lie as the registry-invalidated class.
+    """
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "_lab_live_window_ids", lambda: frozenset({"w-live"}))
+    _insert_windowed_outcome("fco-orphan", "w-orphan")
+    _insert_windowed_outcome("fco-lab", "w-live")
+    _insert_windowed_outcome("fco-unwindowed", None)
+
+    assert repo.close_pending_filter_outcomes_for_inactive_benchmarks(at="t") == 1
+    assert _statuses() == {
+        "fco-orphan": "invalidated",
+        "fco-lab": "pending",
+        "fco-unwindowed": "pending",
+    }
+
+
+def test_close_never_guesses_when_the_lab_is_unavailable(monkeypatch):
+    """An unreadable Lab must not look like "no Lab window is live".
+
+    Degrading to "close everything windowed" would destroy evidence a live Lab
+    window still owns, which is exactly how the wider predicate once closed 96
+    live rows in tests/test_universe_discovery_benchmark.py.
+    """
+    from aletheia.storage import repositories as repo
+
+    def unavailable() -> frozenset[str]:
+        raise RuntimeError("lab unavailable")
+
+    monkeypatch.setattr(repo, "_lab_live_window_ids", unavailable)
+    _insert_windowed_outcome("fco-orphan-unreadable", "w-orphan")
+
+    assert repo.close_pending_filter_outcomes_for_inactive_benchmarks(at="t") == 0
+    assert _statuses() == {"fco-orphan-unreadable": "pending"}
+
+
 def test_doctor_reports_destroyed_evidence_and_how_to_reclaim_it():
     """Every other number in this probe drains on its own; this one does not.
 

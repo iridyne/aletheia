@@ -3552,11 +3552,13 @@ def _probe_filter_evidence(report: Report) -> None:
     """Report whether filter pass/reject facts and their net outcomes are connected."""
     try:
         from aletheia.storage.repositories import (
-            FILTER_OUTCOME_BENCHMARK_DEAD_SQL,
             complete_outcome_economics_sql,
             count_pending_filter_candidate_outcomes_unreachable_benchmark,
+            filter_outcome_unreachable_predicate,
         )
         from aletheia.storage.sqlite import get_db
+
+        unreachable_sql, unreachable_params = filter_outcome_unreachable_predicate()
 
         db = get_db()
         decisions = db.execute(
@@ -3615,13 +3617,13 @@ def _probe_filter_evidence(report: Report) -> None:
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
-            f"  AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
+            f"  AND NOT {unreachable_sql} "
             "  THEN 1 ELSE 0 END) AS overdue, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
-            f"  AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
+            f"  AND NOT {unreachable_sql} "
             "  THEN 1 ELSE 0 END) AS stale_overdue "
             "FROM filter_candidate_outcomes",
-            (now_iso, stale_before),
+            (now_iso, *unreachable_params, stale_before, *unreachable_params),
         ).fetchone()
         from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 
