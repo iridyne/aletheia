@@ -22,7 +22,7 @@ from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
 _VENUES = EXECUTION_MODE_VENUES
 _CACHE_TTL_SECONDS = 300
-_cache: dict[tuple[str, str, str], tuple["OrderConstraints", float]] = {}
+_cache: dict[tuple[str, int, str, str], tuple["OrderConstraints", float]] = {}
 _cache_lock = threading.Lock()
 
 
@@ -127,11 +127,16 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     reader = _constraints_reader
     if reader is None:
         raise ConstraintUnavailable("executable venue rules unavailable")
+    from aletheia.config.loader import load_config
     # Keyed by execution_mode, not venue: bitget_demo and live bitget list
     # different symbols, so one shared entry would serve live rules to a demo
     # order (that is how RENDER passed validation and then died at submission
     # with contract_size_unavailable).
-    key = (execution_mode, symbol.upper(), market_type)
+    # Also keyed by UTA account generation: Bitget profiles (classic_v2 vs uta_v3)
+    # expose different listings under the same execution_mode, so a profile switch
+    # must invalidate the cache (#3445).
+    generation = load_config().exchange.uta_account_config_generation_for(execution_mode)
+    key = (execution_mode, generation, symbol.upper(), market_type)
     now = time.monotonic()
     with _cache_lock:
         cached = _cache.get(key)

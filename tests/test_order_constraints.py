@@ -413,3 +413,105 @@ async def test_listing_view_profile_resolution_failure_is_fail_closed(monkeypatc
 
     assert exc_info.value.temporary is True
     assert markets_loaded == [], "market load must not be attempted when profile is unresolvable"
+
+
+def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, monkeypatch):
+    """#3445: constraints acquired under bitget Classic must not be served after
+    a switch to UTA (or vice versa), even when cached within TTL."""
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig, ExchangeConfig
+    from aletheia.execution import order_constraints as rules
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(rules, "_cache", {})
+
+    cfg = AletheiaConfig()
+    cfg.exchange = ExchangeConfig.model_validate({
+        **cfg.exchange.model_dump(),
+        "paper_execution_mode": "bitget_demo",
+        "bitget_profile": "classic_v2",
+    })
+    loader.save_config(cfg)
+
+    calls = []
+
+    async def read(execution_mode, venue, symbol, market_type):
+        calls.append((execution_mode, symbol, market_type))
+        return rules.OrderConstraints(
+            venue, symbol, market_type, Decimal("0.001"), None,
+            Decimal("0.001"), Decimal("5"),
+        )
+
+    rules.configure_order_constraints_reader(read)
+
+    rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
+    assert len(calls) == 1
+
+    rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
+    assert len(calls) == 1, "constraints should be cached, no second refresh"
+
+    cfg = loader.load_config()
+    # mimic settings route logic: bump uta_account_config_generations when bitget_profile changes
+    generations = dict(cfg.exchange.uta_account_config_generations)
+    from aletheia.config.exchanges import EXECUTION_MODE_VENUES
+    for execution_mode, venue in EXECUTION_MODE_VENUES.items():
+        if venue == "bitget":
+            generations[execution_mode] = generations.get(execution_mode, 0) + 1
+    cfg.exchange = ExchangeConfig.model_validate({
+        **cfg.exchange.model_dump(),
+        "bitget_profile": "uta_v3",
+        "uta_account_config_generations": generations,
+    })
+    loader.save_config(cfg)
+
+    rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
+    assert len(calls) == 2, "profile switch must invalidate cache (new generation key)"
+
+    cfg = loader.load_config()
+    generations = dict(cfg.exchange.uta_account_config_generations)
+    for execution_mode, venue in EXECUTION_MODE_VENUES.items():
+        if venue == "bitget":
+            generations[execution_mode] = generations.get(execution_mode, 0) + 1
+    cfg.exchange = ExchangeConfig.model_validate({
+        **cfg.exchange.model_dump(),
+        "bitget_profile": "classic_v2",
+        "uta_account_config_generations": generations,
+    })
+    loader.save_config(cfg)
+
+    rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
+    assert len(calls) == 3, "UTA→Classic must also invalidate cache"
+
+
+def test_order_constraints_cache_survives_unrelated_config_changes(tmp_path, monkeypatch):
+    """#3445 regression: unrelated settings should not invalidate constraints cache."""
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.execution import order_constraints as rules
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(rules, "_cache", {})
+    loader.save_config(AletheiaConfig())
+
+    calls = []
+
+    async def read(execution_mode, venue, symbol, market_type):
+        calls.append((execution_mode, symbol, market_type))
+        return rules.OrderConstraints(
+            venue, symbol, market_type, Decimal("0.001"), None,
+            Decimal("0.001"), Decimal("5"),
+        )
+
+    rules.configure_order_constraints_reader(read)
+
+    rules.get_order_constraints("bitget_demo", "ETH/USDT", "usdt_futures")
+    assert len(calls) == 1
+
+    cfg = loader.load_config()
+    cfg.trading.slippage_bps += 1.0
+    loader.save_config(cfg)
+
+    rules.get_order_constraints("bitget_demo", "ETH/USDT", "usdt_futures")
+    assert len(calls) == 1, "changing slippage should not invalidate constraints cache"
