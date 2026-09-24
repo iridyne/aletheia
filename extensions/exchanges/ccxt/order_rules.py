@@ -87,9 +87,9 @@ def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object]]:
     """The sandbox flag and extra options that define this mode's listing set.
 
     Resolved from the same profile class that submits the order, so pre-trade
-    validation reads the venue the order will actually meet. An unresolvable mode
-    yields the plain production view — the previous behavior — rather than
-    guessing a sandbox.
+    validation reads the venue the order will actually meet. Profile resolution
+    failure is not permission to fall back to a different listing; it is treated
+    as ConstraintUnavailable(temporary=True).
     """
     try:
         from aletheia.config.loader import load_config
@@ -99,8 +99,11 @@ def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object]]:
         return bool(getattr(profile_type, "sandbox", False)), dict(
             getattr(profile_type, "listing_options", {}) or {}
         )
-    except Exception:
-        return False, {}
+    except Exception as exc:
+        raise ConstraintUnavailable(
+            f"execution mode '{execution_mode}' profile resolution failed",
+            temporary=True,
+        ) from exc
 
 
 async def read_order_constraints(

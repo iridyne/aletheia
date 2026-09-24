@@ -378,3 +378,38 @@ async def test_reader_applies_the_execution_mode_listing_view(monkeypatch):
     # both must reach the client that answers the pre-trade question.
     assert seen.get("sandbox") is True
     assert "uta" in seen["options"]
+
+
+@pytest.mark.anyio
+async def test_listing_view_profile_resolution_failure_is_fail_closed(monkeypatch):
+    """#3444: a profile-resolution failure must raise ConstraintUnavailable rather
+    than silently falling back to the live/default listing.  No market load may
+    be attempted when the profile cannot be resolved."""
+    import aletheia.net as net
+    from aletheia.execution.order_constraints import ConstraintUnavailable
+    from extensions.exchanges.ccxt import order_rules
+
+    markets_loaded: list[str] = []
+
+    async def forbidden_load():
+        markets_loaded.append("loaded")
+        return {}
+
+    def make(exchange_id, *, options):
+        from types import SimpleNamespace
+        return SimpleNamespace(load_markets=forbidden_load), None
+
+    monkeypatch.setattr(net, "make_ccxt", make)
+    import extensions.exchanges.composition as composition
+    monkeypatch.setattr(
+        composition,
+        "_profile_spec",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("profile not found")),
+    )
+
+    with pytest.raises(ConstraintUnavailable) as exc_info:
+        from extensions.exchanges.ccxt.order_rules import read_order_constraints
+        await read_order_constraints("bitget_demo", "bitget", "BTC/USDT", "usdt_futures")
+
+    assert exc_info.value.temporary is True
+    assert markets_loaded == [], "market load must not be attempted when profile is unresolvable"
