@@ -246,7 +246,7 @@ class CCXTProfile:
     def submit_request(self, command: Any) -> tuple[str, str, str, object, object, dict]:
         raise NotImplementedError
 
-    def modify_request(self, command: Any, current: Any) -> tuple[object, str, str, str, object, object, dict]:
+    def modify_request(self, command: Any, current: Any, exchange: Any = None) -> tuple[object, str, str, str, object, object, dict]:
         raise NotImplementedError
 
     def cancel_request(self, command: Any) -> tuple[object, str, dict]:

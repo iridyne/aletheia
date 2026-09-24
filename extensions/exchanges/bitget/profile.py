@@ -196,7 +196,7 @@ class _BitgetDemoProfile(CCXTProfile):
             params,
         )
 
-    def modify_request(self, command, current):
+    def modify_request(self, command, current, exchange=None):
         if command.trigger_price is not None or command.time_in_force is not None:
             raise UTAError(
                 UTAErrorCode.NOT_SUPPORTED,
@@ -207,8 +207,18 @@ class _BitgetDemoProfile(CCXTProfile):
         params: dict[str, object] = {"uta": self._uta}
         if not command.target_venue_order_id and command.target_client_order_id:
             params["clientOrderId"] = command.target_client_order_id
+        # Populate the current instrument with the same quantity_precision fact
+        # used by prepare_submit; without it a venue-legal fractional quantity
+        # (e.g. HYPE 2.5 with a 0.01 step) is rejected by modify after being
+        # accepted by submit (#3446).
+        instrument = current.instrument
+        if exchange is not None and command.quantity is not None:
+            market = (exchange.markets or {}).get(instrument.venue_symbol) or {}
+            quantity_precision = _amount_step_or_none(exchange, market)
+            if quantity_precision is not None:
+                instrument = instrument.model_copy(update={"quantity_precision": quantity_precision})
         quantity = (
-            self._venue_quantity(command, instrument=current.instrument)
+            self._venue_quantity(command, instrument=instrument)
             if command.quantity is not None
             else None
         )

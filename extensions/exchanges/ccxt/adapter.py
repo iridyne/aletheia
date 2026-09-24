@@ -1266,7 +1266,7 @@ class CCXTUTAAdapter:
         request_started = False
         try:
             try:
-                args = self._profile.modify_request(command, exact.found)
+                args = self._profile.modify_request(command, exact.found, exchange=exchange)
             except UTAError as exc:
                 if exc.command_evidence is CommandEvidence.NOT_SENT:
                     return self._not_sent(

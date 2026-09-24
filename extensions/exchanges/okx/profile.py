@@ -126,7 +126,7 @@ class OKXDemoProfile(CCXTProfile):
             params,
         )
 
-    def modify_request(self, command, current):
+    def modify_request(self, command, current, exchange=None):
         if command.trigger_price is not None or command.time_in_force is not None:
             raise UTAError(
                 UTAErrorCode.NOT_SUPPORTED,
