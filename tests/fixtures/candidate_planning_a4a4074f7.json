@@ -289,43 +289,54 @@
   ],
   "startup": [
     {
+      "rank": 1,
       "candidate": {
-        "admission_basis": "startup",
         "asset_id": "asset-0",
-        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-0:okx:spot:COIN0/USDT",
-        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-        "candidate_selection_utility_pct": null,
         "feature_snapshot_id": "feature-0",
+        "venue": "okx",
         "market_type": "spot",
-        "opportunity_mechanism": "continuation",
-        "scanner_direction": "long",
-        "scanner_family": "momentum",
-        "startup_reason": "no_history",
         "symbol": "COIN0/USDT",
-        "venue": "okx"
+        "scanner_family": "momentum",
+        "scanner_direction": "long",
+        "admission_basis": "startup",
+        "startup_reason": "no_history",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-0:okx:spot:COIN0/USDT",
+        "candidate_selection_utility_pct": null,
+        "candidate_selection_policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+        "opportunity_mechanism": "continuation"
       },
       "context": {
+        "version": "candidate-opportunity-context/v1",
         "candidate_id": "golden-1",
         "candidate_selection": {
-          "decision_version": "candidate-selection-utility/v2",
           "policy": "candidate_selection_utility_v1",
-          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-          "source_record_hash": "4361339efa515411bd882a0b18d920eb126563cdd67f5743e81b4d23304a5150"
+          "policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+          "source_record_hash": "6da81c3acab62879b3e6b52b3808b687bf004664b307fb1ab9c43add293b85e2",
+          "decision_version": "candidate-selection-utility/v2"
         },
-        "context": {},
-        "context_hash": "c48a03d2e7caa63001fa8b838c7ce7b85c8643a5f7ca9a80bbc75f0bb97f40d2",
+        "source": {
+          "kind": "universe",
+          "id": "golden-1",
+          "trade_school": "short_term",
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable"
+        },
         "opportunity": {
-          "admission_basis": "startup",
-          "capability_gaps": [],
-          "capability_status": "supported",
-          "direction": "long",
-          "economic_utility_pct": null,
-          "horizon": "4h",
-          "mechanism_source": "target_authority",
-          "mechanism_version": "continuation/v1",
-          "pessimistic_strength": 15.438205128205128,
-          "primary_evidence_refs": [],
           "primary_mechanism": "continuation",
+          "mechanism_version": "continuation/v1",
+          "mechanism_source": "target_authority",
+          "source_component_id": "momentum",
+          "direction": "long",
+          "horizon": "4h",
+          "economic_utility_pct": null,
+          "admission_basis": "startup",
+          "startup_reason": "no_history",
+          "pessimistic_strength": 15.438205128205128,
+          "capability_status": "supported",
+          "capability_gaps": [],
+          "primary_evidence_refs": [],
           "secondary_mechanisms": [
             {
               "applicability": "unavailable",
@@ -362,78 +373,90 @@
                 "external_event_provenance_unavailable"
               ]
             }
-          ],
-          "source_component_id": "momentum",
-          "startup_reason": "no_history"
+          ]
         },
-        "source": {
-          "detected_at": "2026-09-02T00:00:00+00:00",
-          "feature_snapshot_id": null,
-          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
-          "id": "golden-1",
-          "kind": "universe",
-          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
-          "trade_school": "short_term"
+        "context": {
+          "regime": null,
+          "shock_state": {
+            "available": true,
+            "point_strength": 0.0,
+            "role": "context_only"
+          },
+          "volatility_state": {
+            "available": true,
+            "pessimistic_strength": 0.0,
+            "point_strength": 0.0,
+            "role": "context_only"
+          }
         },
-        "version": "candidate-opportunity-context/v1"
+        "context_hash": "52bd24d9a8091be95f195574cb73458f65f366ee7f97e537e79439038445b7fe"
       },
       "planning_identity": [
-        "570c93274a350a2aaaa95714a701be7c4693528532ab0172d7023e4355d25ae6",
-        "c210fd26873d060f6e4c17a109d0461e11b19a3c1eeb0a0060df60dbf1f90ff9"
-      ],
-      "rank": 1
+        "1d3a9bf03d68153ed40d10ab7e621732839ce78a78ee97301b22e0825cddc9d0",
+        "b862a0e1ba6bf44550d68da7a5d28e0156935eb7a4214283927b4836405780ee"
+      ]
     },
     {
+      "rank": 2,
       "candidate": {
-        "admission_basis": "startup",
-        "asset_id": "asset-10",
-        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-10:okx:spot:COIN10/USDT",
-        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-        "candidate_selection_utility_pct": null,
-        "feature_snapshot_id": "feature-10",
+        "asset_id": "asset-1",
+        "feature_snapshot_id": "feature-1",
+        "venue": "okx",
         "market_type": "spot",
-        "opportunity_mechanism": "reversal",
-        "scanner_direction": "short",
-        "scanner_family": "mean_reversion",
+        "symbol": "COIN1/USDT",
+        "scanner_family": "momentum",
+        "scanner_direction": "long",
+        "admission_basis": "startup",
         "startup_reason": "no_history",
-        "symbol": "COIN10/USDT",
-        "venue": "okx"
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-1:okx:spot:COIN1/USDT",
+        "candidate_selection_utility_pct": null,
+        "candidate_selection_policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+        "opportunity_mechanism": "continuation"
       },
       "context": {
+        "version": "candidate-opportunity-context/v1",
         "candidate_id": "golden-2",
         "candidate_selection": {
-          "decision_version": "candidate-selection-utility/v2",
           "policy": "candidate_selection_utility_v1",
-          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-          "source_record_hash": "6349d1a063f9df789d588f484cf865ef516271f76fbf4f35223430d57514fa36"
+          "policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+          "source_record_hash": "a9dd649eee7f4241b38f682547acb320b808a4d5a3185f803d2553ab7f16df81",
+          "decision_version": "candidate-selection-utility/v2"
         },
-        "context": {},
-        "context_hash": "0b8659a19248c0c0e848b9cd3754c40ad8e6b70f847929c5c3243197fd9dc8dc",
+        "source": {
+          "kind": "universe",
+          "id": "golden-2",
+          "trade_school": "short_term",
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable"
+        },
         "opportunity": {
-          "admission_basis": "startup",
-          "capability_gaps": [],
-          "capability_status": "supported",
-          "direction": "short",
-          "economic_utility_pct": null,
-          "horizon": "4h",
+          "primary_mechanism": "continuation",
+          "mechanism_version": "continuation/v1",
           "mechanism_source": "target_authority",
-          "mechanism_version": "reversal/v1",
-          "pessimistic_strength": 15.0,
+          "source_component_id": "momentum",
+          "direction": "long",
+          "horizon": "4h",
+          "economic_utility_pct": null,
+          "admission_basis": "startup",
+          "startup_reason": "no_history",
+          "pessimistic_strength": 11.146923076923075,
+          "capability_status": "supported",
+          "capability_gaps": [],
           "primary_evidence_refs": [],
-          "primary_mechanism": "reversal",
           "secondary_mechanisms": [
             {
               "applicability": "applicable",
-              "direction": "long",
-              "mechanism_id": "continuation",
-              "mechanism_version": "continuation/v1",
-              "pessimistic_strength": 0.0,
-              "point_strength": 12.75,
+              "direction": "short",
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "pessimistic_strength": 5.15625,
+              "point_strength": 5.15625,
               "reason_codes": [
-                "projected_from:momentum"
+                "projected_from:mean_reversion"
               ],
-              "source_component_id": "momentum",
-              "within_run_percentile": 0.34210526315789475
+              "source_component_id": "mean_reversion"
             },
             {
               "applicability": "unavailable",
@@ -458,78 +481,90 @@
                 "external_event_provenance_unavailable"
               ]
             }
-          ],
-          "source_component_id": "mean_reversion",
-          "startup_reason": "no_history"
+          ]
         },
-        "source": {
-          "detected_at": "2026-09-02T00:00:00+00:00",
-          "feature_snapshot_id": null,
-          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
-          "id": "golden-2",
-          "kind": "universe",
-          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
-          "trade_school": "short_term"
+        "context": {
+          "regime": null,
+          "shock_state": {
+            "available": true,
+            "point_strength": 0.0,
+            "role": "context_only"
+          },
+          "volatility_state": {
+            "available": true,
+            "pessimistic_strength": 0.0,
+            "point_strength": 0.0,
+            "role": "context_only"
+          }
         },
-        "version": "candidate-opportunity-context/v1"
+        "context_hash": "bf19231722a67897f4c6329285437a34a4df0ca436f74a5a3d77c43c0e690700"
       },
       "planning_identity": [
-        "9f12282f8d27dc7008ad428cf999ebe45f56a60a66525c32a30cf3b82988bd12",
-        "4c427727853bd95dde583b93a04ae2829e97864cd6dbb701e8b4dfac9cddd570"
-      ],
-      "rank": 2
+        "5ae3d2aa9f24718591e0775cb6075240295d7b2434adf457d459ed1f6c9a7471",
+        "05f52aacedf11145b59b56ebddff33c7e92f5baea7abb73048607bbd2cbf8216"
+      ]
     },
     {
+      "rank": 3,
       "candidate": {
-        "admission_basis": "startup",
-        "asset_id": "asset-11",
-        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-11:okx:spot:COIN11/USDT",
-        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-        "candidate_selection_utility_pct": null,
-        "feature_snapshot_id": "feature-11",
+        "asset_id": "asset-2",
+        "feature_snapshot_id": "feature-2",
+        "venue": "okx",
         "market_type": "spot",
-        "opportunity_mechanism": "reversal",
-        "scanner_direction": "short",
-        "scanner_family": "mean_reversion",
+        "symbol": "COIN2/USDT",
+        "scanner_family": "momentum",
+        "scanner_direction": "long",
+        "admission_basis": "startup",
         "startup_reason": "no_history",
-        "symbol": "COIN11/USDT",
-        "venue": "okx"
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-2:okx:spot:COIN2/USDT",
+        "candidate_selection_utility_pct": null,
+        "candidate_selection_policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+        "opportunity_mechanism": "continuation"
       },
       "context": {
+        "version": "candidate-opportunity-context/v1",
         "candidate_id": "golden-3",
         "candidate_selection": {
-          "decision_version": "candidate-selection-utility/v2",
           "policy": "candidate_selection_utility_v1",
-          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
-          "source_record_hash": "5b14644bd159676bfeb20173c1f2b1d700f28eadd52cc90ef74a3d036574398f"
+          "policy_epoch": "b24411cf72f56766ad6a9dbfa3795fc32654df704f3cb26b65083b13096997ec",
+          "source_record_hash": "86bd2293eb921da0ce582d1cdfd57aa5663108de52626a4a278a948ae3255b3a",
+          "decision_version": "candidate-selection-utility/v2"
         },
-        "context": {},
-        "context_hash": "8b2bf561495281ee8fa1e14e88dcf62db3d962196562e3079aae6f2a28141c49",
+        "source": {
+          "kind": "universe",
+          "id": "golden-3",
+          "trade_school": "short_term",
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable"
+        },
         "opportunity": {
-          "admission_basis": "startup",
-          "capability_gaps": [],
-          "capability_status": "supported",
-          "direction": "short",
-          "economic_utility_pct": null,
-          "horizon": "4h",
+          "primary_mechanism": "continuation",
+          "mechanism_version": "continuation/v1",
           "mechanism_source": "target_authority",
-          "mechanism_version": "reversal/v1",
-          "pessimistic_strength": 15.0,
+          "source_component_id": "momentum",
+          "direction": "long",
+          "horizon": "4h",
+          "economic_utility_pct": null,
+          "admission_basis": "startup",
+          "startup_reason": "no_history",
+          "pessimistic_strength": 7.75,
+          "capability_status": "supported",
+          "capability_gaps": [],
           "primary_evidence_refs": [],
-          "primary_mechanism": "reversal",
           "secondary_mechanisms": [
             {
               "applicability": "applicable",
-              "direction": "long",
-              "mechanism_id": "continuation",
-              "mechanism_version": "continuation/v1",
-              "pessimistic_strength": 0.0,
-              "point_strength": 12.75,
+              "direction": "short",
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "pessimistic_strength": 10.0,
+              "point_strength": 10.0,
               "reason_codes": [
-                "projected_from:momentum"
+                "projected_from:mean_reversion"
               ],
-              "source_component_id": "momentum",
-              "within_run_percentile": 0.34210526315789475
+              "source_component_id": "mean_reversion"
             },
             {
               "applicability": "unavailable",
@@ -554,26 +589,39 @@
                 "external_event_provenance_unavailable"
               ]
             }
-          ],
-          "source_component_id": "mean_reversion",
-          "startup_reason": "no_history"
+          ]
         },
-        "source": {
-          "detected_at": "2026-09-02T00:00:00+00:00",
-          "feature_snapshot_id": null,
-          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
-          "id": "golden-3",
-          "kind": "universe",
-          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
-          "trade_school": "short_term"
+        "context": {
+          "regime": null,
+          "shock_state": {
+            "available": true,
+            "point_strength": 0.0,
+            "role": "context_only"
+          },
+          "volatility_state": {
+            "available": true,
+            "pessimistic_strength": 0.0,
+            "point_strength": 0.0,
+            "role": "context_only"
+          }
         },
-        "version": "candidate-opportunity-context/v1"
+        "context_hash": "4d37f0a2da4d4cc1188efe7d5d1f1c535b937a810039f3f39782aa721f36efc4"
       },
       "planning_identity": [
-        "0102235f270e1d4e07360709b051663983b1576e313362f5578c2c130c1faf7d",
-        "f60b0a9bfb8005288e3f8d1a3f8ed8b8f4a44f3a4d8edd36b7eaa7b5c21bad31"
-      ],
-      "rank": 3
+        "dfc7026cdf33064a5e6ba21d3990fa9859eab4c3222206868857e6faa2a083a8",
+        "8337fa38fcd3aea00aa6f7246362542271e19e7807c4d9480760046ae479b251"
+      ]
+    }
+  ],
+  "revisions": [
+    {
+      "revised_at_base_sha": "8d2968e91",
+      "arm": "startup",
+      "reason": "The frozen A baseline recorded spot+short Candidates at ranks 2 and 3. Spot has no native short-entry capability (entry_plan.entry_instrument_violation), so those rows froze a defect rather than correct history. #8d2968e91 began rejecting them and rotated the actionability manifest to v3 without revising this fixture, leaving the test red. The arm is re-frozen on the corrected ranking; the measured arm is unchanged because it never contained a spot-short row.",
+      "removed": [
+        "COIN10/USDT:spot:short",
+        "COIN11/USDT:spot:short"
+      ]
     }
   ]
 }
