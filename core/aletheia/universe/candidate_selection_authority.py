@@ -118,6 +118,7 @@ def candidate_selection_policy_identity(
         "max_spread_bps": float(universe.max_spread_bps),
         "min_depth_10bps_usd": float(universe.min_depth_10bps_usd),
         "blacklist": sorted({str(item).upper() for item in universe.blacklist}),
+        "allowlist": sorted({str(item).upper() for item in getattr(universe, "allowlist", None) or ()}),
     }
     if all(hasattr(cfg, field) for field in ("fast_trigger", "exchange", "market_data")):
         from aletheia.universe.fast_stream import fast_market_data_venue_for_config

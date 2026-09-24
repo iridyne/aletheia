@@ -676,6 +676,33 @@ async def test_universe_policy_inputs_rotate_identity_without_admission(client):
 
 
 @pytest.mark.anyio
+async def test_universe_allowlist_mutation_rotates_policy_epoch(client):
+    """#3443: allowlist is a behavior-bearing admission gate, so changing it must
+    rotate the candidate-selection policy epoch / invalidate stale in-flight evidence."""
+    from aletheia.config.loader import load_config
+
+    baseline = load_config().universe.candidate_selection_policy_epoch
+
+    resp = await client.post("/api/settings/universe", json={"allowlist": ["BTC/USDT"]})
+    assert resp.status_code == 200
+    with_allowlist = load_config()
+    assert with_allowlist.universe.allowlist == ["BTC/USDT"]
+    assert with_allowlist.universe.candidate_selection_policy_epoch != baseline
+
+    resp = await client.post("/api/settings/universe", json={"allowlist": ["BTC/USDT", "ETH/USDT"]})
+    assert resp.status_code == 200
+    expanded = load_config()
+    assert expanded.universe.allowlist == ["BTC/USDT", "ETH/USDT"]
+    assert expanded.universe.candidate_selection_policy_epoch != with_allowlist.universe.candidate_selection_policy_epoch
+
+    resp = await client.post("/api/settings/universe", json={"allowlist": []})
+    assert resp.status_code == 200
+    unrestricted = load_config()
+    assert unrestricted.universe.allowlist == []
+    assert unrestricted.universe.candidate_selection_policy_epoch != expanded.universe.candidate_selection_policy_epoch
+
+
+@pytest.mark.anyio
 async def test_candidate_identity_config_write_holds_publication_permit(
     client, monkeypatch,
 ):

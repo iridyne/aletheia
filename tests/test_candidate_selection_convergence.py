@@ -489,3 +489,29 @@ def test_candidate_storage_projection_is_cadence_bounded(denominator_rows):
         projection["mib_per_day"] * 30,
     )
     assert projection["mib_per_day"] < 12.0
+
+
+def test_allowlist_is_part_of_policy_identity_deterministically():
+    """#3443: allowlist must be in candidate_selection_policy_identity() so changing
+    it rotates the policy epoch. Identical allowlists in different order/case must
+    produce the same identity (deterministic)."""
+    from aletheia.config.schema import AletheiaConfig, UniverseConfig
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+
+    cfg = AletheiaConfig()
+    cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": []})
+    identity_empty = candidate_selection_policy_identity(cfg)
+    assert identity_empty["allowlist"] == []
+
+    cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": ["BTC/USDT", "ETH/USDT"]})
+    identity_btc_eth = candidate_selection_policy_identity(cfg)
+    assert identity_btc_eth["allowlist"] == ["BTC/USDT", "ETH/USDT"]
+    assert identity_btc_eth != identity_empty
+
+    cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": ["ETH/USDT", "BTC/USDT"]})
+    identity_eth_btc = candidate_selection_policy_identity(cfg)
+    assert identity_eth_btc == identity_btc_eth
+
+    cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": ["BTC/USDT"]})
+    identity_btc_only = candidate_selection_policy_identity(cfg)
+    assert identity_btc_only != identity_btc_eth
