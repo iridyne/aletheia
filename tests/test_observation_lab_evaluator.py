@@ -5,11 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+# Cohort construction drops outcomes before the learning data floor with
+# `dirty_or_missing_entry_time`. Pinned to 2026-08-01, both arms were excluded once
+# the floor advanced to 2026-09-23, so the cohort came back empty and every verdict
+# degraded to insufficient_data — which reads as an evaluator bug rather than as a
+# fixture that fell out of the window.
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
 
 
 def _outcome(db, candidate: str, *, net: float) -> None:
-    entry = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
+    entry = _ANCHOR + timedelta(minutes=1)
     due = entry + timedelta(hours=4)
     db.execute(
         "INSERT INTO filter_candidate_outcomes "

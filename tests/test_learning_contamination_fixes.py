@@ -4,6 +4,12 @@
 #159 guard promotion/effectiveness must drop synthetic-close + pre-clean-window rows.
 """
 
+from datetime import datetime
+
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
+
 
 def test_render_calibration_does_not_crash_on_numeric_ece():
     from extensions.analytics.confidence_calibration import render_calibration_for_pi
@@ -15,12 +21,25 @@ def test_render_calibration_does_not_crash_on_numeric_ece():
 
 
 def test_guard_clean_rows_drops_synthetic_and_pre_floor():
+    """Post-floor and pre-floor are derived, not dated.
+
+    These rows were pinned to 2026-07-12 (labelled post-floor) and 2026-06-01
+    (pre-floor). Once the clean-window floor advanced to 2026-09-23 both were
+    pre-floor, so every row dropped and the test read as a filter regression while
+    the filter was doing exactly its job.
+    """
+    from datetime import timedelta
+
     from extensions.analytics.guard_effectiveness import _clean_rows
+
+    post_floor = (_ANCHOR + timedelta(hours=8)).isoformat()
+    post_floor_later = (_ANCHOR + timedelta(hours=8, minutes=1)).isoformat()
+    pre_floor = (_ANCHOR - timedelta(days=100)).isoformat()
     rows = [
-        {"close_reason": "stop_loss", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": -5},      # genuine, post-floor
-        {"close_reason": "reconciled_gone", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": 0}, # synthetic → drop
-        {"close_reason": "take_profit", "closed_at": "2026-06-01T00:00:00+00:00", "realized_pnl": 5},     # pre-floor → drop
-        {"close_reason": None, "closed_at": "2026-07-12T08:01:00+00:00", "realized_pnl": 3},              # genuine (null reason), post-floor
+        {"close_reason": "stop_loss", "closed_at": post_floor, "realized_pnl": -5},        # genuine, post-floor
+        {"close_reason": "reconciled_gone", "closed_at": post_floor, "realized_pnl": 0},   # synthetic → drop
+        {"close_reason": "take_profit", "closed_at": pre_floor, "realized_pnl": 5},        # pre-floor → drop
+        {"close_reason": None, "closed_at": post_floor_later, "realized_pnl": 3},          # genuine (null reason), post-floor
     ]
     kept = _clean_rows(rows)
     reasons = [r["close_reason"] for r in kept]
@@ -94,9 +113,13 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     """#130: the overturn pass re-reviews APPLIED lessons and demotes a failing one.
 
     Uses the deterministic-demote path (symbol win-rate < 35% over >=10 settled
-    outcomes), so no LLM is needed.
+    outcomes), so no LLM is needed. Fixtures are anchored to the clean-window
+    floor — rows with entry_ts before the anchor are excluded as "dirty" and the
+    demote-by-evidence path never fires.
     """
     import asyncio
+    from datetime import timedelta
+
     sq = _reviewer_db(tmp_path, monkeypatch)
     from extensions.research.lesson_reviewer import run_lesson_reviewer
     from extensions.learning.lessons import LessonStore
@@ -110,6 +133,14 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     assert store.get(les.lesson_id).status == "applied"
 
     # 10 settled 24h BTC/USDT long outcomes, 30% win rate (< 35% demote floor).
+    # Post-anchor timestamps: the clean-window anchor advanced after these rows
+    # were originally written (when `datetime('now','-2 days')` was well after the
+    # v1 anchor), so they silently crossed the v2 floor and all rows were excluded
+    # as "dirty_or_missing_entry_time" — the evidence query saw 0 total, and the
+    # overturn pass deferred instead of demoting. Anchoring them post-floor fixed.
+    entry_at = (_ANCHOR + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    due_at = (_ANCHOR + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    settled_at = (_ANCHOR + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
     db = sq.get_db()
     for i in range(10):
         ret = 2.0 if i < 3 else -2.0
@@ -122,9 +153,10 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
                 " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 " min_tradable_edge_pct, cost_model_version, status) "
                 "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
-                " 'spot', 100.0, ?, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now','-1 day'), "
+                " 'spot', 100.0, ?, ?, ?, ?, "
                 " ?, 'horizon_ohlcv', 0, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
                 (f"fo-{i}", f"candidate-fo-{i}", 100.0 * (1.0 + ret / 100.0),
+                 entry_at, due_at, settled_at,
                  ret, ret, ret, ret - 0.2),
         )
     db.commit()
@@ -169,7 +201,13 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
 
 
 def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch):
-    """All evidence slices assess the same complete outcome snapshot."""
+    """All evidence slices assess the same complete outcome snapshot.
+
+    "inside-window" and "temporal" sit shortly after the clean-window anchor, so
+    they clear the entry-time floor; "before-window" sits 30 real days back, well
+    before the anchor, so it is excluded by the query's rolling window before it
+    ever reaches the floor check (that exclusion is what this test asserts on).
+    """
     from datetime import datetime, timedelta, timezone
 
     sq = _reviewer_db(tmp_path, monkeypatch)
@@ -197,16 +235,23 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         "net_return_pct, min_tradable_edge_pct, cost_model_version, settlement_price_source, settlement_lag_sec, status) "
         "VALUES ('temporal', 'candidate-temporal', 'm', 's', 'BTC/USDT', 'bitget', 'momentum', 'long', "
-        "'24h', 100, 101, datetime('now','-2 days'), datetime('now','-1 day'), "
-        "datetime('now','-1 day'), 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')"
+        "'24h', 100, 101, ?, ?, ?, 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
+        (
+            (_ANCHOR + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
+            (_ANCHOR + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+            (_ANCHOR + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S"),
+        ),
     )
     boundary = datetime.now(timezone.utc) - timedelta(days=30)
-    for row_id, settled_at in (
-        ("before-window", boundary - timedelta(minutes=5)),
-        ("inside-window", boundary + timedelta(minutes=5)),
-    ):
-        due_at = settled_at - timedelta(minutes=1)
-        entry_at = due_at - timedelta(hours=24)
+    rows = (
+        # Excluded by the 30-day rolling window itself, ahead of the floor check.
+        ("before-window", boundary - timedelta(hours=24, minutes=6),
+         boundary - timedelta(minutes=6), boundary - timedelta(minutes=5)),
+        # Post-anchor, so it clears the entry-time floor and is within 30 days of now.
+        ("inside-window", _ANCHOR + timedelta(hours=4),
+         _ANCHOR + timedelta(hours=5), _ANCHOR + timedelta(hours=6)),
+    )
+    for row_id, entry_at, due_at, settled_at in rows:
         db.execute(
             "INSERT INTO universe_forward_outcomes "
             "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
