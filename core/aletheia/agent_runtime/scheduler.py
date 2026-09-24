@@ -249,14 +249,25 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 _TIMEOUT_WORKER_CAPACITY = 16
 _SYNC_TIMEOUT_WORKERS = 1
 _DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC = 4.0
+# A drain-on-timeout caller waits this long for an owned worker to reach a
+# terminal state before detaching. Cancellation cannot stop synchronous work
+# inside the coroutine, so the wait must stay bounded: the shared executor lane
+# is released on expiry while the future keeps its process ownership.
+_ASYNC_DRAIN_GRACE_SEC = 30.0
 _timeout_metrics_lock = threading.Lock()
 _timeout_workers_lock = threading.Lock()
+# Futures whose caller already detached after the drain grace expired. The entry
+# proves the job is still process-owned, so single-flight callers skip instead of
+# starting overlapping work, and stale cleanup must not terminalize its rows.
+_draining_futures: dict[str, concurrent.futures.Future] = {}
+_draining_lock = threading.Lock()
 _timeout_metrics: dict[str, int] = {
     "async_submitted": 0,
     "async_completed": 0,
     "async_timed_out": 0,
     "async_cancelled": 0,
     "async_rejected": 0,
+    "async_detached": 0,
     "sync_submitted": 0,
     "sync_completed": 0,
     "sync_timed_out": 0,
@@ -267,6 +278,23 @@ _timeout_metrics: dict[str, int] = {
 def _bump_timeout_metric(name: str) -> None:
     with _timeout_metrics_lock:
         _timeout_metrics[name] = _timeout_metrics.get(name, 0) + 1
+
+
+def _is_draining(job_id: str) -> bool:
+    """Return whether a detached worker from a prior run still owns this job.
+
+    The done callback clears the entry, but a caller may observe the future
+    between completion and callback delivery, so a finished future is treated as
+    drained here rather than blocking the next tick.
+    """
+    with _draining_lock:
+        future = _draining_futures.get(job_id)
+        if future is None:
+            return False
+        if future.done():
+            _draining_futures.pop(job_id, None)
+            return False
+        return True
 
 
 def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
@@ -819,14 +847,36 @@ def _run_async_with_timeout(
     except concurrent.futures.TimeoutError:
         if drain_on_timeout:
             logger.warning(
-                "job %s: deadline exceeded; waiting for owned work to stop",
-                job_id,
+                "job %s: deadline exceeded; waiting up to %.0fs for owned work to stop",
+                job_id, _ASYNC_DRAIN_GRACE_SEC,
             )
             try:
-                return future.result()
+                return future.result(timeout=_ASYNC_DRAIN_GRACE_SEC)
             except _AsyncJobDeadline as exc:
                 _bump_timeout_metric("async_timed_out")
                 raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
+            except concurrent.futures.TimeoutError:
+                # Worker did not reach a terminal state within the grace period.
+                # Detach the caller so the shared executor lane is released; keep
+                # the future registered so single-flight guards can skip the next
+                # tick, and stale cleanup continues to protect still-active rows.
+                with _draining_lock:
+                    _draining_futures[job_id] = future
+
+                def _on_drain_done(f: concurrent.futures.Future, _jid: str = job_id) -> None:
+                    with _draining_lock:
+                        _draining_futures.pop(_jid, None)
+                    logger.info("job %s: detached worker finished draining", _jid)
+
+                future.add_done_callback(_on_drain_done)
+                _bump_timeout_metric("async_timed_out")
+                _bump_timeout_metric("async_detached")
+                logger.error(
+                    "job %s: worker still running after %.0fs grace; detaching caller "
+                    "— shared executor lane released, future remains process-owned",
+                    job_id, _ASYNC_DRAIN_GRACE_SEC,
+                )
+                raise TimeoutError(f"job {job_id} timed out after {timeout}s")
         # The persistent loop itself did not respond to cancellation in time.
         # Cancel the exact future but keep the one fixed worker thread; capacity
         # remains accounted until its done callback actually runs.
@@ -3711,6 +3761,15 @@ def _cleanup_stale_agent_runs():
 
 
 def _run_universe_refresh():
+    # A detached worker from a previous tick still owns Candidate Selection.
+    # Starting a second refresh would overlap that synchronous work, so skip
+    # instead: the owned run stays excluded from stale cleanup until it ends.
+    if _is_draining("universe_refresh"):
+        logger.warning(
+            "universe_refresh skipped: prior owned worker is still draining"
+        )
+        _record_job_failure("universe_refresh", "prior run still draining")
+        return
     # Reconcile a process-abandoned scanner row before starting another run.
     # This is bookkeeping only: it never triggers a scan or changes allocation.
     _cleanup_stale_scanner_runs()

@@ -2,6 +2,7 @@ import asyncio
 import builtins
 import json
 import threading
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -655,18 +656,24 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
 
 
 def test_owned_async_timeout_waits_for_terminal_worker_state(monkeypatch):
+    """A worker reaching a terminal state inside the grace keeps its ownership.
+
+    The drain wait must stay bounded (#3432) but must not cancel the future:
+    cancellation is what detached synchronous Candidate Selection work in #3402.
+    """
     from aletheia.agent_runtime import scheduler
 
     class PendingFuture:
         def __init__(self):
             self.calls = 0
             self.cancelled = False
+            self.drain_timeout = "unset"
 
         def result(self, timeout=None):
             self.calls += 1
             if self.calls == 1:
                 raise TimeoutError
-            assert timeout is None
+            self.drain_timeout = timeout
             raise scheduler._AsyncJobDeadline
 
         def cancel(self):
@@ -695,6 +702,126 @@ def test_owned_async_timeout_waits_for_terminal_worker_state(monkeypatch):
 
     assert pending.calls == 2
     assert pending.cancelled is False
+    # The drain wait is bounded; an unbounded `None` would occupy the shared
+    # maintenance_io worker for as long as the coroutine refuses to stop.
+    assert pending.drain_timeout == scheduler._ASYNC_DRAIN_GRACE_SEC
+    # Terminal within the grace means nothing stays registered as draining.
+    assert scheduler._is_draining("universe_refresh") is False
+
+
+def test_owned_async_timeout_detaches_after_bounded_grace(monkeypatch):
+    """A worker that never terminates must not hold the shared executor lane.
+
+    #3429 kept ownership by waiting without a bound, which lets one wedged
+    Universe refresh occupy the single ``maintenance_io`` worker forever and
+    starve ``outcome_settler`` and the OHLCV backfills (#3432).
+    """
+    from aletheia.agent_runtime import scheduler
+
+    class NeverTerminatingFuture:
+        def __init__(self):
+            self.calls = 0
+            self.cancelled = False
+            self.done_callbacks = []
+
+        def result(self, timeout=None):
+            self.calls += 1
+            raise TimeoutError
+
+        def cancel(self):
+            self.cancelled = True
+
+        def done(self):
+            return False
+
+        def add_done_callback(self, fn):
+            self.done_callbacks.append(fn)
+
+    wedged = NeverTerminatingFuture()
+
+    class Worker:
+        def submit(self, guarded):
+            guarded.close()
+            return wedged
+
+    class Awaitable:
+        def __await__(self):
+            yield
+
+    monkeypatch.setattr(scheduler, "_async_timeout_worker", Worker())
+    monkeypatch.setattr(scheduler, "_ensure_timeout_workers_ready", lambda: None)
+
+    before = scheduler._timeout_metrics.get("async_detached", 0)
+    try:
+        with pytest.raises(TimeoutError, match="job universe_refresh timed out"):
+            scheduler._run_async_with_timeout(
+                "universe_refresh",
+                Awaitable(),
+                drain_on_timeout=True,
+            )
+
+        # The caller gave up and returned control: the executor lane is free.
+        assert wedged.calls == 2
+        # Ownership is retained rather than cancelled — #3429's fix stands.
+        assert wedged.cancelled is False
+        assert scheduler._timeout_metrics.get("async_detached", 0) == before + 1
+        # The future stays registered so the next tick can see it is still owned.
+        assert scheduler._is_draining("universe_refresh") is True
+        assert len(wedged.done_callbacks) == 1
+    finally:
+        scheduler._draining_futures.pop("universe_refresh", None)
+
+
+def test_universe_refresh_skips_while_prior_worker_drains(monkeypatch):
+    """A second refresh must not start overlapping Candidate Selection work."""
+    from aletheia.agent_runtime import scheduler
+
+    started = []
+    monkeypatch.setattr(
+        scheduler, "_is_draining", lambda job_id: job_id == "universe_refresh"
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_async_with_timeout",
+        lambda *a, **k: started.append(a),
+    )
+    # Proving the skip happens before any bookkeeping keeps the owned row intact.
+    monkeypatch.setattr(
+        scheduler,
+        "_cleanup_stale_scanner_runs",
+        lambda: started.append("cleanup"),
+    )
+    failures = []
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+
+    scheduler._run_universe_refresh()
+
+    assert started == []
+    assert failures == [("universe_refresh", "prior run still draining")]
+
+
+def test_drain_registry_clears_when_detached_worker_finishes():
+    """Once the detached worker terminates, the next tick is admitted again."""
+    from aletheia.agent_runtime import scheduler
+
+    future = concurrent.futures.Future()
+    try:
+        with scheduler._draining_lock:
+            scheduler._draining_futures["universe_refresh"] = future
+        assert scheduler._is_draining("universe_refresh") is True
+
+        future.set_result(None)
+
+        # A finished future releases the single-flight guard and deregisters,
+        # so a wedged tick cannot block Universe refresh permanently.
+        assert scheduler._is_draining("universe_refresh") is False
+        assert "universe_refresh" not in scheduler._draining_futures
+    finally:
+        scheduler._draining_futures.pop("universe_refresh", None)
 
 
 def test_async_timeout_worker_reuses_one_thread(monkeypatch):
