@@ -18,6 +18,22 @@ from aletheia.storage.models import Position
 from aletheia.portfolio.pnl import _account_environment
 
 
+def clean_window_admits(closed_at: str) -> bool:
+    """Whether a close time is inside the versioned clean window.
+
+    Outcome eligibility is a property of the clean-window anchor, not of whatever
+    a test is actually asserting. A fixture that needs a close on an earlier
+    calendar day must derive its eligibility expectation instead of hardcoding one:
+    the anchor advances on every re-anchor, so "yesterday" silently crosses it and
+    an unrelated test starts failing (that is how the daily-PnL bucketing test
+    broke 15 hours after the 2026-09-23 anchor was set).
+    """
+    from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+    anchor = _fixture_utc(CLEAN_WINDOW_ANCHOR_ISO, field="clean_window_anchor")
+    return _fixture_utc(closed_at, field="closed_at") >= anchor
+
+
 def _assert_complete_closed_position_fixture(
     position_id: str,
     *,
@@ -1234,6 +1250,8 @@ def test_verified_close_applies_clean_window_before_running_outcome_hooks(monkey
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     evidence = _verified_result(position)
+    # pre-anchor-intentional: this test proves the clean window actually excludes,
+    # so the instant must sit before the anchor by construction.
     old_ms = int(
         datetime(2026, 7, 10, tzinfo=timezone.utc).timestamp() * 1000
     )

@@ -870,6 +870,36 @@ def test_directionless_universe_filters_are_report_only():
         assert spec.feedback_source == "none", name
         assert spec.auto_tunable is False, name
 
+    # Registration is what gives a gate a declared authority class and its
+    # report-only guarantee, so a gate that runs without it has neither. The
+    # contract bans unregistered permanent inline gates; `tradability_depth` ran
+    # that way until it was registered, and only a derived check like this one
+    # surfaces the next occurrence.
+    import ast
+    from pathlib import Path
+
+    from aletheia.universe import features as features_module
+    from aletheia.universe.filters import _TRADABILITY_FILTERS
+
+    # The ticker prefilters have no shared tuple; they pass filter_name= inline,
+    # so read those literals rather than restating them here.
+    prefilters = {
+        keyword.value.value
+        for node in ast.walk(ast.parse(Path(features_module.__file__).read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == "filter_name"
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, str)
+    }
+    assert prefilters, "ticker prefilter extraction found nothing — the call shape changed"
+    declared = set(_TRADABILITY_FILTERS) | prefilters
+    unregistered = sorted(name for name in declared if filter_by_name(name) is None)
+    assert not unregistered, (
+        "these gates run in the funnel but are absent from FILTER_REGISTRY, so they "
+        f"declare no authority_class and carry no report-only guarantee: {unregistered}"
+    )
+
 
 @spec_claim(
     SpecClaim(

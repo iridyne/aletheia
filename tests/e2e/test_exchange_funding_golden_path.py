@@ -27,8 +27,42 @@ _PROCESS_REPLAY = textwrap.dedent(
 
     run_migrations()
 
+    # The settler reads the funding-history retention contract through the UTA
+    # seam, which raises exchange_adapter_unavailable until composition binds it.
+    # This binds factories only — no credentials are resolved and no client is
+    # created — so the restart phases stay offline. Monkeypatching the ledger
+    # function alone is not enough: retention is a separate seam.
+    from extensions.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
+
+    # Outcome hooks reach Learning through a second composition seam. Unbound, the
+    # shadow_trades hook fails with outcome_feedback_unavailable, which the test
+    # reads as a restart-convergence regression rather than as missing bootstrap.
+    from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
+    from extensions.learning.outcome_feedback import execute_outcome_feedback
+
+    configure_outcome_feedback(execute_outcome_feedback)
+
     from aletheia.storage import repositories as repo
 
+    # Derived from the clean-window anchor, not pinned to a date. Outcome
+    # eligibility requires closed_at at or after the anchor, and the anchor moves
+    # on every re-anchor; a literal July close silently fell outside the window and
+    # the position settled with outcome_eligible=0 while every economic assertion
+    # above it still passed. The close must also stay in the past and inside the
+    # 90-day funding-history retention, which anchor + one minute satisfies.
+    from datetime import datetime as _dt, timedelta as _td
+
+    from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+
+    _closed_dt = _dt.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + _td(minutes=1)
+    OPENED_AT = (_closed_dt - _td(hours=12)).isoformat()
+    CLOSED_AT = _closed_dt.isoformat()
+    CLOSED_AT_MS = int(_closed_dt.timestamp() * 1000)
+    # Every venue's funding-row timestamp is the same derived instant: a literal
+    # here would fall outside the funding query window once the close moves.
+    _MS = str(CLOSED_AT_MS)
     MODES = {
         "bitget_demo": {
             "environment": "demo",
@@ -40,7 +74,7 @@ _PROCESS_REPLAY = textwrap.dedent(
                 "amount": "-0.25",
                 "businessType": "contract_settle_fee",
                 "coin": "USDT",
-                "cTime": "1784030400000",
+                "cTime": _MS,
             },
         },
         "okx_demo": {
@@ -54,7 +88,7 @@ _PROCESS_REPLAY = textwrap.dedent(
                 "type": "8",
                 "subType": "173",
                 "ccy": "USDT",
-                "ts": "1784030400000",
+                "ts": _MS,
                 "posSide": "short",
             },
         },
@@ -68,13 +102,10 @@ _PROCESS_REPLAY = textwrap.dedent(
                 "income": "-0.25",
                 "incomeType": "FUNDING_FEE",
                 "asset": "USDT",
-                "time": "1784030400000",
+                "time": _MS,
             },
         },
     }
-    OPENED_AT = "2026-07-14T00:00:00+00:00"
-    CLOSED_AT = "2026-07-14T12:00:00+00:00"
-    CLOSED_AT_MS = 1784030400000
 
 
     def seed_exchange_chain(mode, spec):
@@ -198,16 +229,36 @@ _PROCESS_REPLAY = textwrap.dedent(
             status="submitted",
             requested_at=CLOSED_AT,
         )
-        fills = [{
-            "tradeId": f"close-{suffix}",
-            "orderId": close_order.exchange_order_id,
-            "clientOid": close_order.client_order_id,
-            "fillPrice": str(spec["exit_price"]),
-            "fillQuantity": "1.0",
-            "fee": "-0.2",
-            "feeCoin": "USDT",
-            "cTime": str(CLOSED_AT_MS),
-        }]
+        # #3213 routed Bitget private fills through normalized UTA reports, so raw
+        # venue field names are rejected outright by PrivateFillEvidenceInvalid.
+        # The close evidence must be built as FillReport, the same shape production
+        # receives from the adapter.
+        from datetime import datetime, timezone
+
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.models import FillReport, UTAAccountIdentity
+
+        identity = UTAAccountIdentity(
+            account_id=f"{mode}-primary", execution_mode=mode, venue=mode.split("_")[0],
+            environment=spec["environment"], profile=mode, credential_generation=0,
+            adapter_implementation="fixture", adapter_version="1",
+        )
+        executed_at = datetime.fromtimestamp(CLOSED_AT_MS / 1000, tz=timezone.utc)
+        scope = scope_from_local(
+            proposal.symbol, proposal.market_type,
+            start_at=executed_at, end_at=executed_at,
+        )
+        fills = [FillReport(
+            identity=identity, instrument=scope.instrument,
+            venue_fill_id=f"close-{suffix}",
+            venue_order_id=close_order.exchange_order_id,
+            client_order_id=close_order.client_order_id,
+            side="sell" if spec["direction"] == "long" else "buy",
+            price=str(spec["exit_price"]), quantity="1.0",
+            fee="0.2", fee_currency="USDT",
+            executed_at=executed_at,
+            received_at=datetime.now(timezone.utc),
+        )]
         first = materialize_bitget_close(close_order.id, fills)
         replay = materialize_bitget_close(close_order.id, fills)
         return {

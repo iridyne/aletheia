@@ -190,6 +190,10 @@ def test_clean_window_dependent_fixtures_derive_timestamps_from_the_anchor():
 
     Any test module that imports the anchor is asserting clean-window behavior,
     so its own fixture timestamps must be derived from the anchor.
+
+    A test that deliberately needs a pre-anchor instant — to prove exclusion
+    actually fires — marks that line `# pre-anchor-intentional`. The exemption is
+    explicit and greppable rather than a judgement call each time this guard fires.
     """
     import ast
     from datetime import datetime
@@ -214,8 +218,14 @@ def test_clean_window_dependent_fixtures_derive_timestamps_from_the_anchor():
                     built = datetime(year, month, day, tzinfo=anchor.tzinfo)
                 except ValueError:
                     continue
-                if built < anchor.replace(hour=0, minute=0, second=0, microsecond=0):
-                    offenders.append(f"{path.name}:{node.lineno} datetime({year}, {month}, {day}, ...)")
+                if built >= anchor.replace(hour=0, minute=0, second=0, microsecond=0):
+                    continue
+                # An exclusion test needs a pre-anchor instant on purpose.
+                # The marker may sit a few lines above a multi-line expression.
+                window = source.splitlines()[max(0, node.lineno - 5):node.lineno + 1]
+                if any("pre-anchor-intentional" in line for line in window):
+                    continue
+                offenders.append(f"{path.name}:{node.lineno} datetime({year}, {month}, {day}, ...)")
     assert not offenders, (
         "these clean-window-dependent fixtures hardcode a pre-anchor date and will "
         "silently fall out of the window at the next re-anchor; derive them from "

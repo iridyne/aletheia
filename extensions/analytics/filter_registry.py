@@ -594,6 +594,25 @@ _HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Data-integrity gate. Stale quotes are report-only and never auto-approved.",
     ),
     FilterSpec(
+        name="tradability_depth",
+        stage="tradability_filter",
+        drop_reason_codes=("depth_below_critical_minimum",),
+        config_path="universe.min_depth_10bps_usd",
+        hardcoded_at="aletheia/universe/filters.py (rejection threshold is 10% of the configured minimum)",
+        current_value="rejects below 10% of the configured 10bps depth minimum; "
+                      "absent depth is allowed through",
+        loosen_direction="down",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        authority_class="fact_or_execution",
+        note="Directionless execution-quality gate. It ran unregistered, which the "
+             "evidence contract forbids for a permanent gate: unregistered means no "
+             "declared authority class and no report-only guarantee, so nothing "
+             "stopped it from later being treated as tunable on alpha evidence.",
+    ),
+    FilterSpec(
         name="scanner_weights_quota",
         stage="ranker_score",
         drop_reason_codes=(),  # re-ranking, not a hard drop

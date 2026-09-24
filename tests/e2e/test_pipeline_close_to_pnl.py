@@ -3,7 +3,10 @@
 from datetime import datetime, timezone, timedelta
 from functools import partial
 
-from tests.test_outcome_closure import _insert_closed_position_via_producer
+from tests.test_outcome_closure import (
+    _insert_closed_position_via_producer,
+    clean_window_admits,
+)
 
 
 _closed = partial(
@@ -64,9 +67,13 @@ class TestTodayRealized:
             ("loss", -5.0, now), ("gain", 3.0, now),
             ("yesterday", -100.0, now - timedelta(days=1)),
         ):
+            # This test is about day bucketing, not outcome eligibility: an
+            # earlier calendar day may legitimately sit outside the clean window,
+            # so the expectation is derived from the anchor rather than assumed.
             _closed(
                 position_id=position_id, execution_mode="okx_demo",
                 realized_pnl=pnl, closed_at=closed_at.isoformat(),
+                expected_outcome_eligible=clean_window_admits(closed_at.isoformat()),
             )
         from aletheia.portfolio.pnl import today_realized_pnl
 
