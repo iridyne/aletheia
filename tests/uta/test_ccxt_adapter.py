@@ -1342,6 +1342,80 @@ async def test_bitget_rejects_non_integral_contract_quantity_before_send(monkeyp
     await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_venue_rejection_stays_bare_when_no_code_is_readable(monkeypatch):
+    """An unreadable payload must not fabricate or corrupt the reason code."""
+    import ccxt
+
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    exchange.create_response = ccxt.ExchangeError("bitget not-json at all")
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(identity))
+        assert report.evidence is CommandEvidence.VENUE_REJECTED
+        assert report.reason_code == "venue_rejected_command"
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_bitget_accepts_venue_step_quantity_on_unit_contract_market(monkeypatch):
+    """A venue-legal fractional quantity must reach the exchange.
+
+    Real ccxt-Bitget reports contractSize=1 for every perpetual and expresses the
+    tradable grid as precision.amount (HYPE trades in 0.01 steps). Requiring a
+    whole contract therefore rejected legal sizes: a live 2.5-unit order died with
+    `quantity_not_exact_contract_multiple` and never reached Bitget. The other
+    fixture in this file uses contractSize="0.01", which real ccxt-Bitget never
+    returns, so this shape was previously untested.
+    """
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    # The real market shape: unit contract, 0.01 size grid.
+    exchange.markets["BTC/USDT:USDT"] = {
+        **exchange.markets["BTC/USDT:USDT"],
+        "contractSize": 1,
+        "precision": {"amount": 0.01, "price": 0.1},
+    }
+    exchange.precisionMode = 4  # TICK_SIZE
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_bitget_command(identity, quantity="2.5"))
+
+    assert report.reason_code != "quantity_not_exact_contract_multiple"
+    assert report.evidence is not CommandEvidence.NOT_SENT
+    assert any(event[0] == "create_order" for event in exchange.events)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_bitget_still_rejects_off_grid_quantity_on_unit_contract_market(monkeypatch):
+    """Widening the grid must not stop rejecting a quantity the venue refuses."""
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    exchange.markets["BTC/USDT:USDT"] = {
+        **exchange.markets["BTC/USDT:USDT"],
+        "contractSize": 1,
+        "precision": {"amount": 0.01, "price": 0.1},
+    }
+    exchange.precisionMode = 4
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_bitget_command(identity, quantity="2.505"))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.reason_code == "quantity_not_exact_contract_multiple"
+    assert not any(event[0] == "create_order" for event in exchange.events)
+    await adapter.close()
+
+
 @pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
 @pytest.mark.asyncio
 async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
@@ -1913,7 +1987,12 @@ async def test_bitget_exact_close_absence_codes_preserve_profile_and_purpose(mon
     try:
         report = await adapter.submit_order(_bitget_command(identity, purpose=purpose, reduce_only=purpose == "exit"))
         assert report.evidence is CommandEvidence.VENUE_REJECTED
-        assert report.reason_code == ("close_position_absence_unverified" if absent else "venue_rejected_command")
+        # A plain rejection now carries Bitget's own code: without it two
+        # rejections for different causes are indistinguishable once the payload
+        # is out of scope, and `orders.error_reason` is the only residue.
+        assert report.reason_code == (
+            "close_position_absence_unverified" if absent else f"venue_rejected_command_{code}"
+        )
         assert report.venue_order_id is None
         assert report.order is None
     finally:

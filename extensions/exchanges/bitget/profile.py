@@ -11,6 +11,22 @@ from extensions.exchanges.ccxt.profile import CCXTProfile, decimal_value, venue_
 from aletheia.uta.models import FillReport, UTAAccountIdentity
 
 
+def _amount_step_or_none(exchange: Any, market: dict[str, Any]) -> Decimal | None:
+    """The venue's published quantity step, or None when it is not expressible.
+
+    Reuses the same converter the pre-trade constraint reader uses so both grids
+    stay identical. A venue on significant-digit precision has no fixed
+    increment, so None keeps the caller on the stricter whole-contract rule
+    rather than inventing a step.
+    """
+    from extensions.exchanges.ccxt.order_rules import _amount_step, _precision_mode_name
+
+    try:
+        return _amount_step((market.get("precision") or {}).get("amount"), _precision_mode_name(exchange))
+    except Exception:
+        return None
+
+
 class _BitgetDemoProfile(CCXTProfile):
     expected_venue = "bitget"
     expected_execution_mode = "bitget_demo"
@@ -42,13 +58,27 @@ class _BitgetDemoProfile(CCXTProfile):
             options={"defaultType": "swap", "uta": uta},
         )
 
-    def close_position_absent(self, error: BaseException) -> bool:
+    def _response_code(self, error: BaseException) -> str | None:
+        """Bitget's numeric `code` from the error body, or None if unreadable."""
         try:
             response = json.loads(str(error).removeprefix("bitget "))
         except (ValueError, TypeError):
-            return False
+            return None
+        if not isinstance(response, dict) or response.get("code") is None:
+            return None
+        return str(response["code"])
+
+    def close_position_absent(self, error: BaseException) -> bool:
         codes = {"22002", "25227", "45110"} if self._uta else {"22002", "25227"}
-        return isinstance(response, dict) and str(response.get("code")) in codes
+        return self._response_code(error) in codes
+
+    def venue_rejection_code(self, error: BaseException) -> str | None:
+        code = self._response_code(error)
+        if code is None:
+            return None
+        # Bitget codes are numeric; keep only what the reason-code pattern admits.
+        token = "".join(char for char in code.lower() if char.isalnum())
+        return token[:32] or None
 
     def acknowledgement_order_id(self, raw: object) -> str:
         order_id = super().acknowledgement_order_id(raw)
@@ -71,10 +101,16 @@ class _BitgetDemoProfile(CCXTProfile):
                 "contract_size_unavailable",
                 command_evidence=CommandEvidence.NOT_SENT,
             )
+        # Bitget publishes contractSize=1 for every perpetual and expresses the
+        # real size grid as sizeMultiplier, which CCXT exposes as
+        # precision.amount. Carry it so the contract-quantity check validates
+        # against the venue's own grid instead of whole contracts; without it a
+        # venue-legal 2.5 HYPE is rejected as a fractional contract.
         instrument = command.instrument.model_copy(
             update={
                 "venue_instrument_id": str(market.get("id")) if market.get("id") else None,
                 "contract_size": contract_size,
+                "quantity_precision": _amount_step_or_none(exchange, market),
                 "linear": market.get("linear"),
                 "inverse": market.get("inverse"),
             }
@@ -227,6 +263,7 @@ class _BitgetDemoProfile(CCXTProfile):
 
 class BitgetClassicV2Profile(_BitgetDemoProfile):
     expected_profile = "classic_v2"
+    listing_options = {"uta": False}
     balance_requests = (
         {"type": "spot"},
         {"type": "swap", "productType": "USDT-FUTURES"},
@@ -308,6 +345,8 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
 
 class BitgetUTAV3Profile(_BitgetDemoProfile):
     expected_profile = "uta_v3"
+    # uta=True routes load_markets to fetch_uta_markets, a different symbol set.
+    listing_options = {"uta": True}
     balance_requests = ({"uta": True},)
     position_params = {"uta": True, "productType": "USDT-FUTURES"}
     open_order_requests = (

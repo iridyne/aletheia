@@ -147,8 +147,8 @@ def test_core_rules_use_bound_reader_and_absence_clears_cached_authority(monkeyp
     monkeypatch.setattr(rules, "_constraints_reader", None, raising=False)
     calls = []
 
-    async def read(venue, symbol, market_type):
-        calls.append((venue, symbol, market_type))
+    async def read(execution_mode, venue, symbol, market_type):
+        calls.append((execution_mode, venue, symbol, market_type))
         return rules.OrderConstraints(
             venue, symbol, market_type, Decimal("0.001"), None,
             Decimal("0.001"), Decimal("5"),
@@ -157,7 +157,7 @@ def test_core_rules_use_bound_reader_and_absence_clears_cached_authority(monkeyp
     rules.configure_order_constraints_reader(read)
     assert rules.prepare_exchange_quantity("bitget_demo", "BTC/USDT", "spot", 0.0011, 2000) == 0.003
     assert rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot").venue == "bitget"
-    assert calls == [("bitget", "BTC/USDT", "spot")]
+    assert calls == [("bitget_demo", "bitget", "BTC/USDT", "spot")]
     rules.configure_order_constraints_reader(None)
     with pytest.raises(rules.ConstraintUnavailable, match="unavailable"):
         rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot")
@@ -198,21 +198,26 @@ async def test_exchange_reader_owns_client_and_session_cleanup(monkeypatch, load
     async def close_session():
         events.append("session_closed")
 
+    sandbox_calls = []
+
     def make(exchange_id, *, options):
         assert exchange_id == "binanceusdm"
-        assert options == {"defaultType": "swap"}
+        # The reader now applies the mode's listing view, so the fake must model
+        # the same surface the real client exposes.
+        assert options["defaultType"] == "swap"
         return SimpleNamespace(
             load_markets=load, close=close_exchange, precisionMode=ccxt.DECIMAL_PLACES,
             markets={"BTC/USDT:USDT": _market()},
+            set_sandbox_mode=lambda value: sandbox_calls.append(value),
         ), SimpleNamespace(close=close_session)
 
     monkeypatch.setattr(net, "make_ccxt", make)
     if load_fails:
         with pytest.raises(ConstraintUnavailable) as raised:
-            await read_order_constraints("binance", "BTC/USDT", "usdt_futures")
+            await read_order_constraints("binance_testnet", "binance", "BTC/USDT", "usdt_futures")
         assert isinstance(raised.value.__cause__, TimeoutError)
     else:
-        result = await read_order_constraints("binance", "BTC/USDT", "usdt_futures")
+        result = await read_order_constraints("binance_testnet", "binance", "BTC/USDT", "usdt_futures")
         assert (result.venue, result.symbol, result.market_type) == ("binance", "BTC/USDT", "usdt_futures")
         assert result.min_quantity == Decimal("0.001")
         assert result.amount_step == Decimal("0.0001")
@@ -284,6 +289,7 @@ async def test_gateway_quantity_rules_use_exact_perpetual_identity(monkeypatch, 
 
     monkeypatch.setattr(net, "make_ccxt", lambda *_a, **_kw: (SimpleNamespace(
         markets=markets, load_markets=load, close=close, precisionMode=ccxt.TICK_SIZE,
+        set_sandbox_mode=lambda _value: None,
     ), None))
     monkeypatch.setattr(rules, "_constraints_reader", read_order_constraints)
     monkeypatch.setattr(rules, "_cache", {})
@@ -307,3 +313,68 @@ def test_rules_lookup_keeps_spot_distinct_from_same_pair_perpetual():
     spot = _market(spot=True, swap=False, contractSize=None)
     exchange = SimpleNamespace(markets={"BTC/USDT:USDT": _market(), "BTC/USDT": spot})
     assert _find_market(exchange, "BTC/USDT", "spot") is spot
+
+
+def test_demo_and_live_rules_are_not_shared_across_one_venue(monkeypatch):
+    """A demo order must not be validated against the live listing set.
+
+    The cache key was the venue, so bitget_demo and live bitget shared one entry,
+    and the reader built a plain production client. RENDER is listed live but
+    absent from the Bitget demo market map, so it passed pre-trade validation and
+    then died at submission with `contract_size_unavailable` — a fail-open gap the
+    order could only discover at the exchange.
+    """
+    from aletheia.execution import order_constraints as rules
+
+    monkeypatch.setattr(rules, "_cache", {})
+    monkeypatch.setattr(rules, "_constraints_reader", None, raising=False)
+    seen = []
+
+    async def read(execution_mode, venue, symbol, market_type):
+        seen.append(execution_mode)
+        return rules.OrderConstraints(
+            venue, symbol, market_type, Decimal("0.001"), None,
+            Decimal("0.001"), Decimal("5"),
+        )
+
+    rules.configure_order_constraints_reader(read)
+    rules.get_order_constraints("bitget_demo", "RENDER/USDT", "usdt_futures")
+    rules.get_order_constraints("bitget_live_limited", "RENDER/USDT", "usdt_futures")
+
+    # Two modes on one venue must each consult the reader for their own listing.
+    assert seen == ["bitget_demo", "bitget_live_limited"]
+
+
+async def test_reader_applies_the_execution_mode_listing_view(monkeypatch):
+    """The pre-trade client must match submission's sandbox and options."""
+    import ccxt
+    from types import SimpleNamespace
+
+    from aletheia import net
+    from extensions.exchanges.ccxt.order_rules import read_order_constraints
+
+    seen: dict[str, object] = {}
+
+    async def load():
+        return {}
+
+    async def close():
+        return None
+
+    def make(exchange_id, *, options):
+        seen["options"] = dict(options)
+        return SimpleNamespace(
+            load_markets=load,
+            close=close,
+            precisionMode=ccxt.TICK_SIZE,
+            markets={"RENDER/USDT:USDT": _market()},
+            set_sandbox_mode=lambda value: seen.__setitem__("sandbox", value),
+        ), None
+
+    monkeypatch.setattr(net, "make_ccxt", make)
+    await read_order_constraints("bitget_demo", "bitget", "RENDER/USDT", "usdt_futures")
+
+    # bitget_demo profiles declare sandbox=True and carry a uta listing option;
+    # both must reach the client that answers the pre-trade question.
+    assert seen.get("sandbox") is True
+    assert "uta" in seen["options"]
