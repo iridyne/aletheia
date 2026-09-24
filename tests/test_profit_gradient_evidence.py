@@ -312,6 +312,10 @@ def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable
 
 
 def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
+    # Timestamps must fall within the epoch (_EPOCH_START through _CUTOFF)
+    # so validation logic reaches cost-evidence field checks.
+    opened = _EPOCH_START + timedelta(hours=1)
+    closed = opened + timedelta(minutes=1)
     return {
         "fact_id": "position-1",
         "economics": {
@@ -328,8 +332,8 @@ def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
             "exit": {
                 "position": {
                     "id": "position-1",
-                    "opened_at": "2026-08-13T00:00:00+00:00",
-                    "closed_at": "2026-08-13T00:01:00+00:00",
+                    "opened_at": opened.isoformat(),
+                    "closed_at": closed.isoformat(),
                     "quantity": 1.0,
                     "entry_price": 100.0,
                     "direction": "long",
