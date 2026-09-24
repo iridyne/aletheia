@@ -28,6 +28,7 @@ url-to-markdown/
 .claude/settings.local.json
 .claude/plans/
 .claude/worktrees/
+.orca-worktrees/
 CLAUDE.local.md
 
 # External skill toolkits (not part of this repo)
