@@ -13,11 +13,11 @@ from aletheia.cli.inspect_cmd import inspect_app
 
 runner = CliRunner()
 
-# Cost-model resolution refuses entries before the learning data floor with
-# `dirty_or_missing_entry_time`. Fixtures pinned to August became dirty once the
-# floor advanced to 2026-09-23, so the row meant to be the clean source was dirty
-# too. Only the two tests that depend on floor membership are anchored; the rest
-# assert on a fixed timeline unrelated to the floor.
+# All datetime fixtures in this file are derived from the clean-window anchor so
+# they remain above the learning data floor after any re-anchor.  The two names
+# below give the tests a stable relative "epoch" timeline:
+#   _EPOCH_START — 2 days after anchor (stands in for the epoch opening)
+#   _CUTOFF      — 14 days after anchor (stands in for the as-of cutoff)
 _ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
 _CLEAN_ENTRY = (_ANCHOR + timedelta(minutes=1)).isoformat()
 _CLEAN_DUE = (_ANCHOR + timedelta(hours=4)).isoformat()
@@ -28,6 +28,9 @@ _PRE_FLOOR_DUE = (_ANCHOR - timedelta(days=79)).isoformat()
 # timeline so the properties under test survive an anchor bump.
 _CLEAN_DUE_NAIVE = (_ANCHOR + timedelta(hours=4)).replace(tzinfo=None).isoformat()
 _AFTER_CUTOFF = (_ANCHOR + timedelta(days=1)).isoformat()
+# Fixed-timeline anchors for tests that are not about floor membership.
+_EPOCH_START = _ANCHOR + timedelta(days=2)
+_CUTOFF = _ANCHOR + timedelta(days=14)
 
 
 def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
@@ -103,9 +106,9 @@ def test_cost_model_source_does_not_admit_future_settlement():
         (
             "future",
             "v1",
-            "2026-08-13T00:00:00+00:00",
-            "2026-08-14T00:00:00+00:00",
-            "2026-08-15T00:00:00+00:00",
+            (_CUTOFF - timedelta(days=1)).isoformat(),
+            _CUTOFF.isoformat(),
+            (_CUTOFF + timedelta(days=1)).isoformat(),
             "settled",
         ),
     )
@@ -113,7 +116,7 @@ def test_cost_model_source_does_not_admit_future_settlement():
     resolved = evidence._resolve_cost_model(
         db,
         "v1",
-        datetime(2026, 8, 14, tzinfo=timezone.utc),
+        _CUTOFF,
     )
 
     assert resolved["status"] == "unavailable"
@@ -222,7 +225,7 @@ def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
     resolved = evidence._resolve_cost_model(
         db,
         cost_model_id,
-        datetime(2026, 8, 14, tzinfo=timezone.utc),
+        _CUTOFF,
         position_facts=[
             {
                 "fact_id": "position-1",
@@ -247,8 +250,8 @@ def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
     )
     monkeypatch.setattr(evidence, "build_candidate_facts", lambda **_: next(reports))
 
-    first, _ = evidence._load_candidates(db, datetime(2026, 8, 14, tzinfo=timezone.utc))
-    second, _ = evidence._load_candidates(db, datetime(2026, 8, 14, tzinfo=timezone.utc))
+    first, _ = evidence._load_candidates(db, _CUTOFF)
+    second, _ = evidence._load_candidates(db, _CUTOFF)
 
     assert first["source_hash"] != second["source_hash"]
 
@@ -273,17 +276,17 @@ def test_candidate_loader_threads_epoch_bounds_into_source_identity(monkeypatch)
 
     monkeypatch.setattr(evidence, "build_candidate_facts", _report)
 
-    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
-    epoch_start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    cutoff = _CUTOFF
+    epoch_start = _EPOCH_START
     source, facts = evidence._load_candidates(
         sqlite3.connect(":memory:"),
         cutoff,
         epoch_start,
     )
 
-    assert captured["epoch_start_at"] == "2026-08-01T00:00:00+00:00"
-    assert source["as_of_at"] == "2026-08-14T00:00:00+00:00"
-    assert source["epoch_start_at"] == "2026-08-01T00:00:00+00:00"
+    assert captured["epoch_start_at"] == _EPOCH_START.isoformat()
+    assert source["as_of_at"] == _CUTOFF.isoformat()
+    assert source["epoch_start_at"] == _EPOCH_START.isoformat()
     assert facts == []
 
 
@@ -296,8 +299,8 @@ def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable
             "fixed_horizon_outcome_unavailable_reason": "missing_settled_at",
         }],
         position_facts=[],
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_CUTOFF,
+        epoch_start=_EPOCH_START,
         cost_model_id="v1",
         epoch_id="epoch-1",
         cost_status="unavailable",
@@ -384,8 +387,8 @@ def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, m
     sample, reason = evidence._position_cost_sample(
         sqlite3.connect(":memory:"),
         fact,
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_CUTOFF,
+        epoch_start=_EPOCH_START,
         cost_model_id="fixture-cost/v1",
         epoch_id="epoch-1",
     )
@@ -404,8 +407,8 @@ def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
         sample, reason = evidence._position_cost_sample(
             sqlite3.connect(":memory:"),
             fact,
-            cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-            epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+            cutoff=_CUTOFF,
+            epoch_start=_EPOCH_START,
             cost_model_id="fixture-cost/v1",
             epoch_id="epoch-1",
         )
@@ -425,8 +428,8 @@ def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
     sample, reason = evidence._position_cost_sample(
         sqlite3.connect(":memory:"),
         fact,
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_CUTOFF,
+        epoch_start=_EPOCH_START,
         cost_model_id="fixture-cost/v1",
         epoch_id="epoch-1",
     )
@@ -435,15 +438,15 @@ def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
 
 
 def test_incomplete_source_cannot_emit_numeric_coverage():
-    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    cutoff = _CUTOFF
     context = evidence._coverage_context(
         registration={},
         candidate_facts=[
             {
-                "event_at": "2026-08-13T00:00:00+00:00",
+                "event_at": (_CUTOFF - timedelta(days=1)).isoformat(),
                 "fixed_horizon_outcome": {
                     "status": "settled",
-                    "settled_at": "2026-08-14T00:00:00+00:00",
+                    "settled_at": _CUTOFF.isoformat(),
                     "cost_model_version": "v1",
                     "horizon": "24h",
                     "net_return_pct": 1.0,
@@ -451,7 +454,7 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
             }
         ],
         position_facts=[],
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        epoch_start=_EPOCH_START,
         cutoff=cutoff,
         candidate_source={"status": "available", "unavailable_count": 1},
         position_source={"status": "available", "error_count": 1},
@@ -474,10 +477,10 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
         registration={},
         candidate_facts=[
             {
-                "event_at": "2026-08-13T00:00:00+00:00",
+                "event_at": (_CUTOFF - timedelta(days=1)).isoformat(),
                 "fixed_horizon_outcome": {
                     "status": "settled",
-                    "settled_at": "2026-08-14T00:00:00+00:00",
+                    "settled_at": _CUTOFF.isoformat(),
                     "cost_model_version": "v1",
                     "horizon": "24h",
                     "net_return_pct": 1.0,
@@ -485,7 +488,7 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
             }
         ],
         position_facts=[],
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        epoch_start=_EPOCH_START,
         cutoff=cutoff,
         candidate_source={"status": "available", "unavailable_count": 1},
         position_source={"status": "available", "error_count": 1},
@@ -500,7 +503,7 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
         registration={},
         candidate_facts=[],
         position_facts=[],
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        epoch_start=_EPOCH_START,
         cutoff=cutoff,
         candidate_source={"status": "available", "unavailable_count": 0},
         position_source={"status": "available", "error_count": 0},
@@ -951,8 +954,8 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
 def test_execution_layer_has_no_external_paired_reference():
     samples, stats = evidence._add_layer_samples(
         db=sqlite3.connect(":memory:"), candidate_facts=[], position_facts=[_execution_fact()],
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_CUTOFF,
+        epoch_start=_EPOCH_START,
         cost_model_id="fixture-cost/v1", epoch_id="epoch-1",
         cost_status="available", registration_ok=True,
     )
