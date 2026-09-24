@@ -200,14 +200,111 @@ def test_incremental_reclaim_is_bounded_and_writer_serialized(tmp_path, monkeypa
         lambda: calls.append("release"),
     )
 
+    freelist_before = int(db.execute("PRAGMA freelist_count").fetchone()[0])
+
     result = reclaim_incremental_freelist(db, max_mb=1)
 
+    freelist_after = int(db.execute("PRAGMA freelist_count").fetchone()[0])
     assert result["enabled"] is True
-    assert result["requested_pages"] <= 256
     assert result["remaining_pages"] >= 0
     assert calls == ["acquire", "release"] * (len(calls) // 2)
     assert len(calls) > 2
+    # Reported progress must match the freelist the caller can observe.
+    assert result["remaining_pages"] == freelist_after
+    assert result["reclaimed_pages"] == freelist_before - freelist_after
     db.close()
+
+
+def test_reclaim_budget_advances_by_reclaimed_not_requested_pages(monkeypatch):
+    """A one-page-per-call vacuum must count one page of progress, not 64.
+
+    #3420 advanced the budget by the requested chunk size, so a nominal 16 MiB
+    reclaim could stop after 64 calls having freed ~256 KiB (#3433).
+    """
+    from aletheia.maintenance import database_capacity
+    from aletheia.maintenance.database_capacity import reclaim_incremental_freelist
+
+    monkeypatch.setattr(
+        "aletheia.storage.sqlite.acquire_write_lock", lambda: 0.0
+    )
+    monkeypatch.setattr("aletheia.storage.sqlite.release_write_lock", lambda: None)
+
+    page_size = 4096
+    start_freelist = 1000
+    state = {"freelist": start_freelist}
+    vacuum_calls: list[int] = []
+
+    class OnePagePerCall:
+        """Reclaims exactly one page however many are requested."""
+
+        def execute(self, sql):
+            if "page_size" in sql:
+                return _Row(page_size)
+            if "freelist_count" in sql:
+                return _Row(state["freelist"])
+            if "auto_vacuum" in sql:
+                return _Row(2)
+            if "incremental_vacuum" in sql:
+                vacuum_calls.append(int(sql.split("(")[1].rstrip(")")))
+                state["freelist"] = max(0, state["freelist"] - 1)
+                return _Row(0)
+            raise AssertionError(f"unexpected pragma: {sql}")
+
+    result = reclaim_incremental_freelist(OnePagePerCall(), max_mb=16)
+
+    # 16 MiB / 4 KiB = 4096 pages requested, but only 1000 pages exist, so the
+    # target is the freelist itself; the attempt cap stops the walk first.
+    assert result["attempts"] == database_capacity._RECLAIM_MAX_ATTEMPTS
+    # One page per call → progress equals the number of calls, not 64x that.
+    assert result["reclaimed_pages"] == database_capacity._RECLAIM_MAX_ATTEMPTS
+    assert result["remaining_pages"] == start_freelist - result["reclaimed_pages"]
+    # Permit holds stay small: each request is one bounded chunk.
+    assert set(vacuum_calls) == {database_capacity._RECLAIM_CHUNK_PAGES}
+    # requested_pages still describes requests, and is far above real progress —
+    # the two are no longer interchangeable.
+    assert result["requested_pages"] > result["reclaimed_pages"]
+
+
+def test_reclaim_stops_when_a_chunk_makes_no_progress(monkeypatch):
+    """A floor SQLite cannot move terminates the loop instead of spinning."""
+    from aletheia.maintenance.database_capacity import reclaim_incremental_freelist
+
+    monkeypatch.setattr(
+        "aletheia.storage.sqlite.acquire_write_lock", lambda: 0.0
+    )
+    monkeypatch.setattr("aletheia.storage.sqlite.release_write_lock", lambda: None)
+
+    vacuum_calls: list[int] = []
+
+    class StuckFreelist:
+        def execute(self, sql):
+            if "page_size" in sql:
+                return _Row(4096)
+            if "freelist_count" in sql:
+                return _Row(500)
+            if "auto_vacuum" in sql:
+                return _Row(2)
+            if "incremental_vacuum" in sql:
+                vacuum_calls.append(1)
+                return _Row(0)
+            raise AssertionError(f"unexpected pragma: {sql}")
+
+    result = reclaim_incremental_freelist(StuckFreelist(), max_mb=16)
+
+    assert len(vacuum_calls) == 1
+    assert result["attempts"] == 1
+    assert result["reclaimed_pages"] == 0
+    assert result["remaining_pages"] == 500
+
+
+class _Row:
+    """Minimal PRAGMA cursor stub returning a single scalar."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def fetchone(self):
+        return (self._value,)
 
 
 def test_compaction_defaults_to_read_only_plan(tmp_path):

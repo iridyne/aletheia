@@ -11,6 +11,13 @@ import time
 
 
 _MIB = 1024 * 1024
+# Pages requested per writer-permit hold. Small holds keep the single SQLite
+# writer available to unrelated jobs during a recurring reclaim.
+_RECLAIM_CHUNK_PAGES = 64
+# Hard ceiling on permit handoffs per reclaim. The 64 MiB pressure budget needs
+# 256 ideal chunks at a 4 KiB page size; this leaves headroom for partial
+# reclaims while bounding the worst case.
+_RECLAIM_MAX_ATTEMPTS = 512
 _CAPACITY_LOG = "database_capacity.jsonl"
 _WAL_RETAINED_LIMIT_BYTES = 64 * _MIB
 _WAL_AUTOCHECKPOINT_PAGES = 1_000
@@ -338,23 +345,36 @@ def reclaim_incremental_freelist(
 
     from aletheia.storage.sqlite import acquire_write_lock, release_write_lock
 
-    attempted = 0
+    requested = 0
+    reclaimed = 0
     remaining = before
-    while attempted < target:
-        chunk = min(64, target - attempted)
+    attempts = 0
+    # ``PRAGMA incremental_vacuum(N)`` may reclaim fewer than N pages, so the
+    # budget advances by the measured freelist delta rather than by the request
+    # size. The attempt cap keeps pathological fragmentation (one page per call)
+    # from turning a bounded cleanup into thousands of writer-permit handoffs.
+    while reclaimed < target and attempts < _RECLAIM_MAX_ATTEMPTS:
+        chunk = min(_RECLAIM_CHUNK_PAGES, target - reclaimed)
         acquire_write_lock()
         try:
             db.execute(f"PRAGMA incremental_vacuum({chunk})")
+            # Read inside the permit so the delta describes this chunk only; a
+            # concurrent peer delete could otherwise inflate the count.
+            after = int(db.execute("PRAGMA freelist_count").fetchone()[0])
         finally:
             release_write_lock()
-        after = int(db.execute("PRAGMA freelist_count").fetchone()[0])
-        attempted += chunk
+        requested += chunk
+        attempts += 1
         if after >= remaining:
+            # No progress: stop instead of spinning against a floor SQLite
+            # cannot move (fully vacuumed, or pages pinned by an open reader).
             break
+        reclaimed += remaining - after
         remaining = after
     return {
         "enabled": True,
-        "requested_pages": attempted,
-        "reclaimed_pages": max(0, before - remaining),
+        "requested_pages": requested,
+        "reclaimed_pages": reclaimed,
         "remaining_pages": remaining,
+        "attempts": attempts,
     }
