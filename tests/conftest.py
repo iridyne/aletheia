@@ -328,6 +328,28 @@ def _shutdown_scheduler_after_test():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _reset_account_equity_history_cache():
+    """The equity-history route memoizes its response for 60s in module state.
+
+    Three modules call ``get_account_equity_history`` and two of them share the cache
+    key ``(7, None, None, 'exchange_account')``. In one process the second caller was
+    therefore served a body built from the first caller's database, which made
+    ``test_pnl_pipeline.py::test_account_equity_history_excludes_legacy_position_notional_rows``
+    fail whenever xdist happened to place it in the same worker within 60 seconds of
+    ``test_account_equity_range.py`` — and pass in isolation. Cleared around every
+    test so no test can inherit another's response.
+    """
+    try:
+        from aletheia.server.routes.data import invalidate_account_equity_history_cache
+    except Exception:
+        yield
+        return
+    invalidate_account_equity_history_cache()
+    yield
+    invalidate_account_equity_history_cache()
+
+
 @pytest.fixture
 def api_only_runtime(monkeypatch, tmp_path):
     """Run the real ASGI app against an explicitly migrated file database.
