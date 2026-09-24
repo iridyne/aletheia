@@ -23,6 +23,52 @@ INDEPENDENT_UNIT_INTERVAL = timedelta(hours=4)
 _SHRINKAGE_K = 50
 _TAIL_HARM_FLOOR_PCT = -15.0
 
+# Every reason this module can attach to an estimate, classified by what the
+# reason actually proves. Admission policy reads this classification; it must
+# never rebuild one from string literals at the consumer, because a reason added
+# here would then silently inherit the strictest branch and stall admission.
+# `test_economic_utility_reason_classification_is_exhaustive` fails when a reason
+# produced below is missing from exactly one set.
+
+# Not measured yet. The cohort may become measurable with no policy change:
+# history accrues, settlement catches up, costs get backfilled.
+EVIDENCE_ABSENT_REASONS = frozenset({
+    "no_history",
+    "parent_sample_insufficient",
+    "child_sample_insufficient",
+    "history_economics_incomplete",
+    "settlement_overdue",
+})
+# Measured, and the measurement refuses the route. Never bypass these.
+MEASURED_REJECTION_REASONS = frozenset({"tail_harm"})
+# The cohort's parent history is already mature — this reason is only reachable
+# after `parent_supported` — but this Candidate cannot be placed onto it for want
+# of a strength quintile. Admitting on a startup basis here would evade that
+# cohort's real economics, which may well be negative. The fix is a wider
+# cross-section, not admission.
+EVIDENCE_UNMATCHED_REASONS = frozenset({"percentile_unavailable"})
+# The stored evidence contradicts itself. Waiting cannot fix it, and admitting on
+# it would decide from corrupt facts; it needs repair, not a bypass.
+EVIDENCE_INTEGRITY_FAULT_REASONS = frozenset({
+    "history_time_invalid",
+    "history_identity_invalid",
+})
+ECONOMIC_UNAVAILABLE_REASONS = (
+    EVIDENCE_ABSENT_REASONS
+    | MEASURED_REJECTION_REASONS
+    | EVIDENCE_UNMATCHED_REASONS
+    | EVIDENCE_INTEGRITY_FAULT_REASONS
+)
+
+
+def reason_proves_evidence_absent(reason: object) -> bool:
+    """True when the reason means "not measured yet", not "measured and refused".
+
+    Unknown reasons answer False so an unclassified reason fails closed at
+    runtime, even though the exhaustiveness test also rejects it at build time.
+    """
+    return reason in EVIDENCE_ABSENT_REASONS
+
 
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, Real):

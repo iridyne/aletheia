@@ -23,6 +23,7 @@ from aletheia.universe.economic_utility import (
     CANDIDATE_SELECTION_OUTCOME_VERSION,
     build_economic_utility_cohort_index,
     estimate_economic_utility,
+    reason_proves_evidence_absent,
 )
 from aletheia.universe.opportunity_evidence import (
     annotate_within_run_percentiles,
@@ -659,7 +660,7 @@ def target_candidates_from_bundle(
             utility = float(raw_utility) if raw_utility is not None else None
             if utility is None and not (
                 decision.get("admission_basis") == "startup"
-                and decision.get("startup_reason") in {"no_history", "parent_sample_insufficient", "child_sample_insufficient"}
+                and reason_proves_evidence_absent(decision.get("startup_reason"))
             ):
                 raise ValueError("candidate_selection_startup_invalid")
         except (KeyError, StopIteration, TypeError, ValueError) as exc:

@@ -1692,3 +1692,144 @@ def test_missing_required_fast_channel_cannot_authorize_order_intent(monkeypatch
         build_entry_plan_order_intent(plan, bid=ready.bid, ask=ready.ask,
             observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
+
+
+def test_economic_utility_reason_classification_is_exhaustive():
+    """Every reason the estimator can emit belongs to exactly one class.
+
+    Admission reads these sets to decide whether a startup bypass is lawful, so
+    an unclassified reason is not a cosmetic gap: it lands in the strict branch
+    and stalls admission silently (that is how `history_economics_incomplete`
+    froze Candidate admission at zero). This parses the producing module instead
+    of restating the list, so adding a reason there without classifying it fails
+    here rather than in production.
+    """
+    import ast
+    from pathlib import Path
+
+    from aletheia.universe import economic_utility as eu
+
+    source = Path(eu.__file__).read_text(encoding="utf-8")
+    emitted: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        # `failures.setdefault(...).add("reason")`
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add" and len(node.args) == 1
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            emitted.add(node.args[0].value)
+        # `reason = "reason"`
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            if any(isinstance(t, ast.Name) and t.id == "reason" for t in node.targets):
+                emitted.add(node.value.value)
+
+    assert emitted, "reason extraction found nothing — the AST shapes changed"
+    classes = {
+        "absent": eu.EVIDENCE_ABSENT_REASONS,
+        "rejection": eu.MEASURED_REJECTION_REASONS,
+        "unmatched": eu.EVIDENCE_UNMATCHED_REASONS,
+        "integrity": eu.EVIDENCE_INTEGRITY_FAULT_REASONS,
+    }
+    unclassified = emitted - eu.ECONOMIC_UNAVAILABLE_REASONS
+    assert not unclassified, (
+        f"reasons emitted but not classified: {sorted(unclassified)} — add each to exactly one of "
+        "EVIDENCE_ABSENT_REASONS (not measured yet), MEASURED_REJECTION_REASONS (measured and refused), "
+        "EVIDENCE_UNMATCHED_REASONS (cohort mature but this Candidate cannot be placed onto it), "
+        "or EVIDENCE_INTEGRITY_FAULT_REASONS (stored evidence self-contradictory)"
+    )
+    stale = eu.ECONOMIC_UNAVAILABLE_REASONS - emitted
+    assert not stale, f"classified reasons no longer emitted: {sorted(stale)}"
+    for name, members in classes.items():
+        others = set().union(*(v for k, v in classes.items() if k != name))
+        assert not (members & others), f"{name} overlaps another class: {sorted(members & others)}"
+    # The distinction the classification exists to enforce.
+    assert "tail_harm" in eu.MEASURED_REJECTION_REASONS
+    assert not eu.reason_proves_evidence_absent("tail_harm")
+    assert eu.reason_proves_evidence_absent("history_economics_incomplete")
+    # Mature parent history must never be called scarce: only reachable once the
+    # parent cohort is supported, so a startup bypass would evade its economics.
+    assert "percentile_unavailable" in eu.EVIDENCE_UNMATCHED_REASONS
+    assert not eu.reason_proves_evidence_absent("percentile_unavailable")
+    assert not eu.reason_proves_evidence_absent("unknown_future_reason")
+    assert not eu.reason_proves_evidence_absent(None)
+
+
+def test_incomplete_cost_history_admits_via_startup_instead_of_stalling():
+    """Missing cost fields are absent evidence, not a measured refusal.
+
+    Regression: a cohort whose outcomes lacked cost fields reported
+    `history_economics_incomplete`, which the consumer's literal scarcity set did
+    not list, so a hard-gate-eligible actionable Candidate reached
+    `unavailable` and admission stayed at zero indefinitely.
+    """
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    row = _outcomes(1)[0]
+
+    def estimate(rows):
+        return estimate_economic_utility(
+            candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+            market_type="spot", strength_percentile=None, outcomes=rows,
+            source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=row["cost_assumptions"],
+        )
+
+    incomplete = estimate([{**row, "estimated_funding_pct": None}])
+    assert incomplete.unavailable_reason == "history_economics_incomplete"
+    assert incomplete.economic_utility_pct is None
+    # The estimate stays unavailable; what changes is that admission may now treat
+    # it as unmeasured and fall back to the startup basis.
+    from aletheia.universe.economic_utility import reason_proves_evidence_absent
+    assert reason_proves_evidence_absent(incomplete.unavailable_reason)
+    assert not reason_proves_evidence_absent(estimate([{**row, "net_return_pct": -20}]).unavailable_reason)
+
+
+def test_admission_consumes_estimator_classification_not_its_own_literals():
+    """Admission must admit on absent evidence and refuse a measured rejection.
+
+    This binds the consumer, not just the data: reverting the startup gate to a
+    literal scarcity set makes `history_economics_incomplete` stall admission
+    again, and this test fails. `settlement_overdue` covers the second reason that
+    froze the live runtime.
+    """
+    from dataclasses import replace
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+    from aletheia.universe.opportunity_evidence import build_opportunity_evidence
+    from aletheia.universe.economic_utility import (
+        EVIDENCE_ABSENT_REASONS,
+        MEASURED_REJECTION_REASONS,
+        EVIDENCE_UNMATCHED_REASONS,
+        EVIDENCE_INTEGRITY_FAULT_REASONS,
+        estimate_economic_utility,
+    )
+    from aletheia.universe.candidate_selection_utility import build_candidate_selection_utility
+
+    cutoff = "2026-09-02T00:00:00+00:00"
+    feature = _feature(market_type="perp")
+    gate = evaluate_hard_gate(feature, UniverseConfig(), candidate_key="x", evaluated_at=cutoff)
+    evidence = build_opportunity_evidence(feature, candidate_key="x", source_cutoff_at=cutoff)
+    long = next(item for item in evidence.mechanisms if item.mechanism_id == "continuation")
+    base = estimate_economic_utility(candidate_key="x", mechanism_id="continuation", direction="long",
+        venue="okx", market_type="perp", strength_percentile=None, source_cutoff_at=cutoff)
+
+    def decide(reason):
+        return build_candidate_selection_utility(
+            hard_gate=gate,
+            opportunity_evidence=replace(evidence, mechanisms=(long,)),
+            economic_estimates=(replace(base, unavailable_reason=reason),),
+        )
+
+    # Hard-gate-eligible + actionable + unmeasured => startup admission is lawful.
+    for reason in sorted(EVIDENCE_ABSENT_REASONS):
+        decision = decide(reason)
+        assert decision.admission_status == "admitted", f"{reason} must not stall admission"
+        assert decision.admission_basis == "startup"
+        assert decision.startup_reason == reason
+        assert decision.economic_utility_pct is None
+
+    # Measured refusal and self-contradictory evidence must never be bypassed.
+    for reason in sorted(MEASURED_REJECTION_REASONS | EVIDENCE_UNMATCHED_REASONS
+                         | EVIDENCE_INTEGRITY_FAULT_REASONS):
+        decision = decide(reason)
+        assert decision.admission_status == "unavailable", f"{reason} must not be bypassed"
+        assert decision.admission_basis is None
+    # An unclassified reason fails closed.
+    assert decide("unknown_future_reason").admission_status == "unavailable"

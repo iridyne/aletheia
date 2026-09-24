@@ -8,7 +8,10 @@ from typing import Literal, Sequence
 
 from aletheia.trading.entry_plan import entry_instrument_violation
 from aletheia.universe.candidate_eligibility import HardGateDecisionV1, canonical_fingerprint
-from aletheia.universe.economic_utility import EconomicUtilityEstimateV2
+from aletheia.universe.economic_utility import (
+    EconomicUtilityEstimateV2,
+    reason_proves_evidence_absent,
+)
 from aletheia.universe.opportunity_evidence import OpportunityEvidenceBundleV1
 
 
@@ -109,17 +112,20 @@ def build_candidate_selection_utility(
     basis = "measured" if status == "admitted" else None
     startup_reason = None
     startup = None
-    scarcity = {"no_history", "parent_sample_insufficient", "child_sample_insufficient"}
     usable = [item for item in opportunity_evidence.mechanisms
               if (item.mechanism_id, item.direction) in actionable and item.pessimistic_strength is not None
               and math.isfinite(item.pessimistic_strength) and 0 < item.pessimistic_strength <= 100]
     estimates = {(item.mechanism_id, item.direction): item for item in economic_estimates}
     if status == "unavailable" and hard_gate.status == "eligible" and hard_gate.actionability != "observe_only":
-        # Every usable route must be sparse: never evade a known economic rejection.
-        sparse = bool(usable) and all(item.unavailable_reason in scarcity for item in economic_estimates
+        # Every usable route must still be unmeasured: never evade a measured
+        # rejection, and never admit on evidence that contradicts itself. The
+        # estimator that emits the reasons owns their classification, so a new
+        # reason cannot silently land in this permissive branch.
+        sparse = bool(usable) and all(reason_proves_evidence_absent(item.unavailable_reason)
+                                    for item in economic_estimates
                                     if (item.mechanism_id, item.direction) in actionable) and all(
             (estimate := estimates.get((item.mechanism_id, item.direction))) is not None
-            and estimate.unavailable_reason in scarcity for item in usable
+            and reason_proves_evidence_absent(estimate.unavailable_reason) for item in usable
         )
         if sparse and len({item.direction for item in usable}) > 1:
             status = "direction_conflict"
