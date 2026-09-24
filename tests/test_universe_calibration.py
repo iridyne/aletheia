@@ -5,10 +5,25 @@ when it is negative. Rows with NULL direction are excluded because their trade
 side is unknown. These tests pin that contract on the real SQLite path.
 """
 
+from datetime import datetime, timedelta
+
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import UniverseForwardOutcome
 from aletheia.storage.sqlite import get_db, reset_db
+
+
+def _after_anchor(**delta) -> str:
+    """An entry_ts inside the clean window.
+
+    `calibration_stats` filters on `entry_ts >= clean_window_cutoff(...)`, and that
+    floor is the clean-window anchor — a real boundary that moves whenever
+    attribution integrity is re-anchored. Timestamps written as absolute literals
+    silently fall out of the window at the next re-anchor and the cohort reads as
+    empty, so every fixture timestamp is derived from the anchor.
+    """
+    return (datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(**delta)).isoformat()
 
 
 def setup_test_db(tmp_path):
@@ -218,11 +233,11 @@ def test_horizon_separated_counts(tmp_path):
     # 1 row for AAA/USDT at T+90min (> 1h) → 2nd admission for that symbol
     # 1 row for BBB/USDT at T+0 → independent symbol, always admitted
     repo.insert_forward_outcomes_batch([
-        _settled("AAA/USDT", "long", 1.0, entry_ts="2026-08-01T00:00:00+00:00", member_id="m_aaa_1"),
-        _settled("AAA/USDT", "long", 2.0, entry_ts="2026-08-01T00:20:00+00:00", member_id="m_aaa_2"),
-        _settled("AAA/USDT", "long", 3.0, entry_ts="2026-08-01T00:40:00+00:00", member_id="m_aaa_3"),
-        _settled("AAA/USDT", "long", 4.0, entry_ts="2026-08-01T01:30:00+00:00", member_id="m_aaa_4"),  # +90min
-        _settled("BBB/USDT", "long", 1.0, entry_ts="2026-08-01T00:00:00+00:00", member_id="m_bbb_1"),
+        _settled("AAA/USDT", "long", 1.0, entry_ts=_after_anchor(minutes=1), member_id="m_aaa_1"),
+        _settled("AAA/USDT", "long", 2.0, entry_ts=_after_anchor(minutes=21), member_id="m_aaa_2"),
+        _settled("AAA/USDT", "long", 3.0, entry_ts=_after_anchor(minutes=41), member_id="m_aaa_3"),
+        _settled("AAA/USDT", "long", 4.0, entry_ts=_after_anchor(minutes=91), member_id="m_aaa_4"),  # +90min
+        _settled("BBB/USDT", "long", 1.0, entry_ts=_after_anchor(minutes=1), member_id="m_bbb_1"),
     ])
     stats = {
         (r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r
