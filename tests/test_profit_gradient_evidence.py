@@ -2,15 +2,32 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from typer.testing import CliRunner
 
 import aletheia.analytics.profit_gradient_evidence as evidence
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.cli.inspect_cmd import inspect_app
 
 runner = CliRunner()
+
+# Cost-model resolution refuses entries before the learning data floor with
+# `dirty_or_missing_entry_time`. Fixtures pinned to August became dirty once the
+# floor advanced to 2026-09-23, so the row meant to be the clean source was dirty
+# too. Only the two tests that depend on floor membership are anchored; the rest
+# assert on a fixed timeline unrelated to the floor.
+_ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
+_CLEAN_ENTRY = (_ANCHOR + timedelta(minutes=1)).isoformat()
+_CLEAN_DUE = (_ANCHOR + timedelta(hours=4)).isoformat()
+_AS_OF_CLEAN = _ANCHOR + timedelta(hours=5)
+_PRE_FLOOR_ENTRY = (_ANCHOR - timedelta(days=80)).isoformat()
+_PRE_FLOOR_DUE = (_ANCHOR - timedelta(days=79)).isoformat()
+# A naive (tz-less) variant and a post-cutoff variant, both kept on the same
+# timeline so the properties under test survive an anchor bump.
+_CLEAN_DUE_NAIVE = (_ANCHOR + timedelta(hours=4)).replace(tzinfo=None).isoformat()
+_AFTER_CUTOFF = (_ANCHOR + timedelta(days=1)).isoformat()
 
 
 def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
@@ -117,17 +134,17 @@ def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
             (
                 "historical",
                 "v1",
-                "2026-06-01T00:00:00+00:00",
-                "2026-06-02T00:00:00+00:00",
-                "2026-06-02T00:00:00+00:00",
+                _PRE_FLOOR_ENTRY,
+                _PRE_FLOOR_DUE,
+                _PRE_FLOOR_DUE,
                 "settled",
             ),
             (
                 "clean",
                 "v1",
-                "2026-08-13T00:00:00+00:00",
-                "2026-08-14T00:00:00+00:00",
-                "2026-08-14T00:00:00+00:00",
+                _CLEAN_ENTRY,
+                _CLEAN_DUE,
+                _CLEAN_DUE,
                 "settled",
             ),
         ],
@@ -136,7 +153,7 @@ def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
     resolved = evidence._resolve_cost_model(
         db,
         "v1",
-        datetime(2026, 8, 14, tzinfo=timezone.utc),
+        _AS_OF_CLEAN,
     )
 
     assert resolved["status"] == "available"
@@ -701,11 +718,11 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
     db.execute("INSERT INTO trade_proposals VALUES ('proposal-1', 2, 100)")
     db.execute(
         "INSERT INTO learning_exposures VALUES (?, ?, ?, ?, ?, ?)",
-        ("exposure-1", "treatment", "cluster-1", "epoch-1", "candidate-1", "2026-08-13T00:00:00+00:00"),
+        ("exposure-1", "treatment", "cluster-1", "epoch-1", "candidate-1", _CLEAN_ENTRY),
     )
     fact = {
         "fact_id": "candidate-1",
-        "event_at": "2026-08-13T00:00:00+00:00",
+        "event_at": _CLEAN_ENTRY,
         "identity": {"proposal_id": "proposal-1"},
         "terminal_state": "risk_reject",
         "fixed_horizon_outcome": {
@@ -715,9 +732,9 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
                 "market_type": "perp",
             "horizon": "24h",
             "outcome_candidate_key": "candidate-1",
-            "entry_ts": "2026-08-13T00:00:00+00:00",
-            "due_at": "2026-08-14T00:00:00+00:00",
-            "settled_at": "2026-08-14T00:00:00+00:00",
+            "entry_ts": _CLEAN_ENTRY,
+            "due_at": _CLEAN_DUE,
+            "settled_at": _CLEAN_DUE,
             "settlement_price_source": "horizon_ohlcv",
             "settlement_lag_sec": 0.0,
             "entry_price_usd": 100.0,
@@ -737,8 +754,8 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
         db,
         fact,
         layer="Risk",
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_AS_OF_CLEAN,
+        epoch_start=_ANCHOR,
         cost_model_id="v1",
         epoch_id="epoch-1",
     )
@@ -759,8 +776,8 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
         db,
         legacy_fact,
         layer="Risk",
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_AS_OF_CLEAN,
+        epoch_start=_ANCHOR,
         cost_model_id="v1",
         epoch_id="epoch-1",
     )
@@ -769,32 +786,32 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
 
     naive_settlement_fact = fact | {
         "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
-            "settled_at": "2026-08-14T00:00:00",
+            "settled_at": _CLEAN_DUE_NAIVE,
         },
     }
     sample, reason = evidence._candidate_sample(
         db,
         naive_settlement_fact,
         layer="Risk",
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_AS_OF_CLEAN,
+        epoch_start=_ANCHOR,
         cost_model_id="v1",
         epoch_id="epoch-1",
     )
     assert reason is None
-    assert sample["stage_window"]["end_at"] == "2026-08-14T00:00:00+00:00"
+    assert sample["stage_window"]["end_at"] == _CLEAN_DUE
 
     future_fact = fact | {
         "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
-            "settled_at": "2026-08-15T00:00:00+00:00",
+            "settled_at": _AFTER_CUTOFF,
         },
     }
     sample, reason = evidence._candidate_sample(
         db,
         future_fact,
         layer="Risk",
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=_AS_OF_CLEAN,
+        epoch_start=_ANCHOR,
         cost_model_id="v1",
         epoch_id="epoch-1",
     )
