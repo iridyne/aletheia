@@ -82,14 +82,18 @@ async def settle_due_filter_outcomes(
             "(missing venue); they remain pending and are excluded from settlement",
             identity_unavailable,
         )
-    benchmark_inactive = repo.count_pending_filter_candidate_outcomes_unreachable_benchmark(
-        now_iso
+    # A discovery benchmark that is not active can never settle its outcomes: both
+    # the selector and the terminal write guard refuse them, so leaving them
+    # ``pending`` reports them as backlog that drains on its own. Close them here so
+    # any path that strands a row self-heals on the next cycle.
+    benchmark_inactive = repo.close_pending_filter_outcomes_for_inactive_benchmarks(
+        at=now_iso
     )
     if benchmark_inactive:
         logger.warning(
-            "filter outcome settler: %d due rows belong to an inactive discovery "
-            "benchmark; the selector and the terminal write guard both refuse them, so "
-            "they remain pending and are excluded from settlement",
+            "filter outcome settler: closed %d pending rows whose discovery benchmark "
+            "is no longer active; neither the selector nor the terminal write guard "
+            "could ever reach them, so they are not settler backlog",
             benchmark_inactive,
         )
     cfg = load_config()

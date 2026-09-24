@@ -685,6 +685,58 @@ def test_requeue_restores_only_the_rows_that_were_never_observed():
     assert again["universe_forward_outcomes"] == 0
 
 
+def test_settler_closes_outcomes_whose_benchmark_can_never_settle():
+    """A pending row under a dead benchmark is not backlog; it gets a terminal state.
+
+    Neither the selector nor the terminal write guard can reach such a row, so
+    leaving it ``pending`` claims it drains on its own. The close must be terminal,
+    must not fabricate settlement, must not touch reachable rows, and must be
+    idempotent.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_discovery_benchmarks (id, status, contract_json, contract_hash, "
+        "code_commit, started_at, capture_ends_at, finalize_not_before, created_at, "
+        "invalidated_at, invalidation_reason) "
+        "VALUES ('bench-dead','invalidated','{}','h','c',datetime('now','-10 days'),"
+        "datetime('now','-3 days'),datetime('now','-3 days'),datetime('now','-10 days'),"
+        "datetime('now','-4 days'),'superseded')"
+    )
+    for row_id, window in (("fco-live", None), ("fco-dead", "bench-dead")):
+        db.execute(
+            "INSERT INTO filter_candidate_outcomes (id, outcome_candidate_key, venue, "
+            "symbol, market_type, direction, scanner_family, horizon, entry_price_usd, "
+            "entry_ts, due_at, status, benchmark_window_id) "
+            "VALUES (?,?,'binance','BTC/USDT','spot','long','momentum','1h',100.0,"
+            "datetime('now','-3 hours'),datetime('now','-2 hours'),'pending',?)",
+            (row_id, f"key-{row_id}", window),
+        )
+    db.commit()
+
+    assert repo.close_pending_filter_outcomes_for_inactive_benchmarks(at="t") == 1
+
+    rows = {
+        str(row["id"]): dict(row)
+        for row in db.execute(
+            "SELECT id, status, settled_at, net_return_pct, exit_price_usd "
+            "FROM filter_candidate_outcomes"
+        )
+    }
+    assert rows["fco-dead"]["status"] == "invalidated"
+    assert rows["fco-dead"]["settled_at"] is None, (
+        "a never-settled row must not be stamped as if it had been settled"
+    )
+    assert rows["fco-dead"]["net_return_pct"] is None
+    assert rows["fco-dead"]["exit_price_usd"] is None
+    assert rows["fco-live"]["status"] == "pending", "a reachable row must be untouched"
+
+    # Idempotent: the predicate is status='pending'.
+    assert repo.close_pending_filter_outcomes_for_inactive_benchmarks(at="t") == 0
+
+
 def test_doctor_reports_destroyed_evidence_and_how_to_reclaim_it():
     """Every other number in this probe drains on its own; this one does not.
 

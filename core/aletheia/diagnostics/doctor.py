@@ -3552,7 +3552,7 @@ def _probe_filter_evidence(report: Report) -> None:
     """Report whether filter pass/reject facts and their net outcomes are connected."""
     try:
         from aletheia.storage.repositories import (
-            FILTER_OUTCOME_SETTLER_REACHABLE_SQL,
+            FILTER_OUTCOME_BENCHMARK_DEAD_SQL,
             complete_outcome_economics_sql,
             count_pending_filter_candidate_outcomes_unreachable_benchmark,
         )
@@ -3615,10 +3615,10 @@ def _probe_filter_evidence(report: Report) -> None:
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
-            f"  AND {FILTER_OUTCOME_SETTLER_REACHABLE_SQL} "
+            f"  AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
             "  THEN 1 ELSE 0 END) AS overdue, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
-            f"  AND {FILTER_OUTCOME_SETTLER_REACHABLE_SQL} "
+            f"  AND NOT {FILTER_OUTCOME_BENCHMARK_DEAD_SQL} "
             "  THEN 1 ELSE 0 END) AS stale_overdue "
             "FROM filter_candidate_outcomes",
             (now_iso, stale_before),
@@ -3691,9 +3691,8 @@ def _probe_filter_evidence(report: Report) -> None:
                 detail,
                 f"{unreachable_pending} due outcomes belong to a discovery benchmark that "
                 "is no longer active; the settler can neither select nor write them, so "
-                "they are not settler backlog and will never drain while the benchmark "
-                "stays inactive. Decide their terminal disposition or reactivate the "
-                "benchmark window",
+                "they are not settler backlog. The settler closes them on its next run — "
+                "a non-zero count means no settler has run since they became unreachable",
             )
         elif malformed_batches:
             report.add(
