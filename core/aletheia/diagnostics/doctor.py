@@ -1706,12 +1706,9 @@ def _probe_trading_loop(report: Report) -> None:
         except Exception:
             pass
 
-        # Session uptime (display only) and whether MO has run yet this session.
-        # Using agent_runs as the warmup signal avoids false suppression during
-        # high-churn restart periods (git hooks, self-heal) where session_uptime
-        # would always reset before 30 min and permanently hide real stalls.
+        # Session uptime (display only). The market_observer warmup signal this used
+        # to carry is gone: see the retired-observe-path note below.
         session_uptime = None
-        mo_ran = True  # default to True so unknown DB state doesn't suppress warn
         try:
             session_row = db.execute(
                 "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
@@ -1719,12 +1716,6 @@ def _probe_trading_loop(report: Report) -> None:
             ).fetchone()
             if session_row:
                 session_uptime = _age_minutes(session_row[0])
-                run_row = db.execute(
-                    "SELECT id FROM agent_runs WHERE agent_name='market_observer'"
-                    " AND started_at >= ? LIMIT 1",
-                    (session_row[0],),
-                ).fetchone()
-                mo_ran = run_row is not None
         except Exception:
             pass
     except Exception as e:
@@ -1735,21 +1726,26 @@ def _probe_trading_loop(report: Report) -> None:
     report.add("loop.activity", "info",
                f"orders={orders} fills={fills} positions(open={open_pos},closed={closed_pos}) "
                f"opportunities={opps} knowledge={ki}")
+    # The Universe Opportunity observe path was retired with its deterministic
+    # emitter (#2945); market_observer is now enrichment-only and its admitted
+    # workset is structurally empty (#2990). This table therefore stops advancing
+    # by design, so its age is historical evidence, not a live-loop failure, and
+    # there is no "observer should fire" remedy to offer. Current entry liveness
+    # belongs to data.candidate_planning, exactly as _probe_skip_halt already
+    # documents for the retired signal_pending evidence.
     if opp_age is None:
-        report.add("loop.newest_opportunity", "info", "no opportunities yet")
-    elif opp_age > 30:
-        if not mo_ran:
-            # MO hasn't fired yet this session — scheduler is still warming up.
-            uptime_str = f", session {_fmt_age(session_uptime)} old" if session_uptime is not None else ""
-            report.add("loop.newest_opportunity", "info",
-                       f"newest opportunity {_fmt_age(opp_age)}{uptime_str}"
-                       " — warming up after restart, first MO run pending")
-        else:
-            report.add("loop.newest_opportunity", "warn",
-                       f"newest opportunity {_fmt_age(opp_age)} — observe stage not producing",
-                       "observer should fire every ~15min when gateway runs unpaused")
+        report.add("loop.newest_opportunity", "info", "no opportunities recorded")
     else:
-        report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
+        uptime_str = (
+            f", session {_fmt_age(session_uptime)} old" if session_uptime is not None else ""
+        )
+        report.add(
+            "loop.newest_opportunity",
+            "info",
+            f"newest opportunity {_fmt_age(opp_age)}{uptime_str} — retired observe path, "
+            "historical evidence only",
+            "current entry liveness is data.candidate_planning",
+        )
 
 
 def _probe_skip_halt(report: Report) -> None:
