@@ -494,10 +494,18 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
         original = endpoint(**kwargs)
         response = client.get(f"/api/universe{path}")
         assert response.status_code == 200, path
-        assert response.json() == original, path
+        response_json = response.json()
+        # Normalize time-sensitive fields for comparison (age_seconds varies between calls)
+        if path == "/workbench" and "progress" in original and "progress" in response_json:
+            original.get("progress", {}).pop("age_seconds", None)
+            response_json.get("progress", {}).pop("age_seconds", None)
+        assert response_json == original, path
         adapter = TypeAdapter(schema)
         validated = adapter.validate_json(response.content, strict=True)
-        assert adapter.dump_python(validated, mode="json", exclude_unset=True) == original, path
+        dumped = adapter.dump_python(validated, mode="json", exclude_unset=True)
+        if path == "/workbench" and isinstance(dumped, dict) and "progress" in dumped:
+            dumped.get("progress", {}).pop("age_seconds", None)
+        assert dumped == original, path
 
     policy = UniversePolicy(active=True)
     repo.insert_universe_policy(policy)
