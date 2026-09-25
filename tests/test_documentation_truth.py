@@ -5,6 +5,7 @@ from pathlib import Path
 from scripts.check_docs import (
     contract_code_path_failures,
     semantic_truth_failures,
+    timestamp_unit_suffix_failures,
 )
 
 
@@ -68,3 +69,28 @@ def test_contract_code_path_failures_reports_missing_and_ignores_valid() -> None
         or "learning/registry.py" in failure
         for failure in failures
     )
+
+
+def test_timestamp_unit_suffix_failures_flags_contradiction_and_ignores_correct() -> None:
+    source_root = Path("core/aletheia")
+    probe = source_root / "_timestamp_unit_probe.py"
+    try:
+        probe.write_text(
+            "bogus_timeout_ms = raw_value / 1000\n"
+            "bogus_delay_sec = raw_value * 1000\n"
+            "bogus_ok_sec = raw_value / 1000\n"
+            "bogus_ok_ms = raw_value * 1000\n",
+            encoding="utf-8",
+        )
+        failures = timestamp_unit_suffix_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert (
+        "core/aletheia/_timestamp_unit_probe.py:1: "
+        "timestamp unit contradiction: bogus_timeout_ms = ... / 1000"
+    ) in failures
+    assert (
+        "core/aletheia/_timestamp_unit_probe.py:2: "
+        "timestamp unit contradiction: bogus_delay_sec = ... * 1000"
+    ) in failures
+    assert not any("bogus_ok_" in failure for failure in failures)
