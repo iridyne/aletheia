@@ -96,6 +96,7 @@ root = true
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.40.1",
     "httpx2>=2.5,<3",
     "hypothesis>=6.155.3",
     "pytest>=9.0.3",
@@ -120,3 +121,9 @@ line-length = 120
 # shadowed by loop var — one legitimate instance).
 select = ["E", "F"]
 ignore = ["E501", "E402", "E702", "E731", "E741", "F401", "F841", "F402"]
+
+[tool.basedpyright]
+# Scope: scripts/dev_check.py passes the changed files explicitly, reports
+# error-level diagnostics on changed lines only. No repo-wide include list — the
+# legacy tree is not type-clean and a whole-repo gate would be pure noise.
+typeCheckingMode = "basic"

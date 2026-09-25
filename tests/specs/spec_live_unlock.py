@@ -490,6 +490,11 @@ def test_forbidden_intents_blocked_in_all_operator_modes():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="LU-C05 tripwire: no serenity executor owns the serenity track's market_type "
+    "scope (serenity_executor.py absent) — deferred to serenity Phase 5 hardening",
+)
 @spec_claim(
     SpecClaim(
         "LU-C05", "live_unlock_contract", "§4b main-track scope", "L2c",
@@ -499,13 +504,22 @@ def test_forbidden_intents_blocked_in_all_operator_modes():
     ),
 )
 def test_auto_mode_scope_main_track_only():
-    # This is a structural RED tripwire — passes xfail until the market_type
-    # scope check is added to permissions.py / serenity_executor boundary.
-    # When implemented, this test should verify that Auto permission is only
-    # propagated to the main-track executor, not to serenity_executor paths.
-    pytest.xfail(
-        "LU-C05 tripwire: serenity_executor market_type isolation not enforced in "
-        "permissions.py — deferred to serenity Phase 5 hardening"
+    """Strict-xfail tripwire: XPASSes (→ red) as soon as a serenity executor exists.
+
+    Until then there is no market_type-scoped owner for the serenity track, so the
+    claim cannot be proven behaviorally; the assertion below documents the gap and
+    keeps the tripwire honest instead of xfailing unconditionally.
+    """
+    from pathlib import Path
+
+    import aletheia
+
+    serenity_executor = Path(aletheia.__file__).parent / "execution" / "serenity_executor.py"
+    assert serenity_executor.exists(), (
+        "LU-C05: serenity_executor.py does not exist, so the serenity track has no "
+        "independent market_type scope owner and Auto permission scope is unenforced. "
+        "When the serenity executor lands this strict xfail XPASSes — replace this "
+        "tripwire with the real market_type isolation behavioral spec."
     )
 
 

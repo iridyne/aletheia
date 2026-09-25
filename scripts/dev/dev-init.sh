@@ -3,8 +3,8 @@
 #
 # Purpose: prepare the local checkout to run the gateway as a plain background
 # binary on 8787 backed by ~/.aletheia/, WITHOUT any OS-level autostart binding
-# (no LaunchAgent respawn). Run this once per fresh checkout / whenever autostart
-# gets re-enabled by an external command.
+# (no LaunchAgent respawn), and install the pre-commit cheap gate. Run this once
+# per fresh checkout / whenever autostart gets re-enabled by an external command.
 
 set -euo pipefail
 
@@ -21,21 +21,21 @@ fail() { printf '[dev-init] ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v uv >/dev/null 2>&1 || fail "uv not found on PATH. Install uv first."
 
-log "1/4  Disabling OS autostart (LaunchAgent) — dev must never be respawned by OS."
+log "1/5  Disabling OS autostart (LaunchAgent) — dev must never be respawned by OS."
 if uv run aletheia gateway disable-autostart 2>&1 | sed 's/^/    /'; then
   :
 else
   warn "disable-autostart returned non-zero. Continuing — inspect above output."
 fi
 
-log "2/4  Checking frontend/node_modules."
+log "2/5  Checking frontend/node_modules."
 if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
   warn "frontend/node_modules missing. Run: cd frontend && npm install"
   warn "Then re-run this script."
   exit 1
 fi
 
-log "3/4  Checking dashboard_static/index.html."
+log "3/5  Checking dashboard_static/index.html."
 if [[ ! -f "$STATIC_DIR/index.html" ]]; then
   log "     Missing. Building frontend (this may take ~30s)..."
   (cd "$FRONTEND_DIR" && npm run build) || fail "Frontend build failed."
@@ -44,7 +44,17 @@ else
   log "     Present."
 fi
 
-log "4/4  Current gateway state:"
+log "4/5  Installing the pre-commit cheap gate (scripts/hooks/pre-commit)."
+if [[ -f "$REPO_ROOT/.git/hooks/pre-commit" ]] && ! cmp -s "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"; then
+  warn "An existing .git/hooks/pre-commit differs and was NOT overwritten. Inspect it, then copy manually:"
+  warn "  cp scripts/hooks/pre-commit .git/hooks/pre-commit"
+else
+  cp "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"
+  chmod +x "$REPO_ROOT/.git/hooks/pre-commit"
+  log "     Installed. Full changed-file gate: uv run python scripts/dev_check.py"
+fi
+
+log "5/5  Current gateway state:"
 uv run aletheia gateway status 2>&1 | sed 's/^/    /' || true
 
 log "Done. Data dir: $DATA_DIR"

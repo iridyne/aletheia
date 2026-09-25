@@ -73,6 +73,47 @@ approval follows root `AGENTS.md`, independently of commit metadata.
 
 Categorize commits by concern, not by session order.
 
+## Fast feedback loop (mandatory first step)
+
+Every routine edit starts with the changed-file gate, not with a suite run:
+
+```sh
+uv run python scripts/dev_check.py          # working tree vs HEAD
+uv run python scripts/dev_check.py --staged # staged only (what the hook runs)
+```
+
+It runs, in order and only against what this change touched: `git diff --check`;
+`ruff check` with `B,ASYNC,RUF` enabled **reported on changed lines only**; the
+test skip/xfail and data-guarded silent-pass census
+(`scripts/check_test_hygiene.py`, #3471); `pytest --lf` when a cache exists;
+focused tests that name or import a changed module; then `basedpyright` in
+`basic` mode, error-level, changed lines only.
+
+Why changed lines only: the repository carries roughly a thousand pre-existing
+`B/ASYNC/RUF` findings and 1152 files `ruff format` would rewrite, so a
+whole-file gate would fail on every edit and be ignored. The enforced contract is
+"this change adds no new problem", not "the repository is clean". Do not add
+`ruff format --check` to this loop without first landing a repository-wide
+formatting migration.
+
+Repair order — stop at the first red and fix it before widening:
+
+1. `dev_check` (seconds) — ruff/hygiene/whitespace/previous red set.
+2. Focused tests for the module you changed (`dev_check` selects these).
+3. `uv run python scripts/dev_check.py --fast` — the `-m fast` default feedback
+   set.
+4. The full suite only through the isolated Fedora process below, and only when
+   explicitly requested.
+
+Do not re-run the whole suite after every edit. Do not treat a green `dev_check`
+as PR-level evidence: `scripts/ci_preflight.py` / `scripts/ci_local.py` still own
+that, and neither grants merge or runtime authority.
+
+`scripts/hooks/pre-commit` enforces the cheap subset (secrets/`.env`,
+whitespace, ruff on staged lines, test hygiene) and never runs pytest; it is
+installed by `scripts/dev/dev-init.sh`. Use `git commit --no-verify` only for a
+verified false positive and say so in the commit.
+
 ## Measuring test results honestly
 
 - **Never compare failure counts across a changed denominator.** Establish the
@@ -171,6 +212,8 @@ deep evidence for that head remains unchanged.
 
 ## Common commands
 
+- Changed-file gate (first step of every edit loop):
+  `uv run python scripts/dev_check.py`
 - Focused test: `uv run pytest tests/test_<area>.py -q`
 - CI Yield baseline (read-only GitHub facts):
   `uv run --no-sync python scripts/ci_yield.py --limit 20
