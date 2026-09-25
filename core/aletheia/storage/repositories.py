@@ -6336,6 +6336,7 @@ from aletheia.storage.models import (
     UniverseTwinShadowBatch,
     UniverseTwinShadowEvidence,
 )
+logger = logging.getLogger("aletheia.storage.repositories")
 
 
 def insert_universe_asset(asset: UniverseAsset) -> None:
@@ -9594,7 +9595,8 @@ def _filter_outcome_insert_payload(outcome) -> dict:
         from aletheia.agent_runtime.runtime_session import current_provenance
 
         provenance = current_provenance()
-    except Exception:
+    except Exception as exc:
+        logger.warning("repositories: outcome insert provenance unavailable (%s)", type(exc).__name__)
         provenance = {}
     for field, source_field in (
         ("producer_runtime_session_id", "runtime_session_id"),
@@ -9651,7 +9653,8 @@ def _settle_outcome_with_exact_venue(
                     from aletheia.agent_runtime.runtime_session import current_provenance
 
                     provenance = current_provenance()
-                except Exception:
+                except Exception as exc:
+                    logger.warning("repositories: settlement provenance unavailable (%s)", type(exc).__name__)
                     provenance = {}
                 updates = {
                     **updates,

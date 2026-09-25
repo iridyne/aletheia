@@ -1,5 +1,7 @@
 """Settings API routes."""
 
+import logging
+
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -632,6 +634,7 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
 # ---------------------------------------------------------------------------
 
 from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP as _EXCHANGE_UNIFICATION_MAP
+logger = logging.getLogger("aletheia.server.routes.settings")
 
 
 class PrimaryExchangeRequest(SettingsRequest):
@@ -1082,7 +1085,8 @@ def _lab_experiment_authority() -> bool:
         from extensions.observation_lab.canonical import get_authority_source
 
         return get_authority_source().source == "lab"
-    except Exception:
+    except Exception as exc:
+        logger.warning("settings: lab authority probe unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -1652,7 +1656,8 @@ async def update_telegram_config(req: TelegramConfigUpdate):
             rescheduled = await run_in_threadpool(
                 reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("settings: telegram summary reschedule unavailable (%s)", type(exc).__name__)
             rescheduled = False
         if not rescheduled:
             try:

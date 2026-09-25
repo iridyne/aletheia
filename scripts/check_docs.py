@@ -556,64 +556,21 @@ def semantic_truth_failures() -> list[str]:
 # is silently rendered as a plausible zero/empty value instead of "unavailable".
 # Visible, dated (2026-09-26), never a silent skip; keep green on master but
 # still catch NEW handlers. (relative_path, lineno) tuples of audited handlers.
-BASELINE_SILENT_FAILURE_FALLBACKS = {
-    # (relative_path, lineno)
-    ("core/aletheia/agent_shell/entry_planner.py", 60),
-    ("core/aletheia/agent_shell/operator_recommendations.py", 360),
-    ("core/aletheia/agents/helpers.py", 467),
-    ("core/aletheia/agents/helpers.py", 469),
-    ("core/aletheia/analytics/causal_controls.py", 181),
-    ("core/aletheia/analytics/causal_controls.py", 216),
-    ("core/aletheia/analytics/entry_exit_geometry.py", 328),
-    ("core/aletheia/analytics/entry_exit_geometry.py", 351),
-    ("core/aletheia/analytics/entry_exit_geometry.py", 361),
-    ("core/aletheia/analytics/go_live_scorecard.py", 167),
-    ("core/aletheia/analytics/go_live_scorecard.py", 234),
-    ("core/aletheia/analytics/profit_gradient_evidence.py", 252),
-    ("core/aletheia/analytics/profit_loop_counterfactual.py", 279),
-    ("core/aletheia/cli/control_cmd.py", 65),
-    ("core/aletheia/cli/control_cmd.py", 74),
-    ("core/aletheia/cli/control_cmd.py", 87),
-    ("core/aletheia/cli/control_cmd.py", 99),
-    ("core/aletheia/cli/gateway.py", 56),
-    ("core/aletheia/data/collector_health.py", 482),
-    ("core/aletheia/diagnostics/config_consistency.py", 179),
-    ("core/aletheia/diagnostics/doctor.py", 2088),
-    ("core/aletheia/diagnostics/doctor.py", 2691),
-    ("core/aletheia/diagnostics/doctor.py", 3290),
-    ("core/aletheia/economics/budgets.py", 425),
-    ("core/aletheia/economics/context_artifacts.py", 123),
-    ("core/aletheia/economics/inference_calls.py", 148),
-    ("core/aletheia/economics/inference_calls.py", 174),
-    ("core/aletheia/economics/inference_calls.py", 243),
-    ("core/aletheia/economics/tracing.py", 377),
-    ("core/aletheia/economics/usage_insights.py", 626),
-    ("core/aletheia/model_provider/base.py", 210),
-    ("core/aletheia/model_provider/fallback.py", 525),
-    ("core/aletheia/model_provider/inference_contract.py", 149),
-    ("core/aletheia/net.py", 568),
-    ("core/aletheia/net.py", 576),
-    ("core/aletheia/server/dev_reload.py", 27),
-    ("core/aletheia/server/routes/model.py", 316),
-    ("core/aletheia/server/routes/model.py", 349),
-    ("core/aletheia/server/routes/model.py", 394),
-    ("core/aletheia/server/routes/settings.py", 1085),
-    ("core/aletheia/server/routes/settings.py", 1655),
-    ("core/aletheia/server/routes/ws.py", 69),
-    ("core/aletheia/storage/knowledge_index.py", 19),
+# Zero known violations as of 2026-09-26 (R20 harvest): all 98 historical
+# entries now return None / typed-unavailable / logged multi-statement bodies
+# instead of a bare falsy literal.
+#
+# Narrow exemptions (kept per-site with reason):
+# - (core/aletheia/storage/migrations.py, 2489) fts5_available(): the whole
+#   file before "# MIGRATION_LEDGER_START" is checksum-frozen by
+#   _legacy_baseline_implementation_checksum(), so ANY source edit — including
+#   adding a log line — breaks the frozen migration ledger. The handler
+#   returns False (FTS5 unsupported -> caller degrades) which is the correct
+#   fail-closed probe result; the failure is intentionally silent because the
+#   source line itself is the audit record. Fixing this would require a
+#   migration-ledger exception, which is a larger change than the gate repair.
+BASELINE_SILENT_FAILURE_FALLBACKS: set[tuple[str, int]] = {
     ("core/aletheia/storage/migrations.py", 2489),
-    ("core/aletheia/storage/repositories.py", 9597),
-    ("core/aletheia/storage/repositories.py", 9654),
-    ("core/aletheia/trading/persona.py", 132),
-    ("core/aletheia/trading/persona.py", 186),
-    ("core/aletheia/trading/persona.py", 209),
-    ("core/aletheia/trading/persona_rollout.py", 609),
-    ("core/aletheia/trading/persona_rollout.py", 1374),
-    ("core/aletheia/trading/playbooks.py", 72),
-    ("core/aletheia/trading/sizing_policy.py", 113),
-    ("core/aletheia/trading/sizing_policy.py", 156),
-    ("core/aletheia/universe/allocator.py", 80),
-    ("core/aletheia/universe/discovery_benchmark.py", 506),
 }
 
 

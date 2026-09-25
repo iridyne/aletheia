@@ -6,8 +6,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import math
 from typing import Any, Callable, Mapping
+
+logger = logging.getLogger("aletheia.analytics.profit_loop_counterfactual")
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
@@ -276,7 +279,8 @@ def profit_loop_registration_cutoffs() -> list[str]:
             )
             .fetchall()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("profit_loop_counterfactual: registration cutoffs unavailable (%s)", type(exc).__name__)
         return []
     return [
         cutoff.isoformat()

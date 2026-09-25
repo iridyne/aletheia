@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import math
+
+logger = logging.getLogger("aletheia.agent_shell.operator_recommendations")
 
 from aletheia.utils.dt import parse_utc
 from aletheia.agent_shell.operator_store import (
@@ -357,7 +360,8 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
 
             value, _ = _resolve_capital_base(proposal_mode, resolved.policy, cfg)
             return float(value or 0.0)
-        except Exception:
+        except Exception as exc:
+            logger.warning("operator_recommendations: effective capital base unavailable (%s)", type(exc).__name__)
             return 0.0
 
     parsed = _parse_numeric_threshold_violation(

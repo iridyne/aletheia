@@ -1,5 +1,7 @@
 """Base model provider abstraction."""
 
+import logging
+
 from collections.abc import AsyncIterator
 import asyncio
 import copy
@@ -7,6 +9,8 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+logger = logging.getLogger("aletheia.model_provider.base")
 
 _ACTIVE_STRUCTURED_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_structured_cost_request", default=None)
 _ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_stream_cost_request", default=None)
@@ -207,7 +211,8 @@ def _cost_metadata(provider: Any, *, mode: str | None = None, request: Any = Non
         from aletheia.agent_runtime.run_context import current_economic_attribution
 
         attribution = current_economic_attribution()
-    except Exception:
+    except Exception as exc:
+        logger.warning("model_provider: cost attribution unavailable (%s)", type(exc).__name__)
         attribution = {}
     if attribution:
         metadata.update(attribution)

@@ -465,8 +465,10 @@ def _classify_schema_validation_error(exc: BaseException) -> str:
             try:
                 items = errors()
             except Exception:  # noqa: BLE001 - classification must stay best effort
+                logger.warning("helpers: schema error classification unavailable (%s)", type(exc).__name__)
                 items = []
         except Exception:  # noqa: BLE001 - classification must stay best effort
+            logger.warning("helpers: schema error classification unavailable (%s)", type(exc).__name__)
             items = []
         if isinstance(items, list) and items and isinstance(items[0], dict):
             item = items[0]

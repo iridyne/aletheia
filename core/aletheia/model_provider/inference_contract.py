@@ -7,6 +7,7 @@ all attempts for one instance of :class:`InferenceCall` share its logical ID.
 
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import threading
@@ -15,6 +16,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+
+logger = logging.getLogger("aletheia.model_provider.inference_contract")
 
 class OutputMode(StrEnum):
     TEXT = "text"
@@ -146,7 +149,8 @@ def capture_environment(*, scope: str = "agent") -> dict[str, Any]:
             "paper_execution_mode": _bounded(cfg.exchange.paper_execution_mode),
             "live_state": _bounded(cfg.live.state),
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("inference_contract: environment capture unavailable (%s)", type(exc).__name__)
         environment = {}
     try:
         from aletheia.agent_runtime.run_context import (

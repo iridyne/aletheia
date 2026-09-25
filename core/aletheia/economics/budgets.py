@@ -16,6 +16,10 @@ this module only owns budget declarations and read-only budget calculations.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.budgets")
+
 import hashlib
 import math
 from datetime import datetime, timedelta, timezone
@@ -422,7 +426,8 @@ def list_recent_would_block_events(
 
             metadata = _json.loads(entry.get("metadata_json") or "{}")
             observations = metadata.get("would_block") or []
-        except Exception:
+        except Exception as exc:
+            logger.warning("budgets: would-block metadata unreadable (%s)", type(exc).__name__)
             observations = []
         entry["would_block"] = observations
         results.append(entry)

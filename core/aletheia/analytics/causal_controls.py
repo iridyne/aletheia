@@ -5,9 +5,12 @@ selection, ranking, risk approval, or order execution.
 """
 
 from __future__ import annotations
+import logging
 from aletheia.utils.dt import parse_utc
 
 import hashlib
+
+logger = logging.getLogger("aletheia.analytics.causal_controls")
 import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -178,7 +181,8 @@ def _insert_rows(rows: list[dict]) -> int:
         if not was_in_tx:
             db.commit()
         return len(rows)
-    except Exception:
+    except Exception as exc:
+        logger.warning("causal_controls: control observation insert unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -213,7 +217,8 @@ def _observable_controls(*, exclude_symbol: str, entry_ts: str, equity_like: boo
             key=lambda s: hashlib.sha256(f"serenity:{entry_ts}:{exclude_symbol}:{s}".encode("utf-8")).hexdigest(),
         )
         return picked[:limit]
-    except Exception:
+    except Exception as exc:
+        logger.warning("causal_controls: observable control pool unavailable (%s)", type(exc).__name__)
         return []
 
 

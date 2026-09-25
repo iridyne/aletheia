@@ -565,7 +565,8 @@ async def close_ccxt(exchange, session) -> bool:
         except _aio.CancelledError as exc:
             cancelled = exc
             closed = False
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            logger.warning("net: exchange close unavailable (%s)", type(exc).__name__)
             closed = False
     if session is not None:
         try:
@@ -573,7 +574,8 @@ async def close_ccxt(exchange, session) -> bool:
         except _aio.CancelledError as exc:
             cancelled = cancelled or exc
             closed = False
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            logger.warning("net: session close unavailable (%s)", type(exc).__name__)
             closed = False
     if cancelled is not None:
         raise cancelled

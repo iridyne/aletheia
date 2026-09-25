@@ -31,6 +31,8 @@ import time
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+logger = logging.getLogger("aletheia.server.routes.ws")
+
 router = APIRouter()
 log = logging.getLogger(__name__)
 
@@ -66,7 +68,8 @@ def _ws_remote_auth_required() -> bool:
     from aletheia.config.loader import load_config
     try:
         cfg = load_config(persist_migrations=False)
-    except Exception:
+    except Exception as exc:
+        logger.warning("ws: remote-auth config read unavailable (%s)", type(exc).__name__)
         return False
     tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
     remote_control = getattr(cfg, "remote_control", None)
