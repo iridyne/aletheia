@@ -524,9 +524,22 @@ _OPPORTUNITIES_SYSTEM = (
     "Return 0-5 opportunities. Return empty array if no clear opportunities. Return raw JSON array, no markdown."
 )
 
+# This evidence source is permanently capped below decision authority:
+# - core/aletheia/trading/serenity_evidence.py `_SOURCE_CEILING` hard-caps
+#   ict_methodology/smc_methodology/price_action at the `speculative` tier.
+# - core/aletheia/trading/serenity_scoring.py `_RESEARCHABILITY_CEILING` caps
+#   Grade-C (speculative) evidence score at 40.
+# - config default `min_score_for_pi=72` (core/aletheia/config/schema.py) keeps
+#   this evidence below the PI decision threshold by default.
+# Per docs/research/trading-theory/01_price_action_and_market_structure.md,
+# ICT/SMC vocabulary is a practitioner taxonomy, not a validated algorithm;
+# do not raise this source's tier or lower min_score_for_pi to let it reach
+# trading decisions without a separately approved decision experiment.
 _ICT_METHODOLOGY_SYSTEM = (
     "You are a trading methodology analyst specializing in ICT (Inner Circle Trader) and SMC (Smart Money Concepts) "
-    "for crypto futures markets. Your job is to produce ACTIONABLE trading methodology knowledge. "
+    "for crypto futures markets. Your job is to document practitioner-taxonomy trading concepts as named patterns "
+    "with their commonly-cited parameters. This is a practitioner taxonomy, not a validated or reproducible "
+    "algorithm — do not claim it is decided methodology. "
     "Return ONLY a JSON array of evidence objects. Each object must have: "
     '"title" (string: concept name like "Order Block Entry"), '
     '"source" (string: "ict_methodology" or "smc_methodology" or "price_action"), '
