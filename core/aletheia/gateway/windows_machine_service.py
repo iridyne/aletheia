@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -14,6 +15,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+
+logger = logging.getLogger("aletheia.gateway.windows_machine_service")
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -173,7 +176,8 @@ def status() -> dict:
             and _sha256(wrapper_path()) == WINSW_SHA256
             and config_path().read_text(encoding="utf-8") == _build_winsw_xml()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("windows_machine_service: installed config validation unavailable (%s)", type(exc).__name__)
         config_valid = False
     return _result(
         installed=True, enabled=enabled, running=running,

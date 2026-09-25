@@ -1,5 +1,6 @@
 """PID file management for the gateway process."""
 
+import logging
 import os
 import platform
 import signal
@@ -9,6 +10,8 @@ import time
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
+
+logger = logging.getLogger("aletheia.gateway.pidfile")
 
 # Markers used to find OUR own gateway processes for orphan cleanup. Two distinct
 # roles must both be matched so a still-alive supervisor can't respawn an inner we
@@ -181,7 +184,8 @@ def supervisor_owns_pid() -> bool:
     try:
         pid = read_pid()
         return pid is not None and pid != os.getpid()
-    except Exception:
+    except Exception as exc:
+        logger.warning("pidfile: supervisor ownership read unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -265,7 +269,8 @@ def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(_PORT_PROBE_TIMEOUT)
             return s.connect_ex((probe_host, port)) == 0
-    except Exception:
+    except Exception as exc:
+        logger.warning("pidfile: port probe unavailable for %s:%s (%s)", probe_host, port, type(exc).__name__)
         return False
 
 
@@ -319,7 +324,8 @@ def find_gateway_orphans() -> list[int]:
     """
     try:
         procs = _list_processes()
-    except Exception:
+    except Exception as exc:
+        logger.warning("pidfile: gateway process listing unavailable (%s)", type(exc).__name__)
         return []
     supervisors: list[int] = []
     inners: list[int] = []

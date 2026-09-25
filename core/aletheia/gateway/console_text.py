@@ -16,7 +16,10 @@ nearly any byte string and would silently mojibake genuinely UTF-8 output.
 """
 
 import locale
+import logging
 import sys
+
+logger = logging.getLogger("aletheia.gateway.console_text")
 
 # (BOM, codec) pairs — schtasks /Query /XML declares encoding="UTF-16" in its
 # text but emits code-page bytes when redirected; other tools do emit UTF-16.
@@ -60,6 +63,7 @@ def _system_code_page_encodings() -> tuple[str, ...]:
         pages = (kernel32.GetOEMCP(), kernel32.GetACP())
         return tuple(dict.fromkeys(f"cp{int(page)}" for page in pages if page))
     except Exception:
+        logger.warning("console_text: system code page probe unavailable")
         return ()
 
 

@@ -4,6 +4,8 @@ from datetime import datetime, timezone, timedelta
 import json
 import logging
 
+logger = logging.getLogger("aletheia.agent_runtime.run_logger")
+
 from aletheia.storage.models import (
     AgentArtifactRef,
     AgentRun,
@@ -186,8 +188,8 @@ def _aggregate_cost(run_id: str) -> dict:
         }
 
 
-def _aggregate_tools_called(run_id: str) -> list[str]:
-    """Return deduplicated tool names used during this run."""
+def _aggregate_tools_called(run_id: str) -> list[str] | None:
+    """Return deduplicated tool names used during this run, or None if unreadable."""
     try:
         from aletheia.storage.repositories import list_tool_calls
         calls = list_tool_calls(run_id=run_id, limit=500)
@@ -198,7 +200,8 @@ def _aggregate_tools_called(run_id: str) -> list[str]:
                 seen[name] = None
         return list(seen)
     except Exception:
-        return []
+        logger.warning("run_logger: tool-call history unavailable for run %s", run_id)
+        return None
 
 
 def _decode_json_list(raw: str | None) -> list:

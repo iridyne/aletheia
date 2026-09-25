@@ -7,6 +7,7 @@ transient definitions in :mod:`aletheia.gateway.managed_service` so existing
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import plistlib
@@ -16,6 +17,8 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+logger = logging.getLogger("aletheia.gateway.session_service")
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway import managed_service as _managed
@@ -276,7 +279,8 @@ def _start_windows() -> dict:
             try:
                 restored = _change_windows(False)
                 disable_ok = bool(restored.get("ok"))
-            except Exception:
+            except Exception as exc:
+                logger.warning("session_service: restore enable-state change unavailable (%s)", type(exc).__name__)
                 disable_ok = False
     if started is not None and started.returncode != 0:
         reason = "access_denied" if _managed._is_access_denied(started.stderr) else "schtasks_error"
@@ -426,7 +430,8 @@ def _status_macos() -> dict:
             valid = valid and _macos_payload_valid(
                 plistlib.loads(enabled_path.read_bytes())
             )
-    except Exception:
+    except Exception as exc:
+        logger.warning("session_service: macOS payload validation unavailable (%s)", type(exc).__name__)
         valid = False
     loaded = False
     try:

@@ -243,7 +243,8 @@ def _verify_webui_accessible(cfg) -> bool:
         with _local_urlopen(req, timeout=2) as response:
             content_type = response.getheader("Content-Type", "")
             return response.status == 200 and "text/html" in content_type
-    except Exception:
+    except Exception as exc:
+        logger.warning("lifecycle: WebUI preflight probe unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -259,7 +260,8 @@ def _verify_api_ready_accessible(cfg) -> bool:
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
         with _local_urlopen(req, timeout=2) as response:
             return response.status == 200
-    except Exception:
+    except Exception as exc:
+        logger.warning("lifecycle: /api/ready probe unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -281,7 +283,8 @@ def _read_ready_beacon(cfg) -> bool:
             return False
         live_pid = read_pid()
         return live_pid is not None and int(beacon_pid) == int(live_pid)
-    except Exception:
+    except Exception as exc:
+        logger.warning("lifecycle: ready-beacon read unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -443,10 +446,15 @@ def _check_circuit_break_auto_reset() -> None:
                 )
             ]
         except Exception:
-            recent_failures = []
+            # Audit unreadable: cannot prove the spawn lane is stable, so the
+            # breaker must stay closed (fail closed) rather than reset on
+            # missing evidence.
+            recent_failures = None
 
         if recent_failures:
             return  # new failures since the trip — leave the breaker closed
+        if recent_failures is None:
+            return  # audit unavailable — leave the breaker closed
 
         # Stable for >30 min with no new failures: restore only the recovery
         # owner disabled by the breaker. If an operator removed that owner while
@@ -863,7 +871,8 @@ def _is_headless() -> bool:
     # Detached process: console handle is invalid
     try:
         return ctypes.windll.kernel32.GetConsoleWindow() == 0
-    except Exception:
+    except Exception as exc:
+        logger.warning("lifecycle: console detachment probe unavailable (%s)", type(exc).__name__)
         return False
 
 

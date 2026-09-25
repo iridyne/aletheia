@@ -632,7 +632,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
 _latest_volume_ranking: dict = {}
 
 
-def get_latest_volume_ranking() -> dict:
+def get_latest_volume_ranking() -> dict | None:
     """Return latest volume scanner results; falls back to DB snapshot after restart."""
     if _latest_volume_ranking:
         return _latest_volume_ranking.copy()
@@ -640,7 +640,8 @@ def get_latest_volume_ranking() -> dict:
         from aletheia.storage import repositories as _repo
         return _repo.get_volume_ranking_snapshot()
     except Exception:
-        return {}
+        logger.warning("scheduler: volume ranking snapshot unavailable")
+        return None
 
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
@@ -2170,7 +2171,8 @@ def status_snapshot() -> dict:
     try:
         job_count = len(_scheduler.get_jobs())
     except Exception:
-        job_count = 0
+        logger.warning("scheduler: job enumeration unavailable")
+        job_count = None
     return {
         "enabled": enabled,
         "running": state == STATE_RUNNING,
@@ -3237,7 +3239,8 @@ def _prune_backups(keep_recent: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_backups
         return prune_backups(keep_recent=keep_recent)
-    except Exception:
+    except Exception as exc:
+        logger.warning("scheduler: backup prune unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -3245,7 +3248,8 @@ def _prune_diagnostics(days: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_diagnostics_dir
         return prune_diagnostics_dir(days=days)
-    except Exception:
+    except Exception as exc:
+        logger.warning("scheduler: diagnostics prune unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -3253,7 +3257,8 @@ def _prune_pre_migration_backup(days: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
         return prune_pre_migration_backup(days=days)
-    except Exception:
+    except Exception as exc:
+        logger.warning("scheduler: pre-migration backup prune unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -3282,7 +3287,8 @@ def _prune_agent_task_claims_tasks_db() -> int:
             return cur.rowcount or 0
         finally:
             conn.close()
-    except Exception:
+    except Exception as exc:
+        logger.warning("scheduler: tasks.db claim prune unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -3940,7 +3946,7 @@ def _ohlcv_backfill_body():
 
     cfg = load_config()
     months = cfg.historical_data.default_months
-    instruments = set(_get_observed_instruments(cfg))
+    instruments = set(_get_observed_instruments(cfg) or [])
 
     total_bars = 0
     for instrument in sorted(instruments, key=str):
@@ -4277,7 +4283,7 @@ def get_collector_targets(cfg):
     """Share the live collector's target set with operator coverage diagnostics."""
     from aletheia.storage import repositories as repo
 
-    instruments = _get_observed_instruments(cfg)
+    instruments = _get_observed_instruments(cfg) or []
     derivative_symbols = _get_derivative_symbols(instruments)
     funding_venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip().lower()
     try:
@@ -4431,7 +4437,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
 
     _DC_HEALTH_TICK.set(tick)
     deadline = _time.monotonic() + _DC_CONTEXT_DEADLINE_S
-    instruments = _get_observed_instruments(cfg)
+    instruments = _get_observed_instruments(cfg) or []
     symbols = list(dict.fromkeys(item.symbol for item in instruments))
 
     # Wave one gives the previously starved context feeds an equal start.  The
@@ -4718,7 +4724,8 @@ def _get_observed_instruments(cfg):
 
         return observed_instruments_from_config(cfg)[:20]
     except Exception:
-        return []
+        logger.warning("scheduler: observed instruments unavailable")
+        return None
 
 
 def _get_derivative_symbols(instruments) -> list[str]:
@@ -4728,4 +4735,4 @@ def _get_derivative_symbols(instruments) -> list[str]:
 
 def _get_observed_symbols(cfg) -> list[str]:
     """Compatibility view for symbol-only cross-venue consumers and tests."""
-    return list(dict.fromkeys(item.symbol for item in _get_observed_instruments(cfg)))
+    return list(dict.fromkeys(item.symbol for item in (_get_observed_instruments(cfg) or [])))
