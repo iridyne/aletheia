@@ -32,5 +32,11 @@ async def test_broker_funding_recovery_is_fail_closed_and_fair(
     tmp_path,
     monkeypatch,
 ):
-    await _assert_prefix_progress(tmp_path / "prefix", monkeypatch)
-    await _assert_restart_progress(tmp_path / "restart", monkeypatch)
+    prefix = await _assert_prefix_progress(tmp_path / "prefix", monkeypatch)
+    restart = await _assert_restart_progress(tmp_path / "restart", monkeypatch)
+    assert prefix is not None and prefix["terminal_total"] == 52, (
+        "typed retention expiry must terminalize the expired prefix"
+    )
+    assert restart is not None and restart["history_expired"] == 1, (
+        "cursor rotation must recover the fresh close after a connection reopen"
+    )

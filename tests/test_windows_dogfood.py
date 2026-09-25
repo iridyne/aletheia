@@ -218,6 +218,9 @@ def test_assert_trust_root_matches_passes_when_keys_equal(tmp_path):
     host_root.mkdir()
     (host_root / "update-public-key.pem").write_bytes(pub.read_bytes())
     m._assert_trust_root_matches(pub, host_root)  # must not raise
+    assert (host_root / "update-public-key.pem").read_bytes() == pub.read_bytes(), (
+        "equal trust roots must match byte-for-byte"
+    )
 
 
 def test_assert_trust_root_matches_raises_on_mismatch(tmp_path):
@@ -280,6 +283,7 @@ def test_require_windows_raises_on_non_windows():
 def test_require_windows_passes_on_windows():
     m = _dogfood()
     m._require_windows()  # must not raise
+    assert os.name == "nt", "the Windows guard must only pass on a Windows host"
 
 
 # ---------------------------------------------------------------------------

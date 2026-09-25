@@ -54,7 +54,8 @@ _CONTRACT = "data_utilization_contract"
 def test_fred_research_cutoff_and_isolation():
     from tests.test_macro_liquidity import test_cutoff_storage_replay_and_old_macro_isolation
 
-    test_cutoff_storage_replay_and_old_macro_isolation()
+    result = test_cutoff_storage_replay_and_old_macro_isolation()
+    assert result is not None, "FRED cutoff/isolation delegation must return its derived result"
 
 
 @spec_claim(SpecClaim(
@@ -65,7 +66,8 @@ def test_fred_research_cutoff_and_isolation():
 def test_positioning_evidence_cutoff_and_replay():
     from tests.test_positioning_evidence import test_future_acquisition_cannot_change_cutoff_and_inputs_replay
 
-    test_future_acquisition_cannot_change_cutoff_and_inputs_replay()
+    result = test_future_acquisition_cannot_change_cutoff_and_inputs_replay()
+    assert result is not None, "positioning cutoff/replay delegation must return its derived result"
 
 
 @spec_claim(SpecClaim(
@@ -76,7 +78,8 @@ def test_positioning_evidence_cutoff_and_replay():
 def test_options_volatility_observation_export():
     from tests.test_options_volatility import test_cutoff_storage_and_legacy_isolation
 
-    test_cutoff_storage_and_legacy_isolation()
+    result = test_cutoff_storage_and_legacy_isolation()
+    assert result is not None, "options-volatility cutoff/isolation delegation must return its derived result"
 
 
 @spec_claim(SpecClaim(
@@ -86,7 +89,8 @@ def test_options_volatility_observation_export():
 ))
 def test_current_derivatives_have_one_economic_owner():
     from tests.test_derivatives_semantics import test_unproved_history_remains_readable_without_current_economic_authority
-    test_unproved_history_remains_readable_without_current_economic_authority()
+    result = test_unproved_history_remains_readable_without_current_economic_authority()
+    assert result is not None, "derivatives semantics delegation must return its derived result"
 
 
 @spec_claim(SpecClaim(
@@ -96,7 +100,8 @@ def test_current_derivatives_have_one_economic_owner():
 ))
 def test_derivatives_comparison_is_observation_only(monkeypatch):
     from tests.test_derivatives_comparison import test_newer_comparison_rows_cannot_change_legacy_scalar_consumers
-    test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch)
+    result = test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch)
+    assert result is not None, "derivatives comparison delegation must return its derived result"
 
 
 @spec_claim(

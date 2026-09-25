@@ -40,8 +40,10 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
     repository = root / "core/aletheia/storage/repositories.py"
     migrations = root / "core/aletheia/storage/migrations.py"
     ddl_pattern = re.compile(rf'''\b(?:CREATE\s+(?:(?:TEMP|TEMPORARY|VIRTUAL)\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
+    scanned = 0
     for directory in ("core/aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
+            scanned += 1
             tree = ast.parse(path.read_text(encoding="utf-8"))
             parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             canonical = {}
@@ -134,3 +136,4 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                                 ddl.group().upper().startswith("ALTER")
                                 and re.match(r"\s+ADD\s+(?:COLUMN\s+)?(?!CONSTRAINT\b)", sql[ddl.end():], re.I)
                             ), (path, node.lineno, "non-additive authority DDL")
+    return scanned

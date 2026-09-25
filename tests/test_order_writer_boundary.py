@@ -18,14 +18,15 @@ _RAW_OWNERS = {"insert_order", "transition_order", "update_order_metadata", "rep
 
 
 def _assert_order_writer_boundary(root):
-    assert_writer_boundary(
+    return assert_writer_boundary(
         root, table="orders", owners=_OWNERS, raw_owners=_RAW_OWNERS,
         delegations={("finalize_exchange_acknowledgement", "transition_order")},
     )
 
 
 def test_order_writer_ownership():
-    _assert_order_writer_boundary(Path(__file__).resolve().parents[1])
+    scanned = _assert_order_writer_boundary(Path(__file__).resolve().parents[1])
+    assert scanned > 0, "order-writer boundary scan must visit repository files"
 
 
 @pytest.mark.parametrize("directory", ["core/aletheia", "extensions", "legacy", "ops", "scripts"])
@@ -88,4 +89,7 @@ def test_order_guard_accepts_canonical_owner_and_delegation(tmp_path):
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    _assert_order_writer_boundary(tmp_path)
+    scanned = _assert_order_writer_boundary(tmp_path)
+    assert scanned >= len(sources), (
+        f"guard must visit every fixture source file (scanned {scanned})"
+    )

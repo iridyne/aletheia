@@ -7,7 +7,7 @@ from pathlib import Path
 def _assert_proposal_writer_boundary(root):
     from tests.authority_writer_checks import assert_writer_boundary
 
-    assert_writer_boundary(
+    return assert_writer_boundary(
         root, table="trade_proposals",
         owners={
             "insert_trade_proposal": {
@@ -24,7 +24,8 @@ def _assert_proposal_writer_boundary(root):
 
 
 def test_proposal_writer_owners():
-    _assert_proposal_writer_boundary(Path(__file__).resolve().parents[1])
+    scanned = _assert_proposal_writer_boundary(Path(__file__).resolve().parents[1])
+    assert scanned > 0, "proposal-writer boundary scan must visit repository files"
 
 
 @pytest.mark.parametrize("path,source", [

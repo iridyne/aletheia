@@ -1844,6 +1844,7 @@ def test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypa
     assert repo.get_db().execute("SELECT count(*) FROM candidate_planning_generations").fetchone()[0] == 1
     stored = repo.get_candidate_planning_generation(generation["id"])
     assert stored["planner_input_json"] is not None and stored["entry_plan_id"] is None
+    return stored
 
 
 @pytest.mark.parametrize("updates", [{"spread_bps": 26}, {"depth_10bps_usd": 24999}, {"estimated_costs": -1}])

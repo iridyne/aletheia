@@ -103,6 +103,7 @@ def test_future_acquisition_cannot_change_cutoff_and_inputs_replay():
     assert derive(facts+future) == original
     assert derive(original["inputs"]) == original
     assert derive(list(reversed(facts))) == original
+    return original
 
 
 @pytest.mark.parametrize("history", [False, True])

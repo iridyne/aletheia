@@ -70,6 +70,7 @@ def test_unproved_history_remains_readable_without_current_economic_authority():
     assert repo.latest_open_interest('BTC/USDT','okx') is None
     assert repo._select_all('funding_rate_snapshots')[0]['funding_rate_annualized']==1.095
     assert repo._select_all('open_interest_snapshots')[0]['open_interest_usd']==6000000
+    return repo._select_all('open_interest_snapshots')[0]
 
 
 def test_contract_quantity_and_nonfinite_values_use_one_canonical_primitive():

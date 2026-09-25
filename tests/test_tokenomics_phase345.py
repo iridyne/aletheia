@@ -22,17 +22,19 @@ def _request() -> ModelRequest:
 
 
 def test_budget_enforcement_is_dormant_by_default():
-    _enforce_budget_if_configured(
+    result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=False, enforcement_mode="hard_block")),
         _request(),
     )
+    assert result is None, "budget enforcement must be a no-op when economics is disabled"
 
 
 def test_budget_warn_only_never_denies():
-    _enforce_budget_if_configured(
+    result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="warn_only")),
         _request(),
     )
+    assert result is None, "warn-only enforcement must never deny"
 
 
 @pytest.mark.parametrize("logical_agent", ["research_worker", "paper_trader"])
@@ -52,9 +54,12 @@ def test_safety_callers_remain_warn_only_in_every_mode(monkeypatch, logical_agen
     import aletheia.agent_runtime.run_context as context
 
     monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": logical_agent})
-    _enforce_budget_if_configured(
+    result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
         _request(),
+    )
+    assert result is None, (
+        f"safety caller {logical_agent} must never be hard-blocked by the budget gate"
     )
 
 

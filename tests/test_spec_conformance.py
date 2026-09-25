@@ -224,3 +224,4 @@ def test_print_conformance_matrix(capsys):
 
     with capsys.disabled():
         print("\n".join(lines))
+    assert total > 0, "spec conformance registry must contain at least one claim"

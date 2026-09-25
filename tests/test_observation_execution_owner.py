@@ -391,9 +391,10 @@ def test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread(
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
 
-    with worker_cycle_exclusion():
-        with worker_cycle_exclusion():
-            pass
+    with worker_cycle_exclusion() as outer_lock:
+        # Same-thread nesting must succeed (reentrant).
+        with worker_cycle_exclusion() as inner_lock:
+            assert inner_lock == outer_lock, "same-thread nesting must reuse the cycle lock"
 
     reset_lab_db()
 
@@ -407,12 +408,15 @@ def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
 
-    with worker_pass_lock(source_commit="a" * 40):
-        pass  # release on exit
+    with worker_pass_lock(source_commit="a" * 40) as lock_path:
+        signature_a = lock_path.read_text()
+    assert "source_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in signature_a
 
     # Re-acquire — must succeed after release.
-    with worker_pass_lock(source_commit="b" * 40):
-        pass
+    with worker_pass_lock(source_commit="b" * 40) as lock_path:
+        signature_b = lock_path.read_text()
+    assert "source_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in signature_b
+    assert signature_b != signature_a, "re-acquired lock must carry the new pass signature"
 
     reset_lab_db()
 def test_worker_pass_writes_unknown_signature_without_cycle_guard_pollution(tmp_path, monkeypatch):

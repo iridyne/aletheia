@@ -208,6 +208,7 @@ def test_cutoff_storage_and_legacy_isolation():
     empty = derive_options_volatility("BTC", [], (NOW+timedelta(seconds=1)).isoformat())
     repo.insert_options_volatility_snapshot(empty.model_dump())
     assert repo.options_volatility_at("BTC", (NOW+timedelta(seconds=2)).isoformat())["atm_iv_30d"] is None
+    return exported
 
 
 @pytest.mark.parametrize("invalid_iv", [None, 5e-324, 1e308])

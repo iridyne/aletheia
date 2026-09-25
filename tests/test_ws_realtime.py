@@ -17,6 +17,7 @@ def test_fingerprint_queries_match_the_migrated_schema():
     )
     for query in queries:
         db.execute(query).fetchone()
+    assert len(queries) > 0, "at least one WS fingerprint query must exist"
 
 
 def test_position_fingerprint_changes_on_insert_and_update():
