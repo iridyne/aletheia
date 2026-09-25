@@ -17,7 +17,6 @@ def setup_env(tmp_path, monkeypatch):
     from extensions.research.equity_observer import run_equity_observer
     from extensions.research.research_agent import run_research_agent
     from extensions.research.risk_critic import run_risk_critic
-    from extensions.research.market_observer import run_market_observer
     from extensions.research.post_trade_reviewer import run_post_trade_reviewer
     from extensions.research.prediction_observer import run_prediction_observer
     from extensions.research.divergence_scanner import run_divergence_scanner
@@ -25,7 +24,6 @@ def setup_env(tmp_path, monkeypatch):
     register_agent("research_agent")(run_research_agent)
     register_agent("risk_critic")(run_risk_critic)
     register_agent("equity_observer")(run_equity_observer)
-    register_agent("market_observer")(run_market_observer)
     register_agent("post_trade_reviewer")(run_post_trade_reviewer)
     register_agent("prediction_observer")(run_prediction_observer)
     register_agent("divergence_scanner")(run_divergence_scanner)
@@ -65,7 +63,7 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("agent_name", [
     "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner",
-    "market_observer", "post_trade_reviewer",
+    "post_trade_reviewer",
 ])
 def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_name):
     setup_env(tmp_path, monkeypatch)
@@ -118,7 +116,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # historical_data.nightly_backfill_enabled — excluded from the required set.)
     job_ids = {j.id for j in s.get_jobs()}
     required = {
-        "market_data", "market_observer", "pi_trading_decision",
+        "market_data", "pi_trading_decision",
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
@@ -132,12 +130,6 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert "pi_operator_loop" not in job_ids
     # Floor guards against wholesale registration failure without pinning an exact N.
     assert len(job_ids) >= len(required)
-    market_observer_job = s.get_job("market_observer")
-    assert market_observer_job is not None
-    assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)
-    assert market_observer_job.executor == "observer"
-    assert market_observer_job.max_instances == 1
-    assert market_observer_job.coalesce is True
     market_data_job = s.get_job("market_data")
     assert market_data_job is not None
     assert market_data_job.executor == "io"

@@ -400,7 +400,7 @@ async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch
 
 @pytest.mark.anyio
 async def test_kill_switch_does_not_block_observe_agent(client, tmp_path, monkeypatch):
-    """kill_switch_active=True must not block gate_check=False agents like market_observer."""
+    """kill_switch_active=True must not block gate_check=False agents like equity_observer."""
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.runtime.kill_switch_active = True
@@ -410,7 +410,7 @@ async def test_kill_switch_does_not_block_observe_agent(client, tmp_path, monkey
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "market_observer"},
+        json={"agent_name": "equity_observer"},
     )
     assert response.status_code == 202
 
@@ -448,7 +448,7 @@ async def test_service_credential_can_start_approved_specialist(client, tmp_path
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "market_observer"},
+        json={"agent_name": "equity_observer"},
         headers={"X-Aletheia-Operator-Service": svc_token},
     )
     assert response.status_code == 202, response.text
@@ -584,7 +584,7 @@ def test_operator_service_runs_excluded_from_manual_runs_by_agent():
     runs = [
         {"id": "r1", "agent_name": "research_agent", "trigger_type": "operator_service"},
         {"id": "r2", "agent_name": "research_agent", "trigger_type": "operator_service"},
-        {"id": "r3", "agent_name": "market_observer", "trigger_type": "operator_service"},
+        {"id": "r3", "agent_name": "equity_observer", "trigger_type": "operator_service"},
     ]
     manual_runs_by_agent: dict = {}
     for run in runs:

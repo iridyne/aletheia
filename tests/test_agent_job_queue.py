@@ -131,7 +131,7 @@ def test_manual_agent_manager_rejects_when_bounded_queue_is_full(tmp_path, monke
     manager = AgentJobManager(capacity=1, runner=blocking_runner)
     manager.enqueue("research_agent")
     assert active.wait(timeout=3)
-    manager.enqueue("market_observer")
+    manager.enqueue("post_trade_reviewer")
 
     with pytest.raises(AgentJobQueueFull) as exc_info:
         manager.enqueue("dreaming_agent")

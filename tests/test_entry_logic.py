@@ -1,7 +1,8 @@
-"""Observer advisory enrichment and structured-model failure behavior.
+"""Structured-model failure behavior plus the universe-admission seed helper.
 
-An existing Opportunity retains its identity while Observer adds advisory
-assessment. Current entry execution belongs to the separate Entry Plan path.
+`llm_structured` must degrade gracefully (return an error, never raise) when no
+model provider is configured. `_seed_admitted_opportunity` builds one
+emitter-attested universe opportunity for tests that need an admitted owner.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,6 @@ import sqlite3
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
-    MarketSnapshot,
     Opportunity,
     UniverseAsset,
     UniverseMember,
@@ -19,7 +19,6 @@ from aletheia.storage.models import (
 )
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.agent_runtime.orchestrator import run_agent
 from tests.observer_admission_fixture import (
     crypto_background,
     insert_universe_opportunity_generation,
@@ -162,61 +161,3 @@ async def test_llm_structured_degrades_gracefully(tmp_path, monkeypatch):
     data, err = await llm_structured(system="x", user="y", schema=Schema)
     assert data is None
     assert err is not None
-
-
-# --- market_observer enriches an admitted deterministic owner ---
-
-async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-    owner = _seed_admitted_opportunity()
-
-    structured_kwargs = {}
-
-    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        structured_kwargs.update(kw)
-        return {
-            "direction_bias": "long",
-            "confidence": "high",
-            "confidence_score": 88,
-            "rationale": "uptrend",
-        }, None
-
-    monkeypatch.setattr("extensions.research.market_observer.llm_structured", fake_structured)
-    from aletheia.config.schema import ModelSelection
-    monkeypatch.setattr("extensions.research.market_observer.get_provider_for_tier",
-                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
-    monkeypatch.setattr("extensions.research.market_observer._has_sufficient_signal", lambda ctx: True)
-    result = await run_agent("market_observer", trigger_type="manual")
-    opps = repo.list_opportunities()
-    assert len(opps) == 1
-    assert opps[0]["id"] == owner.id
-    assert opps[0]["source_agent"] == "universe_scanner"
-    assert opps[0]["direction_bias"] == "long"
-    assert opps[0]["confidence"] == "high"
-    assert opps[0]["symbol"] == "BTC/USDT"  # stored in canonical format
-    assessment = json.loads(opps[0]["metadata"])["observer_assessment"]
-    assert assessment["direction_bias"] == "long"
-    assert assessment["confidence_score"] == 88
-    assert result["errors"] == []
-    assert structured_kwargs["reasoning_effort"] == "none"
-
-
-async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
-    # Without an admitted deterministic owner, Observer must stop before LLM.
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_symbols = ["BTC/USDT"]
-    save_config(cfg)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-
-    async def fake_structured(*_args, **_kwargs):
-        raise AssertionError("Observer must not call the LLM without an admitted owner")
-
-    monkeypatch.setattr("extensions.research.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("extensions.research.market_observer._has_sufficient_signal", lambda ctx: True)
-    result = await run_agent("market_observer", trigger_type="manual")
-    opps = repo.list_opportunities()
-    assert opps == []
-    assert result["errors"] == []

@@ -34,7 +34,7 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-advisory = ("research_agent", "risk_critic", "equity_observer", "market_observer", "post_trade_reviewer", "dreaming_agent", "lesson_reviewer")
+advisory = ("research_agent", "risk_critic", "equity_observer", "post_trade_reviewer", "dreaming_agent", "lesson_reviewer")
 pipeline = ("prediction_observer", "divergence_scanner")
 names = advisory + pipeline
 broken = missing in {"broken_dependency", "broken_data_dependency", "broken_nightly_dependency", "extensions.research.dreaming_agent"}

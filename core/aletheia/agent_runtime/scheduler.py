@@ -199,7 +199,6 @@ _selectively_paused_jobs: set[str] = set()
 # holding SQLite thread-local state indefinitely.
 _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_data": 90.0,
-    "market_observer": 500.0,
     "dreaming_agent": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
@@ -1317,16 +1316,6 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     from aletheia.agents import get_agent_fn
 
-    try:
-        get_agent_fn("market_observer")
-    except ValueError:
-        logger.info("Market Observer not scheduled: optional Research producer unavailable")
-    else:
-        _scheduler.add_job(
-            _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
-            misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
-            executor="observer",
-        )
     if _nightly_research_available("dreaming_daily"):
         _scheduler.add_job(
             _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
@@ -2247,35 +2236,6 @@ def _run_market_data():
     except Exception as e:
         logger.warning("market_data job failed: %s", e)
         _record_job_failure("market_data", str(e))
-
-
-def _run_market_observer():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    # Retry once on database-is-locked — the WAL contention window is short
-    # (exchange_sync / data_collectors / uvicorn handlers), so a brief wait
-    # usually clears it without waiting a full 15-min cycle.
-    for attempt in range(2):
-        try:
-            _run_async_with_timeout("market_observer", _async_run("market_observer"))
-            return
-        except TimeoutError:
-            logger.warning(
-                "market_observer job timed out after %.0fs",
-                _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
-            )
-            _record_job_failure("market_observer", "timeout")
-            return
-        except Exception as e:
-            if "database is locked" in str(e) and attempt == 0:
-                import time as _time
-                logger.warning("market_observer: database locked, retrying in 10s…")
-                _time.sleep(10)
-                continue
-            logger.warning("market_observer job failed: %s", e)
-            _record_job_failure("market_observer", str(e))
-            return
 
 
 def _run_dreaming_agent():
@@ -4168,7 +4128,7 @@ def _run_data_collector_context():
 
 # Wall-clock budget for each collector lane.  Each must stay BELOW its 45-second
 # job timeout so the coroutine returns before asyncio.wait_for cancels it — the
-# same anti-thread-leak rule as market_observer.  _bounded() caps both each
+# standing anti-thread-leak rule.  _bounded() caps both each
 # collector and its lane's cumulative wall-clock.
 _DC_DEADLINE_S = 50.0
 # Context has the same anti-thread-leak bound but a new deadline.  It never

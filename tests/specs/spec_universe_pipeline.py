@@ -96,42 +96,8 @@ def test_forward_outcome_direction_uses_scanner_direction():
 
 
 # ---------------------------------------------------------------------------
-# Observer side — key_observations exposure, per-symbol guards, scanner hint
+# Context builder — macro fields actually consumed on the runtime path
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim("UP-06", "universe_pipeline", "§2 MO-1 key_observations to PI", "L2b",
-              "PI layer1 exposes market_observer's key_observations (numeric "
-              "citations); previously only a truncated thesis reached the PI"),
-)
-
-
-@spec_claim(
-    SpecClaim("UP-07", "universe_pipeline", "§2 MO-2 per-symbol guard (断口F)", "L2a",
-              "market_observer builds guard advisory PER-SYMBOL with scanner_family "
-              "(the run-level symbol-LIST context never matched any guard)"),
-)
-def test_market_observer_per_symbol_guard():
-    from extensions.knowledge import router
-    from extensions.research import market_observer
-
-    assert hasattr(router, "build_guard_advisory")
-    mo_src = inspect.getsource(market_observer)
-    assert "build_guard_advisory" in mo_src
-    assert '"scanner_family": scanner_family' in mo_src
-
-
-@spec_claim(
-    SpecClaim("UP-08", "universe_pipeline", "§2 MO-4 scanner_family in prompt", "L2a",
-              "the market_observer LLM prompt names the scanner family that surfaced "
-              "the symbol so the read validates that family, not a generic scan"),
-)
-def test_market_observer_prompt_scanner_hint():
-    from extensions.research import market_observer
-
-    src = inspect.getsource(market_observer)
-    assert "scanner_hint" in src and "surfaced by the" in src
 
 
 @spec_claim(

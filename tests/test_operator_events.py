@@ -486,14 +486,14 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name="equity_observer",
             status="failed",
             errors='["structured output parse failed"]',
         )
     )
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name="equity_observer",
             status="failed",
             errors='["structured output parse failed"]',
         )
@@ -507,7 +507,7 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("agent_name, expected", [("market_observer", True), ("paper_trader", False)])
+@pytest.mark.parametrize("agent_name, expected", [("portfolio_snapshot", True), ("paper_trader", False)])
 async def test_operator_recommendations_include_schedule_change_proposal_due_for_repeated_manual_runs(client, agent_name, expected):
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
@@ -532,34 +532,6 @@ async def test_operator_recommendations_include_schedule_change_proposal_due_for
 
     kinds = {item["kind"] for item in recommendations.json()}
     assert ("agent_schedule_change_proposal_due" in kinds) is expected
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_market_scan_refresh_due_for_stale_market_observer_activity(client):
-    from datetime import datetime, timedelta, timezone
-
-    from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
-
-    stale_started_at = (datetime.now(timezone.utc) - timedelta(minutes=50)).isoformat()
-    insert_agent_run(
-        AgentRun(
-            agent_name="market_observer",
-            trigger_type="scheduled",
-            status="completed",
-            started_at=stale_started_at,
-            ended_at=stale_started_at,
-        )
-    )
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    payload = recommendations.json()
-    due = [item for item in payload if item["kind"] == "market_scan_refresh_due"]
-    assert len(due) == 1
-    assert due[0]["metadata"]["task_type"] == "run_market_scan"
-    assert due[0]["metadata"]["stale_minutes"] >= 45
 
 
 @pytest.mark.anyio
@@ -648,7 +620,7 @@ async def test_operator_recommendations_include_failed_agent_rerun_due_for_unrec
     failed_started_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name="equity_observer",
             trigger_type="scheduled",
             status="completed",
             started_at=fresh_started_at,
@@ -686,7 +658,7 @@ async def test_operator_recommendations_include_daily_review_refresh_due_when_to
     fresh_started_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name="equity_observer",
             trigger_type="scheduled",
             status="completed",
             started_at=fresh_started_at,

@@ -972,13 +972,6 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     assert queued["status"] == "queued"
     assert queued["thesis"] != "late observer output must not rewrite a queued owner"
     assert queued["direction_bias"] == "long"
-    import inspect
-    from extensions.research import market_observer
-
-    assert "insert_opportunity_once_by_snapshot(" not in inspect.getsource(
-        market_observer
-    )
-    assert "update_open_opportunity(" in inspect.getsource(market_observer)
 
     # Producer-boundary retirement (2026-09-07, #2945): `universe/signal_emitter.py`
     # was the only module that emitted snapshot-scoped Opportunities and

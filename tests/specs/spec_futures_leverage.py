@@ -160,23 +160,16 @@ def test_risk_engine_liquidation_buffer():
 
 @spec_claim(
     SpecClaim("FL-S15", "futures_leverage", "§15 opportunity carries derivatives", "L2a",
-              "Opportunity model carries funding_rate/open_interest/oi_delta_1h and "
-              "market_observer stamps them so perp opportunities expose their derivatives state"),
+              "Opportunity model carries funding_rate/open_interest/oi_delta_1h so perp "
+              "opportunities expose their derivatives state"),
 )
 def test_opportunity_carries_derivatives_fields():
-    import inspect
     from aletheia.storage.models import Opportunity
 
     fields = Opportunity.model_fields
     assert "funding_rate" in fields
     assert "open_interest" in fields
     assert "oi_delta_1h" in fields
-
-    # market_observer enriches the existing Opportunity with derivatives values.
-    import extensions.research.market_observer as mo
-    src = inspect.getsource(mo._analyze_symbol)
-    assert 'updates["funding_rate"]' in src
-    assert 'updates["oi_delta_1h"]' in src
 
 
 @spec_claim(

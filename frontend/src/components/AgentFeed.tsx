@@ -124,7 +124,6 @@ type FeedItem = {
 }
 
 const AGENT_ICON: Record<string, string> = {
-  market_observer: '🔍',
   research_agent: '📑',
   strategy_designer: '📐',
   risk_critic: '🛡',

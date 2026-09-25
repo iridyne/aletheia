@@ -19,10 +19,8 @@ def setup_test_env(tmp_path, monkeypatch):
     """Set up test db and config."""
     from aletheia.agents import register_agent
     from extensions.research.research_agent import run_research_agent
-    from extensions.research.market_observer import run_market_observer
 
     register_agent("research_agent")(run_research_agent)
-    register_agent("market_observer")(run_market_observer)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -85,7 +83,7 @@ def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkey
     from aletheia.agent_runtime.run_logger import mark_stale_running_runs
     from aletheia.storage.models import AgentRun
 
-    running = AgentRun(agent_name="market_observer", trigger_type="scheduled")
+    running = AgentRun(agent_name="post_trade_reviewer", trigger_type="scheduled")
     queued = AgentRun(
         agent_name="research_agent",
         trigger_type="manual",
@@ -150,7 +148,7 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
     end_run(queued, status="completed", outputs=["done"])
     assert repo.get_agent_run(queued.id)["status"] == "completed"
 
-    stale = queue_run("market_observer", "scheduled", "Observe")
+    stale = queue_run("post_trade_reviewer", "scheduled", "Observe")
     assert mark_stale_running_runs(source="test") == 1
     assert repo.get_agent_run(stale.id)["status"] == "stale"
     reset_db()
@@ -158,23 +156,6 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
 
 # Agents now call the LLM; with no model server in tests they degrade gracefully.
 _OK = ("completed", "completed_with_errors")
-
-
-@pytest.mark.anyio
-async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
-    setup_test_env(tmp_path, monkeypatch)
-    result = await run_agent("market_observer", trigger_type="manual")
-    assert result["status"] in _OK
-    # When LLM is unavailable, the quality gate skips opportunity creation.
-    # Errors are recorded instead of neutral/NULL waste signals.
-    if result["status"] == "completed_with_errors":
-        assert len(result["errors"]) > 0
-    else:
-        assert result["errors"] == []
-        # A calm snapshot may be rejected by the deterministic pre-filter. That
-        # is a successful scan with no opportunity, not an agent failure.
-        assert all("opportunity:" in output for output in result["outputs"])
-    reset_db()
 
 
 @pytest.mark.anyio

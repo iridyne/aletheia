@@ -1,9 +1,9 @@
 from scripts.harness_header_ablation import CALLERS, HEADER, _compliant, _facts
 
 
-def test_corpus_has_the_five_preregistered_callers():
+def test_corpus_has_the_preregistered_callers():
     assert set(CALLERS) == {
-        "market_observer", "pi_trading_decision", "risk_critic", "research_worker", "dreaming_agent"
+        "pi_trading_decision", "risk_critic", "research_worker", "dreaming_agent"
     }
 
 

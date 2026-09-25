@@ -234,16 +234,9 @@ COMMANDS: dict[str, CommandDef] = {
         backend_handler="archive_low_value_notification",
     ),
     # A路架构 observer-as-tool 命令：PI 把 observer 作为工具调用而非独立发言方。
-    # 这三条注册条目是 PCI-G02 (A路结构证明) 的代码锚点，handler 由 commands.py 实现。
-    "observe_market": CommandDef(
-        name="observe_market",
-        risk_class="read",
-        worker_permission_required="Observe",
-        operator_permission_required="ReadOnly",
-        description="Run market observer for given symbols and return structured market snapshot",
-        audit_event_type="operator_observe_market",
-        backend_handler="observe_market",
-    ),
+    # 这两条注册条目是 PCI-G02 (A路结构证明) 的代码锚点。
+    # `observe_market` 已随 Market Observer 退役删除（见
+    # docs/design/proposals/retire_market_observer.md）。
     "observe_chain": CommandDef(
         name="observe_chain",
         risk_class="read",
@@ -261,16 +254,6 @@ COMMANDS: dict[str, CommandDef] = {
         description="Return latest macro context (F&G, LSR, funding, dominance) as structured data",
         audit_event_type="operator_observe_macro",
         backend_handler="observe_macro",
-    ),
-    "run_market_scan": CommandDef(
-        name="run_market_scan",
-        risk_class="controlled_operational",
-        worker_permission_required="Observe",
-        operator_permission_required="PaperAuto",
-        description="Trigger a manual market observer scan",
-        requires_confirmation=True,
-        audit_event_type="operator_run_market_scan",
-        backend_handler="run_market_scan",
     ),
     "rerun_failed_agent_task": CommandDef(
         name="rerun_failed_agent_task",

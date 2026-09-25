@@ -20,10 +20,8 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 def setup_env(tmp_path, monkeypatch):
     from aletheia.agents import register_agent
-    from extensions.research.market_observer import run_market_observer
     from extensions.research.post_trade_reviewer import run_post_trade_reviewer
 
-    register_agent("market_observer")(run_market_observer)
     register_agent("post_trade_reviewer")(run_post_trade_reviewer)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -133,32 +131,6 @@ def test_load_playbooks_reads_seeds(tmp_path, monkeypatch):
     block = format_playbook_block(pbs)
     assert "Playbooks" in block
     assert "read-only" in block.lower()
-    reset_db()
-
-
-# --- injection: observable + degrades safely ---
-
-async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
-
-    from extensions.knowledge.manager import create_research_note
-    import extensions.research.market_observer as observer
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    admit_observer_instrument(monkeypatch, observer)
-    create_research_note("BTC regime lesson",
-                         "When BTC loses the 200-day, treat rallies as distribution.",
-                         confidence="high_confidence")
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000.0))
-
-    # LLM is offline in tests → observer must still complete (injection is prompt text).
-    result = await run_agent("market_observer", trigger_type="manual")
-    assert result["status"] in ("completed", "completed_with_errors")
-
-    calls = repo.list_tool_calls(run_id=result["run_id"])
-    assert any(c["tool_name"] == "retrieve_lessons" for c in calls), "retrieval must be observable"
     reset_db()
 
 

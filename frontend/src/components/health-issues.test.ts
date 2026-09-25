@@ -18,11 +18,6 @@ describe('health issue projection', () => {
       label: 'Kill switch',
       value: 'active',
     })
-    expect(parseHealthIssue('observer_run_failed')).toMatchObject({
-      severity: 'yellow',
-      label: 'Observer run failed',
-      value: 'error',
-    })
   })
 
   it('keeps unknown issues actionable without promoting the raw code to primary copy', () => {

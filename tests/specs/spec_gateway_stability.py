@@ -1,14 +1,14 @@
 """Spec: Gateway stability — bound LLM-driven jobs so they cannot leak threads,
 and recover transient bad-JSON from the LLM provider under contention.
 
-Background (2026-06-28 incident): market_observer makes one LLM call per instrument;
-under provider contention each call can run to the 60s provider timeout, so a large
-universe blows the 240s job timeout → _run_async_with_timeout cancels the coroutine
-mid-flight → the daemon thread is abandoned and LEAKS, starving the frontdoor.
-Two fixes, locked here:
-  GS-S01  market_observer uses one run deadline, including prefetch, below job timeout.
+Background (2026-06-28 incident): a large universe of per-instrument LLM calls
+under provider contention could run each call to the provider timeout and blow
+the job timeout → _run_async_with_timeout cancels the coroutine mid-flight → the
+daemon thread is abandoned and LEAKS, starving the frontdoor.
+Fixes locked here:
   GS-B01  llm_structured retries ONCE on a parse failure (recovers prose-prefixed JSON).
   GS-B02  llm_structured retries ONCE on empty content with a fresh request.
+  GS-S05  llm_structured has one total wall-clock budget of its own.
 
 Claims attach to gateway_stability_contract.
 
@@ -33,88 +33,7 @@ import pytest
 from aletheia.model_provider.base import ModelResponse
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-_ROOT = Path(__file__).parent.parent.parent
-_MARKET_OBS = _ROOT / "extensions" / "research" / "market_observer.py"
-
 _CONTRACT = "gateway_stability_contract"
-
-
-# ---------------------------------------------------------------------------
-# GS-S01 — one market_observer run budget (including prefetch) < job timeout
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "GS-S01", _CONTRACT, "§wall-clock budget", "L2a",
-        "market_observer uses one wall-clock deadline across prefetch and the serial "
-        "instrument loop, strictly below the scheduler timeout; prefetch may consume "
-        "only the remaining budget so teardown keeps an explicit safety margin.",
-    ),
-)
-def test_market_observer_loop_has_wallclock_budget():
-    from extensions.research import market_observer as mo
-    assert hasattr(mo, "_MARKET_OBSERVER_LOOP_BUDGET_SEC"), "loop budget constant missing"
-    assert hasattr(mo, "_MARKET_OBSERVER_JOB_TIMEOUT_S"), "job-timeout hint constant missing"
-    assert mo._MARKET_OBSERVER_LOOP_BUDGET_SEC < mo._MARKET_OBSERVER_JOB_TIMEOUT_S, (
-        "loop budget must be strictly below the job timeout to avoid mid-flight cancel"
-    )
-    assert (
-        mo._MARKET_OBSERVER_JOB_TIMEOUT_S
-        - mo._MARKET_OBSERVER_LOOP_BUDGET_SEC
-        == mo._MARKET_OBSERVER_TEARDOWN_MARGIN_SEC
-    ), "observer budget must reserve its declared teardown margin"
-    src = _MARKET_OBS.read_text(encoding="utf-8")
-    assert "_run_deadline" in src and "loop_budget_exceeded" in src, (
-        "the observer must check one run deadline and break with a logged reason"
-    )
-    assert "_gather_prefetch_with_deadline" in src and "asyncio.wait_for" in src, (
-        "parallel prefetch must be bounded by the remaining run deadline"
-    )
-    # The job-timeout hint must match the scheduler's actual configured value.
-    from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
-    assert mo._MARKET_OBSERVER_JOB_TIMEOUT_S == _ASYNC_JOB_TIMEOUT_SEC["market_observer"], (
-        "job-timeout hint drifted from scheduler _ASYNC_JOB_TIMEOUT_SEC['market_observer']"
-    )
-
-
-# ---------------------------------------------------------------------------
-# GS-S02 — market_observer has a module logger (the budget branch logs a warning)
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "GS-S02", _CONTRACT, "§wall-clock budget", "L2a",
-        "market_observer defines a module-level `logger`. The budget-exceeded branch "
-        "calls logger.warning(); without a module logger that branch NameErrors at "
-        "runtime (only when the budget is hit — invisible to non-executing tests).",
-    ),
-)
-def test_market_observer_has_module_logger():
-    import logging
-    from extensions.research import market_observer as mo
-    assert isinstance(getattr(mo, "logger", None), logging.Logger), (
-        "market_observer must define a module-level logging.Logger named 'logger'"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "GS-S03", _CONTRACT, "§bounded-loop fairness", "L2b",
-        "Signal priority keeps the durable next instrument as a mandatory prefix. "
-        "After a bounded run, the cursor advances only through the completed canonical "
-        "prefix, so a skipped low-score instrument is boundedly reachable.",
-    ),
-)
-def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
-    from extensions.research.round_robin import DurableRoundRobin, rotate_from_next
-
-    assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
-    source = _MARKET_OBS.read_text(encoding="utf-8")
-    assert "DurableRoundRobin" in source
-    assert "_fair_signal_order" in source
-    assert "_advance_completed_round_robin_prefix" in source
-    assert "completed_attempt" in source
-    assert "if completed_attempt:" in source
 
 
 # ---------------------------------------------------------------------------
@@ -322,23 +241,19 @@ def test_llm_structured_fallback_to_defaults(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GS-S05 / GS-B08 — structured retries have one total budget below observer caps
+# GS-S05 / GS-B08 — structured retries have one total wall-clock budget
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-S05", _CONTRACT, "§structured retry wall-clock", "L2a",
-        "llm_structured has one total wall-clock budget below the market-observer "
-        "loop budget and scheduler timeout, independent of the provider timeout.",
+        "llm_structured has one total wall-clock budget, independent of the "
+        "provider timeout.",
     ),
 )
-def test_llm_structured_budget_is_below_observer_caps():
+def test_llm_structured_has_bounded_wallclock_budget():
     from aletheia.agents import helpers
-    from extensions.research import market_observer
-    from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
 
-    assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < market_observer._MARKET_OBSERVER_LOOP_BUDGET_SEC
-    assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < _ASYNC_JOB_TIMEOUT_SEC["market_observer"]
     source = Path(helpers.__file__).read_text(encoding="utf-8")
     assert "asyncio.wait_for" in source
 

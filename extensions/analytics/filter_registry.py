@@ -454,8 +454,11 @@ _HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="pre_persistence",
         drop_reason_codes=(),  # rejected symbols never become opportunity rows
         config_path="",
-        hardcoded_at="extensions/research/market_observer.py:"
-                     "_PREFILTER_RSI_DEVIATION/_PREFILTER_ATR_PCT",
+        # The producer that applied these thresholds (the Market Observer) is
+        # retired; see docs/design/proposals/retire_market_observer.md. The
+        # persisted `filter_decisions` rows remain the evidence base for the
+        # diagnostics, replay and shadow experiments that still read this spec.
+        hardcoded_at="",
         current_value="rsi_deviation>12, atr_pct>0.8",
         loosen_direction="down",  # lower thresholds → more opportunities created
         neutral=12.0, floor=6.0, ceiling=20.0,

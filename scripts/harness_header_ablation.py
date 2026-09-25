@@ -26,12 +26,6 @@ Tool permissions: read_only no:live_order
 """
 
 CALLERS: dict[str, dict[str, Any]] = {
-    "market_observer": {
-        "system": "You are a crypto market observer. Use only supplied facts. Return ONLY raw JSON with direction_bias, confidence, confidence_score, rationale, key_observations; no markdown or prose.",
-        "user": "Market BTC/USDT: price={price}; RSI1h={rsi}; momentum4h={momentum}; spread_bps={spread}. Return one market read.",
-        "required": {"direction_bias", "confidence", "confidence_score", "rationale", "key_observations"},
-        "max_tokens": 700,
-    },
     "pi_trading_decision": {
         "system": "You are the Trading Decision Authority for an autonomous paper trading system. Focus on WHAT to trade, not HOW MUCH. Return ONLY raw JSON with action, direction, conviction, reasoning; no markdown or prose.",
         "user": "Candidate BTC/USDT perp: price={price}; RSI1h={rsi}; momentum4h={momentum}; spread_bps={spread}; risk checks run later. action must be trade, skip, or watch.",

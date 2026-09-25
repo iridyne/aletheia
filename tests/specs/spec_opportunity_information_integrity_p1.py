@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -231,22 +230,6 @@ def test_policy_epoch_rotation_uses_one_monotonic_boundary(tmp_path, monkeypatch
         "SELECT ended_at FROM learning_policy_epochs WHERE epoch_id='malformed-start'"
     ).fetchone()
     assert row["ended_at"] is None
-
-
-def test_market_observer_entry_persists_information_epoch_before_early_return():
-    from extensions.research.market_observer import run_market_observer
-    from aletheia.storage.sqlite import get_db
-
-    result = asyncio.run(run_market_observer(permission_mode="invalid"))
-
-    assert result["outputs"] == []
-    row = get_db().execute(
-        "SELECT epoch_id FROM learning_policy_epochs "
-        "WHERE epoch_kind='opportunity_information_integrity' AND ended_at IS NULL"
-    ).fetchone()
-    assert row is not None
-
-
 
 
 def _serenity_opportunity(theme_id: str, opportunity_id: str, *, status: str = "active"):

@@ -155,7 +155,7 @@ async def execute_typed_command(
 
     # #67 fix: confirmation gate. requires_confirmation was previously metadata-only —
     # the handler ran regardless of any confirm flag, so pause_agents/resume_agents/
-    # run_market_scan/rerun_failed_agent_task/set_symbol_observe_only/reconcile_positions
+    # rerun_failed_agent_task/set_symbol_observe_only/reconcile_positions
     # mutated state on the first call while the response merely *labelled* itself
     # `needs_confirmation=True`. Now the first call is non-executing when confirmation
     # is required; callers must re-send with `confirm=True` in params to actually run.

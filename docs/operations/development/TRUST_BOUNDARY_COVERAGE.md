@@ -73,7 +73,6 @@ uv run pytest \
   tests/test_scheduler_reconcile.py \
   tests/test_reconciliation_integrity_incident.py \
   tests/test_reconciliation_properties.py \
-  tests/test_context_effectiveness.py \
   tests/test_context_artifacts_properties.py \
   tests/test_filter_replay_properties.py \
   tests/test_policy_epoch_properties.py \
