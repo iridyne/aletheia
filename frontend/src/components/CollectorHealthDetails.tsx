@@ -85,6 +85,7 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
               <span className="chd-domain-name">{fmtDomain(d.domain)}</span>
               <span className={`chd-status chd-status-${light}`}>{d.last_status || '—'}</span>
               {d.overdue && <span className="chd-badge-overdue">overdue</span>}
+              {d.starved && <span className="chd-badge-overdue">starved</span>}
             </div>
             <div className="chd-domain-meta">
               {cons > 1 && <span>{cons}× consecutive</span>}
@@ -151,6 +152,7 @@ function CompactDetails({ health }: { health: CollectorHealthReport }) {
         const cleanErr = d.last_error_code === 'asyncio_timeout' || d.last_error_code === d.last_status ? null : d.last_error_code
         const parts: string[] = [rawStatus]
         if (d.overdue) parts.push('overdue')
+        if (d.starved) parts.push('starved')
         if (cons > 1) parts.push(`${cons}×`)
         if (cleanErr) parts.push(cleanErr === 'ExchangeNotAvailable' ? 'Exchange unavailable' : cleanErr)
         return (

@@ -1160,6 +1160,8 @@ def _probe_collector_health(report: Report) -> None:
                 extras.append(f"{cons}x")
             if row.get("overdue"):
                 extras.append("overdue")
+            if row.get("starved"):
+                extras.append("starved")
             if extras:
                 s += f"[{','.join(extras)}]"
             return s
