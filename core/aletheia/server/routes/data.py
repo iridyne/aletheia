@@ -355,7 +355,6 @@ def get_agent_run_steps(run_id: str):
 # gate_check: True → block when kill_switch_active or runtime paused
 _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     # Observational — read-only market data, no model calls, no artifacts
-    "market_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "equity_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "prediction_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
@@ -374,7 +373,6 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
 # New entries in _MANUAL_AGENT_ALLOWLIST do NOT automatically expand service authority —
 # explicit addition here is required.
 _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
-    "market_observer",
     "equity_observer",
     "prediction_observer",
     "divergence_scanner",
@@ -411,7 +409,7 @@ def get_agents_catalog():
 
 
 class StartAgentRequest(BaseModel):
-    agent_name: str = "market_observer"
+    agent_name: str = "post_trade_reviewer"
     # Retained for API compatibility. Admission is stricter: any queued/running
     # run for this agent returns 409 with the authoritative in-flight run_id.
     idempotency_key: str | None = None

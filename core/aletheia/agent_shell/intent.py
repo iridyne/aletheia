@@ -35,7 +35,6 @@ Available commands:
 - create_daily_review: user wants to create or write a daily review
 - create_review_report: user wants to create a non-trading review report
 - create_diagnostic_report: user wants to create a diagnostic or system health report
-- run_market_scan: user wants to run a manual market scan
 - rerun_failed_agent_task: user wants to retry or rerun a failed task
 - set_symbol_observe_only: user wants a symbol observed but not tradable
 - propose_prompt_change: user wants to propose changing a prompt or playbook
@@ -61,7 +60,6 @@ _KEYWORD_MAP: dict[str, list[str]] = {
     # take priority over broad read-command keywords like "agent" or "open".
     "pause_agents": ["pause", "stop", "halt"],
     "resume_agents": ["resume", "unpause", "continue"],
-    "run_market_scan": ["run market scan", "scan the market", "run scanner", "trigger market scan"],
     "rerun_failed_agent_task": ["rerun failed task", "retry failed task", "rerun failed agent", "retry last failure"],
     "set_symbol_observe_only": ["observe only", "mark symbol observe only", "set observe only"],
     "propose_prompt_change": ["propose prompt change", "prompt change proposal", "propose playbook change"],

@@ -12230,7 +12230,7 @@ export interface components {
         StartAgentRequest: {
             /**
              * Agent Name
-             * @default market_observer
+             * @default post_trade_reviewer
              */
             agent_name: string;
             /** Idempotency Key */

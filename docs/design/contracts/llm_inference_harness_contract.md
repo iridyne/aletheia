@@ -266,16 +266,9 @@ the Contract spec.
 | `dreaming.lesson_extraction` | `dreaming.lesson_extraction` | `v1` | `structured` | `none` |
 | `dreaming.nightly_consolidation` | `dreaming.nightly_consolidation` | `v1` | `text` | `none` |
 | `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.context_ablation.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.context_ablation.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.learning_b.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.learning_b.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.technical_context.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
-| `evaluation.technical_context.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `insight_synthesizer.insight` | `insight_synthesizer.insight` | `v1` | `text` | `none` |
 | `learning.hypothesis_causal_red_team` | `learning.hypothesis_causal_red_team` | `v1` | `structured` | `none` |
 | `lesson_reviewer.judge` | `lesson_reviewer.judge` | `v1` | `structured` | `none` |
-| `market_observer.market_read` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `news_analyzer.analysis` | `news_analyzer.analysis` | `v1` | `structured` | `none` |
 | `operator.llm_session.turn` | `operator.llm_session.turn` | `v1` | `text` | `typed-command-text` |
 | `post_trade_reviewer.review` | `post_trade_reviewer.review` | `v1` | `text` | `none` |
@@ -322,13 +315,15 @@ Proposal may not exist. Historical entry attribution retains its original meanin
 - `tests/test_model_fallback.py`
 - `tests/test_retired_model_providers.py`
 - `tests/test_model_profiles.py`
-- `tests/test_context_effectiveness.py`
 
 Research rationale and dated evidence remain non-normative in
 [`../../research/llm_harness/README.md`](../../research/llm_harness/README.md).
 
 ## Known gaps
 
-Context effectiveness still requires a configured real model provider and
-owner blind scoring. Mechanical fixtures or fake providers prove only the
-contract and linkage, not improved reasoning quality.
+The context-effectiveness harness (`learning-context-b1`,
+`technical-context-check`, `context-ablation` and their score/summary
+commands) was retired together with the Market Observer: its control prompt
+and response schema lived in that module, so no pair could be built. Restoring
+prompt-ablation research requires a new design against a live prompt, not a
+repair of the removed harness.

@@ -31,7 +31,6 @@ _FAILED_STATUSES = {
     "cancel_requested",
 }
 _IN_PROGRESS_STATUSES = {"queued", "running"}
-_OBSERVER_MAX_STALENESS_MIN = 45.0
 
 # In-process de-dupe by issue kind. Durable warnings must not suppress alerts
 # when an independent incident appears before health returns to fully healthy.
@@ -244,95 +243,6 @@ def _market_data_stale_sources(cfg) -> list[tuple[str, str, float]]:
     return stale
 
 
-def _mo_ran_in_current_session() -> bool:
-    """Return True if market_observer completed at least one run since this session started.
-
-    Warmup guard: after any restart (manual, git-hook, self-heal) the scheduler
-    needs up to one MO interval (~15 min) before the first run fires.  Using
-    session uptime would reset on every restart and permanently suppress the
-    alert during high-churn periods.  Checking agent_runs avoids that — once
-    MO has actually executed, we know warmup is done regardless of how many
-    restarts occurred.
-
-    Returns True on any DB error so the caller defaults to alerting (safer
-    than silently suppressing a real stall).
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        session_row = db.execute(
-            "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
-            " ORDER BY rowid DESC LIMIT 1"
-        ).fetchone()
-        if not session_row or not session_row[0]:
-            return True
-        run_row = db.execute(
-            "SELECT id FROM agent_runs WHERE agent_name='market_observer'"
-            " AND started_at >= ? AND status IN (?) AND ended_at IS NOT NULL LIMIT 1",
-            (session_row[0], "completed"),
-        ).fetchone()
-        return run_row is not None
-    except Exception:
-        return True
-
-
-def _observer_latest_session_run_info() -> dict | None:
-    """Info about the latest market_observer run in the current runtime session.
-
-    Returns a dict with:
-      - status: run status string (completed/failed/running/…)
-      - latest_run_age_min: minutes since the run ended (or started when it is
-        still in progress).
-
-    Returns None when no MO run exists in the current session, or on any DB
-    error (caller should treat this as unknown/initializing, not healthy).
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        session_row = db.execute(
-            "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
-            " ORDER BY rowid DESC LIMIT 1"
-        ).fetchone()
-        if not session_row or not session_row[0]:
-            return None
-        session_start = session_row[0]
-        run_row = db.execute(
-            "SELECT status, started_at, ended_at FROM agent_runs"
-            " WHERE agent_name='market_observer' AND started_at >= ?"
-            " ORDER BY started_at DESC, rowid DESC LIMIT 1",
-            (session_start,),
-        ).fetchone()
-        if not run_row:
-            return None
-
-        def _age_minutes(timestamp: str | None) -> float | None:
-            return _timestamp_age_minutes(timestamp)
-
-        latest_success_row = db.execute(
-            "SELECT started_at, ended_at FROM agent_runs"
-            " WHERE agent_name='market_observer' AND started_at >= ?"
-            " AND status IN (?) AND ended_at IS NOT NULL"
-            " ORDER BY ended_at DESC, rowid DESC LIMIT 1",
-            (session_start, "completed"),
-        ).fetchone()
-        return {
-            "status": run_row["status"],
-            "latest_run_age_min": _age_minutes(run_row["ended_at"] or run_row["started_at"]),
-            # A queued run is not a heartbeat. Keep the last successful
-            # completion available so it cannot hide a stale Observer.
-            "latest_success_age_min": (
-                _age_minutes(latest_success_row["ended_at"])
-                if latest_success_row
-                else None
-            ),
-        }
-    except _FutureTimestampError:
-        return {"status": "completed", "timestamp_issue": "future"}
-    except Exception:
-        return None
-
-
 def _exchange_reachable(cfg=None) -> bool | None:
     """Return the last cached exchange probe result.
 
@@ -461,51 +371,6 @@ def compute_health() -> dict:
 
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
-
-    # Observer freshness: Market Observer is an advisory consumer of
-    # emitter-created Opportunities. Its run completion is the heartbeat; using
-    # opportunities.created_at here falsely reports a healthy zero-output run as
-    # stale whenever the upstream emitter has not created a new candidate.
-    if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
-        run_info = _observer_latest_session_run_info()
-        if run_info is None:
-            # DB error or session/run mismatch — can't determine state.
-            initializing.append(
-                "observer_initializing"
-                if not _mo_ran_in_current_session()
-                else "observer_run_unknown"
-            )
-        elif run_info.get("timestamp_issue") == "future":
-            issues.append("observer_timestamp_future")
-        elif run_info["status"] in _FAILED_STATUSES:
-            # A rejected/cancelled/failed first run is a real negative signal,
-            # not warmup; do not let the successful-run predicate hide it.
-            issues.append("observer_run_failed")
-        elif run_info["status"] not in _SUCCESSFUL_STATUSES | _IN_PROGRESS_STATUSES:
-            issues.append("observer_run_failed")
-        elif not _mo_ran_in_current_session():
-            # No successful completion yet. A queued/running run is warmup until
-            # it exceeds the same freshness window used after the first success.
-            age = run_info["latest_run_age_min"]
-            if age is not None and age > _OBSERVER_MAX_STALENESS_MIN:
-                issues.append(f"observer_stale:{age:.0f}min")
-            else:
-                initializing.append("observer_initializing")
-        elif run_info["status"] in _IN_PROGRESS_STATUSES:
-            # An in-flight run is not itself a heartbeat. For queued work, use
-            # the last successful completion so an indefinitely queued manual
-            # job cannot suppress a real stale alert.
-            age = (
-                run_info.get("latest_success_age_min")
-                if run_info["status"] == "queued"
-                else run_info["latest_run_age_min"]
-            )
-            if age is not None and age > _OBSERVER_MAX_STALENESS_MIN:
-                issues.append(f"observer_stale:{age:.0f}min")
-        else:
-            age = run_info["latest_run_age_min"]
-            if age is not None and age > _OBSERVER_MAX_STALENESS_MIN:
-                issues.append(f"observer_stale:{age:.0f}min")
 
     if not cfg.runtime.paused:
         reachable = _exchange_reachable(cfg)

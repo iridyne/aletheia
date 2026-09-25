@@ -89,26 +89,25 @@ def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
         "PI_OPERATOR_DESIGN_DECISIONS",
         "§A路架构：observer tool registry",
         "L2a",
-        "market_observer 在 PI 的 agent_shell tool registry 中存在对应工具定义——A路架构结构证明："
-        "observers 是 PI 的工具而非独立发言方。tool registry 中必须存在含 'observe_market'、"
-        "'observe_chain' 或 'observe_macro' 命名（或等价命名）的工具注册条目。",
+        "observers 在 PI 的 agent_shell tool registry 中存在对应工具定义——A路架构结构证明："
+        "observers 是 PI 的工具而非独立发言方。tool registry 中必须存在含 'observe_chain' 或"
+        "'observe_macro' 命名（或等价命名）的工具注册条目。",
         status="implemented",
     )
 )
 def test_observer_tools_registered_in_pi_tool_registry():
-    """A路架构结构检查：PI tool registry 必须包含 observe_market/observe_chain/observe_macro。
+    """A路架构结构检查：PI tool registry 必须包含 observe_chain/observe_macro。
 
-    失败状态（当前）：registry 只有 run_market_scan，没有 A路要求的 observe_* 命名条目。
-    通过条件（合规态）：COMMANDS 字典中含有 observe_market / observe_chain / observe_macro
+    通过条件（合规态）：COMMANDS 字典中含有 observe_chain / observe_macro
     任意一条（精确命名或等价命名）的 CommandDef 注册。
     """
     root = _project_root()
     src = (root / "core/aletheia/agent_shell/registry.py").read_text(encoding="utf-8")
-    observe_names = ("observe_market", "observe_chain", "observe_macro")
+    observe_names = ("observe_chain", "observe_macro")
     found = [name for name in observe_names if name in src]
     assert found, (
         f"PI tool registry 缺少 A路架构 observer 工具注册条目 {observe_names!r}；"
-        "当前只有 run_market_scan，不满足 observer-as-tool 结构契约。"
+        "不满足 observer-as-tool 结构契约。"
     )
 
 

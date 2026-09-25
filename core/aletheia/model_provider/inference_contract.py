@@ -89,42 +89,11 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         _spec("agent_shell.portfolio_review", OutputMode.STRUCTURED),
         _spec("agent_shell.intent_classification", OutputMode.STRUCTURED),
         _spec("equity_observer.market_read", OutputMode.STRUCTURED),
-        _spec("market_observer.market_read", OutputMode.STRUCTURED),
         _spec("prediction_observer.market_read", OutputMode.STRUCTURED),
         _spec("news_analyzer.analysis", OutputMode.STRUCTURED),
         _spec("startup_gate.provider_probe", OutputMode.TEXT),
         _spec("provider_settings.ping", OutputMode.TEXT),
         _spec("provider_settings.candidate_probe", OutputMode.TEXT),
-        _spec(
-            "evaluation.learning_b.control",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
-        _spec(
-            "evaluation.learning_b.treatment",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
-        _spec(
-            "evaluation.technical_context.control",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
-        _spec(
-            "evaluation.technical_context.treatment",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
-        _spec(
-            "evaluation.context_ablation.control",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
-        _spec(
-            "evaluation.context_ablation.treatment",
-            OutputMode.STRUCTURED,
-            prompt_template_id="market_observer.market_read",
-        ),
         # Compatibility for direct helper-level tests.  Executable coverage
         # forbids this caller in application code.
         _spec("unregistered", OutputMode.TEXT),

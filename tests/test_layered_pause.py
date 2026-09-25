@@ -78,7 +78,7 @@ class TestLayeredPause:
             MagicMock(id="connectivity_monitor"),
             MagicMock(id="price_feed"),
             MagicMock(id="position_manager"),
-            MagicMock(id="market_observer"),
+            MagicMock(id="post_trade_reviewer"),
             MagicMock(id="paper_trader"),
             MagicMock(id="pi_trading_decision"),
             MagicMock(id="dreaming_daily"),
@@ -98,7 +98,7 @@ class TestLayeredPause:
         assert "position_manager" not in paused_ids
 
         # Non-essential jobs SHOULD be paused
-        assert "market_observer" in paused_ids
+        assert "post_trade_reviewer" in paused_ids
         assert "paper_trader" in paused_ids
         assert "pi_trading_decision" in paused_ids
         assert "dreaming_daily" in paused_ids
@@ -145,13 +145,13 @@ class TestLayeredPause:
         mock_sched = MagicMock()
         mock_sched.state = STATE_RUNNING
         scheduler._scheduler = mock_sched
-        scheduler._selectively_paused_jobs = {"market_observer", "paper_trader", "pi_trading_decision"}
+        scheduler._selectively_paused_jobs = {"post_trade_reviewer", "paper_trader", "pi_trading_decision"}
 
         scheduler.resume_scheduler()
 
         # Each selectively-paused job should be resumed
         resumed_ids = {call[0][0] for call in mock_sched.resume_job.call_args_list}
-        assert "market_observer" in resumed_ids
+        assert "post_trade_reviewer" in resumed_ids
         assert "paper_trader" in resumed_ids
         assert "pi_trading_decision" in resumed_ids
 
@@ -174,12 +174,12 @@ class TestLayeredPause:
 
         mock_sched.resume.side_effect = _resume
         scheduler._scheduler = mock_sched
-        scheduler._selectively_paused_jobs = {"market_observer"}
+        scheduler._selectively_paused_jobs = {"post_trade_reviewer"}
 
         scheduler.resume_scheduler()
 
         mock_sched.resume.assert_called_once()
-        mock_sched.resume_job.assert_called_once_with("market_observer")
+        mock_sched.resume_job.assert_called_once_with("post_trade_reviewer")
 
     def test_get_pause_state_layered(self, monkeypatch):
         """get_pause_state reports layered mode correctly."""
@@ -193,11 +193,11 @@ class TestLayeredPause:
             MagicMock(id="price_feed"),
         ]
         scheduler._scheduler = mock_sched
-        scheduler._selectively_paused_jobs = {"market_observer", "paper_trader"}
+        scheduler._selectively_paused_jobs = {"post_trade_reviewer", "paper_trader"}
 
         state = scheduler.get_pause_state()
         assert state["mode"] == "layered_paused"
-        assert "market_observer" in state["paused_jobs"]
+        assert "post_trade_reviewer" in state["paused_jobs"]
         assert "paper_trader" in state["paused_jobs"]
 
     def test_get_pause_state_running(self, monkeypatch):
@@ -231,7 +231,7 @@ class TestEssentialJobsCoverage:
         """AI-dependent jobs must NOT be in the essential set."""
         from aletheia.agent_runtime.scheduler import _ESSENTIAL_JOBS
         ai_jobs = {
-            "market_observer", "paper_trader", "pi_trading_decision",
+            "paper_trader", "pi_trading_decision",
             "dreaming_daily", "post_trade_reviewer", "risk_critic",
             "insight_synthesizer", "lesson_reviewer",
         }

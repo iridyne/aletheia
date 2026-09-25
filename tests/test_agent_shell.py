@@ -1349,7 +1349,6 @@ def test_registry_operational_commands_require_paper():
     observe_ops = {c.name for c in ops if c.required_permission == "Observe"}
     paper_ops = {c.name for c in ops if c.required_permission == "Paper"}
     assert observe_ops == {
-        "run_market_scan",
         "rerun_failed_agent_task",
         "propose_command_center_behavior_change",
     }
@@ -1414,7 +1413,7 @@ def test_allowed_commands_observe():
     assert "pause_agents" not in cmds
     assert "create_review_report" in cmds
     assert "create_diagnostic_report" in cmds
-    assert len(cmds) == 18
+    assert len(cmds) == 16
 
 
 
@@ -1484,11 +1483,6 @@ def test_keyword_dreaming_log():
 def test_keyword_mark_task_done():
     intent = _classify_keyword("mark task done")
     assert intent.command == "mark_task_done"
-
-
-def test_keyword_run_market_scan():
-    intent = _classify_keyword("run market scan")
-    assert intent.command == "run_market_scan"
 
 
 def test_keyword_rerun_failed_task():
@@ -2508,27 +2502,6 @@ async def test_mark_task_done_completes_operator_task(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_market_scan_triggers_market_observer(monkeypatch):
-    from aletheia.agent_shell.commands import run_market_scan
-    from aletheia import agents
-    from extensions.research.market_observer import run_market_observer
-
-    monkeypatch.setitem(agents._AGENTS, "market_observer", run_market_observer)
-
-    async def fake_run_agent(agent_name: str, trigger_type: str = "scheduled"):
-        assert agent_name == "market_observer"
-        assert trigger_type == "manual"
-        return {"run_id": "run-scan-1", "status": "completed", "outputs": ["scan complete"], "errors": []}
-
-    monkeypatch.setattr("aletheia.agent_shell.commands.run_agent", fake_run_agent, raising=False)
-
-    result = await run_market_scan({})
-
-    assert result["run"]["agent_name"] == "market_observer"
-    assert result["run"]["run_id"] == "run-scan-1"
-
-
-@pytest.mark.asyncio
 async def test_rerun_failed_agent_task_uses_latest_failed_run(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
@@ -2556,7 +2529,6 @@ async def test_rerun_failed_agent_task_uses_latest_failed_run(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command_name,agent_name", [
-    ("run_market_scan", "market_observer"),
     ("rerun_failed_agent_task", "market_observer"),
     ("rerun_failed_agent_task", "post_trade_reviewer"),
 ])

@@ -92,7 +92,7 @@ def test_operator_permissions_use_canonical_ladder():
     assert reason is None
 
     allowed, reason = check_permission(
-        "run_market_scan",
+        "rerun_failed_agent_task",
         "Research",
         permission_scope="operator",
     )
@@ -100,7 +100,7 @@ def test_operator_permissions_use_canonical_ladder():
     assert "PaperAuto" in reason
 
     allowed, reason = check_permission(
-        "run_market_scan",
+        "rerun_failed_agent_task",
         "PaperAuto",
         permission_scope="operator",
     )

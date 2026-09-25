@@ -35,62 +35,6 @@ def test_modify_own_prompt_is_forbidden():
 
 @spec_claim(
     SpecClaim(
-        "PCI-G04", "operator_layer",
-        "§pi_constitution observers_no_pi_decision",
-        "L2a",
-        "market_observer.py does not call insert_pi_decision or construct PiDecision() — "
-        "observers are tools, not independent signal issuers (A-path architecture). "
-        "Contract: PI_OPERATOR_DESIGN_DECISIONS §A路架构 (2026-06-30).",
-        status="implemented",
-    ),
-)
-def test_observers_do_not_insert_pi_decisions():
-    """AST-scan observer files: none must call insert_pi_decision or construct PiDecision.
-
-    The A-path architecture mandates: lower-layer observers write Opportunity records,
-    PI (the top decision-maker) reads them and writes PiDecision. Observers that write
-    PiDecision directly re-entangle the two-loop architecture.
-    """
-    import ast as _ast
-
-    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    # chain_observer.py and macro_observer.py are not yet implemented —
-    # guard only the files that exist to avoid false failures on missing files.
-    _OBSERVER_FILES = [
-        _PROJECT_ROOT / "extensions" / "research" / "market_observer.py",
-    ]
-    # Optionally guard additional observers if they exist
-    for optional_name in ("chain_observer.py", "macro_observer.py"):
-        candidate = _PROJECT_ROOT / "core" / "aletheia" / "agents" / optional_name
-        if candidate.exists():
-            _OBSERVER_FILES.append(candidate)
-
-    forbidden_names = {"insert_pi_decision", "PiDecision"}
-    violations: list[str] = []
-
-    for obs_path in _OBSERVER_FILES:
-        src = obs_path.read_text(encoding="utf-8")
-        tree = _ast.parse(src)
-        for node in _ast.walk(tree):
-            # Function calls: insert_pi_decision(...) or PiDecision(...)
-            if isinstance(node, _ast.Call):
-                func = node.func
-                name = None
-                if isinstance(func, _ast.Name):
-                    name = func.id
-                elif isinstance(func, _ast.Attribute):
-                    name = func.attr
-                if name in forbidden_names:
-                    violations.append(f"{obs_path.name}: {name}()")
-
-    assert not violations, (
-        f"PCI-G04 VIOLATED: observer(s) call insert_pi_decision or construct PiDecision — "
-        f"observers must only write Opportunity, never PiDecision: {violations}"
-    )
-
-
-@spec_claim(
-    SpecClaim(
         "PCI-G03", "operator_layer",
         "§pi_constitution constitution_files_not_in_write_whitelist",
         "L2a",

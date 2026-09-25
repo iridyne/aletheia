@@ -111,7 +111,6 @@ def _join_summaries(items: list[str], *, limit: int = 3) -> str:
 def _default_schedule_for(agent_name: str) -> str | None:
     schedules = {
         "market_data": "every 5 minutes",
-        "market_observer": "every 15 minutes",
         "pi_trading_decision": "every 15 minutes",
         "position_manager": "every 5 minutes",
         "exchange_sync": "every 5 minutes",
@@ -1189,38 +1188,6 @@ async def reconcile_positions(params: dict) -> dict:
     }
 
 
-async def run_market_scan(params: dict) -> dict:
-    from aletheia.agent_shell.operator_store import create_event
-    from aletheia.agents import get_agent_fn
-
-    try:
-        get_agent_fn("market_observer")
-    except ValueError as exc:
-        return {"error": str(exc)}
-
-    result = await run_agent("market_observer", trigger_type="manual")
-    create_event(
-        event_type="market_scan_requested",
-        source="agent_shell_command",
-        related_entity_type="agent_run",
-        related_entity_id=result["run_id"],
-        payload={"agent_name": "market_observer", "status": result["status"]},
-    )
-    message = (
-        f"Triggered manual market scan. New run {result['run_id']} finished with status {result['status']}."
-    )
-    return {
-        "message": message,
-        "run": {
-            "agent_name": "market_observer",
-            "run_id": result["run_id"],
-            "status": result["status"],
-            "errors": result.get("errors", []),
-            "outputs": result.get("outputs", []),
-        },
-    }
-
-
 async def rerun_failed_agent_task(params: dict) -> dict:
     from aletheia.agent_shell.operator_store import create_event
 
@@ -2266,7 +2233,6 @@ HANDLERS: dict[str, callable] = {
     "create_diagnostic_report": create_diagnostic_report,
     "archive_low_value_notification": archive_low_value_notification,
     "reconcile_positions": reconcile_positions,
-    "run_market_scan": run_market_scan,
     "rerun_failed_agent_task": rerun_failed_agent_task,
     "set_symbol_observe_only": set_symbol_observe_only,
     "propose_prompt_change": propose_prompt_change,

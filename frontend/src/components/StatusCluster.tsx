@@ -128,8 +128,6 @@ export default function StatusCluster({
       : undefined
   const activeBlockingHealthIssues = healthIssues.filter(
     issue => !issue.startsWith('code_updated_pending_restart:') &&
-             !issue.startsWith('observer_stale:') &&
-             !issue.startsWith('observer_initializing') &&
              issue !== 'candidate_progress_unavailable'
   )
   const operatorTradingBlocked = (

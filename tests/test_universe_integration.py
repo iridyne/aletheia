@@ -237,8 +237,8 @@ def test_pipeline_scorer_assigns_families():
     assert all(f in _VALID_FAMILIES for f in families_seen)
 
 
-def test_market_observer_universe_integration():
-    """Verify market_observer correctly reads universe members."""
+def test_universe_service_returns_consumable_members():
+    """Verify the universe service exposes members a consumer can act on."""
     cfg = _make_cfg()
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [
@@ -258,7 +258,7 @@ def test_market_observer_universe_integration():
                 members = svc.get_current_universe(limit=5)
 
     assert len(members) == 2
-    # Market observer would consume these as symbol + metadata
+    # Consumers read these as symbol + metadata
     for m in members:
         assert "symbol" in m
         assert "scanner_family" in m

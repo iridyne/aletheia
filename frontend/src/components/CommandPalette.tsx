@@ -165,7 +165,6 @@ export default function CommandPalette({
     { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) await setKillSwitch(false) } },
     { id: 'sys-dump-incident', label: 'Dump Incident Snapshot (JSON)', group: 'System', keywords: 'debug diagnostic memory blackbox state export snapshot incident', action: () => dumpIncidentSnapshot(qc) },
 
-    { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => startAgent('market_observer') },
     { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },
     { id: 'agent-dreaming', label: 'Run Dreaming Agent', group: 'Agents', keywords: 'trigger start dream consolidate', action: () => startAgent('dreaming_agent') },
   ]

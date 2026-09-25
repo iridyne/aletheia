@@ -25,7 +25,6 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_MARKET_OBS = _ROOT / "extensions" / "research" / "market_observer.py"
 _CONTEXT_BUILDER = _ROOT / "core" / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "core" / "aletheia" / "diagnostics" / "doctor.py"
 _LOCAL_FUNDING = _ROOT / "core" / "aletheia" / "portfolio" / "local_funding.py"
@@ -295,30 +294,8 @@ def test_render_has_xvenue_funding_param():
 
 
 # ---------------------------------------------------------------------------
-# DU-S02 — Hyperliquid feed is ROUTED to the decision context (no longer orphan)
+# DU-S22 — owner aggregate Position X shadow
 # ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "DU-S02", _CONTRACT, "§no-orphan: hyperliquid", "L2c",
-        "market_observer reads the hyperliquid-tagged funding rows AND passes "
-        "xvenue_funding into the rendered LLM context — i.e. the acquired "
-        "Hyperliquid data reaches a decision consumer, not just collector/doctor.",
-    ),
-)
-def test_hyperliquid_routed_to_decision_context():
-    src = _MARKET_OBS.read_text(encoding="utf-8")
-    # the cross-venue read (explicit exchange filter) ...
-    assert 'exchange="hyperliquid"' in src or "exchange='hyperliquid'" in src, (
-        "market_observer must read hyperliquid funding via explicit exchange filter"
-    )
-    # ... and it must actually flow into the rendered context
-    assert "xvenue_funding" in src, (
-        "market_observer must pass xvenue_funding into render_enriched_context_md"
-    )
-
-
-
 
 @spec_claim(
     SpecClaim(
@@ -342,39 +319,24 @@ def test_owner_aggregate_structure_path_is_shadow_only():
 
 
 # ---------------------------------------------------------------------------
-# DU-S03 — DefiLlama on-chain feed is ROUTED to the decision context
+# DU-S16 — decision-context freshness
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
-        "DU-S03", _CONTRACT, "§no-orphan: onchain", "L2c",
-        "market_observer reads latest_onchain_snapshots AND passes onchain= into "
-        "the rendered LLM context — DefiLlama on-chain is consumed, not orphan.",
-    ),
-)
-def test_onchain_routed_to_decision_context():
-    src = _MARKET_OBS.read_text(encoding="utf-8")
-    assert "latest_onchain_snapshots" in src, "market_observer must read onchain snapshots"
-    assert "onchain=" in src, "market_observer must pass onchain= into render"
-
-
-@spec_claim(
-    SpecClaim(
         "DU-S16", _CONTRACT, "§decision-context freshness", "L2a",
-        "Orderbook, funding, open-interest, macro, on-chain, and cross-venue "
-        "context consumers share one fail-closed freshness policy; stale rows "
-        "cannot reach Observer or Universe decisions through a side path.",
+        "Orderbook, funding, open-interest, macro, and cross-venue context "
+        "consumers share one fail-closed freshness policy; stale rows cannot "
+        "reach decisions through a side path.",
     ),
 )
 def test_enriched_decision_consumers_share_freshness_policy():
     freshness = (_ROOT / "core" / "aletheia" / "data" / "freshness.py").read_text(encoding="utf-8")
-    observer = _MARKET_OBS.read_text(encoding="utf-8")
     context = _CONTEXT_BUILDER.read_text(encoding="utf-8")
     features = (_ROOT / "core" / "aletheia" / "universe" / "features.py").read_text(encoding="utf-8")
 
     for domain in ("orderbook", "funding", "open_interest", "macro", "onchain"):
         assert f'"{domain}"' in freshness
-    assert "build_market_context_from_db" in observer
     assert "fresh_row" in context
     assert "fresh_row" in features
 
@@ -472,7 +434,7 @@ async def test_verified_exit_private_history_is_registered_and_bounded(monkeypat
     SpecClaim(
         "DU-S13", _CONTRACT, "§perp structure observation path", "L2a",
         "perp_structure_snapshots is registered in data_utilization.md, has a "
-        "whitelisted fixture collector, and reaches market_observer via "
+        "whitelisted fixture collector, and reaches the decision context via "
         "render_enriched_context_md(perp_structure=...), while doctor exposes "
         "freshness. It stays observation-only until a real feed is added.",
     ),
@@ -488,15 +450,11 @@ def test_perp_structure_registered_and_consumed():
 
     collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
     ctx = _CONTEXT_BUILDER.read_text(encoding="utf-8")
-    obs = _MARKET_OBS.read_text(encoding="utf-8")
     doctor = _DOCTOR.read_text(encoding="utf-8")
     assert "VergexStructureCollector" in collector and "_ALLOWED_FIELDS" in collector, (
         "perp structure must have a whitelisted fixture collector"
     )
     assert "perp_structure" in ctx, "context_builder must render perp structure"
-    assert "latest_perp_structure" in obs and "perp_structure=" in obs, (
-        "market_observer must read and pass perp structure into render"
-    )
     assert "data.perp_structure" in doctor, "doctor must expose perp structure freshness"
 
 
@@ -1065,15 +1023,12 @@ def test_orderbook_identity_reaches_storage_and_consumers():
     model = (root / "core/aletheia/data/models.py").read_text(encoding="utf-8")
     collector = (root / "extensions/data/collectors/microstructure.py").read_text(encoding="utf-8")
     repo = (root / "core/aletheia/storage/repositories.py").read_text(encoding="utf-8")
-    observer = (root / "extensions/research/market_observer.py").read_text(encoding="utf-8")
     features = (root / "core/aletheia/universe/features.py").read_text(encoding="utf-8")
 
     assert "market_type: str" in model
     assert "market_type=market_type" in collector
     assert "def latest_orderbook(" in repo and "market_type: str" in repo
-    assert "build_market_context_from_db" in observer
     assert "latest_orderbook(" in _CONTEXT_BUILDER.read_text(encoding="utf-8")
-    assert "exchange=venue" in observer and "market_type=market_type" in observer
     assert "latest_orderbook(" in features
     assert 'venue = str(asset.get("venue")' in features
     assert 'market_type = str(asset.get("market_type")' in features

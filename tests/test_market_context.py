@@ -1,10 +1,8 @@
-"""Tests for the new market context layer (indicators + builder + observer).
+"""Tests for the new market context layer (indicators + builder).
 
 Covers:
   - Stdlib indicators (SMA / RSI / ATR / Bollinger / momentum / vol z-score / RS rank)
   - market_context.build_market_context (multi-TF render + fallback)
-  - market_observer integration (structured output extraction, recorded steps,
-    graceful fallback when LLM unavailable)
 """
 
 import asyncio
@@ -167,7 +165,6 @@ _FakeClient = _FakeProvider
 
 def test_build_context_renders_markdown_tables():
     from aletheia.trading.market_context import build_market_context
-    from extensions.research.market_observer import _evaluate_pre_filter
     provider = _FakeProvider()
     ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], provider=provider))
     assert "Verified market data snapshot" in ctx
@@ -194,12 +191,10 @@ def test_build_context_renders_markdown_tables():
     )
     assert all(item["observed_at"] for item in technical["artifacts"])
     assert debug["fallback"] is False
-    assert _evaluate_pre_filter(debug)["passed"] is True
 
 
 def test_build_context_rejects_consistent_foreign_candle_venue():
     from aletheia.data.cache import get_cache
-    from extensions.research.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class FallbackVenueProvider(_FakeProvider):
@@ -218,12 +213,10 @@ def test_build_context_rejects_consistent_foreign_candle_venue():
     assert debug["technical_context"]["artifacts"] == []
     assert any("foreign_timeframe_venue" in error for error in debug["errors"])
     assert "technical-context-v1 (okx" not in ctx
-    assert _evaluate_pre_filter(debug)["passed"] is False
 
 
 def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
     from aletheia.data.cache import get_cache
-    from extensions.research.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class MixedVenueProvider(_FakeProvider):
@@ -243,7 +236,6 @@ def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
     assert debug["technical_context"]["artifacts"] == []
     assert any("inconsistent_timeframe_venues" in error for error in debug["errors"])
     assert "technical-context-v1 (bitget" not in ctx
-    assert _evaluate_pre_filter(debug)["passed"] is False
 
 
 def test_build_context_marks_missing_timeframe_in_partial_bundle():
@@ -302,48 +294,6 @@ def test_build_context_includes_indicators_in_debug():
     assert btc["1h"]["atr_pct"] > 0
 
 
-def test_observer_pre_filter_uses_structured_1h_debug_only():
-    from extensions.research.market_observer import _evaluate_pre_filter
-
-    debug = {
-        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
-        "symbols": {
-            "BTC/USDT": {
-                "1h": {"rsi_14": 71.0, "atr_pct": 1.25},
-                "4h": {"rsi_14": 50.0, "atr_pct": 0.1},
-            },
-        },
-    }
-
-    result = _evaluate_pre_filter(debug)
-
-    assert result["passed"] is True
-    assert result["rsi"] == 71.0
-    assert result["atr_pct"] == 1.25
-    assert result["matched_rules"] == ["rsi_deviation", "atr_pct"]
-
-
-def test_observer_pre_filter_does_not_promote_markdown_or_news_keywords():
-    from extensions.research.market_observer import _evaluate_pre_filter
-
-    debug = {
-        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
-        "symbols": {
-            "BTC/USDT": {
-                "1h": {"rsi_14": 51.0, "atr_pct": 0.2},
-            },
-        },
-        "rendered_markdown": "BREAKOUT spike in recent news; RSI 99; ATR 12%",
-    }
-
-    result = _evaluate_pre_filter(debug)
-
-    assert result["passed"] is False
-    assert result["rsi"] == 51.0
-    assert result["atr_pct"] == 0.2
-    assert result["keyword_hits"] == []
-
-
 def test_build_context_preserves_instrument_identity_and_cache_scope():
     """Spot and perp reads for one symbol must never share a cache entry."""
     from aletheia.data.cache import get_cache
@@ -366,17 +316,6 @@ def test_build_context_preserves_instrument_identity_and_cache_scope():
     assert {symbol.market_type for symbol in provider.ohlcv_symbols[3:]} == {"spot"}
 
 
-# === Observer integration ===
-
-
-def test_observer_system_prompt_matches_normalized_technical_fields():
-    from extensions.research.market_observer import _SYSTEM_PROMPT
-
-    for token in ("trend:", "atr: ATR14 as a percentage", "bb:", "vwap:", "donchian H/L:", "obv"):
-        assert token in _SYSTEM_PROMPT
-    assert "price > SMA" not in _SYSTEM_PROMPT
-    assert "ATR14: average true range (price units)" not in _SYSTEM_PROMPT
-
 def _setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -396,252 +335,6 @@ def _setup_env(tmp_path, monkeypatch):
     run_migrations()
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
-
-
-def test_observer_pre_filter_rejection_is_not_a_run_error(tmp_path, monkeypatch):
-    """A normal no-signal rejection stays in filter evidence, not AgentRun errors."""
-    _setup_env(tmp_path, monkeypatch)
-
-    import extensions.research.market_observer as mo
-    import aletheia.trading.market_context as mc
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    admit_observer_instrument(monkeypatch, mo)
-
-    async def fake_builder(symbols, market_type="spot", **kwargs):
-        return ("calm verified snapshot", {"fallback": False, "errors": [], "symbols": {}})
-
-    async def unexpected_llm_call(*args, **kwargs):
-        raise AssertionError("pre-filter rejection must skip the LLM")
-
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda context: False)
-    monkeypatch.setattr(mo, "llm_structured", unexpected_llm_call)
-
-    from aletheia.agent_runtime.orchestrator import run_agent
-    from aletheia.storage.sqlite import get_db
-
-    result = asyncio.run(run_agent("market_observer", trigger_type="manual"))
-
-    assert result["outputs"] == []
-    assert result["errors"] == []
-    assert result["status"] == "completed"
-    evidence = get_db().execute(
-        "SELECT decision, reason_code FROM filter_decisions "
-        "WHERE filter_name='observer_pre_filter'"
-    ).fetchall()
-    assert evidence
-    assert {(row["decision"], row["reason_code"]) for row in evidence} == {
-        ("rejected", "no_sufficient_signal")
-    }
-
-
-def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
-    """Even when LLM is unavailable, observer must record a step trace.
-
-    This is the new visibility — the dashboard step trace shows the model
-    DID consult market data, killing the "AI doing nothing" perception.
-    """
-    _setup_env(tmp_path, monkeypatch)
-
-    # Force the structured-LLM path to fail.
-    import extensions.research.market_observer as mo
-    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    admit_observer_instrument(monkeypatch, mo)
-    captured_calls = []
-
-    async def fake_llm_structured(*a, **kw):
-        captured_calls.append(kw)
-        return None, "llm_unavailable: simulated"
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-
-    # Stub build_market_context so observer doesn't need network.
-    async def fake_builder(symbols, market_type="spot", **kw):
-        artifact = {
-            "stable_id": "technical-context-v1:bitget:BTC/USDT:spot:abc",
-            "source": "technical-analysis-v1",
-            "quality_state": "complete",
-            "rendered_chars": 32,
-            "observed_at": "2026-07-19T00:00:00+00:00",
-            "timeframes": ["1h", "4h", "1d"],
-        }
-        return (
-            "BTCUSDT verified snapshot here",
-            {
-                "fallback": False,
-                "errors": [],
-                "symbols": {"BTC/USDT": {"1h": {"rsi_14": 70.0, "atr_pct": 1.0}}},
-                "technical_context": {
-                    "adapter_id": "technical-context-v1",
-                    "artifacts": [artifact],
-                },
-            },
-        )
-    monkeypatch.setattr(mo, "build_market_context", fake_builder, raising=False)
-    # Patch via the module import used inside the agent body.
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    from aletheia.storage import repositories as repo
-    out = asyncio.run(run_market_observer(permission_mode="Observe", run_id="run-mo-1"))
-    # Observer should have completed without throwing, even though LLM failed.
-    assert "llm_unavailable" in (out["errors"][0] if out["errors"] else "")
-    steps = repo.list_run_steps("run-mo-1")
-    actions = [s["action"] for s in steps]
-    # Actions are now per-symbol: "market_read_input:BTC/USDT"
-    assert any("market_read_input" in a for a in actions)
-    # LLM-skip behavior: when LLM fails, records "market_read_skipped" not "market_read_output"
-    assert any("market_read_skipped" in a for a in actions)
-    assert captured_calls
-    assert all(call["context_adapter"] == "technical-context-v1" for call in captured_calls)
-    assert all(
-        any(
-            item["stable_id"].startswith("technical-context-v1:")
-            for item in call["context_artifacts"]
-        )
-        for call in captured_calls
-    )
-    from aletheia.storage.sqlite import get_db
-
-    row = get_db().execute(
-        "SELECT input_snapshot FROM filter_decisions "
-        "WHERE filter_name='observer_pre_filter' LIMIT 1"
-    ).fetchone()
-    inputs = json.loads(row["input_snapshot"])
-    assert inputs["technical_context"]["stable_id"] == (
-        "technical-context-v1:bitget:BTC/USDT:spot:abc"
-    )
-
-    # Cleanup the in-process step counter.
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-1")
-
-
-def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch):
-    """When LLM returns the new structured shape, Observer enriches all fields."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    owner = admit_observer_instrument(monkeypatch, mo)
-    technical_id = "technical-context-v1:bitget:BTC/USDT:spot:frozen"
-
-    async def fake_llm_structured(*a, **kw):
-        return ({
-            "direction_bias": "long",
-            "confidence": "medium",
-            "confidence_score": 65,
-            "rationale": "Multi-tf agreement on BTC",
-            "key_observations": [
-                "BTC 1h RSI 68 + price > SMA20",
-                "4h momentum positive",
-            ],
-        }, None)
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-    monkeypatch.setattr(mo, "current_inference_call_id", lambda: "llm-call-frozen")
-
-    async def fake_builder(symbols, market_type="spot", **kw):
-        return (
-            "snapshot",
-            {
-                "fallback": False,
-                "errors": [],
-                "symbols": {"BTC/USDT": {"1h": {"rsi_14": 70.0, "atr_pct": 1.0}}},
-                "technical_context": {
-                    "adapter_id": "technical-context-v1",
-                    "artifacts": [{
-                        "stable_id": technical_id,
-                        "source": "technical-analysis-v1",
-                        "quality_state": "complete",
-                        "rendered_chars": 16,
-                        "observed_at": "2026-07-19T00:00:00+00:00",
-                        "timeframes": ["1h", "4h", "1d"],
-                    }],
-                },
-            },
-        )
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    from aletheia.storage import repositories as repo
-    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-2"))
-    assert any(o.startswith("opportunity:") for o in out["outputs"])
-
-    opps = repo.list_opportunities(limit=5)
-    assert len(opps) == 1
-    opp = opps[0]
-    assert opp["id"] == owner.id
-    assert opp["source_agent"] == "universe_scanner"
-    assert opp["direction_bias"] == "long"
-    assert opp["confidence"] == "medium"
-    # Deterministic producer semantics stay immutable; Observer owns only its
-    # namespaced assessment.
-    assert opp["confidence_score"] == 60
-    assessment = json.loads(opp["metadata"])["observer_assessment"]
-    assert assessment["confidence_score"] == 65
-    assert assessment["rationale"] == "Multi-tf agreement on BTC"
-    assert len(assessment["key_observations"]) == 2
-    assert assessment["inference_call_id"] == "llm-call-frozen"
-    assert assessment["technical_context"]["source_id"] == technical_id
-    manifest = json.loads(opp["metadata"])["evidence_manifest"]
-    assert manifest["t1"]["technical_context"]["source_id"] == technical_id
-    assert manifest["t1"]["sources"]["technical_context"][0]["stable_id"] == technical_id
-
-
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-2")
-
-
-def test_prediction_market_lines_require_fresh_rows(tmp_path, monkeypatch):
-    """Old prediction rows must not enter market_observer context as current 24h moves."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-    from aletheia.storage.repositories import _insert
-
-    now = datetime.now(timezone.utc)
-    stale = (now - timedelta(days=14)).isoformat()
-    fresh = now.isoformat()
-    base = {
-        "event_id": "ev-test",
-        "source": "polymarket",
-        "condition_id": None,
-        "outcomes": "[]",
-        "outcome_prices": "[]",
-        "yes_probability": 0.7,
-        "no_probability": 0.3,
-        "probability_change_24h": 0.18,
-        "volume_24h": 100000.0,
-        "liquidity": 50000.0,
-        "status": "active",
-        "raw": "{}",
-    }
-    _insert("prediction_markets", {
-        **base,
-        "id": "pm-stale",
-        "external_market_id": "pm-stale",
-        "question": "Will Bitcoin reach 100k?",
-        "updated_at": stale,
-    })
-    _insert("prediction_markets", {
-        **base,
-        "id": "pm-fresh",
-        "external_market_id": "pm-fresh",
-        "question": "Will Bitcoin rally this week?",
-        "updated_at": fresh,
-    })
-
-    cutoff = (now - timedelta(hours=6)).isoformat()
-    lines = mo._prediction_market_signal_lines("BTC/USDT", cutoff)
-    joined = "\n".join(lines)
-    assert "rally this week" in joined
-    assert "reach 100k" not in joined
 
 
 def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path, monkeypatch):
@@ -685,204 +378,3 @@ def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path,
     assert "Fresh probability momentum may appear" in _prediction_context_block()
 
 
-def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
-    """Fresh perp-structure snapshots must reach the market_observer LLM prompt."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
-    from aletheia.storage import repositories as repo
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    admit_observer_instrument(monkeypatch, mo, market_type="perp")
-
-    repo.insert_perp_structure_snapshot({
-        "id": "perp-struct-observer-1",
-        "symbol": "BTC/USDT",
-        "venue": "hyperliquid",
-        "source": "vergex",
-        "as_of_time": datetime.now(timezone.utc).isoformat(),
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-        "data_quality": "complete",
-        "poc": 62267.64,
-        "value_area_low": 60000.0,
-        "value_area_high": 65000.0,
-        "short_liq_above_usd": 335_141_283.44,
-        "long_liq_below_usd": 220_161_274.01,
-        "top10_concentration": 0.21,
-        "top50_concentration": 0.44,
-    })
-
-    captured = []
-
-    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None, deadline=None, **_kw):
-        captured.append(user)
-        return ({
-            "direction_bias": "neutral",
-            "confidence": "speculative",
-            "confidence_score": 50,
-            "rationale": "structure context inspected",
-            "key_observations": ["Perp structure block present"],
-        }, None)
-
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-
-    async def fake_builder(symbols, market_type="spot", **kw):
-        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
-
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct"))
-
-    btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
-    assert "Perp structure" in btc_prompt
-    assert "POC $62,268" in btc_prompt
-    assert "short-liq above $335M vs long-liq below $220M" in btc_prompt
-
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-struct")
-
-
-def test_observer_includes_compact_position_x_structure_context(tmp_path, monkeypatch):
-    """Fresh Position X structure evidence must be compressed before prompt injection."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
-    from aletheia.storage import repositories as repo
-    from tests.observer_admission_fixture import admit_observer_instrument
-
-    admit_observer_instrument(monkeypatch, mo, market_type="perp")
-
-    repo.insert_perp_structure_snapshot({
-        "id": "perp-struct-observer-2",
-        "symbol": "BTC/USDT",
-        "venue": "hyperliquid",
-        "source": "position_x",
-        "as_of_time": datetime.now(timezone.utc).isoformat(),
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-        "data_quality": "degraded",
-        "poc": 62267.64,
-        "value_area_low": 60000.0,
-        "value_area_high": 65000.0,
-        "short_liq_above_usd": 335_141_283.44,
-        "long_liq_below_usd": 220_161_274.01,
-        "structure_bias": "bearish",
-        "composite_z": -0.9,
-        "structure_rank": 25,
-        "universe_size": 30,
-        "dimension_scores_json": (
-            '{"cgo":{"direction":"bearish","strength":"medium","percentile":13.3},'
-            '"lfa":{"direction":"bearish","strength":"flat","percentile":60.0}}'
-        ),
-        "risk_context_json": '{"convexity":{"detail":"23% of band fuel"},'
-        '"cascade":{"detail":"0.4% of OI within ±5%"}}',
-    })
-
-    captured = []
-
-    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None, deadline=None, **_kw):
-        captured.append(user)
-        return ({
-            "direction_bias": "neutral",
-            "confidence": "speculative",
-            "confidence_score": 50,
-            "rationale": "structure context inspected",
-            "key_observations": ["Compact Position X block present"],
-        }, None)
-
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-
-    async def fake_builder(symbols, market_type="spot", **kw):
-        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
-
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct-compact"))
-
-    btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
-    assert "Position X" in btc_prompt
-    assert "bias bearish" in btc_prompt
-    assert "composite_z -0.90" in btc_prompt
-    assert "rank 25/30" in btc_prompt
-    assert "cgo bearish" in btc_prompt
-    assert "advisory only" in btc_prompt
-    assert "degraded" in btc_prompt
-
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-struct-compact")
-
-
-
-def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
-    """When LLM returns empty rationale + observations, thesis must NOT dump
-    the raw markdown snapshot (which used to leak through and look broken on
-    the dashboard). Stub explanation instead."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-
-    async def fake_llm_structured(*a, **kw):
-        # Model returns valid shape but every narrative field is empty —
-        # this is the codex_cli "JSON parse dropped fields" failure mode.
-        return ({
-            "direction_bias": "neutral",
-            "confidence": "speculative",
-            "rationale": "",
-            "key_observations": [],
-        }, None)
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-
-    async def fake_builder(symbols, market_type="spot", **kw):
-        # Big realistic snapshot — would be ugly if it leaked into thesis.
-        return (
-            "## Verified market data snapshot\n### BTCUSDT\n| TF | Close ...",
-            {"fallback": False, "errors": [], "symbols": {}},
-        )
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    from aletheia.storage import repositories as repo
-    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-fb"))
-    opps = repo.list_opportunities(limit=5)
-    assert out["errors"] == []
-    assert out["outputs"] == []
-    assert len(opps) == 0
-
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-fb")
-
-
-def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
-    """Out-of-range / non-numeric scores must be dropped, not crash."""
-    _setup_env(tmp_path, monkeypatch)
-    import extensions.research.market_observer as mo
-
-    async def fake_llm_structured(*a, **kw):
-        return ({
-            "direction_bias": "neutral",
-            "confidence": "speculative",
-            "confidence_score": "not a number",
-            "rationale": "",
-            "key_observations": "should be a list but isn't",
-        }, None)
-    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
-    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
-
-    async def fake_builder(symbols, market_type="spot", **kw):
-        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    from extensions.research.market_observer import run_market_observer
-    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-3"))
-    # Must not raise — junk inputs are dropped silently.
-    assert not out["outputs"]
-
-    from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-mo-3")

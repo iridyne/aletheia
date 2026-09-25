@@ -211,48 +211,6 @@ def _iso_from_epoch(value: object) -> str | None:
         return None
 
 
-def _observer_health_snapshot(session_start: str | None) -> dict[str, Any]:
-    """Read Observer run completion timestamps; Opportunity creation is not a heartbeat."""
-
-    try:
-        from aletheia.storage.sqlite import get_db
-
-        db = get_db()
-        params: tuple[object, ...] = (session_start,) if session_start else ()
-        where = " AND started_at >= ?" if session_start else ""
-        latest = db.execute(
-            "SELECT status, started_at, ended_at FROM agent_runs "
-            "WHERE agent_name='market_observer'" + where
-            + " ORDER BY started_at DESC, rowid DESC LIMIT 1",
-            params,
-        ).fetchone()
-        successful = db.execute(
-            "SELECT started_at, ended_at FROM agent_runs "
-            "WHERE agent_name='market_observer'" + where
-            + " AND status='completed' AND ended_at IS NOT NULL "
-            "ORDER BY ended_at DESC, rowid DESC LIMIT 1",
-            params,
-        ).fetchone()
-        return {
-            "available": True,
-            "latest_status": latest["status"] if latest else None,
-            "latest_started_at": latest["started_at"] if latest else None,
-            "latest_ended_at": latest["ended_at"] if latest else None,
-            "last_successful_at": successful["ended_at"] if successful else None,
-            "unavailable_reason": None,
-        }
-    except Exception as exc:
-        return {
-            "available": False,
-            "latest_status": None,
-            "latest_started_at": None,
-            "latest_ended_at": None,
-            "last_successful_at": None,
-            "unavailable_reason": "observer_health_read_failed",
-            "error": type(exc).__name__,
-        }
-
-
 def _connectivity_snapshot() -> dict[str, Any]:
     """Project cached connectivity only; status must never probe an exchange."""
 
@@ -482,7 +440,6 @@ def _runtime_continuity() -> dict[str, Any]:
                         "unavailable_reason": None,
                     }
                 )
-        observer = _observer_health_snapshot(session.get("started_at"))
         jobs_resumed = (
             bool(
                 scheduler_state.get("running")
@@ -524,15 +481,9 @@ def _runtime_continuity() -> dict[str, Any]:
             "last_healthy_at": {
                 "exchange": connectivity.get("last_probe_at")
                 if connectivity.get("reachable") is True else None,
-                "observer": observer.get("last_successful_at"),
                 "scheduler": scheduler_state.get("last_tick")
                 if scheduler_state.get("running")
                 else scheduler_state.get("last_activity_at"),
-            },
-            "health": {
-                "availability": "available" if observer.get("available") else "partial",
-                "observer": observer,
-                "unavailable_reason": observer.get("unavailable_reason"),
             },
         }
     except Exception:

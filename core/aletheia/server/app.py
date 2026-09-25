@@ -1100,15 +1100,12 @@ from aletheia.agents import register_agent, unregister_agent
 
 try:
     from extensions.research.equity_observer import run_equity_observer
-    from extensions.research.market_observer import run_market_observer
 except ModuleNotFoundError as exc:
     if exc.name not in {"extensions", "extensions.research"}:
         raise
     unregister_agent("equity_observer")
-    unregister_agent("market_observer")
 else:
     register_agent("equity_observer")(run_equity_observer)
-    register_agent("market_observer")(run_market_observer)
 
 try:
     from extensions.research.research_agent import run_research_agent

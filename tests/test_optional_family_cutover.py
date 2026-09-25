@@ -75,7 +75,6 @@ assert not missing.startswith("broken_"), "installed dependency defects must pro
 from aletheia.agents import get_agent_fn
 assert callable(get_agent_fn("portfolio_agent"))
 assert callable(get_agent_fn("equity_observer"))
-assert callable(get_agent_fn("market_observer"))
 if missing in ("knowledge", "all"):
     for name in ("research_agent", "risk_critic", "post_trade_reviewer", "dreaming_agent", "lesson_reviewer"):
         try:

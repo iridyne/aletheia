@@ -170,7 +170,7 @@ async def test_ac07_agent_creates_artifacts(client, monkeypatch):
     monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
 
     first = await c.post("/api/agent-runs/start", json={"agent_name": "research_agent"})
-    second = await c.post("/api/agent-runs/start", json={"agent_name": "market_observer"})
+    second = await c.post("/api/agent-runs/start", json={"agent_name": "equity_observer"})
     assert first.status_code == second.status_code == 202
     await _wait_for_agent_run(c, first.json()["job_id"])
     await _wait_for_agent_run(c, second.json()["job_id"])

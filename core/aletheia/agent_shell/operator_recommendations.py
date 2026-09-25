@@ -182,7 +182,6 @@ def _queue_review_policy(queued_tasks: list[dict]) -> dict | None:
 def _default_schedule_for(agent_name: str) -> str | None:
     schedules = {
         "market_data": "every 5 minutes",
-        "market_observer": "every 15 minutes",
         "position_manager": "every 5 minutes",
         "exchange_sync": "every 5 minutes",
         "portfolio_snapshot": "every 10 minutes",
@@ -1374,64 +1373,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         for run in repo.list_latest_agent_runs()
         if str(run.get("id")) not in recent_run_ids
     )
-    market_observer_runs = [
-        run for run in recent_agent_runs if str(run.get("agent_name") or "") == "market_observer"
-    ]
-    market_observer_runs.sort(
-        key=lambda run: (
-            parse_utc(run.get("ended_at") or run.get("started_at"))
-            or datetime.min.replace(tzinfo=timezone.utc)
-        ),
-        reverse=True,
-    )
-    latest_market_observer_run = market_observer_runs[0] if market_observer_runs else None
-    market_observer_age_minutes = (
-        _run_age_minutes(latest_market_observer_run)
-        if latest_market_observer_run is not None
-        else None
-    )
-    if not cfg.runtime.paused and (
-        latest_market_observer_run is None
-        or (
-            market_observer_age_minutes is not None
-            and market_observer_age_minutes >= 45
-        )
-    ):
-        recommendations.append(
-            {
-                "id": "market-scan-refresh-due",
-                "kind": "market_scan_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Market observer has no recent activity. Refresh market scan to repopulate opportunities."
-                    if latest_market_observer_run is None
-                    else (
-                        "Latest market observer activity is about "
-                        f"{int(market_observer_age_minutes)} minutes old. Refresh market scan to repopulate opportunities."
-                    )
-                ),
-                "taskType": "run_market_scan",
-                "metadata": {
-                    "task_type": "run_market_scan",
-                    "last_run_id": (
-                        latest_market_observer_run.get("id")
-                        if latest_market_observer_run
-                        else None
-                    ),
-                    "last_run_status": (
-                        latest_market_observer_run.get("status")
-                        if latest_market_observer_run
-                        else None
-                    ),
-                    "stale_minutes": (
-                        int(market_observer_age_minutes)
-                        if market_observer_age_minutes is not None
-                        else None
-                    ),
-                },
-            }
-        )
-
     open_positions = repo.list_positions(status="open", limit=200)
     latest_portfolio_snapshot = repo.get_latest_portfolio_snapshot()
     portfolio_snapshot_age_minutes = (
