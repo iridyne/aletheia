@@ -94,7 +94,10 @@ def test_universe_keeps_publishing_without_optional_regime(tmp_path, monkeypatch
     from tests.test_candidate_selection_utility import test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache
 
     monkeypatch.setattr(service, "_regime_refresher", None)
-    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+    generation = test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+    assert generation is not None and generation["status"] == "pending", (
+        "universe must keep publishing candidates without the optional regime refresher"
+    )
 
 
 def test_published_read_keeps_one_snapshot_during_concurrent_replacement(monkeypatch):

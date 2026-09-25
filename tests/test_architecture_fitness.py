@@ -48,7 +48,7 @@ def _get_imports(path: Path) -> set[str]:
 def _assert_risk_writer_boundary(root: Path):
     from tests.authority_writer_checks import assert_writer_boundary
 
-    assert_writer_boundary(
+    scanned = assert_writer_boundary(
         root, table="risk_decisions",
         owners={
             "insert_risk_decision": {"risk/engine.py"},
@@ -67,10 +67,12 @@ def _assert_risk_writer_boundary(root: Path):
             (node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None) == "insert_risk_decision"
             for node in calls
         ) == 1, "authoritative Risk writer must contain one direct insertion delegation"
+    return scanned
 
 
 def test_risk_decisions_have_one_application_writer():
-    _assert_risk_writer_boundary(PROJECT_ROOT)
+    scanned = _assert_risk_writer_boundary(PROJECT_ROOT)
+    assert scanned > 0, "risk-writer boundary scan must visit repository files"
 
 
 @pytest.mark.parametrize("directory", ["core/aletheia", "extensions", "legacy", "ops", "scripts"])
@@ -137,7 +139,10 @@ def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    _assert_risk_writer_boundary(tmp_path)
+    scanned = _assert_risk_writer_boundary(tmp_path)
+    assert scanned >= len(sources), (
+        f"guard must visit every fixture source file (scanned {scanned})"
+    )
 
 
 @pytest.mark.parametrize("calls", [0, 2])
@@ -169,7 +174,7 @@ def _assert_fill_writer_boundary(project_root):
     """Keep observed-close and native Fill writes under the same Core owner."""
     from tests.authority_writer_checks import assert_writer_boundary
 
-    assert_writer_boundary(
+    return assert_writer_boundary(
         project_root, table="fills",
         owners={"insert_fill": {"execution/exchange_materialization.py"}},
         raw_owners={"insert_fill"},
@@ -181,7 +186,8 @@ def _assert_fill_writer_boundary(project_root):
 
 
 def test_fill_writes_stay_with_exchange_materialization():
-    _assert_fill_writer_boundary(PROJECT_ROOT)
+    scanned = _assert_fill_writer_boundary(PROJECT_ROOT)
+    assert scanned > 0, "fill-writer boundary scan must visit repository files"
 
 
 @pytest.mark.parametrize("path,source", [
@@ -217,7 +223,10 @@ def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    _assert_fill_writer_boundary(tmp_path)
+    scanned = _assert_fill_writer_boundary(tmp_path)
+    assert scanned >= len(sources), (
+        f"guard must visit every fixture source file (scanned {scanned})"
+    )
 
 
 def _assert_candidate_writer_boundary(root):
@@ -244,8 +253,9 @@ def _assert_candidate_writer_boundary(root):
             "f'DELETE FROM universe_snapshots WHERE id IN ({placeholders})'",
         },
     }
+    scanned = 0
     for table in ("universe_snapshots", "universe_members"):
-        assert_writer_boundary(
+        scanned += assert_writer_boundary(
             root, table=table,
             owners={"publish_candidate_snapshot": {
                 "universe/service.py", "trading/serenity_publication.py", "cli/dev_seed.py",
@@ -281,6 +291,7 @@ def _assert_candidate_writer_boundary(root):
             imports.add(module)
             imports.update(f"{module}.{alias.name}" for alias in node.names)
     assert not any(name == "aletheia.trading.serenity_publication" or name.startswith("aletheia.trading.serenity_publication.") for name in imports)
+    return scanned
 
 
 def test_candidate_snapshot_creation_has_one_core_owner():
@@ -374,7 +385,10 @@ def test_candidate_writer_guard_accepts_publication_and_distinct_maintenance(tmp
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    _assert_candidate_writer_boundary(tmp_path)
+    scanned = _assert_candidate_writer_boundary(tmp_path)
+    assert scanned >= len(sources), (
+        f"guard must visit every fixture source file (scanned {scanned})"
+    )
 
 
 def test_gateway_startup_has_no_bulk_secret_migration():

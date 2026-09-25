@@ -172,12 +172,16 @@ def test_create_failure_does_not_raise():
     row = _make_row(forward_return=-5.0)
 
     with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
-         patch("extensions.knowledge.manager.create_guard_candidate", side_effect=RuntimeError("db error")):
+         patch("extensions.knowledge.manager.create_guard_candidate", side_effect=RuntimeError("db error")) as mock_create:
         mock_repo.guard_candidate_exists_recent.return_value = False
 
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
         # Should not raise
         _maybe_generate_guard_candidates([row])
+
+    assert mock_create.call_count == 1, (
+        "the failing create_guard_candidate must actually be attempted (failure is swallowed, not skipped)"
+    )
 
 
 def test_content_includes_key_fields():

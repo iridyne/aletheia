@@ -110,7 +110,10 @@ def test_target_policy_authority_is_explicit_and_fail_closed():
 ))
 def test_current_candidate_bootstrap_without_slow_cache(tmp_path, monkeypatch):
     from tests.test_candidate_selection_utility import test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache
-    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+    generation = test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+    assert generation is not None and generation["status"] == "pending", (
+        "bootstrap must admit a planning generation without a slow cache"
+    )
 
 
 @spec_claim(SpecClaim(
@@ -120,4 +123,7 @@ def test_current_candidate_bootstrap_without_slow_cache(tmp_path, monkeypatch):
 ))
 def test_perp_funding_history_cutover():
     from tests.test_candidate_funding import test_scoped_cutover_keeps_spot_and_current_incomplete_denominator
-    test_scoped_cutover_keeps_spot_and_current_incomplete_denominator()
+    loaded = test_scoped_cutover_keeps_spot_and_current_incomplete_denominator()
+    assert any(row["market_type"] == "spot" for row in loaded), (
+        "cutover must preserve spot rows in the loaded outcomes"
+    )

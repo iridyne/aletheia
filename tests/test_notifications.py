@@ -161,8 +161,11 @@ def test_webhook_respects_notify_alerts_false(tmp_path, monkeypatch):
     )
 
     # Should NOT raise and should NOT deliver
-    notifications._send_webhook({"title": "alert", "message": "test"}, event_type="alert")
+    outcome = notifications._send_webhook({"title": "alert", "message": "test"}, event_type="alert")
     # No AssertionError means delivery was correctly suppressed
+    assert outcome["status"] == "not_attempted" and outcome["reason"] == "category_suppressed", (
+        f"alert delivery must be suppressed when notify_alerts=false (got {outcome})"
+    )
 
 
 def test_webhook_respects_notify_trade_fills_false(tmp_path, monkeypatch):
@@ -182,7 +185,10 @@ def test_webhook_respects_notify_trade_fills_false(tmp_path, monkeypatch):
         lambda req, timeout=None: (_ for _ in ()).throw(AssertionError("should not be called")),
     )
 
-    notifications._send_webhook({"symbol": "BTC/USDT"}, event_type="trade_fill")
+    outcome = notifications._send_webhook({"symbol": "BTC/USDT"}, event_type="trade_fill")
+    assert outcome["status"] == "not_attempted" and outcome["reason"] == "category_suppressed", (
+        f"trade-fill delivery must be suppressed when notify_trade_fills=false (got {outcome})"
+    )
 
 
 def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
@@ -202,7 +208,10 @@ def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
         lambda req, timeout=None: (_ for _ in ()).throw(AssertionError("should not be called")),
     )
 
-    notifications._send_webhook({"realized_pnl": 10.0}, event_type="daily_summary")
+    outcome = notifications._send_webhook({"realized_pnl": 10.0}, event_type="daily_summary")
+    assert outcome["status"] == "not_attempted" and outcome["reason"] == "category_suppressed", (
+        f"daily-summary delivery must be suppressed when notify_daily_summary=false (got {outcome})"
+    )
 
 
 def test_webhook_success_records_sanitized_delivery_outcome(tmp_path, monkeypatch):

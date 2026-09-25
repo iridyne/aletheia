@@ -36,6 +36,7 @@ async def test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, ma
         else:
             assert "stopLoss" not in params
             assert "takeProfit" not in params
+        return report
     finally:
         await adapter.close()
 

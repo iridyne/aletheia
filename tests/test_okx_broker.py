@@ -54,7 +54,9 @@ class TestLazyExchangeInit:
 
     @pytest.mark.asyncio
     async def test_close_is_noop_when_never_used(self):
-        await self._client().close()
+        client = self._client()
+        await client.close()
+        assert client._exchange is None, "close on a never-used client must stay a no-op"
 
 
 class TestSymbolFilter:

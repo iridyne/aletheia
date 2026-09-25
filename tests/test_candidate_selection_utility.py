@@ -85,6 +85,7 @@ def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp
     assert generation and generation["status"] == "pending"
     assert generation["candidate_id"] == candidate.id
     assert db.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0] == 0
+    return generation
 
 
 @pytest.mark.parametrize("legacy_unavailable", [False, True])

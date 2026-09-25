@@ -609,4 +609,5 @@ def test_settings_tsx_has_history_hours_field():
 @pytest.mark.asyncio
 async def test_macro_source_time_consumer_contract(monkeypatch):
     from tests.test_macro_source_time import test_fred_source_dates_survive_collection_storage_and_current_consumers
-    await test_fred_source_dates_survive_collection_storage_and_current_consumers(monkeypatch)
+    raw = await test_fred_source_dates_survive_collection_storage_and_current_consumers(monkeypatch)
+    assert raw is not None, "macro source-time delegation must return its persisted snapshot"

@@ -80,7 +80,8 @@ async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypa
 async def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch, kind, market, purpose):
     from tests.uta.test_bitget_entry_preset_scope import test_bitget_entry_presets_are_futures_entry_only
 
-    await test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, market, purpose)
+    result = await test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, market, purpose)
+    assert result is not None, "bitget preset-scope delegation must return its evidence report"
 
 
 @pytest.mark.parametrize(

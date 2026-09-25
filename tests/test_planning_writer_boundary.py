@@ -54,12 +54,15 @@ _RAW_OWNERS = {
 
 
 def _assert_planning_writer_boundary(root):
+    scanned = 0
     for table, raw_owners in _RAW_OWNERS.items():
-        assert_writer_boundary(root, table=table, owners=_OWNERS, raw_owners=raw_owners, delegations=_DELEGATIONS)
+        scanned += assert_writer_boundary(root, table=table, owners=_OWNERS, raw_owners=raw_owners, delegations=_DELEGATIONS)
+    return scanned
 
 
 def test_planning_writer_ownership():
-    _assert_planning_writer_boundary(Path(__file__).resolve().parents[1])
+    scanned = _assert_planning_writer_boundary(Path(__file__).resolve().parents[1])
+    assert scanned > 0, "planning-writer boundary scan must visit repository files"
 
 
 @pytest.mark.parametrize("writer", [
@@ -147,10 +150,16 @@ def test_planning_guard_accepts_declared_writers(tmp_path):
         "    _insert('entry_plans', row)\n"
         "    _update('candidate_planning_generations', rid, row)\n"
     )
+    fixture_paths: set[Path] = set()
     for writer, paths in _OWNERS.items():
         for path in paths:
             target = tmp_path / "core/aletheia" / path
             target.parent.mkdir(parents=True, exist_ok=True)
             source = target.read_text() if target.exists() else ""
             target.write_text(source + f"repo.{writer}(row)\n")
-    _assert_planning_writer_boundary(tmp_path)
+            fixture_paths.add(target)
+    scanned = _assert_planning_writer_boundary(tmp_path)
+    assert scanned >= len(fixture_paths), (
+        f"guard must visit every declared writer fixture (scanned {scanned}, "
+        f"fixtures {len(fixture_paths)})"
+    )

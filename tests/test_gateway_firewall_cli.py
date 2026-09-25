@@ -102,7 +102,8 @@ def test_noninteractive_gateway_start_never_attempts_hidden_uac(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not elevate")),
     )
 
-    gateway_cli._maybe_configure_windows_lan_firewall(enabled=True)
+    result = gateway_cli._maybe_configure_windows_lan_firewall(enabled=True)
+    assert result is None, "non-interactive start must not request hidden UAC elevation"
 
 
 def test_loopback_binding_never_requests_firewall_change(monkeypatch):
@@ -123,7 +124,8 @@ def test_loopback_binding_never_requests_firewall_change(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not elevate")),
     )
 
-    gateway_cli._maybe_configure_windows_lan_firewall(enabled=True)
+    result = gateway_cli._maybe_configure_windows_lan_firewall(enabled=True)
+    assert result is None, "loopback binding must not request a firewall change"
 
 
 def test_doctor_warns_when_wildcard_binding_lacks_windows_firewall_rule(monkeypatch):

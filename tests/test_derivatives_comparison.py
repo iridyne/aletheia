@@ -116,6 +116,7 @@ def test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch
     telemetry = get_market_microstructure('BTC/USDT', exchange='okx', market_type='perp')
     assert telemetry['funding_rate'] == .001 and telemetry['open_interest_usd'] == 1000000
     assert read_derivatives_facts('BTC/USDT', venue='okx')[0]['value'] == .9
+    return telemetry
 
 
 def test_workset_uses_complete_registry_and_config_not_candidate_rank(monkeypatch):

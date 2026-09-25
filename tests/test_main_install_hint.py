@@ -151,6 +151,10 @@ def test_hint_eof_on_stdin_does_not_crash(monkeypatch, tmp_path):
     # Must not raise
     main_mod._do_post_command_hint()
 
+    assert install_calls == [True], (
+        "EOF-blank answer must default to yes and trigger the install hint"
+    )
+
     # EOF-blank readline returns "" which matches the default "yes"
     # this is acceptable behaviour; what matters is no crash
 

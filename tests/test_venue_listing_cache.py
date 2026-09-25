@@ -102,6 +102,7 @@ class TestInvalidate:
 
     def test_invalidate_nonexistent_is_noop(self):
         invalidate_venue_listing("nonexistent")  # must not raise
+        assert "nonexistent" not in _CACHE, "invalidate of an unknown venue must not create a cache entry"
 
 
 # ---------------------------------------------------------------------------

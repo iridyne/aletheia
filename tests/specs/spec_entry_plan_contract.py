@@ -358,7 +358,8 @@ def test_market_quality_retry_before_input_binding(monkeypatch):
     cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.agent.permission_mode = "Full"
     save_config(cfg)
-    test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, "thin")
+    result = test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, "thin")
+    assert result is not None, "market-quality retry delegation must return its stored generation"
 
 
 @spec_claim(SpecClaim(
@@ -381,7 +382,8 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
     test_unbound_candidate_refresh_preserves_birth_context_owner()
     test_spot_short_blocks_before_market_model_and_compiler(monkeypatch)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda _plan: None)
-    test_compiled_holding_is_separate_from_swing_timing(monkeypatch, "universe", "short_term", "c1", 24)
+    plan = test_compiled_holding_is_separate_from_swing_timing(monkeypatch, "universe", "short_term", "c1", 24)
+    assert plan is not None, "static feasibility delegation must return its compiled plan"
 
 
 @spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
