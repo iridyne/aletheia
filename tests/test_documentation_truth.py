@@ -5,6 +5,7 @@ from pathlib import Path
 from scripts.check_docs import (
     contract_code_path_failures,
     semantic_truth_failures,
+    silent_failure_fallback_failures,
     timestamp_unit_suffix_failures,
     vacuous_test_failures,
 )
@@ -114,3 +115,30 @@ def test_vacuous_test_failures_flags_no_assertion_and_ignores_real_assertion() -
         "tests/_vacuous_probe.py:1: vacuous test (no assertion): test_bogus_vacuous"
     ) in failures
     assert not any("test_bogus_real_assert" in failure for failure in failures)
+
+
+def test_silent_failure_fallback_flags_broad_zero_and_ignores_none() -> None:
+    source_root = Path("core/aletheia")
+    probe = source_root / "_silent_failure_probe.py"
+    try:
+        probe.write_text(
+            "def _bogus_broad_zero():\n"
+            "    try:\n"
+            "        return 'x'\n"
+            "    except Exception:\n"
+            "        return 0\n"
+            "def _bogus_ok_none():\n"
+            "    try:\n"
+            "        return 'x'\n"
+            "    except Exception:\n"
+            "        return None\n",
+            encoding="utf-8",
+        )
+        failures = silent_failure_fallback_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert (
+        "core/aletheia/_silent_failure_probe.py:4: "
+        "silent failure fallback: broad except returns falsy '0'"
+    ) in failures
+    assert not any("_bogus_ok_none" in failure for failure in failures)

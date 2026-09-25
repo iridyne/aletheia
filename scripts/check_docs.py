@@ -603,6 +603,209 @@ def semantic_truth_failures() -> list[str]:
     return failures
 
 
+# Silent-failure-fallback baseline: pre-existing broad exception handlers
+# whose entire body is a single falsy return/assignment, so a swallowed error
+# is silently rendered as a plausible zero/empty value instead of "unavailable".
+# Visible, dated (2026-09-26), never a silent skip; keep green on master but
+# still catch NEW handlers. (relative_path, lineno) tuples of audited handlers.
+BASELINE_SILENT_FAILURE_FALLBACKS = {
+    # (relative_path, lineno)
+    ("core/aletheia/agent_runtime/run_logger.py", 200),
+    ("core/aletheia/agent_runtime/scheduler.py", 642),
+    ("core/aletheia/agent_runtime/scheduler.py", 2172),
+    ("core/aletheia/agent_runtime/scheduler.py", 3240),
+    ("core/aletheia/agent_runtime/scheduler.py", 3248),
+    ("core/aletheia/agent_runtime/scheduler.py", 3256),
+    ("core/aletheia/agent_runtime/scheduler.py", 3285),
+    ("core/aletheia/agent_runtime/scheduler.py", 4720),
+    ("core/aletheia/agent_shell/entry_planner.py", 60),
+    ("core/aletheia/agent_shell/operator_recommendations.py", 360),
+    ("core/aletheia/agents/helpers.py", 467),
+    ("core/aletheia/agents/helpers.py", 469),
+    ("core/aletheia/analytics/causal_controls.py", 181),
+    ("core/aletheia/analytics/causal_controls.py", 216),
+    ("core/aletheia/analytics/entry_exit_geometry.py", 328),
+    ("core/aletheia/analytics/entry_exit_geometry.py", 351),
+    ("core/aletheia/analytics/entry_exit_geometry.py", 361),
+    ("core/aletheia/analytics/go_live_scorecard.py", 167),
+    ("core/aletheia/analytics/go_live_scorecard.py", 234),
+    ("core/aletheia/analytics/profit_gradient_evidence.py", 252),
+    ("core/aletheia/analytics/profit_loop_counterfactual.py", 279),
+    ("core/aletheia/cli/control_cmd.py", 65),
+    ("core/aletheia/cli/control_cmd.py", 74),
+    ("core/aletheia/cli/control_cmd.py", 87),
+    ("core/aletheia/cli/control_cmd.py", 99),
+    ("core/aletheia/cli/gateway.py", 56),
+    ("core/aletheia/data/collector_health.py", 482),
+    ("core/aletheia/diagnostics/config_consistency.py", 179),
+    ("core/aletheia/diagnostics/doctor.py", 2088),
+    ("core/aletheia/diagnostics/doctor.py", 2691),
+    ("core/aletheia/diagnostics/doctor.py", 3290),
+    ("core/aletheia/economics/budgets.py", 425),
+    ("core/aletheia/economics/context_artifacts.py", 123),
+    ("core/aletheia/economics/inference_calls.py", 148),
+    ("core/aletheia/economics/inference_calls.py", 174),
+    ("core/aletheia/economics/inference_calls.py", 243),
+    ("core/aletheia/economics/tracing.py", 377),
+    ("core/aletheia/economics/usage_insights.py", 626),
+    ("core/aletheia/execution/coordinator.py", 662),
+    ("core/aletheia/execution/coordinator.py", 668),
+    ("core/aletheia/execution/reconciliation.py", 1444),
+    ("core/aletheia/gateway/console_text.py", 62),
+    ("core/aletheia/gateway/lifecycle.py", 246),
+    ("core/aletheia/gateway/lifecycle.py", 262),
+    ("core/aletheia/gateway/lifecycle.py", 284),
+    ("core/aletheia/gateway/lifecycle.py", 445),
+    ("core/aletheia/gateway/lifecycle.py", 866),
+    ("core/aletheia/gateway/operator_shell.py", 168),
+    ("core/aletheia/gateway/operator_shell.py", 221),
+    ("core/aletheia/gateway/operator_shell.py", 299),
+    ("core/aletheia/gateway/operator_shell.py", 326),
+    ("core/aletheia/gateway/operator_shell.py", 336),
+    ("core/aletheia/gateway/operator_shell.py", 593),
+    ("core/aletheia/gateway/operator_shell.py", 642),
+    ("core/aletheia/gateway/pidfile.py", 184),
+    ("core/aletheia/gateway/pidfile.py", 268),
+    ("core/aletheia/gateway/pidfile.py", 322),
+    ("core/aletheia/gateway/session_service.py", 279),
+    ("core/aletheia/gateway/session_service.py", 429),
+    ("core/aletheia/gateway/tunnel.py", 138),
+    ("core/aletheia/gateway/windows_machine_service.py", 176),
+    ("core/aletheia/model_provider/base.py", 210),
+    ("core/aletheia/model_provider/fallback.py", 525),
+    ("core/aletheia/model_provider/inference_contract.py", 149),
+    ("core/aletheia/net.py", 568),
+    ("core/aletheia/net.py", 576),
+    ("core/aletheia/portfolio/outcome_closure.py", 36),
+    ("core/aletheia/portfolio/pnl.py", 187),
+    ("core/aletheia/portfolio/pnl.py", 238),
+    ("core/aletheia/portfolio/pnl.py", 380),
+    ("core/aletheia/risk/engine.py", 1536),
+    ("core/aletheia/risk/engine.py", 2464),
+    ("core/aletheia/risk/engine.py", 2595),
+    ("core/aletheia/server/dev_reload.py", 27),
+    ("core/aletheia/server/routes/model.py", 316),
+    ("core/aletheia/server/routes/model.py", 349),
+    ("core/aletheia/server/routes/model.py", 394),
+    ("core/aletheia/server/routes/settings.py", 1085),
+    ("core/aletheia/server/routes/settings.py", 1655),
+    ("core/aletheia/server/routes/ws.py", 69),
+    ("core/aletheia/storage/knowledge_index.py", 19),
+    ("core/aletheia/storage/migrations.py", 2489),
+    ("core/aletheia/storage/repositories.py", 9597),
+    ("core/aletheia/storage/repositories.py", 9654),
+    ("core/aletheia/trading/persona.py", 132),
+    ("core/aletheia/trading/persona.py", 186),
+    ("core/aletheia/trading/persona.py", 209),
+    ("core/aletheia/trading/persona_rollout.py", 609),
+    ("core/aletheia/trading/persona_rollout.py", 1374),
+    ("core/aletheia/trading/playbooks.py", 72),
+    ("core/aletheia/trading/sizing_policy.py", 113),
+    ("core/aletheia/trading/sizing_policy.py", 156),
+    ("core/aletheia/trust/behavior_authority.py", 91),
+    ("core/aletheia/trust/learning_safety.py", 46),
+    ("core/aletheia/trust/live_unlock.py", 373),
+    ("core/aletheia/trust/live_unlock.py", 386),
+    ("core/aletheia/universe/allocator.py", 80),
+    ("core/aletheia/universe/discovery_benchmark.py", 506),
+}
+
+
+def _falsy_literal(node: ast.AST) -> str | None:
+    """Return a canonical repr of ``node`` if it is a falsy literal, else None."""
+    if isinstance(node, ast.Constant):
+        if node.value in (0, 0.0, False, "", (), b""):
+            return repr(node.value)
+        return None
+    if isinstance(node, ast.List) and not node.elts:
+        return "[]"
+    if isinstance(node, ast.Dict) and not node.keys:
+        return "{}"
+    if isinstance(node, ast.Tuple) and not node.elts:
+        return "()"
+    if isinstance(node, ast.Set) and not node.elts:
+        return "set()"
+    return None
+
+
+def silent_failure_fallback_failures() -> list[str]:
+    """Broad ``except`` handlers must not swallow an error into a falsy value.
+
+    Scopes to Python source under ``core/aletheia/``. The bug class this guards:
+    "couldn't read it" silently rendered as "it doesn't exist" -- a bare/``Exception``
+    handler whose entire body is a single ``return 0`` (or other falsy literal) or
+    ``value = 0``, converting a genuine failure into a plausible-looking value.
+    Detected with ``ast``; a handler is flagged only when BOTH:
+      1. it is broad -- ``except:``, ``except Exception``, or ``except BaseException``;
+      2. ignoring any leading docstring, its body is exactly ONE statement that
+         returns/assigns a falsy literal (``0``, ``0.0``, ``False``, ``""``, ``[]``,
+         ``{}``, ``()``).
+
+    Non-goals (deliberately not validated here, need dataflow or more context):
+      - ``return None`` / ``value = None`` -- None is this repo's sanctioned
+        "unavailable" signal, the opposite of the bug, and is never flagged;
+      - ``pass``-only handlers -- a different smell (ignored error), out of scope;
+      - ``raise`` / ``continue`` / ``break`` -- propagation / loop control;
+      - multi-statement bodies that log or set a reason code before returning
+        falsy -- deliberately skipped, they surface a signal;
+      - narrow handlers like ``except (TypeError, ValueError):`` -- a targeted
+        catch of an expected failure is idiomatic and would produce heavy noise;
+      - any case needing dataflow to know whether the falsy value reaches a caller
+        that treats it as real data.
+    This check answers only the narrow literal pattern above. Files that fail to
+    parse are reported (not silently skipped).
+    """
+    failures: list[str] = []
+    source_root = ROOT / "core/aletheia"
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(ROOT)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            failures.append(f"{relative}:{exc.lineno}: silent failure fallback check: syntax error")
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is not None:
+                if not (
+                    isinstance(node.type, ast.Name)
+                    and node.type.id in ("Exception", "BaseException")
+                ):
+                    continue
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+            if len(body) != 1:
+                continue
+            stmt = body[0]
+            if isinstance(stmt, ast.Return):
+                literal = _falsy_literal(stmt.value) if stmt.value is not None else None
+            elif isinstance(stmt, ast.Assign):
+                literal = (
+                    _falsy_literal(stmt.value)
+                    if len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    else None
+                )
+            else:
+                literal = None
+            if literal is None:
+                continue
+            if (str(relative), node.lineno) in BASELINE_SILENT_FAILURE_FALLBACKS:
+                continue
+            failures.append(
+                f"{relative}:{node.lineno}: silent failure fallback: "
+                f"broad except returns falsy {literal!r}"
+            )
+    return failures
+
+
 def main() -> int:
     failures = []
     failures.extend(governance_failures())
@@ -611,6 +814,7 @@ def main() -> int:
     failures.extend(contract_code_path_failures())
     failures.extend(timestamp_unit_suffix_failures())
     failures.extend(vacuous_test_failures())
+    failures.extend(silent_failure_fallback_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
