@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
+
+logger = logging.getLogger("aletheia.execution.coordinator")
 
 from aletheia.execution.broker_utils import (
     close_acknowledgement_result,
@@ -659,13 +662,21 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     )
     try:
         cancelled = _run(_call_and_close(adapter, "cancel_order", command))
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "replace_protective_stop: cancel of old stop %s failed for %s (%s)",
+            old_stop, position_id, type(exc).__name__,
+        )
         return False
     if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
         return False
     try:
         new_stop = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "replace_protective_stop: submit of new stop for %s failed after cancel (%s)",
+            position_id, type(exc).__name__,
+        )
         return False
     identifiers["sl"] = new_stop
     repo.update_open_position_exit_plan(
