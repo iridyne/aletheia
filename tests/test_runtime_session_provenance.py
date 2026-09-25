@@ -793,3 +793,80 @@ def test_doctor_probe_orphan_references(tmp_path, monkeypatch):
     checks = {c.name: c for c in report.checks}
     assert checks["trust.runtime_session.orphans"].severity == "warn"
     assert "orphan" in checks["trust.runtime_session.orphans"].detail
+
+
+# --------------------------------------------------------------------------- #
+# 6b. Verification failure (not just insert failure) must also stay NULL
+# --------------------------------------------------------------------------- #
+# `start_runtime_session` marks the session durable only after reading the row
+# back and matching session_id + behavior_fingerprint. The insert-failure path was
+# gated; the *verification*-failure path was not. If that path regressed, child
+# rows would advertise a runtime_session_id whose parent could not be verified,
+# and the lost provenance (boot commit, config hash, fingerprint) is
+# unrecoverable — the parent row is never written, so it cannot be reconstructed.
+# These two cases lock it.
+
+def test_verification_failure_absent_row_leaves_provenance_null(tmp_path, monkeypatch):
+    """Insert succeeds but the read-back finds no row: must stay non-durable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    monkeypatch.setattr(repo, "get_runtime_session", lambda _sid: None)
+
+    session = rs.start_runtime_session()
+
+    assert session["durable"] is False
+    assert rs.current_session_durable() is False
+
+    repo.insert_opportunity(Opportunity(id="opp-unverified", symbol="BTC/USDT", market="spot"))
+    row = repo._select_one("opportunities", "opp-unverified")
+    assert row["runtime_session_id"] is None, (
+        "an unverifiable session must not be stamped as a durable provenance id"
+    )
+
+
+def test_verification_failure_fingerprint_mismatch_leaves_provenance_null(tmp_path, monkeypatch):
+    """Insert succeeds but the read-back fingerprint differs: must stay non-durable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    real_get = repo.get_runtime_session
+
+    def _mismatched(session_id):
+        row = real_get(session_id)
+        if row is None:
+            return None
+        return {**row, "behavior_fingerprint": "deliberately-not-the-inserted-fingerprint"}
+
+    monkeypatch.setattr(repo, "get_runtime_session", _mismatched)
+
+    session = rs.start_runtime_session()
+
+    assert session["durable"] is False
+    assert rs.current_session_durable() is False
+
+    repo.insert_opportunity(Opportunity(id="opp-mismatch", symbol="ETH/USDT", market="spot"))
+    row = repo._select_one("opportunities", "opp-mismatch")
+    assert row["runtime_session_id"] is None, (
+        "a fingerprint-mismatched session must not be stamped as durable provenance"
+    )
+
+
+def test_no_new_orphan_references_after_durability_gate(tmp_path, monkeypatch):
+    """End-to-end: with the gate in place, no child row becomes an orphan."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    session = rs.start_runtime_session()
+    assert session["durable"] is True
+    repo.insert_opportunity(Opportunity(id="opp-ok", symbol="SOL/USDT", market="spot"))
+
+    scan = repo.scan_orphan_session_ids()
+    assert "error" not in scan, scan
+    assert scan["total_orphan_refs"] == 0, scan
