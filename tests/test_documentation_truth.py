@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from scripts.check_docs import semantic_truth_failures
+from scripts.check_docs import (
+    contract_code_path_failures,
+    semantic_truth_failures,
+)
 
 
 def test_current_document_authorities_match_learning_registry() -> None:
@@ -40,4 +43,28 @@ def test_no_runbook_fabricates_position_outcome_evidence() -> None:
     assert offenders == [], (
         "runbook grants Position outcome eligibility by raw SQL: "
         + "; ".join(offenders)
+    )
+
+
+def test_contract_code_path_failures_reports_missing_and_ignores_valid() -> None:
+    contracts = Path("docs/design/contracts")
+    probe = contracts / "_contract_path_probe.md"
+    try:
+        probe.write_text(
+            "`core/aletheia/agent_runtime/scheduler.py` exists\n"
+            "`core/aletheia/nonexistent_module.py` is broken\n"
+            "`learning/registry.py` is package-relative shorthand\n",
+            encoding="utf-8",
+        )
+        failures = contract_code_path_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert (
+        "docs/design/contracts/_contract_path_probe.md:2: "
+        "missing contract code path: core/aletheia/nonexistent_module.py"
+    ) in failures
+    assert not any(
+        "core/aletheia/agent_runtime/scheduler.py" in failure
+        or "learning/registry.py" in failure
+        for failure in failures
     )
