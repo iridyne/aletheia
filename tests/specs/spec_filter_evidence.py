@@ -124,17 +124,18 @@ def test_filter_decision_stage_is_part_of_dedup_identity():
 @spec_claim(
     SpecClaim(
         "FE-B02", _CONTRACT, "§4 ex-ante direction", "L2b",
-        "A directionless filter candidate records gross-only outcomes without inventing directional alpha.",
+        "A directionless filter candidate seeds no outcome rows (without an ex-ante direction there "
+        "is no measurable directional return); a directional candidate still seeds its fixed-horizon cohort.",
         status="implemented",
     )
 )
-def test_directionless_filter_candidate_creates_gross_only_outcomes():
+def test_directionless_filter_candidate_seeds_no_outcomes():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
 
-    key = "observer:run-directionless:okx:BTC/USDT:spot"
+    directionless_key = "observer:run-directionless:okx:BTC/USDT:spot"
     record_filter_decision(
-        candidate_key=key,
+        candidate_key=directionless_key,
         candidate_kind="observer_evaluation",
         filter_name="observer_pre_filter",
         stage="observer_pre_filter",
@@ -147,13 +148,34 @@ def test_directionless_filter_candidate_creates_gross_only_outcomes():
         entry_price_usd=100.0,
     )
 
+    seeded = get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+        (directionless_key,),
+    ).fetchone()[0]
+    assert seeded == 0
+
+    directional_key = "observer:run-directional:okx:BTC/USDT:spot"
+    record_filter_decision(
+        candidate_key=directional_key,
+        candidate_kind="observer_evaluation",
+        filter_name="observer_pre_filter",
+        stage="observer_pre_filter",
+        decision="passed",
+        reason_code="sufficient_signal",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        entry_price_usd=100.0,
+    )
+
     rows = get_db().execute(
         "SELECT direction, horizon FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key=?",
-        (key,),
+        (directional_key,),
     ).fetchall()
     assert {row["horizon"] for row in rows} == {"15m", "1h", "4h", "24h"}
-    assert {row["direction"] for row in rows} == {"unknown"}
+    assert {row["direction"] for row in rows} == {"long"}
 
 
 @spec_claim(

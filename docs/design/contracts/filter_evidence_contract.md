@@ -225,12 +225,15 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 周期，经济公式、时点行情质量和现货/合约隔离完全复用
 `opportunity_outcome_contract.md`。
 
-只要 `venue + symbol + market_type` 完整且入场价为决策时点可见的正数，就创建
-固定周期观察结果。结果分两级：
+只要 `venue + symbol + market_type` 完整、入场价为决策时点可见的正数，且事前已有
+`long` 或 `short`，才创建固定周期观察结果。结果分两级：
 
 1. 事前已有 `long` 或 `short` 时，保存 gross、directional 和成本后 net；禁止事后选更赚的方向。
-2. 事前确实无方向时，以 `direction=unknown` 保存 gross-only 价格移动，directional/net 必须为 NULL，且不得标记 missed alpha。
-3. 永续合约缺入场资金费时可保存 gross/directional，但 net 必须为 NULL。
+2. 永续合约缺入场资金费时可保存 gross/directional，但 net 必须为 NULL。
+
+事前确实无方向时不得创建结果行：没有方向就算不出 directional，`net_return_pct` 永远为
+NULL，这类行只会占用存储并消耗一次结算时点行情观测，不可能成为可度量证据。历史
+`direction=unknown` 行是既成事实的只读审计证据，保持不可变——不回填、不迁移、不删除。
 
 同一候选经过多个关卡时只结算一份结果，避免把同一个价格路径当成多个独立样本。
 

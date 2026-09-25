@@ -211,13 +211,15 @@ def record_filter_decision(
     )
     try:
         repo.insert_filter_decision(fact)
-        if result_key:
+        # Fail closed like ensure_candidate_outcomes(): without an ex-ante direction there is no
+        # directional return, so a forward-outcome row could never become measurable evidence.
+        if result_key and side in _VALID_DIRECTIONS:
             _ensure_candidate_outcomes(
                 outcome_candidate_key=result_key,
                 venue=exact_venue,
                 symbol=symbol,
                 market_type=market,
-                direction=side if side in _VALID_DIRECTIONS else "unknown",
+                direction=side,
                 scanner_family=scanner_family,
                 regime_tag=regime_tag,
                 entry_price_usd=float(entry_price_usd),
