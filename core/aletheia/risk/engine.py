@@ -1533,8 +1533,12 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
             from aletheia.data.symbols import is_stock_token
 
             symbol_is_canonical = is_stock_token(symbol)
-        except Exception:
-            symbol_is_canonical = False
+        except Exception as exc:
+            logger.warning(
+                "risk: stock-token canonicality check unavailable for %s (%s)",
+                symbol, type(exc).__name__,
+            )
+            symbol_is_canonical = None
     if not symbol_is_canonical:
         violations.append("invalid_symbol_format")
 
@@ -2443,7 +2447,7 @@ def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
 # Shared helpers for leverage checks
 # ---------------------------------------------------------------------------
 
-def _external_account_cache_is_healthy(state: dict | None) -> bool:
+def _external_account_cache_is_healthy(state: dict | None) -> bool | None:
     """Whether an exchange equity snapshot is explicit, fresh, and usable.
 
     ``exchange_sync`` derives freshness from ``age_seconds``.  Some callers also
@@ -2461,8 +2465,11 @@ def _external_account_cache_is_healthy(state: dict | None) -> bool:
             return False
         if status_for(state) != "ok":
             return False
-    except Exception:
-        return False
+    except Exception as exc:
+        logger.warning(
+            "risk: exchange cache health check unavailable (%s)", type(exc).__name__,
+        )
+        return None
     explicit_status = state.get("status")
     if explicit_status is not None and str(explicit_status).strip().lower() not in {
         "healthy",
@@ -2580,12 +2587,14 @@ def _derive_per_symbol_cap(
 
 def per_symbol_notional_ceiling(
     execution_mode: str, *, leverage: float = 1.0, cfg=None
-) -> float:
+) -> float | None:
     """Public read-only view of check #19's ceiling for one execution pool.
 
     Lets add-on/pyramid sizing stay inside the same bound the Risk Engine will
     enforce, without duplicating the formula or the mode-policy resolution.
-    Returns 0.0 when unavailable or disabled.
+    Returns None when the ceiling cannot be resolved (policy or capital base
+    unavailable) — callers must fail closed instead of treating it as "no
+    ceiling". Returns 0.0 only when the check is genuinely disabled.
     """
     from aletheia.risk.policy import resolve_risk_policy
 
@@ -2593,10 +2602,10 @@ def per_symbol_notional_ceiling(
     try:
         policy = resolve_risk_policy(cfg, execution_mode).policy
     except Exception:
-        return 0.0
+        return None
     capital_base, _reason = _resolve_capital_base(execution_mode, policy, cfg)
     if capital_base is None:
-        return 0.0
+        return None
     return _derive_per_symbol_cap(
         capital_base,
         float(policy.loss.max_single_trade_risk_pct),

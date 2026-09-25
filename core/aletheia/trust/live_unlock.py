@@ -10,11 +10,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.config.exchanges import live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
+
+logger = logging.getLogger("aletheia.trust.live_unlock")
 
 PREFLIGHT_MAX_AGE_SECONDS = 300
 PREFLIGHT_TIMEOUT_SECONDS = 20
@@ -370,7 +373,8 @@ def revoke_stale_live_unlock(cfg) -> dict[str, Any] | None:
                 f"{reason}"
             ),
         }))
-    except Exception:
+    except Exception as exc:
+        logger.warning("live_unlock: revocation audit write failed (%s)", type(exc).__name__)
         audit_ok = False
 
     cfg.live.state = "live_disabled"
@@ -383,7 +387,8 @@ def revoke_stale_live_unlock(cfg) -> dict[str, Any] | None:
 
         save_config(cfg)
         persisted = True
-    except Exception:
+    except Exception as exc:
+        logger.warning("live_unlock: revocation persistence failed (%s)", type(exc).__name__)
         # The authority is already revoked in memory; the next status/guard pass
         # retries persistence rather than allowing a live order through.
         persisted = False

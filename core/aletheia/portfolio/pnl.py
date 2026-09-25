@@ -178,14 +178,14 @@ def _btc_benchmark_applicable(row: dict) -> bool:
     return context.get("kind") == "crypto"
 
 
-def _close_provenance() -> dict:
+def _close_provenance() -> dict | None:
     """Return only available producer identity for the close event."""
     try:
         from aletheia.agent_runtime.runtime_session import current_close_provenance
 
         return {key: value for key, value in current_close_provenance().items() if value is not None}
     except Exception:
-        return {}
+        return None
 
 
 def _account_environment(execution_mode: str) -> str:
@@ -236,7 +236,10 @@ def _local_upnl_identity(position: dict) -> tuple[str, str | None, bool]:
             execution_mode=execution_mode,
         )
     except Exception:
-        default_fingerprint = ""
+        # Fingerprint derivation unavailable: the account scope cannot be proven,
+        # so exchange-uPnL matching for this position must fail closed rather than
+        # treat the failure as "no fingerprint, legacy row".
+        return "", None, False
 
     raw_identity = position.get("reconciliation_identity")
     if not raw_identity:
@@ -377,8 +380,9 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
                     exact_rows,
                 )
         return index
-    except Exception:
-        return {}
+    except Exception as exc:
+        logger.warning("pnl: exchange uPnL index build failed (%s)", type(exc).__name__)
+        return None
 
 
 def _index_has_base(index: dict[tuple, float | None], base: tuple) -> bool:
@@ -500,7 +504,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(p)
         upnl_source = "local_estimate"
         exc_val = None
-        if market_type is not None and identity_valid:
+        if market_type is not None and identity_valid and exc_upnl_index is not None:
             exc_val, upnl_source = _select_exchange_upnl(
                 exc_upnl_index,
                 match_key,
@@ -512,7 +516,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
                     0,
                 ),
             )
-        elif not identity_valid:
+        elif not identity_valid or exc_upnl_index is None:
             upnl_source = "unavailable"
         if exc_val is not None:
             upnl = exc_val
@@ -1005,7 +1009,7 @@ def close_position(
             outcome_evidence, sort_keys=True, separators=(",", ":"), default=str,
         )
         row = current
-        update_fields.update(_close_provenance())
+        update_fields.update(_close_provenance() or {})
         update_fields = _commit_close_economics(current, update_fields)
         outcome_eligible = update_fields["outcome_eligible"]
         outcome_exclusion_reason = update_fields["outcome_exclusion_reason"]

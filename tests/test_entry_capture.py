@@ -11,6 +11,11 @@ from tests.test_entry_analysis import _anchor, _context_v2
 def capture_input(monkeypatch, profile, priority, direction="long"):
     from aletheia.config.loader import load_config
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a: 5000.)
+    # The per-symbol ceiling seam reads equity through _account_equity
+    # (_resolve_capital_base), so the same fixture equity must be visible there
+    # too; otherwise the ceiling resolves as unavailable and the compiler fails
+    # closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.)
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"

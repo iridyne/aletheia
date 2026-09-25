@@ -38,13 +38,15 @@ def configure_learning_safety(
     _refreeze_reason = refreeze_reason
 
 
-def learning_influence_allowed() -> bool:
+def learning_influence_allowed() -> bool | None:
     if _influence_gate is None:
         return False
     try:
         return _influence_gate() is None
     except Exception:
-        return False
+        # Gate unavailable: learning influence must fail closed to "not allowed"
+        # (None), never read as an empty or permissive state.
+        return None
 
 
 def learning_refreeze_reason() -> str | None:

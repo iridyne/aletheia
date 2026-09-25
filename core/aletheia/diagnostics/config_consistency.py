@@ -219,6 +219,16 @@ def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency 
             return None
 
         ceiling = per_symbol_notional_ceiling(mode, leverage=leverage, cfg=cfg)
+        if ceiling is None:
+            return ConfigInconsistency(
+                field_path="risk.capital.max_per_symbol_entries",
+                severity="blocker",
+                message=(
+                    "Per-symbol ceiling could not be resolved; check #19's bound "
+                    "cannot be verified for current sizing"
+                ),
+                fix_hint="Confirm risk policy resolution and account equity are available",
+            )
         if ceiling > 0 and notional_entry > ceiling:
             return ConfigInconsistency(
                 field_path="risk.capital.max_per_symbol_entries",

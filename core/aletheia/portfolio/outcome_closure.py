@@ -34,7 +34,7 @@ def _close_provenance() -> dict:
 
         return {k: v for k, v in current_close_provenance().items() if v is not None}
     except Exception:
-        return {}
+        return None
 
 
 def _load_open(position_id: str) -> tuple[dict, dict | None]:
@@ -114,7 +114,7 @@ def close_position_administrative(
                 },
             )),
         }
-        updates.update(_close_provenance())
+        updates.update(_close_provenance() or {})
         repo.finalize_position_close(position_id, updates)
         repo.insert_audit_event(AuditEvent(
             actor=actor,
