@@ -59,7 +59,11 @@ proof of network receipt or freshness.
   never interpolates, reorders, deduplicates, or substitutes another venue.
 - Swing high/low uses independent strict symmetric `K=2` tests. State uses only
   confirmed Swings. The newest same-kind Swing replaces the active break level,
-  and each active level is consumed on its first qualifying cross.
+  and each active level is consumed on its first qualifying cross. A given
+  bar's BOS/CHOCH classification uses the structure state as of the
+  immediately preceding bar; a swing that first becomes confirmed on the same
+  bar as an active-level break does not retroactively change that bar's break
+  classification.
 - ATR14 is the arithmetic mean of the latest 14 True Range values; it is not
   the shared Wilder ATR. Break equality at the `0.05 * ATR14` boundary is not a
   cross.

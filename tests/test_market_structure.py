@@ -268,6 +268,39 @@ def test_bearish_bos_and_choch_are_exact_mirrors():
     ]
 
 
+def test_same_bar_swing_confirmation_does_not_change_break_classification():
+    """A swing that first confirms on the same bar as an active-level break
+    must not change that bar's BOS/CHOCH classification (regression for the
+    same-bar state/break ordering bug: see market_structure_contract.md
+    invariants section)."""
+    from aletheia.data.market_structure import derive_market_structure
+
+    without_same_bar_low = _replacement_fixture()
+    with_same_bar_low = _replacement_fixture()
+    # Bar 20 is the pivot for a low fractal confirmed at bar 22 (K=2), the
+    # same bar that closes above active_high (118.0) at bar 22's close
+    # (120.0), breaking it. Injecting the pivot must not change bar 22's
+    # break classification.
+    with_same_bar_low[20] = _bar(20, low=80.0)
+
+    without_result = derive_market_structure(without_same_bar_low, tf_ms=TF_MS)
+    with_result = derive_market_structure(with_same_bar_low, tf_ms=TF_MS)
+
+    assert without_result.swings == tuple(
+        swing for swing in without_result.swings
+        if swing.origin_at_ms != 20 * TF_MS
+    )
+    assert any(
+        swing.origin_at_ms == 20 * TF_MS for swing in with_result.swings
+    ), "fixture must actually confirm a same-bar swing at bar 22 for this to be a real test"
+    assert [(event.type, event.direction, event.break_at_ms)
+            for event in without_result.events] == [
+        (event.type, event.direction, event.break_at_ms)
+        for event in with_result.events
+    ]
+
+
+
 def test_simultaneous_cross_consumes_both_levels_without_an_event():
     from aletheia.data.market_structure import GeometrySwing, _apply_break
 

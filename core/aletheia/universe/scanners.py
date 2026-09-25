@@ -407,11 +407,12 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
                 else "OI build-up, price down"
             )
 
-    # OI/price divergence: hidden accumulation or weak-rally distribution signal.
-    # oi_price_divergence = +1: OI rising while price falling → absorption/accumulation
-    # (smart money absorbing sells); fades the apparent weakness → long.
-    # oi_price_divergence = -1: OI falling while price rising → weak rally on
-    # dwindling conviction; likely to reverse → short.
+    # OI/price divergence: OI and price move in opposite directions.
+    # oi_price_divergence = +1: OI rising while price falling → may indicate
+    # absorption; not proof of institutional intent. Fades the apparent
+    # weakness → long.
+    # oi_price_divergence = -1: OI falling while price rising → rally not
+    # confirmed by rising OI; likely to reverse → short.
     oi_divergence = feat.get("oi_price_divergence")
     if oi_divergence is not None:
         divergence_direction = (
@@ -424,13 +425,13 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
                 direction = divergence_direction
             if direction == divergence_direction:
                 score += 15.0
-                reasons.append("OI↑/price↓ accumulation divergence")
+                reasons.append("OI↑/price↓ divergence")
         elif oi_divergence == -1:
             if direction is None:
                 direction = divergence_direction
             if direction == divergence_direction:
                 score += 15.0
-                reasons.append("OI↓/price↑ weak-rally divergence")
+                reasons.append("OI↓/price↑ divergence")
 
     # Fallback when no derivatives data
     if funding is None and oi_delta is None:

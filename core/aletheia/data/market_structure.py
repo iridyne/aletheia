@@ -357,6 +357,7 @@ def derive_market_structure(
 
     for current_index, current in enumerate(rows):
         final_atr = _atr14_at(rows, current_index)
+        state = _structure_state(highs, lows)
         pivot_index = current_index - FRACTAL_K
         if pivot_index >= FRACTAL_K:
             pivot = rows[pivot_index]
@@ -392,7 +393,6 @@ def derive_market_structure(
                 swings.append(swing)
                 active_low = swing
 
-        state = _structure_state(highs, lows)
         if final_atr is None:
             continue
         active_high, active_low, event = _apply_break(

@@ -74,7 +74,7 @@
       "expected": {
         "score": 15.0,
         "reasons": [
-          "OI↑/price↓ accumulation divergence"
+          "OI↑/price↓ divergence"
         ],
         "direction": "long"
       },
@@ -88,7 +88,7 @@
       "expected": {
         "score": 15.0,
         "reasons": [
-          "OI↓/price↑ weak-rally divergence"
+          "OI↓/price↑ divergence"
         ],
         "direction": "short"
       },
