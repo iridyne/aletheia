@@ -21,7 +21,8 @@ def test_default_config_has_correct_values():
     assert cfg.exchange.mode == "demo"
     assert cfg.live.state == "live_disabled"
     assert cfg.agent.permission_mode == "Paper"
-    assert cfg.risk.max_daily_loss_pct == 1.0
+    # Off by default in every mode; 0 disables the check.
+    assert cfg.risk.max_daily_loss_pct == 0.0
     assert cfg.risk.symbol_filter_mode == "blacklist"
     assert cfg.risk.symbol_list == []
     assert cfg.exchange.symbol_list == []

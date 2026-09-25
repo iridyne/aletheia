@@ -612,7 +612,11 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
 
 class RiskLossPolicy(StrictRiskPolicyModel):
     max_single_trade_risk_pct: float = Field(default=0.25, gt=0)
-    max_daily_loss_pct: float = Field(default=1.0, gt=0)
+    # 0 disables the check (same convention as `capital.max_per_symbol_entries`).
+    # Default 0.0 by owner decision: the daily-loss cap is off by default in every
+    # mode, demo and live. Set a positive percentage to re-enable it; the engine
+    # gates check #8 on this value, so at 0 the check is inert.
+    max_daily_loss_pct: float = Field(default=0.0, ge=0)
 
 
 class RiskPositionsPolicy(StrictRiskPolicyModel):
@@ -679,7 +683,8 @@ class ModeRiskPolicy(StrictRiskPolicyModel):
 
 
 LIVE_RISK_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
-    "loss.max_daily_loss_pct": (0.1, 20.0),
+    # 0 is allowed and disables the daily-loss comparison in the engine.
+    "loss.max_daily_loss_pct": (0.0, 20.0),
     "loss.max_single_trade_risk_pct": (0.01, 10.0),
     "capital.max_total_exposure_pct": (1.0, 50.0),
     "capital.max_position_margin_usdt": (1.0, 100_000.0),
@@ -762,7 +767,7 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 else "max_demo_single_trade_risk_pct",
                 0.25 if is_live else 20.0,
             ),
-            "max_daily_loss_pct": data.get("max_daily_loss_pct", 1.0),
+            "max_daily_loss_pct": data.get("max_daily_loss_pct", 0.0),
         },
         "positions": {
             "max_open_positions": data.get(
@@ -1126,7 +1131,9 @@ class RiskConfig(BaseModel):
     # the global trading brake automatically. Separate toggles for demo and live.
     kill_switch_enabled_live: bool = True
     kill_switch_enabled_demo: bool = False
-    max_daily_loss_pct: float = 1.0
+    # Legacy shared field: 0 disables the daily-loss check. Kept at 0 to match the
+    # per-mode default above; it syncs to both demo and live policies.
+    max_daily_loss_pct: float = 0.0
     max_single_trade_risk_pct: float = 0.25
     max_total_live_exposure_pct: float = 5.0
     # Hard ceiling and fallback when the matching account has no local balance

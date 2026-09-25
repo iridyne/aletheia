@@ -147,6 +147,7 @@ def test_unverified_close_blocks_risk_without_fabricating_breach_or_tripping(mon
 
     cfg = load_config()
     cfg.risk.kill_switch_enabled_demo = True
+    cfg.risk.max_daily_loss_pct = 1.0  # off by default; this test covers the enabled check
     save_config(cfg)
     _closed_position("administrative", -10_000.0, mode="bitget_demo", eligible=False)
 

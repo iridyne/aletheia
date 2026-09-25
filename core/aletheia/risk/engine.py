@@ -1238,22 +1238,33 @@ def _evaluate_proposal_locked(
             resolved_policy=resolved_policy,
         )
     )
+    # Check #8 — Max Daily Loss. `max_daily_loss_pct` defaults to 0, which
+    # disables the check in every mode (same convention as
+    # `capital.max_per_symbol_entries`). The authoritative account-loss snapshot
+    # exists only to evaluate this limit, so it is not fetched at all while the
+    # limit is off: requiring it then would reject entries for a cap that is not
+    # being enforced. With a positive percentage configured the behaviour is
+    # unchanged, including the fail-closed rejection when the snapshot is
+    # unavailable. Gate on the configured percentage, not on the derived amount:
+    # an unavailable capital base also yields a zero limit, and that must not be
+    # mistaken for "the limit is disabled".
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
-    account_loss = authoritative_account_realized_loss(proposal.execution_mode)
-    realized = account_loss.realized_pnl_usdt
-    if not account_loss.available or realized is None:
-        violations.append(f"account_loss_unavailable:{account_loss.reason}")
-    elif daily_loss_limit > 0 and realized <= -daily_loss_limit:
-        violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
-        is_live = _is_live(proposal.execution_mode)
-        ks_enabled = risk.kill_switch_enabled_live if is_live else risk.kill_switch_enabled_demo
-        if ks_enabled and not mode_brake_active:
-            from aletheia.risk.kill_switch import activate as _trip
-            _trip(
-                reason=f"daily loss {realized} breached limit -{daily_loss_limit}",
-                actor="system",
-                scope=resolved_policy.mode,
-            )
+    if risk.max_daily_loss_pct > 0:
+        account_loss = authoritative_account_realized_loss(proposal.execution_mode)
+        realized = account_loss.realized_pnl_usdt
+        if not account_loss.available or realized is None:
+            violations.append(f"account_loss_unavailable:{account_loss.reason}")
+        elif realized <= -daily_loss_limit:
+            violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
+            is_live = _is_live(proposal.execution_mode)
+            ks_enabled = risk.kill_switch_enabled_live if is_live else risk.kill_switch_enabled_demo
+            if ks_enabled and not mode_brake_active:
+                from aletheia.risk.kill_switch import activate as _trip
+                _trip(
+                    reason=f"daily loss {realized} breached limit -{daily_loss_limit}",
+                    actor="system",
+                    scope=resolved_policy.mode,
+                )
 
     # 9a/9b. Preserve the account's owner-approved global-config binding.
     if (
