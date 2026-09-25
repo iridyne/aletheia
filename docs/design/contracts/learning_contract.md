@@ -802,28 +802,21 @@ Primary executable claims:
 - `tests/specs/spec_hypothesis_research.py`
 - `tests/specs/spec_learning_ledger.py`
 - `tests/specs/spec_learning_contribution.py`
-- `tests/specs/spec_learning_authority.py`
-- `tests/specs/spec_learning_lifecycle.py`
+- `tests/specs/spec_learning_contract.py` (LC-S01..S04 claims, incl. the numeric-treatment guard moved from the retired `spec_learning_authority.py`)
 - `tests/specs/spec_learning_continuity.py`
 - `tests/specs/spec_learning_verdict_runtime.py`
 - `tests/specs/spec_learning_final_consumers.py`
 - `tests/specs/spec_learning_observability.py` (`LCO-*` implemented/partial registry claims)
 - `tests/test_outcome_consumers.py` (verified external outcomes and excluded administrative rows)
 - `tests/e2e/test_pipeline_guard_promotion.py`
-- `tests/e2e/test_learning_paper_lifecycle.py`
 
-The isolated Paper Learning lifecycle E2E uses the real Universe score consumer, canonical full-arm
-registration seam, cost-aware settler, contribution evaluator, protected owner admission route,
-unfiltered 10% paper assignment stream, v3 cluster aggregation with selected and dropped members,
-harm evaluator, lifecycle refreeze and static fallback. A shared deterministic test clock advances
-event time without sleeping; only external market
-observation I/O is replaced. The test proves production timestamps remain causally ordered across a
-real seven-day evidence window and that no proposal, risk decision, order, fill, position or paper
-account event is created. The adjacent Universe pipeline spec locks the service-to-registration
-wiring with the full scored arm and selected subset. This is separate from and does not modify the
-frozen active-mainline Golden Path. It proves causal plumbing and safety fallback, not positive
-contribution, profitability, Live readiness or admission eligibility for the production
-qualification cohort.
+The former isolated Paper Learning lifecycle E2E test (retired in the #2945
+single-mainline convergence, 2026-09-07) was deleted: Observation Lab is the only online
+Experiment authority, and legacy lifecycle-controller coverage is historical. Paper-stage safety
+now lives in the Observation Lab executable claims (`spec_observation_experiment_ownership.py`,
+`spec_update_observation_settlement.py`) and the `LP-*`/`LC-*` claims above; the current contract
+claims no positive contribution, profitability, Live readiness or admission eligibility from
+paper-only evidence.
 
 Important tripwires:
 

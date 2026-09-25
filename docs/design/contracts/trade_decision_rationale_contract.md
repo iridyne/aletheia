@@ -53,7 +53,7 @@ Trades & Positions 的 Causal Chain 从 proposal 解析 `entry_parameters`，从
 
 ## 5. 验证
 
-- `tests/specs/spec_trade_decision_rationale.py`：五项开仓事实、缺项拦截，以及自动/AI/对账平仓来源。
+- `tests/specs/spec_pipeline_risk_gate.py` (`PL-RG-12`)、`tests/specs/spec_pi_decision_chain.py` (`PI-S05`) 与 `tests/specs/spec_pipeline_entry_enrichment.py`（`PL-ENRICH-02`）：五项开仓事实（entry/stop/take-profit/notional/leverage 的理由与来源）在入场路径的缺项拦截、native limit 四要素门槛，以及持久化 rationale 回链。五项 JSON 结构见 `decision_lifecycle_contract.md` §2.3 `parameter_rationale`。
 - `tests/test_exchange_close_confirmation.py`、`tests/specs/spec_pipeline_multibroker_reconciliation.py` 与 `tests/specs/spec_pipeline_exchange_materialization.py`：pending exchange close 的 durable rationale handoff、verified settlement、legacy NULL、损坏 carrier fail-closed 与 replay 幂等。
 - `tests/test_trade_decision_rationale_ui.py`：侧栏必须读取持久字段、保留缺失态。
 - 既有 proposal hash、entry enrichment、position-manager、execution-chain specs：保护原有链路与安全语义。
