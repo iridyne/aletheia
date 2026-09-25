@@ -252,6 +252,77 @@ def contract_code_path_failures() -> list[str]:
     return failures
 
 
+# Timestamp-unit baseline: pre-existing assignments whose ``*_ms`` name is fed
+# by a ``/ 1000`` (seconds) expression or whose ``*_sec``/``*_seconds`` name is
+# fed by a ``* 1000`` (milliseconds) expression. Visible, dated (2026-09-26),
+# never a silent skip; keep green on master but still catch NEW violations.
+BASELINE_TIMESTAMP_UNIT_VIOLATIONS = {
+    # (relative_path, lineno) tuples of audited violations.
+}
+
+
+def timestamp_unit_suffix_failures() -> list[str]:
+    """Variable names ending in ``_ms`` must carry milliseconds; ``_sec``/
+    ``_seconds`` must carry seconds.
+
+    Scopes to Python source under ``core/aletheia/``. Flags only the two most
+    dangerous, mechanically-obvious unit contradictions, detected with ``ast``:
+      1. a target named ``*_ms`` whose value divides by 1000 (``/`` or ``//``);
+      2. a target named ``*_sec``/``*_seconds`` whose value multiplies by 1000.
+
+    Non-goals (deliberately not validated here, need dataflow or type info):
+      - cross-function dataflow and function return-type units;
+      - dict-key units and database column units;
+      - comparisons against ``time.time()`` vs ``time.time_ns()``;
+      - any inference requiring type information.
+    Anything not matching the two literal patterns above is ignored, never
+    flagged. Files that fail to parse are reported (not silently skipped).
+    """
+    failures: list[str] = []
+    source_root = ROOT / "core/aletheia"
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(ROOT)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            failures.append(f"{relative}:{exc.lineno}: timestamp unit check: syntax error")
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            if not isinstance(value, ast.BinOp) or not isinstance(value.right, ast.Constant):
+                continue
+            if value.right.value != 1000:
+                continue
+            div_op = isinstance(value.op, (ast.Div, ast.FloorDiv))
+            mul_op = isinstance(value.op, ast.Mult)
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    name = target.id
+                elif isinstance(target, ast.Attribute):
+                    name = target.attr
+                else:
+                    continue
+                bad = (
+                    (name.endswith("_ms") and div_op)
+                    or (name.endswith(("_sec", "_seconds")) and mul_op)
+                )
+                if not bad:
+                    continue
+                if (str(relative), node.lineno) in BASELINE_TIMESTAMP_UNIT_VIOLATIONS:
+                    continue
+                op = "/" if isinstance(value.op, ast.Div) else (
+                    "//" if isinstance(value.op, ast.FloorDiv) else "*"
+                )
+                failures.append(
+                    f"{relative}:{node.lineno}: timestamp unit contradiction: "
+                    f"{name} = ... {op} 1000"
+                )
+    return failures
+
+
 def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
@@ -375,6 +446,7 @@ def main() -> int:
     failures.extend(proposal_metadata_failures())
     failures.extend(broken_relative_links(current_authority_markdown_files()))
     failures.extend(contract_code_path_failures())
+    failures.extend(timestamp_unit_suffix_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
