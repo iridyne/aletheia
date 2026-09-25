@@ -27,7 +27,8 @@ def test_gateway_uses_exact_provider_and_preserves_known_empty(
     from aletheia.data import providers
     from aletheia.execution import gateway, venue_capabilities
 
-    read = AsyncMock(return_value={"spot": symbols, "swap": symbols})
+    # Return value uses execution-domain vocabulary (usdt_futures, not swap).
+    read = AsyncMock(return_value={"spot": symbols, "usdt_futures": symbols})
     provider = SimpleNamespace(get_public_market_capabilities=read, close=AsyncMock())
     calls = []
 
@@ -36,11 +37,13 @@ def test_gateway_uses_exact_provider_and_preserves_known_empty(
         return provider
 
     monkeypatch.setattr(providers, "_provider_factory", factory)
-    monkeypatch.setattr(venue_capabilities, "_okx_demo_symbols", None)
+    # Clear the demo capability cache so the refresh is triggered.
+    monkeypatch.setattr(venue_capabilities, "_demo_capabilities_cache", {})
     result = gateway._check_symbol_availability("BTC/USDT", "okx_demo", market_type)
     assert (result is None) is bool(symbols)
     assert calls == [("okx", {"exact_venue": True, "fallback_venue": None})]
-    read.assert_awaited_once_with(sandbox=True)
+    # extra_options={} because OKX demo has no listing_options.
+    read.assert_awaited_once_with(sandbox=True, extra_options={})
     provider.close.assert_awaited_once()
 
 
@@ -70,7 +73,7 @@ async def test_unbound_data_is_unavailable_not_empty(monkeypatch, no_concrete_da
 
 
 @pytest.mark.parametrize("result", [
-    None, [], {"swap": None}, {"swap": {"BTC/USDT"}},
+    None, [], {"usdt_futures": None}, {"usdt_futures": {"BTC/USDT"}},
     {"future": frozenset()}, {"spot": frozenset({""})},
     {"spot": frozenset({1})},
 ])
@@ -85,3 +88,35 @@ async def test_invalid_capability_facts_fail_closed(monkeypatch, result):
     with pytest.raises(ValueError, match="market capabilities invalid"):
         await fetch_venue_capabilities("okx_demo")
     provider.close.assert_awaited_once()
+
+
+async def test_bitget_demo_capability_uses_profile_listing_options(
+    monkeypatch, no_concrete_data_import,
+):
+    """bitget_demo must pass its profile's listing_options as extra_options.
+
+    Bitget exposes two market views (Classic / UTA) under different API options.
+    The capability check and the order constraint check must see the same listing,
+    so fetch_venue_capabilities passes the profile's listing_options to the
+    provider exactly as read_order_constraints does via _listing_view.
+    """
+    from aletheia.data import providers
+    from aletheia.execution.venue_capabilities import fetch_venue_capabilities
+
+    read_calls: list[dict] = []
+
+    async def _fake_capabilities(*, sandbox, extra_options):
+        read_calls.append({"sandbox": sandbox, "extra_options": extra_options})
+        return {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset()}
+
+    provider = SimpleNamespace(
+        get_public_market_capabilities=_fake_capabilities,
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(providers, "_provider_factory", lambda *args, **kwargs: provider)
+    result = await fetch_venue_capabilities("bitget_demo")
+    assert result == {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset()}
+    assert len(read_calls) == 1
+    assert read_calls[0]["sandbox"] is True
+    # BitgetClassicV2Profile.listing_options = {"uta": False}
+    assert "uta" in read_calls[0]["extra_options"]

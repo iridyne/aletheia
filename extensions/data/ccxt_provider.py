@@ -740,27 +740,37 @@ class CCXTProvider:
         self,
         *,
         sandbox: bool = False,
+        extra_options: dict | None = None,
     ) -> dict[str, frozenset[str]]:
-        """Read active USDT spot/swap symbols without fallback or persistence.
+        """Read active USDT spot/perp symbols without fallback or persistence.
 
         The sandbox client is request-local and never changes this provider's
         ordinary clients. No credentials or private endpoints are involved.
+        ``extra_options`` merges into the CCXT client options (e.g. a profile's
+        ``listing_options`` selecting an API category) so the listing read
+        matches the exact profile that will submit orders.
         """
         from aletheia.net import close_ccxt, make_ccxt
 
-        exchange, session = make_ccxt(self._primary_name, options={"defaultType": "swap"})
+        exchange, session = make_ccxt(
+            self._primary_name,
+            options={"defaultType": "swap", **(extra_options or {})},
+        )
         try:
             if sandbox:
                 exchange.set_sandbox_mode(True)
             await exchange.load_markets()
-            symbols: dict[str, set[str]] = {"swap": set(), "spot": set()}
+            symbols: dict[str, set[str]] = {"usdt_futures": set(), "spot": set()}
             for info in exchange.markets.values():
                 if not info.get("active", True):
                     continue
-                market_type = info.get("type")
-                if market_type not in symbols:
-                    continue
                 if (info.get("quote") or "").upper() != "USDT":
+                    continue
+                if info.get("spot"):
+                    market_type = "spot"
+                elif info.get("swap") and not info.get("future"):
+                    market_type = "usdt_futures"
+                else:
                     continue
                 canonical = to_canonical(f"{info.get('base', '')}/USDT")
                 symbols[market_type].add(canonical)

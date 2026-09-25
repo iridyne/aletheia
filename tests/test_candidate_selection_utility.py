@@ -159,6 +159,7 @@ def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, mo
 
 def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direction, market_type):
     import asyncio
+    from unittest.mock import AsyncMock
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember
     from aletheia.config.loader import save_config, load_config
@@ -196,6 +197,14 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
             closes = [100+slope*(i-limit+1) + (.3*(-1)**i if mechanism == "continuation" else 0) for i in range(limit)]
             return [[end-(limit-i)*step, close, close+.1, close-.1, close, 1000] for i, close in enumerate(closes)]
     monkeypatch.setattr(CCXTProvider, "_ensure_primary", lambda self, *args, **kwargs: Exchange())
+    # bitget_demo has a sandbox-restricted listing (#3465), so the registry sync
+    # fetches the demo symbol set from the live CCXT listing. This fixture fakes
+    # the venue's markets entirely, so stand in the demo listing with the same
+    # symbols — otherwise every fake COIN market is filtered out.
+    monkeypatch.setattr(
+        "aletheia.universe.registry._load_demo_whitelist",
+        AsyncMock(return_value=frozenset(f"COIN{i}/USDT" for i in range(20))),
+    )
     service = UniverseService()
     snapshot_id = asyncio.run(service.refresh())
     assert snapshot_id is not None, [dict(r) for r in repo.get_db().execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1")]

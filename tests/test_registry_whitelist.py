@@ -11,7 +11,7 @@ from aletheia.universe.registry import _load_demo_whitelist
 async def test_load_demo_whitelist_returns_merged_frozenset():
     """Whitelist must be a frozenset of symbols, not a dict."""
     okx_demo_markets = {
-        "swap": frozenset(["BTC/USDT", "ETH/USDT", "SOL/USDT"]),
+        "usdt_futures": frozenset(["BTC/USDT", "ETH/USDT", "SOL/USDT"]),
         "spot": frozenset(["BTC/USDT", "ETH/USDT", "SOL/USDT", "WLD/USDT"]),
     }
     with patch(
@@ -29,10 +29,34 @@ async def test_load_demo_whitelist_returns_merged_frozenset():
 
 
 @pytest.mark.asyncio
-async def test_load_demo_whitelist_non_okx_returns_none():
-    assert await _load_demo_whitelist("bitget_demo") is None
-    assert await _load_demo_whitelist("binance_testnet") is None
+async def test_load_demo_whitelist_non_sandbox_returns_none():
+    """A mode with no restricted sandbox listing needs no extra filter.
+
+    ``bitget_demo`` and ``binance_testnet`` have sandbox=True profiles and DO
+    return a capability snapshot — see
+    test_load_demo_whitelist_bitget_demo_uses_sandbox_capabilities.
+    ``paper_internal`` is not a registered execution mode at all.
+    """
     assert await _load_demo_whitelist("paper_internal") is None
+
+
+@pytest.mark.asyncio
+async def test_load_demo_whitelist_bitget_demo_uses_sandbox_capabilities():
+    """bitget_demo has a restricted listing and must be filtered like okx_demo.
+
+    #3465: volume-ranking injected symbols the demo profile does not list.
+    """
+    fake = {
+        "usdt_futures": frozenset(["BTC/USDT", "ETH/USDT"]),
+        "spot": frozenset(["BTC/USDT", "ETH/USDT", "ONDO/USDT"]),
+    }
+    with patch(
+        "aletheia.execution.venue_capabilities.fetch_venue_capabilities",
+        new_callable=AsyncMock,
+        return_value=fake,
+    ):
+        result = await _load_demo_whitelist("bitget_demo")
+    assert result == frozenset(["BTC/USDT", "ETH/USDT", "ONDO/USDT"])
 
 
 @pytest.mark.asyncio
@@ -40,7 +64,7 @@ async def test_load_demo_whitelist_empty_markets():
     with patch(
         "aletheia.execution.venue_capabilities.fetch_venue_capabilities",
         new_callable=AsyncMock,
-        return_value={"swap": frozenset(), "spot": frozenset()},
+        return_value={"usdt_futures": frozenset(), "spot": frozenset()},
     ):
         result = await _load_demo_whitelist("okx_demo")
     assert result == frozenset()

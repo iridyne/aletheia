@@ -48,21 +48,25 @@ def _is_excluded(instrument: MarketInstrument) -> bool:
 async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
     """Load the demo symbol whitelist for the active execution mode.
 
-    Returns None if no demo filtering is needed (live mode or full-access demos).
+    Returns None if no demo filtering is needed (the mode's listing is not
+    sandbox-restricted, so the universe registry already reflects the venue
+    the process will submit orders to).
 
-    The shared execution capability seam returns {"swap": frozenset,
+    The shared execution capability seam returns {"usdt_futures": frozenset,
     "spot": frozenset}. Collapse to a single frozenset so callers can do
     `symbol in whitelist`.
     """
-    if paper_execution_mode == "okx_demo":
-        from aletheia.execution.venue_capabilities import fetch_venue_capabilities
+    from aletheia.execution.venue_capabilities import (
+        _is_sandbox_mode,
+        fetch_venue_capabilities,
+    )
 
-        markets = await fetch_venue_capabilities(paper_execution_mode)
-        if markets is None:
-            return None
-        return markets.get("swap", frozenset()) | markets.get("spot", frozenset())
-    # bitget_demo and binance_testnet support their full perp list — no extra filter
-    return None
+    if not _is_sandbox_mode(paper_execution_mode):
+        return None
+    markets = await fetch_venue_capabilities(paper_execution_mode)
+    if markets is None:
+        return None
+    return markets.get("usdt_futures", frozenset()) | markets.get("spot", frozenset())
 
 
 def _invalidate_stale_pipeline_data() -> None:

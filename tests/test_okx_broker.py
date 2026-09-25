@@ -13,11 +13,9 @@ from tests.async_test_utils import closing_coro_runner
 def _reset_module_state():
     """Reset the module-level cache between tests."""
     import aletheia.execution.venue_capabilities as mod
-    mod._okx_demo_symbols = None
-    mod._okx_demo_symbols_loaded_at = 0.0
+    mod._demo_capabilities_cache.clear()
     yield
-    mod._okx_demo_symbols = None
-    mod._okx_demo_symbols_loaded_at = 0.0
+    mod._demo_capabilities_cache.clear()
 
 
 class TestLazyExchangeInit:
@@ -71,72 +69,64 @@ class TestSymbolFilter:
             side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
         ):
             with pytest.raises(RuntimeError, match="market load unavailable"):
-                mod._get_demo_symbols("usdt_futures")
+                mod.load_venue_capabilities("okx_demo")
 
-        assert mod._okx_demo_symbols is None
-        assert mod._okx_demo_symbols_loaded_at == 0.0
+        assert "okx_demo" not in mod._demo_capabilities_cache
 
     def test_filter_with_populated_set_blocks_unsupported(self):
-        """Symbols not in swap frozenset are blocked for perp orders."""
+        """Symbols not in usdt_futures frozenset are blocked for perp orders."""
+        import time
         import aletheia.execution.venue_capabilities as mod
-        mod._okx_demo_symbols = {
-            "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
-            "spot": frozenset({"BTC/USDT", "ETH/USDT", "DOGE/USDT"}),
-        }
-        mod._okx_demo_symbols_loaded_at = 9999999999.0
 
-        swap_result = mod._get_demo_symbols("usdt_futures")
-        assert swap_result is not None
-        assert "BTC/USDT" in swap_result
-        assert "DOGE/USDT" not in swap_result  # DOGE is spot-only
-
-        spot_result = mod._get_demo_symbols("spot")
-        assert "DOGE/USDT" in spot_result  # DOGE passes as spot
+        mod._demo_capabilities_cache["okx_demo"] = (
+            {
+                "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"}),
+                "spot": frozenset({"BTC/USDT", "ETH/USDT", "DOGE/USDT"}),
+            },
+            time.time(),
+        )
+        futures_result = mod.get_supported_symbols("okx_demo", "usdt_futures")
+        assert futures_result is not None
+        assert "BTC/USDT" in futures_result
+        assert "DOGE/USDT" not in futures_result  # DOGE is spot-only
+        spot_result = mod.get_supported_symbols("okx_demo", "spot")
+        assert "DOGE/USDT" in spot_result
 
     def test_filter_is_frozenset_o1_lookup(self):
         """Confirm the filter returns a frozenset for O(1) membership testing."""
+        import time
         import aletheia.execution.venue_capabilities as mod
-        mod._okx_demo_symbols = {
-            "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
-            "spot": frozenset({"BTC/USDT"}),
-        }
-        mod._okx_demo_symbols_loaded_at = 9999999999.0
 
-        symbols = mod._get_demo_symbols("usdt_futures")
-        assert isinstance(symbols, frozenset)
+        mod._demo_capabilities_cache["okx_demo"] = (
+            {"usdt_futures": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}), "spot": frozenset({"BTC/USDT"})},
+            time.time(),
+        )
+        assert isinstance(mod.get_supported_symbols("okx_demo", "usdt_futures"), frozenset)
 
     def test_refresh_builds_dict_of_frozensets_from_markets(self):
-        """refresh_okx_demo_symbols builds {"swap": frozenset, "spot": frozenset}."""
+        """refresh_okx_demo_symbols builds {"usdt_futures": frozenset, "spot": frozenset}."""
         import aletheia.execution.venue_capabilities as mod
 
         fake_result = {
-            "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
+            "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
             "spot": frozenset({"BTC/USDT", "ETH/USDT"}),
         }
-
         with patch(
             "aletheia.execution.venue_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner(fake_result),
         ):
             count = mod.refresh_okx_demo_symbols()
 
-        assert count == 5  # 3 swap + 2 spot
-        assert mod._okx_demo_symbols == fake_result
+        assert count == 5  # 3 usdt_futures + 2 spot
+        assert mod._demo_capabilities_cache["okx_demo"][0] == fake_result
 
     def test_contended_refresh_reuses_newly_fresh_cache(self):
         import aletheia.execution.venue_capabilities as mod
 
-        fake_result = {
-            "swap": frozenset({"BTC/USDT"}),
-            "spot": frozenset({"BTC/USDT"}),
-        }
-        runner = MagicMock(
-            side_effect=closing_coro_runner(
-                fake_result,
-                RuntimeError("redundant refresh failed"),
-            )
-        )
-
+        fake_result = {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset({"BTC/USDT"})}
+        runner = MagicMock(side_effect=closing_coro_runner(
+            fake_result, RuntimeError("redundant refresh failed"),
+        ))
         with patch("aletheia.execution.venue_capabilities.run_coro_from_sync", runner):
             first = mod.refresh_okx_demo_symbols()
             second = mod.refresh_okx_demo_symbols()
@@ -153,16 +143,15 @@ class TestSymbolFilter:
         ):
             assert mod.refresh_okx_demo_symbols() == 0
 
-        assert mod._get_demo_symbols("usdt_futures") == frozenset()
-        assert mod._get_demo_symbols("spot") == frozenset()
+        assert mod.get_supported_symbols("okx_demo", "usdt_futures") == frozenset()
+        assert mod.get_supported_symbols("okx_demo", "spot") == frozenset()
 
     def test_scheduler_records_refresh_failure(self, monkeypatch):
         from aletheia.agent_runtime import scheduler
 
         failures = []
         monkeypatch.setattr(
-            scheduler,
-            "_record_job_failure",
+            scheduler, "_record_job_failure",
             lambda job_id, error: failures.append((job_id, error)),
         )
         with patch(
@@ -172,8 +161,6 @@ class TestSymbolFilter:
             scheduler._run_okx_demo_symbols()
 
         assert failures == [("okx_demo_symbols", "market load unavailable")]
-
-
 
 
 class TestRiskEngineOkx:

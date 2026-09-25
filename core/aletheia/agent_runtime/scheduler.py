@@ -149,6 +149,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "cleanup",
     "news_fetch",
     "okx_demo_symbols",
+    "bitget_demo_capabilities",
     "reconciliation",
     "position_reconcile",
     "tpsl_fill_check",
@@ -1641,11 +1642,20 @@ def init_scheduler() -> BackgroundScheduler | None:
             next_run_time=datetime.now() + timedelta(minutes=3),
             executor="maintenance_io",
         )
-    # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
+    # Demo capability list refresh — keeps the O(1) symbol filter cache warm.
+    # One job per sandbox execution mode; each runs every 4 h.
     _scheduler.add_job(
         _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
         id="okx_demo_symbols", misfire_grace_time=600, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=45),
+    )
+    _scheduler.add_job(
+        _guarded(
+            "bitget_demo_capabilities", _run_bitget_demo_capabilities,
+        ),
+        "interval", hours=4,
+        id="bitget_demo_capabilities", misfire_grace_time=600, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=75),
     )
     # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
     _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
@@ -3947,14 +3957,28 @@ def _ohlcv_backfill_body():
                 len(instruments), total_bars)
 
 
-def _run_okx_demo_symbols():
+def _run_okx_demo_symbols() -> None:
+    """Refresh OKX demo symbol capabilities (scheduler job).  4 h interval."""
+    from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
     try:
-        from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
         count = refresh_okx_demo_symbols()
-        logger.info("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:
         logger.warning("okx_demo_symbols refresh failed: %s", e)
         _record_job_failure("okx_demo_symbols", str(e))
+        return
+    logger.info("okx_demo capabilities refreshed: %d symbols", count)
+
+
+def _run_bitget_demo_capabilities() -> None:
+    """Refresh Bitget demo capabilities (scheduler job).  4 h interval."""
+    from aletheia.execution.venue_capabilities import refresh_demo_capabilities
+    try:
+        count = refresh_demo_capabilities("bitget_demo")
+    except Exception as e:
+        logger.warning("bitget_demo_capabilities refresh failed: %s", e)
+        _record_job_failure("bitget_demo_capabilities", str(e))
+        return
+    logger.info("bitget_demo capabilities refreshed: %d symbols", count)
 
 
 async def _async_universe_refresh():

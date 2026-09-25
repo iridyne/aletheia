@@ -142,11 +142,11 @@ async def test_public_market_capabilities_use_generic_factory_and_close(monkeypa
 
     class FakeExchange:
         markets = {
-            "BTC/USDT:USDT": {"active": True, "type": "swap", "quote": "USDT", "base": "BTC"},
-            "WLD/USDT": {"active": True, "type": "spot", "quote": "USDT", "base": "WLD"},
-            "ETH/USDC:USDC": {"active": True, "type": "swap", "quote": "USDC", "base": "ETH"},
-            "OLD/USDT": {"active": False, "type": "spot", "quote": "USDT", "base": "OLD"},
-            "BTC/USD": {"active": True, "type": "future", "quote": "USD", "base": "BTC"},
+            "BTC/USDT:USDT": {"active": True, "type": "swap", "swap": True, "future": False, "spot": False, "quote": "USDT", "base": "BTC"},
+            "WLD/USDT": {"active": True, "type": "spot", "spot": True, "swap": False, "future": False, "quote": "USDT", "base": "WLD"},
+            "ETH/USDC:USDC": {"active": True, "type": "swap", "swap": True, "future": False, "spot": False, "quote": "USDC", "base": "ETH"},
+            "OLD/USDT": {"active": False, "type": "spot", "spot": True, "swap": False, "future": False, "quote": "USDT", "base": "OLD"},
+            "BTC/USD": {"active": True, "type": "future", "swap": False, "future": True, "spot": False, "quote": "USD", "base": "BTC"},
         }
 
         def set_sandbox_mode(self, enabled):
@@ -170,7 +170,7 @@ async def test_public_market_capabilities_use_generic_factory_and_close(monkeypa
     result = await provider.get_public_market_capabilities(sandbox=True)
 
     assert result == {
-        "swap": frozenset({"BTC/USDT"}),
+        "usdt_futures": frozenset({"BTC/USDT"}),
         "spot": frozenset({"WLD/USDT"}),
     }
     assert events == [

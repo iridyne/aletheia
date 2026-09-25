@@ -155,7 +155,7 @@ def test_registry_symbol_availability_speaks_the_execution_vocabulary(e2e_db=Non
 
     This was latent rather than visible: a venue with no registry rows returns
     None and fails open, so the trap only springs once that venue is wired — which
-    is exactly what pointing the runtime at Bitget Demo does.
+    is exactly what pointing the runtime at a registry-based (live) mode does.
     """
     from aletheia.execution import gateway, venue_capabilities
     from aletheia.storage import repositories as repo
@@ -179,13 +179,15 @@ def test_registry_symbol_availability_speaks_the_execution_vocabulary(e2e_db=Non
     assert "usdt_futures" in registry, registry
     assert "BTC/USDT" in registry["usdt_futures"]
 
+    # bitget_live_limited is registry-based (non-sandbox); bitget_demo now reads
+    # the profile-aware demo capability cache instead of the universe registry.
     assert gateway._check_symbol_availability(
-        "BTC/USDT", "bitget_demo", "usdt_futures"
+        "BTC/USDT", "bitget_live_limited", "usdt_futures"
     ) is None
 
     # A symbol the venue does not list is still rejected: the translation must not
     # turn the gate into a rubber stamp.
     venue_capabilities._registry_symbol_cache.clear()
     assert gateway._check_symbol_availability(
-        "DOGE/USDT", "bitget_demo", "usdt_futures"
+        "DOGE/USDT", "bitget_live_limited", "usdt_futures"
     ) is not None
