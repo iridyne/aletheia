@@ -8,6 +8,9 @@
 ## 快速命令
 
 ```powershell
+# 改动文件快反馈门（每次 edit 后的第一道，秒级）
+uv run python scripts/dev_check.py
+
 # 单文件（秒级，日常用）
 uv run pytest tests/test_xxx.py -q
 

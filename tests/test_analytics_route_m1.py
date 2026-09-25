@@ -26,11 +26,11 @@ def test_safe_pf_no_trades():
 
 
 def test_safe_pf_json_serializable():
-    for scenario in [_safe_pf(100, 0), _safe_pf(100, 50), _safe_pf(0, 0)]:
-        serialized = json.dumps(scenario)
-        parsed = json.loads(serialized)
-        if parsed["value"] is not None:
-            assert math.isfinite(parsed["value"])
+    parsed = [json.loads(json.dumps(scenario)) for scenario in [_safe_pf(100, 0), _safe_pf(100, 50), _safe_pf(0, 0)]]
+    # The finite case must actually be exercised, otherwise the loop below is vacuous.
+    assert any(scenario["value"] is not None for scenario in parsed)
+    for scenario in parsed:
+        assert scenario["value"] is None or math.isfinite(scenario["value"])
 
 
 class _FakeRound1Db:

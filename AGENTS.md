@@ -147,6 +147,12 @@ deterministic validation instead (`scripts/ci_plan.py`, `scripts/ci_preflight.py
 `scripts/ci_local.py`, and `scripts/check_docs.py`/targeted pytest), which is local-only
 validation and does not grant merge/runtime authority.
 
+Start every routine change with the changed-file gate
+`uv run python scripts/dev_check.py` (ruff `B/ASYNC/RUF` on changed lines, test
+skip/xfail census, `pytest --lf`, focused tests, `basedpyright` basic). It is the
+mandatory first feedback step and never replaces the PR-level gates above; see
+[`DEVELOPMENT_WORKFLOW.md`](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md#fast-feedback-loop-mandatory-first-step).
+
 Before opening or resetting an Observation/qualification window after a merged
 behavior or evidence change, deploy the exact merged commit to Fedora, restart
 when required, and verify runtime commit, schema, provider, and settlement
