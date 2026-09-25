@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v88"
+SCHEMA_VERSION = "aletheia-sqlite-v89"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8327,6 +8327,48 @@ def _apply_cost_covering_edge_v88(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN min_cost_covering_edge_pct REAL")
 
 
+
+def _apply_cost_covering_edge_backfill_v89(db: sqlite3.Connection) -> None:
+    """Backfill min_cost_covering_edge_pct on rows settled before v88 added it.
+
+    Only recomputes rows where every summed input already exists; a row missing
+    any cost component stays NULL, matching the same-conditions-as-net_return_pct
+    contract rule. Never fabricates a missing input. shadow_trades names its net
+    field net_pnl_pct, not net_return_pct — the other two tables share the name.
+    """
+    existing = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    net_column_by_table = {
+        "universe_forward_outcomes": "net_return_pct",
+        "filter_candidate_outcomes": "net_return_pct",
+        "shadow_trades": "net_pnl_pct",
+    }
+    for table, net_column in net_column_by_table.items():
+        if table not in existing:
+            continue
+        columns = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if not {
+            net_column, "estimated_fee_pct", "estimated_spread_slippage_pct",
+            "estimated_funding_pct", "min_tradable_edge_pct", "min_cost_covering_edge_pct",
+        } <= columns:
+            continue
+        db.execute(
+            f"UPDATE {table} SET min_cost_covering_edge_pct = "
+            "estimated_fee_pct + estimated_spread_slippage_pct + estimated_funding_pct "
+            "+ min_tradable_edge_pct "
+            "WHERE min_cost_covering_edge_pct IS NULL "
+            f"AND {net_column} IS NOT NULL "
+            "AND estimated_fee_pct IS NOT NULL "
+            "AND estimated_spread_slippage_pct IS NOT NULL "
+            "AND estimated_funding_pct IS NOT NULL "
+            "AND min_tradable_edge_pct IS NOT NULL"
+        )
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8849,6 +8891,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"cost_covering_edge_v88:additive").hexdigest(),
         schema_version="aletheia-sqlite-v88",
         apply=_apply_cost_covering_edge_v88,
+    ),
+    MigrationStep(
+        migration_id="20260925_0088_cost_covering_edge_backfill_v89",
+        checksum=hashlib.sha256(b"cost_covering_edge_backfill_v89:formula_backfill").hexdigest(),
+        schema_version="aletheia-sqlite-v89",
+        apply=_apply_cost_covering_edge_backfill_v89,
     ),
 )
 

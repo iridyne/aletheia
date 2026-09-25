@@ -1958,3 +1958,61 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
         assert snapshot(store.get_db()) == before
     finally:
         store.reset_db()
+
+
+def test_cost_covering_edge_backfill_v89_recomputes_only_complete_rows():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE universe_forward_outcomes (id TEXT PRIMARY KEY, net_return_pct REAL, "
+        "estimated_fee_pct REAL, estimated_spread_slippage_pct REAL, estimated_funding_pct REAL, "
+        "min_tradable_edge_pct REAL, min_cost_covering_edge_pct REAL)"
+    )
+    connection.execute(
+        "INSERT INTO universe_forward_outcomes VALUES "
+        "('complete', 0.5, 0.12, 0.15, 0.0, 0.05, NULL), "
+        "('missing-funding', 0.5, 0.12, 0.15, NULL, 0.05, NULL), "
+        "('unsettled', NULL, 0.12, 0.15, 0.0, 0.05, NULL), "
+        "('already-populated', 0.5, 0.12, 0.15, 0.0, 0.05, 0.32)"
+    )
+
+    migrations._apply_cost_covering_edge_backfill_v89(connection)
+
+    rows = dict(connection.execute(
+        "SELECT id, min_cost_covering_edge_pct FROM universe_forward_outcomes"
+    ).fetchall())
+    assert rows["complete"] == pytest.approx(0.32)
+    assert rows["missing-funding"] is None
+    assert rows["unsettled"] is None
+    assert rows["already-populated"] == pytest.approx(0.32)
+    connection.close()
+
+
+def test_cost_covering_edge_backfill_v89_is_idempotent_across_tables():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    net_column_by_table = {
+        "filter_candidate_outcomes": "net_return_pct",
+        "shadow_trades": "net_pnl_pct",
+    }
+    for table, net_column in net_column_by_table.items():
+        connection.execute(
+            f"CREATE TABLE {table} (id TEXT PRIMARY KEY, {net_column} REAL, "
+            "estimated_fee_pct REAL, estimated_spread_slippage_pct REAL, estimated_funding_pct REAL, "
+            "min_tradable_edge_pct REAL, min_cost_covering_edge_pct REAL)"
+        )
+        connection.execute(
+            f"INSERT INTO {table} VALUES ('row-1', 0.5, 0.1, 0.1, 0.0, 0.05, NULL)"
+        )
+
+    migrations._apply_cost_covering_edge_backfill_v89(connection)
+    migrations._apply_cost_covering_edge_backfill_v89(connection)
+
+    for table in ("filter_candidate_outcomes", "shadow_trades"):
+        value = connection.execute(
+            f"SELECT min_cost_covering_edge_pct FROM {table} WHERE id='row-1'"
+        ).fetchone()[0]
+        assert value == pytest.approx(0.25)
+    connection.close()
