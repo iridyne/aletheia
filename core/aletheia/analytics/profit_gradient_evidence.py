@@ -12,9 +12,12 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import math
 import sqlite3
 from typing import Any, Iterable, Mapping
+
+logger = logging.getLogger("aletheia.analytics.profit_gradient_evidence")
 
 from aletheia.analytics.candidate_facts import (
     FACT_CONTRACT_VERSION as PROFIT_LOOP_FACT_CONTRACT_VERSION,
@@ -249,7 +252,8 @@ def _table_exists(db: Any, table: str) -> bool:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
             (table,),
         ).fetchone() is not None
-    except Exception:
+    except Exception as exc:
+        logger.warning("profit_gradient_evidence: table existence probe unavailable for %s (%s)", table, type(exc).__name__)
         return False
 
 

@@ -7,6 +7,10 @@ audited without becoming a second prompt archive.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.context_artifacts")
+
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -120,7 +124,8 @@ def record_context_artifacts(
         if not was_in_tx:
             db.commit()
         return len(rows)
-    except Exception:
+    except Exception as exc:
+        logger.warning("context_artifacts: context record insert unavailable (%s)", type(exc).__name__)
         return 0
 
 

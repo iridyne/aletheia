@@ -1,11 +1,14 @@
 """Gateway lifecycle CLI commands."""
 
+import logging
 import platform
 from pathlib import Path
 import sys
 import time
 
 import typer
+
+logger = logging.getLogger("aletheia.cli.gateway")
 
 gateway_app = typer.Typer(no_args_is_help=True)
 service_app = typer.Typer(no_args_is_help=True, help="Install and inspect the OS service backend.")
@@ -53,7 +56,8 @@ def _audit_firewall_change(*, action: str, before: dict, after: dict) -> bool:
             "message": f"Windows dashboard LAN firewall {action}",
         })
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("cli gateway: firewall-change audit unavailable (%s)", type(exc).__name__)
         return False
 
 

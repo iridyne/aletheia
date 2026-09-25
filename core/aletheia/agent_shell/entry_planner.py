@@ -58,6 +58,7 @@ def _intent_validation_code(exc: BaseException) -> str:
         try:
             items = errors()
         except Exception:
+            logger.warning("entry_planner: validation error classification unavailable (%s)", type(exc).__name__)
             items = []
         for item in items if isinstance(items, list) else []:
             nested = (item.get("ctx") or {}).get("error") if isinstance(item, dict) else None

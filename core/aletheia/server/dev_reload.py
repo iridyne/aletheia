@@ -4,9 +4,13 @@ All auto-reload features are gated on ALETHEIA_DEV_RELOAD=1 AND live trading
 being disabled. This module is the single source of truth for that decision.
 """
 
+import logging
+
 import os
 import time
 from pathlib import Path
+
+logger = logging.getLogger("aletheia.server.dev_reload")
 
 _boot_time = time.time()
 _reload_counter = 0
@@ -24,7 +28,8 @@ def is_dev_reload_enabled() -> bool:
         cfg = load_config()
         if cfg.live.state != "live_disabled":
             return False
-    except Exception:
+    except Exception as exc:
+        logger.warning("dev_reload: config read unavailable (%s)", type(exc).__name__)
         return False
     return True
 

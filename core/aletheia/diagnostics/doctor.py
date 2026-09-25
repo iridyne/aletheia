@@ -29,6 +29,7 @@ never touches trading state — those stay human decisions per the safety rules.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import sys
@@ -39,6 +40,8 @@ from pathlib import Path
 from typing import Literal
 
 import typer
+
+logger = logging.getLogger("aletheia.diagnostics.doctor")
 
 Severity = Literal["ok", "info", "warn", "blocker"]
 
@@ -2085,7 +2088,8 @@ def _probe_reconciled_ratio(report: Report) -> None:
             try:
                 from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
                 active_thrash = bool(detect_reconcile_thrash(window_minutes=30).get("churned_symbols"))
-            except Exception:
+            except Exception as exc:
+                logger.warning("doctor: reconcile-thrash probe unavailable (%s)", type(exc).__name__)
                 active_thrash = False
             if active_thrash:
                 report.add("loop.reconciled_ratio", "warn",
@@ -2688,7 +2692,8 @@ def _probe_content_memo_quality(report: Report) -> None:
     # No valid memo — distinguish expired from never-created.
     try:
         any_memo = list_knowledge_items(item_type="trading_memo", limit=1)
-    except Exception:
+    except Exception as exc:
+        logger.warning("doctor: trading-memo probe unavailable (%s)", type(exc).__name__)
         any_memo = []
     if any_memo:
         report.add("content.memo_quality", "warn",
@@ -3287,7 +3292,8 @@ def _probe_fts_coverage(report: Report) -> None:
         if not has_db_body and _read_body is not None:
             try:
                 has_disk_body = bool((_read_body(r["file_path"]) or "").strip())
-            except Exception:
+            except Exception as exc:
+                logger.warning("doctor: FTS disk-body probe unavailable (%s)", type(exc).__name__)
                 has_disk_body = False
         if has_db_body or has_disk_body:
             rebuildable += 1

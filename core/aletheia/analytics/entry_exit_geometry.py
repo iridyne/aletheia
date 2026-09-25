@@ -9,9 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import math
 import sqlite3
 from typing import Any
+
+logger = logging.getLogger("aletheia.analytics.entry_exit_geometry")
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.analytics.trade_path import build_trade_path_rows
@@ -325,7 +328,8 @@ def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
             "ORDER BY rowid ASC",
             (proposal_id,),
         ).fetchall()
-    except Exception:
+    except Exception as exc:
+        logger.warning("entry_exit_geometry: proposal chain read unavailable (%s)", type(exc).__name__)
         return False
     chain = [dict(row) for row in rows]
     if not chain or chain[-1].get("id") != proposal_id:
@@ -348,7 +352,8 @@ def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
         try:
             model = TradeProposal.model_validate(stored)
             expected_hash = repo.validate_trade_proposal_commit_hash(model)
-        except Exception:
+        except Exception as exc:
+            logger.warning("entry_exit_geometry: proposal chain validation unavailable (%s)", type(exc).__name__)
             return False
         if commit_hash != expected_hash:
             return False
@@ -358,7 +363,8 @@ def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
     try:
         supplied = TradeProposal.model_validate(proposal).model_dump()
         persisted = TradeProposal.model_validate(chain[-1]).model_dump()
-    except Exception:
+    except Exception as exc:
+        logger.warning("entry_exit_geometry: proposal normalization unavailable (%s)", type(exc).__name__)
         return False
     return supplied == persisted
 

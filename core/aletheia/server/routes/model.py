@@ -1,5 +1,7 @@
 """Core model metadata and routing API; credential ingress lives in Model."""
 
+import logging
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -27,6 +29,8 @@ from aletheia.model_provider.router import (
     ModelAdapterUnavailable,
     verify_model_selection,
 )
+
+logger = logging.getLogger("aletheia.server.routes.model")
 
 router = APIRouter(prefix="/api", tags=["model"])
 
@@ -313,7 +317,8 @@ async def ping_model():
                         detail="empty response",
                         verified_at=verification_at,
                     )
-            except Exception:
+            except Exception as exc:
+                logger.warning("model route: ping verification persist unavailable (%s)", type(exc).__name__)
                 verification_persisted = False
             return {
                 "ok": False,
@@ -346,7 +351,8 @@ async def ping_model():
                     reason_code="verified",
                     verified_at=verification_at,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.warning("model route: ping verification persist unavailable (%s)", type(exc).__name__)
             verification_persisted = False
         return {
             "ok": True,
@@ -391,7 +397,8 @@ async def ping_model():
                     detail=str(e)[:200],
                     verified_at=verification_at,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.warning("model route: ping verification persist unavailable (%s)", type(exc).__name__)
             verification_persisted = False
         return {
             "ok": False,

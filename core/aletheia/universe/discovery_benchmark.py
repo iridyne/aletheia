@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import gzip
 import hashlib
 import io
@@ -31,6 +32,7 @@ from aletheia.universe.baseline_integrity import (
 )
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION, estimate_outcome_economics
 from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
+logger = logging.getLogger("aletheia.universe.discovery_benchmark")
 
 BENCHMARK_CONTRACT_VERSION = "universe-discovery-benchmark/v1"
 ALLOCATOR_CONTRACT_VERSION = "production-universe-allocator-at-frozen-commit/v1"
@@ -503,7 +505,8 @@ def build_capture(
         from aletheia.agent_runtime.runtime_session import current_provenance
 
         provenance = current_provenance()
-    except Exception:
+    except Exception as exc:
+        logger.warning("discovery_benchmark: capture provenance unavailable (%s)", type(exc).__name__)
         provenance = {}
     outcome_rows: list[dict[str, Any]] = []
     for (identity, direction), labels in sorted(memberships.items()):

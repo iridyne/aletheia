@@ -606,7 +606,8 @@ def rollout_runtime_safe(cfg) -> bool:
         from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
 
         return not detect_reconcile_thrash().get("is_thrashing")
-    except Exception:
+    except Exception as exc:
+        logger.warning("persona_rollout: reconcile-thrash probe unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -1371,7 +1372,8 @@ def persona_rollout_status(cfg=None, *, create: bool = False) -> dict[str, Any]:
                 (state.get("rollout_id"),),
             ).fetchall()
         ]
-    except Exception:
+    except Exception as exc:
+        logger.warning("persona_rollout: rollout events unreadable (%s)", type(exc).__name__)
         events = []
     return {
         "desired_progressive_unlock": bool(getattr(cfg.trading, "persona_progressive_unlock_enabled", False)),

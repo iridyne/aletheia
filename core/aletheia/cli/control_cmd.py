@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import typer
+
+logger = logging.getLogger("aletheia.cli.control_cmd")
 
 control_app = typer.Typer(no_args_is_help=True, help="Machine governance control plane.")
 
@@ -62,7 +65,8 @@ def _deployed_commit() -> str:
 
         session = current_external_gateway_session()
         return str((session or {}).get("boot_commit") or "")
-    except Exception:
+    except Exception as exc:
+        logger.warning("control_cmd: boot commit unavailable (%s)", type(exc).__name__)
         return ""
 
 
@@ -71,7 +75,8 @@ def _cached_master_commit() -> str:
     try:
         from aletheia.update.git_ops import remote_commit
         return remote_commit("master") or ""
-    except Exception:
+    except Exception as exc:
+        logger.warning("control_cmd: master commit unavailable (%s)", type(exc).__name__)
         return ""
 
 
@@ -84,7 +89,8 @@ def _cfg_commit() -> str:
         except TypeError:
             cfg = load_config()
         return cfg.update.current_commit or ""
-    except Exception:
+    except Exception as exc:
+        logger.warning("control_cmd: config commit unavailable (%s)", type(exc).__name__)
         return ""
 
 
@@ -96,7 +102,8 @@ def _auto_deploy_commit() -> str:
         last = status().get("last_successful") or {}
         sha = last.get("sha") if isinstance(last, dict) else None
         return sha if isinstance(sha, str) else ""
-    except Exception:
+    except Exception as exc:
+        logger.warning("control_cmd: auto-deploy commit unavailable (%s)", type(exc).__name__)
         return ""
 
 

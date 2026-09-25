@@ -1,6 +1,10 @@
 """Seed starter playbooks on first run (guide §22.3 / §8)."""
 
+import logging
+
 from pathlib import Path
+
+logger = logging.getLogger("aletheia.trading.playbooks")
 
 # Guide §22.3 — 5 starter playbooks (not fixed strategies; the agent turns these
 # into paper candidates).
@@ -69,7 +73,8 @@ def load_playbooks() -> dict[str, str]:
             except OSError:
                 continue
         return out
-    except Exception:
+    except Exception as exc:
+        logger.warning("playbooks: playbook directory read unavailable (%s)", type(exc).__name__)
         return {}
 
 

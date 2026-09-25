@@ -6,6 +6,10 @@ ConfigInconsistency findings. Never raises; each check is isolated.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.diagnostics.config_consistency")
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -176,7 +180,8 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
         from aletheia.trust.live_unlock import current_authorization_ref
 
         authorized = current_authorization_ref(cfg) is not None
-    except Exception:
+    except Exception as exc:
+        logger.warning("config_consistency: live authorization probe unavailable (%s)", type(exc).__name__)
         authorized = False
     if authorized:
         return None

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.data.collector_health")
+
 from datetime import datetime, timezone
 import re
 import json
@@ -479,7 +483,8 @@ def get_collector_health_report(
             from aletheia.agent_runtime.connectivity import get_status
 
             connectivity_status = get_status().get("external_connectivity") or {}
-        except Exception:
+        except Exception as exc:
+            logger.warning("collector_health: connectivity status unavailable (%s)", type(exc).__name__)
             connectivity_status = {}
     infrastructure_incident = _infrastructure_incident(
         domains,

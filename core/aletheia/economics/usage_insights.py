@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.usage_insights")
+
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 import json
@@ -623,7 +627,8 @@ def _cooldowns() -> list[dict[str, Any]]:
             for row in get_model_health_snapshot()
             if row.get("cooling_down")
         ]
-    except Exception:
+    except Exception as exc:
+        logger.warning("usage_insights: model cooldown probe unavailable (%s)", type(exc).__name__)
         return []
 
 
