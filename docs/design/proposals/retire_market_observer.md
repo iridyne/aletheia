@@ -1,6 +1,6 @@
 ---
 id: proposal-retire-market-observer
-status: draft
+status: accepted
 github_issue: 2933
 related_contracts:
   - docs/design/contracts/decision_lifecycle_contract.md
@@ -140,6 +140,9 @@ removal is safe.
 
 ## Resolution
 
-Pending owner acceptance. On acceptance, the normative statement moves to
+Accepted 2026-09-25 by the owner: the switch to Candidate → Planning Cycle → Entry
+Plan was already agreed, so the superseded pipeline is removed outright rather than left
+disabled. Normative statement moves to `docs/product/ACTIVE_RUNTIME_SCOPE.md`; execution in
+#2933 / #2934. On acceptance, the normative statement moves to
 `docs/product/ACTIVE_RUNTIME_SCOPE.md` (the retired mechanism leaves the active topology) and the
 Proposal remains as decision history. Execution stays in #2933 / #2934.
