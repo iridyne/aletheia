@@ -52,7 +52,11 @@ def test_v86_upgrade_preserves_history_and_enforces_new_leg_identity(tmp_path, m
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(migrations, "_is_pytest", lambda: False)
     registry = migrations._MIGRATIONS
-    monkeypatch.setattr(migrations, "_MIGRATIONS", registry[:-1])
+    v87_index = next(
+        index for index, step in enumerate(registry)
+        if step.migration_id == "20260911_0086_entry_legs_v87"
+    )
+    monkeypatch.setattr(migrations, "_MIGRATIONS", registry[:v87_index])
     storage.reset_db()
     try:
         migrations.apply_migrations()

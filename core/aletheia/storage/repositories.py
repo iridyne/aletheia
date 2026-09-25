@@ -9872,7 +9872,8 @@ _UNIVERSE_DISCOVERY_OUTCOME_COLUMNS = (
     "entry_price_usd", "entry_spread_bps", "funding_rate_at_entry", "entry_ts",
     "due_at", "settled_at", "exit_price_usd", "gross_return_pct",
     "directional_return_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
-    "estimated_funding_pct", "net_return_pct", "min_tradable_edge_pct", "mfe_pct",
+    "estimated_funding_pct", "net_return_pct", "min_tradable_edge_pct",
+    "min_cost_covering_edge_pct", "mfe_pct",
     "mae_pct", "settlement_price_source", "settlement_lag_sec", "cost_model_version",
     "analysis_notional_quote", "producer_runtime_session_id", "producer_commit",
     "producer_behavior_fingerprint", "settlement_runtime_session_id",
@@ -10540,10 +10541,11 @@ def settle_linked_shadow_outcomes(
     cur = execute_write(
         "UPDATE shadow_trades SET (exit_price,pnl_pct,gross_return_pct,net_pnl_pct,"
         "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
-        "min_tradable_edge_pct,settlement_price_source,settlement_lag_sec,"
+        "min_tradable_edge_pct,min_cost_covering_edge_pct,settlement_price_source,settlement_lag_sec,"
         "cost_model_version,resolved_at) = (SELECT exit_price_usd,"
         "directional_return_pct,gross_return_pct,net_return_pct,estimated_fee_pct,"
         "estimated_spread_slippage_pct,estimated_funding_pct,min_tradable_edge_pct,"
+        "min_cost_covering_edge_pct,"
         "settlement_price_source,settlement_lag_sec,cost_model_version,settled_at "
         "FROM filter_candidate_outcomes AS canonical_outcome "
         f"WHERE {canonical_where}) "
@@ -10696,7 +10698,7 @@ def calibration_stats(*, cost_model_version: str) -> list[dict]:
         "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
+        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count, "
         "MIN(net_return_pct) as min_return, "
         "MAX(net_return_pct) as max_return "
@@ -10860,7 +10862,7 @@ def filter_pressure_stats(
         "AVG(net_return_pct) AS avg_net, "
         "MIN(net_return_pct) AS min_net, "
         "MAX(net_return_pct) AS max_net, "
-        "AVG(CASE WHEN net_return_pct > min_tradable_edge_pct "
+        "AVG(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
         "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
@@ -10954,7 +10956,7 @@ def family_direction_edge(
         "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
+        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
@@ -12798,6 +12800,7 @@ def resolve_shadow_trade_if_pending(
             " gross_return_pct = ?, net_pnl_pct = ?, "
             " estimated_fee_pct = ?, estimated_spread_slippage_pct = ?, "
             " estimated_funding_pct = ?, min_tradable_edge_pct = ?, "
+            " min_cost_covering_edge_pct = ?, "
             " settlement_price_source = ?, settlement_lag_sec = ?, "
             " cost_model_version = ?, resolved_at = ? "
             "WHERE id = ? AND outcome_candidate_key IS NULL "
@@ -12811,6 +12814,7 @@ def resolve_shadow_trade_if_pending(
                 economics.get("estimated_spread_slippage_pct"),
                 economics.get("estimated_funding_pct"),
                 economics.get("min_tradable_edge_pct"),
+                economics.get("min_cost_covering_edge_pct"),
                 settlement_price_source,
                 settlement_lag_sec,
                 economics.get("cost_model_version"),

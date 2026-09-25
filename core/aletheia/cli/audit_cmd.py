@@ -78,7 +78,7 @@ def data(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     row = db.execute(
         f"""SELECT COUNT(*),
-                  SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
+                  SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                            THEN 1 ELSE 0 END),
                   AVG(net_return_pct)
            FROM universe_forward_outcomes

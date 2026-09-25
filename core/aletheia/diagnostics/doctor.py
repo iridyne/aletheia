@@ -3449,7 +3449,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
         # 24h horizon — most meaningful for strategy effectiveness
         row = db.execute(
             f"""SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
+                      SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                                THEN 1 ELSE 0 END),
                       AVG(net_return_pct)
                FROM universe_forward_outcomes

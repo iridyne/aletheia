@@ -827,7 +827,7 @@ def _setup_du_db(tmp_path, monkeypatch):
 
 def _seed_forward_outcome(
     conn, family, direction, forward_return, horizon="24h", edge=0.05,
-    cost_model_version="v1",
+    cost_model_version="v1", cost_covering=0.25,
 ):
     import uuid
     from datetime import datetime, timezone
@@ -846,14 +846,14 @@ def _seed_forward_outcome(
         " forward_return_pct, gross_return_pct, directional_return_pct, "
         " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         " net_return_pct, "
-        " min_tradable_edge_pct, market_type, cost_model_version, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " min_tradable_edge_pct, min_cost_covering_edge_pct, market_type, cost_model_version, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "bitget", "X/USDT",
          family, direction, horizon, 100.0, now, now, now,
          "horizon_ohlcv", 0.0,
          100.0 * (1.0 + forward_return / 100.0),
          forward_return, forward_return, directional, 0.1, 0.1, 0.0,
-         net, edge, "spot", cost_model_version, "settled"),
+         net, edge, cost_covering, "spot", cost_model_version, "settled"),
     )
     conn.commit()
 

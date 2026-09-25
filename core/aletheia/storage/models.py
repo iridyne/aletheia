@@ -325,6 +325,7 @@ class ShadowTrade(BaseModel):
     estimated_spread_slippage_pct: float | None = None
     estimated_funding_pct: float | None = None
     min_tradable_edge_pct: float | None = None
+    min_cost_covering_edge_pct: float | None = None
     settlement_price_source: str | None = None
     settlement_lag_sec: float | None = None
     cost_model_version: str | None = None
@@ -418,6 +419,7 @@ class FilterCandidateOutcome(BaseModel):
     estimated_funding_pct: float | None = None
     net_return_pct: float | None = None
     min_tradable_edge_pct: float | None = None
+    min_cost_covering_edge_pct: float | None = None
     mfe_pct: float | None = None
     mae_pct: float | None = None
     settlement_price_source: str | None = None
@@ -1898,6 +1900,7 @@ class UniverseForwardOutcome(BaseModel):
     estimated_funding_pct: float | None = None
     net_return_pct: float | None = None
     min_tradable_edge_pct: float | None = None
+    min_cost_covering_edge_pct: float | None = None
     mfe_pct: float | None = None
     mae_pct: float | None = None
     settlement_price_source: str | None = None

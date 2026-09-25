@@ -174,6 +174,7 @@ class _CohortSummary:
     source_outcome_fingerprint: str | None
     identity_invalid: bool
     failure_reason: str | None
+    minimum_cost_covering_edge: float | None
 
 
 @dataclass(frozen=True)
@@ -296,6 +297,8 @@ def build_economic_utility_cohort_index(
             )
         edges = {_finite(row.get("min_tradable_edge_pct")) for row in complete}
         edges.discard(None)
+        cost_edges = {_finite(row.get("min_cost_covering_edge_pct")) for row in complete}
+        cost_edges.discard(None)
         source_material = sorted(
             (
                 {
@@ -339,6 +342,7 @@ def build_economic_utility_cohort_index(
             canonical_fingerprint(source_material) if complete else None,
             key in invalid,
             min(failures.get(key, ()), default=None),
+            next(iter(cost_edges)) if len(cost_edges) == 1 else None,
         )
     return EconomicUtilityCohortIndex(source_cutoff_at, expected_costs, summaries)
 
@@ -376,6 +380,7 @@ class EconomicUtilityEstimateV2:
     child_independent_n: int = 0
     outcome_coverage: float = 0.0
     unavailable_reason: str | None = None
+    min_cost_covering_edge_pct: float | None = None
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -450,6 +455,7 @@ def estimate_economic_utility(
         standard_error = stdev(child_values) / math.sqrt(len(child_values))
         utility = expected - standard_error if tail.status == "clear" else None
     minimum_edge = summary.minimum_edge if summary else None
+    minimum_cost_covering_edge = summary.minimum_cost_covering_edge if summary else None
     if status == "available" and minimum_edge is None:
         status, expected, standard_error, utility = "unavailable", None, None, None
     reason = None
@@ -519,6 +525,7 @@ def estimate_economic_utility(
         len(child_values),
         coverage,
         reason,
+        minimum_cost_covering_edge,
     )
 
 

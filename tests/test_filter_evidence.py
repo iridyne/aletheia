@@ -824,7 +824,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, min_cost_covering_edge_pct=0.25, "
             "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
             "cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",

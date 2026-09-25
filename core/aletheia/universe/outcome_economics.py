@@ -99,6 +99,11 @@ def estimate_outcome_economics(
         and funding_pct is not None
     ):
         net = directional - fee_pct - spread_slippage_pct - funding_pct
+    cost_covering_pct = (
+        (fee_pct + spread_slippage_pct + funding_pct + min_edge_pct)
+        if net is not None
+        else None
+    )
 
     mfe, mae = _path_excursions(
         entry=entry,
@@ -114,6 +119,7 @@ def estimate_outcome_economics(
         "estimated_funding_pct": funding_pct,
         "net_return_pct": net,
         "min_tradable_edge_pct": min_edge_pct,
+        "min_cost_covering_edge_pct": cost_covering_pct,
         "mfe_pct": mfe,
         "mae_pct": mae,
         "cost_model_version": COST_MODEL_VERSION,

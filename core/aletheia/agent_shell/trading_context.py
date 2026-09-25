@@ -49,7 +49,7 @@ def _get_data_health_summary() -> dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
             f"""SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
+                      SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                                THEN 1 ELSE 0 END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
