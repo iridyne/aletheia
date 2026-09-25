@@ -323,6 +323,169 @@ def timestamp_unit_suffix_failures() -> list[str]:
     return failures
 
 
+# Vacuous-test baseline: pre-existing test functions whose body contains no
+# assertion construct at all, so they can never fail. Visible, dated
+# (2026-09-26), never a silent skip; keep green on master but still catch NEW
+# vacuous tests. (relative_path, func_name) tuples, not line numbers, so the
+# baseline does not churn on edits.
+BASELINE_VACUOUS_TESTS = {
+    # (relative_path, func_name)
+    ("tests/specs/spec_broker_funding_fairness.py", "test_broker_funding_recovery_is_fail_closed_and_fair"),
+    ("tests/specs/spec_candidate_selection_utility.py", "test_current_candidate_bootstrap_without_slow_cache"),
+    ("tests/specs/spec_candidate_selection_utility.py", "test_perp_funding_history_cutover"),
+    ("tests/specs/spec_data_model.py", "test_run_migrations_idempotent"),
+    ("tests/specs/spec_data_utilization.py", "test_fred_research_cutoff_and_isolation"),
+    ("tests/specs/spec_data_utilization.py", "test_positioning_evidence_cutoff_and_replay"),
+    ("tests/specs/spec_data_utilization.py", "test_options_volatility_observation_export"),
+    ("tests/specs/spec_data_utilization.py", "test_current_derivatives_have_one_economic_owner"),
+    ("tests/specs/spec_data_utilization.py", "test_derivatives_comparison_is_observation_only"),
+    ("tests/specs/spec_entry_plan_contract.py", "test_market_quality_retry_before_input_binding"),
+    ("tests/specs/spec_entry_plan_contract.py", "test_static_entry_feasibility_and_birth_owner"),
+    ("tests/specs/spec_macro_signals.py", "test_macro_source_time_consumer_contract"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "test_legacy_experiment_reference_inventory_cannot_grow"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "test_no_new_legacy_experiment_writer"),
+    ("tests/specs/spec_pipeline_bitget_preset_protection.py", "test_bitget_spot_and_futures_close_never_send_entry_presets"),
+    ("tests/specs/spec_update_observation_settlement.py", "test_caught_up_activation_cut_is_a_true_no_op"),
+    ("tests/specs/spec_update_observation_settlement.py", "test_activation_cut_contains_only_delivery_and_checkpoint_work"),
+    ("tests/specs/spec_update_observation_settlement.py", "test_activation_cut_lock_covers_backup_and_source_switch"),
+    ("tests/specs/spec_update_observation_settlement.py", "test_bounded_applied_delivery_recovery"),
+    ("tests/test_architecture_fitness.py", "test_risk_decisions_have_one_application_writer"),
+    ("tests/test_architecture_fitness.py", "test_risk_writer_guard_accepts_canonical_storage_and_risk_import"),
+    ("tests/test_architecture_fitness.py", "test_fill_writes_stay_with_exchange_materialization"),
+    ("tests/test_architecture_fitness.py", "test_fill_writer_guard_preserves_exact_provenance_update"),
+    ("tests/test_architecture_fitness.py", "test_candidate_writer_guard_accepts_publication_and_distinct_maintenance"),
+    ("tests/test_config_schema_bounds.py", "test_execution_cost_config_accepts_documented_boundaries"),
+    ("tests/test_gateway_firewall_cli.py", "test_noninteractive_gateway_start_never_attempts_hidden_uac"),
+    ("tests/test_gateway_firewall_cli.py", "test_loopback_binding_never_requests_firewall_change"),
+    ("tests/test_main_install_hint.py", "test_hint_eof_on_stdin_does_not_crash"),
+    ("tests/test_notifications.py", "test_webhook_respects_notify_alerts_false"),
+    ("tests/test_notifications.py", "test_webhook_respects_notify_trade_fills_false"),
+    ("tests/test_notifications.py", "test_webhook_respects_notify_daily_summary_false"),
+    ("tests/test_observation_execution_owner.py", "test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread"),
+    ("tests/test_observation_execution_owner.py", "test_worker_lock_releases_and_can_be_reacquired"),
+    ("tests/test_okx_broker.py", "test_close_is_noop_when_never_used"),
+    ("tests/test_order_writer_boundary.py", "test_order_writer_ownership"),
+    ("tests/test_order_writer_boundary.py", "test_order_guard_accepts_canonical_owner_and_delegation"),
+    ("tests/test_planning_writer_boundary.py", "test_planning_guard_accepts_declared_writers"),
+    ("tests/test_planning_writer_boundary.py", "test_planning_writer_ownership"),
+    ("tests/test_proposal_writer_boundary.py", "test_proposal_writer_owners"),
+    ("tests/test_regime_boundary.py", "test_universe_keeps_publishing_without_optional_regime"),
+    ("tests/test_self_evolution_tier1.py", "test_create_failure_does_not_raise"),
+    ("tests/test_spec_conformance.py", "test_print_conformance_matrix"),
+    ("tests/test_tokenomics_phase345.py", "test_budget_enforcement_is_dormant_by_default"),
+    ("tests/test_tokenomics_phase345.py", "test_budget_warn_only_never_denies"),
+    ("tests/test_tokenomics_phase345.py", "test_safety_callers_remain_warn_only_in_every_mode"),
+    ("tests/test_venue_listing_cache.py", "test_invalidate_nonexistent_is_noop"),
+    ("tests/test_windows_dogfood.py", "test_assert_trust_root_matches_passes_when_keys_equal"),
+    ("tests/test_windows_dogfood.py", "test_require_windows_passes_on_windows"),
+    ("tests/test_ws_realtime.py", "test_fingerprint_queries_match_the_migrated_schema"),
+}
+
+
+def _call_name(call: ast.Call) -> str | None:
+    """Return the dotted tail name of a call target (``assert_frame_equal``,
+    ``self.assertEqual`` -> ``assertEqual``), or ``None`` for dynamic targets."""
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_placeholder(body: list[ast.stmt]) -> bool:
+    """True if the body is just a docstring and/or ``pass``/``...``."""
+    stmts = [
+        stmt
+        for stmt in body
+        if not (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+    ]
+    return all(
+        isinstance(stmt, ast.Pass)
+        or (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is Ellipsis
+        )
+        for stmt in stmts
+    )
+
+
+def _has_assertion(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True if the function body contains any verification construct."""
+    for dec in func.decorator_list:
+        name = dec.id if isinstance(dec, ast.Name) else (
+            dec.attr if isinstance(dec, ast.Attribute) else None
+        )
+        if name and ("skip" in name or "xfail" in name):
+            return True
+    if _is_placeholder(func.body):
+        return True
+    for node in ast.walk(func):
+        if isinstance(node, (ast.Assert, ast.Raise)):
+            return True
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name and (name.startswith("assert") or name in ("fail", "skip", "xfail")):
+                return True
+        if isinstance(node, ast.With):
+            ctx = node.items[0].context_expr
+            if isinstance(ctx, ast.Call) and _call_name(ctx) in (
+                "raises", "warns", "deprecated_call",
+            ):
+                return True
+    return False
+
+
+def vacuous_test_failures() -> list[str]:
+    """Test functions must actually assert something.
+
+    Scopes to Python sources under ``tests/``. Flags any function whose name
+    starts with ``test_`` (at module level or inside classes, sync or async)
+    whose body contains NO verification construct at all: no ``assert``, no
+    call named ``assert*`` / ``*assert_*`` (covers ``self.assertEqual``,
+    ``assert_frame_equal``, ``mock.assert_called_once()``), no
+    ``with pytest.raises/warns/deprecated_call``, no ``pytest.fail/skip/xfail``
+    or ``fail``, and no bare ``raise``. Such a test can never fail, so it offers
+    false confidence while costing runtime.
+
+    Skipped (not flagged): functions decorated with a name containing ``skip``
+    or ``xfail`` (already excluded from meaningful execution), and empty
+    placeholders whose body is only a docstring and/or ``pass``/``...`` (flagged
+    anyway they would be pure noise).
+
+    Non-goals (deliberately not detected here, need semantic analysis):
+      - tautological assertions like ``assert True`` / ``assert x == x``;
+      - assertions on the wrong object;
+      - assertions made unreachable by an early ``return``.
+    This check answers only "is there any assertion at all". Anything
+    unrecognized is ignored, never flagged. Files that fail to parse are
+    reported (not silently skipped).
+    """
+    failures: list[str] = []
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        relative = path.relative_to(ROOT)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            failures.append(f"{relative}:{exc.lineno}: vacuous test check: syntax error")
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            if _has_assertion(node):
+                continue
+            if (str(relative), node.name) in BASELINE_VACUOUS_TESTS:
+                continue
+            failures.append(f"{relative}:{node.lineno}: vacuous test (no assertion): {node.name}")
+    return failures
+
+
 def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
@@ -447,6 +610,7 @@ def main() -> int:
     failures.extend(broken_relative_links(current_authority_markdown_files()))
     failures.extend(contract_code_path_failures())
     failures.extend(timestamp_unit_suffix_failures())
+    failures.extend(vacuous_test_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
