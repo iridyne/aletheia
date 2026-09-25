@@ -377,12 +377,15 @@ class MarketDataProvider(Protocol):
     volume conversion. Core retains product admission, configured exclusions
     and registry lifecycle ownership.
 
-    The optional async ``get_public_market_capabilities(*, sandbox=False)``
-    reads active USDT symbols from the exact primary venue/environment, returning
-    ``{"spot": frozenset[str], "swap": frozenset[str]}``. Empty sets are known
-    absence, not a failed read. Errors propagate; no fallback, credentials,
-    persistence or venue-health writes are permitted. The request-local sandbox
-    client is closed before returning, without changing ordinary provider clients.
+    The optional async ``get_public_market_capabilities(*, sandbox=False,
+    extra_options=None)`` reads active USDT symbols from the exact primary
+    venue/environment, returning ``{"spot": frozenset[str], "usdt_futures":
+    frozenset[str]}``. ``extra_options`` merges into the CCXT client options so
+    a profile-specific listing (e.g. Bitget Classic vs UTA) is read exactly.
+    Empty sets are known absence, not a failed read. Errors propagate; no
+    fallback, credentials, persistence or venue-health writes are permitted.
+    The request-local sandbox client is closed before returning, without
+    changing ordinary provider clients.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...

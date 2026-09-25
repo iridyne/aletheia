@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
@@ -97,6 +97,16 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     cfg.universe.blacklist = []
 
     monkeypatch.setattr("extensions.data.ccxt_provider.CCXTProvider._ensure_primary", lambda self: FakeExchange())
+    # binance_testnet has a sandbox-restricted listing (#3465), so the registry
+    # sync fetches the demo symbol set from the live CCXT client. This fixture
+    # fakes the venue's markets entirely, so stand in the demo listing with the
+    # same symbols — otherwise real-network filtering drops fake markets.
+    monkeypatch.setattr(
+        "aletheia.universe.registry._load_demo_whitelist",
+        AsyncMock(return_value=frozenset(
+            f"{s.split(':')[0]}:usdt_futures" for s in markets
+        )),
+    )
     monkeypatch.setattr(
         "aletheia.universe.registry.repo.sync_universe_assets", fake_sync
     )

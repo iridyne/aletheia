@@ -534,32 +534,41 @@ def test_symbol_availability_check_structure():
     ),
 )
 def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
+    import time
+
     import aletheia.execution.gateway as gw
     import aletheia.execution.venue_capabilities as capabilities
 
-    # New structure: {"swap": frozenset, "spot": frozenset}
-    # WLD/USDT is spot-only on OKX demo — absent from swap, present in spot.
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
-        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
-        "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
+    # Structure: {"usdt_futures": frozenset, "spot": frozenset}
+    # WLD/USDT is spot-only on OKX demo — absent from usdt_futures, present in spot.
+    monkeypatch.setattr(capabilities, "_demo_capabilities_cache", {
+        "okx_demo": (
+            {
+                "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"}),
+                "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
+            },
+            time.time(),
+        )
     })
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols_loaded_at", float("inf"))
 
-    # WLD is in spot but NOT in swap → perp order must be rejected
+    # WLD is in spot but NOT in usdt_futures → perp order must be rejected
     reason = gw._check_symbol_availability("WLDUSDT", "okx_demo", "usdt_futures")
-    assert reason is not None, "Absent-from-swap symbol must produce a rejection reason"
+    assert reason is not None, "Absent-from-usdt_futures symbol must produce a rejection reason"
     assert "WLD" in reason or "not available" in reason.lower()
 
     # WLD spot order must pass
     assert gw._check_symbol_availability("WLDUSDT", "okx_demo", "spot") is None
 
-    # BTC is in swap → perp order passes
+    # BTC is in usdt_futures → perp order passes
     assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is None
 
-    # Loaded cache contains only "swap" key — spot requests must be rejected (issue #1222)
-    # _get_demo_symbols now returns frozenset() (not None) for a missing key in a loaded dict.
-    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
-        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+    # Loaded cache contains only "usdt_futures" key — spot requests must be
+    # rejected (issue #1222). A missing key in a loaded dict is frozenset(), not None.
+    monkeypatch.setattr(capabilities, "_demo_capabilities_cache", {
+        "okx_demo": (
+            {"usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"})},
+            time.time(),
+        )
     })
     reason_no_spot = gw._check_symbol_availability("BTCUSDT", "okx_demo", "spot")
     assert reason_no_spot is not None, (
@@ -570,9 +579,11 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
 @spec_claim(
     SpecClaim(
         "EX-B12", "execution_contract", "§3.2 symbol filter", "L2b",
-        "For registry-based modes (bitget, binance): absent symbol → rejection reason; "
+        "For registry-based (non-sandbox, live) modes: absent symbol → rejection reason; "
         "spot-only symbol rejects a perp order (market-type-aware); "
-        "empty/unsynced registry → None (fail-open, never blocks legitimate orders)",
+        "empty/unsynced registry → None (fail-open, never blocks legitimate orders). "
+        "Sandbox modes (okx_demo, bitget_demo, binance_testnet) use the demo capability "
+        "cache instead — see EX-B11.",
     ),
 )
 def test_symbol_check_registry_modes(monkeypatch):
@@ -589,7 +600,7 @@ def test_symbol_check_registry_modes(monkeypatch):
             {"symbol": "ETH/USDT", "market_type": "usdt_futures"},
         ],
     )
-    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
+    reason = gw._check_symbol_availability("WLDUSDT", "bitget_live_limited", "usdt_futures")
     assert reason is not None, "Registry loaded but symbol absent — must reject"
 
     # ── case B: WLD available as spot, but NOT for a perp order ──
@@ -601,14 +612,14 @@ def test_symbol_check_registry_modes(monkeypatch):
             {"symbol": "WLD/USDT", "market_type": "spot"},
         ],
     )
-    reason_spot_only = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
+    reason_spot_only = gw._check_symbol_availability("WLDUSDT", "bitget_live_limited", "usdt_futures")
     assert reason_spot_only is not None, "Spot-only symbol must reject a perp order"
-    assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot") is None
+    assert gw._check_symbol_availability("WLDUSDT", "bitget_live_limited", "spot") is None
 
     # ── case C: registry empty (not yet synced) → fail-open ──
     capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
-    reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
+    reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_live_limited")
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
 
     # ── case D: futures-only registry rejects spot request ──
@@ -622,14 +633,14 @@ def test_symbol_check_registry_modes(monkeypatch):
             {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
         ],
     )
-    reason_no_spot_key = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot")
+    reason_no_spot_key = gw._check_symbol_availability("WLDUSDT", "bitget_live_limited", "spot")
     assert reason_no_spot_key is not None, (
         "Loaded registry with no spot partition must reject a spot order (issue #1222)"
     )
 
     # ── case E: symbol present in the exact requested partition passes ──
     capabilities._registry_symbol_cache.clear()
-    assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures") is None, (
+    assert gw._check_symbol_availability("WLDUSDT", "bitget_live_limited", "usdt_futures") is None, (
         "Symbol present in the loaded futures partition must pass"
     )
 
@@ -665,9 +676,11 @@ def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
     capabilities._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", _list_assets)
 
+    # bitget_live_limited is registry-based (non-sandbox); bitget_demo now reads
+    # the demo capability cache instead — see EX-B11.
     assert gw._check_symbol_availability(
         "TARGET/USDT",
-        "bitget_demo",
+        "bitget_live_limited",
         "usdt_futures",
     ) is None
     assert observed_limits == [None]
