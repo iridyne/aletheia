@@ -190,6 +190,68 @@ def governance_failures() -> list[str]:
     return failures
 
 
+TOP_LEVEL_DIRS = {
+    path.name
+    for path in ROOT.iterdir()
+    if path.is_dir() and not path.name.startswith(".")
+}
+# Drift baseline: contract refs to root-relative `.py` paths that no longer
+# exist on disk. Kept as a visible, dated set (never a silent skip) so the
+# check is green on master but still catches NEW drift. 2026-09-26.
+BASELINE_MISSING_CONTRACT_PATHS = {
+    "data/derivatives_facts.py",
+    "extensions/research/market_observer.py",
+    "tests/e2e/test_learning_paper_lifecycle.py",
+    "tests/specs/spec_learning_authority.py",
+    "tests/specs/spec_learning_lifecycle.py",
+    "tests/specs/spec_trade_decision_rationale.py",
+    "tests/test_uta.py",
+}
+
+
+def contract_code_path_failures() -> list[str]:
+    """Contract docs must reference real repo file paths in backticked `.py` spans.
+
+    Scopes to `docs/design/contracts/*.md`. Finds backticked inline spans that
+    look like a repo-relative `.py` path: they must contain a `/`, end in `.py`,
+    contain no spaces/backticks, and their first segment must be a real top-level
+    repo directory (e.g. ``core/…``, ``tests/…``, ``scripts/…``) so the reference
+    is genuinely root-relative. Each such path must exist on disk relative to the
+    repository root.
+
+    Non-goals (deliberately not validated here, need a symbol classifier):
+      - dotted symbols, ``foo()`` calls, constants, ``Class.method()`` refs;
+      - ``.md`` targets (covered by ``broken_relative_links`` link syntax);
+      - package-relative shorthand like ``learning/registry.py`` (a top-level
+        segment missing) and globs/placeholders like ``agents/*.py`` -- these are
+        prose abbreviations or patterns, not root-relative paths, and are ignored
+        rather than reported;
+      - fenced code blocks are skipped: they are illustrative samples, not live
+        path references, and would churn on intentionally abbreviated paths.
+    Anything unrecognized is ignored, never failed.
+    """
+    failures: list[str] = []
+    pattern = re.compile(r"`([^`\s]+?/[^`\s]*\.py)`")
+    for relative in sorted(Path("docs/design/contracts").glob("*.md")):
+        if relative.name == "README.md":
+            continue
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for path in pattern.findall(line):
+                if (
+                    path in BASELINE_MISSING_CONTRACT_PATHS
+                    or path.split("/", 1)[0] not in TOP_LEVEL_DIRS
+                    or "*" in path
+                    or "{" in path
+                ):
+                    continue
+                if not (ROOT / path).exists():
+                    failures.append(
+                        f"{relative}:{lineno}: missing contract code path: {path}"
+                    )
+    return failures
+
+
 def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
@@ -312,6 +374,7 @@ def main() -> int:
     failures.extend(governance_failures())
     failures.extend(proposal_metadata_failures())
     failures.extend(broken_relative_links(current_authority_markdown_files()))
+    failures.extend(contract_code_path_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
