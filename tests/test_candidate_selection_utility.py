@@ -490,6 +490,7 @@ def _outcomes(count: int = 60):
             "mae_pct": -0.5,
             "cost_model_version": "v1",
             "min_tradable_edge_pct": 0.05,
+            "min_cost_covering_edge_pct": 0.25,
             "estimated_fee_pct": 0.1,
             "estimated_spread_slippage_pct": 0.1,
             "estimated_funding_pct": 0.0,
@@ -1957,3 +1958,38 @@ def test_allowlist_is_visible_in_the_tradability_funnel_with_a_complete_denomina
     assert _TRADABILITY_FILTERS.index("tradability_allowlist") < _TRADABILITY_FILTERS.index(
         "tradability_blacklist"
     )
+
+
+def test_selection_floor_is_cost_covering_not_just_margin():
+    """A candidate whose economic_utility_pct clears the old 0.05% margin but not
+    full measured cost must be 'below_floor', not 'admitted' (issue #3461)."""
+    from dataclasses import replace
+
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+    from aletheia.universe.candidate_selection_utility import build_candidate_selection_utility
+    from aletheia.universe.economic_utility import estimate_economic_utility
+    from aletheia.universe.opportunity_evidence import build_opportunity_evidence
+
+    cutoff = "2026-09-25T00:00:00+00:00"
+    feature = _feature()
+    gate = evaluate_hard_gate(feature, UniverseConfig(), candidate_key="edge-floor", evaluated_at=cutoff)
+    evidence = build_opportunity_evidence(feature, candidate_key="edge-floor", source_cutoff_at=cutoff)
+
+    outcomes = [{**item, "net_return_pct": 0.10} for item in _outcomes()]
+    estimate = estimate_economic_utility(
+        candidate_key="edge-floor", mechanism_id="continuation", direction="long",
+        venue="okx", market_type="spot", strength_percentile=0.9, outcomes=outcomes,
+        source_cutoff_at=cutoff, cost_assumptions=outcomes[0]["cost_assumptions"],
+    )
+    # Real cost (0.25, from the fixture's fee+spread+funding+margin) exceeds the
+    # measured 0.10 net return, but the old 0.05 margin would have admitted it.
+    assert estimate.min_cost_covering_edge_pct == 0.25
+    assert estimate.economic_utility_pct is not None
+    assert estimate.economic_utility_pct > 0.05  # clears the old (wrong) floor
+    assert estimate.economic_utility_pct < estimate.min_cost_covering_edge_pct  # fails the real floor
+
+    decision = build_candidate_selection_utility(
+        hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(estimate,),
+    )
+    assert decision.admission_status == "below_floor"
+    assert decision.utility_floor_pct == 0.25

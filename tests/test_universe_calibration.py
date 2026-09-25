@@ -74,6 +74,7 @@ def _settled(
         estimated_funding_pct=0.0,
         net_return_pct=net,
         min_tradable_edge_pct=0.05,
+        min_cost_covering_edge_pct=0.25,
         settlement_price_source="horizon_ohlcv",
         settlement_lag_sec=0.0,
         cost_model_version=cost_model_version,
@@ -157,7 +158,10 @@ def test_incomplete_tradable_edge_is_excluded_from_calibration(tmp_path):
     malformed = _settled("CCC/USDT", "long", 5.0)
     blob = _settled("DDD/USDT", "long", 5.0)
     max_finite = _settled("EEE/USDT", "long", 5.0).model_copy(
-        update={"min_tradable_edge_pct": float.fromhex("0x1.fffffffffffffp+1023")},
+        update={
+            "min_tradable_edge_pct": float.fromhex("0x1.fffffffffffffp+1023"),
+            "min_cost_covering_edge_pct": float.fromhex("0x1.fffffffffffffp+1023"),
+        },
     )
     malformed_net = _settled("FFF/USDT", "long", 5.0)
     blob_net = _settled("GGG/USDT", "long", 5.0)

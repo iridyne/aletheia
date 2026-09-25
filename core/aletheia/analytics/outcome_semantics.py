@@ -70,6 +70,9 @@ def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
     if any(value is None for value in values.values()):
         return None
     economics = {field: float(value) for field, value in values.items()}
+    cost_floor = _to_float(row.get("min_cost_covering_edge_pct"))
+    if cost_floor is not None:
+        economics["min_cost_covering_edge_pct"] = cost_floor
     direction = str(row.get("direction") or "").lower()
     entry = _to_float(row.get("entry_price_usd"))
     exit_price = _to_float(row.get("exit_price_usd"))

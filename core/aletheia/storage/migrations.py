@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v87"
+SCHEMA_VERSION = "aletheia-sqlite-v88"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8292,7 +8292,6 @@ def _apply_entry_legs_v87(db: sqlite3.Connection) -> None:
         db.execute(f"PRAGMA foreign_keys={int(foreign_keys)}")
 
 
-
 def _apply_fred_source_batches_v86(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE fred_source_batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8316,6 +8315,16 @@ def _apply_options_volatility_v85(db: sqlite3.Connection) -> None:
 def _apply_candidate_funding_v84(db: sqlite3.Connection) -> None:
     db.execute("ALTER TABLE filter_candidate_outcomes ADD COLUMN funding_evidence_json TEXT "
                "CHECK(funding_evidence_json IS NULL OR json_valid(funding_evidence_json))")
+
+def _apply_cost_covering_edge_v88(db: sqlite3.Connection) -> None:
+    """Add the cost-covering admission floor field alongside the existing estimation-margin field."""
+    existing = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    for table in ("universe_forward_outcomes", "filter_candidate_outcomes", "shadow_trades"):
+        if table in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN min_cost_covering_edge_pct REAL")
 
 
 _MIGRATIONS = (
@@ -8834,6 +8843,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"entry_legs_v87:additive_identity:active_authority").hexdigest(),
         schema_version="aletheia-sqlite-v87",
         apply=_apply_entry_legs_v87,
+    ),
+    MigrationStep(
+        migration_id="20260925_0087_cost_covering_edge_v88",
+        checksum=hashlib.sha256(b"cost_covering_edge_v88:additive").hexdigest(),
+        schema_version="aletheia-sqlite-v88",
+        apply=_apply_cost_covering_edge_v88,
     ),
 )
 

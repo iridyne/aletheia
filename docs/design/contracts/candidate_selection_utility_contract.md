@@ -64,8 +64,17 @@ The current chain is:
    uncertainty penalty, explicit minimum support, and fail-closed tail status.
 4. `candidate-selection-utility/v2` chooses the highest available mechanism,
    never sums utilities, rejects unresolved Long/Short conflicts and applies
-   `max(0.05, min_tradable_edge_pct)` to measured estimates. Parent support remains
-   50 independent clusters, 10 dates, 5 symbols and 80% coverage; the child
+   `min_cost_covering_edge_pct` (the cost-covering floor carried on
+   `EconomicUtilityEstimateV2`, equal to full measured fee + spread/slippage +
+   funding plus the estimation-error margin) to measured estimates. When
+   `min_cost_covering_edge_pct` is unavailable, the estimate falls back to a
+   `0.05` floor rather than admitting unconditionally. The legacy
+   `max(0.05, min_tradable_edge_pct)` formula is retired for this consumer;
+   `min_tradable_edge_pct` itself is unchanged and keeps only its separate
+   counterfactual-classification consumer per `opportunity_outcome_contract.md`;
+   "cleared its edge" statistics now read `min_cost_covering_edge_pct` there too.
+   Parent support remains 50 independent clusters, 10 dates, 5 symbols and
+   80% coverage; the child
    requires 20 clusters. These thresholds are not lowered for Startup.
 5. Only `no_history`, `parent_sample_insufficient` or
    `child_sample_insufficient` can support Startup. It requires an eligible,

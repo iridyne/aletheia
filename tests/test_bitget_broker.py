@@ -217,7 +217,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
             gross_return_pct=5.0, directional_return_pct=5.0,
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
-            min_tradable_edge_pct=0.05, cost_model_version="v1",
+            min_tradable_edge_pct=0.05, min_cost_covering_edge_pct=0.32, cost_model_version="v1",
             settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
             market_type="spot", status="settled",
         ))

@@ -45,6 +45,13 @@
 - `estimated_funding_pct`：正数表示成本，负数表示收入。现货为 0；永续按入场资金费率、8 小时周期和持有时长线性估算。正 funding 下 long 支付、short 收取。
 - `net_return_pct`：`directional - fee - spread/slippage - funding`。
 - `min_tradable_edge_pct`：估算误差安全余量，取 `max(0.05%, 单边配置滑点)`。
+- `min_cost_covering_edge_pct`：成本覆盖准入底线，等于
+  `estimated_fee_pct + estimated_spread_slippage_pct + estimated_funding_pct
+  + min_tradable_edge_pct`。仅在 `net_return_pct` 非 NULL 时有效；`net_return_pct`
+  为 NULL 的同样条件下（永续缺入场资金费率、方向未知、价格时点不可信）此字段
+  同步为 NULL。`min_tradable_edge_pct` 回答“是否在估算误差范围内”，
+  `min_cost_covering_edge_pct` 回答“净收益是否值得交易”；两者语义不同，
+  各有独立消费者，互不替代。
 
 永续缺少入场资金费率、方向未知、价格时点不可信时，`net_return_pct` 必须为 NULL。禁止把未知成本按 0 处理。
 配置成本还必须满足与 Paper 执行相同的 canonical 域：单边 fee 为有限的 `0..5`

@@ -122,7 +122,7 @@ def _training_outcome_fingerprint(
         "outcome_candidate_key", "scanner_run_id", "mechanism_id", "direction",
         "venue", "market_type", "strength_quintile", "horizon", "status", "entry_ts",
         "settled_at", "symbol", "net_return_pct", "mae_pct", "cost_model_version",
-        "min_tradable_edge_pct", "estimated_fee_pct",
+        "min_tradable_edge_pct", "min_cost_covering_edge_pct", "estimated_fee_pct",
         "estimated_spread_slippage_pct", "estimated_funding_pct",
         "mechanism_behavior_version", "outcome_contract_version", "cost_assumptions",
     )
@@ -135,7 +135,7 @@ def _training_outcome_fingerprint(
         material_row = {field: row.get(field) for field in fields}
         if settled is not None and settled > cutoff:
             for field in ("settled_at", "net_return_pct", "mae_pct", "cost_model_version",
-                          "min_tradable_edge_pct", "estimated_fee_pct",
+                          "min_tradable_edge_pct", "min_cost_covering_edge_pct", "estimated_fee_pct",
                           "estimated_spread_slippage_pct", "estimated_funding_pct"):
                 material_row[field] = None
             material_row["status"] = "pending"
@@ -539,7 +539,7 @@ def load_candidate_selection_outcomes(
                         "settled_at", "exit_price_usd", "gross_return_pct",
                         "directional_return_pct", "estimated_fee_pct",
                         "estimated_spread_slippage_pct", "estimated_funding_pct",
-                        "net_return_pct", "min_tradable_edge_pct", "mfe_pct",
+                        "net_return_pct", "min_tradable_edge_pct", "min_cost_covering_edge_pct", "mfe_pct",
                         "mae_pct", "settlement_price_source", "settlement_lag_sec",
                         "cost_model_version", "settlement_runtime_session_id",
                         "settlement_producer_commit", "settlement_behavior_fingerprint",

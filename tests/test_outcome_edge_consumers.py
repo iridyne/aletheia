@@ -31,23 +31,31 @@ def _insert_outcome(
         exit_price_usd = 100.0 * (1.0 + price_return_pct / 100.0)
     else:
         exit_price_usd = None
+    # Compute min_cost_covering_edge_pct when all ingredients are valid numerics.
+    try:
+        cost_covering: object = (
+            float(estimated_fee_pct) + float(estimated_spread_slippage_pct)
+            + float(estimated_funding_pct) + float(edge)
+        )
+    except (TypeError, ValueError):
+        cost_covering = None
     get_db().execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, venue, scanner_family, market_type, direction, "
         "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
-        "min_tradable_edge_pct, cost_model_version, settlement_price_source, "
+        "min_tradable_edge_pct, min_cost_covering_edge_pct, cost_model_version, settlement_price_source, "
         "settlement_lag_sec, status) "
         "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'okx', 'momentum', ?, ?, "
-        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, "
+        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, ?, "
         "'horizon_ohlcv', 0, 'settled')",
         (
             outcome_id, f"member-{outcome_id}", market_type, direction,
             exit_price_usd, now, now, now,
             directional_return_pct, estimated_fee_pct,
             estimated_spread_slippage_pct, estimated_funding_pct,
-            net_return_pct, edge, cost_model_version,
+            net_return_pct, edge, cost_covering, cost_model_version,
         ),
     )
 

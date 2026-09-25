@@ -122,15 +122,15 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
         "entry_price_usd,exit_price_usd,entry_ts,due_at,settled_at,directional_return_pct,"
         "settlement_price_source,settlement_lag_sec,"
         "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
-        "net_return_pct,min_tradable_edge_pct,cost_model_version,status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "net_return_pct,min_tradable_edge_pct,min_cost_covering_edge_pct,cost_model_version,status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             oid, f"candidate-{oid}" if complete else None, "member", "snapshot",
             "bitget" if complete else None, symbol,
             scanner, direction, "24h", "spot", 100.0, 101.2 if direction == "long" else 98.8,
             _ts, _ts, _ts,
             1.2, "horizon_ohlcv" if complete else None, 0 if complete else None,
-            0.1, 0.1, 0.0, 1.0, 0.05,
+            0.1, 0.1, 0.0, 1.0, 0.05, 0.25,
             "v1" if complete else None, "settled",
         ),
     )
