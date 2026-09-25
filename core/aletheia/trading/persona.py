@@ -129,8 +129,9 @@ def build_sizing_context(
             from aletheia.trust.learning_safety import learning_influence_allowed
 
             apply_learning = bool(learning_influence_allowed())
-        except Exception:
+        except Exception as exc:
             # Learning authority is fail-closed when its global gate is unavailable.
+            logger.warning("persona: learning influence gate unavailable (%s)", type(exc).__name__)
             apply_learning = False
     if apply_learning:
         try:
@@ -183,7 +184,8 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
 
         if not rollout_runtime_safe(cfg):
             return {}
-    except Exception:
+    except Exception as exc:
+        logger.warning("persona: rollout runtime-safety probe unavailable (%s)", type(exc).__name__)
         return {}
     try:
         from aletheia.trading.persona_rollout import current_persona_rollout
@@ -206,8 +208,9 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
             return {}
         for key in ladder[:unlocked_n]:
             out[key] = True
-    except Exception:
+    except Exception as exc:
         # A missing/invalid rollout state must never grant dynamic authority.
+        logger.warning("persona: rollout state read unavailable (%s)", type(exc).__name__)
         return {}
     return out
 

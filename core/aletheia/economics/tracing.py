@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.tracing")
+
 import hashlib
 import json
 import math
@@ -374,7 +378,8 @@ def _current_provenance() -> dict[str, Any]:
         from aletheia.agent_runtime.runtime_session import current_provenance
 
         return current_provenance()
-    except Exception:
+    except Exception as exc:
+        logger.warning("tracing: current provenance unavailable (%s)", type(exc).__name__)
         return {}
 
 

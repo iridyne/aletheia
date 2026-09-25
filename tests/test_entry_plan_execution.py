@@ -32,6 +32,10 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
+    # The per-symbol ceiling seam reads equity through _account_equity
+    # (_resolve_capital_base); give it the same fixture equity so the ceiling
+    # resolves instead of failing closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -135,6 +139,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.agent.permission_mode = "Full"
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
     cfg.market_data.ccxt_exchange = "bitget"
     cfg.universe.max_candidates = 3
     save_config(cfg)

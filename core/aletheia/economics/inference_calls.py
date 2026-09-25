@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.inference_calls")
+
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -145,7 +149,8 @@ def record_inference_started(call: InferenceCall, *, started_at: str | None = No
         if not was_in_tx:
             db.commit()
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("inference_calls: inference telemetry persist unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -171,7 +176,8 @@ def record_structured_attempt_outcome(
         if not was_in_tx:
             db.commit()
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("inference_calls: inference telemetry persist unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -240,7 +246,8 @@ def record_inference_finished(
         if not was_in_tx:
             db.commit()
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("inference_calls: inference telemetry persist unavailable (%s)", type(exc).__name__)
         return False
 
 

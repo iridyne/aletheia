@@ -16,7 +16,8 @@ def _fts_table_exists(db) -> bool:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'"
         ).fetchone()
         return row is not None
-    except Exception:
+    except Exception as exc:
+        logger.warning("knowledge_index: FTS table probe unavailable (%s)", type(exc).__name__)
         return False
 
 

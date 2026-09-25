@@ -77,7 +77,8 @@ def get_family_multipliers(
 
     try:
         stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
-    except Exception:
+    except Exception as exc:
+        logger.warning("allocator: calibration stats unavailable (%s)", type(exc).__name__)
         return {}
 
     multipliers: dict[str, float] = {}

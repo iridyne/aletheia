@@ -1048,6 +1048,7 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
 
     cfg = load_config()
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.execute_write("UPDATE candidate_planning_generations SET producer_commit='controlled-passive-test' WHERE id=?",

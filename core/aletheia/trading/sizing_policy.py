@@ -110,7 +110,8 @@ def clean_close_count(
                 continue
             count += 1
         return count
-    except Exception:
+    except Exception as exc:
+        logger.warning("sizing_policy: clean-close count unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -153,7 +154,8 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
         from aletheia.trust.learning_safety import learning_influence_allowed
         if not learning_influence_allowed():
             return 0.0
-    except Exception:
+    except Exception as exc:
+        logger.warning("sizing_policy: learning influence gate unavailable (%s)", type(exc).__name__)
         return 0.0
     if not getattr(cfg.trading, "persona_learning_enabled", False):
         return 0.0

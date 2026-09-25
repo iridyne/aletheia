@@ -522,7 +522,8 @@ async def complete_with_fallback(
             try:
                 pn_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
                 md = str(getattr(pn_provider, "model", "") or "")
-            except Exception:  # noqa: BLE001
+            except Exception as exc:
+                logger.warning("fallback: provider model metadata unavailable (%s)", type(exc).__name__)
                 md = ""
         if not md:
             continue

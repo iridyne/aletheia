@@ -5,7 +5,10 @@ Aggregates 10 criteria into a composite score (0-100) with traffic light status.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Callable
+
+logger = logging.getLogger("aletheia.analytics.go_live_scorecard")
 
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
@@ -164,7 +167,8 @@ def count_consecutive_zero_fill_days() -> int:
             consecutive += 1
             day -= timedelta(days=1)
         return consecutive
-    except Exception:
+    except Exception as exc:
+        logger.warning("go_live_scorecard: zero-fill-day probe unavailable (%s)", type(exc).__name__)
         return 0
 
 
@@ -231,7 +235,8 @@ def compute_pnl_by_trade_school() -> dict:
             wr = wins / len(pnls) if pnls else 0.0
             result[school] = {"profit_factor": round(pf, 3), "win_rate": round(wr, 3), "count": len(pnls)}
         return result
-    except Exception:
+    except Exception as exc:
+        logger.warning("go_live_scorecard: PnL-by-school aggregation unavailable (%s)", type(exc).__name__)
         return {}
 
 
