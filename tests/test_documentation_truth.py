@@ -6,6 +6,7 @@ from scripts.check_docs import (
     contract_code_path_failures,
     semantic_truth_failures,
     timestamp_unit_suffix_failures,
+    vacuous_test_failures,
 )
 
 
@@ -94,3 +95,22 @@ def test_timestamp_unit_suffix_failures_flags_contradiction_and_ignores_correct(
         "timestamp unit contradiction: bogus_delay_sec = ... * 1000"
     ) in failures
     assert not any("bogus_ok_" in failure for failure in failures)
+
+
+def test_vacuous_test_failures_flags_no_assertion_and_ignores_real_assertion() -> None:
+    probe = Path("tests") / "_vacuous_probe.py"
+    try:
+        probe.write_text(
+            "def test_bogus_vacuous():\n"
+            "    x = 1 + 1\n"
+            "def test_bogus_real_assert():\n"
+            "    assert 1 + 1 == 2\n",
+            encoding="utf-8",
+        )
+        failures = vacuous_test_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert (
+        "tests/_vacuous_probe.py:1: vacuous test (no assertion): test_bogus_vacuous"
+    ) in failures
+    assert not any("test_bogus_real_assert" in failure for failure in failures)
