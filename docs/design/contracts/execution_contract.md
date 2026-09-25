@@ -263,7 +263,7 @@ UTA adapter 不得把期货缺失/非法 leverage 默认成 1x：三家 adapter 
 只可在同一 Position id 上补齐缺失 leverage；已有有效值不会被不完整 view 清空。Live 仍保持
 alert-only，不新增自动修复权限。`report_invalid_open_position_exposures()` 只读列出历史 open
 Position 的 id、symbol、market type 与 sanitized field category，不执行批量修复。可执行检查：
-`PL-ADOPT-26~28`、`tests/test_uta.py`、`tests/test_position_reconciler.py`；其中
+`PL-ADOPT-26~28`、`tests/specs/spec_pipeline_adopted_position.py`、`tests/test_position_reconciler.py`；其中
 `PL-ADOPT-26` 还验证已接管 futures Position 的持久化 leverage 被 Risk 账户杠杆计算实际采用。
 
 交易所返回的 Position uPnL 是账户内的聚合暴露，不能被复制成多个本地 Position 各自的完整 uPnL。

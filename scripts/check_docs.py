@@ -198,15 +198,10 @@ TOP_LEVEL_DIRS = {
 # Drift baseline: contract refs to root-relative `.py` paths that no longer
 # exist on disk. Kept as a visible, dated set (never a silent skip) so the
 # check is green on master but still catches NEW drift. 2026-09-26.
-BASELINE_MISSING_CONTRACT_PATHS = {
-    "data/derivatives_facts.py",
-    "extensions/research/market_observer.py",
-    "tests/e2e/test_learning_paper_lifecycle.py",
-    "tests/specs/spec_learning_authority.py",
-    "tests/specs/spec_learning_lifecycle.py",
-    "tests/specs/spec_trade_decision_rationale.py",
-    "tests/test_uta.py",
-}
+# Zero known violations as of 2026-09-26 (R20 harvest): all seven historical
+# entries were resolved — pointer fixes for moved files, retirement notes for
+# deleted tests/agents, and successor executable claims for converged specs.
+BASELINE_MISSING_CONTRACT_PATHS: set[str] = {}
 
 
 def contract_code_path_failures() -> list[str]:
