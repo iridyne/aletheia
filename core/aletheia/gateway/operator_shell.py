@@ -3,11 +3,14 @@
 from contextlib import contextmanager
 import hmac
 import json
+import logging
 import os
 import platform
 import shutil
 import subprocess
 import threading
+
+logger = logging.getLogger("aletheia.gateway.operator_shell")
 import time
 from pathlib import Path
 from typing import Callable
@@ -165,7 +168,8 @@ def _pid_exists(pid: int) -> bool:
             from aletheia.gateway._win32_proc import pid_alive_win32
 
             return pid_alive_win32(pid, ("",))
-        except Exception:
+        except Exception as exc:
+            logger.warning("operator_shell: win32 pid probe unavailable for %s (%s)", pid, type(exc).__name__)
             return False
     try:
         os.kill(pid, 0)
@@ -218,7 +222,8 @@ def _operator_shell_process_matches(pid: int, cmd: list[str]) -> bool:
             from aletheia.gateway._win32_proc import pid_alive_win32
 
             return all(pid_alive_win32(pid, (marker, marker.replace("/", "\\"))) for marker in markers)
-        except Exception:
+        except Exception as exc:
+            logger.warning("operator_shell: win32 marker probe unavailable for %s (%s)", pid, type(exc).__name__)
             return False
     cmdline = _read_process_command_line(pid)
     if not cmdline:
@@ -296,7 +301,8 @@ def _gateway_api_ready(cfg) -> bool:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(url, timeout=1.0) as response:
             return response.status == 200
-    except Exception:
+    except Exception as exc:
+        logger.warning("operator_shell: gateway /api/ready probe unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -323,7 +329,8 @@ def _list_operator_shell_processes() -> list[tuple[int, int, str]]:
             from aletheia.gateway._win32_proc import list_processes_by_exe_win32
 
             return list_processes_by_exe_win32({"node.exe"})
-        except Exception:
+        except Exception as exc:
+            logger.warning("operator_shell: win32 process listing unavailable (%s)", type(exc).__name__)
             return []
 
     try:
@@ -333,7 +340,8 @@ def _list_operator_shell_processes() -> list[tuple[int, int, str]]:
             text=True,
             timeout=10,
         ).stdout
-    except Exception:
+    except Exception as exc:
+        logger.warning("operator_shell: ps process listing unavailable (%s)", type(exc).__name__)
         return []
 
     rows: list[tuple[int, int, str]] = []
@@ -590,7 +598,8 @@ def _post_operator_heartbeat(cfg, payload: dict) -> bool:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=2.0) as response:
             return 200 <= response.status < 300
-    except Exception:
+    except Exception as exc:
+        logger.warning("operator_shell: heartbeat POST unavailable (%s)", type(exc).__name__)
         return False
 
 
@@ -639,7 +648,8 @@ def _record_operator_shell_unavailable(
 
         record_heartbeat(**payload)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("operator_shell: fallback heartbeat persist unavailable (%s)", type(exc).__name__)
         return False
 
 

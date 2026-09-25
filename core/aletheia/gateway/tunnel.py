@@ -135,7 +135,8 @@ def _pid_alive(pid: int) -> bool:
                 kernel32.CloseHandle(handle)
                 return True
             return False
-        except Exception:
+        except Exception as exc:
+            logger.warning("tunnel: win32 pid probe unavailable for %s (%s)", pid, type(exc).__name__)
             return False
     else:
         try:
