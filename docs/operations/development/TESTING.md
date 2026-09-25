@@ -14,6 +14,9 @@ uv run python scripts/dev_check.py
 # 单文件（秒级，日常用）
 uv run pytest tests/test_xxx.py -q
 
+# 最快单元层（纯单元/纯函数，~70s 并行；-n auto 由 pytest-xdist 多核分发）
+uv run pytest tests/ -m tier_unit -n auto -q --timeout=120
+
 # 按关键字过滤
 uv run pytest tests/ -k "knowledge or dreaming" -q
 
@@ -26,8 +29,9 @@ uv run pytest tests/test_architecture_fitness.py -q
 # Conformance Matrix（打印 claim 状态矩阵）
 uv run pytest tests/test_spec_conformance.py -v -s
 
-# 全量（~5min，提交前后台跑）
+# 全量（~5min，提交前后台跑；可并行 ~1min，失败时先用非并行复现）
 uv run pytest tests/ -q --tb=line
+uv run pytest tests/ -n auto --tb=line -q
 ```
 
 **不要等全量完成再继续工作**——后台跑，有失败再回头修。
