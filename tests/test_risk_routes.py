@@ -37,7 +37,7 @@ async def test_get_risk_boundaries(client):
     resp = await client.get("/api/risk/boundaries")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["max_daily_loss_pct"] == 1.0
+    assert data["max_daily_loss_pct"] == 0.0  # off by default; 0 disables the check
     assert data["symbol_list"] == []
     assert data["symbol_filter_mode"] == "blacklist"
 

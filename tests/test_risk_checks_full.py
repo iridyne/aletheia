@@ -69,10 +69,11 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     from aletheia.risk import kill_switch
     cfg = load_config()
     cfg.risk.kill_switch_enabled_demo = True  # default False; bitget_demo is demo-mode
+    cfg.risk.max_daily_loss_pct = 1.0  # off by default; this test covers the enabled check
     save_config(cfg)
 
     # The Demo denominator in this test is stubbed external account equity ($100); this
-    # $10 loss is well beyond the default 1% daily-loss limit.
+    # $10 loss is well beyond the 1% daily-loss limit configured above.
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     _insert_closed_position_via_producer(

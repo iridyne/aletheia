@@ -1835,7 +1835,8 @@ _RISK_MINIMUMS: dict[str, float] = {
 }
 
 _RISK_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_daily_loss_pct": (0.1, 20.0),
+    # 0 disables the daily-loss check; the engine skips the comparison at 0.
+    "max_daily_loss_pct": (0.0, 20.0),
     "max_single_trade_risk_pct": (0.01, 10.0),
     "max_total_live_exposure_pct": (1.0, 50.0),
     "max_live_position_margin_usdt": (1.0, 100_000.0),

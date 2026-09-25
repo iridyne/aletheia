@@ -177,7 +177,9 @@ trading:
   max_position_hold_hours: 72.0    # time-based exit
   min_confidence_to_trade: medium  # high | medium | speculative
 risk:                              # HARD limits — agent cannot change these
-  max_daily_loss_pct: 1.0          # breached → kill switch auto-trips
+  max_daily_loss_pct: 0.0          # 0 = disabled (default, demo and live).
+                                   # Set a positive percentage to enable:
+                                   # breached → kill switch auto-trips
   max_single_trade_risk_pct: 0.25
   # ... see Settings → Risk Boundaries (read-only display)
 retention:                         # telemetry pruning (trade/audit/knowledge never pruned)

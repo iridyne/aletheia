@@ -65,7 +65,7 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 6 | Max Open Positions | live/demo 持仓数；demo 默认 200，设置 API 只保留正整数下限 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
-| 8 | Max Daily Loss | 只读 authoritative account snapshot；来源不可用→拒绝但不伪造 breach；真实日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `account_loss_unavailable:{reason}` / `max_daily_loss_exceeded:{r}<=-{lim}` | engine.py check #8 |
+| 8 | Max Daily Loss | **默认关闭**：`risk.max_daily_loss_pct` 默认 `0`，此时整关不执行，也不读取 account snapshot（该快照仅服务本关）。配置正数百分比后启用，行为不变：只读 authoritative account snapshot；来源不可用→拒绝但不伪造 breach；真实日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`（`0`=关闭，demo/live 默认均为 `0`）、`kill_switch_enabled_{live/demo}` | 关闭时不产生；启用时 `account_loss_unavailable:{reason}` / `max_daily_loss_exceeded:{r}<=-{lim}` | engine.py check #8 |
 | 9a | Exchange Allowlist | `AccountConfigBinding.GLOBAL` 账户必须匹配；OKX/Binance 保留既有 `SELF_CONTAINED` 豁免 | `risk.allowed_exchange` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `exchange_not_allowed:{a}!={e}` | engine.py check #9a |
 | 9b | Account Mode Match | `GLOBAL` 账户要求 live↔mode=live / demo↔mode=demo；`SELF_CONTAINED` 保留既有豁免 | `exchange.mode` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `account_mode_mismatch:...` | engine.py check #9b |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |

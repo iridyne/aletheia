@@ -127,15 +127,22 @@ def test_spot_leverage_rejects_non_unit_values():
 @spec_claim(
     SpecClaim(
         "RE-B20", "risk_engine_contract", "§2 check 8 authoritative account loss", "L2b",
-        "Daily-loss protection blocks when account truth is unavailable without fabricating a "
-        "threshold breach, and exact authoritative loss retains the existing threshold check.",
+        "With `max_daily_loss_pct` configured positive, daily-loss protection blocks when "
+        "account truth is unavailable without fabricating a threshold breach, and exact "
+        "authoritative loss retains the existing threshold check. The check is off by "
+        "default (`0`), so its data dependency is not consulted unless enabled.",
     )
 )
 def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
     import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
     from aletheia.portfolio.account_loss import AccountLossSnapshot
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import TradeProposal
+
+    cfg = load_config()
+    cfg.risk.max_daily_loss_pct = 1.0  # off by default; this claim covers the enabled check
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     proposal = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",

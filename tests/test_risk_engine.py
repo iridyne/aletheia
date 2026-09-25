@@ -627,5 +627,5 @@ def test_agent_cannot_modify_risk_limits():
     cfg = RiskConfig()
     # The risk config is a Pydantic model — agent code can read but
     # the system enforces that only human/CLI/dashboard can write config
-    assert cfg.max_daily_loss_pct == 1.0
+    assert cfg.max_daily_loss_pct == 0.0  # off by default; 0 disables the check
     assert cfg.max_live_position_margin_usdt == 50.0
