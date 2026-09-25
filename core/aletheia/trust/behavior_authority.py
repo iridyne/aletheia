@@ -89,4 +89,6 @@ def authorize_candidate_block(
     try:
         return _candidate_filter_path_resolver(required_path) is True
     except Exception:
-        return False
+        # Resolver unavailable: unknown prospective authority must fail closed
+        # to observation-only, never to a silent block.
+        return None

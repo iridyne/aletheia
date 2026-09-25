@@ -1442,7 +1442,7 @@ def reconcile() -> dict:
                 try:
                     exchange_symbol = to_bitget(str(order["symbol"]))
                 except Exception:
-                    exchange_symbol = ""
+                    exchange_symbol = None
                 cache_key = (market_type, exchange_symbol)
                 if exchange_symbol and cache_key not in symbol_fill_rows:
                     try:

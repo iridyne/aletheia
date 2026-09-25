@@ -55,7 +55,7 @@ def test_learning_safety_preserves_reasons_and_rejects_invalid_evidence(monkeypa
         raise RuntimeError("query unavailable")
     monkeypatch.setattr(safety, "_influence_gate", unavailable)
     monkeypatch.setattr(safety, "_refreeze_reason", unavailable)
-    assert safety.learning_influence_allowed() is False
+    assert safety.learning_influence_allowed() is None  # unavailable, fails closed
     assert safety.learning_refreeze_reason() == "learning_integrity_state_unavailable"
 
 
@@ -106,7 +106,7 @@ def test_registry_evidence_cannot_override_core_source_or_path(monkeypatch):
         resolver.return_value = invalid
         assert behavior.authorize_candidate_block(**kwargs) is False
     resolver.side_effect = RuntimeError("registry unavailable")
-    assert behavior.authorize_candidate_block(**kwargs) is False
+    assert behavior.authorize_candidate_block(**kwargs) is None  # unavailable, fails closed
 
 
 def test_real_registry_only_declares_filter_capability():

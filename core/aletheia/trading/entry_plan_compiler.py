@@ -176,6 +176,8 @@ def _compile_bounded_risk_envelope(
             leverage=max_leverage,
             cfg=cfg,
         )
+        if per_symbol_cap is None:
+            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE")
         if per_symbol_cap > 0:
             max_notional = min(max_notional, per_symbol_cap)
         if max_leverage < 1 or max_risk_pct <= 0 or max_notional <= 0:

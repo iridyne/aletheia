@@ -275,6 +275,11 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
         leverage=float(position.get("leverage") or 1),
         cfg=cfg,
     )
+    if cap is None:
+        # Ceiling cannot be resolved: fail closed rather than allowing an
+        # unbounded add-on that check #19 cannot verify.
+        return {"add": False, "add_notional": 0.0,
+                "reason": "per-symbol ceiling unavailable"}
     if cap > 0:
         room = max(0.0, cap - (base_notional + already_added))
         add_notional = min(add_notional, room)
