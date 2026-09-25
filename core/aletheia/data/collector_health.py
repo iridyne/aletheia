@@ -121,6 +121,51 @@ def record_collector_status(
     }
     repo.upsert_collector_health_state(state)
 
+    # #3089: `last_scheduled_at` advances on every turn, so a domain that is only
+    # ever `skipped_budget` looks freshly scheduled forever and never goes overdue.
+    # Warn once per starvation window when a skip lands on a domain that is starved
+    # under the shared 3-cadence health convention. This is scheduler starvation,
+    # not a source failure, so it must not increment `consecutive_problems` or be
+    # reported as a collector problem.
+    if status == "skipped_budget":
+        cadence_sec = COLLECTOR_CADENCE_SEC[domain]
+        last_attempt = _parse_time(previous.get("last_attempt_at"))
+        now_dt = _parse_time(now)
+        attempt_age_sec = (
+            (now_dt - last_attempt).total_seconds()
+            if last_attempt is not None and now_dt is not None
+            else None
+        )
+        # `_bounded` records `skipped_budget` when the lane budget is already spent,
+        # so a domain can be skipped on every tick without ever attempting. That
+        # case has no attempt timestamp to age, so it is bounded by the same
+        # convention in the only unit available: three cadences' worth of skips.
+        starving = bool(
+            (attempt_age_sec is not None and attempt_age_sec > cadence_sec * 3)
+            or (int(state["attempts"]) == 0 and int(state["budget_skips"]) >= 3)
+        )
+        if starving:
+            reason = (
+                f"no real attempt for {int(attempt_age_sec)}s"
+                if attempt_age_sec is not None
+                else f"no real attempt recorded; {int(state['budget_skips'])} turns skipped"
+            )
+            emit_infra_event(
+                severity="warning",
+                source="data_collectors",
+                code="collector_budget_starvation",
+                entity_id=domain,
+                message=(
+                    f"{domain} has had {reason} because every turn was "
+                    f"skipped_budget (cadence {cadence_sec}s)."
+                ),
+                action=(
+                    "Review the shared collector budget and scheduler load. "
+                    "The source is not failing; it is never being attempted."
+                ),
+                dedupe_sec=cadence_sec * 3,
+            )
+
     if problem_count >= _ALERT_THRESHOLD:
         connectivity_state = "unknown"
         try:
@@ -340,8 +385,38 @@ def get_collector_health_report(
             and status not in {"disabled", "not_configured"}
             and age_sec > cadence_sec * 3
         )
+        # #3089: `last_scheduled_at` advances even when a turn is `skipped_budget`,
+        # so overdue alone can report a domain that is never allowed to attempt as
+        # healthy forever. Liveness must come from real attempts. A domain that has
+        # not attempted for more than the same 3-cadence window is starved by the
+        # scheduler, not failing at the source: the raw status and counters stay
+        # untouched and only this derived projection changes.
+        attempt_age_sec, _ = (
+            _collector_timestamp_age(row.get("last_attempt_at"), now=now)
+            if stored_row is not None and row.get("last_attempt_at")
+            else (None, None)
+        )
+        starved = bool(
+            status not in {"disabled", "not_configured", "never_run"}
+            and (
+                (attempt_age_sec is not None and attempt_age_sec > cadence_sec * 3)
+                # Never attempted at all: there is no attempt timestamp to age, so
+                # bound it by the same convention in the only unit available. A
+                # domain skipped before its turn every tick reaches this.
+                or (
+                    row.get("last_attempt_at") is None
+                    and int(row.get("attempts") or 0) == 0
+                    and int(row.get("budget_skips") or 0) >= 3
+                )
+            )
+        )
         consecutive = int(row.get("consecutive_problems") or 0)
-        is_degraded = timestamp_error is not None or overdue or consecutive >= _ALERT_THRESHOLD
+        is_degraded = (
+            timestamp_error is not None
+            or overdue
+            or starved
+            or consecutive >= _ALERT_THRESHOLD
+        )
         if is_degraded:
             degraded += 1
         elif status in _PROBLEM_STATUSES:
@@ -357,11 +432,24 @@ def get_collector_health_report(
         error_summary = timestamp_error or ((
             str(error_code) if error_code else "collector_returned_failed_result"
         ) if status in _PROBLEM_STATUSES else None)
+        if starved and error_summary is None:
+            # Starvation is not a source failure: name the scheduler, not the
+            # collector, so the operator does not go looking for a broken feed.
+            error_summary = (
+                "collector_budget_starvation: no real attempt for "
+                f"{int(attempt_age_sec)}s (cadence {cadence_sec}s)"
+                if attempt_age_sec is not None
+                else (
+                    "collector_budget_starvation: no real attempt recorded; "
+                    f"{int(row.get('budget_skips') or 0)} turns skipped "
+                    f"(cadence {cadence_sec}s)"
+                )
+            )
         row.update({
             "domain": domain,
             "cadence_sec": cadence_sec,
             "last_status": status,
-            "display_status": "degraded" if timestamp_error else status,
+            "display_status": "degraded" if (timestamp_error or starved) else status,
             "attributed_cause": None,
             "last_error_summary": error_summary,
             "display_severity": (
@@ -372,7 +460,9 @@ def get_collector_health_report(
                 else "ok"
             ),
             "age_sec": age_sec,
+            "attempt_age_sec": attempt_age_sec,
             "overdue": overdue,
+            "starved": starved,
             "degraded": is_degraded,
         })
         domains.append(row)

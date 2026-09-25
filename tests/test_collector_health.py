@@ -114,8 +114,14 @@ def test_skipped_budget_does_not_count_toward_consecutive_problems(collector_db)
 
     rows = get_collector_health_report()["domains"]
     row = next(item for item in rows if item["domain"] == "defillama")
+    # This test's purpose is the counter: skips must never be counted as source
+    # problems. #3089 changes only the derived projection - a domain that has
+    # never attempted while being skipped on every turn is scheduler starvation,
+    # so `degraded` is now True for that reason. The issue quotes this assertion
+    # as the behaviour being corrected.
     assert row["consecutive_problems"] == 0
-    assert row["degraded"] is False
+    assert row["starved"] is True
+    assert row["degraded"] is True
     assert row["budget_skips"] == 3
 
 
@@ -523,3 +529,221 @@ def test_report_keeps_pre_recovery_failures_under_one_recovery_notice(collector_
     }
     assert {row["display_status"] for row in rows.values()} == {"waiting_for_retry"}
     assert {row["display_severity"] for row in rows.values()} == {"info"}
+
+
+# --- #3089: scheduler starvation must not be reported as healthy ---------------
+# `last_scheduled_at` advances on every turn, so a domain whose every turn is
+# `skipped_budget` keeps looking freshly scheduled. Liveness must come from real
+# attempts. The raw status and counters stay untouched; only the derived
+# projection changes.
+
+_STARVED_DOMAIN = "defillama"  # cadence 600s -> 3-cadence window is 1800s
+
+
+def _report_row(now, domain=_STARVED_DOMAIN):
+    from aletheia.data.collector_health import get_collector_health_report
+
+    report = get_collector_health_report(now=now)
+    return report, next(item for item in report["domains"] if item["domain"] == domain)
+
+
+def test_single_budget_skip_stays_informational(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=1)).isoformat(),
+    )
+    record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=2, occurred_at=now.isoformat())
+
+    report, row = _report_row(now)
+    assert row["starved"] is False
+    assert row["degraded"] is False
+    assert row["consecutive_problems"] == 0
+    assert row["budget_skips"] == 1
+    assert report["status"] != "degraded"
+
+
+def test_repeated_budget_skips_beyond_window_report_starvation(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    for tick in (2, 3, 4):
+        record_collector_status(
+            _STARVED_DOMAIN, "skipped_budget", tick=tick, occurred_at=now.isoformat()
+        )
+
+    report, row = _report_row(now)
+    assert row["starved"] is True
+    assert row["degraded"] is True
+    assert report["status"] == "degraded"
+    # Starvation is the scheduler's fault, not the source's.
+    assert row["consecutive_problems"] == 0
+    assert row["last_status"] == "skipped_budget"
+    assert row["budget_skips"] == 3
+    assert "collector_budget_starvation" in str(row["last_error_summary"])
+
+
+def test_advancing_scheduled_at_does_not_hide_stale_attempt(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=2, occurred_at=now.isoformat())
+
+    _report, row = _report_row(now)
+    # The scheduled tick is fresh, so the legacy overdue signal stays quiet...
+    assert row["overdue"] is False
+    assert row["age_sec"] == 0
+    # ...but the real attempt age is what proves starvation.
+    assert row["starved"] is True
+    assert row["attempt_age_sec"] > row["cadence_sec"] * 3
+
+
+def test_real_attempt_clears_starvation(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=2, occurred_at=now.isoformat())
+    assert _report_row(now)[1]["starved"] is True
+
+    later = now + timedelta(minutes=1)
+    record_collector_status(_STARVED_DOMAIN, "success", tick=3, occurred_at=later.isoformat())
+
+    report, row = _report_row(later)
+    assert row["starved"] is False
+    assert row["degraded"] is False
+    assert row["attempt_age_sec"] == 0
+    assert report["status"] != "degraded"
+
+
+def test_partial_attempt_clears_starvation_but_keeps_attention(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=2, occurred_at=now.isoformat())
+
+    later = now + timedelta(minutes=1)
+    record_collector_status(_STARVED_DOMAIN, "partial", tick=3, occurred_at=later.isoformat())
+
+    report, row = _report_row(later)
+    assert row["starved"] is False
+    assert row["degraded"] is False
+    # A real attempt happened, so this is the pre-existing partial/attention
+    # path, not starvation.
+    assert row["display_severity"] == "warning"
+    assert report["status"] == "attention"
+
+
+@pytest.mark.parametrize("status", ["disabled", "not_configured"])
+def test_inactive_domains_never_report_starvation(collector_db, status):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    record_collector_status(_STARVED_DOMAIN, status, tick=2, occurred_at=now.isoformat())
+
+    _report, row = _report_row(now)
+    assert row["starved"] is False
+    assert row["degraded"] is False
+
+
+def test_source_failure_semantics_are_unchanged_by_starvation(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    # Attempts happen on cadence and fail: a source problem, not starvation.
+    for tick in (1, 2, 3):
+        record_collector_status(
+            _STARVED_DOMAIN, "failed", tick=tick,
+            occurred_at=(now - timedelta(seconds=20)).isoformat(),
+        )
+
+    report, row = _report_row(now)
+    # A real attempt happened every time, so this stays a source problem.
+    assert row["starved"] is False
+    assert row["consecutive_problems"] == 3
+    assert row["degraded"] is True
+    assert report["status"] == "degraded"
+
+
+def test_starvation_emits_one_deduplicated_operator_warning(collector_db):
+    from aletheia.data.collector_health import record_collector_status
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    clear_infra_events()
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        _STARVED_DOMAIN, "success", tick=1,
+        occurred_at=(now - timedelta(minutes=40)).isoformat(),
+    )
+    for tick in (2, 3, 4, 5):
+        record_collector_status(
+            _STARVED_DOMAIN, "skipped_budget", tick=tick, occurred_at=now.isoformat()
+        )
+
+    events = [
+        e for e in list_infra_events(limit=50) if e["code"] == "collector_budget_starvation"
+    ]
+    assert len(events) == 1, events
+    assert events[0]["entity_id"] == _STARVED_DOMAIN
+    assert "no real attempt" in events[0]["message"]
+
+
+def test_domain_skipped_before_its_turn_every_tick_reports_starvation(collector_db):
+    """`_bounded` records `skipped_budget` before the coroutine runs, so a domain
+    can be skipped on every tick without ever attempting. It has no attempt
+    timestamp to age, and its scheduled tick keeps advancing, so without a
+    count-based bound it would report healthy forever."""
+    from aletheia.data.collector_health import record_collector_status
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    clear_infra_events()
+    now = datetime.now(timezone.utc)
+    for tick in (1, 2, 3):
+        record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=tick, occurred_at=now.isoformat())
+
+    report, row = _report_row(now)
+    assert row["attempts"] == 0
+    assert row["attempt_age_sec"] is None
+    assert row["starved"] is True
+    assert row["degraded"] is True
+    assert report["status"] == "degraded"
+    assert "no real attempt recorded" in str(row["last_error_summary"])
+
+    events = [
+        e for e in list_infra_events(limit=50) if e["code"] == "collector_budget_starvation"
+    ]
+    assert len(events) == 1, events
+
+
+def test_two_budget_skips_without_attempt_stay_informational(collector_db):
+    """The count-based bound must not fire before the 3-cadence convention."""
+    from aletheia.data.collector_health import record_collector_status
+
+    now = datetime.now(timezone.utc)
+    for tick in (1, 2):
+        record_collector_status(_STARVED_DOMAIN, "skipped_budget", tick=tick, occurred_at=now.isoformat())
+
+    _report, row = _report_row(now)
+    assert row["starved"] is False
+    assert row["degraded"] is False

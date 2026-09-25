@@ -502,7 +502,9 @@ export interface CollectorHealthDomain {
   attributed_cause: string | null
   display_severity: 'warning' | 'info' | 'muted' | 'ok'
   age_sec: number | null
+  attempt_age_sec?: number | null
   overdue: boolean
+  starved?: boolean
   degraded: boolean
   consecutive_problems?: number
   last_error_code?: string | null
