@@ -72,6 +72,10 @@ Proposal as stable decision history.
 - [Slim Core legacy Gateway retirement](slim_core_legacy_gateway_retirement.md):
   remove the dormant PS recovery/write graph and its startup authority while
   preserving historical data and canonical Core reconciliation gates.
+- [Retire the Market Observer pipeline](retire_market_observer.md): draft removal
+  of the `market_observer` agent, its scheduler job and its liveness surfaces,
+  whose admitted workset lost its only producer with the deterministic Universe
+  emitter; historical `opportunities` reads and attribution labels are preserved.
 - [Slim Core partial-reduce retirement](slim_core_partial_reduce_retirement.md):
   delete the unused estimated-fee writer; preserve verified partial Fill
   materialization and historical ledger readers.
