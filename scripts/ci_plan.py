@@ -613,7 +613,7 @@ def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
     if required.get("python_unit") and mode == "affected":
         checks.append({
             "name": "python unit tier",
-            "command": ["uv", "run", "pytest", "tests/", "-m", "tier_unit", "-q", "--tb=short", "--timeout=120"],
+            "command": ["uv", "run", "pytest", "tests/", "-m", "tier_unit", "-n", "auto", "-q", "--tb=short", "--timeout=120"],
         })
     if required.get("full_ci"):
         checks.append({"name": "full mode note", "command": ["python", "-c", "print('full CI authority is GitHub/Fedora bootstrap-gated')"]})
