@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.providers import MarketInstrument, get_market_data_provider
 from aletheia.data.symbols import instrument_background_rejection_reason, to_canonical
+from aletheia.execution.venue_capabilities import _REGISTRY_MARKET_TYPE_ALIASES
 from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
 
@@ -45,16 +46,21 @@ def _is_excluded(instrument: MarketInstrument) -> bool:
     return False
 
 
-async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
+async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset[str] | None:
     """Load the demo symbol whitelist for the active execution mode.
 
     Returns None if no demo filtering is needed (the mode's listing is not
     sandbox-restricted, so the universe registry already reflects the venue
     the process will submit orders to).
 
-    The shared execution capability seam returns {"usdt_futures": frozenset,
-    "spot": frozenset}. Collapse to a single frozenset so callers can do
-    `symbol in whitelist`.
+    Entries are ``f"{canonical}:{market_type}"`` using the capability
+    vocabulary (``"spot"``/``"usdt_futures"``), not a flat symbol union: a
+    symbol confirmed executable only as spot must not admit a perp instrument
+    that merely shares its canonical symbol.
+
+    An external mode whose profile cannot be resolved raises
+    ``ConstraintUnavailable`` out of ``_is_sandbox_mode`` rather than
+    reporting "no filter" — see that function's contract.
     """
     from aletheia.execution.venue_capabilities import (
         _is_sandbox_mode,
@@ -66,7 +72,11 @@ async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
     markets = await fetch_venue_capabilities(paper_execution_mode)
     if markets is None:
         return None
-    return markets.get("usdt_futures", frozenset()) | markets.get("spot", frozenset())
+    return frozenset(
+        f"{symbol}:{market_type}"
+        for market_type, symbols in markets.items()
+        for symbol in symbols
+    )
 
 
 def _invalidate_stale_pipeline_data() -> None:
@@ -141,13 +151,18 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             if _is_excluded(instrument) and asset_class == "crypto":
                 continue
 
-            # Demo whitelist filter: skip symbols not executable on demo
-            if demo_whitelist is not None and canonical not in demo_whitelist:
-                # US-14: was a silent continue. Debug-log so an unexpectedly empty
-                # demo universe (whitelist-format mismatch) is diagnosable.
-                logger.debug("demo_whitelist: skip %s (not executable on %s)",
-                             canonical, cfg.exchange.paper_execution_mode)
-                continue
+            # Demo whitelist filter: skip instruments not executable on demo.
+            # Partitioned by market type — a symbol the demo venue lists only as
+            # spot must not admit a perp that shares its canonical symbol.
+            if demo_whitelist is not None:
+                demo_key = f"{canonical}:{_REGISTRY_MARKET_TYPE_ALIASES.get(market_type, market_type)}"
+                if demo_key not in demo_whitelist:
+                    # US-14: was a silent continue. Debug-log so an unexpectedly
+                    # empty demo universe (whitelist-format mismatch) is
+                    # diagnosable.
+                    logger.debug("demo_whitelist: skip %s (not executable on %s)",
+                                 demo_key, cfg.exchange.paper_execution_mode)
+                    continue
 
             config_blacklisted = canonical in cfg.universe.blacklist
             support_reason = instrument_background_rejection_reason(

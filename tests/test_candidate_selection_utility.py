@@ -201,9 +201,15 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     # fetches the demo symbol set from the live CCXT listing. This fixture fakes
     # the venue's markets entirely, so stand in the demo listing with the same
     # symbols — otherwise every fake COIN market is filtered out.
+    # The demo whitelist is partitioned by the capability vocabulary
+    # ("usdt_futures"/"spot"); the fake venue's registry market_type is
+    # "perp"/"spot".
+    capability_market_type = "usdt_futures" if market_type == "perp" else market_type
     monkeypatch.setattr(
         "aletheia.universe.registry._load_demo_whitelist",
-        AsyncMock(return_value=frozenset(f"COIN{i}/USDT" for i in range(20))),
+        AsyncMock(return_value=frozenset(
+            f"COIN{i}/USDT:{capability_market_type}" for i in range(20)
+        )),
     )
     service = UniverseService()
     snapshot_id = asyncio.run(service.refresh())

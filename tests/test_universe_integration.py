@@ -103,7 +103,9 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     # same symbols — otherwise real-network filtering drops fake markets.
     monkeypatch.setattr(
         "aletheia.universe.registry._load_demo_whitelist",
-        AsyncMock(return_value=frozenset(s.split(":")[0] for s in markets)),
+        AsyncMock(return_value=frozenset(
+            f"{s.split(':')[0]}:usdt_futures" for s in markets
+        )),
     )
     monkeypatch.setattr(
         "aletheia.universe.registry.repo.sync_universe_assets", fake_sync

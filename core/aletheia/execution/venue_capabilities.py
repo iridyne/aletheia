@@ -163,16 +163,23 @@ def _is_sandbox_mode(execution_mode: str) -> bool:
     """Return True iff *execution_mode* uses a restricted sandbox listing.
 
     Asks the CCXT profile resolver — the same source of truth used by
-    ``fetch_venue_capabilities`` and ``read_order_constraints``. Returns False
-    on any resolution failure (the order-constraint check remains fail-closed
-    independently; this only decides which listing source to consult).
+    ``fetch_venue_capabilities`` and ``read_order_constraints``.
+
+    An identity with no external venue (``paper_internal``, the empty default)
+    provably has no restricted listing, so it returns False. For an external
+    identity a profile-resolution failure is NOT reported as False:
+    ``_listing_view`` raises ``ConstraintUnavailable`` and that propagates,
+    because an unprovable listing source must never be mistaken for "not
+    restricted" — that would silently skip the demo filter entirely.
     """
-    try:
-        from extensions.exchanges.ccxt.order_rules import _listing_view
-        sandbox, _ = _listing_view(execution_mode)
-        return bool(sandbox)
-    except Exception:
+    from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
+    from extensions.exchanges.ccxt.order_rules import _listing_view
+
+    mode = str(execution_mode or "").strip().lower()
+    if mode not in EXTERNAL_EXECUTION_MODES:
         return False
+    sandbox, _ = _listing_view(mode)
+    return bool(sandbox)
 
 
 def load_venue_capabilities(execution_mode: str) -> dict | None:
@@ -186,13 +193,30 @@ def load_venue_capabilities(execution_mode: str) -> dict | None:
     Refresh failures propagate (fail-closed): an unavailable sandbox listing
     must stop pre-order validation rather than silently fall through to the
     live registry, which would leak the wrong venue's listing.
+
+    A mode whose profile cannot be resolved at all returns ``None``: this
+    pre-order capability check is fail-open, and the submission path's
+    ``read_order_constraints`` is independently fail-closed on the same
+    resolution.
     """
     with _demo_capabilities_lock:
         entry = _demo_capabilities_cache.get(execution_mode)
         if entry is not None and (time.time() - entry[1]) < _DEMO_CAPABILITIES_TTL:
             return entry[0]
 
-    if _is_sandbox_mode(execution_mode):
+    from aletheia.execution.order_constraints import ConstraintUnavailable
+
+    try:
+        sandbox_mode = _is_sandbox_mode(execution_mode)
+    except ConstraintUnavailable:
+        logger.warning(
+            "Capability listing source unresolvable for execution_mode=%s; "
+            "pre-order symbol availability stays unknown",
+            execution_mode,
+        )
+        return None
+
+    if sandbox_mode:
         refresh_demo_capabilities(execution_mode)
         with _demo_capabilities_lock:
             entry = _demo_capabilities_cache.get(execution_mode)
