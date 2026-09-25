@@ -12,9 +12,8 @@
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
-| 3 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
-| 4 | prediction_observer | 30min | agents | Prediction market scan |
+| 2 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
+| 3 | prediction_observer | 30min | agents | Prediction market scan |
 | 6 | pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
 | 7 | position_manager | 30s | io | Manage open positions (trailing stop, exit) |
 | 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
@@ -123,49 +122,17 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 
 ### A. Market Sensing Agents
 
-#### market_observer
+#### market_observer (retired 2026-09-24 — removed from the runtime topology)
 
-- **Owner**: `extensions/research/market_observer.py`, explicitly composed in the
-  existing Core registry. Missing Research omits the scheduler job and marks the
-  manual catalog unavailable before queue writes; Operator scan/rerun rejects
-  unavailable implementations before creating a run or its run event. Explicit context-effectiveness
-  evaluation returns blocked before provider access, without a substitute prompt.
-- **Trigger**: scheduler every 10min + event-driven wake
-- **Inputs**: exact-instrument market snapshots, structured 1h RSI/ATR pre-filter facts,
-  one `technical-context-v1` closed-bar bundle, freshness-qualified
-  derivatives/macro/on-chain data, and successfully analyzed, relevance-qualified,
-  exact-entity news
-- **LLM**: Yes (analysis of market conditions)
-- **Outputs**: namespaced `metadata.observer_assessment` on an existing open
-  Opportunity; producer-owned direction, confidence, thesis, identity and expiry
-  remain unchanged. Legacy `universe_scanner` Opportunity rows remain audit-only;
-  setup-linked evidence never grants current entry authority.
-- **Side effects**: Enriches only the exact snapshot/member/instrument carrier whose
-  `signal_emitter` pass fact is durable. It does not create an Opportunity or gate the
-  canonical Candidate admission. Historical emitter attestation authorizes only enrichment, not a new entry.
-- **Error behavior**: Missing Universe state, missing/conflicting emitter evidence, or
-  LLM unavailability skips enrichment; it never falls back to standalone signal creation
-- **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
-- **Technical context contract**: the model sees normalized EMA trend, RSI/momentum,
-  ATR/Bollinger volatility, VWAP/Donchian location and volume/OBV participation.
-  The Harness records `technical-context-v1` plus the exact artifact identity;
-  degraded or insufficient-warmup timeframes render no partial indicator values.
-- **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
-- **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one
-  `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. The bundle is
-  rendered only for an exact `observer_advisory_bundle` treatment assignment whose path is
-  allowlisted and currently authoritative; control, disabled/default, stale authority, missing
-  candidate identity, or adapter error renders no learned bundle. Universe members use a stable
-  member candidate and fixed-horizon outcome identity. Market and prediction context is
-  non-Learning input and remains present.
-- **Downstream contract**: Observer rationale and observations remain advisory inside
-  `metadata.observer_assessment`; they cannot establish execution eligibility or rewrite T0.
-- **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
-- **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
-- **Information provenance**: Opportunity metadata preserves the original T0 scanner
-  identity and only the exact T1 source rows actually rendered to the Observer. It
-  never infers historical news, macro, on-chain, prediction, Hyperliquid, or Position X
-  evidence from whichever row is latest later.
+Retired under the accepted proposal
+[`docs/design/proposals/retire_market_observer.md`](../proposals/retire_market_observer.md)
+(#2933). The agent, its scheduler job, its registration, and the diagnostic surfaces
+that reported its liveness were deleted because its admitted workset had no producer:
+`source_agent="universe_scanner"` no longer exists, so nothing could ever reach its
+`signal_emitter` admission gate. The deterministic Universe → Opportunity mainline
+is the sole candidate supply path. Historical `market_observer` runs and
+`metadata.observer_assessment` rows remain readable as audit-only evidence; they
+grant no current entry or enrichment authority.
 
 #### equity_observer (replaces stock_observer)
 
@@ -468,7 +435,6 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 | Job | Timeout | Job | Timeout |
 |-----|---------|-----|---------|
 | market_data | 90s | dreaming_agent | 300s |
-| market_observer | 240s | risk_critic | 300s |
 | pi_trading_decision | 300s | — | — |
 | post_trade_reviewer | 300s | exchange_sync | 60s |
 
@@ -490,9 +456,9 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
   persistent single worker owns execution outside the Uvicorn event loop.
 
 - `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit, connect/network/remote-protocol/proxy transport failures), tries the next candidate model from the explicit ordered `fallback_models` configuration only; discovery and model-name heuristics cannot supply candidates (see [Inference Harness failure semantics](llm_inference_harness_contract.md#failure-and-recovery-semantics)). Authentication and other permanent 4xx failures do not retry. Timeout exceptions remain terminal so five sequential 60-second model attempts cannot overrun bounded agent jobs.
-- `agents.helpers.llm_structured()` 对非对象/不可解析 JSON、schema 校验失败和空输出最多尝试 2 次：第一次使用原始请求，第二次只在这些结构化失败后追加一次随机 nonce 修复消息，并保持同一输出预算；不再把上一轮坏输出或递增预算带回第三次尝试。全部尝试共享 180 秒总墙钟预算（小于 Observer 200 秒循环预算和 240 秒任务上限），不继承 provider 面向长研究输出的 300 秒上限。当前 HTTP provider 使用 portable strict JSON Schema；不支持该字段时由适配器执行有界 schema fallback。`fallback_to_defaults` 默认关闭；只有非关键调用方显式开启时，失败才返回 schema 派生默认值，并在 error 字符串保留 `(fallback)` 标记。当前生产调用方均未开启该选项。
+- `agents.helpers.llm_structured()` 对非对象/不可解析 JSON、schema 校验失败和空输出最多尝试 2 次：第一次使用原始请求，第二次只在这些结构化失败后追加一次随机 nonce 修复消息，并保持同一输出预算；不再把上一轮坏输出或递增预算带回第三次尝试。全部尝试共享 180 秒总墙钟预算，不继承 provider 面向长研究输出的 300 秒上限。当前 HTTP provider 使用 portable strict JSON Schema；不支持该字段时由适配器执行有界 schema fallback。`fallback_to_defaults` 默认关闭；只有非关键调用方显式开启时，失败才返回 schema 派生默认值，并在 error 字符串保留 `(fallback)` 标记。当前生产调用方均未开启该选项。
 - **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).
-- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. market_observer → technical-only signals).
+- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. equity_observer → technical-only signals).
 
 ### Permission Modes (two surfaces — see [live_unlock_contract §5](live_unlock_contract.md))
 

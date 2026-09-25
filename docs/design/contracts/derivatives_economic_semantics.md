@@ -7,7 +7,7 @@ not preserve an incorrect unit or settlement-interval assumption in current data
 
 ## One economic owner
 
-`data/derivatives_facts.py` owns the unit conversion, Funding annualization,
+`core/aletheia/data/derivatives_facts.py` owns the unit conversion, Funding annualization,
 source-proved projection and compatible OI baseline rules. Existing collectors,
 Universe Feature acquisition and current repository/context/API reads reuse them.
 No additional provider, comparison-source admission or execution authority follows.
