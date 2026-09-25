@@ -591,6 +591,76 @@ async def test_live_funding_override_requires_finite_rate(
 
 
 @pytest.mark.asyncio
+async def test_last_price_uses_scan_time_ticker_not_stale_candle_close(
+    monkeypatch,
+):
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.features import _fetch_single_feature
+
+    monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        repo,
+        "latest_funding_rate", lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(repo, "latest_open_interest", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "get_latest_feature_snapshot", lambda *args: None)
+
+    _now = datetime.now(timezone.utc)
+
+    class Exchange:
+        id = "bitget"
+
+        async def fetch_ohlcv(self, *args, **kwargs):
+            # 1h candle close is 100.0; the live ticker must win over it.
+            ts = int((_now - timedelta(days=1)).timestamp() * 1000)
+            return [[ts, 100, 101, 99, 100, 1000]]
+
+    async def collect(last):
+        ticker = {"quoteVolume": 1_000_000}
+        if last is not _MISSING:
+            ticker["last"] = last
+        from tests.ohlcv_test_helpers import observation_reader
+
+        exchange = Exchange()
+        return await _fetch_single_feature(
+            exchange,
+            {
+                "id": "asset-btc",
+                "symbol": "BTC/USDT",
+                "venue": "bitget",
+                "market_type": "spot",
+            },
+            ticker,
+            _now,
+            lambda symbol: symbol,
+            ohlcv_reader=observation_reader(exchange),
+        )
+
+    # (a) valid positive last -> last_price equals it and NOT the closed close.
+    a = await collect(1234.5)
+    assert a is not None
+    assert a["last_price"] == 1234.5
+    assert a["last_price"] != 100.0  # 100.0 is closes_1h[-1]; the bug value
+
+    # (b) same closes_1h, different ticker last -> different last_price.
+    b = await collect(9999.0)
+    assert b is not None
+    assert b["last_price"] == 9999.0
+    assert a["last_price"] != b["last_price"]
+
+    # (c) missing or invalid last -> None, never the candle close.
+    c = await collect(_MISSING)
+    assert c is not None
+    assert c["last_price"] is None
+    d = await collect(0)
+    assert d is not None
+    assert d["last_price"] is None
+
+
+_MISSING = object()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("response_delay_minutes", [4, 6])
 async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
     monkeypatch, response_delay_minutes,

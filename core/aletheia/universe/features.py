@@ -887,7 +887,19 @@ async def _fetch_single_feature(
     if spread is None and ob_row:
         spread = ob_row.get("spread_bps")
 
-    last_price = closes_1h[-1] if closes_1h else None
+    # Must be the scan-time observable price: it becomes entry_price_usd on
+    # counterfactual outcome rows. The fully-closed candle close is a stale
+    # value (up to an hour old) and is deliberately NOT used as a fallback, so
+    # an unavailable live price stays None and downstream refuses to seed an
+    # unmeasurable outcome row.
+    last_price = None
+    if ticker.get("last") is not None:
+        try:
+            _last = float(ticker["last"])
+        except (TypeError, ValueError):
+            _last = None
+        if _last is not None and math.isfinite(_last) and _last > 0:
+            last_price = _last
 
     feat = {
         "asset_id": asset_id,
