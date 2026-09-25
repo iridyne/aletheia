@@ -40,10 +40,15 @@ def test_execution_cost_config_rejects_invalid_values(model, field, value):
 
 
 def test_execution_cost_config_accepts_documented_boundaries():
-    TradingConfig(execution_fee_pct=0.0, slippage_bps=0.0)
-    TradingConfig(execution_fee_pct=5.0, slippage_bps=200.0)
-    UniverseConfig(max_spread_bps=1.0)
-    UniverseConfig(max_spread_bps=200.0)
+    configs = [
+        TradingConfig(execution_fee_pct=0.0, slippage_bps=0.0),
+        TradingConfig(execution_fee_pct=5.0, slippage_bps=200.0),
+        UniverseConfig(max_spread_bps=1.0),
+        UniverseConfig(max_spread_bps=200.0),
+    ]
+    assert all(config is not None for config in configs), (
+        "documented boundary values must construct valid configs"
+    )
 
 
 @pytest.mark.parametrize(

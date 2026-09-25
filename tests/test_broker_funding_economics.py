@@ -1218,6 +1218,7 @@ async def test_expired_funding_prefix_does_not_starve_recoverable_close(
         "SELECT COUNT(*) FROM audit_events WHERE "
         "event_type='exchange_position_funding_history_expired'"
     ).fetchone()[0] == 52
+    return replay
 
 
 @pytest.mark.asyncio
@@ -1288,6 +1289,7 @@ async def test_funding_cursor_progress_survives_connection_reopen(
     assert repo._select_one("positions", "bounded-fresh")[
         "funding_source"
     ] == "broker_ledger"
+    return third
 
 
 @pytest.mark.asyncio

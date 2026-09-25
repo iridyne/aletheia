@@ -149,7 +149,7 @@ def _assert_exact_inventory(
     label: str,
     discovered: set[str],
     allowed: frozenset[str],
-) -> None:
+) -> int:
     unexpected = discovered - allowed
     stale = allowed - discovered
     assert not unexpected and not stale, (
@@ -157,6 +157,7 @@ def _assert_exact_inventory(
         f"unexpected={sorted(unexpected)}, stale={sorted(stale)}. "
         "Update #2737's exact migration debt ceiling with the code change."
     )
+    return len(discovered)
 
 
 @spec_claim(SpecClaim(
@@ -169,10 +170,13 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
         for path, source in _production_sources().items()
         if any(table in source for table in _LEGACY_TABLES)
     }
-    _assert_exact_inventory(
+    count = _assert_exact_inventory(
         label="LEGACY EXPERIMENT REFERENCE",
         discovered=discovered,
         allowed=_REFERENCE_ALLOWLIST,
+    )
+    assert count == len(_REFERENCE_ALLOWLIST), (
+        "legacy experiment reference inventory must match the frozen allowlist exactly"
     )
 
 
@@ -184,10 +188,13 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
 ))
 def test_no_new_legacy_experiment_writer():
     sources = _production_sources()
-    _assert_exact_inventory(
+    count = _assert_exact_inventory(
         label="LEGACY EXPERIMENT WRITER",
         discovered=_discover_legacy_writers(sources),
         allowed=_WRITER_ALLOWLIST,
+    )
+    assert count == len(_WRITER_ALLOWLIST), (
+        "legacy experiment writer inventory must match the frozen allowlist exactly"
     )
 
 

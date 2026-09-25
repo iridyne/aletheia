@@ -249,6 +249,7 @@ def test_scoped_cutover_keeps_spot_and_current_incomplete_denominator():
         cost_assumptions=loaded[0]["cost_assumptions"],
     )
     assert all(v.failure_reason == "tail_harm" for v in harmed.cohorts.values())
+    return loaded
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,10 @@ _CONTRACT = "observation_lab_backup_contract"
     "no importer, maintenance pass or checkpoint rewrite is permitted.",
 ))
 def test_caught_up_activation_cut_is_a_true_no_op(tmp_path, monkeypatch):
-    _assert_fast_path(tmp_path, monkeypatch)
+    result = _assert_fast_path(tmp_path, monkeypatch)
+    assert result is not None and result.get("fast_path") is True, (
+        "caught-up activation cut must take the read-only fast path"
+    )
 
 
 @spec_claim(SpecClaim(
@@ -44,7 +47,10 @@ def test_caught_up_activation_cut_is_a_true_no_op(tmp_path, monkeypatch):
 def test_activation_cut_contains_only_delivery_and_checkpoint_work(
     tmp_path, monkeypatch,
 ):
-    _assert_minimal_cut(tmp_path, monkeypatch)
+    result = _assert_minimal_cut(tmp_path, monkeypatch)
+    assert result is not None and result.get("delivery_import", {}).get("processed", 0) > 0, (
+        "activation cut must drain the delivery frontier"
+    )
 
 
 @spec_claim(SpecClaim(
@@ -56,8 +62,12 @@ def test_activation_cut_contains_only_delivery_and_checkpoint_work(
     "authoritative backup, source activation and target checkpoint re-anchor.",
 ))
 def test_activation_cut_lock_covers_backup_and_source_switch(tmp_path, monkeypatch):
-    _assert_lock_lifetime(monkeypatch)
-    _assert_phase_boundary(tmp_path, monkeypatch)
+    lock_result = _assert_lock_lifetime(monkeypatch)
+    phase_result = _assert_phase_boundary(tmp_path, monkeypatch)
+    assert lock_result is not None, "cycle lock must remain held across the minimal cut"
+    assert phase_result is not None and phase_result.get("continuity_verified") is True, (
+        "settlement barrier must cover backup and source switch"
+    )
 
 
 @spec_claim(SpecClaim(
@@ -67,4 +77,7 @@ def test_activation_cut_lock_covers_backup_and_source_switch(tmp_path, monkeypat
 ))
 def test_bounded_applied_delivery_recovery():
     from tests.test_update_delivery_recovery import test_only_exact_unclassified_delivery_suffix_can_settle
-    test_only_exact_unclassified_delivery_suffix_can_settle(None)
+    proof = test_only_exact_unclassified_delivery_suffix_can_settle(None)
+    assert proof is not None and proof.get("ok") is True, (
+        "clean applied-delivery suffix must settle with a proven checkpoint"
+    )

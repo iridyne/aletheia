@@ -80,6 +80,7 @@ async def test_fred_source_dates_survive_collection_storage_and_current_consumer
     from aletheia.server.routes.data import get_macro_snapshot
     assert get_macro_snapshot()['data']['vix_close'] is None
     assert repo._select_all('macro_snapshots', limit=1)[0] == raw
+    return raw
 
 
 @pytest.mark.parametrize('source,precision', [

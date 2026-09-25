@@ -461,6 +461,13 @@ def test_run_migrations_idempotent(tmp_path, monkeypatch):
     run_migrations()
     # Second call on the same DB must not raise.
     run_migrations()
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "aletheia_schema_migrations" in tables, "idempotent migration run must create the migration ledger"
 
 
 # ---------------------------------------------------------------------------

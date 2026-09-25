@@ -49,6 +49,7 @@ def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
     else:
         assert lab.execute("SELECT COUNT(*) FROM joint_checkpoints").fetchone()[0] == count
         assert not verify_joint_checkpoint().ok
+    return proof
 
 
 def test_recovery_preflight_cannot_skip_stopping_producers(monkeypatch):

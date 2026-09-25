@@ -81,6 +81,7 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     with pytest.raises(ValueError, match="entry_plan_expired"):
         build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
             observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now + timedelta(hours=4))
+    return plan
 
 
 @pytest.mark.parametrize("legacy_version", [None, "entry-plan/v1"])

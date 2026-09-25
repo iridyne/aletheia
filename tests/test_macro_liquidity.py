@@ -77,6 +77,7 @@ def test_cutoff_storage_replay_and_old_macro_isolation():
     assert repo._select_all("macro_snapshots") == before
     assert ml.derive_macro_liquidity(ml.read_source_batches("2026-09-10T00:00:00+00:00"),
         "2026-09-10T00:00:00+00:00")["coverage"] == 0
+    return result
 
 
 def test_refetch_does_not_refresh_old_source_and_revision_has_no_backfill():

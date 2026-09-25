@@ -71,6 +71,7 @@ def test_caught_up_update_settlement_is_a_true_read_only_fast_path(
     assert result["checkpoint"] is checkpoint
     assert result["maintenance_deferred"] is True
     assert result["timings_ms"]["total"] >= 0
+    return result
 
 
 def test_update_settlement_drains_only_delivery_then_strictly_verifies(
@@ -151,6 +152,7 @@ def test_update_settlement_drains_only_delivery_then_strictly_verifies(
     assert result["maintenance_deferred"] is True
     assert "delivery_import" in result["timings_ms"]
     assert "checkpoint_postverify" in result["timings_ms"]
+    return result
 
 
 def test_update_settlement_refuses_retry_before_import(tmp_path, monkeypatch):
@@ -216,6 +218,7 @@ def test_update_barrier_keeps_cycle_lock_around_minimal_cut(monkeypatch):
         assert result["ok"] is True
 
     assert events == ["lock:enter", "settle", "activation", "lock:exit"]
+    return result
 
 
 def _stub_capture_dependencies(monkeypatch, verdicts) -> None:
@@ -469,3 +472,4 @@ def test_update_progress_separates_stop_settlement_and_keeps_lock(
         "barrier:exit",
     ]
     assert "backup" not in events
+    return result

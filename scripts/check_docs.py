@@ -323,58 +323,11 @@ def timestamp_unit_suffix_failures() -> list[str]:
 # (2026-09-26), never a silent skip; keep green on master but still catch NEW
 # vacuous tests. (relative_path, func_name) tuples, not line numbers, so the
 # baseline does not churn on edits.
-BASELINE_VACUOUS_TESTS = {
-    # (relative_path, func_name)
-    ("tests/specs/spec_broker_funding_fairness.py", "test_broker_funding_recovery_is_fail_closed_and_fair"),
-    ("tests/specs/spec_candidate_selection_utility.py", "test_current_candidate_bootstrap_without_slow_cache"),
-    ("tests/specs/spec_candidate_selection_utility.py", "test_perp_funding_history_cutover"),
-    ("tests/specs/spec_data_model.py", "test_run_migrations_idempotent"),
-    ("tests/specs/spec_data_utilization.py", "test_fred_research_cutoff_and_isolation"),
-    ("tests/specs/spec_data_utilization.py", "test_positioning_evidence_cutoff_and_replay"),
-    ("tests/specs/spec_data_utilization.py", "test_options_volatility_observation_export"),
-    ("tests/specs/spec_data_utilization.py", "test_current_derivatives_have_one_economic_owner"),
-    ("tests/specs/spec_data_utilization.py", "test_derivatives_comparison_is_observation_only"),
-    ("tests/specs/spec_entry_plan_contract.py", "test_market_quality_retry_before_input_binding"),
-    ("tests/specs/spec_entry_plan_contract.py", "test_static_entry_feasibility_and_birth_owner"),
-    ("tests/specs/spec_macro_signals.py", "test_macro_source_time_consumer_contract"),
-    ("tests/specs/spec_observation_experiment_ownership.py", "test_legacy_experiment_reference_inventory_cannot_grow"),
-    ("tests/specs/spec_observation_experiment_ownership.py", "test_no_new_legacy_experiment_writer"),
-    ("tests/specs/spec_pipeline_bitget_preset_protection.py", "test_bitget_spot_and_futures_close_never_send_entry_presets"),
-    ("tests/specs/spec_update_observation_settlement.py", "test_caught_up_activation_cut_is_a_true_no_op"),
-    ("tests/specs/spec_update_observation_settlement.py", "test_activation_cut_contains_only_delivery_and_checkpoint_work"),
-    ("tests/specs/spec_update_observation_settlement.py", "test_activation_cut_lock_covers_backup_and_source_switch"),
-    ("tests/specs/spec_update_observation_settlement.py", "test_bounded_applied_delivery_recovery"),
-    ("tests/test_architecture_fitness.py", "test_risk_decisions_have_one_application_writer"),
-    ("tests/test_architecture_fitness.py", "test_risk_writer_guard_accepts_canonical_storage_and_risk_import"),
-    ("tests/test_architecture_fitness.py", "test_fill_writes_stay_with_exchange_materialization"),
-    ("tests/test_architecture_fitness.py", "test_fill_writer_guard_preserves_exact_provenance_update"),
-    ("tests/test_architecture_fitness.py", "test_candidate_writer_guard_accepts_publication_and_distinct_maintenance"),
-    ("tests/test_config_schema_bounds.py", "test_execution_cost_config_accepts_documented_boundaries"),
-    ("tests/test_gateway_firewall_cli.py", "test_noninteractive_gateway_start_never_attempts_hidden_uac"),
-    ("tests/test_gateway_firewall_cli.py", "test_loopback_binding_never_requests_firewall_change"),
-    ("tests/test_main_install_hint.py", "test_hint_eof_on_stdin_does_not_crash"),
-    ("tests/test_notifications.py", "test_webhook_respects_notify_alerts_false"),
-    ("tests/test_notifications.py", "test_webhook_respects_notify_trade_fills_false"),
-    ("tests/test_notifications.py", "test_webhook_respects_notify_daily_summary_false"),
-    ("tests/test_observation_execution_owner.py", "test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread"),
-    ("tests/test_observation_execution_owner.py", "test_worker_lock_releases_and_can_be_reacquired"),
-    ("tests/test_okx_broker.py", "test_close_is_noop_when_never_used"),
-    ("tests/test_order_writer_boundary.py", "test_order_writer_ownership"),
-    ("tests/test_order_writer_boundary.py", "test_order_guard_accepts_canonical_owner_and_delegation"),
-    ("tests/test_planning_writer_boundary.py", "test_planning_guard_accepts_declared_writers"),
-    ("tests/test_planning_writer_boundary.py", "test_planning_writer_ownership"),
-    ("tests/test_proposal_writer_boundary.py", "test_proposal_writer_owners"),
-    ("tests/test_regime_boundary.py", "test_universe_keeps_publishing_without_optional_regime"),
-    ("tests/test_self_evolution_tier1.py", "test_create_failure_does_not_raise"),
-    ("tests/test_spec_conformance.py", "test_print_conformance_matrix"),
-    ("tests/test_tokenomics_phase345.py", "test_budget_enforcement_is_dormant_by_default"),
-    ("tests/test_tokenomics_phase345.py", "test_budget_warn_only_never_denies"),
-    ("tests/test_tokenomics_phase345.py", "test_safety_callers_remain_warn_only_in_every_mode"),
-    ("tests/test_venue_listing_cache.py", "test_invalidate_nonexistent_is_noop"),
-    ("tests/test_windows_dogfood.py", "test_assert_trust_root_matches_passes_when_keys_equal"),
-    ("tests/test_windows_dogfood.py", "test_require_windows_passes_on_windows"),
-    ("tests/test_ws_realtime.py", "test_fingerprint_queries_match_the_migrated_schema"),
-}
+# Zero known violations as of 2026-09-26 (R20 harvest): all 49 historical
+# entries now carry real assertions — boundary scans assert their scan count,
+# delegation wrappers assert the delegated observable, and pure no-op tests
+# assert the observable consequence of the operation.
+BASELINE_VACUOUS_TESTS: set[tuple[str, str]] = {}
 
 
 def _call_name(call: ast.Call) -> str | None:
