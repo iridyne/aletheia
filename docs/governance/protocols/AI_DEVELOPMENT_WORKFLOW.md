@@ -41,13 +41,15 @@ Final report:
 2. Review the diff and commit only intended source/documentation changes.
 3. Prepare the PR body from [`.github/PULL_REQUEST_TEMPLATE.md`](../../../.github/PULL_REQUEST_TEMPLATE.md)
    and run `uv run --no-sync python scripts/ci_preflight.py --pr-body-file <path>`
-   before the first CI-triggering PR create/update and again before an exact-head
-   repair push. It must pass against the intended body and current branch/base diff.
-4. Push the branch and use the PR as the durable review and handoff surface. If only
-   Change Contract metadata needs repair, edit the PR body on the same head and wait
-   for `Verify Change Contract`; never create a no-op/retrigger source commit. If the
-   invalid metadata had blocked deep CI, the trusted recovery job re-runs only that
-   failed exact-head run and its dependants after the metadata check turns green.
+   before the first PR create/update. It must pass against the intended body and
+   current branch/base diff. Since 2026-09-07 remote CI is `workflow_dispatch`-only
+   ([decision](../decisions/DECISIONS.md#2026-09-07-—-remote-ci-维持-manual-only-是主动决策不是遗留疏漏)),
+   so this local preflight is the enforcing gate — there is no exact-head
+   `Verify Change Contract` check run to wait on, and no trusted recovery job to
+   re-dispatch a run.
+4. Push the branch and use the PR as the durable review and handoff surface.
+   Merges are manual (`gh pr merge <n> --rebase`), so the PR body edit itself is
+   the metadata repair — no retrigger commit is needed.
 5. Record long-lived decisions in
    [`Architecture Decision Log`](../decisions/DECISIONS.md) or the relevant
    design document. Do not commit external-orchestrator session state.
