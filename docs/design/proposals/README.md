@@ -3,10 +3,9 @@
 Proposals describe substantial future behavior without claiming that behavior
 already exists.
 
-Create one only for a major new capability, a cross-domain change, or a
-trust-boundary change. Ordinary bugs, narrow refactors, and routine
-documentation or operations changes use a GitHub Issue when tracking is needed
-and a PR for review.
+A Proposal is optional and never a precondition
+([2026-09-26 decision](../../governance/decisions/DECISIONS.md)). Write one when
+the reasoning will not survive in a PR body; otherwise use an Issue and a PR.
 
 ## Lifecycle
 

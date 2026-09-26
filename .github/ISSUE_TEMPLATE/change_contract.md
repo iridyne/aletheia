@@ -25,7 +25,7 @@ D0: restore truth / conformance repair — existing Contract / invariant already
 D1: change semantics — behavior semantics change. State ADDED / MODIFIED / REMOVED
   semantic deltas.
 D2: change structure — authority ownership, mainline, subsystem topology, or product
-  scope changes; requires accepted docs/design/proposals/ Proposal first.
+  scope changes. Name the gates that will hold the new structure.
 
 Delete sections that do not apply. For D0, delete the Contract Delta subsections.
 -->
@@ -55,7 +55,7 @@ Delete this section when there are no material dependencies.
 Select one and explain:
 - [ ] D0 — Restore truth / implementation conformance repair (Contract Delta: NONE)
 - [ ] D1 — Change semantics
-- [ ] D2 — Change structure (requires accepted Proposal)
+- [ ] D2 — Change structure (name the gates that hold it)
 -->
 
 ## Contract Delta
