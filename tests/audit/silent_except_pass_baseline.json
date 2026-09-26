@@ -1,0 +1,1260 @@
+{
+  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason.",
+  "generated_at": "2026-09-26",
+  "generator": "python -m ast walk over core/aletheia + extensions",
+  "count": 313,
+  "sites": [
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 81
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 122
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 183
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 191
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 287
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 313
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 396
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 438
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 462
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 470
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 481
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 506
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 624
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 635
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 648
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 655
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 665
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 681
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 696
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 717
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 735
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 759
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 789
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 798
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 826
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 842
+    },
+    {
+      "file": "core/aletheia/_gateway_runner.py",
+      "line": 850
+    },
+    {
+      "file": "core/aletheia/agent_runtime/auto_resume.py",
+      "line": 80
+    },
+    {
+      "file": "core/aletheia/agent_runtime/auto_resume.py",
+      "line": 94
+    },
+    {
+      "file": "core/aletheia/agent_runtime/auto_resume.py",
+      "line": 228
+    },
+    {
+      "file": "core/aletheia/agent_runtime/build_info.py",
+      "line": 38
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 68
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 429
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 551
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 564
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 726
+    },
+    {
+      "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
+      "line": 686
+    },
+    {
+      "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
+      "line": 755
+    },
+    {
+      "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
+      "line": 902
+    },
+    {
+      "file": "core/aletheia/agent_runtime/health.py",
+      "line": 528
+    },
+    {
+      "file": "core/aletheia/agent_runtime/job_queue.py",
+      "line": 157
+    },
+    {
+      "file": "core/aletheia/agent_runtime/orchestrator.py",
+      "line": 135
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pause_ownership.py",
+      "line": 101
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pause_ownership.py",
+      "line": 136
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pause_ownership.py",
+      "line": 170
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pi_daemon.py",
+      "line": 267
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pi_daemon.py",
+      "line": 322
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pi_daemon.py",
+      "line": 677
+    },
+    {
+      "file": "core/aletheia/agent_runtime/resume_gate.py",
+      "line": 99
+    },
+    {
+      "file": "core/aletheia/agent_runtime/resume_gate.py",
+      "line": 296
+    },
+    {
+      "file": "core/aletheia/agent_runtime/run_logger.py",
+      "line": 82
+    },
+    {
+      "file": "core/aletheia/agent_runtime/run_logger.py",
+      "line": 134
+    },
+    {
+      "file": "core/aletheia/agent_runtime/runtime_session.py",
+      "line": 192
+    },
+    {
+      "file": "core/aletheia/agent_runtime/runtime_session.py",
+      "line": 242
+    },
+    {
+      "file": "core/aletheia/agent_runtime/runtime_session.py",
+      "line": 283
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 467
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 627
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 739
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 1217
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 1695
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 1797
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 1821
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 4193
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "line": 4718
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 111
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 512
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 522
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 845
+    },
+    {
+      "file": "core/aletheia/agent_shell/audit.py",
+      "line": 53
+    },
+    {
+      "file": "core/aletheia/agent_shell/commands.py",
+      "line": 381
+    },
+    {
+      "file": "core/aletheia/agent_shell/runtime.py",
+      "line": 346
+    },
+    {
+      "file": "core/aletheia/agent_shell/runtime.py",
+      "line": 370
+    },
+    {
+      "file": "core/aletheia/agents/__init__.py",
+      "line": 27
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "line": 371
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "line": 379
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "line": 532
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "line": 1118
+    },
+    {
+      "file": "core/aletheia/analytics/candidate_facts.py",
+      "line": 74
+    },
+    {
+      "file": "core/aletheia/analytics/causal_controls.py",
+      "line": 140
+    },
+    {
+      "file": "core/aletheia/analytics/filter_evidence.py",
+      "line": 396
+    },
+    {
+      "file": "core/aletheia/analytics/ranker_objective_audit.py",
+      "line": 83
+    },
+    {
+      "file": "core/aletheia/analytics/sizing_counterfactual.py",
+      "line": 151
+    },
+    {
+      "file": "core/aletheia/analytics/trade_attribution.py",
+      "line": 445
+    },
+    {
+      "file": "core/aletheia/analytics/trade_insights.py",
+      "line": 572
+    },
+    {
+      "file": "core/aletheia/cli/control_cmd.py",
+      "line": 36
+    },
+    {
+      "file": "core/aletheia/cli/control_cmd.py",
+      "line": 46
+    },
+    {
+      "file": "core/aletheia/cli/control_cmd.py",
+      "line": 59
+    },
+    {
+      "file": "core/aletheia/cli/inspect_cmd.py",
+      "line": 461
+    },
+    {
+      "file": "core/aletheia/cli/inspect_cmd.py",
+      "line": 568
+    },
+    {
+      "file": "core/aletheia/cli/inspect_cmd.py",
+      "line": 1313
+    },
+    {
+      "file": "core/aletheia/cli/inspect_cmd.py",
+      "line": 1631
+    },
+    {
+      "file": "core/aletheia/cli/install.py",
+      "line": 80
+    },
+    {
+      "file": "core/aletheia/config/loader.py",
+      "line": 218
+    },
+    {
+      "file": "core/aletheia/config/loader.py",
+      "line": 500
+    },
+    {
+      "file": "core/aletheia/config/loader.py",
+      "line": 504
+    },
+    {
+      "file": "core/aletheia/config/loader.py",
+      "line": 589
+    },
+    {
+      "file": "core/aletheia/config/secrets.py",
+      "line": 215
+    },
+    {
+      "file": "core/aletheia/config/secrets.py",
+      "line": 236
+    },
+    {
+      "file": "core/aletheia/config/secrets.py",
+      "line": 299
+    },
+    {
+      "file": "core/aletheia/data/active_ohlcv_backfill.py",
+      "line": 40
+    },
+    {
+      "file": "core/aletheia/data/collector_health.py",
+      "line": 182
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "line": 603
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "line": 615
+    },
+    {
+      "file": "core/aletheia/diagnostics/config_consistency.py",
+      "line": 45
+    },
+    {
+      "file": "core/aletheia/diagnostics/config_consistency.py",
+      "line": 259
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 295
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 388
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 566
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 1048
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 1692
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 1723
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 1736
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 2047
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 2682
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 3451
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 3509
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 3563
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 3739
+    },
+    {
+      "file": "core/aletheia/diagnostics/doctor.py",
+      "line": 3750
+    },
+    {
+      "file": "core/aletheia/economics/context_artifacts.py",
+      "line": 172
+    },
+    {
+      "file": "core/aletheia/economics/pricing_sync.py",
+      "line": 384
+    },
+    {
+      "file": "core/aletheia/economics/pricing_sync.py",
+      "line": 620
+    },
+    {
+      "file": "core/aletheia/economics/tracing.py",
+      "line": 868
+    },
+    {
+      "file": "core/aletheia/execution/broker_utils.py",
+      "line": 86
+    },
+    {
+      "file": "core/aletheia/execution/exchange_materialization.py",
+      "line": 1782
+    },
+    {
+      "file": "core/aletheia/files/jsonl.py",
+      "line": 84
+    },
+    {
+      "file": "core/aletheia/files/jsonl.py",
+      "line": 213
+    },
+    {
+      "file": "core/aletheia/files/jsonl.py",
+      "line": 240
+    },
+    {
+      "file": "core/aletheia/gateway/_win32_proc.py",
+      "line": 285
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 94
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 102
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 339
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 523
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 921
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 961
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "line": 1153
+    },
+    {
+      "file": "core/aletheia/gateway/console_text.py",
+      "line": 50
+    },
+    {
+      "file": "core/aletheia/gateway/frontdoor.py",
+      "line": 570
+    },
+    {
+      "file": "core/aletheia/gateway/frontdoor.py",
+      "line": 589
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 338
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 375
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 399
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 517
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 519
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 604
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 606
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 618
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 628
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 758
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 771
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 832
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 916
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 942
+    },
+    {
+      "file": "core/aletheia/gateway/lifecycle.py",
+      "line": 1132
+    },
+    {
+      "file": "core/aletheia/gateway/logs.py",
+      "line": 85
+    },
+    {
+      "file": "core/aletheia/gateway/managed_service.py",
+      "line": 134
+    },
+    {
+      "file": "core/aletheia/gateway/managed_service.py",
+      "line": 370
+    },
+    {
+      "file": "core/aletheia/gateway/managed_service.py",
+      "line": 512
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 159
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 191
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 512
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 531
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 580
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 825
+    },
+    {
+      "file": "core/aletheia/gateway/operator_shell.py",
+      "line": 887
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 256
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 369
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 381
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 383
+    },
+    {
+      "file": "core/aletheia/gateway/session_service.py",
+      "line": 65
+    },
+    {
+      "file": "core/aletheia/gateway/session_service.py",
+      "line": 217
+    },
+    {
+      "file": "core/aletheia/gateway/session_service.py",
+      "line": 439
+    },
+    {
+      "file": "core/aletheia/gateway/windows_identity.py",
+      "line": 45
+    },
+    {
+      "file": "core/aletheia/gateway/windows_machine_service.py",
+      "line": 372
+    },
+    {
+      "file": "core/aletheia/infra/errors.py",
+      "line": 71
+    },
+    {
+      "file": "core/aletheia/logging_config.py",
+      "line": 41
+    },
+    {
+      "file": "core/aletheia/logging_config.py",
+      "line": 67
+    },
+    {
+      "file": "core/aletheia/main.py",
+      "line": 497
+    },
+    {
+      "file": "core/aletheia/main.py",
+      "line": 520
+    },
+    {
+      "file": "core/aletheia/maintenance/filesystem_retention.py",
+      "line": 99
+    },
+    {
+      "file": "core/aletheia/maintenance/filesystem_retention.py",
+      "line": 195
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 33
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 471
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 500
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 560
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 588
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 646
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "line": 669
+    },
+    {
+      "file": "core/aletheia/model_provider/inference_contract.py",
+      "line": 174
+    },
+    {
+      "file": "core/aletheia/model_provider/inference_contract.py",
+      "line": 183
+    },
+    {
+      "file": "core/aletheia/net.py",
+      "line": 87
+    },
+    {
+      "file": "core/aletheia/net.py",
+      "line": 113
+    },
+    {
+      "file": "core/aletheia/net.py",
+      "line": 266
+    },
+    {
+      "file": "core/aletheia/net.py",
+      "line": 353
+    },
+    {
+      "file": "core/aletheia/net.py",
+      "line": 405
+    },
+    {
+      "file": "core/aletheia/notifications.py",
+      "line": 110
+    },
+    {
+      "file": "core/aletheia/notifications.py",
+      "line": 278
+    },
+    {
+      "file": "core/aletheia/notifications.py",
+      "line": 290
+    },
+    {
+      "file": "core/aletheia/notifications.py",
+      "line": 299
+    },
+    {
+      "file": "core/aletheia/portfolio/pnl.py",
+      "line": 1100
+    },
+    {
+      "file": "core/aletheia/portfolio/position_manager.py",
+      "line": 1674
+    },
+    {
+      "file": "core/aletheia/portfolio/position_reconciler.py",
+      "line": 1348
+    },
+    {
+      "file": "core/aletheia/portfolio/position_reconciler.py",
+      "line": 1481
+    },
+    {
+      "file": "core/aletheia/portfolio/position_reconciler.py",
+      "line": 1511
+    },
+    {
+      "file": "core/aletheia/portfolio/position_reconciler.py",
+      "line": 1605
+    },
+    {
+      "file": "core/aletheia/risk/engine.py",
+      "line": 2159
+    },
+    {
+      "file": "core/aletheia/risk/engine.py",
+      "line": 2238
+    },
+    {
+      "file": "core/aletheia/risk/engine.py",
+      "line": 2535
+    },
+    {
+      "file": "core/aletheia/risk/kill_switch.py",
+      "line": 85
+    },
+    {
+      "file": "core/aletheia/runtime_home_migration.py",
+      "line": 325
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 347
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 362
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 385
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 420
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 754
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 759
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 803
+    },
+    {
+      "file": "core/aletheia/server/app.py",
+      "line": 812
+    },
+    {
+      "file": "core/aletheia/server/routes/analytics.py",
+      "line": 524
+    },
+    {
+      "file": "core/aletheia/server/routes/analytics.py",
+      "line": 658
+    },
+    {
+      "file": "core/aletheia/server/routes/analytics.py",
+      "line": 743
+    },
+    {
+      "file": "core/aletheia/server/routes/analytics.py",
+      "line": 2163
+    },
+    {
+      "file": "core/aletheia/server/routes/data.py",
+      "line": 2540
+    },
+    {
+      "file": "core/aletheia/server/routes/data.py",
+      "line": 2959
+    },
+    {
+      "file": "core/aletheia/server/routes/dev_reload.py",
+      "line": 55
+    },
+    {
+      "file": "core/aletheia/server/routes/operator.py",
+      "line": 1567
+    },
+    {
+      "file": "core/aletheia/server/routes/persistence.py",
+      "line": 213
+    },
+    {
+      "file": "core/aletheia/server/routes/prediction.py",
+      "line": 175
+    },
+    {
+      "file": "core/aletheia/server/routes/settings.py",
+      "line": 755
+    },
+    {
+      "file": "core/aletheia/server/routes/ws.py",
+      "line": 346
+    },
+    {
+      "file": "core/aletheia/server/routes/ws.py",
+      "line": 352
+    },
+    {
+      "file": "core/aletheia/storage/market_ohlcv_layout.py",
+      "line": 103
+    },
+    {
+      "file": "core/aletheia/storage/migrations.py",
+      "line": 3117
+    },
+    {
+      "file": "core/aletheia/storage/migrations.py",
+      "line": 7813
+    },
+    {
+      "file": "core/aletheia/storage/migrations.py",
+      "line": 9195
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 305
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 4093
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 5062
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 5069
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 5157
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 5925
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 11052
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 12848
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 12861
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "line": 12889
+    },
+    {
+      "file": "core/aletheia/storage/sqlite.py",
+      "line": 372
+    },
+    {
+      "file": "core/aletheia/storage/sqlite.py",
+      "line": 378
+    },
+    {
+      "file": "core/aletheia/trading/entry_snapshot.py",
+      "line": 36
+    },
+    {
+      "file": "core/aletheia/trading/entry_snapshot.py",
+      "line": 44
+    },
+    {
+      "file": "core/aletheia/trading/instruments.py",
+      "line": 48
+    },
+    {
+      "file": "core/aletheia/trading/instruments.py",
+      "line": 72
+    },
+    {
+      "file": "core/aletheia/trading/market_data.py",
+      "line": 71
+    },
+    {
+      "file": "core/aletheia/trading/market_data.py",
+      "line": 219
+    },
+    {
+      "file": "core/aletheia/trading/market_data.py",
+      "line": 221
+    },
+    {
+      "file": "core/aletheia/trading/market_data.py",
+      "line": 258
+    },
+    {
+      "file": "core/aletheia/trading/market_data.py",
+      "line": 260
+    },
+    {
+      "file": "core/aletheia/trading/persona.py",
+      "line": 120
+    },
+    {
+      "file": "core/aletheia/trading/persona.py",
+      "line": 122
+    },
+    {
+      "file": "core/aletheia/trading/persona.py",
+      "line": 143
+    },
+    {
+      "file": "core/aletheia/trading/sizing.py",
+      "line": 324
+    },
+    {
+      "file": "core/aletheia/trust/learning_safety.py",
+      "line": 58
+    },
+    {
+      "file": "core/aletheia/trust/live_unlock.py",
+      "line": 120
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "line": 863
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "line": 880
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "line": 890
+    },
+    {
+      "file": "core/aletheia/universe/outcome_recorder.py",
+      "line": 534
+    },
+    {
+      "file": "core/aletheia/universe/outcome_recorder.py",
+      "line": 555
+    },
+    {
+      "file": "core/aletheia/universe/registry.py",
+      "line": 228
+    },
+    {
+      "file": "core/aletheia/uta/manager.py",
+      "line": 175
+    },
+    {
+      "file": "core/aletheia/uta/manager.py",
+      "line": 188
+    },
+    {
+      "file": "extensions/analytics/guard_promotion.py",
+      "line": 39
+    },
+    {
+      "file": "extensions/analytics/memo_effectiveness.py",
+      "line": 139
+    },
+    {
+      "file": "extensions/analytics/reasoning_feedback.py",
+      "line": 147
+    },
+    {
+      "file": "extensions/data/ccxt_provider.py",
+      "line": 804
+    },
+    {
+      "file": "extensions/data/ccxt_provider.py",
+      "line": 811
+    },
+    {
+      "file": "extensions/data/collectors/coinalyze.py",
+      "line": 152
+    },
+    {
+      "file": "extensions/data/collectors/coinalyze.py",
+      "line": 282
+    },
+    {
+      "file": "extensions/data/collectors/defillama.py",
+      "line": 260
+    },
+    {
+      "file": "extensions/data/collectors/macro.py",
+      "line": 76
+    },
+    {
+      "file": "extensions/data/news_collector.py",
+      "line": 62
+    },
+    {
+      "file": "extensions/data/sources/chain.py",
+      "line": 130
+    },
+    {
+      "file": "extensions/data/sources/chain.py",
+      "line": 211
+    },
+    {
+      "file": "extensions/exchanges/ccxt/adapter.py",
+      "line": 587
+    },
+    {
+      "file": "extensions/exchanges/ccxt/adapter.py",
+      "line": 693
+    },
+    {
+      "file": "extensions/exchanges/ccxt/adapter.py",
+      "line": 825
+    },
+    {
+      "file": "extensions/exchanges/ccxt/adapter.py",
+      "line": 1005
+    },
+    {
+      "file": "extensions/exchanges/ccxt/order_rules.py",
+      "line": 70
+    },
+    {
+      "file": "extensions/knowledge/guards.py",
+      "line": 181
+    },
+    {
+      "file": "extensions/knowledge/guards.py",
+      "line": 430
+    },
+    {
+      "file": "extensions/knowledge/manager.py",
+      "line": 341
+    },
+    {
+      "file": "extensions/learning/evidence_epoch.py",
+      "line": 43
+    },
+    {
+      "file": "extensions/learning/evidence_epoch.py",
+      "line": 55
+    },
+    {
+      "file": "extensions/learning/evidence_epoch.py",
+      "line": 181
+    },
+    {
+      "file": "extensions/learning/hypothesis_research.py",
+      "line": 769
+    },
+    {
+      "file": "extensions/learning/outcome_feedback.py",
+      "line": 116
+    },
+    {
+      "file": "extensions/observation_lab/canonical.py",
+      "line": 605
+    },
+    {
+      "file": "extensions/observation_lab/db.py",
+      "line": 53
+    },
+    {
+      "file": "extensions/observation_lab/db.py",
+      "line": 64
+    },
+    {
+      "file": "extensions/observation_lab/db.py",
+      "line": 362
+    },
+    {
+      "file": "extensions/observation_lab/db.py",
+      "line": 618
+    },
+    {
+      "file": "extensions/observation_lab/worker_lock.py",
+      "line": 136
+    },
+    {
+      "file": "extensions/regime/detector.py",
+      "line": 351
+    },
+    {
+      "file": "extensions/research/dreaming_agent.py",
+      "line": 610
+    },
+    {
+      "file": "extensions/research/equity_observer.py",
+      "line": 201
+    },
+    {
+      "file": "extensions/research/prediction_observer.py",
+      "line": 206
+    },
+    {
+      "file": "extensions/research/research_worker.py",
+      "line": 271
+    },
+    {
+      "file": "extensions/research/research_worker.py",
+      "line": 569
+    },
+    {
+      "file": "extensions/research/research_worker.py",
+      "line": 1025
+    },
+    {
+      "file": "extensions/research/research_worker.py",
+      "line": 1052
+    },
+    {
+      "file": "extensions/telegram/bot.py",
+      "line": 371
+    },
+    {
+      "file": "extensions/telegram/bot.py",
+      "line": 380
+    },
+    {
+      "file": "extensions/telegram/bot.py",
+      "line": 404
+    },
+    {
+      "file": "extensions/telegram/bot.py",
+      "line": 451
+    }
+  ]
+}
