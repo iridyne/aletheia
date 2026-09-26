@@ -598,7 +598,7 @@ def test_invalid_native_proposal_fails_closed(
 
     monkeypatch.setattr(
         gateway,
-        "_capture_attribution_snapshot_json",
+        "capture_attribution_snapshot_json",
         lambda _symbol, **_kwargs: None,
     )
     payload = {
@@ -1167,7 +1167,7 @@ def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
     original_hash = proposal.commit_hash
     monkeypatch.setattr(
         gateway,
-        "_capture_attribution_snapshot_json",
+        "capture_attribution_snapshot_json",
         lambda _symbol, **_kwargs: json.dumps({"regime_tag": "late-context"}),
     )
     result = gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode)
