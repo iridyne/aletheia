@@ -36,6 +36,7 @@ from aletheia.universe.twin_scoring import (
     TwinShadowRecord,
     annotate_authority_selection,
     build_twin_shadow_batch,
+    candidate_key,
 )
 
 
@@ -205,18 +206,6 @@ def _tuples(value: object) -> object:
 
 def decode_random_state(payload: str) -> object:
     return _tuples(json.loads(payload))
-
-
-def _candidate_key(scanner_run_id: str, feature: Mapping[str, object]) -> str:
-    feature_id = feature.get("feature_snapshot_id")
-    asset_id = feature.get("asset_id")
-    symbol = str(feature.get("symbol") or "")
-    market_type = str(feature.get("market_type") or "spot")
-    source_id = feature_id or asset_id or "not_available"
-    return (
-        f"universe-twin:{scanner_run_id or 'not_available'}:"
-        f"{source_id}:{market_type}:{symbol or 'not_available'}"
-    )
 
 
 def _outcome_candidate_key(record: TwinShadowRecord) -> str:
@@ -395,7 +384,7 @@ def build_twin_shadow_bundle(
     """Build one compact diagnostic sample in memory; performs no writes."""
 
     captured = captured_at or datetime.now(timezone.utc).isoformat()
-    safe_inputs = {_candidate_key(scanner_run_id, item.feature): _safe_input(item) for item in inputs}
+    safe_inputs = {candidate_key(scanner_run_id, item.feature): _safe_input(item) for item in inputs}
     evidence: list[UniverseTwinShadowEvidence] = []
     outcomes: list[FilterCandidateOutcome] = []
 
@@ -758,8 +747,8 @@ def replay_twin_shadow_bundle(
     policy = ContinuousScoringPolicy(**json.loads(str(batch["policy_json"])))
     replayed = build_twin_shadow_batch(inputs, scanner_run_id=scanner_run_id, base_policy=policy)
     by_key = {str(row["candidate_key"]): row for row in ordered_rows}
-    fine = [item.feature for item in inputs if bool(by_key[_candidate_key(scanner_run_id, item.feature)]["fine_filter_passed"])]
-    allocated = [item.feature for item in inputs if bool(by_key[_candidate_key(scanner_run_id, item.feature)]["authority_selected"])]
+    fine = [item.feature for item in inputs if bool(by_key[candidate_key(scanner_run_id, item.feature)]["fine_filter_passed"])]
+    allocated = [item.feature for item in inputs if bool(by_key[candidate_key(scanner_run_id, item.feature)]["authority_selected"])]
     replayed = annotate_authority_selection(replayed, fine_filtered=fine, allocated=allocated)
 
     context = json.loads(str(batch["allocation_context_json"]))
