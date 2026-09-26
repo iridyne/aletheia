@@ -142,3 +142,31 @@ def test_silent_failure_fallback_flags_broad_zero_and_ignores_none() -> None:
         "silent failure fallback: broad except returns falsy '0'"
     ) in failures
     assert not any("_bogus_ok_none" in failure for failure in failures)
+
+
+def test_skip_without_reason_is_reported_and_strict_xfail_is_not() -> None:
+    """The fifth gate: reason-less skips fail; strict xfail with reason passes."""
+    from scripts.check_docs import skip_xfail_and_data_guard_failures
+
+    probe = Path("tests") / "_skip_xfail_probe.py"
+    try:
+        probe.write_text(
+            "import pytest\n"
+            "\n"
+            "@pytest.mark.skip\ndef test_bad_unconditional_skip():\n"
+            "    assert True\n"
+            "\n"
+            "@pytest.mark.xfail(reason='known gap', strict=True)\n"
+            "def test_good_strict_xfail():\n"
+            "    assert False\n",
+            encoding="utf-8",
+        )
+        failures = skip_xfail_and_data_guard_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert any(
+        "tests/_skip_xfail_probe.py:3: unconditional @pytest.mark.skip "
+        "on test_bad_unconditional_skip" in failure
+        for failure in failures
+    )
+    assert not any("test_good_strict_xfail" in failure for failure in failures)

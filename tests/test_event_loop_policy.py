@@ -97,6 +97,6 @@ def test_uvicorn_loop_none_defers_to_process_policy() -> None:
     ProactorEventLoop factory on win32. Regression guard against a uvicorn
     upgrade dropping the "none" key (which would silently re-break §23).
     """
-    uvicorn_config = pytest.importorskip("uvicorn.config")
+    uvicorn_config = pytest.importorskip("uvicorn.config", reason="uvicorn.config is optional")
     cfg = uvicorn_config.Config("asyncio:SelectorEventLoop", loop="none")
     assert cfg.get_loop_factory() is None
