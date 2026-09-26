@@ -34,7 +34,10 @@ def _current_regime() -> str:
         if regime is not None:
             return "unknown"
     except Exception:
-        pass
+        logger.warning(
+            "entry_snapshot: market regime lookup failed (falling back to macro snapshot)",
+            exc_info=True,
+        )
     try:
         from aletheia.storage.repositories import latest_macro_snapshot
 
@@ -42,7 +45,10 @@ def _current_regime() -> str:
         if macro and macro.get("risk_regime"):
             return str(macro["risk_regime"])
     except Exception:
-        pass
+        logger.warning(
+            "entry_snapshot: macro snapshot fallback failed (returning 'unknown')",
+            exc_info=True,
+        )
     return "unknown"
 
 
