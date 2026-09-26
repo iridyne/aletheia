@@ -82,7 +82,7 @@ Request/execution path, and where each stage lives:
 | CLI entry (`aletheia` / `ato`) | `core/aletheia/main.py` → `core/aletheia/cli/*` (one module per command group) |
 | HTTP app + routes | `core/aletheia/server/app.py`, `server/routes/` (~23 route modules) |
 | Process/service lifecycle, supervisor, frontdoor | `core/aletheia/gateway/` |
-| Candidate discovery / scoring | `core/aletheia/universe/`, `extensions/volume_scanner`, `extensions/regime` |
+| Candidate discovery / scoring | `core/aletheia/universe/`, `extensions/data/collectors/volume_scanner.py`, `extensions/regime` |
 | Entry strategy authority (plans, triggers, sizing, TA) | `core/aletheia/trading/` |
 | Agent/LLM loop (System Operator) | `core/aletheia/agent_shell/`, `agent_runtime/`, `agents/` |
 | Risk approval (precedes every execution) | `core/aletheia/risk/` |
