@@ -30,6 +30,7 @@ from extensions.observation_lab.manifest import (
     resolve_treatment,
 )
 from aletheia.config.loader import get_data_dir
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 _log = logging.getLogger("aletheia.observation_lab.canonical")
 _SUPPORTED_MANIFEST_VERSIONS = frozenset({"execution-manifest/v1", "execution-manifest/v2"})
@@ -60,8 +61,6 @@ def _capture_receipt_reason_allowed(reason: object) -> bool:
     return value in _CAPTURE_RECEIPT_REASONS or value.startswith("undeclared_conflict:")
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _json(value: Any) -> str:

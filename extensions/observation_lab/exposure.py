@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from extensions.observation_lab.manifest import ExecutionManifest
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,6 @@ class LabExposureFact:
     source_runtime_commit: str | None = None
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _canonical_json(value: Any) -> str:

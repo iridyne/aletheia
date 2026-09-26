@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 
 # Checkpoints prove durable evidence identity, not scheduler heartbeats or
@@ -89,8 +90,6 @@ class CheckpointVerification:
     mismatch_components: tuple[str, ...] = ()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _canonical_json(value: Any) -> str:

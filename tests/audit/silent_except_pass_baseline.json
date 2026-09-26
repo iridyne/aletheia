@@ -702,7 +702,7 @@
     },
     {
       "file": "core/aletheia/trust/live_unlock.py",
-      "line": 120
+      "line": 119
     },
     {
       "file": "core/aletheia/universe/features.py",
@@ -814,7 +814,7 @@
     },
     {
       "file": "extensions/observation_lab/canonical.py",
-      "line": 605
+      "line": 604
     },
     {
       "file": "extensions/observation_lab/db.py",

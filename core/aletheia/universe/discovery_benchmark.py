@@ -32,6 +32,7 @@ from aletheia.universe.baseline_integrity import (
 )
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION, estimate_outcome_economics
 from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
+from aletheia.storage.time_utils import utcnow as _now
 logger = logging.getLogger("aletheia.universe.discovery_benchmark")
 
 BENCHMARK_CONTRACT_VERSION = "universe-discovery-benchmark/v1"
@@ -56,8 +57,6 @@ _SLOT_KEY = "universe-discovery"
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 _PERP_MARKETS = frozenset({"perp", "swap", "futures", "usdt_futures"})
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _utc(value: str | datetime | None = None) -> datetime:

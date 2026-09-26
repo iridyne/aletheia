@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from extensions.observation_lab.db import get_lab_db, lab_db_path, lab_transaction
+from aletheia.storage.time_utils import utcnow as _now
 
 
 @dataclass(frozen=True)
@@ -39,8 +40,6 @@ _HANDLERS: dict[tuple[str, str], ObservationHandler] = {}
 _VALID_AUTHORITY = frozenset({"observe_only", "external_authority"})
 _VALID_ADMISSION = frozenset({"admitted", "unavailable", "excluded"})
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _json(value: object) -> str:

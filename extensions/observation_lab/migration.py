@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from extensions.observation_lab.db import get_lab_db, lab_transaction, readonly_lab_db
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 LEGACY_TABLES = (
     "learning_hypotheses",
@@ -25,8 +26,6 @@ LEGACY_TABLES = (
 )
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _json(value: Any) -> str:
