@@ -459,7 +459,7 @@ def risk(
         try:
             violations = json.loads(violations)
         except Exception:
-            pass
+            pass  # Display graceful degradation; raw string used as fallback
         entry = {
             "id": r.get("id"),
             "proposal_id": r.get("proposal_id"),
@@ -566,7 +566,7 @@ def universe(
             try:
                 entry["risk_flags"] = json.loads(rf)
             except Exception:
-                pass
+                pass  # Display graceful degradation; raw string used as fallback
         result.append(entry)
     _output(result, json_output)
 
@@ -1311,7 +1311,7 @@ def regime(
             try:
                 signals = json.loads(signals)
             except Exception:
-                pass
+                pass  # Display graceful degradation; raw string used as fallback
         result.append({
             "state": r.get("state"),
             "confidence": r.get("confidence"),
@@ -1629,7 +1629,7 @@ def agent_runs(
                 e = datetime.fromisoformat(completed.replace("Z", "+00:00"))
                 duration_s = round((e - s).total_seconds(), 1)
             except Exception:
-                pass
+                pass  # Display graceful degradation; raw string used as fallback
         display.append({
             "id": r.get("id", "")[:8],
             "agent": r.get("agent_name"),

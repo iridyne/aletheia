@@ -369,7 +369,7 @@ def _extract_json_object(text: str):
         try:
             return json.loads(text)
         except (json.JSONDecodeError, TypeError):
-            pass
+            pass  # JSON parse failed; return raw text
 
     # Strategy 2: strip markdown code fences
     fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
@@ -377,7 +377,7 @@ def _extract_json_object(text: str):
         try:
             return json.loads(fence_match.group(1).strip())
         except (json.JSONDecodeError, TypeError):
-            pass
+            pass  # Fenced JSON parse failed; return raw text
 
     # Strategy 3: brace-matching extraction — find the first '{' and match
     # its closing '}' accounting for nesting and string literals.
@@ -530,7 +530,7 @@ def _validate_json_schema_value(
                     _validate_json_schema_value(value, variant, root=root, path=path)
                     matches += 1
                 except (TypeError, ValueError):
-                    pass
+                    pass  # Schema variant mismatch; expected in oneOf check
             if matches == 0 or (combinator == "oneOf" and matches != 1):
                 raise ValueError(f"{path}: value does not satisfy {combinator}")
             return
@@ -1116,7 +1116,7 @@ def _record_llm(success: bool) -> None:
 
         (record_llm_success if success else record_llm_failure)()
     except Exception:
-        pass
+        logger.warning("agents.helpers: LLM health record failed", exc_info=True)
 
 
 # Per-run step counters. agent_run_steps.step_number must be monotonic within a run;

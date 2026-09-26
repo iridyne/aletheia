@@ -108,7 +108,7 @@ def _record_webhook_outcome(outcome: dict) -> None:
                 "event_type": "webhook_delivery_failed",
             })
         except Exception:
-            pass
+            logger.warning("notifications: webhook delivery audit write failed", exc_info=True)
 
 
 def webhook_delivery_status() -> dict | None:
@@ -276,7 +276,7 @@ def notify_operator(
                 "message": f"{clean_title}: {clean_message}",
             })
         except Exception:
-            pass
+            logger.warning("notifications: notification audit write failed", exc_info=True)
 
     if error_log:
         try:
@@ -288,7 +288,7 @@ def notify_operator(
                 "message": clean_message,
             })
         except Exception:
-            pass
+            logger.warning("notifications: notification audit write failed", exc_info=True)
 
     if windows:
         try:
@@ -297,7 +297,7 @@ def notify_operator(
             if getattr(cfg.health, "alert_via_windows_toast", True):
                 send_windows_toast(clean_title, clean_message)
         except Exception:
-            pass
+            pass  # Best-effort OS notification; failure must not affect runtime
 
     if telegram:
         _send_telegram_alert(f"{clean_title}: {clean_message}", level=level)
