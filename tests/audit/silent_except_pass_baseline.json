@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 313,
+  "count": 300,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -809,34 +809,6 @@
       "line": 1674
     },
     {
-      "file": "core/aletheia/portfolio/position_reconciler.py",
-      "line": 1348
-    },
-    {
-      "file": "core/aletheia/portfolio/position_reconciler.py",
-      "line": 1481
-    },
-    {
-      "file": "core/aletheia/portfolio/position_reconciler.py",
-      "line": 1511
-    },
-    {
-      "file": "core/aletheia/portfolio/position_reconciler.py",
-      "line": 1605
-    },
-    {
-      "file": "core/aletheia/risk/engine.py",
-      "line": 2159
-    },
-    {
-      "file": "core/aletheia/risk/engine.py",
-      "line": 2238
-    },
-    {
-      "file": "core/aletheia/risk/engine.py",
-      "line": 2535
-    },
-    {
       "file": "core/aletheia/risk/kill_switch.py",
       "line": 85
     },
@@ -993,14 +965,6 @@
       "line": 378
     },
     {
-      "file": "core/aletheia/trading/entry_snapshot.py",
-      "line": 36
-    },
-    {
-      "file": "core/aletheia/trading/entry_snapshot.py",
-      "line": 44
-    },
-    {
       "file": "core/aletheia/trading/instruments.py",
       "line": 48
     },
@@ -1027,22 +991,6 @@
     {
       "file": "core/aletheia/trading/market_data.py",
       "line": 260
-    },
-    {
-      "file": "core/aletheia/trading/persona.py",
-      "line": 120
-    },
-    {
-      "file": "core/aletheia/trading/persona.py",
-      "line": 122
-    },
-    {
-      "file": "core/aletheia/trading/persona.py",
-      "line": 143
-    },
-    {
-      "file": "core/aletheia/trading/sizing.py",
-      "line": 324
     },
     {
       "file": "core/aletheia/trust/learning_safety.py",

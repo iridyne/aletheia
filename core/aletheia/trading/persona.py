@@ -118,9 +118,9 @@ def build_sizing_context(
             if dd < 1.0:
                 appetite -= (1.0 - dd) * 0.3
         except Exception:
-            pass
+            logger.warning("persona: drawdown scale failed (skipping)", exc_info=True)
     except Exception:
-        pass
+        logger.warning("persona: portfolio drawdown block failed (skipping)", exc_info=True)
 
     # P3: persona learning nudges appetite by the current regime bucket's clean-window
     # reward (dormant unless persona_learning_enabled + enough clean samples; bounded).
@@ -141,7 +141,7 @@ def build_sizing_context(
                 appetite += adj
                 ctx["learned_adj"] = adj
         except Exception:
-            pass
+            logger.warning("persona: learned appetite adjustment failed (skipping)", exc_info=True)
 
     ctx["risk_appetite"] = max(0.0, min(1.0, appetite))
     return ctx
