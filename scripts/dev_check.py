@@ -378,6 +378,24 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("  docs         skipped (no docs/, spec, or gate change)")
 
+    # Audit gates: cheap AST scans that enforce engineering discipline
+    # (no silent except-pass, etc). Trigger on any Python change under
+    # the areas the audit covers, plus changes to the audit itself.
+    audit_touched = any(
+        path.startswith(("core/aletheia/", "extensions/", "tests/audit/"))
+        and path.endswith(".py")
+        for path in changed
+    )
+    if audit_touched:
+        audit_rc = run_pytest(["tests/audit/", "-q", "--no-header"])
+        if audit_rc != 0:
+            failures.append("audit gates: see tests/audit/ output above")
+            print("  audit        FAIL")
+        else:
+            print("  audit        ok")
+    else:
+        print("  audit        skipped (no core/, extensions/, or tests/audit/ change)")
+
     if failures:
         _report(failures, started)
         return EXIT_FINDINGS
