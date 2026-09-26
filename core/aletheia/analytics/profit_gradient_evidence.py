@@ -44,17 +44,12 @@ from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
 
 
-LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
 PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"
 _COMPILER_PRODUCER = {
     "module": "aletheia.analytics.profit_gradient_evidence",
     "contract_version": PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
     "source_mode": "database_read_only",
     "manual_layer_samples": False,
-}
-_LEGACY_COMPILER_PRODUCER = {
-    **_COMPILER_PRODUCER,
-    "contract_version": LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
 _GRADIENT_COMPARISON_METHOD = "paired_same_unit"
@@ -1831,26 +1826,17 @@ def verify_profit_gradient_evidence(
 ) -> tuple[bool, str | None]:
     """Verify an artifact; optionally rebuild its frozen sources for CLI trust."""
     contract_version = payload.get("contract_version")
-    if contract_version not in {
-        LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
-        PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
-    }:
+    if contract_version != PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
         return False, "evidence_contract_version_mismatch"
-    expected_producer = (
-        _COMPILER_PRODUCER
-        if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
-        else _LEGACY_COMPILER_PRODUCER
-    )
-    if payload.get("producer") != expected_producer:
+    if payload.get("producer") != _COMPILER_PRODUCER:
         return False, "evidence_producer_mismatch"
     if payload.get("read_only") is not True or payload.get("behavior_changed") is not False:
         return False, "evidence_authority_metadata_invalid"
     required = {
         "registration", "evidence_context", "layer_samples", "exclusion_waterfall",
         "source_hashes", "source_status", "exploratory_evidence", "inputs", "producer", "content_hash",
+        "reconciliation",
     }
-    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
-        required.add("reconciliation")
     if not required <= set(payload):
         return False, "evidence_artifact_fields_missing"
     inputs = payload.get("inputs")
@@ -1859,22 +1845,22 @@ def verify_profit_gradient_evidence(
         for field in ("evidence_epoch_id", "cutoff_at", "cost_model_id")
     ):
         return False, "evidence_inputs_invalid"
-    mapping_fields = ("registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence")
-    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
-        mapping_fields += ("reconciliation",)
+    mapping_fields = (
+        "registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence",
+        "reconciliation",
+    )
     for field in mapping_fields:
         if not isinstance(payload.get(field), Mapping):
             return False, f"evidence_{field}_invalid"
     context = payload["evidence_context"]
-    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
-        if payload["reconciliation"].get("contract_version") != RECONCILIATION_CONTRACT_VERSION:
-            return False, "evidence_reconciliation_contract_invalid"
-        if context.get("gradient_contract_version") != "profit_gradient/v3":
-            return False, "evidence_gradient_contract_invalid"
-        if context.get("reconciliation_contract_version") != RECONCILIATION_CONTRACT_VERSION:
-            return False, "evidence_reconciliation_contract_invalid"
-        if context.get("evidence_integrity") != "verified":
-            return False, "evidence_integrity_invalid"
+    if payload["reconciliation"].get("contract_version") != RECONCILIATION_CONTRACT_VERSION:
+        return False, "evidence_reconciliation_contract_invalid"
+    if context.get("gradient_contract_version") != "profit_gradient/v3":
+        return False, "evidence_gradient_contract_invalid"
+    if context.get("reconciliation_contract_version") != RECONCILIATION_CONTRACT_VERSION:
+        return False, "evidence_reconciliation_contract_invalid"
+    if context.get("evidence_integrity") != "verified":
+        return False, "evidence_integrity_invalid"
     if not isinstance(payload["registration"].get("status"), str):
         return False, "evidence_registration_invalid"
     if "profit_loop_counterfactual" not in payload["exploratory_evidence"]:
@@ -1905,8 +1891,7 @@ def verify_profit_gradient_evidence(
     expected = _hash({key: value for key, value in payload.items() if key != "content_hash"})
     if supplied != expected:
         return False, "evidence_content_hash_mismatch"
-    # Historical v1 keeps frozen-hash integrity; only v2 has a shape-compatible rebuild.
-    if revalidate_sources and contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+    if revalidate_sources:
         try:
             rebuilt = build_profit_gradient_evidence(
                 evidence_epoch_id=str(inputs["evidence_epoch_id"]),
@@ -2096,7 +2081,6 @@ def build_profit_gradient_evidence(
 
 
 __all__ = [
-    "LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
     "PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
     "RECONCILIATION_CONTRACT_VERSION",
     "RECONCILIATION_TOLERANCE_QUOTE",
