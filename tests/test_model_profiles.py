@@ -359,6 +359,12 @@ async def test_candidate_key_stays_bound_to_its_endpoint(client, monkeypatch, pr
 @pytest.mark.anyio
 @pytest.mark.parametrize("field", ["command", "mode", "codex_model", "default", "set_as_deep", "set_as_fast"])
 async def test_retired_settings_fields_are_rejected(client, field):
+    """A retired transport field must not be accepted by the live profile writer.
+
+    The former fixed-provider mutation endpoint is retired outright and owns no
+    route (asserted by spec LLMH-S07), so probing its status code here pinned
+    route-matching order rather than behavior.
+    """
     http, _ = client
     response = await http.post(
         "/api/settings/model-profiles", json={
@@ -366,10 +372,6 @@ async def test_retired_settings_fields_are_rejected(client, field):
         }
     )
     assert response.status_code == 422
-    response = await http.patch(
-        "/api/settings/model-integrations/openai_native", json={field: "retired"}
-    )
-    assert response.status_code == 404
 
 
 @pytest.mark.anyio
