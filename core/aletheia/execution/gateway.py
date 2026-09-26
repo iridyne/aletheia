@@ -21,6 +21,7 @@ from aletheia.execution.post_commit_audit import (
 )
 from aletheia.trading.entry_snapshot import (
     capture_attribution_snapshot,
+    capture_attribution_snapshot_json,
 )
 from aletheia.storage.models import TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
@@ -208,7 +209,7 @@ def submit_proposal(
     # Capture the read-only decision-time attribution for every execution mode
     # so that delayed exchange reconciliation does not invent later context or
     # silently lose the same metadata already preserved for local paper.
-    attribution_snapshot = _capture_attribution_snapshot_json(
+    attribution_snapshot = capture_attribution_snapshot_json(
         symbol,
         market_type=market_type,
         opportunity_id=opportunity_id,
@@ -1892,23 +1893,6 @@ def _execute_proposal(
         }
 
     return {"status": "unknown_mode", "proposal_id": proposal.id}
-
-
-def _capture_attribution_snapshot_json(
-    symbol: str,
-    *,
-    market_type: str = "",
-    opportunity_id: str | None = None,
-) -> str | None:
-    try:
-        snapshot = capture_attribution_snapshot(
-            symbol,
-            market_type=market_type,
-            opportunity_id=opportunity_id,
-        )
-        return json.dumps(snapshot, default=str)
-    except Exception:
-        return None
 
 
 def _entry_execution_stage(proposal, receipt, stage, **facts):
