@@ -28,3 +28,8 @@ def utcnow_iso() -> str:
 def utcnow() -> datetime:
     """Return the current UTC time as a timezone-aware datetime."""
     return datetime.now(timezone.utc)
+
+
+def utcnow_iso_us() -> str:
+    """UTC ISO string with microsecond precision (`_now` variant used by observation_lab)."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")

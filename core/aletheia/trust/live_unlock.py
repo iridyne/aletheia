@@ -16,6 +16,7 @@ from typing import Any
 
 from aletheia.config.exchanges import live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
+from aletheia.storage.time_utils import utcnow as _now
 
 logger = logging.getLogger("aletheia.trust.live_unlock")
 
@@ -35,8 +36,6 @@ _PUBLIC_EVIDENCE_FIELDS = frozenset({
 })
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:

@@ -19,6 +19,7 @@ from typing import Any, Mapping
 from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 from extensions.observation_lab.db import lab_transaction, readonly_lab_db
 from aletheia.storage.sqlite import get_db, register_instant_us
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 _SUPPORTED_FILTERS = frozenset({
     "family_ttl", "observer_pre_filter", "ranker_confidence_gate",
@@ -40,8 +41,6 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _parse_time(value: Any) -> datetime | None:

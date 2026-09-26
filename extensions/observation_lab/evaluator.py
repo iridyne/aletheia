@@ -18,6 +18,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from extensions.observation_lab.db import readonly_lab_db
+from aletheia.storage.time_utils import utcnow as _now
 
 
 def _json(value: Any) -> str:
@@ -31,8 +32,6 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _parse_time(value: Any) -> datetime | None:

@@ -37,6 +37,7 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any
+from aletheia.storage.time_utils import utcnow_iso_us as _now
 
 
 _HASH_EXCLUDED_FIELDS = frozenset({"manifest_id", "created_at"})
@@ -151,8 +152,6 @@ def _manifest_content_hash(manifest: ExecutionManifest) -> str:
     return _compute_manifest_hash(asdict(manifest))
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _utc_instant(value: str) -> tuple[datetime, str]:
