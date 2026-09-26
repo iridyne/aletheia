@@ -46,15 +46,11 @@ documentation path.
 
 ## Proposal threshold and lifecycle
 
-Create a Proposal only for:
-
-1. a major new capability;
-2. a cross-domain change; or
-3. a trust-boundary change.
-
-Ordinary bugs, narrow refactors, documentation corrections, and routine
-operations changes use a GitHub Issue when tracking is needed and a PR for
-review. They do not require a Proposal.
+A Proposal is an optional communication tool, never a precondition. No change of
+any depth requires one before it lands; what a change requires is that its gates
+go green. Write one when a design is large enough that the reasoning will not
+survive in a PR body — a major new capability, a cross-domain change, a
+trust-boundary change — and skip it otherwise.
 
 A Proposal records a stable design and one of these states:
 `draft`, `accepted`, `rejected`, `implemented`, or `superseded`.
@@ -124,7 +120,7 @@ classification:
 |---|---|---|
 | D0 — Restore truth (Conformance Repair) | Existing Contract / invariant already defines required behavior; current code, docs, tests, or runtime is non-conformant | `NONE` — reference the existing Contract / invariant being repaired |
 | D1 — Change Semantics | Behavior semantics, state transitions, API/schema, or result meaning changes within existing ownership | Explicit `ADDED / MODIFIED / REMOVED` semantic delta |
-| D2 — Change Structure | State ownership, long-lived mainline, subsystem topology, authority, or product scope changes | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
+| D2 — Change Structure | State ownership, long-lived mainline, subsystem topology, authority, or product scope changes | Explicit `ADDED / MODIFIED / REMOVED` semantic delta, plus the gates that hold the new structure |
 
 SDD depth is a semantic classifier only; it does not replace owner approval for
 a new D1/D2 decision. [Root AGENTS.md](../../../AGENTS.md#bounded-engineering-delegation)
@@ -139,8 +135,9 @@ Update a Contract only when an approved D1/D2 change is accepted.
 A D0 repair that brings code back into conformance with an existing Contract
 MUST NOT modify that Contract. Internal refactors, algorithm replacements,
 race-condition repairs, and performance optimizations do not change Contracts.
-D1 may update Contract and executable SpecClaims as part of semantic repair; Proposal
-is required only for D2 structural changes.
+D1 and D2 may update Contract and executable SpecClaims as part of the accepted
+change. No depth requires a Proposal document first; see
+[2026-09-26 — 提案文档不再是任何改动的前置条件](../decisions/DECISIONS.md).
 
 ### D0 / D1 / D2 walkthrough examples
 
@@ -157,12 +154,12 @@ is required only for D2 structural changes.
 - **Investigation and D1/D2 boundary:** [#3009](https://github.com/iridyne/aletheia/issues/3009)
   records silence after compiler refusal, not a proven recovery policy. If investigation
   requires a new retry rule within existing ownership, stop for D1 acceptance; if it
-  requires a new durable recovery owner/mainline, stop for D2 Proposal/owner decision.
+  requires a new durable recovery owner/mainline, stop for a D2 owner decision.
   The symptom and Issue do not authorize either implementation or a Gate B promotion.
 - **D2 — authority convergence:** [#2299](https://github.com/iridyne/aletheia/issues/2299)
   makes UTA the sole private external-account boundary and assigns coordinator/UTA/storage
-  responsibilities. This structural direction requires an accepted Proposal and owner
-  decision, not autonomous selection disguised as mechanical cleanup.
+  responsibilities. This structural direction requires an owner decision, not autonomous
+  selection disguised as mechanical cleanup.
 
 These are classification walkthroughs, not authorization to reopen or implement the
 referenced work; the human decision boundary is inherited from root `AGENTS.md`.

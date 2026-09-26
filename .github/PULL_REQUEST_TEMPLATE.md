@@ -12,8 +12,8 @@
 D0: write `NONE` and reference the existing Contract/invariant being repaired.
 D1: summarize the approved semantic delta (`ADDED / MODIFIED / REMOVED`) and required
 Contract/spec updates.
-D2: summarize the approved structural delta and link the accepted Proposal; update
-affected Contracts and SpecClaims where required.
+D2: summarize the approved structural delta; update affected Contracts and
+SpecClaims where required. A Proposal is optional -- link one only if you wrote one.
 Do not repeat the full Change Contract from the linked Issue.
 -->
 
@@ -25,13 +25,13 @@ Do not repeat the full Change Contract from the linked Issue.
 
 <!--
 Answer each that applies; delete inapplicable rows.
-For D0, the canonical Contract / SpecClaim / Proposal rows are normally not applicable.
+For D0, the canonical Contract / SpecClaim rows are normally not applicable.
 -->
 
 - [ ] The implementation satisfies the Change Contract in the linked Issue.
 - [ ] D1: Canonical Contract in `docs/design/contracts/` is updated in this PR.
 - [ ] D1: Executable SpecClaims in `tests/specs/` are updated or added.
-- [ ] D2: This change is covered by an accepted `docs/design/proposals/` Proposal.
+- [ ] D2: The gates that hold the new structure exist and are named above.
 - [ ] Product Capability Ground Truth updated — only if a production capability
       genuinely changed (test-level conformance alone does not qualify).
 - [ ] Runtime evidence — pick exactly one; an empty answer is not acceptable:

@@ -27,9 +27,10 @@ Phase           产出物                     本项目对应                   
 6. Implement    AI 生成 + 人验证           代码 + tests/specs/ claims    双重验证后 commit
 ```
 
-**关键规则**: 计划中的行为变更先明确契约与验收，再改代码；故障修复按
-`回归测试 → 最小实现 → 契约/claim 同步` 在同一变更中闭环。若发现代码已领先文档，
-将其视为 drift，必须核对当前权威意图后补齐，而不是把历史实现自动写成新规则。
+**关键规则**: 验收标准先落成一个会翻红的门（test / spec / check），再改代码；故障修复按
+`回归测试 → 最小实现 → 契约/claim 同步` 在同一变更中闭环。"先写文档"不是任何改动的前置
+条件，"先有门"才是（[2026-09-26 决策](../../governance/decisions/DECISIONS.md)）。发现
+代码领先文档时，先补门锁住实际行为，再决定契约该不该跟着改。
 
 ---
 
@@ -37,12 +38,12 @@ Phase           产出物                     本项目对应                   
 
 | 原则 | 一句话 | 本项目落地 |
 |------|--------|-----------|
-| Spec as Truth | spec 是活契约+可执行蓝图 | `docs/design/` + `tests/specs/` |
+| Spec as Truth | spec 是活契约+可执行蓝图 | `tests/specs/` 是载体，`docs/design/` 是语义来源 |
 | Upfront Clarity | 业务规则/边缘/非功能需求前置 | risk_engine_contract 16关 |
 | Persistent Context | spec 跨会话持久 | Git-tracked contract + decision doc + PR |
 | Test-Driven Guardrails | 从 spec 派生测试 | `@spec_claim` → pytest |
 | System Integration | 集成点写进 spec | agent_contracts + data_layer |
-| Living Specs | spec 随反馈迭代 | "文档为准代码追文档" |
+| Living Specs | spec 随反馈迭代 | 门为准：契约改语义，门证明语义 |
 | Structured Organization | constitution 保证一致性 | 根 `AGENTS.md` + topic-specific guide |
 | Systematic Decomposition | 大功能拆原子 | GitHub Issues/PRs + 外部开发编排器 |
 | Human Orchestration | 人=编排+审核 | checkpoint 制度 |
