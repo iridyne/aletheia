@@ -258,6 +258,15 @@ def _columns(db: Any, table: str) -> set[str]:
     try:
         return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
     except Exception:
+        # `PRAGMA table_info` failing is not a normal "no columns" case —
+        # it means a connection problem or a schema-inspection bug the
+        # caller cannot distinguish from a real missing column. Log so the
+        # ambiguity is visible instead of silently returning an empty set.
+        logger.warning(
+            "profit_gradient_evidence: PRAGMA table_info(%s) failed",
+            table,
+            exc_info=True,
+        )
         return set()
 
 
@@ -274,7 +283,14 @@ def _rollback_snapshot(db: Any) -> None:
         if getattr(db, "in_transaction", False):
             db.rollback()
     except sqlite3.Error:
-        pass
+        # Best-effort snapshot cleanup — the caller has already produced
+        # its analytic artifact and does not depend on the rollback
+        # succeeding. Log so a persistent rollback failure (locked DB,
+        # journal corruption) does not silently pile up.
+        logger.warning(
+            "profit_gradient_evidence: snapshot rollback failed",
+            exc_info=True,
+        )
 
 
 def _epoch_hash(
@@ -484,7 +500,18 @@ def _load_candidates(
             epoch_start_at=_iso(epoch_start) if epoch_start is not None else None,
             db=db,
         )
-    except (Exception,):  # source errors become unavailable evidence, never zero economics
+    except Exception:
+        # The contract keeps this fail-open on purpose: analytic economics
+        # must never fabricate zero from a source failure. But a bare
+        # collapse into `candidate_fact_source_unavailable` hides both
+        # legitimate DB unavailability and real defects (KeyError, TypeError,
+        # implementation bugs). Log with a stack so a defect is visible
+        # without changing caller-visible behaviour.
+        logger.error(
+            "profit_gradient_evidence: build_candidate_facts failed "
+            "(returning unavailable)",
+            exc_info=True,
+        )
         return _unavailable("candidate_fact_source_unavailable"), []
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, dict)]
     facts.sort(key=lambda fact: (str(fact.get("event_at") or ""), str(fact.get("fact_id") or "")))
