@@ -832,6 +832,26 @@ def place_protection(position_id: str) -> dict[str, str]:
         try:
             placed[key] = _submit_protection_leg(position, purpose, float(price))
         except Exception:
+            # A failing leg used to be silently skipped, which left the
+            # caller with an incomplete `placed` dict and no way to know
+            # whether the required stop-loss was actually sent to the
+            # venue. execution_contract.md §4 requires "未决 child 保留"
+            # (pending children must be retained) and "失败不报告替换成功"
+            # (do not report a replacement as successful on failure). A
+            # silent `continue` here failed both: it did not retain any
+            # trace of the failed leg, and the caller received a partial
+            # `placed` map as if it were complete. Keeping the fail-open
+            # semantics for now (do not close the main position on a
+            # protection failure — that is a separate D1 decision — see
+            # followup in `project_shit_cleanup_batch1_2026-09-26.md`
+            # segment 3 #5), but a real defect (wrong price, adapter
+            # bug, credentials revoked) is now visible.
+            logger.error(
+                "Protection leg submission failed: position=%s purpose=%s (main position remains open without this leg)",
+                position.get("id"),
+                purpose,
+                exc_info=True,
+            )
             continue
     if placed:
         repo.update_open_position_exit_plan(
