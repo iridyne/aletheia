@@ -200,7 +200,14 @@ def _source_identity(feature: Mapping[str, object]) -> tuple[str | None, str | N
     )
 
 
-def _candidate_key(scanner_run_id: str, feature: Mapping[str, object]) -> str:
+def candidate_key(scanner_run_id: str, feature: Mapping[str, object]) -> str:
+    """Canonical `universe-twin:...` key for a candidate feature.
+
+    Shared by `twin_scoring` and `twin_persistence`. asset_id is guaranteed
+    TEXT by the `universe_members` schema, so the two historical
+    implementations returned byte-identical strings; they are folded into
+    this single owner to prevent future drift.
+    """
     feature_id, asset_id, symbol, market_type = _source_identity(feature)
     source_id = feature_id or asset_id or "not_available"
     return f"universe-twin:{scanner_run_id or 'not_available'}:{source_id}:{market_type}:{symbol or 'not_available'}"
@@ -324,7 +331,7 @@ def build_twin_shadow_record(
     return TwinShadowRecord(
         record_version=TWIN_SHADOW_RECORD_VERSION,
         scanner_run_id=scanner_run_id,
-        candidate_key=_candidate_key(scanner_run_id, feature),
+        candidate_key=candidate_key(scanner_run_id, feature),
         feature_snapshot_id=feature_snapshot_id,
         asset_id=asset_id,
         symbol=symbol,
@@ -454,7 +461,7 @@ def build_shadow_allocation_candidates(
     candidates: list[dict[str, object]] = []
     for item in inputs:
         feature = dict(item.feature)
-        record = by_key.get(_candidate_key(scanner_run_id, feature))
+        record = by_key.get(candidate_key(scanner_run_id, feature))
         if record is None or not record.shadow.valid:
             continue
         if "authority_no_chase_gate" in record.blocking_reasons:
