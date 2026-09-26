@@ -179,7 +179,7 @@ def current_evidence_epochs() -> dict[str, dict[str, Any]]:
                 try:
                     values = json.loads(row["effective_values_json"] or "{}")
                 except Exception:
-                    pass
+                    logger.warning("evidence_epoch: effective_values_json parse failed", exc_info=True)
                 result[path_id] = {
                     "epoch_id": row["epoch_id"],
                     "started_at": row["started_at"],

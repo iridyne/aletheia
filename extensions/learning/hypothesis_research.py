@@ -767,7 +767,7 @@ def _bounded(value: Any, depth: int = 0) -> Any:
             try:
                 return _bounded(json.loads(text), depth + 1)
             except (TypeError, ValueError, json.JSONDecodeError):
-                pass
+                pass  # Bounded JSON parse helper; non-JSON text returns as-is
         return text[:1_000]
     if isinstance(value, (int, float, bool)) or value is None:
         return value

@@ -6,6 +6,14 @@ are consistent across the Analytics tab and Trade Insights panel.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.analytics.trade_insights")
+
+import logging
+
+logger = logging.getLogger("aletheia.analytics.trade_insights")
+
 from aletheia.analytics.streaks import summarize_streaks
 from aletheia.utils.dt import parse_utc_instant
 
@@ -570,7 +578,7 @@ def _r_multiple_distribution(rows) -> dict:
             try:
                 db_cm.__exit__(None, None, None)
             except Exception:
-                pass
+                logger.warning("trade_insights: DB context cleanup failed", exc_info=True)
 
     return {
         "bins": [{"bin": label, "count": counts[label]} for label, _, _ in _BINS],

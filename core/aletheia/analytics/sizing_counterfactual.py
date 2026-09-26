@@ -149,7 +149,7 @@ def _trade(row: dict) -> dict | None:
             if math.isfinite(candidate_distance) and candidate_distance > 0:
                 stop_distance = candidate_distance
     except (TypeError, ValueError, OverflowError):
-        pass
+        pass  # Safe arithmetic fallback; NaN/inf/bad-type → stop_distance stays None
     conviction = row.get("conviction")
     try:
         conviction = int(conviction) if conviction is not None else None
