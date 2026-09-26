@@ -1034,3 +1034,38 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
 - 这条决策本身不需要提案背书：`scripts/check_change_contract.py` 的 EXEMPT_PATTERNS 已经
   豁免 `^docs/`、`^.github/`、`^scripts/check_`、`^AGENTS.md$`，而 `AGENTS.md` 也已写明
   owner 的显式请求即构成授权。
+
+## 2026-09-26 — PR 合并方式 = 人工 `gh pr merge --rebase`，无自动合并层
+
+**Decision:** 所有 PR 都用 `gh pr merge <n> --rebase` 手工合并；不再有任何 workflow
+在合并链路上运作。`--auto`、`--squash`、GitHub 自带的 auto-merge 请求都不用。
+Stacked PR 自底向上合，每合完一层要重新在新 master 上 rebase 上层分支并强推
+（用 `--force-with-lease`，不用裸 `--force`）。
+
+**Reason:** PR #3506 退役了 `auto-merge.yml` 及其配套 workflow，原因见
+[2026-09-07 决策](DECISIONS.md#2026-09-07--remote-ci-维持-manual-only-是主动决策不是遗留疏漏)：
+远程 CI 保持 `workflow_dispatch`-only，没有 required check 能保证 exact-head 一致。
+在这种前提下 auto-merge 有两种坏结局：等一个永远不来的 check(死锁)，或者对
+docs-only PR 无 review 秒合。人工合是唯一让 owner 保持决定权的路径。
+
+选 `--rebase` 而非 `--squash`：每个提交原样进 master，历史线性可读；上层 stacked PR
+可以自动 skip 已合的 patch，rebase 冲突面更小。
+
+**Guardrail:**
+- 不得引入任何监听 `pull_request` / `pull_request_target` / `workflow_run` 并调用
+  `github.rest.pulls.merge` 的新 workflow。
+- 不得让 GitHub 内建 auto-merge 参与合并（`gh pr merge --auto` 禁用）。
+- `--squash` 只在**该 PR 显式约定 squash** 时用；默认永远是 `--rebase`。
+- 强推 stacked PR 分支必须 `--force-with-lease`，不能裸 `--force`（保护并发写入）。
+
+**Consequences:**
+- 每合一层 stacked PR，上层分支需要人工 rebase 一次——这是 `--rebase` merge 改写
+  hash 的固定代价，不是 bug。
+- `do-not-auto-merge` label 变成纯装饰（没有 auto-merge 会读它了）。它对 Codex
+  Shepherd 的自我保护逻辑仍有语义（Shepherd 用它标"改动 Shepherd 自身的 PR"），
+  但对合并流程没作用。Shepherd 内部是否收敛这条属于另一个独立决定。
+- 部署流程（`Prepare and tag releases` → tag → Fedora Paper timer）的 tag/Release
+  自动 follow-up 保留；被删的只是"验证通过后自动合并候选 PR"这一步——现在由
+  owner 手工 `gh pr merge --rebase` 完成。
+
+---

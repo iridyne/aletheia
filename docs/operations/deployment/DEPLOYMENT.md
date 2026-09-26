@@ -81,9 +81,12 @@ HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，�
 有未保存改动、非主线祖先、未决实验进程或缺备份证明时必须阻断；不重置历史证据。
 存量目录迁移和恢复验证是部署前提，本地测试不代替 Fedora 上线证明。
 
-候选 PR 打开后若普通 PR 又推进了 `master`，可信的 refresh workflow 会在已有候选存在时
-以真实 branch merge-base 判断候选是否过期，并用自身 workflow run 身份认证后自动更新并
-重新验证同一个候选；没有 owner 先前的 `operational_need=true` 意图时不会凭空创建发布候选。
+候选 PR 打开后若普通 PR 又推进了 `master`，owner 重新运行 `Prepare and tag releases`
+（`operational_need=true`）即可——Release Please 会在已有候选存在时更新同一个候选而不创建
+第二个发布 PR。没有 owner 明确的 `operational_need=true` 意图时不会凭空创建发布候选。
+（2026-09-26 之前这一步由 `refresh-release-candidate.yml` 自动完成，已在 PR #3506 中随
+auto-merge 控制面一起退役——见 `MODULAR_MONOLITH_RELEASE.md` 的 "Retired candidate-refresh
+automation" 段。）
 
 正常发布不需要手动登录 Fedora。以下命令只用于首次启用 timer、故障恢复或诊断：
 
