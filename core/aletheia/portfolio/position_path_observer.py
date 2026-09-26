@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import logging
 import math
 import time
 from datetime import datetime, timezone
 from typing import Any, cast
+
+logger = logging.getLogger("aletheia.portfolio.position_path_observer")
 
 from aletheia.data.price_feed import protective_price_venue
 from aletheia.data.providers import Candle, MarketDataProvider
@@ -456,6 +459,15 @@ def _project_position_state_as_of(
         }
         return projected
     except Exception:
+        # The whole historical-state rebuild is wrapped here. A schema
+        # column missing, a bad row, or a caller-side bug would return
+        # the unchanged `projected` fallback silently. Log so a real
+        # regression is visible without changing what the caller sees.
+        logger.warning(
+            "position_path_observer: historical state rebuild failed "
+            "(returning projected fallback)",
+            exc_info=True,
+        )
         return projected
 
 
@@ -753,6 +765,17 @@ async def observe_open_position_paths(
             )
             _record_inserted_summary(summary, inserted=inserted, status=status)
         except Exception as exc:
+            # Structured error is captured in the summary — good — but
+            # the exception type alone loses the stack. A schema drift,
+            # caller bug, or repo API contract change is otherwise
+            # indistinguishable from a routine transient failure the
+            # retry logic will catch next cycle.
+            logger.warning(
+                "position_path_observer: resolve of deferred observation failed "
+                "position_id=%s",
+                position_id,
+                exc_info=True,
+            )
             summary["errors"].append(
                 {"position_id": position_id, "error_type": type(exc).__name__}
             )
@@ -1080,6 +1103,15 @@ def build_position_path_observer_status(
     try:
         evidence_counts = repo.count_position_path_observations_since(0)
     except Exception:
+        # Cumulative evidence count for the status endpoint. Any DB /
+        # schema / caller failure collapses to two `None` counts —
+        # visually identical to "no data" for the caller. Log so a
+        # real regression is visible.
+        logger.warning(
+            "position_path_observer: cumulative evidence count read failed "
+            "(returning None counts)",
+            exc_info=True,
+        )
         evidence_counts = {"available": None, "unavailable": None}
     oldest_deferred_rows = repo.list_oldest_deferred_position_path_bucket(limit=1)
     oldest_deferred_bucket = None
