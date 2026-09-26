@@ -62,7 +62,6 @@ jobs:
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const repairableCiConclusions = new Set(['failure', 'timed_out']);
             const primaryCiWorkflow = 'Aletheia CI';
-            const metadataGateWorkflow = 'Aletheia Change Contract gate';
             const ciFailureHandoffPolicy = {
               preflight_metadata: {
                 retry_without_code_change: true,
@@ -359,50 +358,6 @@ jobs:
                 `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
               );
             };
-
-            // A metadata-gate failure is diagnostic only: do NOT label/hold the PR.
-            // Its required check is the authority, and a PR-body-only edit on this
-            // exact same head must turn it green without a no-op source commit.
-            const metadataRun = context.eventName === 'workflow_run'
-              ? context.payload.workflow_run
-              : null;
-            if (
-              metadataRun?.name === metadataGateWorkflow &&
-              metadataRun.status === 'completed' &&
-              repairableCiConclusions.has(metadataRun.conclusion)
-            ) {
-              const handoffMarker =
-                `<!-- aletheia-ci-failure-handoff head=${expectedHeadSha} run=${metadataRun.id} -->`;
-              const alreadyPosted = shepherdComments.some((comment) =>
-                String(comment.body || '').includes(handoffMarker)
-              );
-              if (!alreadyPosted) {
-                await postComment(
-                  `Change Contract metadata gate run ${metadataRun.id} concluded ` +
-                  `\`${metadataRun.conclusion}\` on exact head \`${expectedHeadSha}\`. ` +
-                  `Edit the PR body on this same head; do not create a no-op/retrigger commit.\n\n` +
-                  '```json\n' +
-                  ciFailureHandoff({
-                    run: metadataRun,
-                    category: 'preflight_metadata',
-                    failingJob: 'Verify Change Contract',
-                    failingStep: 'Verify Change Contract structure',
-                    confidence: 'high',
-                  }) +
-                  '\n```\n\n' +
-                  handoffMarker
-                );
-              }
-              return;
-            }
-            if (
-              metadataRun?.name === metadataGateWorkflow &&
-              metadataRun.status === 'completed' &&
-              metadataRun.conclusion === 'success'
-            ) {
-              core.info('metadata recovery job owns any required same-head CI rerun');
-              return;
-            }
 
             // The files endpoint is capped by GitHub. If it cannot prove that the full
             // PR file set was enumerated, no authority decision is allowed.

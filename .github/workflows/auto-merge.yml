@@ -5,9 +5,7 @@ on:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   workflow_run:
-    # The isolated metadata gate is a first-class exact-head merge prerequisite;
-    # its successful same-head PR-body recovery must re-evaluate auto-merge.
-    workflows: [Aletheia CI, Aletheia Change Contract gate]
+    workflows: [Aletheia CI]
     types: [completed]
   repository_dispatch:
     types: [auto_merge_update, release_candidate_verified]
