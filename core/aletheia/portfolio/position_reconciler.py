@@ -1346,7 +1346,11 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             error_log=False,
         )
     except Exception:
-        pass
+        logger.warning(
+            "position_reconciler: audit write failed (position=%s)",
+            position.id if hasattr(position, "id") else "?",
+            exc_info=True,
+        )
 
     return {
         "position_id": position.id,
@@ -1479,7 +1483,10 @@ def run_reconcile(mode: str | None = None) -> dict:
                     error_log=False,
                 )
             except Exception:
-                pass
+                logger.warning(
+                    "position_reconciler: self-heal audit write failed",
+                    exc_info=True,
+                )
 
     if incident is None and account_mode == "demo":
         repairs, leverage_degraded = _reconcile_managed_leverage(
@@ -1509,7 +1516,10 @@ def run_reconcile(mode: str | None = None) -> dict:
                 error_log=False,
             )
         except Exception:
-            pass
+            logger.warning(
+                "position_reconciler: leverage-repair audit write failed",
+                exc_info=True,
+            )
 
     # Evidence collection is state bookkeeping, not a destructive reconcile action.
     # A complete view miss creates/advances a durable candidate; a verified exchange
@@ -1603,7 +1613,10 @@ def run_reconcile(mode: str | None = None) -> dict:
                         error_log=False,
                     )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "position_reconciler: adopt notification failed",
+                        exc_info=True,
+                    )
             except Exception as e:
                 err = f"adopt {item.symbol} {item.direction}: {e}"
                 logger.warning("Reconcile adopt failed: %s", err)
