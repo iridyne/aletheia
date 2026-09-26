@@ -45,7 +45,11 @@ def stock_tokens_from_config(cfg) -> list[InstrumentId]:
         exchange = stock_token_exchange(s)
         try:
             result.append(InstrumentId.from_parts(exchange, s, MARKET_SPOT))
-        except (ValueError, Exception):
+        except ValueError:
+            # A stock token that fails InstrumentId construction is legitimately
+            # skipped (bad config, unknown exchange). Any other exception —
+            # AttributeError from a bad InstrumentId implementation, TypeError
+            # from a wrong argument — is a programming defect we want to see.
             pass
     return result
 
