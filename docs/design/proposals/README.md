@@ -60,15 +60,9 @@ Proposal as stable decision history.
 - [Complete Unified Trading Account](unified_trading_account.md): one private
   external-account read/write boundary beneath Gateway authority, with explicit
   evidence, reconciliation and profile qualification semantics.
-- [Usage v2 production read model and workspace](usage_v2_workspace.md):
-  event-time fail-closed cost semantics and one typed, read-only Usage page for
-  overview, trend, attribution, reliability, and configured budgets.
 - [Position replay and profit-gradient evidence](position_replay_profit_gradient.md):
   exact candidate/Position facts, frozen hypotheses, prefix-only analysis, and
   seven-layer unique-winner gates without trading authority.
-- [Gateway service lifecycle](gateway_service_lifecycle.md): cross-platform
-  install, enablement, runtime control, and optional Windows machine-service
-  design.
 - [Slim Core legacy Gateway retirement](slim_core_legacy_gateway_retirement.md):
   remove the dormant PS recovery/write graph and its startup authority while
   preserving historical data and canonical Core reconciliation gates.
@@ -89,12 +83,6 @@ Proposal as stable decision history.
   accepted SDK transport and HTTP-only model endpoint convergence; the former
   [three-category design](../history/model_provider_profiles_and_access_methods.md)
   is historical.
-- [OHLCV Provider Observation/Result](ohlcv_provider_observation_result.md):
-  exact-timeframe and real-OHLCV result semantics, source/venue identity, and
-  explicit rejection of coarse or field-incomplete fallback data.
-- [Serenity Research Attempt Truth](serenity_research_attempt_truth.md):
-  cooperative cancellation acknowledgement, guarded terminal transitions,
-  durable progress facts, and restart reconciliation for Serenity runs.
 - [Fedora immutable Runtime updates](fedora_immutable_runtime_updates.md):
   signed Linux releases, headless activation ownership, migration preflight,
   health-gated activation, and bounded recovery.
@@ -109,9 +97,24 @@ Proposal as stable decision history.
   in-process LLM usage/budget/admission governance layered on the existing
   provider and economics truth surfaces; historical dated research remains under
   `docs/research/tokenomics/`.
+- [Usage v2 production read model and workspace](usage_v2_workspace.md):
+  event-time fail-closed cost semantics and one typed, read-only Usage page for
+  overview, trend, attribution, reliability, and configured budgets.
+- [Gateway service lifecycle](gateway_service_lifecycle.md): cross-platform
+  install, enablement, runtime control, and optional Windows machine-service
+  design.
+- [OHLCV Provider Observation/Result](ohlcv_provider_observation_result.md):
+  exact-timeframe and real-OHLCV result semantics, source/venue identity, and
+  explicit rejection of coarse or field-incomplete fallback data.
+- [Serenity Research Attempt Truth](serenity_research_attempt_truth.md):
+  cooperative cancellation acknowledgement, guarded terminal transitions,
+  durable progress facts, and restart reconciliation for Serenity runs.
 
 ## Superseded proposals
 
 - [Universe Fast Trigger Watch](universe_fast_trigger_watch.md): historical
   Momentum Setup/authorization design, replaced by the generic Entry Plan
   contract; its retired adapter and local-execution requirements are archived.
+- [Tokenomics harness phase plan (2026-07-30)](tokenomics_harness_phase_plan_2026-07-30.md):
+  dated phase sequencing for the Tokenomics harness, superseded by
+  [Tokenomics / LLM Economics Harness](tokenomics_harness.md).
