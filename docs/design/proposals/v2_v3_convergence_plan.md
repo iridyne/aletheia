@@ -1,0 +1,379 @@
+---
+id: v2-v3-convergence-plan
+status: draft
+related_contracts: []
+supersedes: []
+---
+
+# V2/V3 残留与双主线收敛执行计划
+
+## Summary
+
+本文件是一份**执行计划**，不是新的设计提案。它把一次只读审计的结果转成给执行者的确切动作清单：删除仓库中已退役的 V2 代码路径、消除真正的双写双读第二权威（Risk 扁平配置字段）、修正会误导未来开发者的文档状态，并**明确列出必须保留的 V2/V3 命名**，避免误删。
+
+审计结论（先行）：
+
+- 仓库**不存在**「两套同时在跑的竞争算法」。绝大多数 `xxx/v2`、`xxx/v3` 是契约版本串、迁移序号或外部协议事实，**不是**双主线。
+- 真正的第二权威只有三处：`OpportunityGenerationV2` 退役 entry 权威、`profit_gradient_evidence/v1` 死验证分支、**Risk 扁平字段 ↔ 嵌套 mode policy 的双写双读**。后者是唯一真正会持续制造 bug 的双主线。
+- 文档层有一处 D0 真值漂移：`docs/design/proposals/README.md` 把 4 个 `status: implemented` 的提案仍列在「Current proposals」。
+
+## Current fact
+
+审计时的 worktree：本地 `master` = `6d9180127afedb9ca55f1f085f3db0749ac55069`，与 `origin/master`（`84af70e2637d3c7beeb1db7a91da4b7422073d1d`，PR #3496）已分叉：本地领先 7 个 commit，落后 2 个。**本计划的所有行号以本地 `6d9180127` 为准。执行前必须先 rebase/merge origin/master，然后按第 0 阶段重新核对行号。**
+
+已确认的 live 主链：`Candidate → candidate_planning_generations → agent_shell/entry_planner.py`。`opportunities` 表的 `generation_*` 列与 `OpportunityGenerationV2` 是**已退役的第二条 entry 权威**，不在 live 主链上。
+
+---
+
+## 给执行者的硬规则（每个阶段开始前重读）
+
+1. **一次只做一个 Phase。** 做完一个 Phase，跑它的验收命令，commit，然后才开始下一个。不要把多个 Phase 攒在一个脏 worktree 里。
+2. **每个 Phase 的 commit message 必须写清 `SDD Depth: D0/D1/D2` 和 `Contract Delta`。** 本文件每个 Phase 都给了这两个值，照抄。
+3. **不要重命名任何 `xxx/v2`、`xxx/v3` 字符串常量。** 它们是持久化在数据库里的契约标识。改了会让历史数据校验失败。本计划里没有任何一条要求你改这类字符串。
+4. **不要动 `core/aletheia/storage/migrations.py` 里任何 `_apply_*_vNN` 函数或 `_*_CHECKSUM` 常量。** 迁移是 checksum 冻结的；哪怕加一行日志都会破坏 ledger 校验。
+5. **不要删除数据库列或表。** 数据层是 additive-only。本计划只删**代码路径**。
+6. **遇到本文件没写到的情况就停下来报告。** 不要自己推断、不要扩大范围、不要「顺手」改别的。
+7. **禁改清单见下一节。碰到就停。**
+
+## 禁改清单（NEVER TOUCH）
+
+执行者在任何 Phase 都不得修改以下内容。如果某个 Phase 的动作看起来需要碰到它们，说明理解错了，停下报告。
+
+| 路径 / 内容 | 理由 |
+|---|---|
+| `core/aletheia/universe/features.py` | PR #3496 刚落地的 acquisition 语义哈希来源 |
+| `core/aletheia/universe/candidate_selection_authority.py`、`candidate_selection_shadow.py` | 同上，#3496 改动面 |
+| `tests/specs/spec_candidate_selection_utility.py`、`tests/test_candidate_selection_utility.py` | 同上 |
+| `docs/design/contracts/candidate_selection_utility_contract.md` | 同上 |
+| `docs/design/history/**` | 冻结的设计历史 |
+| Candidate 阈值、Risk **评估语义**、Entry、Execution、Alpha 的行为 | 产品语义，本计划只做结构收敛，不改任何判定结果 |
+| `KNOWN_BITGET_PROFILES` / `classic_v2` / `uta_v3`（`core/aletheia/config/schema.py:25,317`） | 真实交易所 API 协议版本，不是内部版本号 |
+| 一切外部 URL 里的 `/api/v2`、`/api/v3`、`/api/v5` | 外部服务真实端点 |
+| observation Main 库 ↔ Lab 库的 gated 收敛桥（`migrations.py:4489,7047,7071`） | #2737 有意设计的、带 gate 的迁移桥，Phase 8 未完成 |
+| 全部 13 个 `docs/design/proposals/slim_core_*.md` | #3134 仍 OPEN，DoD 未达成 |
+| `docs/design/proposals/observation_experiment_ownership_v2.md`、`usage_v2_workspace.md` 的**语义内容** | 活跃契约；Phase 5 只改 README 里的分类，不改这两个文件的正文 |
+
+---
+
+## Phase 0 — 基线核对（必做，不产生代码改动）
+
+**目的**：本计划的行号取自 `6d9180127`。你开工时的 HEAD 可能已经变了。先证明行号还对得上，再动手。
+
+**动作**
+
+1. 同步：`git fetch origin && git merge origin/master`（或按仓库惯例 rebase）。
+2. 逐条运行下列命令，确认输出里包含括号内的符号名。**任何一条不匹配，就停下报告，不要猜测新行号后继续。**
+
+```
+sed -n '182p' core/aletheia/storage/models.py            # class OpportunityGenerationV2(BaseModel):
+sed -n '903p' core/aletheia/storage/repositories.py      # def canonical_opportunity_generation(
+sed -n '917p' core/aletheia/storage/repositories.py      # def insert_opportunity_generation(
+sed -n '47p'  core/aletheia/analytics/profit_gradient_evidence.py   # LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
+sed -n '55p'  core/aletheia/analytics/profit_gradient_evidence.py   # _LEGACY_COMPILER_PRODUCER = {
+sed -n '1834p' core/aletheia/analytics/profit_gradient_evidence.py  # LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+sed -n '944p' core/aletheia/risk/engine.py               # risk = resolved_policy.legacy_view(cfg.risk)
+sed -n '1084p' core/aletheia/config/schema.py            # def __setattr__(self, name, value) -> None:
+sed -n '9229p' core/aletheia/storage/migrations.py       # def run_migrations(
+```
+
+**验收命令**
+
+```
+uv run python scripts/dev_check.py
+```
+
+**已知的基线红（不是你造成的，不要试图修）**：`tests/e2e/test_pipeline_exchange_entry_to_position.py`
+等若干 e2e 用例在干净的 `6d9180127` 上就有 11 个失败，症状是
+`execution_precheck_failed` 与 `KeyError: 'order_id'`。已在独立的干净 worktree 上复现证实。
+因此 `dev_check.py` 的 `pytest --lf` / focused 步骤在基线即为红。判断你自己的改动时，
+以本计划每个 Phase 指定的 focused 测试为准，不要以这批 e2e 的状态为准。
+
+
+（Phase 0 的 `dev_check` 在本仓库当前基线上因上述 e2e 红而不会全绿。这是已知的、
+预先存在的问题，不属于本计划范围。按每个 Phase 自己的 focused 测试判断。）
+
+**Contract Delta**：`NONE`。**SDD Depth**：无（不产生改动）。
+
+---
+
+## Phase 1 — 删除退役的 `OpportunityGenerationV2` entry 权威
+
+**为什么**：这是一整条已退役的第二 entry 权威，零生产调用者，而且已经被 AST 规则明令禁止复活。留着它，未来任何人读 `storage/models.py` 都会以为 `opportunities` 表还在 entry 主链上。这是本计划里最有价值的一刀。
+
+**分类**：`DEAD`。**SDD Depth**：`D2`（删除退役代码路径）。**Contract Delta**：`NONE`（删除零调用者的退役路径，不改变任何现有行为）。
+
+**证据**
+
+- `core/aletheia/storage/models.py:182` — `class OpportunityGenerationV2(BaseModel)`
+- `core/aletheia/storage/repositories.py:903` — `canonical_opportunity_generation(generation: OpportunityGenerationV2)`
+- `core/aletheia/storage/repositories.py:917` — `insert_opportunity_generation(opportunity, generation: OpportunityGenerationV2)`
+- 生产调用者：**零**。live 主链是 `Candidate → candidate_planning_generations → entry_planner`，不消费 `opportunities` 表的 generation 路径。
+- 唯一引用者是测试与一条 AST 禁复活断言：
+  - `tests/observer_admission_fixture.py:9,59,91`
+  - `tests/specs/spec_pipeline_middle_state_integrity.py:989`（AST-ban 条目）
+
+**确切动作**
+
+1. 删除 `core/aletheia/storage/models.py` 中 `class OpportunityGenerationV2` 整个类定义。
+2. 删除 `core/aletheia/storage/repositories.py` 中 `canonical_opportunity_generation` 与 `insert_opportunity_generation` 两个函数整体。
+3. `grep -rn "OpportunityGenerationV2\|canonical_opportunity_generation\|insert_opportunity_generation" --include=*.py .` — 把剩下的每一个引用都清掉：
+   - 删除 `tests/observer_admission_fixture.py`（该 fixture 只为这条退役路径存在）。
+   - 删除依赖该 fixture 的测试。
+   - 从 `tests/specs/spec_pipeline_middle_state_integrity.py:989` 的 AST-ban 清单里移除对应条目（符号已不存在，禁令失去对象）。
+   - 如果 `models.py` / `repositories.py` 有 `__all__`，删掉对应条目。
+4. **不要**删 `OPPORTUNITY_GENERATION_VERSION = "opportunity-generation/v2"`（`repositories.py:900`）除非第 3 步的 grep 证明它也零引用。它被 `repositories.py:894,1108,9358` 引用——**大概率要保留**，先查再说。
+5. **不要**删 `opportunities` 表的 `generation_version` / `generation_json` / `generation_hash` 列，也不要删 `opportunity_entry_validity_assessments` 表。它们是已应用迁移写入的历史数据（`migrations.py:3876-3976`），属 additive-only 数据层。
+
+**如果发现任何一个生产调用者**（非 `tests/`、非 `scripts/`）：**停下报告**，不要删。
+
+**验收命令**
+
+```
+uv run python scripts/dev_check.py
+uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py -q
+```
+
+---
+
+## Phase 2 — 删除 `profit_gradient_evidence/v1` 死验证分支
+
+**为什么**：验证器同时接受 v1 与 v2 两种契约版本，但 `build_profit_gradient_evidence`
+的 producer 常量硬编码为 v2，消费侧 CLI 命令在调用验证器前也已经把非 v2 拒掉。
+没有任何生产路径能产出或消费 v1。这是一条永远走不到的分支，会让下一个读者以为 v1 还受支持。
+
+**分类**：`COMPAT_SHIM`（实际已 `DEAD`）。**SDD Depth**：`D1`（收窄验证器接受范围）。**Contract Delta**：`MODIFIED: verify_profit_gradient_evidence 只接受 profit_gradient_evidence/v2；没有生产路径能产出或消费 v1，无行为变化。`
+
+**证据**
+
+- `core/aletheia/analytics/profit_gradient_evidence.py:47` — `LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"`
+- `core/aletheia/analytics/profit_gradient_evidence.py:55-58` — `_LEGACY_COMPILER_PRODUCER`
+- `core/aletheia/analytics/profit_gradient_evidence.py:1833-1843` — 验证器同时接受 v1/v2，并按版本选 producer
+- **生产已 gate 掉 v1**：`core/aletheia/cli/inspect_cmd.py:343` 在调用验证器前先 `if payload.get("contract_version") != PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION: raise BadParameter`
+- 钉住 v1 的测试有两个，不是一个：
+  - `tests/test_profit_gradient_evidence.py:61-77` `test_historical_v1_artifact_keeps_hash_verification_without_new_selector_shape` —— 直接钉 v1 分支，随分支一起删。
+  - `tests/test_profit_gradient_evidence.py:860` `test_profit_gradient_evidence_cli_writes_compiler_artifact` —— 它 monkeypatch `build_profit_gradient_evidence` 返回一个**合成的 v1 payload**，因此会走到生成器命令 `cli/inspect_cmd.py:397` 的验证调用（**该命令没有前置版本 gate**，与 :343 的消费者命令不同）。它测的是「CLI 写出文件」，v1 只是其 fixture 的偶然选择。把 fixture 的两处 `contract_version` 与 :930 的断言改成 v2 即可，fixture 其余部分已是完整 v2 形状（含 `reconciliation`）。
+
+**确切动作**
+
+1. 删除 `LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION`（:47）与 `_LEGACY_COMPILER_PRODUCER`（:55-58）。
+2. 把验证器（:1833 起）的版本检查从「集合包含 v1 与 v2」改为「必须等于 `PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION`」；删掉随之失效的 `expected_producer` 三元选择，直接用 `_COMPILER_PRODUCER`。
+3. `grep -n "LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION\|_LEGACY_COMPILER_PRODUCER" -r .` 清掉所有剩余引用，包括 `profit_gradient_evidence.py` 的 `__all__`（约 :2099）。
+4. 删除测试 `test_historical_v1_artifact_keeps_hash_verification_without_new_selector_shape`。这不是在削弱验收——这个测试钉的是一条生产走不到的分支，分支删了测试就没有对象了。
+5. **不要**改 `PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"`（:48）和 `PROFIT_GRADIENT_CONTRACT_VERSION = "profit_gradient/v3"`（`profit_gradient.py:22`）。这两个是当前 live 契约标识。
+
+**验收命令**
+
+```
+uv run python scripts/dev_check.py
+uv run pytest tests/test_profit_gradient_evidence.py -q
+```
+
+---
+
+## Phase 3 — 消除 Risk 扁平字段 ↔ 嵌套 mode policy 的双写双读（唯一真正的双主线）
+
+**为什么**：这是本计划里唯一一处「同一份配置有两个权威、且双向自动同步」的地方，也是最会持续制造 bug 的地方。代码注释自己承认了：`config/schema.py:1060-1066` 写着共享扁平字段「一个扁平名对应一对嵌套值，nested-only 写入让 demo/live 不一致时没有正确的单一扁平答案……**删除这些扁平名才是真正的修复，而且它自己是一次独立的改动**」。
+
+**分类**：`DUAL_MAINLINE`。**SDD Depth**：`D1`（配置权威收敛）。**Contract Delta**：`MODIFIED: RiskConfig 扁平 legacy 字段退出读写路径，嵌套 ModeRiskPolicy 成为唯一权威。风险判定阈值与结果不变。`
+
+**⚠️ 这个 Phase 风险最高，因为它落在 Risk 域边界上。执行规则：**
+
+- **只做结构收敛，不改任何一个阈值、默认值、判定逻辑。** 收敛前后，同一份配置必须产出完全相同的 Risk 判定。
+- **本 Phase 必须拆成下面 3 个独立 commit**，每个 commit 单独跑验收。不要一次做完。
+- **Phase 3c 需要 Owner 批准才能执行。** 做完 3a、3b 就停下汇报，等批准。
+
+**两侧实现**
+
+- 胜者（保留）：嵌套 `RiskConfig.demo` / `RiskConfig.live: ModeRiskPolicy`（`config/schema.py:961-962`）
+- 败者（最终删除）：`RiskConfig` 扁平字段 + 双向同步机制
+  - `config/schema.py:1084-1103` — `__setattr__`，扁平写 → 嵌套（docstring: "Keep one-release legacy assignments synchronized with v2 policies"）
+  - `config/schema.py:1029-1073` — `_mirror_nested_into_flat`，嵌套写 → 扁平镜像
+  - `config/schema.py:868-947` — `_RISK_MODE_PATHS` 映射表
+  - `core/aletheia/risk/policy.py:31` — `ResolvedRiskPolicy.legacy_view()`；`:35` — `RiskPolicyView`（扁平名 → 嵌套的读桥）
+
+**`legacy_view` 的 4 个调用点（全部要处理）**
+
+```
+core/aletheia/risk/engine.py:944                      risk = resolved_policy.legacy_view(cfg.risk)   # 并在 :946 重绑 cfg.risk
+core/aletheia/portfolio/position_manager.py:537       return resolved.legacy_view(cfg.risk)
+core/aletheia/agent_shell/operator_recommendations.py:336   risk = resolved.legacy_view(cfg.risk)
+core/aletheia/risk/policy.py:31                       定义处
+```
+
+**绕过 `legacy_view` 直接读扁平字段的生产读者（raw readers）**
+
+```
+core/aletheia/risk/engine.py:2752-2755   check_account_leverage: getattr(cfg.risk, "max_account_leverage_live", 1.5) / "max_account_leverage_demo"
+core/aletheia/diagnostics/doctor.py:764-777   max_demo_position_margin_usdt
+```
+
+执行者必须自己再跑一次确认，不要只信这两条：
+
+```
+grep -rn "cfg\.risk\.max_\|cfg\.risk\.starting_capital_usdt\|cfg\.risk\.max_daily_loss_pct\|getattr(cfg\.risk," --include=*.py core/ extensions/
+```
+
+**Phase 3a（先做）— 把 raw flat readers 改成读嵌套**
+
+1. `risk/engine.py:2752-2755` `check_account_leverage`：改为通过已解析的 mode policy 读 leverage 上限，而不是 `getattr(cfg.risk, "max_account_leverage_live", ...)`。**必须保留原有的 mode 选择语义**（`is_live` 决定读 live 还是 demo），也必须保留原有默认值（1.5 / 3.0）。
+2. `diagnostics/doctor.py:764-777`：同样改读嵌套 demo policy。
+3. 不删任何东西，只改读法。这样做完之后扁平字段就只剩「被写入」和「被 `legacy_view` 映射」两种用途。
+
+验收：
+
+```
+uv run python scripts/dev_check.py
+uv run pytest tests/ -q -k "risk or leverage or doctor"
+```
+
+**Phase 3b — 收敛写路径为单一入口**
+
+1. `core/aletheia/server/routes/settings.py` 的 `update_risk_config`（约 :1884-1923）当前对扁平 key 做 `setattr(candidate, field, value)`，靠 `__setattr__` 把值推进嵌套。改为**直接写嵌套 mode policy**，让扁平字段不再是写入入口。
+2. 保留 `settings.py` 的 `_RISK_MINIMUMS` / `_RISK_BOUNDS` 校验语义不变——**边界校验是信任边界，不许简化掉**。
+3. 做完后 `_mirror_nested_into_flat`（`schema.py:1029`）仍然存在（`GET /settings` 还在 dump 扁平视图），但扁平侧已经是纯只读镜像，不再是第二个写权威。
+
+验收：
+
+```
+uv run python scripts/dev_check.py
+uv run pytest tests/ -q -k "settings or risk_config or risk_policy"
+```
+
+**Phase 3c — 删除扁平字段本身（需 Owner 批准，先停）**
+
+做完 3a、3b 后**停下**，向 Owner 汇报：
+
+- 3a/3b 的 commit SHA
+- `GET /settings` 的响应形状是否包含扁平 risk 字段、有哪些消费者（前端只有 `docs/design/frontend/` 文档，无代码目录，但仍需确认 API 消费者）
+- 还有多少测试在写扁平侧（审计估计约 30 个测试写扁平字段）
+
+Owner 批准后才执行：删除 `RiskConfig` 扁平字段声明、`__setattr__` 同步钩子、`_mirror_nested_into_flat`、`_RISK_MODE_PATHS`、`legacy_view` / `RiskPolicyView`，并把 4 个 `legacy_view` 调用点改为直接用 `ResolvedRiskPolicy`，同时迁移所有写扁平侧的测试。这是 `D1` 偏 `D2`，改动面大，必须独立 PR。
+
+---
+
+## Phase 4 —（已撤回）删除 `run_migrations` 兼容别名
+
+**状态：撤回，不执行。** 本 Phase 的成本估计在计划起草时是错的。
+
+起草时依据的是「约 20+ 处调用者」。实际 `grep -rn "run_migrations" --include=*.py .`
+返回 **200+ 个调用点，分布在 180+ 个测试文件**（几乎每个 test 模块的
+`_isolate`/`setup` fixture 都用它）。为了消掉一个函数名而产生一个触及 180+ 文件的
+diff，不可评审，且回归风险远超收益。
+
+更重要的是，这个别名**已经有护栏防止它污染生产**：
+`tests/test_migration_fast_path.py:1707`
+`test_production_code_has_no_legacy_implicit_run_migrations_callers` 用 AST 断言
+`core/aletheia` 下没有任何生产代码 import 或调用 `run_migrations`。也就是说它已经
+被约束成一个纯测试 fixture 入口，不是一个会渗进生产的第二权威。
+
+**结论**：这不是双主线，是一个被测试守住的测试便利函数。保留。
+如果将来要动，正确做法是在 `conftest.py` 层统一收口，而不是逐个改 180 个文件。
+
+---
+
+## Phase 5 — 修正 proposals README 的真值漂移（D0）
+
+**为什么**：`docs/design/proposals/README.md` 的「Current proposals」段落里列着 4 个 frontmatter 已是 `status: implemented` 的提案。未来任何 Agent 读这个索引，都会以为这些还是待设计的工作，从而重复实现已经落地的东西。这是纯文档 D0 修复，但对「防止屎山化」的杠杆很高。
+
+**分类**：文档真值漂移。**SDD Depth**：`D0`（恢复既有真值一致性）。**Contract Delta**：`NONE`。
+
+**确切动作**
+
+1. 在 `docs/design/proposals/README.md` 中，把下列 4 个文件从「Current proposals」段移到「Implemented proposals」段（它们的 frontmatter 已是 `status: implemented`）：
+   - `usage_v2_workspace.md`
+   - `gateway_service_lifecycle.md`
+   - `ohlcv_provider_observation_result.md`
+   - `serenity_research_attempt_truth.md`
+2. 把 `tokenomics_harness_phase_plan_2026-07-30.md`（frontmatter `status: superseded`，`superseded_by: tokenomics_harness.md`）补录到「Superseded」段——它当前在 README 里是孤儿，完全没被列出。
+3. **只改 README 的分类归属。不要改这些 proposal 文件本身的正文，不要移动文件，不要碰 `docs/design/history/`。**
+4. **不要**改 README 对 `observation_experiment_ownership_v2.md` 的描述。它的措辞略超前（Phase 8 未完成），但改它涉及语义判断，留给 Owner。
+
+**验收命令**
+
+```
+uv run python scripts/check_docs.py
+```
+
+---
+
+## 明确排除清单：这些 V2/V3 不要动
+
+执行者在扫 `grep -rn "v2\|v3"` 的时候一定会撞到下面这些。它们**全部保留**。逐条写出来就是为了让你不误删。
+
+### 外部协议事实
+
+| 位置 | 内容 |
+|---|---|
+| `core/aletheia/config/schema.py:25,317` | `KNOWN_BITGET_PROFILES = {"classic_v2", "uta_v3"}`、`bitget_profile: str = "classic_v2"` — Bitget 真实 API 版本 |
+| `core/aletheia/agent_runtime/startup_behavior_gate.py:399-415` | 同上的启动 gate |
+| `core/aletheia/execution/order_constraints.py:135-138` | profile 切换使缓存失效（#3445） |
+| `core/aletheia/server/routes/settings.py:578-579` | profile 取值校验 |
+| `core/aletheia/agent_runtime/connectivity.py:32-37`、`diagnostics/doctor.py:2991`、`universe/fast_stream.py:459-460` | 外部端点 `/api/v2`、`/api/v3/ping`、`/api/v5` 等 |
+
+### 契约版本串 / 语义标识（改了会让历史数据校验失败）
+
+`profit_gradient/v3`（`analytics/profit_gradient.py:22`）、`profit_gradient_evidence/v2`（`profit_gradient_evidence.py:48`）、`exit-paired-evidence/v2`（`alpha_attribution.py:172`）、`exit-trailing-qualification/v2`（`exit_trailing_qualification.py:385`）、`paper-dynamic-profit-protection/v2`（`exit_trailing_qualification.py:17`）、`momentum-geometry-measurement/v2` + `TREATMENT_VERSION="v2"`（`momentum_geometry_replay.py:14,18`）、`trading_mandate_compliance/v2`（`trading_mandate_compliance.py:25`）、`sizing-counterfactual/v2`（`sizing_counterfactual.py:11`）、`skip-halt-v2`（`skip_diagnosis.py:30`）、`oi-v2`（`outcome_integrity.py:20`）、`outcome-integrity-v2-2026-09-23`（`learning_window.py:15`）、`catalog-model-family-v2`（`economics/pricing_sync.py:27`）、`universe-step-v3`（`universe/scanners.py:22`）、`candidate-selection-utility/v2`、`universe-economic-utility/v2`（`universe/economic_utility.py:360`）、`universe-opportunity-evidence/v2`、`opportunity-generation/v2`（`storage/repositories.py:900`）、`market-structure/v2`（`data/market_structure.py:19`）。
+
+### 单一实现、仅命名带版本后缀（NAMING_ONLY，不是双主线）
+
+- `EconomicUtilityEstimateV2`（`universe/economic_utility.py:359`）— 没有 V1 实现存在，改名收益为零、风险非零。
+- `OpportunityEvidenceBundleV1`、`TailEvidenceV1`（`economic_utility.py:351`）、`CandidateSelectionUtilityV1`、`HardGateDecisionV1` — 同理。
+- `CORE_ALGORITHM_VERSION`（`data/market_structure.py:18`）vs `COMPAT_ALGORITHM_VERSION`（`:19`）— **看起来像双算法，其实不是**。两个标签共用同一个内核 `derive_market_structure`（`data/market_structure.py:326`）；`universe/market_structure.py:70` 调的也是它。兼容 API `evaluate_market_structure` 有 live 生产消费者（`universe/momentum_trigger.py:321`）。保留。
+
+### 数据层 additive-only（只删代码，永不删数据）
+
+`opportunities.generation_*` 列、`opportunity_entry_validity_assessments` 表、legacy unkeyed shadow 回填函数（`repositories.py:12758,12781`）、`legacy_unknown` OHLCV 历史行、全部 88 个 `_apply_*_vNN` 迁移及其 checksum。
+
+### 有意的、带 gate 的收敛桥（禁区）
+
+observation Main 库 ↔ Lab 库（`migrations.py:4489` `retire_legacy_experiment_tables`、`:7047` `_apply_observation_ownership_v2_v61`、`:7071` `_apply_observation_authority_cutover_proof_v62`）。这是 #2737 的设计产物，受 `require_lab_authority` 和 `retire_legacy_experiment_schema` flag 双重 gate，Phase 8 未完成。**不要碰。**
+
+### 13 个 `slim_core_*.md` proposal
+
+全部指向仍 OPEN 的 #3134，DoD 未达成，是活跃程序的合法跟踪文档。不要移、不要改 status。
+
+---
+
+## 验证契约
+
+每个 Phase 独立验收，顺序不可跳：
+
+| Phase | 验收命令 | 通过标准 | 实际结果 |
+|---|---|---|---|
+| 0 | 9 条 `sed` 行号核对 | 全部匹配 | ✅ 全部匹配（`sed -n '1834p'` 的目标串实际在 1835，off-by-one，属计划文本笔误而非仓库漂移）。`dev_check` 因上文所述 e2e 基线红不全绿。 |
+| 1 | `uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py tests/test_entry_logic.py -q` | exit 0 | ✅ 19 passed；另 `-k "opportunity or admission or entry_plan"` 467 passed（唯一失败为基线 e2e） |
+| 2 | `uv run pytest tests/ -q -k "profit_gradient"` | exit 0 | ✅ 216 passed |
+| 3a | `uv run python scripts/dev_check.py` + `uv run pytest tests/ -q -k "risk or leverage or doctor"` | 均 exit 0 | 未执行（需 Owner 批准范围） |
+| 3b | `uv run python scripts/dev_check.py` + `uv run pytest tests/ -q -k "settings or risk_config or risk_policy"` | 均 exit 0 | 未执行 |
+| 3c | 需 Owner 批准后单独定义 | — | 未执行 |
+| 4 | — | — | 已撤回，见 Phase 4 |
+| 5 | `uv run python scripts/check_docs.py` | exit 0 | ✅ exit 0 |
+
+全部完成后跑一次 `uv run python scripts/ci_preflight.py`（或仓库当前的 PR 级 gate）再开 PR。
+
+**不允许**为了让验收变绿而放宽断言、跳过测试、加 `xfail`、或改 `dev_check.py` / `check_docs.py` 本身。
+
+## 停止条件
+
+出现以下任一情况，**立即停下并报告**，不要自行决定：
+
+1. Phase 0 的行号核对有任何一条不匹配。
+2. 发现 Phase 1 / Phase 2 的「零生产调用者」判断不成立（找到了非测试、非脚本的调用者）。
+3. Phase 3 任一步会改变 Risk 判定结果，而不只是改变读写路径。
+4. Phase 3a、3b 完成 —— 3c 需 Owner 批准，在此处硬停。
+5. ~~Phase 4 中 `run_migrations` 与 `apply_migrations` 的签名转发关系不是一目了然。~~（Phase 4 已撤回）
+6. 任何动作需要修改禁改清单里的内容。
+7. 任何动作需要删除数据库列 / 表，或修改迁移 checksum。
+8. 验收命令红了，而修复它需要超出本 Phase 范围的改动。
+
+## Rollout and rollback
+
+每个 Phase 一个 commit，按 Phase 顺序各自可独立 revert。Phase 1、2、5 之间无依赖，失败只需 revert 该 Phase。Phase 3a → 3b 有顺序依赖（3b 假定 3a 已把 raw readers 迁走），revert 需反序。
+
+PR 切分建议：Phase 1+2（退役代码删除，同一审查域）+ Phase 5（文档真值）一个 PR；Phase 3a+3b（Risk 配置收敛）单独一个 PR。**Phase 3c 必须独立 PR。**
+
+## Resolution
+
+**Phase 1、2、5 已执行完成**（见「验证契约」表的实际结果列），Phase 4 已撤回。
+**剩余唯一实质工作是 Phase 3**（Risk 扁平字段 ↔ 嵌套 mode policy 收敛），需 Owner
+就 3c 的范围表态后执行。执行进度在对应 GitHub Issue / PR 中跟踪，不在本文件累积状态。
