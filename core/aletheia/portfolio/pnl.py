@@ -1514,6 +1514,17 @@ def _compute_portfolio(
                     exchange_external_summary = [i.to_dict() for i in _recon.external]
                     exchange_external_positions = len(_recon.external)
                 except Exception:
+                    # `classify_positions()` / `ReconcileItem.to_dict()`
+                    # exceptions silently fall back to `ext_total -
+                    # local_open` arithmetic. That output looks plausible
+                    # but can hide a real reconciler regression or a
+                    # schema drift. Fallback preserved for stability; log
+                    # so a defect is visible.
+                    logger.warning(
+                        "pnl: classify_positions failed, falling back to "
+                        "count-subtraction for external positions",
+                        exc_info=True,
+                    )
                     local_open = len(positions)
                     ext_total = int(cached.get("open_positions_count") or 0)
                     exchange_external_positions = max(0, ext_total - local_open)
@@ -1536,6 +1547,18 @@ def _compute_portfolio(
                     if exc_exposure:
                         final_exposure = exc_exposure
         except Exception:
+            # This is the whole exchange-cache read wrapped in one
+            # `except Exception`. On any failure — schema drift on the
+            # cache table, `float()` on unexpected data, missing keys —
+            # `sync_status` collapses to a bare "error" with no root
+            # cause. Downstream still returns final_unrealized /
+            # exposure from local values, silently. Log so an operator
+            # tail on warnings sees the actual defect.
+            logger.warning(
+                "pnl: exchange-cache read for authoritative equity/exposure "
+                "failed (sync_status='error', falling back to local values)",
+                exc_info=True,
+            )
             sync_status = "error"
 
     # UTA unified state (multi-broker aggregate, cached)
@@ -1565,7 +1588,14 @@ def _compute_portfolio(
                 if uta_count:
                     final_positions_count = uta_count
         except Exception:
-            pass
+            # UTA multi-broker aggregate lookup — a legitimate optional
+            # data source. Silent failure kept the previous single-broker
+            # numbers without a signal. Log so a regression in the UTA
+            # cache path is visible.
+            logger.warning(
+                "pnl: UTA unified state read failed (keeping single-broker values)",
+                exc_info=True,
+            )
 
     return {
         "total_value_usdt": (round(final_total_value, 4) if final_total_value is not None else None),
