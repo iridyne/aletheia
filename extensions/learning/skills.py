@@ -10,10 +10,9 @@ from datetime import datetime, timezone
 from aletheia.storage.event_store import get_event_store, make_event
 from aletheia.storage.models import PSSkill, new_id
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # Hard-coded layers that skills can NEVER modify (plan §1.7)

@@ -26,14 +26,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from aletheia.economics.schema import ensure_economics_schema
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 _VALID_SCOPES = ("system", "agent_run", "logical_agent", "provider", "provider_tier")
 _VALID_WINDOWS = ("daily", "weekly", "session")
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _budget_id(scope: str, subject: str | None, window: str) -> str:

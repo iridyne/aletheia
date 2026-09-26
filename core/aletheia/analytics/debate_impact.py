@@ -23,6 +23,7 @@ from aletheia.analytics.outcome_semantics import (
     outcome_values,
 )
 from aletheia.storage.sqlite import get_db, readonly_db
+from aletheia.storage.table_utils import table_exists as _table_exists
 
 _HORIZONS = ("15m", "1h", "4h")
 _VERDICT_MISSED = MISSED_ALPHA
@@ -332,15 +333,6 @@ def _fmt_trace(row: dict[str, Any]) -> str:
         f"bear={_fmt_num(row.get('avg_debate_bear'))}"
     )
 
-
-def _table_exists(db, table: str) -> bool:
-    if db is None:
-        return False
-    found = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    ).fetchone()
-    return found is not None
 
 
 def _has_columns(db, table: str, columns: list[str]) -> bool:

@@ -11,16 +11,13 @@ from pathlib import Path
 import yaml
 
 from aletheia.storage.hashing import sha256_file
+from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
 
 _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 # Files exempt from the "unlisted payload" check — the exporter writes manifest.yaml
 # after checksums.txt, so it cannot include itself in the manifest.
 _EXEMPT_NAMES = frozenset({"checksums.txt", "manifest.yaml"})
 
-
-def _canonical_json(value: object) -> str:
-    """Use the same stable JSON shape as the joint-checkpoint writer."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _sha256_json(value: object) -> str:

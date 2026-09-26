@@ -13,6 +13,7 @@ from typing import Any
 
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.model_provider.inference_contract import InferenceCall
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 _SCHEMA_VERSION = "llm-inference-call-v1"
 
@@ -57,8 +58,6 @@ _STRUCTURED_ATTEMPT_OUTCOMES = frozenset(
 )
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _json(value: Any) -> str:

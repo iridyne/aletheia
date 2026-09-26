@@ -17,6 +17,7 @@ from aletheia.storage.models import (
 from aletheia.universe.relative_rank_shadow import RelativeRankBatch
 from aletheia.universe.twin_persistence import TwinExperimentContext
 from aletheia.universe.twin_scoring import TwinShadowInput
+from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
 
 
 RELATIVE_RANK_CAPTURE_INTERVAL_SEC = 55 * 60
@@ -53,9 +54,6 @@ def _safe(value: object) -> object:
         return value if math.isfinite(value) else None
     return None
 
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _sha256(value: object) -> str:

@@ -19,6 +19,7 @@ from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )
+from aletheia.storage.table_utils import table_exists as _table_exists
 
 _HORIZONS = ("15m", "1h", "4h", "24h")
 _ENTRY_ALIGNMENT_MAX_SEC = 60
@@ -808,9 +809,6 @@ def _exclusions(rows: list[dict]) -> dict:
 def _columns(db, table: str) -> set[str]:
     return {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
-
-def _table_exists(db, table: str) -> bool:
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
 
 
 def _supported_market(value: Any) -> str | None:

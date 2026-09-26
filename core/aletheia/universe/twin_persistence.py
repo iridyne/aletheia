@@ -38,6 +38,7 @@ from aletheia.universe.twin_scoring import (
     build_twin_shadow_batch,
     candidate_key,
 )
+from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
 
 
 TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v2"
@@ -131,9 +132,6 @@ class TwinReplayReport:
     def matches(self) -> bool:
         return self.batch_hash_matches and not self.mismatched_candidate_keys
 
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _sha256(value: object) -> str:

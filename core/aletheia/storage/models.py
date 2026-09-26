@@ -7,14 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 from uuid import uuid4
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 def new_id() -> str:
     return uuid4().hex[:12]
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class StrategyParametersInvalid(ValueError):

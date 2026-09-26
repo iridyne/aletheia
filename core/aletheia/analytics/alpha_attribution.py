@@ -22,6 +22,7 @@ from aletheia.storage.repositories import (
     SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
     complete_outcome_economics_sql,
 )
+from aletheia.storage.time_utils import utcnow as _utcnow
 
 VERDICT_NAMES = (
     "Universe Alpha",
@@ -1543,8 +1544,7 @@ def _parse_json(raw: Any) -> Any:
     return {}
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+
 
 
 def _normalize_days(days: int) -> int:

@@ -7,10 +7,9 @@ from aletheia.storage.event_store import get_event_store, make_event
 from aletheia.storage.hashing import sha256_json
 from aletheia.storage.models import PSPolicyVersion, new_id
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class PolicyStore:

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from aletheia.economics.schema import ensure_economics_schema
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 _SCHEMA_VERSION = "observer-context-v1"
 _MAX_TEXT = 160
@@ -25,8 +26,6 @@ _ALLOWED_KINDS = {"environment", "news", "learning"}
 _ALLOWED_FRESHNESS = {"fresh", "stale", "unknown"}
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _bounded_text(value: object) -> str | None:

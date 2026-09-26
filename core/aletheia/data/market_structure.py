@@ -12,6 +12,7 @@ from typing import Literal, Sequence
 
 from aletheia.data.providers import Candle, MarketDataProvider, timeframe_ms
 from aletheia.data.symbols import InstrumentId
+from aletheia.storage.json_utils import canonical_json as _canonical_json
 
 
 CONTRACT_VERSION = "market-structure-provider/v1"
@@ -36,14 +37,6 @@ _PARAMS = {
     "window_bars": WINDOW_BARS,
 }
 
-
-def _canonical_json(payload: object) -> str:
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
 
 
 def _float_identity(value: float) -> str:
