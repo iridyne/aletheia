@@ -11,8 +11,8 @@ semantic nature of the change. They are independent.
 - **D0** — restore truth / conformance repair; Contract Delta = `NONE`
 - **D1** — change semantics; requires explicit `ADDED / MODIFIED / REMOVED`
   semantic delta and owner acceptance
-- **D2** — change structure; requires accepted Proposal before target state
-  enters Contract
+- **D2** — change structure; requires the same explicit semantic delta plus the
+  gates that hold the new structure
 
 SDD depth is classification only. Follow the single
 [bounded engineering delegation](../../../../AGENTS.md#bounded-engineering-delegation)
