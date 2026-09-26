@@ -28,10 +28,12 @@ Product Support.
 claim → Contract. Whenever a `SpecClaim`'s `contract`, `section`, or `invariant`
 text changes:
 
-1. Open the named Contract and the named section. **If the section does not
-   exist, you invented it** — add the section or repoint the claim. (2026-09-07:
-   `LU-C07` was repointed at a `§4b selected-mode resolution` that did not exist;
-   the fix was adding `§4b-2` to the Live Unlock Contract.)
+1. **If the named section does not exist, you invented it** — add the section or
+   repoint the claim. Since 2026-09-26 this step is mechanical:
+   `check_docs.spec_claim_anchor_failures` fails the claim, so it no longer
+   depends on anyone remembering to look. (It once did: 2026-09-07, `LU-C07` was
+   repointed at a `§4b selected-mode resolution` that did not exist; the fix was
+   adding `§4b-2` to the Live Unlock Contract.)
 2. The claim's `invariant` may promise only what the Contract states and only
    what the test actually exercises. A claim promising more than the Contract is
    the defect, even when the test is green. (`LU-C07` promised a selector acting
