@@ -336,7 +336,7 @@ def _verify_started(
                 if _verify_webui_accessible(cfg):
                     return True  # Gateway confirmed fully operational
             except Exception:
-                pass
+                logger.warning("lifecycle: WebUI readiness probe failed", exc_info=True)
         time.sleep(poll_interval)
 
     # Timeout — distinguish "process alive" from "process truly dead".
@@ -397,7 +397,7 @@ def _write_circuit_break_state(*, recovery_owner: str) -> None:
             encoding="utf-8",
         )
     except Exception:
-        pass
+        logger.warning("lifecycle: failed to persist circuit-breaker state", exc_info=True)
 
 
 def _check_circuit_break_auto_reset() -> None:
@@ -515,9 +515,9 @@ def _check_circuit_break_auto_reset() -> None:
                 ),
             })
         except Exception:
-            pass
+            logger.warning("lifecycle: circuit-breaker reset audit write failed", exc_info=True)
     except Exception:
-        pass
+        logger.warning("lifecycle: circuit-breaker auto-reset failed", exc_info=True)
 
 
 def _check_spawn_circuit_breaker() -> None:
@@ -602,9 +602,9 @@ def _check_spawn_circuit_breaker() -> None:
                         source="gateway_lifecycle",
                     )
         except Exception:
-            pass
+            logger.warning("lifecycle: circuit-breaker recovery-owner update failed", exc_info=True)
     except Exception:
-        pass
+        logger.warning("lifecycle: spawn circuit-breaker check failed", exc_info=True)
 
 
 def _fail_spawn(reason: str, *, diagnostic_hint: str | None = None) -> None:
@@ -616,7 +616,7 @@ def _fail_spawn(reason: str, *, diagnostic_hint: str | None = None) -> None:
         tail_lines = _tail_file(errors_log_path(), 15)
         tail = "\n".join(tail_lines)
     except Exception:
-        pass
+        logger.warning("lifecycle: failed to read errors.log tail after spawn failure", exc_info=True)
 
     try:
         from aletheia.files.jsonl import write_audit
@@ -626,7 +626,7 @@ def _fail_spawn(reason: str, *, diagnostic_hint: str | None = None) -> None:
             "message": f"Gateway spawn failed: {reason}",
         })
     except Exception:
-        pass
+        logger.warning("lifecycle: failed to write gateway_spawn_failed audit", exc_info=True)
 
     _notify_gateway_problem(
         "Aletheia Gateway failed to start",
@@ -830,7 +830,7 @@ def do_status() -> None:
         else:
             typer.echo("Tunnel: disabled")
     except Exception:
-        pass
+        logger.warning("lifecycle: tunnel status unavailable", exc_info=True)
     service_invalid = machine_service and (
         service.get("enabled") is False
         or service.get("owned") is False

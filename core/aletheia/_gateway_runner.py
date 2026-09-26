@@ -79,7 +79,7 @@ def backend_port_for(cfg) -> int:
         try:
             return int(raw)
         except ValueError:
-            pass
+            logger.warning("gateway_runner: backend port env parse failed", exc_info=True)
     return int(cfg.app.dashboard_port) + _BACKEND_PORT_OFFSET
 
 
@@ -120,7 +120,7 @@ def _publish_frontdoor_route(
             reason=reason,
         )
     except Exception:
-        pass
+        logger.warning("gateway_runner: frontdoor route publish failed", exc_info=True)
 
 
 def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
@@ -181,7 +181,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
         try:
             kill_pid_tree(proc.pid)
         except Exception:
-            pass
+            logger.warning("gateway_runner: frontdoor old process kill failed", exc_info=True)
         _record_frontdoor_restart(cfg.app.dashboard_port, getattr(proc, "pid", 0))
     new_proc = _spawn_frontdoor(cfg, backend_port)
     if not _wait_frontdoor_listening(cfg, new_proc):
@@ -189,7 +189,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
         try:
             kill_pid_tree(new_proc.pid)
         except Exception:
-            pass
+            logger.warning("gateway_runner: frontdoor failed-start cleanup failed", exc_info=True)
         return new_proc
     return new_proc
 
@@ -394,7 +394,7 @@ def _stop_vite_watch(proc: subprocess.Popen | None) -> None:
         try:
             proc.kill()
         except Exception:
-            pass
+            logger.warning("gateway_runner: vite process kill failed", exc_info=True)
 
 
 def _spawn_collector_process(cfg) -> subprocess.Popen:
@@ -436,7 +436,7 @@ def _record_collector_restart(pid: int) -> None:
         })
         write_error({"source": "gateway_supervisor", "message": msg})
     except Exception:
-        pass
+        logger.warning("gateway_runner: collector restart record failed", exc_info=True)
 
 
 def _install_shutdown_handlers(state: dict) -> dict:
@@ -479,7 +479,7 @@ def _restore_shutdown_handlers(prev: dict) -> None:
         try:
             signal.signal(s, handler)
         except (ValueError, OSError):
-            pass
+            pass  # Best-effort signal handler restore
 
 
 def _record_signal_shutdown(signum: int) -> None:
@@ -679,7 +679,7 @@ def _record_supervisor_exception(exc: Exception) -> None:
             "message": f"Supervisor loop caught unexpected exception: {type(exc).__name__}: {exc}",
         })
     except Exception:
-        pass
+        logger.warning("gateway_runner: supervisor exception record failed", exc_info=True)
 
 
 def _record_give_up(attempts: int) -> None:
@@ -694,7 +694,7 @@ def _record_give_up(attempts: int) -> None:
         from aletheia.agent_runtime.health import _send_alert
         _send_alert(msg)
     except Exception:
-        pass
+        logger.warning("gateway_runner: supervisor give-up record failed", exc_info=True)
 
 
 def _record_port_liveness_failure(port: int, pid: int) -> None:
@@ -715,7 +715,7 @@ def _record_port_liveness_failure(port: int, pid: int) -> None:
         })
         write_error({"source": "gateway_supervisor", "message": msg})
     except Exception:
-        pass
+        logger.warning("gateway_runner: port liveness record failed", exc_info=True)
 
 
 def _record_frontdoor_restart(port: int, pid: int) -> None:
@@ -733,7 +733,7 @@ def _record_frontdoor_restart(port: int, pid: int) -> None:
         })
         write_error({"source": "gateway_supervisor", "message": msg})
     except Exception:
-        pass
+        logger.warning("gateway_runner: frontdoor restart record failed", exc_info=True)
 
 
 def _write_restart_history(history: list[dict]) -> None:
@@ -757,7 +757,7 @@ def _write_restart_history(history: list[dict]) -> None:
             for entry in history:
                 fh.write(_json.dumps({"ts": ts, **entry}) + "\n")
     except Exception:
-        pass
+        logger.warning("gateway_runner: restart history write failed", exc_info=True)
 
 
 def _ready_beacon_path():
@@ -787,7 +787,7 @@ def _write_ready_beacon(cfg) -> None:
         }
         path.write_text(_json.dumps(payload), encoding="utf-8")
     except Exception:
-        pass
+        logger.warning("gateway_runner: ready beacon write failed", exc_info=True)
     _emit_sd_notify()
 
 
@@ -840,7 +840,7 @@ def _schedule_supervisor_recovery() -> None:
         try:
             _write_error_event(f"supervisor_recovery: unexpected error: {type(exc).__name__}: {exc}")
         except Exception:
-            pass
+            logger.warning("gateway_runner: recovery error record failed", exc_info=True)
 
 
 def _write_error_event(message: str) -> None:
@@ -848,7 +848,7 @@ def _write_error_event(message: str) -> None:
         from aletheia.files.jsonl import write_error
         write_error({"source": "gateway_supervisor", "message": message})
     except Exception:
-        pass
+        logger.warning("gateway_runner: error event write failed", exc_info=True)
 
 
 def main():

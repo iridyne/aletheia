@@ -465,7 +465,7 @@ class _PersistentAsyncTimeoutWorker:
             if loop is not None:
                 loop.call_soon_threadsafe(loop.stop)
         except RuntimeError:
-            pass
+            logger.warning('scheduler: timeout worker close failed (loop state)')
         thread.join(timeout=5)
         with self._lock:
             if not thread.is_alive():
@@ -625,7 +625,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
                 extra={"job_id": job_id, "consecutive": count},
             )
         except Exception:
-            pass
+            logger.warning('scheduler: consecutive-failure audit write failed')
 
 
 # Volume scanner results cache (populated by data_collector_context, ~10 min cadence).
@@ -737,7 +737,7 @@ def _run_job_guarded(job_id: str, fn):
             try:
                 delattr(_JOB_RUN_STATE, attr)
             except AttributeError:
-                pass
+                logger.warning('scheduler: job-state cleanup attribute already absent')
 
 
 def _guarded(job_id: str, fn):
@@ -1215,7 +1215,7 @@ def _run_serenity_startup_catchup() -> None:
                 extra={"stage": "startup_catchup"},
             )
         except Exception:
-            pass
+            logger.warning('scheduler: serenity startup catch-up audit write failed')
         _record_job_failure("serenity_startup_catchup", str(exc))
 
 
@@ -1693,7 +1693,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         try:
             _scheduler.shutdown(wait=False)
         except Exception:
-            pass
+            logger.warning('scheduler: init cleanup shutdown failed after startup error')
         _async_timeout_worker.close()
         _news_analyzer_timeout_worker.close()
         raise
@@ -1795,7 +1795,7 @@ def resume_scheduler() -> bool:
                     }
                 )
             except Exception:
-                pass
+                logger.warning('scheduler: resume-blocked audit write failed')
             return False
 
         if _scheduler is None:
@@ -1819,7 +1819,7 @@ def resume_scheduler() -> bool:
                 try:
                     _scheduler.resume_job(job_id)
                 except Exception:
-                    pass
+                    logger.warning('scheduler: resume_job failed')
             logger.info(
                 "Scheduler resumed %d selectively-paused jobs",
                 len(_selectively_paused_jobs),
@@ -4716,7 +4716,7 @@ def _get_observed_instruments(cfg):
             if result:
                 return result
     except Exception:
-        pass
+        logger.warning('scheduler: active-universe instrument lookup failed; using fallback')
 
     # Fallback: configured observed instruments.
     try:
