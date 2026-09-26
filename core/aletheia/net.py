@@ -85,7 +85,7 @@ def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
         for h in _SECRET_HEADERS:
             resp.request.headers.pop(h, None)
     except Exception:
-        pass
+        pass  # Best-effort header scrub; original response still raised
     try:
         url = str(resp.url)
     except Exception:
@@ -111,7 +111,7 @@ def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
             body_detail = resp.text
         body_detail = (body_detail or "").strip()[:500]
     except Exception:
-        pass
+        logger.debug("net: error body extraction failed (simplified error message)", exc_info=True)
     msg = f"HTTP {status} from {url}" + (f": {body_detail}" if body_detail else "")
     raise httpx.HTTPStatusError(msg, request=getattr(resp, "request", None), response=resp)
 
@@ -351,7 +351,7 @@ class _RetryingTransport(httpx.AsyncBaseTransport):
                     try:
                         await response.aread()
                     except Exception:
-                        pass
+                        pass  # Best-effort body drain; connection may not be reused
                     wait = self._initial_backoff * (2 ** attempt)
                     logger.debug(
                         "HTTP %d — retrying in %.1fs (attempt %d/%d)",
@@ -403,7 +403,7 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
                 try:
                     await response.aread()
                 except Exception:
-                    pass
+                    pass  # Best-effort body drain before direct retry
                 finally:
                     await response.aclose()
                 return await self._direct_transport.handle_async_request(request)

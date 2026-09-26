@@ -216,7 +216,7 @@ def _audit_webhook_config_migration() -> None:
             "message": "Disabled a legacy enabled webhook with an invalid URL.",
         })
     except Exception:
-        pass
+        pass  # Advisory audit write; config save succeeds regardless
 
 
 
