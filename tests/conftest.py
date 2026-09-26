@@ -12,6 +12,7 @@ into real orders by applying a test marker. Native Bitget protection is read-onl
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 
@@ -392,6 +393,42 @@ def _reset_account_equity_history_cache():
     invalidate_account_equity_history_cache()
     yield
     invalidate_account_equity_history_cache()
+
+
+@pytest.fixture(autouse=True)
+def _drop_leaked_dashboard_mount():
+    """Strip the SPA catch-all ``Mount`` that lifespan leaves on the shared app.
+
+    ``aletheia.server.app.app`` is a module-level singleton shared by 61 test files,
+    and its lifespan mounts the built frontend at ``/`` (app.py:719 ->
+    _mount_static_dashboard -> app.py:158) with no idempotence guard, so every
+    ``with TestClient(app)`` appends another one. A root mount matches any path the
+    API did not claim and Starlette answers a non-GET/HEAD static request with 405
+    (starlette/staticfiles.py:113), so ``tests/test_model_profiles.py``'s retired
+    routes returned 405 instead of 404 once any earlier test had entered that
+    lifespan -- green alone, red in the full suite. Nothing under tests/ asserts the
+    SPA is served from this app: test_frontdoor.py builds its own via
+    frontdoor.create_app(static_dir=...).
+    """
+
+    def _prune():
+        # sys.modules, not import: a plain unit test must not pay for pulling in
+        # FastAPI and 23 route modules just to run this autouse fixture.
+        module = sys.modules.get("aletheia.server.app")
+        if module is None:
+            return
+        routes = module.app.router.routes
+        # In place: app.routes IS router.routes, and the live Router iterates that
+        # same list on every request, so rebinding the attribute would not be seen.
+        routes[:] = [
+            route
+            for route in routes
+            if not (getattr(route, "name", None) == "dashboard" and getattr(route, "path", "") == "")
+        ]
+
+    _prune()
+    yield
+    _prune()
 
 
 @pytest.fixture
