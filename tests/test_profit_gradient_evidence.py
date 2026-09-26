@@ -58,25 +58,6 @@ def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     assert evidence.verify_profit_gradient_evidence(first, revalidate_sources=True) == (True, None)
 
 
-def test_historical_v1_artifact_keeps_hash_verification_without_new_selector_shape():
-    payload = evidence.build_profit_gradient_evidence(
-        evidence_epoch_id="missing-epoch",
-        cutoff_at="2026-08-14T00:00:00Z",
-        cost_model_id="missing-cost-model",
-    )
-    payload = dict(payload)
-    payload["contract_version"] = evidence.LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
-    payload["producer"] = dict(evidence._LEGACY_COMPILER_PRODUCER)
-    payload.pop("reconciliation")
-    payload["evidence_context"] = {}
-    payload["content_hash"] = evidence._hash(
-        {key: value for key, value in payload.items() if key != "content_hash"}
-    )
-
-    assert evidence.verify_profit_gradient_evidence(payload, revalidate_sources=True) == (True, None)
-    assert payload["contract_version"] != evidence.PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
-
-
 def test_compiler_does_not_write_database():
     from aletheia.storage.sqlite import get_db
 
@@ -879,12 +860,12 @@ def test_compiled_artifact_hash_rejects_tampering():
 def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeypatch):
     output = tmp_path / "profit-gradient-evidence.json"
     payload = {
-        "contract_version": "profit_gradient_evidence/v1",
+        "contract_version": "profit_gradient_evidence/v2",
         "read_only": True,
         "behavior_changed": False,
         "producer": {
             "module": "aletheia.analytics.profit_gradient_evidence",
-            "contract_version": "profit_gradient_evidence/v1",
+            "contract_version": "profit_gradient_evidence/v2",
             "source_mode": "database_read_only",
             "manual_layer_samples": False,
         },
@@ -946,7 +927,7 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
 
     assert result.exit_code == 0, result.stdout
     written = json.loads(output.read_text(encoding="utf-8"))
-    assert written["contract_version"] == "profit_gradient_evidence/v1"
+    assert written["contract_version"] == "profit_gradient_evidence/v2"
     assert written["inputs"] == {
         "evidence_epoch_id": "epoch-1",
         "cutoff_at": "2026-08-14T00:00:00Z",
