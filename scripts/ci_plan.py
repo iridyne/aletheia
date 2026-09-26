@@ -548,11 +548,9 @@ def plan(
         "changed_files_complete": changed_files_complete,
         "changed_files": normalized_changes,
         "mode": mode,
-        "github_ci": "none" if mode == "docs_only" else "planned",
         "surfaces": sorted(surfaces),
         "unknown_paths": sorted(unknown_paths),
         "required": required,
-        "github_checks": _github_checks(required),
         "local_checks": _local_checks(required, mode),
         "review": {
             # Codex remains optional feedback; an asynchronous comment is not CI.
@@ -561,16 +559,6 @@ def plan(
         "reason_codes": sorted(reason_codes),
         "plan_fingerprint": f"sha256:{digest}",
     }
-
-
-def _github_checks(required: dict[str, bool]) -> list[str]:
-    checks = ["Verify Change Contract"]
-    if not any(required.values()):
-        return []
-    checks.append("Trusted CI verdict")
-    if required.get("full_ci"):
-        checks.append("Full CI verdict")
-    return checks
 
 
 def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
@@ -661,7 +649,6 @@ def _write_github_outputs(path: str, report: dict[str, Any]) -> None:
         f"base_sha={report['base_sha']}",
         f"head_sha={report['head_sha']}",
         f"mode={report['mode']}",
-        f"github_ci={report['github_ci']}",
         f"plan_fingerprint={report['plan_fingerprint']}",
         f"codex_required={str(report['review']['codex_required']).lower()}",
     ]
