@@ -17,8 +17,11 @@ diagnostic surfaces that report its liveness. Its admitted workset has no produc
 agent runs to completion without doing anything, and the surfaces that report it describe a
 retired mechanism as live runtime state.
 
-This is a structural removal (D2): an agent leaves the runtime topology. It needs an accepted
-Proposal before implementation, which is why this document exists rather than a PR.
+This is a structural removal (D2): an agent leaves the runtime topology. This document
+records the reasoning and the acceptance signal; since 2026-09-26 a Proposal is no longer
+required as a precondition for any change depth ([decision](../../governance/decisions/DECISIONS.md#2026-09-26-—-提案文档不再是任何改动的前置条件测试是权威载体)).
+The Proposal exists because the reasoning would not fit in a PR body, not because writing
+one buys permission to change structure.
 
 ## Current fact
 
