@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.config.exchanges import (
     DEMO_EXECUTION_MODES,
@@ -332,7 +334,11 @@ def execute_existing_proposal(
 
             try:
                 receipt = EntryExecutionReceiptV1.model_validate(execution_receipt)
-            except Exception:
+            except ValidationError:
+                # A malformed / missing receipt is a legitimate rejection.
+                # A different exception (Pydantic internal bug, AttributeError
+                # from a broken caller) is a programming defect that we want to
+                # see, not disguise as "receipt required".
                 return {
                     "status": "rejected",
                     "reason_code": "entry_execution_receipt_required",
