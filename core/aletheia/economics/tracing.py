@@ -498,6 +498,14 @@ def record_llm_attempt(
         )
         return event_id
     except Exception:
+        # DB insert failure was silently swallowed. Cost-attribution
+        # rows dropped without a trace and callers only see ``None``.
+        # Log with a stack so a real defect (schema drift, transaction
+        # abort) is visible; still return None so callers can proceed.
+        logger.warning(
+            "economics.tracing: cost-event insert failed (event lost)",
+            exc_info=True,
+        )
         return None
 
 
