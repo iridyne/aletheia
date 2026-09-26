@@ -6,11 +6,14 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 import json
+import logging
 import math
 import os
 import time
 from typing import Literal, Protocol
 from uuid import uuid4
+
+logger = logging.getLogger("aletheia.universe.fast_stream")
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict
@@ -206,6 +209,16 @@ def parse_bitget_message(
         try:
             rows = sorted(data, key=lambda item: int(item.get("ts") or 0))
         except (AttributeError, TypeError, ValueError):
+            # A single row with unexpected `ts` type causes the whole
+            # batch to be silently dropped. A schema change upstream
+            # would make all trades invisible without any signal.
+            logger.warning(
+                "fast_stream: trade sort failed on batch size=%d channel=%s "
+                "(entire batch dropped)",
+                len(data) if isinstance(data, (list, tuple)) else -1,
+                channel,
+                exc_info=True,
+            )
             return []
     for index, row in enumerate(rows):
         if not isinstance(row, (dict, list, tuple)):
@@ -250,6 +263,14 @@ def parse_bitget_message(
                 bids = tuple((float(level[0]), float(level[1])) for level in row.get("bids", ()))
                 asks = tuple((float(level[0]), float(level[1])) for level in row.get("asks", ()))
             except (TypeError, ValueError, IndexError):
+                # Structural error in one depth row silently skips it.
+                # A schema drift (e.g. non-numeric price string) would
+                # make all depth updates invisible. Log so upstream
+                # format changes are detectable.
+                logger.warning(
+                    "fast_stream: depth row parse failed (row skipped)",
+                    exc_info=True,
+                )
                 continue
             if bids and asks and all(price > 0 and size >= 0 for price, size in bids + asks):
                 events.append(FastMarketEvent(event_type="depth", bids=bids, asks=asks, **common))
