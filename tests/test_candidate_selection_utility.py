@@ -851,6 +851,7 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator(historical
 
 
 def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
     from aletheia.storage import repositories as repo
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
@@ -894,7 +895,8 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     after_cutoff_keys = {
         outcome.outcome_candidate_key for outcome in after_cutoff.outcomes
     }
-    key = load_candidate_selection_outcomes(selection_policy={"semantic_manifest": {"feature_acquisition": "candidate-feature-acquisition/v2"}})[0]["outcome_candidate_key"]
+    policy = candidate_selection_policy_identity(UniverseConfig())
+    key = load_candidate_selection_outcomes(selection_policy=policy)[0]["outcome_candidate_key"]
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
         "net_return_pct=4.0, mae_pct=-2.0, cost_model_version='v1' "
@@ -904,7 +906,7 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     repo.get_db().commit()
 
     frozen = load_candidate_selection_outcomes(
-        selection_policy={"semantic_manifest": {"feature_acquisition": "candidate-feature-acquisition/v2"}},
+        selection_policy=policy,
         limit_batches=0,
         settled_through="2026-09-02T12:00:00+00:00",
     )

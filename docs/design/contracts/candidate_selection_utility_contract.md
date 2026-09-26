@@ -194,11 +194,30 @@ proved causal attribution.
 Discovery acquires exact venue/symbol/physical-market books independently of
 Candidate existence. Only durable observations enter evidence. Suppressed
 calculations becoming evidence persist current payload and timestamp. The
-manifest includes `feature_acquisition` from the features-owner constant
-`candidate-feature-acquisition/v2`; records store `feature_acquisition_version`.
-Training requires equality to the explicitly supplied frozen policy version
-before labels are built. Missing versions match only missing historical versions;
-training does not require epoch equality or mutate frozen historical rows.
+manifest includes `feature_acquisition`, automatically derived as the SHA-256
+hex digest of `core/aletheia/universe/features.py` bytes once at module import.
+It replaces the manually bumped `candidate-feature-acquisition/v2` identity;
+there is no v3. The existing serialized `feature_acquisition_version` field stores
+the digest without changing the record decoding/schema version. Training requires
+equality to the explicitly supplied frozen policy identity before labels are built.
+Missing identities match only missing historical identities; current policies
+exclude both missing and legacy manual identities. Historical readers can still
+request their original frozen policy; this does not authorize current training.
+
+This measurement cutover excludes every pre-digest record, including records
+captured after #3492 but before this identity was deployed. No historical record,
+price, hash or Outcome is deleted, backfilled, relabeled or retrospectively certified.
+New natural captures open the clean acquisition window. Existing Outcome
+`producer_commit` / `producer_runtime_session_id` attribute each exposure to its
+exact build and process. The runtime `behavior_fingerprint` hashes configuration
+only and cannot distinguish the #3492 source change; it is not this boundary.
+
+Matching acquisition identities may pool across producer commits/sessions subject
+to the existing outcome, funding, mechanism, cost and cutoff checks. An unrelated
+file change does not rotate acquisition identity. Any edit inside `features.py`,
+including a comment, conservatively does. This bounded source fingerprint is not
+a transitive dependency or whole-repository semantic hash. No new experiment
+framework, database migration, admission threshold or execution authority is added.
 
 Canonical planning generations own refresh priority without legacy wakes.
 Scanner `candidate_path` metrics distinguish unavailable data, legitimate empty
