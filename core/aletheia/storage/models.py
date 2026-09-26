@@ -169,77 +169,6 @@ class AgentRunArtifact(AgentArtifactRef):
     run_id: str
 
 
-class OpportunityInstrumentIdentity(BaseModel):
-    """Exact venue identity frozen into a tradeable Opportunity generation."""
-
-    model_config = ConfigDict(frozen=True)
-
-    venue: str = Field(min_length=1)
-    symbol: str = Field(min_length=1)
-    market_type: Literal["spot", "perp"]
-
-
-class OpportunityGenerationV2(BaseModel):
-    """Immutable point-in-time facts that make one Crypto Opportunity real."""
-
-    model_config = ConfigDict(frozen=True)
-
-    instrument_identity: OpportunityInstrumentIdentity
-    family: str = Field(min_length=1)
-    archetype: Literal["continuation", "reversal", "breakout", "squeeze", "event", "convergence"]
-    direction: Literal["long", "short"]
-    detected_at: str = Field(min_length=1)
-    signal_mark: float = Field(gt=0)
-    motive_evidence: dict
-    entry_trigger: dict
-    entry_zone: tuple[float, float]
-    invalidation: dict
-    horizon_hours: float = Field(gt=0, le=48)
-    cost_snapshot: dict
-    material_fingerprint: str = Field(min_length=64, max_length=64)
-    valid_until: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _validate_generation_geometry(self):
-        low, high = self.entry_zone
-        if low <= 0 or high < low or not low <= self.signal_mark <= high:
-            raise ValueError("Opportunity generation entry geometry is invalid")
-        invalidation_price = self.invalidation.get("price")
-        if invalidation_price is not None:
-            try:
-                invalidation_price = float(invalidation_price)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Opportunity generation invalidation is invalid") from exc
-            if (
-                invalidation_price <= 0
-                or (self.direction == "long" and invalidation_price >= self.signal_mark)
-                or (self.direction == "short" and invalidation_price <= self.signal_mark)
-            ):
-                raise ValueError("Opportunity generation invalidation is invalid")
-        if not self.invalidation:
-            raise ValueError("Opportunity generation invalidation is required")
-        if not self.motive_evidence or not self.entry_trigger:
-            raise ValueError("Opportunity generation motive and trigger are required")
-        if any(character not in "0123456789abcdef" for character in self.material_fingerprint):
-            raise ValueError("Opportunity generation fingerprint is invalid")
-        detected = datetime.fromisoformat(self.detected_at.replace("Z", "+00:00"))
-        deadline = datetime.fromisoformat(self.valid_until.replace("Z", "+00:00"))
-        if detected.tzinfo is None or deadline.tzinfo is None or deadline <= detected:
-            raise ValueError("Opportunity generation validity interval is invalid")
-        required_costs = {
-            "cost_model_version",
-            "spread_bps",
-            "estimated_slippage_bps",
-            "funding",
-            "depth_10bps_usd",
-            "target_notional_usd",
-            "capacity_ratio",
-        }
-        if not required_costs.issubset(self.cost_snapshot):
-            raise ValueError("Opportunity generation cost snapshot is incomplete")
-        return self
-
-
 class Opportunity(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
@@ -291,9 +220,9 @@ class Opportunity(_Provenanced):
     setup_id: str | None = None
     signal_mark: str | None = None
     trigger_behavior_version: str | None = None
-    # Canonical OpportunityGenerationV2 JSON and its SHA-256.  NULL is retained
-    # for legacy and observation-only rows; execution-eligible production Crypto
-    # paths use insert_opportunity_generation(), which requires all three.
+    # Canonical generation JSON and its SHA-256.  NULL is retained
+    # for legacy and observation-only rows; these three columns were written
+    # by the now-retired execution-eligible generation entry path.
     generation_version: str | None = None
     generation_json: str | None = None
     generation_hash: str | None = None
