@@ -679,8 +679,12 @@ async def test_exchange_mode_change(client):
 
 @pytest.mark.anyio
 async def test_settings_get(client):
+    """The settings read model reports the loaded config, not a pinned constant."""
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
     resp = await client.get("/api/settings")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["app"]["dashboard_port"] == 8787
-    assert data["risk"]["max_daily_loss_pct"] == 1.0
+    assert data["app"]["dashboard_port"] == cfg.app.dashboard_port
+    assert data["risk"]["max_daily_loss_pct"] == cfg.risk.max_daily_loss_pct
