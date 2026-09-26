@@ -132,9 +132,9 @@ workflows are gone), so the owner merges each PR by hand:
 gh pr merge <pr-number> --rebase
 ```
 
-`--rebase` keeps every commit distinct on `master` (see
-`docs/governance/decisions/DECISIONS.md#2026-09-26`). Do not use `--auto`
-(no workflow listens for that request any more), and do not use
+`--rebase` keeps every commit distinct on `master` (see the 2026-09-26
+retirement entry in `docs/governance/decisions/DECISIONS.md`). Do not use
+`--auto` (no workflow listens for that request any more), and do not use
 `--squash` unless a specific PR has been agreed to squash. Merging a stack
 is bottom-up: land the base PR, then rebase the next branch on the new
 `master` and push before merging it.
