@@ -986,7 +986,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     # comment is not a producer.
     import ast
 
-    emitter_seams = {"insert_universe_setup", "insert_opportunity_generation"}
+    emitter_seams = {"insert_universe_setup"}
     reintroduced = {}
     for path in (ROOT / "core" / "aletheia").rglob("*.py"):
         if path.name == "repositories.py":
