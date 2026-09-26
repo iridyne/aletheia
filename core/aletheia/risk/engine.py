@@ -2749,10 +2749,16 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
         cfg = load_config()
     active_mode = execution_mode if execution_mode is not None else _config_active_execution_mode(cfg)
     is_live = _is_live(active_mode)
-    max_ratio = (
-        getattr(cfg.risk, "max_account_leverage_live", 1.5)
-        if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
-    )
+    # Read the cap from the mode policy that admission actually enforces. The flat
+    # alias is only mirrored for `_RISK_MODE_PATHS`, so a nested-only write (the
+    # copy / replace / reset-defaults routes) left this monitoring surface
+    # reporting a stale cap while the admission gate enforced the nested one.
+    from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+
+    try:
+        max_ratio = resolve_risk_policy(cfg, active_mode).policy.leverage.account_cap
+    except UnknownRiskExecutionMode:
+        max_ratio = 1.5 if is_live else 3.0
     try:
         open_positions = _active_open_positions()
     except Exception:
