@@ -79,6 +79,10 @@ def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_los
 
     cfg = load_config()
     cfg.risk.kill_switch_enabled_demo = True
+    # The account-loss snapshot is fetched only while the daily-loss limit is
+    # enabled (a 0 percentage disables the check in every mode), so the
+    # fail-closed rejection this test asserts requires a positive limit.
+    cfg.risk.demo.loss.max_daily_loss_pct = 1.0
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     position = _position(execution_mode="bitget_demo")

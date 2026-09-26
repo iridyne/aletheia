@@ -7,6 +7,7 @@ Key difference from unit tests:
 """
 
 import sqlite3
+import time
 import pytest
 
 import aletheia.config.loader as loader
@@ -101,3 +102,34 @@ def _mock_exchange(monkeypatch):
         )
 
     monkeypatch.setattr(_net, "make_ccxt", _blocked_make_ccxt)
+
+
+@pytest.fixture(autouse=True)
+def _local_venue_capabilities():
+    """Seed the sandbox symbol listing locally instead of fetching it.
+
+    Pre-order symbol availability asks for the venue's tradable listing. For a
+    sandbox execution mode a cold cache triggers a synchronous network refresh
+    (``venue_capabilities.refresh_demo_capabilities``), which the ``_mock_exchange``
+    guard correctly blocks — the whole entry path then fails as
+    ``execution_precheck_failed`` for a reason unrelated to the behavior under test.
+
+    Seeding the cache keeps the real ``load_venue_capabilities`` code path (its
+    TTL, lock and fail-closed branches all still execute) while making the
+    listing a local fact.
+    """
+    from aletheia.execution import venue_capabilities as _vc
+
+    listing = {
+        "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT"}),
+        "spot": frozenset({"BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT"}),
+    }
+    with _vc._demo_capabilities_lock:
+        preserved = dict(_vc._demo_capabilities_cache)
+        _vc._demo_capabilities_cache["bitget_demo"] = (listing, time.time())
+    try:
+        yield listing
+    finally:
+        with _vc._demo_capabilities_lock:
+            _vc._demo_capabilities_cache.clear()
+            _vc._demo_capabilities_cache.update(preserved)
