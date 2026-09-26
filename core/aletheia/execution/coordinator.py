@@ -69,7 +69,12 @@ def _close_adapter(adapter) -> None:
     try:
         _run(adapter.close())
     except Exception:
-        pass
+        # Adapter close is best-effort — the caller is often already in an
+        # error path and the exchange session will eventually time out. But
+        # a persistent close failure (network stall, adapter bug, credential
+        # revoked mid-close) is worth surfacing so it does not hide as a
+        # slow connection leak. Log at warning with a stack; do not re-raise.
+        logger.warning("Adapter close failed", exc_info=True)
 
 
 def _create_bound_adapter(execution_mode: str, expected_account: UTAAccountIdentity | None = None):
@@ -242,7 +247,9 @@ async def _command(execution_mode: str, method: str, command):
         try:
             await adapter.close()
         except Exception:
-            pass
+            # Best-effort close in a finally; see `_close_adapter` for the
+            # rationale for logging rather than silently swallowing.
+            logger.warning("Adapter close failed after %s", method, exc_info=True)
 
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
@@ -494,7 +501,9 @@ async def _call_and_close(adapter, method: str, command):
         try:
             await adapter.close()
         except Exception:
-            pass
+            # Best-effort close in a finally; see `_close_adapter` for the
+            # rationale for logging rather than silently swallowing.
+            logger.warning("Adapter close failed after %s", method, exc_info=True)
 
 
 def _fallback_report(adapter, command, evidence):
