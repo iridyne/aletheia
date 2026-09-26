@@ -509,16 +509,11 @@ jobs:
                 return;
               }
               if (run.conclusion === 'success') {
-                await github.rest.repos.createDispatchEvent({
-                  ...context.repo,
-                  event_type: 'auto_merge_update',
-                  client_payload: {
-                    operation: 'enable',
-                    pull_request_number: pullRequest.number,
-                    expected_head_sha: expectedHeadSha,
-                    expected_base_sha: pullRequest.base.sha,
-                  },
-                });
+                // Auto-merge retired 2026-09-26: owners now merge manually with
+                // `gh pr merge <n> --rebase`. Nothing consumes a merge-request
+                // dispatch, so successful CI is only an observation here — the
+                // merge is a human action.
+                core.info('CI succeeded on exact head; awaiting manual merge');
                 return;
               }
               if (!repairableCiConclusions.has(run.conclusion)) return;

@@ -2,13 +2,15 @@ name: Delete merged head branches
 
 # GitHub's built-in "Automatically delete head branches" repo setting does
 # not fire when the merging actor is a GITHUB_TOKEN-authenticated Actions
-# workflow (auto-merge.yml in this repo), because GitHub deliberately breaks
-# the workflow-triggers-workflow chain for that token.
+# workflow, because GitHub deliberately breaks the workflow-triggers-workflow
+# chain for that token. Auto-merge itself was retired 2026-09-26 (owners now
+# merge manually), but the reflex to leave workflow-driven cleanup in place is
+# still cheap insurance: this workflow closes the gap for any future
+# GITHUB_TOKEN-authored merge.
 #
-# This workflow closes the gap: on any PR close, if the PR was actually
-# merged and the head lives in the same repository, delete the head branch
-# via the REST API. Fork branches are left alone (they belong to the
-# contributor's fork, not this repository).
+# On any PR close, if the PR was actually merged and the head lives in the
+# same repository, delete the head branch via the REST API. Fork branches are
+# left alone (they belong to the contributor's fork, not this repository).
 
 on:
   pull_request_target:
