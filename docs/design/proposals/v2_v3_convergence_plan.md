@@ -82,17 +82,44 @@ sed -n '9229p' core/aletheia/storage/migrations.py       # def run_migrations(
 uv run python scripts/dev_check.py
 ```
 
-**已知的基线红（不是你造成的，不要试图修）**：`tests/e2e/test_pipeline_exchange_entry_to_position.py`
-等若干 e2e 用例在干净的 `6d9180127` 上就有 11 个失败，症状是
-`execution_precheck_failed` 与 `KeyError: 'order_id'`。已在独立的干净 worktree 上复现证实。
-因此 `dev_check.py` 的 `pytest --lf` / focused 步骤在基线即为红。判断你自己的改动时，
-以本计划每个 Phase 指定的 focused 测试为准，不要以这批 e2e 的状态为准。
-
-
-（Phase 0 的 `dev_check` 在本仓库当前基线上因上述 e2e 红而不会全绿。这是已知的、
-预先存在的问题，不属于本计划范围。按每个 Phase 自己的 focused 测试判断。）
-
 **Contract Delta**：`NONE`。**SDD Depth**：无（不产生改动）。
+
+---
+
+## 基线修复（已完成，先于所有 Phase）
+
+起草本计划时，仓库在 `185934f90`（本分支之前）就有 12 个 e2e 用例是红的。已在两个独立的干净
+worktree 上复现证实，与本计划的任何改动无关。两个互不相关的原因，**都是测试缺数据，产品行为无一处需要改**：
+
+**原因一（11 red + 1 error）—— 缺交易所币种清单。** commit `edc93a594`
+
+下单前要查「这个币能不能交易」。沙盒模式下缓存为空时，代码会同步去交易所拉取清单，
+而 e2e 的 `_mock_exchange` 护栏（`tests/e2e/conftest.py:97`）正确地拦住了一切真实网络连接。
+抛出的 `RuntimeError` 被 `execution/gateway.py:1527` 的宽 `except Exception` 收敛成
+`execution_precheck_failed`，真因不可见；`KeyError: 'order_id'` 是同一原因在下一步的表现（订单根本没建成）。
+
+修法：在 `tests/e2e/conftest.py` 加 autouse fixture，给 `bitget_demo` 预置本地清单并在结束时还原。
+`load_venue_capabilities` 的 TTL、锁、fail-closed 分支全部照常执行，只是清单变成本地事实。
+
+**原因二（1 red）—— 测试没开启它要验证的那项检查。** commit `edc93a594`
+
+`test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_loss`
+断言 `account_loss_unavailable:administrative_close` 这条 fail-closed 拒绝，却把
+`max_daily_loss_pct` 留在 0。按 `engine.py:1241-1250` 的契约，0 = 该项检查停用，
+于是账户亏损快照根本不会被取。测试现显式开启它依赖的上限。
+
+**附带清理（2 处过时断言）。** commit `335046594`
+
+- `test_settings_get` 断言 `max_daily_loss_pct == 1.0`，但 0.0 才是当前声明的默认值
+  （`schema.py:619`、`:1136`）。它钉的是一个早已改掉的常量，现改为核对接口如实返回已加载配置。
+- `test_retired_settings_fields_are_rejected` 额外探测
+  `PATCH /api/settings/model-integrations/{provider}`。该接口已整体退役、无任何路由——
+  spec `LLMH-S07` 正是断言它不存在。期待 404 实际钉的是路由匹配顺序，一旦同一会话挂载足够多
+  router 就会变成 405，于是该用例依赖执行顺序。保留有价值的那半（真实的 model-profiles
+  写入口必须以 422 拒绝退役字段）。
+
+**结果**：`tests/e2e/` 91 passed，`dev_check` PASS。**后续执行者应当在一个全绿基线上工作；
+如果你看到红，那很可能是你自己造成的，请不要假定它是历史遗留。**
 
 ---
 
@@ -213,24 +240,36 @@ core/aletheia/diagnostics/doctor.py:764-777   max_demo_position_margin_usdt
 grep -rn "cfg\.risk\.max_\|cfg\.risk\.starting_capital_usdt\|cfg\.risk\.max_daily_loss_pct\|getattr(cfg\.risk," --include=*.py core/ extensions/
 ```
 
-**Phase 3a（先做）— 把 raw flat readers 改成读嵌套**
+**Phase 3a — 把 raw flat readers 改成读嵌套 ✅ 已完成（commit `09fbb6c9f`）**
 
-1. `risk/engine.py:2752-2755` `check_account_leverage`：改为通过已解析的 mode policy 读 leverage 上限，而不是 `getattr(cfg.risk, "max_account_leverage_live", ...)`。**必须保留原有的 mode 选择语义**（`is_live` 决定读 live 还是 demo），也必须保留原有默认值（1.5 / 3.0）。
-2. `diagnostics/doctor.py:764-777`：同样改读嵌套 demo policy。
-3. 不删任何东西，只改读法。这样做完之后扁平字段就只剩「被写入」和「被 `legacy_view` 映射」两种用途。
+两处已改为经 `resolve_risk_policy(...)` 读嵌套 mode policy：
 
-验收：
+1. `risk/engine.py` `check_account_leverage` —— 改前复现：嵌套上限 7.0，仪表盘报 10.0。改后两者一致。
+2. `diagnostics/doctor.py` demo 保证金上限告警 —— 改前复现：实际执行上限 12，doctor 读到 100000（因此上限被调低后告警永不触发）。
 
-```
-uv run python scripts/dev_check.py
-uv run pytest tests/ -q -k "risk or leverage or doctor"
-```
+额外修正（同一 commit）：doctor 原先在「该模式解析不出风控策略」时静默跳过检查。诊断工具不能把「无法验证」显示成「健康」，现改为报 blocker。
 
-**Phase 3b — 收敛写路径为单一入口**
+回归测试：`tests/test_doctor.py` 94 passed；`-k "leverage or account_leverage"` 82 passed；
+`-k "risk or doctor or diagnostics or leverage or settings"` 1184 passed。
+新增 `test_demo_margin_gate_reads_the_cap_admission_enforces`，已验证「回退修复则红、恢复修复则绿」。
 
-1. `core/aletheia/server/routes/settings.py` 的 `update_risk_config`（约 :1884-1923）当前对扁平 key 做 `setattr(candidate, field, value)`，靠 `__setattr__` 把值推进嵌套。改为**直接写嵌套 mode policy**，让扁平字段不再是写入入口。
+**Phase 3b — 收敛写路径为单一入口（降级为可选，起草时高估了收益）**
+
+起草时把「双写」当成核心风险。读完 `schema.py:1034-1072` 的完整注释后，这个判断要修正：
+
+`__setattr__`（扁平写 → 嵌套）和 `_mirror_nested_into_flat`（嵌套写 → 扁平）**不是两个竞争的写入者**，
+而是同一次写入的两个同步方向。后者是补丁，因为只有前者时，copy / replace / reset-defaults
+这三条只写嵌套的路线会让扁平名永久停在旧默认值上。
+
+注释里那句 *"Enforcement was never wrong"* 是关键：准入树入口就 `cfg.risk = legacy_view(...)`
+重绑了，门内所有检查读的都是嵌套。**危险从来在读侧，不在写侧**——而读侧已由 3a 修完。
+
+因此 3b 的实际收益只是「让扁平字段不再是写入口」这一条结构整洁性，不修任何已知症状。
+若要做，动作如下；不做也不阻塞任何事。
+
+1. `core/aletheia/server/routes/settings.py` 的 `update_risk_config`（约 :1884-1923）当前对扁平 key 做 `setattr(candidate, field, value)`，靠 `__setattr__` 把值推进嵌套。改为**直接写嵌套 mode policy**。
 2. 保留 `settings.py` 的 `_RISK_MINIMUMS` / `_RISK_BOUNDS` 校验语义不变——**边界校验是信任边界，不许简化掉**。
-3. 做完后 `_mirror_nested_into_flat`（`schema.py:1029`）仍然存在（`GET /settings` 还在 dump 扁平视图），但扁平侧已经是纯只读镜像，不再是第二个写权威。
+3. 做完后 `_mirror_nested_into_flat`（`schema.py:1034`）仍然存在（`GET /settings` 还在 dump 扁平视图），但扁平侧成为纯只读镜像。
 
 验收：
 
@@ -239,15 +278,16 @@ uv run python scripts/dev_check.py
 uv run pytest tests/ -q -k "settings or risk_config or risk_policy"
 ```
 
-**Phase 3c — 删除扁平字段本身（需 Owner 批准，先停）**
+**Phase 3c — 删除扁平字段本身（不建议现在做；需 Owner 批准）**
 
-做完 3a、3b 后**停下**，向 Owner 汇报：
+3a 已消灭全部已知症状。3c 剩下的是纯结构收敛，代价却明显更高：
 
-- 3a/3b 的 commit SHA
-- `GET /settings` 的响应形状是否包含扁平 risk 字段、有哪些消费者（前端只有 `docs/design/frontend/` 文档，无代码目录，但仍需确认 API 消费者）
-- 还有多少测试在写扁平侧（审计估计约 30 个测试写扁平字段）
+- `GET /settings` 把整个扁平 dump 喂给一个 33 字段的 Risk-Limits 编辑器（`schema.py:1043-1045`）。删扁平字段等于重做那个接口的数据契约。
+- 约 30 个测试写扁平侧，全部要迁移。注释也点出这批测试正是分歧能长期存活的原因：*"31 green account-leverage specs — every one of them writes the FLAT key"*。
 
-Owner 批准后才执行：删除 `RiskConfig` 扁平字段声明、`__setattr__` 同步钩子、`_mirror_nested_into_flat`、`_RISK_MODE_PATHS`、`legacy_view` / `RiskPolicyView`，并把 4 个 `legacy_view` 调用点改为直接用 `ResolvedRiskPolicy`，同时迁移所有写扁平侧的测试。这是 `D1` 偏 `D2`，改动面大，必须独立 PR。
+建议：记为独立 Issue，与前端 Risk-Limits 编辑器的契约变更**一起**做，不要单独拆出来改。
+
+若 Owner 决定执行，动作是：删除 `RiskConfig` 扁平字段声明、`__setattr__` 同步钩子、`_mirror_nested_into_flat`、`_RISK_MODE_PATHS`、`legacy_view` / `RiskPolicyView`，并把 4 个 `legacy_view` 调用点改为直接用 `ResolvedRiskPolicy`，同时迁移所有写扁平侧的测试。这是 `D1` 偏 `D2`，必须独立 PR。
 
 ---
 
@@ -340,12 +380,13 @@ observation Main 库 ↔ Lab 库（`migrations.py:4489` `retire_legacy_experimen
 
 | Phase | 验收命令 | 通过标准 | 实际结果 |
 |---|---|---|---|
-| 0 | 9 条 `sed` 行号核对 | 全部匹配 | ✅ 全部匹配（`sed -n '1834p'` 的目标串实际在 1835，off-by-one，属计划文本笔误而非仓库漂移）。`dev_check` 因上文所述 e2e 基线红不全绿。 |
-| 1 | `uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py tests/test_entry_logic.py -q` | exit 0 | ✅ 19 passed；另 `-k "opportunity or admission or entry_plan"` 467 passed（唯一失败为基线 e2e） |
+| 0 | 9 条 `sed` 行号核对 | 全部匹配 | ✅ 全部匹配（`sed -n '1834p'` 的目标串实际在 1835，off-by-one，属计划文本笔误而非仓库漂移） |
+| 基线修复 | `uv run pytest tests/e2e/ -q` | exit 0 | ✅ 91 passed（修前 12 red，见下「基线修复」节）；commit `edc93a594`、`335046594` |
+| 1 | `uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py tests/test_entry_logic.py -q` | exit 0 | ✅ 19 passed；另 `-k "opportunity or admission or entry_plan"` 467 passed |
 | 2 | `uv run pytest tests/ -q -k "profit_gradient"` | exit 0 | ✅ 216 passed |
-| 3a | `uv run python scripts/dev_check.py` + `uv run pytest tests/ -q -k "risk or leverage or doctor"` | 均 exit 0 | 未执行（需 Owner 批准范围） |
-| 3b | `uv run python scripts/dev_check.py` + `uv run pytest tests/ -q -k "settings or risk_config or risk_policy"` | 均 exit 0 | 未执行 |
-| 3c | 需 Owner 批准后单独定义 | — | 未执行 |
+| 3a | `uv run pytest tests/ -q -k "risk or doctor or diagnostics or leverage or settings"` | exit 0 | ✅ 1184 passed；`dev_check` PASS；commit `09fbb6c9f` |
+| 3b | `uv run pytest tests/ -q -k "settings or risk_config or risk_policy"` | exit 0 | 未执行 —— 已降级为可选（见 Phase 3b） |
+| 3c | 需 Owner 批准后单独定义 | — | 未执行 —— 不建议现在做（见 Phase 3c） |
 | 4 | — | — | 已撤回，见 Phase 4 |
 | 5 | `uv run python scripts/check_docs.py` | exit 0 | ✅ exit 0 |
 
@@ -360,7 +401,7 @@ observation Main 库 ↔ Lab 库（`migrations.py:4489` `retire_legacy_experimen
 1. Phase 0 的行号核对有任何一条不匹配。
 2. 发现 Phase 1 / Phase 2 的「零生产调用者」判断不成立（找到了非测试、非脚本的调用者）。
 3. Phase 3 任一步会改变 Risk 判定结果，而不只是改变读写路径。
-4. Phase 3a、3b 完成 —— 3c 需 Owner 批准，在此处硬停。
+4. Phase 3a 已完成；3b 已降级为可选、3c 不建议现在做，两者都需 Owner 表态，在此处硬停。
 5. ~~Phase 4 中 `run_migrations` 与 `apply_migrations` 的签名转发关系不是一目了然。~~（Phase 4 已撤回）
 6. 任何动作需要修改禁改清单里的内容。
 7. 任何动作需要删除数据库列 / 表，或修改迁移 checksum。
@@ -368,12 +409,16 @@ observation Main 库 ↔ Lab 库（`migrations.py:4489` `retire_legacy_experimen
 
 ## Rollout and rollback
 
-每个 Phase 一个 commit，按 Phase 顺序各自可独立 revert。Phase 1、2、5 之间无依赖，失败只需 revert 该 Phase。Phase 3a → 3b 有顺序依赖（3b 假定 3a 已把 raw readers 迁走），revert 需反序。
+每个 Phase 一个 commit，各自可独立 revert。基线修复、Phase 1、2、3a、5 之间无依赖。
 
-PR 切分建议：Phase 1+2（退役代码删除，同一审查域）+ Phase 5（文档真值）一个 PR；Phase 3a+3b（Risk 配置收敛）单独一个 PR。**Phase 3c 必须独立 PR。**
+PR 切分建议：基线修复（`edc93a594`、`335046594`）+ Phase 1、2（退役代码删除）+ Phase 5（文档真值）一个 PR；Phase 3a（`09fbb6c9f`，Risk 监控读取修正）单独一个 PR，因为它是唯一改变了对外可见数值的改动。**Phase 3c 若执行必须独立 PR。**
 
 ## Resolution
 
-**Phase 1、2、5 已执行完成**（见「验证契约」表的实际结果列），Phase 4 已撤回。
-**剩余唯一实质工作是 Phase 3**（Risk 扁平字段 ↔ 嵌套 mode policy 收敛），需 Owner
-就 3c 的范围表态后执行。执行进度在对应 GitHub Issue / PR 中跟踪，不在本文件累积状态。
+**已完成**：基线修复（12 个历史 red → `tests/e2e/` 91 passed）、Phase 1、Phase 2、Phase 3a、Phase 5。
+Phase 4 已撤回。
+
+**剩余工作需 Owner 决策，不需要立即执行**：Phase 3b 已降级为可选（读侧风险已由 3a 消除，
+它只剩结构整洁性收益）；Phase 3c 建议与前端 Risk-Limits 编辑器的契约变更合并为独立 Issue。
+
+执行进度在对应 GitHub Issue / PR 中跟踪，不在本文件累积状态。
