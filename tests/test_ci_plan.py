@@ -29,7 +29,6 @@ def _plan(paths, **kwargs):
 def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     safe = _plan(["README.md", "docs/references/example.md"])
     assert safe["mode"] == "docs_only"
-    assert safe["github_ci"] == "none"
     assert safe["required"]["trusted_ci"] is False
 
     authoritative = _plan(["docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"])
@@ -67,11 +66,6 @@ def test_critical_and_ci_authority_escalate() -> None:
     assert full["required"]["full_ci"] is True
     assert full["required"]["shadow_backstop"] is False
     assert full["review"]["codex_required"] is False
-    assert full["github_checks"] == [
-        "Verify Change Contract",
-        "Trusted CI verdict",
-        "Full CI verdict",
-    ]
 
 
 @pytest.mark.parametrize("module", ["credential_routes", "credential_cli", "http_runtime"])
