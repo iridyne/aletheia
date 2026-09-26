@@ -425,3 +425,48 @@ def test_typed_open_order_recovers_venue_identity(tmp_path, monkeypatch, complet
     assert result["inconclusive"] == (0 if complete else 1)
     assert result["filled"] == 0
     assert bool(result["errors"]) is not complete
+
+
+def test_materialization_missing_transition_failure_shape_is_pinned():
+    """Static regression: `transition_order()` failure in the
+    materialization-missing branch must NOT go on to write a
+    `local_materialization_failed` audit event.
+
+    Prior behaviour was ``except Exception: pass`` followed unconditionally
+    by ``_write_reconcile_event(order, state="materialization_missing",
+    reason="local_materialization_failed")`` — that split audit truth from
+    database truth (audit claimed the state was reached, DB rejected the
+    transition).
+
+    Runtime pinning requires an end-to-end reconcile fixture (Bitget
+    fill-history path + monkeypatched ``transition_order``) that this test
+    file's helpers do not yet expose; the follow-up integration test is
+    out of scope here. This static shape check catches any regression that
+    reintroduces the silent ``except: pass`` pattern in the two known
+    sites.
+    """
+    from pathlib import Path
+    source = Path(__file__).resolve().parent.parent.joinpath(
+        "core/aletheia/execution/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    # The two sibling blocks both wrap `transition_order(... status=
+    # "materialization_missing" ...)`. After PR #3XXX they name the exception
+    # (`except Exception as transition_exc`) and record it in `errors` +
+    # only write the audit event inside an `else:` branch.
+    assert source.count("except Exception as transition_exc") >= 2, (
+        "both materialization_missing transition sites must name their "
+        "exception (regression: silent `except: pass` is back)"
+    )
+    assert source.count("materialization_missing_transition_failed") >= 2, (
+        "both sites must append a stable error code to `errors` when the "
+        "transition fails"
+    )
+    # The audit-write failure branch itself is caught, so an audit-sink
+    # exception cannot mutate order state or bubble up.
+    assert source.count(
+        "reconcile: materialization failure audit write failed"
+    ) >= 2, (
+        "both sites must catch audit-sink failure separately (not roll back "
+        "the transition, per execution_contract.md §7)"
+    )
