@@ -865,7 +865,7 @@ def list_cost_breakdown_by_provider(
                 bucket["latency_ms_sum"] += float(latency_ms)
                 bucket["latency_count"] += 1
             except (TypeError, ValueError):
-                pass
+                pass  # Non-numeric latency field → bucket still valid for other fields
         if usage is not None:
             for field in ("input_tokens", "output_tokens", "reasoning_tokens"):
                 value = usage.get(field)

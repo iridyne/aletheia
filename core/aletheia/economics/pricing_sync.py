@@ -621,7 +621,7 @@ def _refresh_worker(trigger: str) -> None:
             }
         )
     except Exception:
-        pass
+        logger.warning("pricing_sync: pricing catalog write failed", exc_info=True)
 
 
 def start_pricing_refresh(*, trigger: str) -> dict[str, Any]:

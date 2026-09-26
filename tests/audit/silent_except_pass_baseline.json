@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 287,
+  "count": 283,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -325,10 +325,6 @@
       "line": 151
     },
     {
-      "file": "core/aletheia/analytics/trade_insights.py",
-      "line": 572
-    },
-    {
       "file": "core/aletheia/cli/control_cmd.py",
       "line": 36
     },
@@ -471,10 +467,6 @@
     {
       "file": "core/aletheia/economics/context_artifacts.py",
       "line": 171
-    },
-    {
-      "file": "core/aletheia/economics/pricing_sync.py",
-      "line": 623
     },
     {
       "file": "core/aletheia/economics/tracing.py",
@@ -1001,10 +993,6 @@
       "line": 139
     },
     {
-      "file": "extensions/analytics/reasoning_feedback.py",
-      "line": 147
-    },
-    {
       "file": "extensions/data/ccxt_provider.py",
       "line": 804
     },
@@ -1071,10 +1059,6 @@
     {
       "file": "extensions/knowledge/manager.py",
       "line": 341
-    },
-    {
-      "file": "extensions/learning/evidence_epoch.py",
-      "line": 181
     },
     {
       "file": "extensions/learning/hypothesis_research.py",

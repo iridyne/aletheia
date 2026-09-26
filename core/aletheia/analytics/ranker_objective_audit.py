@@ -82,7 +82,7 @@ def _query_only(db, report: dict):
             try:
                 db.execute(f"PRAGMA query_only={previous}")
             except sqlite3.DatabaseError:
-                pass
+                pass  # Best-effort PRAGMA restore; failure doesn't corrupt data
 
 
 def _populate_report(

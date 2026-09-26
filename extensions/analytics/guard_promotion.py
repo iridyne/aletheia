@@ -37,7 +37,7 @@ def _atomic_write(path: Path, content: str) -> None:
         try:
             os.unlink(tmp_name)
         except OSError:
-            pass
+            pass  # Best-effort temp file cleanup; original exception still re-raised
         raise
 
 

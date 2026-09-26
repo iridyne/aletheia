@@ -145,7 +145,7 @@ def build_reasoning_feedback(
                     meta = json.loads(meta_part)
                     return str(meta.get("scanner_family") or meta.get("supporting", [{}])[0].get("scanner_family") or "unknown")
             except Exception:
-                pass
+                logger.warning("reasoning_feedback: scanner family extraction failed", exc_info=True)
             return "unknown"
 
         from collections import defaultdict
