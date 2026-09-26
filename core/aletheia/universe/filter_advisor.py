@@ -80,8 +80,15 @@ def get_family_spread_tolerances(
             cutoff=cutoff,
             settled_through=source_cutoff_at,
         )
-    except Exception as exc:
-        logger.warning("filter_advisor: data fetch failed: %s", exc)
+    except Exception:
+        # The tolerance stats are advisory (a spread-threshold multiplier
+        # applied by downstream filters). Returning `{}` degrades to the
+        # neutral default rather than blocking candidate admission on a
+        # transient DB hiccup. But the previous single-line warning
+        # obscured schema drift, query bugs, and genuine "no rows yet"
+        # into one signal — log with a stack so a real regression is
+        # visible without changing caller-visible behaviour.
+        logger.warning("filter_advisor: data fetch failed", exc_info=True)
         return {}
 
     if evidence_out is not None:

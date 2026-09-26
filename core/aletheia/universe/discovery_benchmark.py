@@ -505,8 +505,18 @@ def build_capture(
         from aletheia.agent_runtime.runtime_session import current_provenance
 
         provenance = current_provenance()
-    except Exception as exc:
-        logger.warning("discovery_benchmark: capture provenance unavailable (%s)", type(exc).__name__)
+    except Exception:
+        # Provenance may be unavailable during isolated tests or before the
+        # runtime session is fully initialised — the benchmark then records
+        # outcome rows with an empty provenance dict rather than fail closed.
+        # Previously this logged only the exception type; a schema drift or a
+        # bug in current_provenance() would then be indistinguishable from
+        # "session not yet started" in downstream diagnostics. Log with a
+        # stack so a real regression surfaces.
+        logger.warning(
+            "discovery_benchmark: capture provenance unavailable",
+            exc_info=True,
+        )
         provenance = {}
     outcome_rows: list[dict[str, Any]] = []
     for (identity, direction), labels in sorted(memberships.items()):
