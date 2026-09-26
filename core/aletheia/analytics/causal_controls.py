@@ -139,7 +139,7 @@ def _rows_for_item(
                 entry_ts=entry_ts,
             )
         except Exception:
-            pass
+            logger.warning("causal_controls: metric write failed", exc_info=True)
     for horizon in _HORIZONS[layer]:
         rows.append({
             "id": uuid4().hex,

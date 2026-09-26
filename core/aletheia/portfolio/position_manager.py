@@ -1672,7 +1672,7 @@ def apply_operator_adjustment(
             "message": (reason or "operator adjusted exit plan")[:200],
         })
     except Exception:
-        pass
+        logger.warning("position_manager: audit write failed", exc_info=True)
 
     return {
         "updated": True,

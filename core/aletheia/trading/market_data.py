@@ -216,10 +216,10 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                     continue
                 iid = InstrumentId.from_parts(venue, sym, mt)
                 seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
-            except (ValueError, Exception):
+            except ValueError:
                 pass
     except Exception:
-        pass
+        logger.warning("market_data: instrument scan outer block failed (partial result)", exc_info=True)
     n_open = len(seen)
 
     try:
@@ -255,10 +255,10 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                 mt = _instrument_market_from_row(m.get("market_type"))
                 iid = InstrumentId.from_parts(exchange, sym, mt)
                 seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
-            except (ValueError, Exception):
+            except ValueError:
                 pass
     except Exception:
-        pass
+        logger.warning("market_data: candidate instruments scan failed (partial result)", exc_info=True)
 
     # The cap protects discovery work, never an existing Position. When open
     # positions alone exceed it, expand the cycle rather than silently starving

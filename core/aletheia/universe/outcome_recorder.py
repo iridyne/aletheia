@@ -532,7 +532,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                         wr,
                     )
         except Exception:
-            pass
+            logger.warning("outcome_recorder: cohort metric logging failed (skipping)", exc_info=True)
     # Log per-family filter pressure: families whose filter-rejected candidates
     # show positive net returns (only meaningful once filter_candidate_outcomes
     # accumulates rows with scanner_family from the fine filter stage).

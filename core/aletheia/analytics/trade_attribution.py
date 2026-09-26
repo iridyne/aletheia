@@ -443,7 +443,7 @@ def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> floa
             delta = (t_close - t_open).total_seconds() / 3600.0
             return round(delta, 2)
     except Exception:
-        pass
+        logger.warning("trade_attribution: delta calc failed (returning None)", exc_info=True)
     return None
 
 

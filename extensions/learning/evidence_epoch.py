@@ -41,7 +41,7 @@ def _current_commit() -> str:
         if sha:
             return sha
     except Exception:
-        pass
+        logger.warning("evidence_epoch: boot_commit read failed", exc_info=True)
     try:
         from aletheia.storage.sqlite import get_db
 
@@ -53,7 +53,7 @@ def _current_commit() -> str:
         if row and row["boot_commit"]:
             return str(row["boot_commit"])
     except Exception:
-        pass
+        logger.warning("evidence_epoch: DB boot_commit read failed (returning empty)", exc_info=True)
     return ""
 
 

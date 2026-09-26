@@ -1,5 +1,9 @@
 """Refresh provider-independent estimates from LiteLLM's public price catalog."""
 
+import logging
+
+logger = logging.getLogger("aletheia.economics.pricing_sync")
+
 from __future__ import annotations
 
 import hashlib
@@ -381,7 +385,7 @@ def _runtime_models() -> list[tuple[str, str]]:
                 if fallback_model:
                     models.add((fallback_provider, fallback_model))
     except Exception:
-        pass
+        logger.warning("pricing_sync: model catalog scan failed (partial)", exc_info=True)
     return sorted(models)
 
 

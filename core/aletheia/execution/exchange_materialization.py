@@ -1780,5 +1780,5 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                             status="materialization_missing",
                         )
         except Exception:
-            pass
+            logger.warning("exchange_materialization: handoff audit write failed (re-raising original)", exc_info=True)
         raise
