@@ -209,6 +209,16 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
 
         return {"consecutive_kill_rounds": consecutive, "kill_threshold": kill_floor, "window_days": window_days}
     except Exception:
+        # Failure here silently returns `consecutive_kill_rounds=0`,
+        # which erases any kill-condition signal downstream. That is
+        # also a scorecard-policy question filed as followup; log so
+        # the underlying result-read / field / numeric-conversion
+        # defect is visible.
+        logger.warning(
+            "go_live_scorecard: kill-round tally failed "
+            "(defaulting consecutive_kill_rounds=0)",
+            exc_info=True,
+        )
         return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
 
@@ -380,6 +390,17 @@ def _check_risk_violations() -> dict:
         return _criterion("risk_clean", "Zero Risk Violations (24h)", score, 0.09,
                           f"{violation_count} violation events" if violation_count else "clean")
     except Exception:
+        # The 50-point fallback here is a fail-open scorecard behaviour
+        # that inflates the go-live composite when this criterion cannot
+        # be verified. Whether "cannot verify" should score 50 (or 0, or
+        # abstain) is a scorecard-policy question the owner has not yet
+        # settled — filed as followup. This log makes the underlying DB
+        # or schema failure visible so the 50 is not silent.
+        logger.warning(
+            "go_live_scorecard: risk_clean criterion evaluation failed "
+            "(defaulting score to 50/100 'cannot verify')",
+            exc_info=True,
+        )
         return _criterion("risk_clean", "Zero Risk Violations (24h)", 50, 0.09, "cannot verify")
 
 
@@ -424,6 +445,14 @@ def _check_reconciliation() -> dict:
         return _criterion("reconciliation", "No Reconciliation Errors (7d)", score, 0.045,
                           f"{errors} errors in 7 days" if errors else "clean")
     except Exception:
+        # Same fail-open scorecard 50/100 fallback as `risk_clean`
+        # above; log so the underlying `audit_events` query failure or
+        # schema drift is visible.
+        logger.warning(
+            "go_live_scorecard: reconciliation criterion evaluation failed "
+            "(defaulting score to 50/100 'cannot verify')",
+            exc_info=True,
+        )
         return _criterion("reconciliation", "No Reconciliation Errors (7d)", 50, 0.045, "cannot verify")
 
 
