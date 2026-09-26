@@ -345,7 +345,7 @@ async def _llm_startup_gate(cfg) -> None:
             }
         )
     except Exception:
-        pass
+        pass  # Best-effort pause notification during shutdown
 
     try:
         from aletheia.notifications import notify_operator
@@ -360,7 +360,7 @@ async def _llm_startup_gate(cfg) -> None:
             error_log=True,
         )
     except Exception:
-        pass
+        pass  # Best-effort lifespan audit write
 
     # Start auto-resume probe loop (runs as independent asyncio.Task, not via
     # APScheduler which is now paused). Periodically re-probes LLM and resumes
@@ -418,7 +418,7 @@ async def lifespan(app: FastAPI):
 
         configure_logging()
     except Exception:
-        pass
+        pass  # Best-effort logging config; default logging applies if fails
     _aletheia_logger = logging.getLogger("aletheia")
     if _aletheia_logger.level == logging.NOTSET:
         _aletheia_logger.setLevel(logging.DEBUG)
@@ -752,12 +752,12 @@ async def lifespan(app: FastAPI):
             if fast_trigger_task is not None:
                 await _cancel_background_task(fast_trigger_task, "Fast Trigger watcher")
         except Exception:
-            pass
+            pass  # Best-effort fast-trigger stop during shutdown
         if background_services_enabled:
             try:
                 stop_scheduler()
             except Exception:
-                pass
+                pass  # Best-effort scheduler stop during shutdown
             await asyncio.to_thread(agent_job_manager.stop)
 
         await _cancel_background_task(llm_gate_task, "LLM startup gate")
@@ -801,7 +801,7 @@ async def lifespan(app: FastAPI):
                 telegram_bot.stop()
                 await _cancel_background_task(telegram_task, "Telegram polling")
             except Exception:
-                pass
+                pass  # Best-effort Telegram bot stop during shutdown
         try:
             from aletheia.agent_runtime.pi_daemon import current_daemon_task, stop_pi_daemon
 
@@ -810,7 +810,7 @@ async def lifespan(app: FastAPI):
                 stop_pi_daemon()
                 await _cancel_background_task(pi_daemon_task, "PI daemon")
         except Exception:
-            pass
+            pass  # Best-effort PI daemon stop during shutdown
         _lifespan_tasks.clear()
         # Mark the Runtime Session ended cleanly. Reaching this finally means an
         # orderly lifespan exit; a hard kill skips it, leaving ended_at NULL +

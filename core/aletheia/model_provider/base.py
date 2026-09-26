@@ -31,7 +31,7 @@ async def _record_llm_attempt_async(**kwargs: Any) -> None:
 
         await asyncio.to_thread(record_llm_attempt, **kwargs)
     except Exception:
-        pass
+        logger.warning("model_provider: LLM attempt record failed", exc_info=True)
 
 
 def model_json_schema_payload(schema: Any) -> dict[str, Any]:
@@ -469,7 +469,7 @@ class ModelProvider:
                             pricing_observation=pricing_observation,
                         )
                     except Exception:
-                        pass
+                        logger.warning("model_provider: LLM cost record failed (raising original exception)", exc_info=True)
                     raise
                 finished_dt = datetime.now(timezone.utc)
                 raw_usage = getattr(response, "usage", None)
@@ -498,7 +498,7 @@ class ModelProvider:
                         pricing_observation=pricing_observation,
                     )
                 except Exception:
-                    pass
+                    logger.warning("model_provider: LLM cost record failed (returning response)", exc_info=True)
                 return response
 
             setattr(traced_complete, "_aletheia_cost_traced", True)
@@ -558,7 +558,7 @@ class ModelProvider:
                                 pricing_observation=pricing_observation,
                             )
                         except Exception:
-                            pass
+                            logger.warning("model_provider: structured LLM cost record failed (raising)", exc_info=True)
                     raise
                 else:
                     if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
@@ -586,7 +586,7 @@ class ModelProvider:
                                 pricing_observation=pricing_observation,
                             )
                         except Exception:
-                            pass
+                            logger.warning("model_provider: structured LLM cost record failed (returning result)", exc_info=True)
                     return result
                 finally:
                     _ACTIVE_STRUCTURED_REQUEST.reset(token)
@@ -644,7 +644,7 @@ class ModelProvider:
                                 pricing_observation=pricing_observation,
                             )
                         except Exception:
-                            pass
+                            logger.warning("model_provider: stream LLM cost record failed (raising)", exc_info=True)
                     raise
                 else:
                     if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
@@ -667,7 +667,7 @@ class ModelProvider:
                                 pricing_observation=pricing_observation,
                             )
                         except Exception:
-                            pass
+                            logger.warning("model_provider: stream LLM cost record failed", exc_info=True)
                 finally:
                     _ACTIVE_STREAM_REQUEST.reset(token)
 
