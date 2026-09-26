@@ -303,7 +303,7 @@ def _stamp_provenance(data: dict) -> dict:
             if f in data and data.get(f) is None and prov.get(f) is not None:
                 data[f] = prov[f]
     except Exception:
-        pass
+        logger.warning("repositories: provenance fill failed for row", exc_info=True)
     return data
 
 
@@ -4091,7 +4091,7 @@ def insert_serenity_opportunity(o: SerenityOpportunity) -> None:
 
         record_serenity_control_cohort(data)
     except Exception:
-        pass
+        logger.warning("repositories: control cohort record failed for serenity opportunity", exc_info=True)
 
 
 def get_serenity_opportunity(opportunity_id: str) -> dict | None:
@@ -5060,14 +5060,14 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
 
             flush_run_telemetry(run_id)
         except Exception:
-            pass
+            logger.warning("repositories: flush_run_telemetry failed", exc_info=True)
         return _select_all("agent_tool_calls", where="run_id = ?", params=(run_id,), limit=limit)
     try:
         from aletheia.agents.helpers import flush_all_agent_telemetry
 
         flush_all_agent_telemetry()
     except Exception:
-        pass
+        logger.warning("repositories: flush_all_agent_telemetry failed", exc_info=True)
     return _select_all("agent_tool_calls", limit=limit)
 
 
@@ -5155,7 +5155,7 @@ def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
 
         flush_run_telemetry(run_id)
     except Exception:
-        pass
+        logger.warning("repositories: flush_run_telemetry failed in list_run_steps", exc_info=True)
     db = get_db()
     steps = db.execute(
         "SELECT id, run_id, action, input_data, output_data, created_at, "
@@ -11050,7 +11050,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
                     if age < timedelta(minutes=_FUNDING_HEARTBEAT_FLOOR_MINUTES):
                         return
                 except (TypeError, ValueError):
-                    pass
+                    logger.warning("repositories: heartbeat parse failed for funding snapshot", exc_info=True)
     _insert("funding_rate_snapshots", data,
         ignore_existing_id=bool(json.loads(data.get('derivatives_metadata_json') or '{}').get('observation_only')))
 
@@ -12846,7 +12846,7 @@ def insert_market_regime(record) -> None:
                 if age < timedelta(minutes=_MARKET_REGIME_HEARTBEAT_FLOOR_MINUTES):
                     return
             except (TypeError, ValueError):
-                pass
+                logger.warning("repositories: heartbeat parse failed for market regime", exc_info=True)
     _insert("market_regimes", data)
 
 
@@ -12859,7 +12859,7 @@ def get_latest_market_regime(*, now: datetime | None = None) -> dict | None:
         try:
             row["signals"] = json.loads(row["signals"])
         except (json.JSONDecodeError, TypeError):
-            pass
+            logger.warning("repositories: signals JSON parse failed for market regime", exc_info=True)
     from aletheia.data.freshness import assess_freshness
 
     verdict = assess_freshness(
@@ -12887,7 +12887,7 @@ def list_market_regimes(limit: int = 50) -> list[dict]:
             try:
                 row["signals"] = json.loads(row["signals"])
             except (json.JSONDecodeError, TypeError):
-                pass
+                logger.warning("repositories: signals JSON parse failed in list_market_regimes", exc_info=True)
     return rows
 
 
