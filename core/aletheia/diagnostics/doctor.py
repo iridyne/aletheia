@@ -3910,6 +3910,27 @@ def _probe_infra_db_size(report: Report) -> None:
     report.add("infra.db_size", severity, detail, hint)
 
 
+def _probe_infra_schema_current(report: Report) -> None:
+    """A database behind the code's migrations makes reads fail on missing columns."""
+    try:
+        from aletheia.storage.migrations import migration_status
+        status = migration_status()
+    except Exception as e:
+        report.add("infra.schema", "info", f"probe error: {e}")
+        return
+    pending = status.get("pending") or []
+    if not pending:
+        report.add("infra.schema", "ok", f"schema current at {status.get('schema_version')}")
+        return
+    report.add(
+        "infra.schema",
+        "warn",
+        f"{len(pending)} pending migration(s); code expects {status.get('schema_version')} "
+        f"— oldest pending {pending[0]}",
+        "queries can fail on missing columns; run `uv run aletheia data migrate`",
+    )
+
+
 def _probe_content_lesson_guards(report: Report) -> None:
     """Accepted ps_lessons: dry-run vs active-blocking vs expired guard status.
 
@@ -4041,6 +4062,7 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_git_hooks,
         _probe_network,
         _probe_infra_db_size,
+        _probe_infra_schema_current,
         _probe_audit_chain,
         _probe_funding_audit_mirror,
         _probe_runtime_session_provenance,
