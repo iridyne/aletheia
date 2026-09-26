@@ -8,7 +8,10 @@ gateway or broker merely to capture read-only market context.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger("aletheia.trading.entry_snapshot")
 
 
 def _btc_price_now() -> float | None:
@@ -217,4 +220,16 @@ def capture_attribution_snapshot_json(
             default=str,
         )
     except Exception:
+        # Attribution snapshot is a proposal-time diagnostic — a failure here
+        # is legitimate (missing market data, DB unavailable) and consumers
+        # already handle a ``None`` return via ``str | None``. But a bare
+        # ``return None`` loses the reason; any regression in
+        # capture_attribution_snapshot or json.dumps would be invisible.
+        # Log with a traceback so a real defect surfaces without changing
+        # the caller-visible contract.
+        logger.error(
+            "Attribution snapshot capture failed for %s (returning None)",
+            symbol,
+            exc_info=True,
+        )
         return None
