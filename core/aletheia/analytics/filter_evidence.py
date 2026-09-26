@@ -1138,6 +1138,16 @@ def _queued_candidate_outcome_seed(
             (f"opportunity:{opportunity_id}",),
         ).fetchall()
     except Exception:
+        # Queued-cohort seed lookup: a real DB / schema failure is
+        # indistinguishable from "there is no queued cohort for this
+        # opportunity yet" without a stack. Callers (Risk/Operator) still
+        # get None as the neutral "no seed" signal; log so a schema drift
+        # does not hide behind normal empty results.
+        logger.warning(
+            "filter_evidence: queued outcome seed lookup failed opportunity=%s",
+            opportunity_id,
+            exc_info=True,
+        )
         return None
     if {row["horizon"] for row in rows} != set(_HORIZONS):
         return None
@@ -1449,6 +1459,16 @@ def _exact_snapshot(
                 return None
         return snapshot
     except Exception:
+        # Snapshot lookup: `to_canonical()` on the symbol, DB call, and
+        # freshness maths are all wrapped here. A caller passing a bad
+        # symbol type, a schema drift on `filter_state_snapshots`, and a
+        # legitimate "no snapshot within freshness window" all end here.
+        # Callers already handle None; log with a stack so real defects
+        # are visible.
+        logger.warning(
+            "filter_evidence: snapshot lookup failed",
+            exc_info=True,
+        )
         return None
 
 
@@ -1469,6 +1489,15 @@ def _member_asset_venue(
     try:
         asset = repo.get_universe_asset(str(member["asset_id"]))
     except Exception:
+        # Registry asset lookup: returning None here hides a real DB /
+        # schema failure as "no venue for this asset". Downstream Risk
+        # evidence would then be written with venue=NULL and no outcome
+        # seed. Log so the ambiguity is visible.
+        logger.warning(
+            "filter_evidence: registry asset lookup failed asset_id=%s",
+            member.get("asset_id"),
+            exc_info=True,
+        )
         return None
     if (
         not asset
