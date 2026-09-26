@@ -9,6 +9,7 @@ falls back to requested price/quantity/fees when private evidence is incomplete.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from aletheia.execution.verified_exit import VerifiedExitResult
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Order, Position, new_id
 from aletheia.uta.models import FillReport
+
+logger = logging.getLogger("aletheia.execution.exchange_materialization")
 
 def claim_observed_tpsl_close(
     position_id: str,
@@ -469,6 +472,16 @@ def _attribution_fields(proposal: dict) -> dict:
     try:
         snapshot = json.loads(raw) if isinstance(raw, str) else (raw or {})
     except (TypeError, ValueError):
+        # A persisted `attribution_snapshot` that fails JSON decoding
+        # is a data-integrity signal, not "no context". Log so the two
+        # cases are distinguishable in the downstream Position record;
+        # keep the `{}` fallback so materialization proceeds.
+        logger.warning(
+            "exchange_materialization: attribution_snapshot JSON invalid "
+            "(proposal=%s, using empty snapshot)",
+            proposal.get("id"),
+            exc_info=True,
+        )
         snapshot = {}
     if not isinstance(snapshot, dict):
         snapshot = {}
@@ -489,6 +502,18 @@ def _attribution_fields(proposal: dict) -> dict:
             )
         )
     except Exception:
+        # `extract/serialize_sizing_manifest` failure used to be silently
+        # mapped to `None`, and the downstream `insert_position` still
+        # went through — leaving Position rows with `sizing_manifest=NULL`
+        # for reasons the operator could not distinguish. Log with a
+        # stack so a real defect (schema drift, contract change in the
+        # rollout module) is visible.
+        logger.warning(
+            "exchange_materialization: sizing_manifest extraction failed "
+            "(proposal=%s, Position will have NULL sizing_manifest)",
+            proposal.get("id"),
+            exc_info=True,
+        )
         sizing_manifest = None
     regime_value = snapshot.get("regime_tag", "unknown")
     return {
