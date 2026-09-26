@@ -191,6 +191,17 @@ def parse_utc_strict(value: str | None) -> datetime | None:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
     except (ValueError, RuntimeError):
+        # A malformed `opened_at` on a Position row is a real data
+        # integrity signal — but silently returning None turns it into
+        # "no max-hold applicable" downstream (`_decide_exit` skips the
+        # horizon wake), which erases an exit that should have fired.
+        # Keep the None fallback so the caller does not crash on one bad
+        # row, but leave a stack so the underlying corruption is visible.
+        logger.warning(
+            "position_manager: malformed ISO timestamp on Position row "
+            "(returning None, downstream max-hold check will skip)",
+            exc_info=True,
+        )
         return None
 
 
@@ -219,7 +230,19 @@ def _native_proposal_protection(
 
         proposal = get_trade_proposal(str(proposal_id))
     except Exception:
-        # A native identity whose authority cannot be read must fail closed.
+        # A native identity whose authority cannot be read must fail
+        # closed. The fail-closed result is correct — a `TradeProposal`
+        # read failure could be a DB fault, an import error, or a
+        # genuine schema drift, and none of those should be treated as
+        # "no authority row". Log with a stack so the actual cause is
+        # visible instead of collapsing every fault into the same
+        # fail-closed signal.
+        logger.warning(
+            "position_manager: TradeProposal authority read failed "
+            "(failing closed, proposal_id=%s)",
+            proposal_id,
+            exc_info=True,
+        )
         return True, None
     if proposal is None:
         return True, None
