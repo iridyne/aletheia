@@ -118,8 +118,41 @@ worktree 上复现证实，与本计划的任何改动无关。两个互不相�
   router 就会变成 405，于是该用例依赖执行顺序。保留有价值的那半（真实的 model-profiles
   写入口必须以 422 拒绝退役字段）。
 
-**结果**：`tests/e2e/` 91 passed，`dev_check` PASS。**后续执行者应当在一个全绿基线上工作；
-如果你看到红，那很可能是你自己造成的，请不要假定它是历史遗留。**
+**结果**：`tests/e2e/` 91 passed，`tests/specs/` 1309 passed，`dev_check` PASS。
+
+---
+
+## 已知的顺序依赖脆弱性（先于本工作存在，未修，不要误判为自己造成）
+
+`tests/test_model_profiles.py` 里约 16 个「已退役路由应返回 404」的用例**依赖测试执行顺序**，
+只在整套一起跑时变红（`assert 405 == 404`），单文件跑全绿。
+
+**根因（已用探针在真实失败现场取证）**：`core/aletheia/server/app.py:158` 在 lifespan 启动时
+把静态前端 `app.mount("/", ...)` 挂在根路径上——它匹配任何未被 API 接住的地址。而
+`aletheia.server.app.app` 是模块级全局单例，被 61 个测试文件共享。任何用
+`with TestClient(app)` 触发过一次 lifespan 的测试（如 `tests/test_doctor_json.py:91`、
+`tests/test_settings_honesty.py:97`、`tests/test_outcome_reporting.py:35`），都会把这个根挂载
+**永久留在共享 app 上**，且每次启动累加。探针实测：失败现场共享 app 上有 3 条 `path=""`
+的根挂载，全部匹配 `/api/model/openai-oauth/start` 与
+`/api/settings/model-integrations/openai_native`，于是本该 404 的退役地址返回 405。
+
+**判定证据**：
+
+| 版本 | 完整跑（无 `-x`）结果 |
+|---|---|
+| `185934f90`（本工作之前） | 1 failed, 10051 passed |
+| 本分支 `557581b57` | 16 failed, 10048 passed |
+| 本分支但 revert 掉 `335046594` | **23 failed**, 10041 passed |
+
+回退本工作的改动反而让红变多（16 → 23），证明这些用例的红由**顺序**决定，不由改动内容决定。
+`185934f90` 只报 1 个红是因为那次用了 `-x`（遇错即停），在第一个失败处就停了。
+
+**为何未修**：修它要改 61 个测试文件共享全局 `app` 的方式（每个需要 lifespan 的测试应当构造
+自己的应用实例），是一次独立的测试基础设施重构，与 V2/V3 收敛无关。
+
+**给后续执行者**：跑单文件或 focused 测试时这些用例是绿的，按 Phase 验收即可。整套跑时若只见
+`tests/test_model_profiles.py` 的 `405 != 404`，那是这个已知问题，不是你造成的。
+**除此之外看到任何红，都应当先假定是自己造成的。**
 
 ---
 
