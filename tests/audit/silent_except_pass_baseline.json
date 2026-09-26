@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 224,
+  "count": 220,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -219,10 +219,6 @@
     {
       "file": "core/aletheia/agents/helpers.py",
       "line": 532
-    },
-    {
-      "file": "core/aletheia/agents/helpers.py",
-      "line": 1118
     },
     {
       "file": "core/aletheia/analytics/filter_evidence.py",
@@ -555,18 +551,6 @@
     {
       "file": "core/aletheia/net.py",
       "line": 405
-    },
-    {
-      "file": "core/aletheia/notifications.py",
-      "line": 110
-    },
-    {
-      "file": "core/aletheia/notifications.py",
-      "line": 278
-    },
-    {
-      "file": "core/aletheia/notifications.py",
-      "line": 290
     },
     {
       "file": "core/aletheia/notifications.py",
