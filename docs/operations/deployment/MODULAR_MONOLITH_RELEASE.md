@@ -1,5 +1,15 @@
 # Modular monolith release bundle
 
+> **Status as of 2026-09-26.** The auto-merge control plane and the release-CI
+> handoff (`auto-merge.yml`, `refresh-release-candidate.yml`,
+> `release-ci-handoff.yml`) were retired in PR #3506 in favour of manual
+> rolling updates. Sections below that describe automatic `trusted auto-merge`
+> or a `Refresh release candidate` follow-up are documenting the historical
+> mechanism; the current path is that the owner merges each release candidate
+> by hand with `gh pr merge <n> --rebase`. The `Prepare and tag releases` and
+> `Fedora Paper timer` legs (versioning, tag/Release creation, Paper role
+> auto-update) are unchanged.
+
 Aletheia is deployed as one local product even though development uses Python and
 TypeScript. Node.js exists only in CI to compile the React dashboard. The release
 bundle contains the Python application plus the compiled static dashboard; the
