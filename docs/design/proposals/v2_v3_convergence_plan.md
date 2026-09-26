@@ -114,17 +114,20 @@ worktree 上复现证实，与本计划的任何改动无关。两个互不相�
   （`schema.py:619`、`:1136`）。它钉的是一个早已改掉的常量，现改为核对接口如实返回已加载配置。
 - `test_retired_settings_fields_are_rejected` 额外探测
   `PATCH /api/settings/model-integrations/{provider}`。该接口已整体退役、无任何路由——
-  spec `LLMH-S07` 正是断言它不存在。期待 404 实际钉的是路由匹配顺序，一旦同一会话挂载足够多
-  router 就会变成 405，于是该用例依赖执行顺序。保留有价值的那半（真实的 model-profiles
-  写入口必须以 422 拒绝退役字段）。
+  spec `LLMH-S07` 正是断言它不存在。期待 404 实际钉的是路由匹配顺序，一旦同一会话里 SPA
+  静态挂载被挂上（见下节）就会变成 405，于是该用例依赖执行顺序。保留有价值的那半（真实的
+  model-profiles 写入口必须以 422 拒绝退役字段）。
 
 **结果**：`tests/e2e/` 91 passed，`tests/specs/` 1309 passed，`dev_check` PASS。
 
 ---
 
-## 已知的顺序依赖脆弱性（先于本工作存在，未修，不要误判为自己造成）
+## 已修复的顺序依赖脆弱性（曾先于本工作存在）
 
-`tests/test_model_profiles.py` 里约 16 个「已退役路由应返回 404」的用例**依赖测试执行顺序**，
+> 本节原先记录为「已知未修，成本是重构 61 个测试文件」。该成本估算是错的，实际修法只动
+> 1 个文件、约 20 行，见本节末「实际修法」。历史判断保留在此以便追溯。
+
+`tests/test_model_profiles.py` 里 16 个「已退役路由应返回 404」的用例曾**依赖测试执行顺序**，
 只在整套一起跑时变红（`assert 405 == 404`），单文件跑全绿。
 
 **根因（已用探针在真实失败现场取证）**：`core/aletheia/server/app.py:158` 在 lifespan 启动时
@@ -147,12 +150,39 @@ worktree 上复现证实，与本计划的任何改动无关。两个互不相�
 回退本工作的改动反而让红变多（16 → 23），证明这些用例的红由**顺序**决定，不由改动内容决定。
 `185934f90` 只报 1 个红是因为那次用了 `-x`（遇错即停），在第一个失败处就停了。
 
-**为何未修**：修它要改 61 个测试文件共享全局 `app` 的方式（每个需要 lifespan 的测试应当构造
-自己的应用实例），是一次独立的测试基础设施重构，与 V2/V3 收敛无关。
+**405 的确切来源**：`Mount("/")` 的 `path` 被 `rstrip("/")` 成空串，按前缀匹配、**不看 method**，
+对任何路径都返回 `Match.FULL`，于是请求进 `StaticFiles`，而它第一行就是
+「非 `GET`/`HEAD` 直接抛 405」（`starlette/staticfiles.py:113`）。所以失败的 16 个用例全是
+`POST`/`PATCH`——`GET` 的退役路由拿到的是 404，从来不报错。
 
-**给后续执行者**：跑单文件或 focused 测试时这些用例是绿的，按 Phase 验收即可。整套跑时若只见
-`tests/test_model_profiles.py` 的 `405 != 404`，那是这个已知问题，不是你造成的。
-**除此之外看到任何红，都应当先假定是自己造成的。**
+**两处先前的误记（已更正）**：`tests/test_settings_honesty.py:97` 并非污染源，它在 `:95` 自建
+`FastAPI()` 只挂 settings router，不碰共享 app；先前遗漏了
+`tests/test_profitability_execution_mode_scope.py:311,341` 与
+`tests/test_positions_route_pagination.py:52`。真实污染源是 4 个文件共 7 处
+`with TestClient(app)`：`test_doctor_json.py:91,108,126`、
+`test_profitability_execution_mode_scope.py:311,341`、`test_outcome_reporting.py:35`、
+`test_positions_route_pagination.py:52`。
+
+**实际修法（D0，`tests/conftest.py` 一处 autouse fixture）**：每个测试前后把共享 app 上
+`name == "dashboard"` 且 `path == ""` 的根 Mount 原地摘掉。三个要点：
+
+- 用 `sys.modules.get` 而非 `import`，否则每个纯单元测试都要为这个 autouse fixture 拉起
+  FastAPI 与 23 个 route 模块。
+- 用 `routes[:] = [...]` 原地改，因为 `app.routes` 返回的就是 `router.routes` 同一个 list
+  对象，活的 `Router` 每次请求实时遍历它，重新赋值改不到。
+- 零生产代码改动。`tests/` 下没有任何用例依赖这条静态挂载存在：唯一断言根路径返回 SPA 的
+  `tests/test_frontdoor.py:314,434` 用的是 `frontdoor.create_app(static_dir=...)` 自建 app。
+
+**不选另外三条路的理由**：把挂载改成幂等只能止住累积（3 条变 1 条），一条根 Mount 就足够吞掉
+所有未被 API 认领的地址，405 照旧；让 4 个文件各建 app 最贵，`server/app.py` 没有 `create_app`
+工厂、`app` 是模块级单例后跟 40+ 次 `include_router`，且将来任何新写的 `with TestClient(app)`
+会把问题原样带回；把断言放宽成 `in (404, 405)` 行数最少，但削弱契约并掩盖共享 app 被永久污染
+这件会误伤其它测试的事。
+
+**验收**：最小复现 `uv run pytest tests/test_doctor_json.py tests/test_model_profiles.py -q
+-p no:randomly`——修前 16 failed / 89 passed，修后 105 passed（7 秒，不必等全套 6 分钟）。
+全套 `tests/`（不含 specs/e2e）由 16 failed, 10048 passed 变为 **10064 passed, 0 failed**；
+`tests/specs` 1309 passed、`tests/e2e` 91 passed、`ruff` 全绿，均无回归。
 
 ---
 
