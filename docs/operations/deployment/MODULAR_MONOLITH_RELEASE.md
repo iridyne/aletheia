@@ -1,14 +1,13 @@
 # Modular monolith release bundle
 
-> **Status as of 2026-09-26.** The auto-merge control plane and the release-CI
+> **2026-09-26 update.** The auto-merge control plane and its release
 > handoff (`auto-merge.yml`, `refresh-release-candidate.yml`,
-> `release-ci-handoff.yml`) were retired in PR #3506 in favour of manual
-> rolling updates. Sections below that describe automatic `trusted auto-merge`
-> or a `Refresh release candidate` follow-up are documenting the historical
-> mechanism; the current path is that the owner merges each release candidate
-> by hand with `gh pr merge <n> --rebase`. The `Prepare and tag releases` and
-> `Fedora Paper timer` legs (versioning, tag/Release creation, Paper role
-> auto-update) are unchanged.
+> `release-ci-handoff.yml`) were retired in PR #3506. The owner now merges
+> each release candidate by hand with `gh pr merge <n> --rebase`; the
+> tag/Release follow-up and the Fedora Paper timer are unchanged. This
+> document has been updated to describe the current path; a short section
+> below records the retired candidate-refresh automation for archival
+> reasons only.
 
 Aletheia is deployed as one local product even though development uses Python and
 TypeScript. Node.js exists only in CI to compile the React dashboard. The release
@@ -40,48 +39,56 @@ accumulated Conventional Commit history needs a Runtime update; Release Please
 then computes one Ready-for-review release PR from the history since the
 previous tag. Ordinary `feat`, `fix`, and `perf` changes therefore accumulate
 instead of creating one product version per merge, and hidden `docs`, `ci`, and
-`chore` changes remain accumulated. Release preparation never dispatches CI.
-Only an explicit current owner request for remote CI permits starting
-`Aletheia CI` on the release branch; release or deployment intent alone does
-not. Its successful exact-head handoff may then continue
-merge, immutable Tag/Release, and Paper-role deployment unattended.
+`chore` changes remain accumulated.
 
-If an ordinary PR advances `master` while the release candidate is still open,
-`Refresh release candidate after master advances` observes the completed trusted
-auto-merge run, confirms that an active repository-owned `autorelease: pending`
-candidate has a stale branch merge-base, and dispatches a refresh authenticated
-to that workflow run. Release Please then updates the same candidate without
-starting CI; the refresh path cannot create a candidate without the owner's
-original release-intent gate.
-
-Release Please keeps its `autorelease: pending` marker on the generated PR and
-adds `do-not-auto-merge` until an explicitly requested validation succeeds.
-When an owner explicitly requests remote CI in the current task and it succeeds,
-a metadata-only job dispatches the exact
-candidate branch, SHA, and merge-base SHA to the trusted auto-merge workflow.
-The candidate is refreshed without automatically starting CI when `master` advances.
-Merging the exact candidate emits a tag-only follow-up; that follow-up verifies
-the squash parent against the authorized base before creating the matching
-immutable tag and metadata-only GitHub Release. Failed CI or identity checks
-leave the candidate untagged. The workflow does not publish a package, build an
-artifact, deploy a Runtime, or open an Observation window; the Fedora Paper
-timer consumes the stable tag as a separate downstream gate.
+The generated release PR is a normal PR. The owner merges it manually with
+`gh pr merge <n> --rebase` (see the 2026-09-26 decision *"PR 合并方式 = 人工
+`gh pr merge --rebase`"* in `docs/governance/decisions/DECISIONS.md`). Merging
+the exact candidate triggers the tag-only `repository_dispatch` follow-up in
+`release-please.yml`, which verifies the merge parent against the authorized
+base before creating the matching immutable `vX.Y.Z` tag and metadata-only
+GitHub Release. Failed identity checks leave the candidate untagged. The tag
+follow-up does not publish a package, build an artifact, deploy a Runtime, or
+open an Observation window; the Fedora Paper timer consumes the stable tag as
+a separate downstream gate.
 
 The workflow invokes the exact `release-please@17.6.0` CLI through the
 GitHub-owned Node setup Action. This preserves the repository's restrictive
 Action allowlist; it does not require a PAT or an allowlist exception for a
 third-party Action.
 
+### Retired candidate-refresh automation
+
+Before 2026-09-26, `Refresh release candidate after master advances` observed
+a completed `trusted auto-merge` run, confirmed that an active
+`autorelease: pending` candidate had a stale branch merge-base, and dispatched
+a refresh authenticated to that workflow run. That whole leg — the
+`refresh-release-candidate.yml` workflow, the `trusted auto-merge` handoff,
+the automatic hold-release — was retired in PR #3506 together with the
+`auto-merge.yml` control plane.
+
+If an ordinary PR advances `master` while a candidate is still open, the
+owner reruns `Prepare and tag releases` (Release Please updates the same
+`autorelease: pending` candidate without creating a second release PR). CI is
+never dispatched automatically as part of this refresh.
+
 ## Release SOP（正常自动，故障手动恢复）
 
-正常路径只保留一个显式发布意图动作：repository admin 在 GitHub Actions 运行
-`Prepare and tag releases` 并设置 `operational_need=true`；workflow 会通过 GitHub API
-fail-closed 验证触发者的 repository admin 权限并生成候选，但不会自动启动 CI。
-只有 owner 在当前任务中明确要求远程 CI，才可在候选分支运行 `Aletheia CI`；
-发布、部署或“完整验证”的表述本身不构成授权。成功后才会
-继续解除候选 hold、合并、创建不可变 Tag/Release，并由 Fedora Paper timer 部署。
-无需手动指定版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条
-自动部署链，必须保持 owner 选定的固定 SHA。
+正常路径:
+
+1. **owner 触发**：`Prepare and tag releases` workflow，`operational_need=true`。
+   workflow 通过 GitHub API fail-closed 验证触发者是 repository admin，生成候选 PR。
+2. **不会自动启动 CI**。只有 owner 在当前任务中明确要求远程 CI，才可在候选分支上
+   手动 dispatch `Aletheia CI`。发布、部署或"完整验证"的表述本身不构成授权。
+3. **owner 手工合并**候选 PR：`gh pr merge <n> --rebase`（2026-09-26 决策）。
+4. **合并触发** `release-please.yml` 的 `repository_dispatch: release_candidate_merged`
+   follow-up，它验证 merge parent 后创建 `vX.Y.Z` Tag 与 GitHub Release。
+5. **Fedora Paper timer** 每 5 分钟检查稳定 Tag，按角色执行部署（`aletheia update
+   auto run`）。资格运行时不参加这条链，必须保持 owner 选定的固定 SHA。
+
+以上第 3 步是 2026-09-26 之后**唯一的合并入口**——`trusted auto-merge` /
+`refresh-release-candidate` 那条自动链已废除（见上一节 "Retired candidate-refresh
+automation"）。无需手动指定版本，也无需登录 Fedora 执行 `git pull`。
 
 只有在确认 Runtime 更新确有 operational need 时才运行该批处理；失败或候选
 状态损坏时可用同一入口重试。CLI 形式为：
@@ -98,16 +105,18 @@ hand-edit a target version: the Conventional Commit history and
 policy, ordinary `feat`, `fix`, and `perf` release notes produce the next patch;
 an explicit breaking change produces the next minor version.
 
-The workflow rejects the release job for manual dispatches by non-admins. A stale
-candidate caused by a later `master` merge is refreshed automatically while the
-candidate remains open; do not create a second release PR by hand.
+The workflow rejects the release job for manual dispatches by non-admins. If
+a later `master` merge makes the candidate stale, rerun `Prepare and tag
+releases` — Release Please updates the same open candidate in place; do not
+create a second release PR by hand.
 
-The release is complete only after the generated `autorelease: pending` PR is
-observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
-Release exists. A queued or green CI run, an open or mergeable PR, or enabled
-auto-merge is not completion. Recover a failed tag/GitHub Release follow-up by
-rerunning that failed `repository_dispatch` workflow run in the Actions UI or
-with:
+The release is complete only after the generated `autorelease: pending` PR
+has been merged manually (`gh pr merge <n> --rebase`), its matching
+immutable `vX.Y.Z` tag exists, and the GitHub Release exists. A queued or
+green CI run, an open or mergeable PR, or the mere existence of the tag
+`repository_dispatch` follow-up run does not count as completion. Recover a
+failed tag/GitHub Release follow-up by rerunning that failed
+`repository_dispatch` workflow run in the Actions UI or with:
 
 ```sh
 gh run rerun <run-id> --repo iridyne/aletheia

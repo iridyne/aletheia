@@ -124,24 +124,51 @@ Before publishing:
 5. verify the remote SHA with `git ls-remote`;
 6. create the PR.
 
-Merging is manual since 2026-09-26. The auto-merge control plane was retired
-in PR #3506 (`.github/workflows/auto-merge.yml` and its companion release
-workflows are gone), so the owner merges each PR by hand:
+Merging is manual since 2026-09-26. PR #3506 retired the auto-merge control
+plane; the 2026-09-26 decision *"PR 合并方式 = 人工 `gh pr merge --rebase`,
+无自动合并层"* in `docs/governance/decisions/DECISIONS.md` names the current
+rule. The owner merges each PR by hand:
 
 ```powershell
 gh pr merge <pr-number> --rebase
 ```
 
-`--rebase` keeps every commit distinct on `master` (see the 2026-09-26
-retirement entry in `docs/governance/decisions/DECISIONS.md`). Do not use
-`--auto` (no workflow listens for that request any more), and do not use
-`--squash` unless a specific PR has been agreed to squash. Merging a stack
-is bottom-up: land the base PR, then rebase the next branch on the new
-`master` and push before merging it.
+`--rebase` keeps every commit distinct on `master`. Do not use `--auto`
+(no workflow listens for that request any more), and do not use `--squash`
+unless a specific PR has been agreed to squash.
 
-Stacked PRs do not need special retargeting logic here. When the base PR
-merges, GitHub retargets the next PR to `master` automatically; you rebase
-the branch locally, force-push, and merge it manually.
+### Stacked PRs
+
+This repository uses **plain feature-branch stacks** (PR B is created with
+its base set to PR A's branch). GitHub does NOT automatically retarget PR B
+when PR A merges — that automatic cascade only exists for GitHub's newer
+[native stacked PR](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs)
+feature (`gh stack`), which we do not use.
+
+For a plain stack, merge bottom-up. After each layer lands:
+
+1. Rebase the next branch on the new `master`:
+
+   ```powershell
+   git fetch origin
+   git checkout <next-branch>
+   git rebase --update-refs origin/master
+   ```
+
+   `--update-refs` follows the stack and moves intermediate branch pointers
+   in the same operation. Any patch already on `master` is skipped
+   automatically (a `--rebase` merge on GitHub preserves patch identity).
+
+2. Push with a lease, not a bare force. `--force-with-lease` refuses to
+   overwrite the remote if someone else pushed since your last fetch:
+
+   ```powershell
+   git push --force-with-lease origin <next-branch>
+   ```
+
+3. Confirm on GitHub that the PR's diff is now just the branch's own
+   change (base auto-retargets to `master` because its previous base
+   branch was deleted on merge). Then merge that PR the same way.
 
 Once the commit is pushed and the PR is created, the local Orca worktree
 can be removed. Nothing runs remotely on the PR event; there is no CI or
@@ -154,5 +181,5 @@ auto-merge in flight that a worktree removal could cancel.
 | `git pull --ff-only` has no tracking information | New feature branch has not been pushed | Use `git pull --ff-only origin master` for the base check; use `git push -u` when publishing |
 | `uv` cannot persist its cache | Machine cache permissions are unsuitable | Set a task-specific `UV_CACHE_DIR` under `LOCALAPPDATA` |
 | PR is green but remains open | No auto-merger exists any more (retired 2026-09-26) | Merge it manually: `gh pr merge <n> --rebase` |
-| Stacked PR shows a huge unfamiliar diff after its base merged | Rebase-merge rewrites hashes; the top branch still carries the old ones | Rebase the top branch on the new `master` (`git rebase --update-refs origin/master`), force-push, verify the diff shrinks to the branch's real change |
+| Stacked PR shows a huge unfamiliar diff after its base merged | Rebase-merge rewrites hashes; the top branch still carries the old ones | Rebase the top branch on the new `master` (`git rebase --update-refs origin/master`), `git push --force-with-lease` (never bare `--force`), verify the diff shrinks to the branch's real change |
 | Worktree deletion would lose the only copy | Change is not durably published | Push and verify the remote SHA, create the PR, then the worktree can be removed |
