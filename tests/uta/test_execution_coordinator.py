@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -800,3 +801,180 @@ def test_unbound_historical_exposure_blocks_new_entry_without_rebinding(tmp_path
         _execute("new-proposal", "new-risk")
     assert adapter.calls == 0
     assert (repo.get_order(historical.id) if exposure == "unresolved_order" else repo.get_position(historical.id)) == before
+
+
+def _drifted_adapter_factory(mode, *, venue_position_ids, submit_recorder):
+    """Adapter factory whose identity drifts one generation and whose venue answers."""
+    from aletheia.execution.coordinator import _identity_generation_drift
+    from aletheia.uta.models import (
+        InstrumentIdentity,
+        PositionListReport,
+        PositionStatusReport,
+        QueryScope,
+        ReadCompleteness,
+    )
+
+    current = _identity(mode).model_copy(update={"credential_generation": _identity(mode).credential_generation + 1})
+    instrument = InstrumentIdentity(
+        canonical_symbol="BTC/USDT",
+        venue_symbol="BTC/USDT",
+        market_type="spot",
+        base_currency="BTC",
+        quote_currency="USDT",
+    )
+
+    def factory(_mode):
+        class DriftedAdapter:
+            identity = current
+
+            async def get_positions(self, query=None):
+                positions = tuple(
+                    PositionStatusReport(
+                        identity=current,
+                        instrument=instrument,
+                        venue_position_id=venue_id,
+                        side="long",
+                        quantity=Decimal("0.01"),
+                        received_at=datetime.now(timezone.utc),
+                    )
+                    for venue_id in venue_position_ids
+                )
+                return PositionListReport(
+                    identity=current,
+                    completeness=ReadCompleteness.COMPLETE,
+                    scope=QueryScope(),
+                    received_at=datetime.now(timezone.utc),
+                    profile_version="1",
+                    positions=positions,
+                )
+
+            async def submit_order(self, command):
+                submit_recorder.append(command.expected_account)
+                return _ack(command, venue_order_id="venue-close-1")
+
+            async def close(self):
+                pass
+
+        return DriftedAdapter()
+
+    return factory, current
+
+
+def test_close_reanchors_generation_drift_only_after_venue_proof(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    _insert_bound_position(position)
+    entry_id = position.order_id
+    assert entry_id is not None
+    recorder = []
+    factory, current = _drifted_adapter_factory(
+        "binance_testnet", venue_position_ids=["venue-pos-1"], submit_recorder=recorder
+    )
+    audit = []
+    monkeypatch.setattr(coordinator, "create_uta_adapter", factory)
+    monkeypatch.setattr(coordinator, "write_post_commit_audit", lambda event, **kwargs: audit.append(event) or True)
+
+    result = close_position(position.id, "stop_loss")
+    assert result["closed"] is False  # ack path leaves order submitted; no venue fill yet
+    assert recorder == [current]  # close submitted under the current generation
+    [close_order] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
+    entry = repo.get_order(entry_id)
+    assert entry is not None
+    assert UTAAccountIdentity.model_validate_json(entry["uta_account_identity_json"]) == current
+    assert UTAAccountIdentity.model_validate_json(close_order["uta_account_identity_json"]) == current
+    reanchored = [e for e in audit if e["event_type"] == "uta_account_reanchored"]
+    assert len(reanchored) == 2
+    assert all(e["before"]["credential_generation"] == 1 and e["after"]["credential_generation"] == 2 for e in reanchored)
+    assert any(e["event_type"] == "uta_command_applied" for e in audit)
+
+
+def test_close_fails_closed_on_generation_drift_without_venue_proof(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    _insert_bound_position(position)
+    entry_id = position.order_id
+    assert entry_id is not None
+    recorder = []
+    # Venue holds no BTC position: a different physical account cannot be proven.
+    factory, _current = _drifted_adapter_factory(
+        "binance_testnet", venue_position_ids=[], submit_recorder=recorder
+    )
+    monkeypatch.setattr(coordinator, "create_uta_adapter", factory)
+
+    with pytest.raises(ValueError, match="uta_account_identity_mismatch"):
+        close_position(position.id, "stop_loss")
+    assert recorder == []  # nothing was submitted
+    [close_order] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
+    assert close_order["status"] == "error"
+    assert close_order["error_reason"] == "uta_account_identity_mismatch"
+    position_row = repo.get_position(position.id)
+    assert position_row is not None
+    assert position_row["pending_close_status"] == "error"
+    entry = repo.get_order(entry_id)
+    assert entry is not None
+    assert UTAAccountIdentity.model_validate_json(entry["uta_account_identity_json"]).credential_generation == 1
+    assert position_row["status"] == "open"
+
+
+def test_entry_reanchors_open_position_generation_drift_after_venue_proof(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    _insert_bound_position(position)
+    entry_id = position.order_id
+    assert entry_id is not None
+    _authority("new-proposal", "new-risk")
+    recorder = []
+    factory, current = _drifted_adapter_factory(
+        "binance_testnet", venue_position_ids=["venue-pos-1"], submit_recorder=recorder
+    )
+    monkeypatch.setattr(coordinator, "create_uta_adapter", factory)
+
+    result = _execute("new-proposal", "new-risk")
+    assert result["order_status"] == "submitted"
+    assert recorder == [current]
+    entry = repo.get_order(entry_id)
+    assert entry is not None
+    assert UTAAccountIdentity.model_validate_json(
+        entry["uta_account_identity_json"]
+    ) == current

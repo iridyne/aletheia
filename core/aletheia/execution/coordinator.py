@@ -38,6 +38,9 @@ from aletheia.uta.models import (
     CapabilitySupport,
     ModifyOrderCommand,
     OrderLifecycle,
+    PositionQuery,
+    QueryScope,
+    ReadCompleteness,
     SubmitOrderCommand,
     UTAAccountIdentity,
 )
@@ -78,6 +81,150 @@ def _create_bound_adapter(execution_mode: str, expected_account: UTAAccountIdent
         _close_adapter(adapter)
         raise
     return adapter
+
+
+def _identity_generation_drift(persisted: UTAAccountIdentity, current: UTAAccountIdentity) -> bool:
+    """Same configured account; only the durable credential generation differs."""
+    return (
+        persisted.credential_generation != current.credential_generation
+        and persisted.account_id == current.account_id
+        and persisted.execution_mode == current.execution_mode
+        and persisted.venue == current.venue
+        and persisted.environment == current.environment
+        and persisted.profile == current.profile
+    )
+
+
+async def _venue_positions(adapter) -> list | None:
+    """Read venue positions under current credentials; ``None`` when not complete."""
+    report = await adapter.get_positions(PositionQuery(scope=QueryScope()))
+    if report.completeness is not ReadCompleteness.COMPLETE:
+        return None
+    return list(report.positions)
+
+
+def _venue_confirms_position(row: dict, venue_positions: list) -> str | None:
+    """Return the venue position id when the venue holds the exact local Position.
+
+    The match is (canonical symbol, market type, side, quantity).  A fresh
+    physical account cannot hold the same exact Position set, so this is the
+    account-continuity proof required before any generation re-anchor.
+    """
+    expected = instrument_from_local(row["symbol"], row["market_type"])
+    direction = str(row["direction"] or "").lower()
+    sides = {"long", "buy"} if direction == "long" else {"short", "sell"}
+    quantity = float(row["quantity"] or 0.0)
+    for position in venue_positions:
+        instrument = position.instrument
+        if instrument.canonical_symbol != expected.canonical_symbol:
+            continue
+        if instrument.market_type != expected.market_type:
+            continue
+        if str(position.side or "").lower() not in sides:
+            continue
+        if abs(float(position.quantity) - quantity) > max(1e-9, quantity * 1e-6):
+            continue
+        return position.venue_position_id
+    return None
+
+
+def _reanchor_order_identity(
+    order_id: str,
+    *,
+    persisted: UTAAccountIdentity,
+    current: UTAAccountIdentity,
+    position_id: str | None,
+    venue_position_id: str | None,
+) -> None:
+    """Re-bind one Order's account provenance to the current generation.
+
+    The venue already proved the same physical account holds the exact open
+    Position; this updates the local provenance label only, never the venue
+    state.  The audit event keeps the prior generation as explicit migration
+    evidence, so history is preserved, not silently relabeled.
+    """
+    update_order_metadata(order_id, uta_account_identity_json=current.model_dump_json())
+    write_post_commit_audit(
+        {
+            "actor": "system",
+            "source": "execution_coordinator",
+            "event_type": "uta_account_reanchored",
+            "entity_type": "order",
+            "entity_id": order_id,
+            "reason": "credential_generation_drift_venue_proven",
+            "position_id": position_id,
+            "venue_position_id": venue_position_id,
+            "before": {
+                "account_id": persisted.account_id,
+                "credential_generation": persisted.credential_generation,
+            },
+            "after": {
+                "account_id": current.account_id,
+                "credential_generation": current.credential_generation,
+            },
+        }
+    )
+
+
+async def _reanchor_generation_drift_rows(execution_mode: str, adapter, rows) -> bool:
+    """Re-bind drifted Order/Position identities after exact venue proof.
+
+    Fail-closed when any drifted row is unbound, hard-mismatched, or cannot be
+    proven against the venue.  Returns ``True`` only when every drifted open
+    Position matched the venue exactly and the whole drifted set was re-anchored.
+    """
+    drifted = []
+    for existing in rows:
+        try:
+            persisted = UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "")
+        except (ValueError, TypeError):
+            # Unbound/malformed identity cannot be proven; fail closed.
+            return False
+        if persisted == adapter.identity:
+            continue
+        if not _identity_generation_drift(persisted, adapter.identity):
+            return False
+        drifted.append((existing, persisted))
+    if not drifted:
+        return True
+    venue_positions = await _venue_positions(adapter)
+    if venue_positions is None:
+        return False
+    for existing, _persisted in drifted:
+        if existing["source_kind"] != "position":
+            continue
+        if _venue_confirms_position(existing, venue_positions) is None:
+            return False
+    if any(existing["source_kind"] == "order" for existing, _persisted in drifted) and not any(
+        existing["source_kind"] == "position" for existing, _persisted in drifted
+    ):
+        # No open Position to prove account continuity; refuse to relabel in-flight Orders.
+        return False
+    for existing, persisted in drifted:
+        _reanchor_order_identity(
+            order_id=existing["order_id"] or existing["id"],
+            persisted=persisted,
+            current=adapter.identity,
+            position_id=existing["id"] if existing["source_kind"] == "position" else None,
+            venue_position_id=(
+                _venue_confirms_position(existing, venue_positions)
+                if existing["source_kind"] == "position"
+                else None
+            ),
+        )
+    return True
+
+
+def _all_rows_match_current_identity(rows, current: UTAAccountIdentity) -> bool:
+    for existing in rows:
+        try:
+            persisted = UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "")
+        except (ValueError, TypeError):
+            # Unbound/malformed identity is never trusted as the current account.
+            return False
+        if persisted != current:
+            return False
+    return True
 
 
 async def _command(execution_mode: str, method: str, command):
@@ -260,13 +407,15 @@ def execute_order(
     try:
         placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
         rows = get_db().execute(
-            f"SELECT uta_account_identity_json FROM orders WHERE execution_mode=? AND id<>? AND status IN ({placeholders}) "
-            "UNION ALL SELECT o.uta_account_identity_json FROM positions p LEFT JOIN orders o ON o.id=p.order_id "
+            f"SELECT id, NULL AS order_id, uta_account_identity_json, 'order' AS source_kind, NULL AS symbol, NULL AS market_type, NULL AS direction, NULL AS quantity "
+            f"FROM orders WHERE execution_mode=? AND id<>? AND status IN ({placeholders}) "
+            "UNION ALL SELECT p.id, p.order_id, o.uta_account_identity_json, 'position' AS source_kind, p.symbol, p.market_type, p.direction, p.quantity "
+            "FROM positions p LEFT JOIN orders o ON o.id=p.order_id "
             "WHERE p.execution_mode=? AND p.status='open'",
             (execution_mode, order.id, *_RETRY_SUPPRESSING_ORDER_STATES, execution_mode),
         ).fetchall()
-        for existing in rows:
-            if UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "") != adapter.identity:
+        if not _all_rows_match_current_identity(rows, adapter.identity):
+            if not _run(_reanchor_generation_drift_rows(execution_mode, adapter, rows)):
                 raise ValueError("uta_account_identity_mismatch")
         order.uta_account_identity_json = adapter.identity.model_dump_json()
         if before_submission is None:
@@ -499,8 +648,9 @@ def close_position(
             "fill_quantity": 0,
             "already_pending": True,
         }
+    persisted = UTAAccountIdentity.model_validate_json(order.uta_account_identity_json or "")
     try:
-        adapter = _create_bound_adapter(row["execution_mode"], UTAAccountIdentity.model_validate_json(order.uta_account_identity_json))
+        adapter = _create_bound_adapter(row["execution_mode"])
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -511,6 +661,45 @@ def close_position(
             pending_close_status="error",
         )
         raise
+    if adapter.identity != persisted:
+        # Credential/config generation drift: the persisted identity predates the
+        # current generation.  Re-bind only after the venue proves the exact open
+        # Position still exists under current credentials; otherwise fail closed.
+        try:
+            venue_positions = _run(_venue_positions(adapter))
+        except Exception:
+            venue_positions = None
+        venue_position_id = (
+            _venue_confirms_position(row, venue_positions)
+            if _identity_generation_drift(persisted, adapter.identity) and venue_positions
+            else None
+        )
+        if venue_position_id is None:
+            _close_adapter(adapter)
+            finalize_exchange_acknowledgement(
+                order.id,
+                exchange_order_id=None,
+                status="error",
+                error_reason="uta_account_identity_mismatch",
+                close_position_id=position_id,
+                pending_close_status="error",
+            )
+            raise ValueError("uta_account_identity_mismatch")
+        _reanchor_order_identity(
+            order_id=row["order_id"] or order.id,
+            persisted=persisted,
+            current=adapter.identity,
+            position_id=position_id,
+            venue_position_id=venue_position_id,
+        )
+        _reanchor_order_identity(
+            order_id=order.id,
+            persisted=persisted,
+            current=adapter.identity,
+            position_id=position_id,
+            venue_position_id=venue_position_id,
+        )
+        adapter = _create_bound_adapter(row["execution_mode"], adapter.identity)
     quantity = float(row["quantity"])
     order_type = "market"
     limit_price = None
