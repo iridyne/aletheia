@@ -43,14 +43,38 @@ instead of creating one product version per merge, and hidden `docs`, `ci`, and
 
 The generated release PR is a normal PR. The owner merges it manually with
 `gh pr merge <n> --rebase` (see the 2026-09-26 decision *"PR 合并方式 = 人工
-`gh pr merge --rebase`"* in `docs/governance/decisions/DECISIONS.md`). Merging
-the exact candidate triggers the tag-only `repository_dispatch` follow-up in
-`release-please.yml`, which verifies the merge parent against the authorized
-base before creating the matching immutable `vX.Y.Z` tag and metadata-only
-GitHub Release. Failed identity checks leave the candidate untagged. The tag
-follow-up does not publish a package, build an artifact, deploy a Runtime, or
-open an Observation window; the Fedora Paper timer consumes the stable tag as
-a separate downstream gate.
+`gh pr merge --rebase`"* in `docs/governance/decisions/DECISIONS.md`).
+
+> ⚠️ **Tag follow-up currently has no automatic dispatcher.** The
+> `release_candidate_merged` `repository_dispatch` used to be fired by the
+> now-deleted `auto-merge.yml`; nothing else emits it. Merging the release
+> PR manually will not automatically create the matching `vX.Y.Z` tag or
+> GitHub Release. Until this gap is closed (a separate D1 decision — do we
+> keep tagged releases at all under the rolling-update policy?), the tag
+> must be produced by hand after merge. Two workable paths:
+>
+> ```sh
+> # Path A: fire the same repository_dispatch by hand
+> gh api repos/iridyne/aletheia/dispatches \
+>   -f event_type=release_candidate_merged \
+>   -f 'client_payload[merge_commit_sha]=<merge sha>' \
+>   -f 'client_payload[expected_base_sha]=<parent sha>'
+>
+> # Path B: skip release-please and tag directly (loses the merge-parent audit)
+> git tag v<X.Y.Z> <merge sha> && git push origin v<X.Y.Z>
+> ```
+>
+> If the owner decides to remove tagged releases entirely (rolling update
+> only), this whole subsection can go with the `release-please.yml`
+> retirement.
+
+Assuming a `v<X.Y.Z>` tag exists (created by either path above), the
+`release-please.yml` `repository_dispatch` handler verifies the merge parent
+against the authorized base and creates the matching immutable tag and
+metadata-only GitHub Release. Failed identity checks leave the candidate
+untagged. The tag follow-up does not publish a package, build an artifact,
+deploy a Runtime, or open an Observation window; the Fedora Paper timer
+consumes the stable tag as a separate downstream gate.
 
 The workflow invokes the exact `release-please@17.6.0` CLI through the
 GitHub-owned Node setup Action. This preserves the repository's restrictive
@@ -81,14 +105,18 @@ never dispatched automatically as part of this refresh.
 2. **不会自动启动 CI**。只有 owner 在当前任务中明确要求远程 CI，才可在候选分支上
    手动 dispatch `Aletheia CI`。发布、部署或"完整验证"的表述本身不构成授权。
 3. **owner 手工合并**候选 PR：`gh pr merge <n> --rebase`（2026-09-26 决策）。
-4. **合并触发** `release-please.yml` 的 `repository_dispatch: release_candidate_merged`
-   follow-up，它验证 merge parent 后创建 `vX.Y.Z` Tag 与 GitHub Release。
+4. **owner 手工触发 tag follow-up**（见上一节 ⚠️ 提示框）。合并本身**不会**
+   自动触发——`release_candidate_merged` 事件原本由 `auto-merge.yml` dispatch，
+   该 workflow 已在 PR #3506 中删除。走 `gh api ... dispatch` 路径可以让
+   `release-please.yml` 验证 merge parent 后创建 tag；走 `git tag && git push`
+   直接打 tag 则绕过这层验证。是否保留 tagged release 是独立的 D1 决策。
 5. **Fedora Paper timer** 每 5 分钟检查稳定 Tag，按角色执行部署（`aletheia update
    auto run`）。资格运行时不参加这条链，必须保持 owner 选定的固定 SHA。
 
 以上第 3 步是 2026-09-26 之后**唯一的合并入口**——`trusted auto-merge` /
 `refresh-release-candidate` 那条自动链已废除（见上一节 "Retired candidate-refresh
-automation"）。无需手动指定版本，也无需登录 Fedora 执行 `git pull`。
+automation"）。第 4 步是手工链上目前**未闭合的一步**，需要另做决定。无需手动
+指定版本，也无需登录 Fedora 执行 `git pull`。
 
 只有在确认 Runtime 更新确有 operational need 时才运行该批处理；失败或候选
 状态损坏时可用同一入口重试。CLI 形式为：
