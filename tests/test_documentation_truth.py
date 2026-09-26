@@ -170,3 +170,51 @@ def test_skip_without_reason_is_reported_and_strict_xfail_is_not() -> None:
         for failure in failures
     )
     assert not any("test_good_strict_xfail" in failure for failure in failures)
+
+
+def test_claim_section_matcher_accepts_both_heading_numberings() -> None:
+    """``## 2 Foo`` and ``## §1 file location`` are both live in the contracts."""
+    from scripts.check_docs import _claim_section_present
+
+    document = "# Title\n## 2. Provider lifecycle\n## §1 文件位置\n### Cache\n"
+    assert _claim_section_present("§2 provider lifecycle", document)
+    assert _claim_section_present("§1 anything", document)
+    assert _claim_section_present("Cache", document)
+    assert not _claim_section_present("§9 invented", document)
+    # A word that appears only in the body, never as a heading, is not a section.
+    assert not _claim_section_present("Title-adjacent prose", document)
+
+
+def test_claim_anchor_gate_rejects_unregistered_and_proposal_only_contracts() -> None:
+    """The sixth gate: an executable claim may not invent its own authority."""
+    from scripts.check_docs import spec_claim_anchor_failures
+
+    probe = Path("tests/specs") / "spec__anchor_probe.py"
+    try:
+        probe.write_text(
+            "from tests.specs.spec_meta import SpecClaim, spec_claim\n"
+            "\n"
+            "@spec_claim(SpecClaim('PROBE-1', 'no_such_contract', '§1 x', 'L2a', 'i'))\n"
+            "def test_probe_unregistered():\n"
+            "    assert True\n"
+            "\n"
+            "@spec_claim(SpecClaim('PROBE-2', 'agent_contracts', '§1 scheduler', 'L2a', 'i'))\n"
+            "def test_probe_good():\n"
+            "    assert True\n",
+            encoding="utf-8",
+        )
+        failures = spec_claim_anchor_failures()
+    finally:
+        probe.unlink(missing_ok=True)
+    assert any(
+        "tests/specs/spec__anchor_probe.py:3: claim PROBE-1 names unregistered "
+        "contract 'no_such_contract'" in failure
+        for failure in failures
+    )
+    assert not any("PROBE-2" in failure for failure in failures)
+
+
+def test_claim_anchor_gate_is_green_on_the_current_tree() -> None:
+    from scripts.check_docs import spec_claim_anchor_failures
+
+    assert spec_claim_anchor_failures() == []

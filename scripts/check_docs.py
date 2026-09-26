@@ -10,6 +10,7 @@ import ast
 import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -679,6 +680,387 @@ def skip_xfail_and_data_guard_failures() -> list[str]:
     return failures
 
 
+# Contract names that live outside ``docs/design/contracts/<name>.md``. Every
+# other name resolves automatically from that directory's file stems.
+# ``docs/design/contracts/`` always wins over a same-stem Proposal: an executable
+# claim answers to approved behavior, never to a design that does not exist yet.
+CONTRACT_DOC_ALIASES = {
+    "PI_OPERATOR_DESIGN_DECISIONS": "docs/design/operator/PI_OPERATOR_DESIGN_DECISIONS.md",
+    "active_runtime_scope": "docs/product/ACTIVE_RUNTIME_SCOPE.md",
+    "api_reference": "docs/design/api/api_reference.md",
+    "candidate_selection_utility": "docs/design/contracts/candidate_selection_utility_contract.md",
+    "data_layer_contract": "docs/design/data/data_layer.md",
+    "data_model": "docs/design/data/data_model.md",
+    "data_utilization_contract": "docs/design/data/data_utilization.md",
+    "entry_plan_contract": "docs/design/contracts/entry-plan-contract.md",
+    "insight_feedback_loop": "docs/archive/legacy/plans/learning/insight_feedback_loop.md",
+    "learning": "docs/design/contracts/learning_contract.md",
+    "learning_evolution": "docs/design/proposals/learning_evolution.md",
+    "learning_observability": "docs/design/proposals/learning_observability.md",
+    "operator_layer": "docs/design/operator/operator_layer.md",
+    "risk_engine": "docs/design/contracts/risk_engine_contract.md",
+}
+# Contract names with no document anywhere in the repository: the section
+# references in their claims are the spec file's own numbering, not a pointer
+# into approved behavior. Registering them turns "half the executable claims
+# answer to no contract" into a table you can read, and makes any NEW invented
+# namespace fail. Values are the claim count when registered (2026-09-26) --
+# documentation, not a budget; nothing asserts on them.
+UNANCHORED_CONTRACT_NAMESPACES = {
+    "analytics_contract": 7,
+    "behavior_authority": 3,
+    "factor_feedback": 3,
+    "futures_leverage": 10,
+    "gateway_stability_contract": 14,
+    "guard_authority": 20,
+    "knowledge_fts_integrity": 5,
+    "learning_pipeline": 21,
+    "legacy_promotion_gates": 1,
+    "network_egress_contract": 12,
+    "opportunity_information_integrity": 4,
+    "outcome_integrity": 12,
+    "persona_sizing": 14,
+    "pipeline_adopted_position": 28,
+    "pipeline_bitget_preset_protection": 5,
+    "pipeline_entry_enrichment": 4,
+    "pipeline_exchange_account_routing": 1,
+    "pipeline_exchange_commit": 7,
+    "pipeline_exchange_materialization": 17,
+    "pipeline_historical_chain_recovery": 7,
+    "pipeline_live_disappearance_settlement": 5,
+    "pipeline_live_unlock": 6,
+    "pipeline_market_data": 11,
+    "pipeline_middle_state_integrity": 17,
+    "pipeline_multibroker_reconciliation": 12,
+    "pipeline_opportunity_expiry": 2,
+    "pipeline_outcome_feedback": 22,
+    "pipeline_position_manager": 14,
+    "pipeline_profit_loop": 2,
+    "pipeline_risk_execution_integrity": 25,
+    "pipeline_risk_gate": 10,
+    "pipeline_stop_propagation": 4,
+    "pipeline_tpsl_private_materialization": 10,
+    "pipeline_unresolved_entry_exposure": 16,
+    "serenity_attribution": 2,
+    "serenity_evidence_quality": 14,
+    "serenity_holding": 3,
+    "serenity_live_readiness": 1,
+    "serenity_multi_lens": 6,
+    "serenity_promote": 11,
+    "serenity_researchability": 5,
+    "serenity_verdict": 3,
+    "serenity_xstock_execution": 2,
+    "spot_parity": 3,
+    "strategy_pool": 3,
+    "trust_boundary_policy": 6,
+    "universe_pipeline": 20,
+    "uta_boundary": 6,
+}
+# Contract names whose only document is a Proposal. A Proposal describes behavior
+# that does not exist yet, so nothing in it is assertable -- an executable claim
+# pointing there has no approved behavior behind it. Clearing an entry means
+# moving the referenced sections into a Contract.
+BASELINE_PROPOSAL_ANCHORED_CONTRACTS = {
+    "learning_evolution",
+    "learning_observability",
+}
+# Claims whose ``section`` finds no heading in the resolved document. A visible,
+# dated set (2026-09-26), never a silent skip. Two shapes hide in here: a section
+# the claim invented, and a document that never numbered its headings.
+BASELINE_UNRESOLVED_CLAIM_SECTIONS = {
+    ("tests/specs/spec_active_runtime_scope.py", "AR-S03"),
+    ("tests/specs/spec_active_runtime_scope.py", "AR-S04"),
+    ("tests/specs/spec_active_runtime_scope.py", "AR-S07"),
+    ("tests/specs/spec_agent_contracts.py", "AC-S05"),
+    ("tests/specs/spec_api_reference.py", "API-D6"),
+    ("tests/specs/spec_api_reference.py", "API-D7"),
+    ("tests/specs/spec_api_reference.py", "API-S08"),
+    ("tests/specs/spec_candidate_selection_utility.py", "CSU-S01"),
+    ("tests/specs/spec_candidate_selection_utility.py", "CSU-S02"),
+    ("tests/specs/spec_candidate_selection_utility.py", "CSU-S04"),
+    ("tests/specs/spec_candidate_selection_utility.py", "CSU-S05"),
+    ("tests/specs/spec_candidate_selection_utility.py", "CSU-S06"),
+    ("tests/specs/spec_codex_shepherd.py", "AG-CODEX-SHEPHERD-01"),
+    ("tests/specs/spec_configuration.py", "CFG-S01"),
+    ("tests/specs/spec_configuration.py", "CFG-S02"),
+    ("tests/specs/spec_data_layer.py", "DL-B04"),
+    ("tests/specs/spec_data_layer.py", "DL-B05"),
+    ("tests/specs/spec_data_layer.py", "DL-B14"),
+    ("tests/specs/spec_data_layer.py", "DL-C01"),
+    ("tests/specs/spec_data_layer.py", "DL-C02"),
+    ("tests/specs/spec_data_layer.py", "DL-C03"),
+    ("tests/specs/spec_data_layer.py", "DL-S01"),
+    ("tests/specs/spec_data_layer.py", "DL-S02"),
+    ("tests/specs/spec_data_layer.py", "DL-S03"),
+    ("tests/specs/spec_data_layer.py", "DL-S06"),
+    ("tests/specs/spec_data_layer.py", "DL-S07"),
+    ("tests/specs/spec_data_layer.py", "DL-S08"),
+    ("tests/specs/spec_data_layer.py", "DL-S09"),
+    ("tests/specs/spec_data_layer.py", "DL-S10"),
+    ("tests/specs/spec_data_model.py", "DM-A14"),
+    ("tests/specs/spec_data_model.py", "DM-S10"),
+    ("tests/specs/spec_data_utilization.py", "DU-B01"),
+    ("tests/specs/spec_data_utilization.py", "DU-B02"),
+    ("tests/specs/spec_data_utilization.py", "DU-C01"),
+    ("tests/specs/spec_data_utilization.py", "DU-C02"),
+    ("tests/specs/spec_data_utilization.py", "DU-S01"),
+    ("tests/specs/spec_data_utilization.py", "DU-S04"),
+    ("tests/specs/spec_data_utilization.py", "DU-S05"),
+    ("tests/specs/spec_data_utilization.py", "DU-S06"),
+    ("tests/specs/spec_data_utilization.py", "DU-S07"),
+    ("tests/specs/spec_data_utilization.py", "DU-S08"),
+    ("tests/specs/spec_data_utilization.py", "DU-S09"),
+    ("tests/specs/spec_data_utilization.py", "DU-S10"),
+    ("tests/specs/spec_data_utilization.py", "DU-S12"),
+    ("tests/specs/spec_data_utilization.py", "DU-S13"),
+    ("tests/specs/spec_data_utilization.py", "DU-S15"),
+    ("tests/specs/spec_data_utilization.py", "DU-S16"),
+    ("tests/specs/spec_data_utilization.py", "DU-S17"),
+    ("tests/specs/spec_data_utilization.py", "DU-S18"),
+    ("tests/specs/spec_data_utilization.py", "DU-S19"),
+    ("tests/specs/spec_data_utilization.py", "DU-S22"),
+    ("tests/specs/spec_data_utilization.py", "DU-S30"),
+    ("tests/specs/spec_data_utilization.py", "DU-S33"),
+    ("tests/specs/spec_data_utilization.py", "DU-T01"),
+    ("tests/specs/spec_decision_lifecycle.py", "DL-S64"),
+    ("tests/specs/spec_defillama.py", "DFL-C01"),
+    ("tests/specs/spec_defillama.py", "DFL-E2E"),
+    ("tests/specs/spec_defillama.py", "DFL-S01"),
+    ("tests/specs/spec_defillama.py", "DFL-S02"),
+    ("tests/specs/spec_defillama.py", "DFL-S03"),
+    ("tests/specs/spec_defillama.py", "DFL-S04"),
+    ("tests/specs/spec_defillama.py", "DFL-S05"),
+    ("tests/specs/spec_defillama.py", "DFL-S06"),
+    ("tests/specs/spec_defillama.py", "DFL-S07"),
+    ("tests/specs/spec_entry_plan_contract.py", "EP-S09"),
+    ("tests/specs/spec_entry_plan_contract.py", "EP-S12"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R01"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R02"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R03"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R04"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R05"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R06"),
+    ("tests/specs/spec_equity_observer.py", "EQ-R07"),
+    ("tests/specs/spec_hyperliquid.py", "HL-C01"),
+    ("tests/specs/spec_hyperliquid.py", "HL-C02"),
+    ("tests/specs/spec_hyperliquid.py", "HL-E2E"),
+    ("tests/specs/spec_hyperliquid.py", "HL-S01"),
+    ("tests/specs/spec_hyperliquid.py", "HL-S02"),
+    ("tests/specs/spec_hyperliquid.py", "HL-S03"),
+    ("tests/specs/spec_hyperliquid.py", "HL-S04"),
+    ("tests/specs/spec_hyperliquid.py", "HL-S05"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-B01"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-B03"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-B04"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-B05"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-B06"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-S01"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-S02"),
+    ("tests/specs/spec_insight_feedback_loop.py", "IFL-S03"),
+    ("tests/specs/spec_insight_feedback_loop.py", "PCI-G02"),
+    ("tests/specs/spec_learning_contract.py", "LC-S04"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S01"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S02"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S03"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S04"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S05"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S06"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S07"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S09"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S11"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S12"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S13"),
+    ("tests/specs/spec_learning_t0_foundation.py", "LT0-S15"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S01"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S02"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S03"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S04"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S05"),
+    ("tests/specs/spec_lesson_guards.py", "LG-S06"),
+    ("tests/specs/spec_macro_signals.py", "MS-C02"),
+    ("tests/specs/spec_macro_signals.py", "MS-C03"),
+    ("tests/specs/spec_macro_signals.py", "MS-C04"),
+    ("tests/specs/spec_macro_signals.py", "MS-C05"),
+    ("tests/specs/spec_macro_signals.py", "MS-C06"),
+    ("tests/specs/spec_macro_signals.py", "MS-C08"),
+    ("tests/specs/spec_macro_signals.py", "MS-C09"),
+    ("tests/specs/spec_macro_signals.py", "MS-S03"),
+    ("tests/specs/spec_macro_signals.py", "MS-S04"),
+    ("tests/specs/spec_macro_signals.py", "MS-S05"),
+    ("tests/specs/spec_macro_signals.py", "MS-S06"),
+    ("tests/specs/spec_macro_signals.py", "MS-S07"),
+    ("tests/specs/spec_macro_signals.py", "MS-S08"),
+    ("tests/specs/spec_macro_signals.py", "MS-S09"),
+    ("tests/specs/spec_macro_signals.py", "MS-S10"),
+    ("tests/specs/spec_macro_signals.py", "MS-S11"),
+    ("tests/specs/spec_macro_signals.py", "MS-S12"),
+    ("tests/specs/spec_macro_signals.py", "MS-S14"),
+    ("tests/specs/spec_macro_signals.py", "MS-S14b"),
+    ("tests/specs/spec_macro_signals.py", "MS-S14c"),
+    ("tests/specs/spec_macro_signals.py", "MS-S14d"),
+    ("tests/specs/spec_market_type_dedup.py", "OD-S01"),
+    ("tests/specs/spec_market_type_dedup.py", "OD-S01b"),
+    ("tests/specs/spec_market_type_dedup.py", "OD-S02"),
+    ("tests/specs/spec_market_type_dedup.py", "OD-S02d"),
+    ("tests/specs/spec_market_type_dedup.py", "OD-S02e"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "OEO-S01"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "OEO-S04"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "OEO-S06"),
+    ("tests/specs/spec_observation_experiment_ownership.py", "OEO-S07"),
+    ("tests/specs/spec_operator_contract_parity.py", "PI-S05"),
+    ("tests/specs/spec_operator_loop.py", "PCI-G01"),
+    ("tests/specs/spec_operator_loop.py", "PCI-G03"),
+    ("tests/specs/spec_operator_single_source.py", "PI-S06"),
+    ("tests/specs/spec_pi_decision_chain.py", "PCI-G02"),
+    ("tests/specs/spec_pi_decision_chain.py", "PCI-G05"),
+    ("tests/specs/spec_pi_decision_chain.py", "PCI-G07"),
+    ("tests/specs/spec_pi_decision_chain.py", "PI-S01"),
+    ("tests/specs/spec_pi_decision_chain.py", "PI-S07"),
+    ("tests/specs/spec_risk_engine.py", "RE-B15"),
+    ("tests/specs/spec_risk_engine.py", "RE-B15b"),
+    ("tests/specs/spec_risk_engine.py", "RE-B16"),
+    ("tests/specs/spec_risk_engine.py", "RE-B19"),
+    ("tests/specs/spec_risk_engine.py", "RE-S09"),
+    ("tests/specs/spec_trading_mandate.py", "TM-S01"),
+    ("tests/specs/spec_update_observation_settlement.py", "OBC-UPD-04"),
+}
+# Both baselines above expire. ``tests/test_spec_conformance.py`` records what
+# happens without an expiry: a count budget nobody lowered stayed red for two
+# months and stopped protecting anything. An expired non-empty baseline fails, so
+# the choice is to clear entries or to move the date deliberately.
+CLAIM_ANCHOR_BASELINE_EXPIRY = date(2026, 12, 1)
+_CLAIM_SECTION_NUMBER = re.compile(r"^§?\s*([0-9]+(?:\.[0-9]+)*[a-z]?)\b")
+
+
+def _contract_doc_paths() -> dict[str, str]:
+    """Resolve every registered contract name to exactly one document path."""
+    paths = {
+        path.stem: f"docs/design/contracts/{path.name}"
+        for path in (ROOT / "docs/design/contracts").glob("*.md")
+        if path.name not in {"README.md", "template.md"}
+    }
+    paths.update(CONTRACT_DOC_ALIASES)
+    return paths
+
+
+def _claim_literal(node: ast.AST | None, constants: dict[str, str]) -> str | None:
+    """A SpecClaim argument's string value, following module-level constants."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _spec_claim_anchors() -> list[tuple[str, int, str, str, str]]:
+    """Return ``(relative, lineno, claim_id, contract, section)`` per SpecClaim."""
+    anchors: list[tuple[str, int, str, str, str]] = []
+    for path in sorted((ROOT / "tests/specs").glob("spec_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # A third of the claims pass the contract as a module-level constant
+        # (``_CONTRACT = "..."``), so literal-only extraction would miss them.
+        constants = {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "SpecClaim"):
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            fields = []
+            for index, name in enumerate(("claim_id", "contract", "section")):
+                argument = node.args[index] if index < len(node.args) else keywords.get(name)
+                fields.append(_claim_literal(argument, constants))
+            claim_id, contract, section = fields
+            if contract is None or section is None:
+                continue
+            anchors.append(
+                (str(path.relative_to(ROOT)), node.lineno, claim_id or "?", contract, section)
+            )
+    return anchors
+
+
+def _claim_section_present(section: str, document: str) -> bool:
+    """Whether a claim's ``section`` names something the document actually has."""
+    headings = [line for line in document.splitlines() if line.startswith("#")]
+    match = _CLAIM_SECTION_NUMBER.match(section.strip().lstrip("§ "))
+    if match:
+        # Headings are written both as ``## 2 Foo`` and ``## §1 file location``.
+        numbered = re.compile(rf"^#+\s*§?\s*{re.escape(match.group(1))}[.)\s:]")
+        return any(numbered.match(heading) for heading in headings)
+    word = section.strip().lstrip("§ ").split()[0].lower() if section.strip() else ""
+    return bool(word) and any(word in heading.lower() for heading in headings)
+
+
+def spec_claim_anchor_failures() -> list[str]:
+    """Executable claims must name a contract and section that exist.
+
+    ``docs/design/contracts/README.md`` already states this as a human duty --
+    open the named Contract and the named section, and if the section does not
+    exist you invented it -- and the duty has already been missed (claim
+    ``LU-C07`` pointed at a ``§4b`` that never existed). Nothing read
+    ``SpecClaim.section`` before this check, so a claim could name any string.
+
+    Three mechanical rules:
+      1. the ``contract`` name must be registered -- resolved from
+         ``docs/design/contracts/``, aliased, or listed as a document-less
+         namespace -- so no new invented name appears silently.
+      2. a name must not resolve into ``docs/design/proposals/``. A Proposal
+         describes behavior that does not exist yet; nothing in it is assertable.
+      3. for a name that resolves to a document, ``section`` must find a heading.
+
+    Non-goals (deliberately not validated here): whether the claim's assertion
+    actually verifies what the section says, and whether every contract section
+    has a claim. The second needs the section baseline at zero first, or it
+    would emit hundreds of entries at once.
+    """
+    failures: list[str] = []
+    if BASELINE_UNRESOLVED_CLAIM_SECTIONS or BASELINE_PROPOSAL_ANCHORED_CONTRACTS:
+        if date.today() > CLAIM_ANCHOR_BASELINE_EXPIRY:
+            failures.append(
+                f"scripts/check_docs.py: claim-anchor baselines expired on "
+                f"{CLAIM_ANCHOR_BASELINE_EXPIRY.isoformat()} and are not empty; "
+                f"clear them or move the date deliberately"
+            )
+    paths = _contract_doc_paths()
+    documents: dict[str, str] = {}
+    for relative, lineno, claim_id, contract, section in _spec_claim_anchors():
+        if contract in UNANCHORED_CONTRACT_NAMESPACES:
+            continue
+        path = paths.get(contract)
+        if path is None:
+            failures.append(
+                f"{relative}:{lineno}: claim {claim_id} names unregistered contract "
+                f"{contract!r}; add it to CONTRACT_DOC_ALIASES or "
+                f"UNANCHORED_CONTRACT_NAMESPACES in scripts/check_docs.py"
+            )
+            continue
+        if path.startswith("docs/design/proposals/"):
+            if contract not in BASELINE_PROPOSAL_ANCHORED_CONTRACTS:
+                failures.append(
+                    f"{relative}:{lineno}: claim {claim_id} anchors {contract!r} on a "
+                    f"Proposal ({path}); a Proposal describes behavior that does not "
+                    f"exist yet, so nothing in it can be asserted"
+                )
+            continue
+        if (relative, claim_id) in BASELINE_UNRESOLVED_CLAIM_SECTIONS:
+            continue
+        if path not in documents:
+            documents[path] = (ROOT / path).read_text(encoding="utf-8")
+        if not _claim_section_present(section, documents[path]):
+            failures.append(
+                f"{relative}:{lineno}: claim {claim_id} points at {contract} "
+                f"{section!r}: no such heading in {path}"
+            )
+    return failures
+
+
 def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
@@ -924,6 +1306,7 @@ def main() -> int:
     failures.extend(vacuous_test_failures())
     failures.extend(silent_failure_fallback_failures())
     failures.extend(skip_xfail_and_data_guard_failures())
+    failures.extend(spec_claim_anchor_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
