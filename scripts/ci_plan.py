@@ -642,21 +642,6 @@ def _load_changes(args: argparse.Namespace) -> tuple[str, str, list[PathChange]]
     return base_sha or "", head_sha or "", changes
 
 
-def _write_github_outputs(path: str, report: dict[str, Any]) -> None:
-    lines = [
-        f"schema_version={report['schema_version']}",
-        f"policy_version={report['policy_version']}",
-        f"base_sha={report['base_sha']}",
-        f"head_sha={report['head_sha']}",
-        f"mode={report['mode']}",
-        f"plan_fingerprint={report['plan_fingerprint']}",
-        f"codex_required={str(report['review']['codex_required']).lower()}",
-    ]
-    for lane, value in report["required"].items():
-        lines.append(f"required_{lane}={str(value).lower()}")
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Emit the deterministic Aletheia CI plan.")
     parser.add_argument("--event", default="local")
@@ -668,7 +653,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--changed-files-json")
     parser.add_argument("--changed-files-complete", choices=("true", "false"), default="true")
     parser.add_argument("--trusted-label", action="append", default=[])
-    parser.add_argument("--github-output", default=None)
     args = parser.parse_args(argv)
     try:
         base_sha, head_sha, changes = _load_changes(args)
@@ -690,8 +674,6 @@ def main(argv: list[str] | None = None) -> int:
             trusted_labels=["ci:full"],
         )
         report["planner_error"] = str(exc)
-    if args.github_output:
-        _write_github_outputs(args.github_output, report)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if not report.get("planner_error") else 2
 

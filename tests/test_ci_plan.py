@@ -30,6 +30,11 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     safe = _plan(["README.md", "docs/references/example.md"])
     assert safe["mode"] == "docs_only"
     assert safe["required"]["trusted_ci"] is False
+    # ``github_ci`` / ``github_checks`` are the retired auto-merge fields
+    # (PR #3509). If either is re-added without deleting this guard the report
+    # goes back to advertising a merge policy that has no consumer.
+    assert "github_ci" not in safe
+    assert "github_checks" not in safe
 
     authoritative = _plan(["docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"])
     assert authoritative["mode"] == "full"
@@ -66,6 +71,8 @@ def test_critical_and_ci_authority_escalate() -> None:
     assert full["required"]["full_ci"] is True
     assert full["required"]["shadow_backstop"] is False
     assert full["review"]["codex_required"] is False
+    assert "github_ci" not in full
+    assert "github_checks" not in full
 
 
 @pytest.mark.parametrize("module", ["credential_routes", "credential_cli", "http_runtime"])
