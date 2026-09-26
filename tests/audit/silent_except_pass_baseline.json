@@ -2,24 +2,8 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 282,
+  "count": 251,
   "sites": [
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 81
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 122
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 183
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 191
-    },
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 287
@@ -27,14 +11,6 @@
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 313
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 396
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 438
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -74,43 +50,11 @@
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 681
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 696
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 717
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 735
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 759
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 789
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
       "line": 798
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 826
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 842
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 850
     },
     {
       "file": "core/aletheia/agent_runtime/auto_resume.py",
@@ -226,39 +170,7 @@
     },
     {
       "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 467
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 627
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 739
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 1217
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 1695
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 1797
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 1821
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
       "line": 4193
-    },
-    {
-      "file": "core/aletheia/agent_runtime/scheduler.py",
-      "line": 4718
     },
     {
       "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
@@ -534,39 +446,7 @@
     },
     {
       "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 338
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
       "line": 375
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 399
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 517
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 519
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 604
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 606
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 618
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 628
     },
     {
       "file": "core/aletheia/gateway/lifecycle.py",
@@ -575,10 +455,6 @@
     {
       "file": "core/aletheia/gateway/lifecycle.py",
       "line": 771
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 832
     },
     {
       "file": "core/aletheia/gateway/lifecycle.py",
