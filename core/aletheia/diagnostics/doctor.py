@@ -386,7 +386,7 @@ def _shorten_secret_safe(value: object, max_len: int = 240) -> str:
         from aletheia.gateway.logs import redact_log_text
         text = redact_log_text(text)
     except Exception:
-        pass
+        logger.warning("doctor: log redaction unavailable — values may be unredacted", exc_info=True)
     return text if len(text) <= max_len else text[: max_len - 3] + "..."
 
 
@@ -564,7 +564,7 @@ def _probe_process(report: Report) -> None:
                 report.add("process.code_drift", "warn", drift,
                            "gateway is running stale code — `aletheia gateway restart`")
         except Exception:
-            pass
+            logger.warning("doctor: code-drift probe unavailable", exc_info=True)
 
 
 def _probe_windows_lan_firewall(report: Report) -> None:
@@ -1690,7 +1690,7 @@ def _probe_data_quality(report: Report) -> None:
             report.add("data.cache_freshness", "info",
                        f"price cache oldest entry {stats['oldest_sec']:.0f}s (threshold 90s)")
     except Exception:
-        pass
+        logger.warning("doctor: price-cache probe unavailable", exc_info=True)
 
 
 def _probe_trading_loop(report: Report) -> None:
@@ -1721,7 +1721,7 @@ def _probe_trading_loop(report: Report) -> None:
             row = db.execute("SELECT created_at FROM opportunities ORDER BY created_at DESC LIMIT 1").fetchone()
             newest_opp = row[0] if row else None
         except Exception:
-            pass
+            logger.warning("doctor: newest-opportunity probe unavailable", exc_info=True)
 
         # Session uptime (display only). The market_observer warmup signal this used
         # to carry is gone: see the retired-observe-path note below.
@@ -1734,7 +1734,7 @@ def _probe_trading_loop(report: Report) -> None:
             if session_row:
                 session_uptime = _age_minutes(session_row[0])
         except Exception:
-            pass
+            logger.warning("doctor: session-uptime probe unavailable", exc_info=True)
     except Exception as e:
         report.add("loop.activity", "info", f"could not read trading tables: {e}")
         return
@@ -2045,7 +2045,7 @@ def _probe_learning_retrieval(report: Report) -> None:
             active_guards = len(load_trading_guards(status="active"))
             pending_candidates = len(load_trading_guards(status="candidate"))
         except Exception:
-            pass
+            logger.warning("doctor: guard-promotion counts unavailable — reported zeros are unreliable", exc_info=True)
         # A shadow backlog is observation feed, not a broken automatic promotion chain.
         detail = f"{active_guards} active guard(s), {pending_candidates} pending shadow candidate(s)"
         report.add("loop.guard_promotion", "ok", detail)
@@ -2680,7 +2680,7 @@ def _probe_content_memo_quality(report: Report) -> None:
                 memo = candidate
                 break
     except Exception:
-        pass
+        logger.warning("doctor: trading-memo read failed", exc_info=True)
     if memo:
         # accuracy_score is written by memo_effectiveness (not yet on master); light
         # up only when the tag exists, so this probe sharpens automatically once it lands.
@@ -3449,7 +3449,7 @@ def _probe_ohlcv_coverage(report: Report) -> None:
                 f"all {len(members)} active members ≥{min_bars} bars",
             )
     except Exception:
-        pass
+        logger.warning("doctor: ohlcv-coverage probe unavailable", exc_info=True)
 
 
 def _probe_signal_effectiveness(report: Report) -> None:
@@ -3507,7 +3507,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
                        f"24h net signal win_rate {win_rate:.1f}% "
                        f"({total} settled, avg_net={avg_str}, {identity}) — near-random")
     except Exception:
-        pass
+        logger.warning("doctor: signal-effectiveness probe unavailable", exc_info=True)
 
 
 def _probe_outcome_economics(report: Report) -> None:
@@ -3561,7 +3561,7 @@ def _probe_outcome_economics(report: Report) -> None:
         else:
             report.add("data.outcome_economics", "info", detail)
     except Exception:
-        pass
+        logger.warning("doctor: outcome-economics probe unavailable", exc_info=True)
 
 
 def _probe_filter_evidence(report: Report) -> None:
@@ -3737,7 +3737,7 @@ def _probe_filter_evidence(report: Report) -> None:
         else:
             report.add("data.filter_evidence", "ok", detail)
     except Exception:
-        pass
+        logger.warning("doctor: filter-evidence probe unavailable", exc_info=True)
 
 
 def _probe_serenity_pipeline(report: Report) -> None:

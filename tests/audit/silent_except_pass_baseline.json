@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 251,
+  "count": 231,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -326,51 +326,7 @@
     },
     {
       "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 388
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 566
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
       "line": 1048
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 1692
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 1723
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 1736
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 2047
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 2682
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 3451
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 3509
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 3563
-    },
-    {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 3739
     },
     {
       "file": "core/aletheia/diagnostics/doctor.py",
@@ -754,43 +710,7 @@
     },
     {
       "file": "core/aletheia/storage/repositories.py",
-      "line": 305
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 4093
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 5062
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 5069
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 5157
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
       "line": 5925
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 11052
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 12848
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 12861
-    },
-    {
-      "file": "core/aletheia/storage/repositories.py",
-      "line": 12889
     },
     {
       "file": "core/aletheia/storage/sqlite.py",
