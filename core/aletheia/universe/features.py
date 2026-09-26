@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
@@ -27,7 +29,11 @@ from aletheia.utils.dt import parse_utc
 
 logger = logging.getLogger("aletheia.universe.features")
 
-CANDIDATE_FEATURE_ACQUISITION_VERSION = "candidate-feature-acquisition/v2"
+# ponytail: hash this acquisition owner once at import, not the whole build.
+# Any edit here conservatively rotates evidence; unrelated files do not.
+CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT = hashlib.sha256(
+    Path(__file__).read_bytes()
+).hexdigest()
 
 # Phase 3 retention (2026-07-17): change-suppression on universe_feature_snapshots.
 # Feature collection runs every ~10 min per asset. When the values are

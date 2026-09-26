@@ -158,11 +158,11 @@ def candidate_selection_semantic_manifest() -> dict[str, str]:
     )
     from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-    from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_VERSION
+    from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT
     from aletheia.universe.candidate_funding import PERP_FUNDING_EVIDENCE_VERSION
 
     return {
-        "feature_acquisition": CANDIDATE_FEATURE_ACQUISITION_VERSION,
+        "feature_acquisition": CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT,
         "perp_funding": PERP_FUNDING_EVIDENCE_VERSION,
         "hard_gate": HARD_GATE_VERSION,
         "hard_gate_policy": HARD_GATE_POLICY_VERSION,

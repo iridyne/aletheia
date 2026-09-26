@@ -30,7 +30,7 @@ from aletheia.universe.opportunity_evidence import (
     build_opportunity_evidence,
 )
 from aletheia.universe.twin_persistence import TwinShadowBundle
-from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_VERSION
+from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT
 
 CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v4"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v2"
@@ -322,7 +322,7 @@ def build_candidate_selection_shadow_bundle(
             "target_selected": decision.candidate_key in target_selected_keys,
             "outcome_candidate_keys": outcome_keys,
             "evidence_contract": {
-                "feature_acquisition_version": CANDIDATE_FEATURE_ACQUISITION_VERSION,
+                "feature_acquisition_version": CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT,
                 "shadow_authority_applied": authority_applied,
                 "promotion_eligible": qualified,
                 "blocking_reasons": blocking_reasons,
