@@ -28,7 +28,6 @@ from aletheia.storage.models import (
     KnowledgeItem,
     Opportunity,
     OpportunityEntryValidityAssessment,
-    OpportunityGenerationV2,
     Order,
     OrderStatus,
     OutcomeHookJob,
@@ -893,68 +892,11 @@ def insert_opportunity(opp: Opportunity) -> None:
         and opp.source_agent in {"fast_trigger", "universe_scanner"}
         and opp.generation_version != "opportunity-generation/v2"
     ):
-        raise ValueError("execution-eligible producer requires OpportunityGenerationV2")
+        raise ValueError("execution-eligible producer requires an opportunity-generation/v2 record")
     _insert("opportunities", _stamp_provenance(opp.model_dump()))
 
 
 OPPORTUNITY_GENERATION_VERSION = "opportunity-generation/v2"
-
-
-def canonical_opportunity_generation(
-    generation: OpportunityGenerationV2,
-) -> tuple[str, str]:
-    """Return canonical JSON plus SHA-256 for one frozen generation."""
-
-    payload = json.dumps(
-        generation.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    )
-    return payload, hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def insert_opportunity_generation(
-    opportunity: Opportunity,
-    generation: OpportunityGenerationV2,
-) -> Opportunity:
-    """Validate and insert one complete, immutable tradeable generation."""
-
-    from aletheia.data.symbols import InstrumentId
-    from aletheia.trading.instruments import instrument_market_to_db_market
-
-    identity = generation.instrument_identity
-    instrument = InstrumentId.from_parts(identity.venue, identity.symbol, identity.market_type)
-    stock_linked_perp = opportunity.asset_subclass == "stock_linked_perp"
-    if not opportunity.execution_eligible or (opportunity.asset_class != "crypto" and not stock_linked_perp):
-        raise ValueError("Opportunity generation requires execution-eligible asset")
-    expected_market = (
-        instrument.market_type if stock_linked_perp else instrument_market_to_db_market(instrument.market_type)
-    )
-    if (
-        opportunity.symbol != instrument.symbol
-        or opportunity.market != expected_market
-        or opportunity.direction_bias != generation.direction
-        or opportunity.scanner_family != generation.family
-        or opportunity.valid_until != generation.valid_until
-    ):
-        raise ValueError("Opportunity generation projection mismatch")
-    try:
-        zone = tuple(float(value) for value in json.loads(opportunity.entry_zone or ""))
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("Opportunity generation entry zone is invalid") from exc
-    if zone != tuple(generation.entry_zone):
-        raise ValueError("Opportunity generation entry zone mismatch")
-    payload, digest = canonical_opportunity_generation(generation)
-    stored = opportunity.model_copy(
-        update={
-            "generation_version": OPPORTUNITY_GENERATION_VERSION,
-            "generation_json": payload,
-            "generation_hash": digest,
-        }
-    )
-    _insert("opportunities", _stamp_provenance(stored.model_dump()))
-    return stored
 
 
 def insert_opportunity_validity_assessment(
