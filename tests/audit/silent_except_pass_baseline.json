@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 300,
+  "count": 287,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -313,14 +313,6 @@
       "line": 1118
     },
     {
-      "file": "core/aletheia/analytics/candidate_facts.py",
-      "line": 74
-    },
-    {
-      "file": "core/aletheia/analytics/causal_controls.py",
-      "line": 141
-    },
-    {
       "file": "core/aletheia/analytics/filter_evidence.py",
       "line": 397
     },
@@ -331,10 +323,6 @@
     {
       "file": "core/aletheia/analytics/sizing_counterfactual.py",
       "line": 151
-    },
-    {
-      "file": "core/aletheia/analytics/trade_attribution.py",
-      "line": 445
     },
     {
       "file": "core/aletheia/analytics/trade_insights.py",
@@ -486,11 +474,7 @@
     },
     {
       "file": "core/aletheia/economics/pricing_sync.py",
-      "line": 383
-    },
-    {
-      "file": "core/aletheia/economics/pricing_sync.py",
-      "line": 619
+      "line": 623
     },
     {
       "file": "core/aletheia/economics/tracing.py",
@@ -499,10 +483,6 @@
     {
       "file": "core/aletheia/execution/broker_utils.py",
       "line": 86
-    },
-    {
-      "file": "core/aletheia/execution/exchange_materialization.py",
-      "line": 1782
     },
     {
       "file": "core/aletheia/files/jsonl.py",
@@ -801,14 +781,6 @@
       "line": 299
     },
     {
-      "file": "core/aletheia/portfolio/pnl.py",
-      "line": 1100
-    },
-    {
-      "file": "core/aletheia/portfolio/position_manager.py",
-      "line": 1674
-    },
-    {
       "file": "core/aletheia/risk/kill_switch.py",
       "line": 85
     },
@@ -982,15 +954,7 @@
     },
     {
       "file": "core/aletheia/trading/market_data.py",
-      "line": 221
-    },
-    {
-      "file": "core/aletheia/trading/market_data.py",
       "line": 258
-    },
-    {
-      "file": "core/aletheia/trading/market_data.py",
-      "line": 260
     },
     {
       "file": "core/aletheia/trust/learning_safety.py",
@@ -1011,10 +975,6 @@
     {
       "file": "core/aletheia/universe/features.py",
       "line": 890
-    },
-    {
-      "file": "core/aletheia/universe/outcome_recorder.py",
-      "line": 534
     },
     {
       "file": "core/aletheia/universe/outcome_recorder.py",
@@ -1114,23 +1074,11 @@
     },
     {
       "file": "extensions/learning/evidence_epoch.py",
-      "line": 43
-    },
-    {
-      "file": "extensions/learning/evidence_epoch.py",
-      "line": 55
-    },
-    {
-      "file": "extensions/learning/evidence_epoch.py",
       "line": 181
     },
     {
       "file": "extensions/learning/hypothesis_research.py",
       "line": 769
-    },
-    {
-      "file": "extensions/learning/outcome_feedback.py",
-      "line": 116
     },
     {
       "file": "extensions/observation_lab/canonical.py",

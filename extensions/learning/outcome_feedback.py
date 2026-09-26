@@ -1,5 +1,9 @@
 """Optional research feedback; no Position, settlement or job lifecycle writes."""
 
+import logging
+
+logger = logging.getLogger("aletheia.extensions.learning.outcome_feedback")
+
 from datetime import datetime, timezone
 
 from aletheia.portfolio.outcome_hooks import SHADOW_TRADES_HOOK, SERENITY_POST_MORTEM_HOOK
@@ -114,6 +118,6 @@ def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> floa
         if t_open and t_close:
             return (t_close - t_open).total_seconds() / 3600.0
     except Exception:
-        pass
+        logger.warning("outcome_feedback: hold duration calc failed (returning None)", exc_info=True)
     return None
 

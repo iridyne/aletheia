@@ -395,7 +395,7 @@ def record_filter_decision_batch(
             ):
                 return str(previous["id"] if hasattr(previous, "keys") else previous[0])
         except Exception:
-            # Evidence capture is fail-open: an unavailable cadence lookup must
+            # Evidence capture is fail-open: already documented: an unavailable cadence lookup must
             # not suppress the current immutable observation.
             pass
     facts = [_sanitize_snapshot(item) for item in candidate_facts]

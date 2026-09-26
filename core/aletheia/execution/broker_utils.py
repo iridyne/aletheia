@@ -84,7 +84,7 @@ def clean_error_message(raw: str) -> str:
                 return f"{prefix}: {msg}"
 
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-            pass
+            pass  # Best-effort error message extraction; keep raw on failure
 
     # CCXT "does not have market symbol X" → friendlier wording
     if "does not have market symbol" in raw:

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.analytics.candidate_facts")
+
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
@@ -72,7 +76,7 @@ def _register_instant(db: Any) -> None:
     try:
         register_instant_us(db)
     except Exception:
-        pass
+        logger.warning("candidate_facts: register_instant_us failed", exc_info=True)
 
 
 def _rows(db: Any, sql: str, params: Iterable[object] = ()) -> list[dict[str, Any]]:

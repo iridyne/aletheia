@@ -69,8 +69,8 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
         for s in cfg.market_data.observed_instruments:
             try:
                 result.append(InstrumentId.parse(s))
-            except (ValueError, Exception):
-                pass
+            except ValueError:
+                pass  # parse failure → skip this instrument
         return result
     # Legacy path: symbols + exchange from config.
     # Dedup: when both spot and usdt_futures are enabled, emit ONE instrument per

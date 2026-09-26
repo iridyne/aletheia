@@ -1098,7 +1098,7 @@ def close_position(
             error_log=False,
         )
     except Exception:
-        pass
+        logger.warning("pnl: outcome write_audit failed", exc_info=True)
     if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
         _run_outcome_hooks({**row, **update_fields}, realized, reason)
     return {
