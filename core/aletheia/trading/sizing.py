@@ -14,6 +14,10 @@ All proposals still pass through Risk Engine gates after sizing.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.trading.sizing")
+
 
 _DEFAULT_KELLY_FRACTION = 0.25   # legacy name: conviction-policy scaling factor
 _MIN_MULTIPLIER = 0.3            # floor: $25 base → $7.50 minimum at lowest conviction
@@ -322,5 +326,5 @@ def _lookup_atr_snapshot(
                 "atr_pct": float(row["atr_pct"]),
             }
     except Exception:
-        pass
+        logger.warning("sizing: ATR data read failed (returning None)", exc_info=True)
     return None

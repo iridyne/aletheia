@@ -2157,7 +2157,7 @@ def _lookup_beta(symbol: str) -> float | None:
         if row and row[0] is not None:
             return float(row[0])
     except Exception:
-        pass
+        logger.warning("risk.engine: min_stop DB read failed (returning None)", exc_info=True)
     return None
 
 
@@ -2236,7 +2236,7 @@ def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
             if row and row[0]:
                 return row[0]
         except Exception:
-            pass
+            logger.warning("risk.engine: opportunity family lookup failed (returning None)", exc_info=True)
     return None
 
 
@@ -2533,7 +2533,7 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
         if equity is not None:
             return equity
     except Exception:
-        pass
+        logger.warning("risk.engine: account equity read failed (returning None)", exc_info=True)
     return None
 
 
