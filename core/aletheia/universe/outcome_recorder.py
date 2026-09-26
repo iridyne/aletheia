@@ -553,7 +553,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                     entry["n"],
                 )
         except Exception:
-            pass
+            pass  # Secondary miss-rate metrics; failure does not affect outcome recording
 
     # Tier 1: auto-generate guard candidates for significant losses
     if all_settled_rows:
