@@ -979,3 +979,58 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
   新专用函数，间接保留旧路径。发现时应视为技术债提 Issue，不应任其积累。
 - 向后兼容胶水（re-export、shim、alias）只允许在跨服务 API 边界存在，且必须有明确的
   删除计划（Issue + 里程碑）；repo 内部模块间禁止。
+
+---
+
+## 2026-09-26 — 提案文档不再是任何改动的前置条件；测试是权威载体
+
+**Decision:** 取消"D2 结构性改动必须先有一份 accepted 提案文档"这条前置条件。判断一个改动
+是否正确，唯一的机械依据是**它是否让相应的门（test / spec / check）变绿**。提案文档降级为
+可选的沟通工具：想写就写，但它不再是任何 PR、任何 commit、任何改动的准入条件。
+
+**Reason（第一性原理）:** 严谨本身不是问题，严谨的**载体**是问题。竞品 R20 Quantum Trader
+的 test/production 行数比是 **2.60**，文档占产出 **4%**；本仓库是 **1.01** 和 **55%**
+（`docs/research/audits/COMPETITIVE_ANALYSIS_R20_2026-09-24.md`）。差别不在谁更认真，而在：
+
+- 住在 `tests/` 里的规则**会翻红**——它在改坏的那一刻自己叫出来，不需要任何人记得它存在。
+- 住在 `docs/` 里的规则**要人读**——它只有在有人恰好读到、恰好读懂、恰好选择遵守时才生效。
+
+这条被取消的前置条件正是后者的极端案例，实测三点：
+1. 它只存在于 `documentation_governance.md` 的散文里和一个 PR 模板复选框里。**没有任何程序
+   检查它。** 唯一会读提案文件的代码是 `scripts/check_docs.py` 的 `proposal_metadata_failures`，
+   而它只校验 YAML 头里有 `id:` 和一个合法的 `status:`——不校验提案是否存在、是否被引用。
+2. 它的来源不是任何一次事故。它来自 `docs/design/process/SDD_METHODOLOGY.md`（2026-06-23
+   从 specdriven.ai 引入）的一句「文档为准，代码追文档」。981 行的本决策日志里零条相关记录。
+3. 它的实际效果是让"写文档"成为改代码的关税，而收不到任何机械保障——因为没有程序检查，
+   所以既拦不住不写文档的坏改动，也拦不住写了文档的坏改动。
+
+**How it works（规则搬家，不是规则消失）:** 每删掉一段散文，必须先有一个门接住它对应的约束。
+
+| 原来靠散文约束的东西 | 现在接住它的门 |
+| --- | --- |
+| "可执行条款要指向真实契约小节" | `check_docs.spec_claim_anchor_failures`（2026-09-26） |
+| "契约里写的代码路径要存在" | `check_docs.contract_code_path_failures` |
+| "测试不许空洞断言 / 无理由 skip" | `check_docs.vacuous_test_failures`、`skip_xfail_and_data_guard_failures` |
+| "不许静默吞异常" | `check_docs.silent_failure_fallback_failures` |
+| "跨文档语义要一致" | `check_docs.semantic_truth_failures` |
+
+同时把 `check_docs` 接到 `scripts/dev_check.py`（pre-commit 走的那条路）。此前它**没有任何
+自动触发点**：不在 pre-commit，不在 `ci.yml`（只有 `workflow_dispatch`），`ci_plan.py` 只是
+列出来给人看。一个没人跑的门就是加了步骤的散文。
+
+**Guardrail（这三条不变，否则本决策会读成"AI 可以自我授权"）:**
+- `AGENTS.md` 的"merged PR 与绿灯测试不授予任何额外 scope 或 runtime 权限"**不变**。门变绿
+  只证明"没弄坏已知的事实"，不证明"这个改动该做"。该不该做仍由 owner 的显式请求决定。
+- `documentation_governance.md` 的"测试验证事实，不授权语义变更；代码与契约不符是
+  nonconformance，永远不是削弱契约的许可"**不变**。本决策取消的是**写提案的前置义务**，
+  不是契约的权威性：改语义仍要改契约，只是不再先写一份提案文档来换取改契约的许可。
+- 删散文不得净增散文。`docs/governance/` 与 `AGENTS.md` 的总行数必须随门的数量**下降**。
+  门增加而散文也增加，说明是加了一层，不是搬了一层。
+
+**Consequences:**
+- D0/D1/D2 分级本身保留——它描述改动的性质（恢复事实 / 改语义 / 改结构），仍然有用。
+  去掉的只是挂在 D2 上的那句"必须先有 accepted 提案"。
+- `docs/design/proposals/` 保留。已有提案不失效，仍可写新提案；它只是不再是通行证。
+- 这条决策本身不需要提案背书：`scripts/check_change_contract.py` 的 EXEMPT_PATTERNS 已经
+  豁免 `^docs/`、`^.github/`、`^scripts/check_`、`^AGENTS.md$`，而 `AGENTS.md` 也已写明
+  owner 的显式请求即构成授权。
