@@ -2321,3 +2321,91 @@ def opportunity_lifecycle(
         _output(story, True)
     else:
         typer.echo(render_opportunity_lifecycle_story(story))
+
+
+@inspect_app.command("tables")
+def tables(
+    like: Optional[str] = typer.Option(None, "--like", help="Substring filter on table name."),
+    table: Optional[str] = typer.Option(None, "--table", help="Show columns for one table."),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """List runtime tables with row counts, or one table's columns.
+
+    Removes the need to hand-write `PRAGMA table_info` / `sqlite_master` probes
+    before querying: an agent can discover the schema it needs in one call.
+    """
+    from aletheia.storage.sqlite import readonly_db
+
+    with readonly_db(allow_missing=True) as db:
+        if table:
+            columns = [
+                {"name": row[1], "type": row[2], "notnull": bool(row[3]), "pk": bool(row[5])}
+                for row in db.execute("SELECT * FROM pragma_table_info(?)", (table,))
+            ]
+            if not columns:
+                raise typer.BadParameter(f"no such table: {table}", param_hint="--table")
+            count = db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            _output({"table": table, "rows": count, "columns": columns}, json_output)
+            return
+        names = [
+            str(row[0])
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        if like:
+            needle = like.lower()
+            names = [name for name in names if needle in name.lower()]
+        rows = [
+            {"table": name, "rows": db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]}
+            for name in names
+        ]
+    _output(rows, json_output)
+
+
+_QUERY_PARAM_OPTION = typer.Option(
+    None, "--param", help="Positional ? parameter (repeatable)."
+)
+
+
+@inspect_app.command("query")
+def query(
+    sql: str = typer.Argument(..., help="A single read-only SQL statement."),
+    param: Optional[list[str]] = _QUERY_PARAM_OPTION,
+    limit: int = typer.Option(50, "--limit", help="Max rows returned; 0 disables the cap."),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Run one read-only SQL query against the runtime database.
+
+    The connection is opened with SQLite `query_only=ON`, so writes are refused
+    by the engine rather than by parsing the statement. Replaces hand-written
+    `python -c "... get_db().execute(...)"` one-liners during debugging.
+    """
+    import sqlite3
+
+    from aletheia.storage.sqlite import readonly_db
+
+    # ponytail: engine-enforced read-only; no SQL whitelist to drift out of date.
+    try:
+        with readonly_db(allow_missing=True) as db:
+            cursor = db.execute(sql, tuple(param or ()))
+            if cursor.description is None:
+                raise typer.BadParameter(
+                    "statement returned no result set; only queries are supported",
+                    param_hint="SQL",
+                )
+            columns = [d[0] for d in cursor.description]
+            fetched = cursor.fetchmany(limit + 1) if limit > 0 else cursor.fetchall()
+    except sqlite3.OperationalError as exc:
+        raise typer.BadParameter(f"{exc}", param_hint="SQL") from exc
+    truncated = limit > 0 and len(fetched) > limit
+    if truncated:
+        fetched = fetched[:limit]
+    rows = [dict(zip(columns, row, strict=True)) for row in fetched]
+    if json_output:
+        _output({"columns": columns, "rows": rows, "truncated": truncated}, True)
+        return
+    _output(rows, False)
+    if truncated:
+        typer.echo(f"(truncated at --limit {limit}; more rows available)")
