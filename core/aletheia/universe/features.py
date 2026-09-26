@@ -888,7 +888,8 @@ async def _fetch_single_feature(
                 if taker_reader is not None:
                     taker_buy_ratio = await taker_reader(symbol)
             except Exception:
-                pass
+                pass  # Keep only a freshness-qualified DB value as fallback.
+
 
     if spread is None and ob_row:
         spread = ob_row.get("spread_bps")
