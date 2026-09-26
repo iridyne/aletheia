@@ -434,6 +434,251 @@ def vacuous_test_failures() -> list[str]:
     return failures
 
 
+def _find_test_verification_nodes(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.AST]:
+    """Return all verification constructs inside one test function body.
+
+    Reuses the same recognition as ``_has_assertion``: ``assert``, bare
+    ``raise``, calls named ``assert*`` / ``fail`` / ``skip`` / ``xfail``,
+    and ``with pytest.raises/warns/deprecated_call``.
+    """
+    nodes: list[ast.AST] = []
+    for node in ast.walk(func):
+        if isinstance(node, (ast.Assert, ast.Raise)):
+            nodes.append(node)
+        elif isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name and (name.startswith("assert") or name in ("fail", "skip", "xfail")):
+                nodes.append(node)
+        elif isinstance(node, ast.With):
+            ctx = node.items[0].context_expr
+            if isinstance(ctx, ast.Call) and _call_name(ctx) in (
+                "raises", "warns", "deprecated_call",
+            ):
+                nodes.append(node)
+    return nodes
+
+
+def _is_guarded_data_check(node: ast.AST) -> bool:
+    """True if the AST node sits inside an ``if`` whose condition is an
+    existence/data check and that ``if`` has no ``else`` branch."""
+    return isinstance(node, ast.If) and not node.orelse and isinstance(
+        node.test, (ast.Call, ast.BoolOp, ast.UnaryOp)
+    )
+
+
+def _if_existence_condition(test: ast.AST) -> bool:
+    """Whether an ``if`` test looks like a data/environment existence probe."""
+    calls = list(ast.walk(test))
+    for call in calls:
+        if not isinstance(call, ast.Call):
+            continue
+        name = _call_name(call)
+        if name in ("exists", "getenv", "get", "isfile", "isdir"):
+            return True
+        if name == "get" and isinstance(call.func, ast.Attribute) and call.func.attr == "get":
+            return True
+        if isinstance(call.func, ast.Attribute) and call.func.attr in (
+            "exists", "getenv", "get", "isfile", "isdir",
+        ):
+            return True
+    for node in ast.walk(test):
+        if isinstance(node, ast.Attribute) and node.attr in (
+            "exists", "getenv", "get", "isfile", "isdir",
+        ):
+            return True
+    return False
+
+
+# Skip/xfail hygiene + data-guarded silent-pass baseline (2026-09-26).
+# Visible, dated, never a silent skip; keep green on master but still catch
+# NEW violations. See skip_xfail_and_data_guard_failures() for the detector.
+BASELINE_SKIP_XFAIL_DATA_GUARD: set[tuple[str, int, str]] = set()
+
+
+def _reason_text(reason: ast.AST | None) -> str | None:
+    """Extract literal reason text from an ast node; None if not a plain
+    string or a single-variable f-string (treat dynamic interpolations as
+    non-empty)."""
+    if reason is None:
+        return None
+    if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+        return reason.value
+    if isinstance(reason, ast.JoinedStr):
+        return " ".join(
+            part.value for part in reason.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        ).strip() or "f"
+    return "f"
+
+
+def skip_xfail_and_data_guard_failures() -> list[str]:
+    """Skip/xfail hygiene and data-guarded silent-pass detection.
+
+    Part A — skip/xfail hygiene: ``pytest.skip(...)`` calls,
+    ``@pytest.mark.skip`` / ``@pytest.mark.skipif`` / ``@pytest.mark.xfail``
+    decorators and ``pytest.importorskip(...)`` calls must carry a non-empty
+    ``reason``; ``xfail`` must be explicitly ``strict=True`` (non-strict xfail
+    silently passes when the test unexpectedly succeeds); unconditional
+    ``@pytest.mark.skip`` is flagged because such a test should be deleted or
+    moved to history rather than left permanently skipped.
+
+    Part B — data-guard silent pass: a ``test_*`` function whose every
+    verification construct sits inside an ``if`` whose condition is a
+    data/existence probe (``os.path.exists``, ``Path(...).exists()``,
+    ``os.environ.get``, ``os.getenv``, ``.isfile``, ``.isdir``, ``.get``)
+    and that ``if`` has no ``else`` branch. When the guard is false the test
+    performs zero assertions and passes — a false green.
+
+    Non-goals (deliberately not validated here, need dataflow or intent):
+      - reason text quality, skipif-condition validity, and conditional skips
+        inside fixtures/helpers (cross-function dataflow);
+      - ``else`` branches that disclose with an explicit
+        ``pytest.skip(reason=...)`` (correct disclosure, not flagged);
+      - loops that assert over a scanned corpus (not a guard gate);
+      - assertion sufficiency (same boundary as ``vacuous_test_failures``).
+    """
+    failures: list[str] = []
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        relative = path.relative_to(ROOT)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            failures.append(f"{relative}:{exc.lineno}: skip/xfail check: syntax error")
+            continue
+
+        # Part A: decorators
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                mark = None
+                if (
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and isinstance(dec.func.value, ast.Attribute)
+                    and dec.func.value.attr == "mark"
+                ):
+                    mark = dec.func.attr
+                elif (
+                    isinstance(dec, ast.Attribute)
+                    and isinstance(dec.value, ast.Attribute)
+                    and dec.value.attr == "mark"
+                ):
+                    mark = dec.attr
+                if mark not in ("skip", "skipif", "xfail"):
+                    continue
+                if not isinstance(dec, ast.Call):
+                    # bare @pytest.mark.skip without a call -> unconditional skip
+                    failures.append(
+                        f"{relative}:{dec.lineno}: unconditional @pytest.mark.skip "
+                        f"on {node.name} (no reason accepted)"
+                    )
+                    continue
+                if mark in ("skip", "skipif"):
+                    reason = next(
+                        (kw.value for kw in dec.keywords if kw.arg == "reason"),
+                        None,
+                    )
+                    reason_text = _reason_text(reason)
+                    if mark == "skip":
+                        failures.append(
+                            f"{relative}:{dec.lineno}: unconditional @pytest.mark.skip "
+                            f"on {node.name} (no reason accepted)"
+                        )
+                    elif not reason_text or not reason_text.strip():
+                        failures.append(
+                            f"{relative}:{dec.lineno}: @pytest.mark.skipif on "
+                            f"{node.name} requires a non-empty reason"
+                        )
+                else:  # xfail
+                    reason = next(
+                        (kw.value for kw in dec.keywords if kw.arg == "reason"),
+                        None,
+                    )
+                    strict = next(
+                        (kw.value for kw in dec.keywords if kw.arg == "strict"),
+                        None,
+                    )
+                    reason_text = _reason_text(reason)
+                    if not reason_text or not reason_text.strip():
+                        failures.append(
+                            f"{relative}:{dec.lineno}: @pytest.mark.xfail on "
+                            f"{node.name} requires a non-empty reason"
+                        )
+                    if strict is None or not isinstance(strict, ast.Constant) or strict.value is not True:
+                        failures.append(
+                            f"{relative}:{dec.lineno}: @pytest.mark.xfail on "
+                            f"{node.name} must be strict=True"
+                        )
+
+        # Part A: pytest.skip / importorskip calls without reason
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node)
+            if name not in ("skip", "importorskip"):
+                continue
+            if name == "skip":
+                reason = node.args[0] if node.args else next(
+                    (kw.value for kw in node.keywords if kw.arg == "reason"),
+                    None,
+                )
+                reason_text = _reason_text(reason)
+                if not reason_text or not reason_text.strip():
+                    failures.append(
+                        f"{relative}:{node.lineno}: pytest.skip requires a non-empty reason"
+                    )
+            else:  # importorskip
+                reason = node.args[1] if len(node.args) > 1 else next(
+                    (kw.value for kw in node.keywords if kw.arg == "reason"),
+                    None,
+                )
+                reason_text = _reason_text(reason)
+                if not reason_text or not reason_text.strip():
+                    failures.append(
+                        f"{relative}:{node.lineno}: pytest.importorskip requires a non-empty reason"
+                    )
+
+        # Part B: data-guarded silent pass
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            verifications = _find_test_verification_nodes(node)
+            if not verifications:
+                continue
+            all_guarded = True
+            for vnode in verifications:
+                guard = None
+                parent_map = {}
+                for p in ast.walk(node):
+                    for child in ast.iter_child_nodes(p):
+                        parent_map[id(child)] = p
+                current = vnode
+                found = False
+                while current is not None:
+                    parent = parent_map.get(id(current))
+                    if parent is None:
+                        break
+                    if isinstance(parent, ast.If) and not parent.orelse:
+                        if _if_existence_condition(parent.test):
+                            guard = parent
+                            found = True
+                            break
+                    current = parent
+                if not found:
+                    all_guarded = False
+                    break
+            if all_guarded and guard is not None:
+                failures.append(
+                    f"{relative}:{node.lineno}: data-guarded test (no assertions "
+                    f"when guard is false): {node.name}"
+                )
+    return failures
+
+
 def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
@@ -678,6 +923,7 @@ def main() -> int:
     failures.extend(timestamp_unit_suffix_failures())
     failures.extend(vacuous_test_failures())
     failures.extend(silent_failure_fallback_failures())
+    failures.extend(skip_xfail_and_data_guard_failures())
     failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
