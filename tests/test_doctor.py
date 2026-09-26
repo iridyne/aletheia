@@ -1486,6 +1486,37 @@ def test_demo_margin_gate_tracks_registered_execution_modes(monkeypatch):
     assert check.severity == "blocker"
 
 
+def test_demo_margin_gate_reads_the_cap_admission_enforces(monkeypatch):
+    """A zero nested cap must block even when the flat alias is still healthy.
+
+    The flat `max_demo_position_margin_usdt` alias is not mirrored from the nested
+    policy, so a nested-only write leaves it stale. The blocker must follow the
+    nested cap that admission actually enforces.
+    """
+    import aletheia.config.loader as loader
+    import aletheia.agent_runtime.pause_ownership as pause_ownership
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    # Nested cap is the authority; the flat alias intentionally stays positive.
+    object.__setattr__(cfg.risk.demo.capital, "max_position_margin_usdt", 0.0)
+    assert float(cfg.risk.max_demo_position_margin_usdt) > 0
+
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(pause_ownership, "active_pause_owners", lambda _cfg: [])
+    monkeypatch.setattr(pause_ownership, "active_pause_blocker_names", lambda _cfg: [])
+    monkeypatch.setattr(pause_ownership, "pause_blocked_reason", lambda _cfg: None)
+
+    report = dx.Report(generated_at="t")
+    dx._probe_config_gates(report)
+
+    check = next(c for c in report.checks if c.name == "config.demo_margin_cap")
+    assert check.severity == "blocker"
+    assert "max_position_margin_usdt=0" in check.detail
+
+
 def test_invalid_persisted_config_reports_safe_validation_path(monkeypatch):
     import aletheia.config.loader as loader
     from pydantic import ValidationError
