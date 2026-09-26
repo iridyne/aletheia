@@ -18,7 +18,13 @@ from typing import Any
 
 
 def table_exists(db: Any, table: str) -> bool:
-    """Return True if *table* exists in the SQLite database *db*."""
+    """Return True if *table* exists in the SQLite database *db*.
+
+    Returns False if *db* is None (some callers pass an optional
+    connection that may not yet be open).
+    """
+    if db is None:
+        return False
     row = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table,),
