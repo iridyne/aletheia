@@ -1,10 +1,10 @@
 """Refresh provider-independent estimates from LiteLLM's public price catalog."""
 
+from __future__ import annotations
+
 import logging
 
 logger = logging.getLogger("aletheia.economics.pricing_sync")
-
-from __future__ import annotations
 
 import hashlib
 import json
