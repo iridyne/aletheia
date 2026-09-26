@@ -860,6 +860,16 @@ def _read_plans(position_id: str, *, db: Any = None) -> list[dict[str, Any]] | N
         ).fetchall()
         return [dict(row) for row in rows]
     except Exception:
+        # A schema/DB failure would return None here, indistinguishable
+        # from "no plan versions yet". Downstream analytics then miss the
+        # revision history, initial risk, and protective trigger paths
+        # without a signal. Callers still receive None; log so a real
+        # failure is visible.
+        logger.warning(
+            "entry_exit_geometry: position_exit_plan_versions read failed position_id=%s",
+            position_id,
+            exc_info=True,
+        )
         return None
 
 
@@ -872,6 +882,15 @@ def _entry_fill(position: dict[str, Any], *, db: Any = None) -> dict[str, Any] |
             "SELECT * FROM fills WHERE order_id=? ORDER BY rowid ASC", (order_id,)
         ).fetchall()
     except Exception:
+        # DB / schema failure on fills lookup gets mapped to "no entry fill",
+        # which downstream reports as `entry_fill_or_initial_plan_malformed`
+        # — the same code as legitimately-missing fills. Log so a real
+        # database issue is visible.
+        logger.warning(
+            "entry_exit_geometry: fills lookup failed order_id=%s",
+            order_id,
+            exc_info=True,
+        )
         return None
     return dict(rows[0]) if len(rows) == 1 else None
 
@@ -935,6 +954,16 @@ def _safe_read(
         else:
             return None
     except Exception:
+        # `_safe_read` wraps arbitrary repository calls or dynamic SQL.
+        # Caller errors, table/column drift, and SQLite failures all
+        # currently return None while `_build_row` still emits an
+        # "available" report. Log so genuine problems surface.
+        logger.warning(
+            "entry_exit_geometry: safe_read failed identity=%s table=%s",
+            identity,
+            table,
+            exc_info=True,
+        )
         return None
     return value if isinstance(value, dict) else None
 
