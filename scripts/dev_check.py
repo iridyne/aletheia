@@ -6,9 +6,10 @@ Runs only what is cheap, and only against the files this change touched:
   1. ``git diff --check``  whitespace / conflict-marker hygiene on the whole diff
   2. ``ruff check``        E/F plus B,ASYNC,RUF, reported only on changed lines
   3. ``check_test_hygiene`` dead skip/xfail and data-guarded silent-pass audit
-  4. ``pytest --lf``       the previous red set, when a pytest cache exists
-  5. focused tests         test/spec files that name or import a changed module
-  6. ``basedpyright``      basic mode, error level, changed lines only
+  4. ``check_docs``        documentation governance, when docs/ or a spec changed
+  5. ``pytest --lf``       the previous red set, when a pytest cache exists
+  6. focused tests         test/spec files that name or import a changed module
+  7. ``basedpyright``      basic mode, error level, changed lines only
 
 Why changed lines only: the repository carries roughly a thousand pre-existing
 B/ASYNC/RUF findings, so a whole-file gate would be pure noise. The contract this
@@ -43,6 +44,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_docs
 import check_test_hygiene
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -196,6 +198,38 @@ def step_hygiene(files: list[str]) -> list[str]:
     return findings
 
 
+# ``scripts/check_docs.py`` had no automatic trigger at all: not this hook path,
+# not ci.yml (``workflow_dispatch``-only), and ``scripts/ci_plan.py`` only lists
+# it for a human to run. Gates nothing runs are prose with extra steps. It is
+# repository-wide and costs ~5s, so it runs only when the change touches what it
+# actually reads — a doc, an executable spec, or the gate itself.
+DOCS_GATE_TRIGGERS = ("docs/", "tests/specs/", "AGENTS.md", "README.md", "scripts/check_docs.py")
+
+
+def step_docs_governance(files: list[str]) -> list[str]:
+    """Documentation-governance gates, run whole-repository when relevant.
+
+    Unlike ruff and basedpyright this is not filtered to changed lines: every
+    gate in ``check_docs`` is already baselined against the current tree, so it
+    reports only what this change introduced.
+    """
+    if not any(path.startswith(DOCS_GATE_TRIGGERS) for path in files):
+        return []
+    findings: list[str] = []
+    for gate in (
+        check_docs.governance_failures,
+        check_docs.proposal_metadata_failures,
+        check_docs.contract_code_path_failures,
+        check_docs.spec_claim_anchor_failures,
+        check_docs.semantic_truth_failures,
+    ):
+        findings.extend(gate())
+    findings.extend(
+        check_docs.broken_relative_links(check_docs.current_authority_markdown_files())
+    )
+    return findings
+
+
 def last_failed_exists() -> bool:
     cache = REPO_ROOT / ".pytest_cache" / "v" / "cache" / "lastfailed"
     if not cache.exists():
@@ -333,6 +367,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  hygiene      FAIL ({len(hygiene_findings)} finding(s))")
     else:
         print("  hygiene      ok")
+
+    if any(path.startswith(DOCS_GATE_TRIGGERS) for path in changed):
+        docs_findings = step_docs_governance(changed)
+        if docs_findings:
+            failures.extend(f"docs {line}" for line in docs_findings)
+            print(f"  docs         FAIL ({len(docs_findings)} finding(s))")
+        else:
+            print("  docs         ok")
+    else:
+        print("  docs         skipped (no docs/, spec, or gate change)")
 
     if failures:
         _report(failures, started)
