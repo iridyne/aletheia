@@ -124,31 +124,28 @@ Before publishing:
 5. verify the remote SHA with `git ls-remote`;
 6. create the PR.
 
-Repository permission to use auto-merge does not itself queue every PR.
-Auto-merge is represented by a per-PR request. Ready, non-draft PRs targeting
-`master` are queued by `.github/workflows/auto-merge.yml`; the
-`do-not-auto-merge` label removes an existing request and prevents a new one.
-Removing the label queues the PR again.
-
-For a PR created while changing that automation, or whenever the request must
-be guaranteed before the workflow is available, explicitly queue it:
+Merging is manual since 2026-09-26. The auto-merge control plane was retired
+in PR #3506 (`.github/workflows/auto-merge.yml` and its companion release
+workflows are gone), so the owner merges each PR by hand:
 
 ```powershell
-gh pr merge <pr-number> --auto --squash
-gh pr view <pr-number> --json autoMergeRequest,statusCheckRollup,mergeStateStatus
+gh pr merge <pr-number> --rebase
 ```
 
-Do not claim the handoff is complete until `autoMergeRequest` is non-null.
-Required checks still control whether GitHub may merge.
+`--rebase` keeps every commit distinct on `master` (see
+`docs/governance/decisions/DECISIONS.md#2026-09-26`). Do not use `--auto`
+(no workflow listens for that request any more), and do not use
+`--squash` unless a specific PR has been agreed to squash. Merging a stack
+is bottom-up: land the base PR, then rebase the next branch on the new
+`master` and push before merging it.
 
-Stacked PRs need special attention. A PR initially targeting another feature
-branch does not run the `master` workflow. When its base later changes to
-`master`, the workflow's `edited` event queues it. Verify the request and CI
-instead of assuming retargeting triggered both.
+Stacked PRs do not need special retargeting logic here. When the base PR
+merges, GitHub retargets the next PR to `master` automatically; you rebase
+the branch locally, force-push, and merge it manually.
 
-Once the commit is pushed, the PR exists, required checks are running, and the
-auto-merge request is present, GitHub owns the remaining work. The local Orca
-worktree can then be removed without cancelling CI or auto-merge.
+Once the commit is pushed and the PR is created, the local Orca worktree
+can be removed. Nothing runs remotely on the PR event; there is no CI or
+auto-merge in flight that a worktree removal could cancel.
 
 ## Fast failure map
 
@@ -156,6 +153,6 @@ worktree can then be removed without cancelling CI or auto-merge.
 | --- | --- | --- |
 | `git pull --ff-only` has no tracking information | New feature branch has not been pushed | Use `git pull --ff-only origin master` for the base check; use `git push -u` when publishing |
 | `uv` cannot persist its cache | Machine cache permissions are unsuitable | Set a task-specific `UV_CACHE_DIR` under `LOCALAPPDATA` |
-| PR is green but remains open | No per-PR auto-merge request exists | Inspect `autoMergeRequest`; run `gh pr merge --auto --squash` |
-| Stacked PR has no CI after its base merged | Retargeting did not produce the expected workflow run | Verify the new base and workflow event; reopen only when a fresh PR event is deliberately required |
-| Worktree deletion would lose the only copy | Change is not durably published | Push, verify the remote SHA, create the PR, and verify its auto-merge request first |
+| PR is green but remains open | No auto-merger exists any more (retired 2026-09-26) | Merge it manually: `gh pr merge <n> --rebase` |
+| Stacked PR shows a huge unfamiliar diff after its base merged | Rebase-merge rewrites hashes; the top branch still carries the old ones | Rebase the top branch on the new `master` (`git rebase --update-refs origin/master`), force-push, verify the diff shrinks to the branch's real change |
+| Worktree deletion would lose the only copy | Change is not durably published | Push and verify the remote SHA, create the PR, then the worktree can be removed |

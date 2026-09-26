@@ -51,9 +51,10 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
 
 1. `Prepare and tag releases` 以 `operational_need=true` 生成一个候选 PR，但不自动
    启动 CI。只有 owner 在当前任务中明确要求远程 CI，才可在候选分支运行
-   `Aletheia CI`；发布、部署或“完整验证”的表述本身不构成授权。
-   验证通过后由 trusted auto-merge 自动合并。普通 release-bearing PR 不会各自产生
-   一个产品版本。
+   `Aletheia CI`；发布、部署或“完整验证”的表述本身不构成授权。**2026-09-26 起
+   auto-merge 已退役（PR #3506）**，验证通过后由 owner 手工 `gh pr merge <n> --rebase`
+   合并候选 PR；tag 与 Release 的自动 follow-up 保留。普通 release-bearing PR 不会
+   各自产生一个产品版本。
 2. 合并后的 follow-up 自动创建不可变 `vX.Y.Z` Tag 和 GitHub Release。
 3. 只有明确配置为 `paper` 角色的 Fedora source runtime 才由
    `aletheia-auto-update.timer` 每 5 分钟检查稳定 Tag，执行 `aletheia update auto run`；
