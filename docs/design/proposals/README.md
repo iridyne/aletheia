@@ -27,6 +27,11 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [V2/V3 residue and dual-mainline convergence](v2_v3_convergence_plan.md):
+  delete the retired V2 entry authority and the dead profit-gradient branch,
+  collapse the flat Risk fields that shadow the nested mode policy, and list the
+  V2/V3 names that are external protocol fact and must survive.
+
 - [Optional news compartment](slim_core_news_compartment.md): isolate existing
   RSS/analysis/API work while retaining Core historical matching.
 

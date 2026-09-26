@@ -1,6 +1,6 @@
 ---
 id: v2-v3-convergence-plan
-status: draft
+status: accepted
 related_contracts: []
 supersedes: []
 ---
