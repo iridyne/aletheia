@@ -69,7 +69,8 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
         for s in cfg.market_data.observed_instruments:
             try:
                 result.append(InstrumentId.parse(s))
-            except (ValueError, Exception):
+            except ValueError:
+
                 pass
         return result
     # Legacy path: symbols + exchange from config.

@@ -34,7 +34,12 @@ def _current_regime() -> str:
         if regime is not None:
             return "unknown"
     except Exception:
-        pass
+        # Regime lookup: DB failure / schema drift falls through to macro
+        # snapshot. Log so a real regression is visible.
+        logger.warning(
+            "entry_snapshot: market regime lookup failed (falling back to macro)",
+            exc_info=True,
+        )
     try:
         from aletheia.storage.repositories import latest_macro_snapshot
 
@@ -42,7 +47,13 @@ def _current_regime() -> str:
         if macro and macro.get("risk_regime"):
             return str(macro["risk_regime"])
     except Exception:
-        pass
+        # Macro snapshot fallback also unavailable — final `unknown`
+        # return is documented behaviour, log so the distinction from
+        # 'genuinely no macro snapshot' is visible.
+        logger.warning(
+            "entry_snapshot: macro snapshot fallback failed (returning 'unknown')",
+            exc_info=True,
+        )
     return "unknown"
 
 
