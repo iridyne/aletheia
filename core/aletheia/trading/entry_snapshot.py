@@ -197,7 +197,18 @@ def capture_attribution_snapshot(
             "leverage": context.leverage.get(symbol, {}),
         })
     except Exception:
-        pass
+        # Attribution snapshot proceeds without data_completeness/tradability/
+        # leverage when the market-context builder fails — the snapshot is a
+        # proposal-time audit artefact, not decision input, so omission is
+        # tolerable. Bare ``pass`` however hid every real defect
+        # (schema drift, DB unavailable, context_builder bug) as "no context
+        # today". Log with a traceback so a regression surfaces without
+        # changing the snapshot shape or downstream behaviour.
+        logger.error(
+            "Attribution snapshot market_context builder failed for %s (proceeding without context)",
+            symbol,
+            exc_info=True,
+        )
     snapshot["market_context"] = market_context
     return snapshot
 
