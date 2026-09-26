@@ -11,6 +11,7 @@ from aletheia.analytics.position_lifecycle_story import (
     build_position_lifecycle_story,
     render_position_lifecycle_story,
 )
+from aletheia.storage.table_utils import table_exists as _table_exists
 
 OPPORTUNITY_LIFECYCLE_CONTRACT_VERSION = "opportunity_lifecycle/v1"
 
@@ -46,12 +47,6 @@ def _timestamp(value: Any) -> datetime | None:
 def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
-
-def _table_exists(db: Any, table: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone()
-    return row is not None
 
 
 def _has_column(db: Any, table: str, column: str) -> bool:

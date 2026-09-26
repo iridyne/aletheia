@@ -18,6 +18,7 @@ from typing import Any, Callable
 from aletheia.config.loader import get_data_dir
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_catalog_pricing_snapshot
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 LITELLM_PRICE_MAP_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
@@ -159,8 +160,6 @@ class PricingRefreshStartError(RuntimeError):
     """Raised when the background pricing refresh worker cannot be admitted."""
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _cache_path() -> Path:

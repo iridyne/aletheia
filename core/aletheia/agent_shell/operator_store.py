@@ -12,6 +12,7 @@ from aletheia.agent_shell.file_artifacts import (
     write_task_note,
 )
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.json_utils import canonical_json_safe as _canonical_json
 
 # Task types that are inherently non-idempotent (each call is a distinct request)
 # and MUST bypass the create_task dedup guardrail.
@@ -34,9 +35,6 @@ _TASK_IDEMPOTENCY_STATUSES: tuple[str, ...] = ("running", "completed")
 _EVALUATE_STRATEGY_STATE_TASK_TYPE = "evaluate_strategy_state"
 _EVALUATE_STRATEGY_STATE_BACKPRESSURE_LIMIT = 50
 
-
-def _canonical_json(value) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _heartbeat_semantic_hash(

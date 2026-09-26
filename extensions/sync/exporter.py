@@ -14,8 +14,6 @@ from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # Secrets patterns that must never be exported
@@ -70,6 +68,7 @@ def _safe_ignore(*callbacks):
     return combined
 
 from aletheia.config.redact import redact_config_dict as _redact_config_dict
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 class ExportService:

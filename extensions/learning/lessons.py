@@ -8,12 +8,11 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.event_store import get_event_store, make_event
 from aletheia.storage.models import PSLesson, new_id
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 logger = logging.getLogger(__name__)
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class LessonStore:
@@ -127,7 +126,7 @@ class LessonStore:
 
     def accept(self, lesson_id: str) -> bool:
         """Move a lesson from proposed to accepted; stamps guard timestamps."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import timedelta
         now = datetime.now(timezone.utc)
         activated_at = now.isoformat()
         dry_run_until = (now + timedelta(hours=24)).isoformat()

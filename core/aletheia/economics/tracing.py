@@ -16,10 +16,9 @@ from uuid import uuid4
 
 from aletheia.economics.agent_roles import role_for_logical_agent
 from aletheia.economics.schema import ensure_economics_schema
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_iso(value: str | None) -> str:

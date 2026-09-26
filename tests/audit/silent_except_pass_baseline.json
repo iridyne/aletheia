@@ -1,6 +1,6 @@
 {
-  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason.",
-  "generated_at": "2026-09-26",
+  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
+  "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
   "count": 313,
   "sites": [
@@ -318,15 +318,15 @@
     },
     {
       "file": "core/aletheia/analytics/causal_controls.py",
-      "line": 140
+      "line": 141
     },
     {
       "file": "core/aletheia/analytics/filter_evidence.py",
-      "line": 396
+      "line": 397
     },
     {
       "file": "core/aletheia/analytics/ranker_objective_audit.py",
-      "line": 83
+      "line": 84
     },
     {
       "file": "core/aletheia/analytics/sizing_counterfactual.py",
@@ -402,7 +402,7 @@
     },
     {
       "file": "core/aletheia/data/active_ohlcv_backfill.py",
-      "line": 40
+      "line": 41
     },
     {
       "file": "core/aletheia/data/collector_health.py",
@@ -482,19 +482,19 @@
     },
     {
       "file": "core/aletheia/economics/context_artifacts.py",
-      "line": 172
+      "line": 171
     },
     {
       "file": "core/aletheia/economics/pricing_sync.py",
-      "line": 384
+      "line": 383
     },
     {
       "file": "core/aletheia/economics/pricing_sync.py",
-      "line": 620
+      "line": 619
     },
     {
       "file": "core/aletheia/economics/tracing.py",
-      "line": 868
+      "line": 867
     },
     {
       "file": "core/aletheia/execution/broker_utils.py",

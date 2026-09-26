@@ -25,6 +25,8 @@ from aletheia.analytics.outcome_semantics import (
     outcome_values,
 )
 from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
+from aletheia.storage.table_utils import table_exists as _table_exists
+from aletheia.storage.time_utils import utcnow as _utcnow
 
 _MISS_THRESHOLD_PCT = 0.5
 _POOR_EXPRESSION_DELTA_PCT = 0.5
@@ -1076,10 +1078,6 @@ def _base_report(generated_at: str, window: dict) -> dict:
     }
 
 
-def _table_exists(db, table: str) -> bool:
-    row = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-    return row is not None
-
 
 def _table_columns(db, table: str) -> set[str]:
     if not _table_exists(db, table):
@@ -1257,7 +1255,3 @@ def _fmt_rate(value: Any) -> str:
 
 def _window_label(window: dict) -> str:
     return f"{window.get('days', 7)}d"
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)

@@ -25,6 +25,7 @@ from aletheia.analytics.outcome_semantics import (
 from aletheia.analytics.sizing_trace import build_sizing_trace_audit, compact_sizing_trace_summary
 from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit, compact_thesis_lineage_summary
 from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+from aletheia.storage.table_utils import table_exists as _table_exists
 
 _FORWARD_HORIZONS = ("15m", "1h", "4h", "24h")
 _TRADE_ACTIONS = {"trade", "scale_in", "flip"}
@@ -1245,16 +1246,6 @@ def _is_past(raw: Any) -> bool:
 def _sort_ts(raw: Any) -> str:
     return str(raw or "9999-12-31T23:59:59+00:00")
 
-
-def _table_exists(db, table: str) -> bool:
-    try:
-        row = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        return False
-    return row is not None
 
 
 def _has_column(db, table: str, column: str) -> bool:

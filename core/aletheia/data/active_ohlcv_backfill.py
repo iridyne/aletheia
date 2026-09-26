@@ -21,6 +21,7 @@ from aletheia.data.symbols import (
     MARKET_SPOT,
 )
 from aletheia.storage import repositories as repo
+from aletheia.storage.time_utils import utcnow as _utcnow
 
 logger = logging.getLogger("aletheia.active_ohlcv_backfill")
 
@@ -76,8 +77,6 @@ class BackfillRunResult:
     bars_fetched: int = 0
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 

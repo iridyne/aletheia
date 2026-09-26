@@ -42,6 +42,7 @@ from aletheia.analytics.profit_loop_counterfactual import (
 from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
 from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
+from aletheia.storage.table_utils import table_exists as _table_exists
 
 
 PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"
@@ -240,16 +241,6 @@ def _hash(value: Any) -> str:
         normalized = {"value": normalized}
     return sha256_json(normalized)
 
-
-def _table_exists(db: Any, table: str) -> bool:
-    try:
-        return db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone() is not None
-    except Exception as exc:
-        logger.warning("profit_gradient_evidence: table existence probe unavailable for %s (%s)", table, type(exc).__name__)
-        return False
 
 
 def _columns(db: Any, table: str) -> set[str]:

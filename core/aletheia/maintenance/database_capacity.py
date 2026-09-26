@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 from statistics import median
 import time
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 _MIB = 1024 * 1024
@@ -24,8 +25,6 @@ _WAL_AUTOCHECKPOINT_PAGES = 1_000
 _logger = logging.getLogger("aletheia.maintenance.database_capacity")
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _database_path(path: Path | None = None) -> Path:

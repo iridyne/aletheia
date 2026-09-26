@@ -16,6 +16,7 @@ import sqlite3
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.storage.models import AuditEvent, ReconciliationIntegrityIncident
 from aletheia.storage import repositories as repo
+from aletheia.storage.json_utils import canonical_json as _canonical_json
 
 
 INCIDENT_TYPE = "close_reopen_churn"
@@ -41,9 +42,6 @@ def _parse(value: str | None) -> datetime | None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _fingerprint(detection: dict) -> str:

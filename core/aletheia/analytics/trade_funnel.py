@@ -17,6 +17,8 @@ from statistics import mean, median
 from typing import Any
 
 from aletheia.storage.sqlite import readonly_db
+from aletheia.storage.table_utils import table_exists as _table_exists
+from aletheia.storage.time_utils import utcnow as _utcnow
 
 
 _COUNT_KEYS = (
@@ -370,13 +372,6 @@ def _window(*, hours: int | None, days: int | None) -> dict:
         "cutoff": cutoff,
     }
 
-
-def _table_exists(db, table: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    ).fetchone()
-    return row is not None
 
 
 def _count(
@@ -951,7 +946,3 @@ def _window_label(window: dict) -> str:
     if window.get("days") is not None:
         return f"{window['days']}d"
     return f"{window.get('hours', 24)}h"
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)

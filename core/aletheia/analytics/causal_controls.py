@@ -14,6 +14,7 @@ logger = logging.getLogger("aletheia.analytics.causal_controls")
 import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 _HORIZONS = {
@@ -256,9 +257,3 @@ def _due_at(entry_ts: str, horizon: str) -> str | None:
     if dt is None:
         return None
     return (dt + _HORIZON_DELTA[horizon]).isoformat()
-
-
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()

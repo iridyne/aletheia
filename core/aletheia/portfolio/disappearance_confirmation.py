@@ -23,22 +23,19 @@ from aletheia.storage.models import (
     PositionDisappearanceCandidate,
     PositionDisappearanceObservation,
 )
+from aletheia.storage.json_utils import canonical_json_safe as _canonical_json
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 
 MIN_INDEPENDENT_COMPLETE_OBSERVATIONS = 2
 DIRECT_CONFIRMED_ABSENT = "confirmed_absent"
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
 
 def _digest(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_json(value).encode('utf-8')).hexdigest()}"
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 

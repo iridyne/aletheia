@@ -26,6 +26,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from aletheia.storage.json_utils import canonical_json as _canonical_json
 
 TRADING_MANDATE_VERSION = "trading_mandate/v1"
 TRADING_MANDATE_FIT_VERSION = "trading_mandate_fit/v1"
@@ -45,15 +46,6 @@ _PHYSICAL_MARKET_ALIASES = {
 _SUPPORTED_PHYSICAL_MARKETS = frozenset({"spot", "perp"})
 _SUPPORTED_DIRECTIONS = frozenset({"long", "short"})
 
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
 
 
 def _mapping(value: object) -> dict[str, Any]:

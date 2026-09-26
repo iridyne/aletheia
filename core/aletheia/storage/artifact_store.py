@@ -12,10 +12,9 @@ import yaml
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import canonical_json, sha256_bytes, sha256_file
 from aletheia.storage.models import PSArtifactRef
+from aletheia.storage.time_utils import utcnow_iso as _utcnow_iso
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class ArtifactStore:

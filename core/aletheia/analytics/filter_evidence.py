@@ -26,6 +26,7 @@ from aletheia.storage.models import (
     FilterDecisionBatch,
 )
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 logger = logging.getLogger("aletheia.analytics.filter_evidence")
 
@@ -1529,7 +1530,3 @@ def _boot_commit() -> str | None:
         return get_boot_commit()
     except Exception:
         return None
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()

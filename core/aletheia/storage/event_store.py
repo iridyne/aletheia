@@ -12,14 +12,13 @@ from aletheia.files.jsonl import _exclusive_file_lock
 from aletheia.storage.hashing import canonical_json, sha256_bytes
 from aletheia.storage.models import PSEvent, new_id
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.time_utils import utcnow_iso as _utcnow_iso
 
 
 def _machine_id() -> str:
     return platform.node() or "unknown"
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _events_dir() -> Path:
