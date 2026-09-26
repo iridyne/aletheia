@@ -14,7 +14,6 @@ pytestmark = pytest.mark.tier_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codex-shepherd.yml"
-AUTO_MERGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "auto-merge.yml"
 SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
 
 
@@ -28,12 +27,6 @@ def _script() -> str:
         for step in _workflow()["jobs"]["shepherd"]["steps"]
         if isinstance(step, dict) and "script" in step.get("with", {})
     )
-
-
-def _auto_merge_source() -> str:
-    return AUTO_MERGE_WORKFLOW_PATH.read_text(encoding="utf-8")
-
-
 @spec_claim(
     SpecClaim(
         "AG-CODEX-SHEPHERD-01",
@@ -138,60 +131,6 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     add_label = script.index("await github.rest.issues.addLabels", hold_start)
     marker_return = script.index("if (exactHeadHalt) return", add_label)
     assert hold_start < add_label < marker_return
-
-
-def test_auto_merge_atomically_protects_shepherd_authority() -> None:
-    source = _auto_merge_source()
-
-    # The merge controller must recognize Shepherd as merge authority everywhere
-    # it makes an authority decision. This removes an unlabeled-event race between
-    # two independent workflows.
-    shepherd_token = "'.github/workflows/codex-shepherd.yml'"
-    authority_message = "merge-authority workflow changes require an explicit manual merge"
-    assert source.count(shepherd_token) == 0
-    assert "path.startsWith('.github/workflows/')" in source
-    assert "'scripts/ci_plan.py'" in source
-    assert "'scripts/ci_local.py'" in source
-    assert source.count(authority_message) == 2
-
-    # Every authority decision must fail closed when GitHub's files endpoint is
-    # truncated. Schedule can disable directly; release and ordinary merge return.
-    schedule_complete = source.index(
-        "const changedFilesComplete = changedFiles.length === pullRequest.changed_files"
-    )
-    schedule_authority = source.index("const changesMergeAuthority", schedule_complete)
-    assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 1400]
-    assert schedule_complete < schedule_authority
-
-    release_summary = source.index("const [pullRequestSummary] = candidates")
-    release_metadata = source.index(
-        "const {data: pullRequest} = await github.rest.pulls.get", release_summary
-    )
-    release_complete = source.index(
-        "if (changedFiles.length !== pullRequest.changed_files)", release_metadata
-    )
-    release_authority = source.index(authority_message, release_complete)
-    assert release_summary < release_metadata < release_complete < release_authority
-    assert "pull_number: pullRequestSummary.number" in source[release_metadata:release_complete]
-    assert "release candidate changed after discovery; owner hold remains" in source[
-        release_metadata:release_complete
-    ]
-    assert "owner hold remains" in source[release_complete:release_authority]
-
-    ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
-    ordinary_complete = source.index(
-        "if (changedFiles.length !== pullRequestMetadata.changed_files)", ordinary_metadata
-    )
-    ordinary_authority = source.index(authority_message, ordinary_complete)
-    assert ordinary_metadata < ordinary_complete < ordinary_authority
-    assert "pullRequestMetadata.head.sha !== expectedHeadSha" in source[
-        ordinary_metadata:ordinary_complete
-    ]
-    assert "exact-head merge remains disabled" in source[
-        ordinary_complete:ordinary_authority
-    ]
-
-
 def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> None:
     script = _script()
 
@@ -220,25 +159,26 @@ def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> 
     assert "ci-failure" in script
 
 
-def test_codex_shepherd_retriggers_auto_merge_after_clean_review_comment() -> None:
+def test_codex_shepherd_observes_clean_ci_without_dispatching_a_merge() -> None:
+    # Auto-merge retired 2026-09-26: owners merge manually with
+    # `gh pr merge <n> --rebase`. Shepherd's issue_comment branch must not
+    # emit an `auto_merge_update` (or any other) merge dispatch when CI
+    # succeeds on an exact head; observing success is the whole action.
     script = _script()
-    issue_comment_handler = script[script.index("if (context.eventName === 'issue_comment')") :]
+    # Bind the assertions to the *main* issue_comment dispatch branch, which
+    # follows the latestCiRun() helper. The earlier issue_comment occurrences
+    # only tag the event source for payload/PR-number extractors; a bare
+    # .index() lands on one of those, silently passes the substring checks,
+    # and never looks at the code that used to dispatch the merge.
+    ci_helper = script.index("const latestCiRun")
+    dispatch_anchor = script.index("if (context.eventName === 'issue_comment')", ci_helper)
+    dispatch_end = script.index("if (context.eventName === 'workflow_run')", dispatch_anchor)
+    dispatch = script[dispatch_anchor:dispatch_end]
 
-    assert "run.conclusion === 'success'" in issue_comment_handler
-    assert "event_type: 'auto_merge_update'" in issue_comment_handler
-    assert "expected_head_sha: expectedHeadSha" in issue_comment_handler
-    assert "expected_base_sha: pullRequest.base.sha" in issue_comment_handler
-
-
-def test_auto_merge_does_not_parse_codex_comments_as_merge_authority() -> None:
-    source = _auto_merge_source()
-
-    assert "$commentsAfter: String" not in source
-    assert "comments(first: 100" not in source
-    assert "pullRequest.comments.nodes" not in source
-    assert "hasCleanExactHeadCodexReview" not in source
-    assert "Didn't find any major issues." not in source
-    assert "requires a clean exact-head Codex review" not in source
+    assert "run.conclusion === 'success'" in dispatch
+    assert "awaiting manual merge" in dispatch
+    assert "auto_merge_update" not in dispatch
+    assert "createDispatchEvent" not in dispatch
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
