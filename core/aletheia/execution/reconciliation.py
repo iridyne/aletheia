@@ -1130,13 +1130,40 @@ def reconcile() -> dict:
                     error_reason="exchange_fill_local_materialization_missing",
                     filled_at=None,
                 )
-            except Exception:
-                pass
-            _write_reconcile_event(
-                order,
-                state="materialization_missing",
-                reason="local_materialization_failed",
-            )
+            except Exception as transition_exc:
+                # `transition_order` failed — the database order status did
+                # NOT reach `materialization_missing`. Do not emit an audit
+                # event saying it did (that would split audit truth from
+                # database truth). Surface the failure via `errors` and a
+                # warning; the next order still gets processed.
+                errors.append(
+                    f"{order['id']}:materialization_missing_transition_failed"
+                )
+                logger.warning(
+                    "reconcile: materialization_missing transition failed "
+                    "for order %s (%s)",
+                    order["id"],
+                    type(transition_exc).__name__,
+                )
+            else:
+                # Transition succeeded — the database is now at
+                # `materialization_missing`. The audit event may be written.
+                try:
+                    _write_reconcile_event(
+                        order,
+                        state="materialization_missing",
+                        reason="local_materialization_failed",
+                    )
+                except Exception as audit_exc:
+                    # Committed order state is authoritative
+                    # (execution_contract.md §7); an audit-sink failure
+                    # after that must not roll it back or bubble up.
+                    logger.warning(
+                        "reconcile: materialization failure audit write failed "
+                        "for order %s (%s)",
+                        order["id"],
+                        type(audit_exc).__name__,
+                    )
             continue
 
         materialized_fills += result.new_fill_count
@@ -1590,13 +1617,34 @@ def reconcile() -> dict:
                             error_reason="exchange_fill_local_materialization_missing",
                             filled_at=None,
                         )
-                    except Exception:
-                        pass
-                    _write_reconcile_event(
-                        order,
-                        state="materialization_missing",
-                        reason="local_materialization_failed",
-                    )
+                    except Exception as transition_exc:
+                        # See sibling block above (~line 1130): database
+                        # state did not reach `materialization_missing`;
+                        # do not emit an audit event that would claim it
+                        # did. Surface via `errors` + warning.
+                        errors.append(
+                            f"{order['id']}:materialization_missing_transition_failed"
+                        )
+                        logger.warning(
+                            "reconcile: materialization_missing transition failed "
+                            "for order %s (%s)",
+                            order["id"],
+                            type(transition_exc).__name__,
+                        )
+                    else:
+                        try:
+                            _write_reconcile_event(
+                                order,
+                                state="materialization_missing",
+                                reason="local_materialization_failed",
+                            )
+                        except Exception as audit_exc:
+                            logger.warning(
+                                "reconcile: materialization failure audit write failed "
+                                "for order %s (%s)",
+                                order["id"],
+                                type(audit_exc).__name__,
+                            )
                     continue
 
                 materialized_fills += result.new_fill_count
