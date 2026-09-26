@@ -38,8 +38,10 @@ This is the main implementation authority after governance and product scope. Re
 
 Contracts describe current approved behavior. Decisions describe why the system
 chose its current direction. Proposals describe a substantial future change
-without claiming it exists. A Proposal is required only for a major new
-capability, a cross-domain change, or a trust-boundary change. Ordinary bugs use
-a GitHub Issue and PR. If code and contract differ, verify the current behavior
+without claiming it exists. Since 2026-09-26 a Proposal is optional and never a
+precondition for any change depth
+([decision](../governance/decisions/DECISIONS.md#2026-09-26-—-提案文档不再是任何改动的前置条件测试是权威载体));
+write one when the reasoning will not survive in a PR body, otherwise use a
+GitHub Issue and PR. If code and contract differ, verify the current behavior
 and file or update a GitHub Issue unless the task explicitly changes the
 contract.
