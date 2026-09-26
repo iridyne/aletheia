@@ -104,11 +104,13 @@ async def _venue_positions(adapter) -> list | None:
 
 
 def _venue_confirms_position(row: dict, venue_positions: list) -> str | None:
-    """Return the venue position id when the venue holds the exact local Position.
+    """Return re-anchor evidence when the venue holds the exact local Position.
 
     The match is (canonical symbol, market type, side, quantity).  A fresh
     physical account cannot hold the same exact Position set, so this is the
-    account-continuity proof required before any generation re-anchor.
+    account-continuity proof required before any generation re-anchor.  The
+    returned key is the venue position id when exposed, else the exact matched
+    identity (Bitget position lists do not expose a venue position id).
     """
     expected = instrument_from_local(row["symbol"], row["market_type"])
     direction = str(row["direction"] or "").lower()
@@ -124,7 +126,12 @@ def _venue_confirms_position(row: dict, venue_positions: list) -> str | None:
             continue
         if abs(float(position.quantity) - quantity) > max(1e-9, quantity * 1e-6):
             continue
-        return position.venue_position_id
+        # Bitget position lists do not expose a venue position id; keep the exact
+        # matched identity as the re-anchor evidence key when that is the case.
+        return position.venue_position_id or (
+            f"venue-pos:{instrument.canonical_symbol}:{instrument.market_type}:"
+            f"{str(position.side).lower()}:{float(position.quantity):g}"
+        )
     return None
 
 

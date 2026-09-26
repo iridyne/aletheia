@@ -944,6 +944,40 @@ def test_close_fails_closed_on_generation_drift_without_venue_proof(tmp_path, mo
     assert position_row["status"] == "open"
 
 
+def test_close_reanchors_when_venue_position_has_no_venue_id(tmp_path, monkeypatch):
+    """Bitget position lists expose no venue position id; the exact match must still prove."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    _insert_bound_position(position)
+    entry_id = position.order_id
+    assert entry_id is not None
+    recorder = []
+    factory, current = _drifted_adapter_factory(
+        "binance_testnet", venue_position_ids=[None], submit_recorder=recorder
+    )
+    monkeypatch.setattr(coordinator, "create_uta_adapter", factory)
+
+    result = close_position(position.id, "stop_loss")
+    assert recorder == [current]
+    entry = repo.get_order(entry_id)
+    assert entry is not None
+    assert UTAAccountIdentity.model_validate_json(entry["uta_account_identity_json"]) == current
+
+
 def test_entry_reanchors_open_position_generation_drift_after_venue_proof(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import coordinator
