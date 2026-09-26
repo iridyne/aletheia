@@ -546,8 +546,19 @@ def _capture_universe_discovery_nonfatal(
                 result.get("batch_id"),
                 result.get("outcomes_inserted"),
             )
-    except Exception as exc:
-        logger.warning("Universe Discovery Benchmark capture failed (non-fatal): %s", exc)
+    except Exception:
+        # Sidecar semantics are "never block the production Universe refresh"
+        # (introduced with the discovery-benchmark landing). Keeping the broad
+        # except is deliberate — the sidecar reaches persistence, scanners and
+        # filters, so a narrow list would drift out of date. But bare warning
+        # loses the stack, so any real defect is invisible until someone tails
+        # the logs and wonders why "capture failed" recurs. Log at error with
+        # full traceback so a genuine regression surfaces immediately.
+        logger.error(
+            "Universe Discovery Benchmark capture failed (non-fatal, run=%s)",
+            scanner_run_id,
+            exc_info=True,
+        )
 
 
 
@@ -639,24 +650,28 @@ class UniverseService:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
         # Optional market-context refresh; unavailable context stays absent.
+        # Disabled config and a missing refresher are normal states, not
+        # failures — expressing them as if/else instead of raise/except
+        # both avoids logging benign paths as errors and shrinks the try
+        # block to the parts that can actually fault (refresh coroutine
+        # and repo write).
         current_regime = None
-        try:
-            if not cfg.regime.enabled:
-                raise RuntimeError("regime disabled by config")
-
-            if _regime_refresher is None:
-                raise RuntimeError("regime_refresher_unavailable")
-            current_regime = await _regime_refresher(cfg.regime.min_hold_periods)
-            if current_regime is not None:
-                with repo.transaction():
-                    repo.insert_market_regime(current_regime)
-                logger.info(
-                    "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
-                    current_regime.state, current_regime.confidence,
-                    current_regime.long_bias, current_regime.short_bias,
-                )
-        except Exception as e:
-            logger.warning("Regime detection failed (non-fatal): %s", e)
+        if cfg.regime.enabled and _regime_refresher is not None:
+            try:
+                current_regime = await _regime_refresher(cfg.regime.min_hold_periods)
+                if current_regime is not None:
+                    with repo.transaction():
+                        repo.insert_market_regime(current_regime)
+                    logger.info(
+                        "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
+                        current_regime.state, current_regime.confidence,
+                        current_regime.long_bias, current_regime.short_bias,
+                    )
+            except Exception:
+                # Regime is an optional market-context annotation; a genuine
+                # failure here must not block the Universe refresh, but it
+                # is a real defect and deserves a stack.
+                logger.error("Regime detection failed (non-fatal)", exc_info=True)
 
         run = UniverseScannerRun()
         with repo.transaction():
@@ -690,10 +705,20 @@ class UniverseService:
             with repo.transaction():
                 repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
-            # Inject volume-ranking symbols as additional candidates
+            # Inject volume-ranking symbols as additional candidates.
+            # The import is done lazily because get_latest_volume_ranking is
+            # populated by a scheduler side effect and may legitimately be
+            # unavailable during isolated tests. Only that resolution — an
+            # ImportError from the scheduler module — is a genuine "skip this
+            # optional injection" signal. A TypeError from _volume_ranked_instruments,
+            # an AttributeError from a malformed vol payload, or any other
+            # exception is a programming defect we want to see, not silently
+            # demote to "no ranking today".
             try:
                 from aletheia.agent_runtime.scheduler import get_latest_volume_ranking
-
+            except ImportError as exc:
+                logger.debug("volume_ranking injection skipped: %s", exc)
+            else:
                 vol = get_latest_volume_ranking()
                 vol_symbols = vol.get("symbols") or [] if vol else []
                 ranked_instruments = _volume_ranked_instruments(
@@ -718,8 +743,6 @@ class UniverseService:
                             ),
                         )
                     )
-            except Exception as e:
-                logger.debug("volume_ranking injection skipped: %s", e)
 
             feature_kwargs = {"priority_asset_ids": priority_asset_ids} if priority_asset_ids else {}
             features_list = await collect_features(
