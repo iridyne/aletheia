@@ -761,20 +761,32 @@ def _probe_config_gates(report: Report) -> None:
 
     from aletheia.config.exchanges import DEMO_EXECUTION_MODES
 
-    demo_cap = getattr(cfg.risk, "max_demo_position_margin_usdt", None)
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
-    if (
-        cfg.exchange.mode == "demo"
-        and paper_mode in DEMO_EXECUTION_MODES
-        and demo_cap is not None
-        and float(demo_cap) <= 0
-    ):
-        report.add(
-            "config.demo_margin_cap",
-            "blocker",
-            f"max_demo_position_margin_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
-            "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
-        )
+    if cfg.exchange.mode == "demo" and paper_mode in DEMO_EXECUTION_MODES:
+        # Read the cap admission actually enforces. The flat alias is not mirrored
+        # for this field, so a nested-only write (copy / replace / reset-defaults)
+        # left this blocker unable to fire after the operator loop reduced the
+        # real cap. A mode that is registered as demo but owns no risk policy is
+        # reported, never silently treated as a healthy cap.
+        from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+
+        try:
+            demo_cap = resolve_risk_policy(cfg, paper_mode).policy.capital.max_position_margin_usdt
+        except UnknownRiskExecutionMode:
+            report.add(
+                "config.demo_margin_cap",
+                "blocker",
+                f"paper_execution_mode={paper_mode!r} owns no risk policy — its margin cap is unverifiable",
+                "register the execution mode's risk policy, or select a registered paper/demo mode",
+            )
+        else:
+            if float(demo_cap) <= 0:
+                report.add(
+                    "config.demo_margin_cap",
+                    "blocker",
+                    f"max_position_margin_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
+                    "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
+                )
 
     if cfg.runtime.kill_switch_active:
         report.add("config.kill_switch", "blocker",
