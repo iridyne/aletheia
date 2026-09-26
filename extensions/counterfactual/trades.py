@@ -30,6 +30,16 @@ def _max_event_snapshot_age_seconds() -> int:
 
         return int(MARKET_DATA_INTERVAL_MINUTES) * 60 * 2
     except Exception:
+        # Scheduler import failing or cadence type drifting used to
+        # silently rewrite the freshness window to a fixed 10 min. That
+        # decoupled the counterfactual price-freshness policy from the
+        # actual data-collection cadence. Callers can still keep going
+        # with the safe default, but log so a real defect is visible.
+        logger.warning(
+            "counterfactual.trades: MARKET_DATA_INTERVAL_MINUTES lookup failed "
+            "(defaulting to 600s freshness window)",
+            exc_info=True,
+        )
         return 10 * 60
 
 
@@ -380,6 +390,17 @@ def _current_price(
             snap = latest_snapshot(symbol, market_type=market_type)
         return float(snap["price"]) if snap else None
     except Exception:
+        # DB/schema failure, symbol conversion error, snapshot-field
+        # drift, or `float(snap["price"])` on bad data all collapse to
+        # None here — which downstream lets `persist_shadow_batch` write
+        # a shadow row with `entry_price=NULL`. The `None` return is the
+        # documented signal, but any of the above defects is now visible.
+        logger.warning(
+            "counterfactual.trades: entry-price lookup failed symbol=%s market_type=%s",
+            symbol,
+            market_type,
+            exc_info=True,
+        )
         return None
 
 
@@ -706,7 +727,16 @@ def _current_regime() -> str:
         if macro and macro.get("risk_regime"):
             return str(macro["risk_regime"])
     except Exception:
-        pass
+        # Macro repo unavailability, field drift, or caller-side errors
+        # all used to be swallowed silently, freezing the returned regime
+        # tag to `"unknown"` — which is legitimately reported when there
+        # simply is no macro snapshot. Log so the two cases can be
+        # distinguished from the shadow trades records.
+        logger.warning(
+            "counterfactual.trades: current regime lookup failed "
+            "(defaulting to 'unknown')",
+            exc_info=True,
+        )
     return "unknown"
 
 
