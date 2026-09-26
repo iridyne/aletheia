@@ -555,7 +555,7 @@ def _capture_universe_discovery_nonfatal(
         # the logs and wonders why "capture failed" recurs. Log at error with
         # full traceback so a genuine regression surfaces immediately.
         logger.error(
-            "Universe Discovery Benchmark capture failed (non-fatal, run=%s)",
+            "Universe Discovery Benchmark capture failed (non-fatal) run=%s",
             scanner_run_id,
             exc_info=True,
         )
