@@ -1439,10 +1439,13 @@ def reconcile() -> dict:
             else:
                 rows = list(fill_rows.get(market_type, []))
             if not use_exact_order_history and _needs_symbol_scoped_history(order, rows):
-                try:
-                    exchange_symbol = to_bitget(str(order["symbol"]))
-                except Exception:
-                    exchange_symbol = None
+                # `to_bitget()` is pure string canonicalisation over `str`
+                # (see `data/symbols.py`) — it cannot raise on a `str` input,
+                # so the historical `except Exception: exchange_symbol = None`
+                # was masking data-integrity issues rather than protecting a
+                # real failure path. Other call sites (`:1211`, `:1416`) call
+                # it directly with no guard, which is the correct pattern.
+                exchange_symbol = to_bitget(str(order["symbol"]))
                 cache_key = (market_type, exchange_symbol)
                 if exchange_symbol and cache_key not in symbol_fill_rows:
                     try:
