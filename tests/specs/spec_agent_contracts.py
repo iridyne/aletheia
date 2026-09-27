@@ -289,54 +289,55 @@ def test_scheduler_job_wrappers_have_try_except():
 )
 def test_registered_scheduler_jobs_record_swallowed_failures():
     import ast
-    from tests.module_source import module_source
+    from tests.module_source import ROOT, seam_modules
 
-    tree = ast.parse(module_source("core/aletheia/agent_runtime/scheduler.py"))
+    source = "core/aletheia/agent_runtime/scheduler.py"
+    trees = [
+        (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        for path in [ROOT / source, *seam_modules(source)]
+    ]
     functions = {
-        node.name: node
+        node.name: (path, node)
+        for path, tree in trees
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef)
     }
-
-    registered: list[tuple[str, str]] = []
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_job"
-        ):
-            continue
-        if not node.args or not isinstance(node.args[0], ast.Call):
-            continue
-        guarded_call = node.args[0]
-        if not (
-            isinstance(guarded_call.func, ast.Name)
-            and guarded_call.func.id == "_guarded"
-            and len(guarded_call.args) >= 2
-        ):
-            continue
-        job_arg, fn_arg = guarded_call.args[:2]
-        if isinstance(job_arg, ast.Constant) and isinstance(fn_arg, ast.Name):
-            registered.append((str(job_arg.value), fn_arg.id))
-
+    registered = []
+    for path, tree in trees:
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_job"
+                and node.args
+                and isinstance(node.args[0], ast.Call)
+            ):
+                continue
+            guarded = node.args[0]
+            if not (
+                isinstance(guarded.func, ast.Name)
+                and guarded.func.id == "_guarded"
+                and len(guarded.args) >= 2
+            ):
+                continue
+            job, callback = guarded.args[:2]
+            if isinstance(job, ast.Constant) and isinstance(callback, ast.Name):
+                registered.append((str(job.value), callback.id, path, node.lineno))
     assert registered, "No _guarded scheduler jobs found"
-
     missing = []
-    for job_id, fn_name in registered:
-        fn = functions.get(fn_name)
-        has_failure_record = fn is not None and any(
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "_record_job_failure"
-            for call in ast.walk(fn)
-        )
-        if not has_failure_record:
-            missing.append(f"{job_id}->{fn_name}")
-
-    assert missing == [], (
-        "Registered scheduler jobs must record caught failures so repeated "
-        f"failures surface as infra_events: {missing}"
-    )
+    for job_id, name, path, line in registered:
+        owner = functions.get(name)
+        if owner is not None:
+            path, function = owner
+            line = function.lineno
+            if any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == "_record_job_failure"
+                for call in ast.walk(function)
+            ):
+                continue
+        missing.append(f"{path.relative_to(ROOT)}:{line}: {job_id}->{name}")
+    assert not missing, f"Registered wrappers must record caught failures: {missing}"
 
 
 @spec_claim(
