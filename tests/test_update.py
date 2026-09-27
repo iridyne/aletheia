@@ -1543,6 +1543,24 @@ def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
     assert result["stage"] == "import"
 
 
+def test_smoke_pytest_does_not_inherit_runtime_data_root(tmp_path, monkeypatch):
+    from ops.update import smoke
+
+    home = tmp_path / "home"
+    runtime = home / ".aletheia"
+    runtime.mkdir(parents=True)
+    sentinel = runtime / "owner-sentinel.txt"
+    sentinel.write_text("unchanged", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(runtime))
+    monkeypatch.setenv("PYTEST_ADDOPTS", f"-o cache_dir={tmp_path / 'pytest-cache'}")
+
+    result = smoke.run_smoke_check()
+    assert result == {"ok": True, "stage": "done", "detail": ""}
+    assert sentinel.read_text(encoding="utf-8") == "unchanged"
+
+
 def test_apply_no_auto_restart(tmp_path, monkeypatch):
     """Neither success nor rollback may restart the gateway (user requirement)."""
     setup_env(tmp_path, monkeypatch)
