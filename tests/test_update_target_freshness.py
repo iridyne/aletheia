@@ -65,6 +65,7 @@ def _settled_update_boundary(monkeypatch):
 
 
 def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch):
+    """The development updater preserves concurrent configuration changes."""
     from aletheia.config import loader
     from aletheia.config.schema import AletheiaConfig
     from aletheia.update import git_ops
@@ -78,6 +79,7 @@ def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch
     latest = AletheiaConfig()
     latest.runtime.paused = True  # concurrent/unrelated durable change
 
+    monkeypatch.setattr(applier.sys, "platform", "darwin")
     monkeypatch.setattr(applier, "load_config", lambda: pre_pull)
     monkeypatch.setattr(git_mutations, "fetch", lambda branch: {"ok": True})
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
