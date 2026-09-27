@@ -104,6 +104,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 而不是只比较父进程中的模拟参数；该探针不启动 Aletheia Gateway。
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
+- 离线交易测试同时隔离私有下单和公共 listing I/O；保留真实能力刷新、Gateway 校验与记账断言。
 - DB 测试用真实隔离 SQLite，不 mock。批量持久化示例见
   [test_performance_storage_batches.py](../../../tests/test_performance_storage_batches.py)：
   断言实际落库值，并让后续 SQL 写入失败，验证前序写入全部回滚；不验证 facade 转发或 mock 调用。

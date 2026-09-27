@@ -3,8 +3,8 @@
 Demo orders use the explicitly selected exchange account. There is no local
 simulator fallback; missing or retired execution modes cannot execute.
 
-The Bitget HTTP call is always mocked here — CI never touches the real API (the
-autouse guard in conftest.py also blocks unmocked calls). These verify:
+Private order I/O and public sandbox listing I/O are mocked here; no real API
+request is needed. Capability caches start cold so the real refresh path runs. These verify:
 - gateway routes an approved bitget_demo proposal to the broker (real-exchange path),
   tags execution_mode="bitget_demo", and is NOT blocked by live_disabled;
 - a bitget_demo proposal is rejected when exchange.mode != demo (account_mode_mismatch
@@ -44,9 +44,16 @@ def setup_env(tmp_path, monkeypatch):
 
 def _demo_config(monkeypatch, permission="Paper"):
     from aletheia.config.loader import load_config, save_config
-    from aletheia.execution import order_constraints
+    from aletheia.execution import order_constraints, venue_capabilities
     from aletheia.execution.order_constraints import OrderConstraints
     from decimal import Decimal
+    from extensions.data.ccxt_provider import CCXTProvider
+
+    async def public_listing(self, **kwargs):
+        return {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset({"BTC/USDT"})}
+
+    monkeypatch.setattr(CCXTProvider, "get_public_market_capabilities", public_listing)
+    monkeypatch.setattr(venue_capabilities, "_demo_capabilities_cache", {})
 
     cfg = load_config()
     cfg.agent.permission_mode = permission
