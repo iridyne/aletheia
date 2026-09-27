@@ -5,6 +5,25 @@
 
 ---
 
+## Local proof receipts
+
+The existing ci_plan/ci_local pair owns required proof lanes. Python unit,
+runtime, integration, specification and E2E checks use tier_unit,
+domain_runtime, tier_integration, tier_spec and tier_e2e respectively; runtime
+is the existing runtime domain, not a new classification. Each executed check
+records its lane, command, exit code and duration alongside the exact base/head
+and plan fingerprint. A failed required check stops execution.
+
+A required lane without an executor is required_but_unavailable and exits
+nonzero, never pass. Full-suite proof requires the credential-isolated Fedora
+identity/container described in DEVELOPMENT_WORKFLOW.md; the local executor
+currently reports that lane unavailable rather than pretending a printed note
+is proof. --skip-execute returns planned commands only, not a pass receipt.
+The same restriction applies to a deep plan that requests all four Python tiers:
+partitioning the suite does not make it focused or credential-isolated. Those
+lanes remain required but have no local execution command; an affected unit-only
+plan may still run locally. No required scope is silently removed.
+
 ## 快速命令
 
 ```powershell
@@ -14,27 +33,28 @@ uv run python scripts/dev_check.py
 # 单文件（秒级，日常用）
 uv run pytest tests/test_xxx.py -q
 
-# 最快单元层（纯单元/纯函数，~70s 并行；-n auto 由 pytest-xdist 多核分发）
-uv run pytest tests/ -m tier_unit -n auto -q --timeout=120
+# 单元层；串行计时用于跟踪同集合反馈成本
+uv run pytest tests/ -m tier_unit -q --timeout=120
 
 # 按关键字过滤
 uv run pytest tests/ -k "knowledge or dreaming" -q
 
-# SDD spec claims（全部，<2s）
+# SDD spec claims
 uv run pytest tests/specs/ -q
 
-# 架构依赖检查（<1s）
+# 架构依赖检查
 uv run pytest tests/test_architecture_fitness.py -q
 
 # Conformance Matrix（打印 claim 状态矩阵）
 uv run pytest tests/test_spec_conformance.py -v -s
 
-# 全量（~5min，提交前后台跑；可并行 ~1min，失败时先用非并行复现）
+# 全量：仅限已授权、凭据隔离的 Fedora 测试环境（不是稳定 Runtime checkout）
 uv run pytest tests/ -q --tb=line
-uv run pytest tests/ -n auto --tb=line -q
 ```
 
-**不要等全量完成再继续工作**——后台跑，有失败再回头修。
+全量验证只在凭据隔离且与稳定 Runtime 分离的 Fedora 测试身份/容器中执行，
+按 DEVELOPMENT_WORKFLOW.md 的授权与隔离要求操作；不能用本地分层跑完全部测试
+来绕过该边界。普通改动先跑 changed-file gate 和相关 focused tests。
 
 ---
 
@@ -79,9 +99,18 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 禁止 mock：模块间接口 / 数据库层 / 内部函数调用链
 ```
 
+伪造子进程时同时隔离创建和终止；不得把虚拟 PID 交给真实 OS。
+启动一致性可由临时子进程实际绑定端口并回传自身 PID/runtime ID 验证，
+而不是只比较父进程中的模拟参数；该探针不启动 Aletheia Gateway。
+
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - 离线交易测试同时隔离私有下单和公共 listing I/O；保留真实能力刷新、Gateway 校验与记账断言。
-- DB 测试用真实 SQLite in-memory，不 mock
+- DB 测试用真实隔离 SQLite，不 mock。批量持久化示例见
+  [test_performance_storage_batches.py](../../../tests/test_performance_storage_batches.py)：
+  断言实际落库值，并让后续 SQL 写入失败，验证前序写入全部回滚；不验证 facade 转发或 mock 调用。
+- 私有读取失败日志的回归见 [test_ccxt_adapter.py](../../../tests/uta/test_ccxt_adapter.py)：使用合成载荷验证安全诊断与原有 unavailable/reason 结果，不读取真实凭据；业务目标引用既有安全与执行契约。
+- 终止歧义的行为回归入口是 [test_close_terminal_ambiguity.py](../../../tests/test_close_terminal_ambiguity.py)；D0 修复引用既有 [Execution Contract](../../design/contracts/execution_contract.md)，不向 Contract 写入本轮测试证据。
+- 平台分支测试显式声明目标平台；development updater 的测试不能依赖运行主机恰好不是 Linux。
 
 ---
 

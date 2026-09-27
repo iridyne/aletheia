@@ -28,8 +28,6 @@ from tools.sdd_shadow.validate import (
     load_json,
 )
 
-pytestmark = pytest.mark.tier_unit
-
 ROOT = Path(__file__).resolve().parents[1]
 SHADOW_ROOT = ROOT / "tools" / "sdd_shadow"
 WORKFLOW_PATHS = {

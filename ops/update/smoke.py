@@ -12,6 +12,7 @@ NOT run here — too slow for an unattended update path.
 
 import logging
 import subprocess
+import tempfile
 
 from aletheia.config.loader import _PROJECT_ROOT
 from aletheia.gateway.pidfile import _no_window_kwargs
@@ -51,11 +52,13 @@ def run_smoke_check() -> dict:
 
     # Gate 2: fast pytest subset.
     try:
-        r = subprocess.run(
-            [sys.executable, "-m", "pytest", *_FAST_TESTS, "-q", "-x"],
-            cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=180,
-            env=env, **_no_window_kwargs(),
-        )
+        with tempfile.TemporaryDirectory(prefix="aletheia-update-tests-") as test_root:
+            env["ALETHEIA_DATA_DIR"] = test_root
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", *_FAST_TESTS, "-q", "-x"],
+                cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=180,
+                env=env, **_no_window_kwargs(),
+            )
         if r.returncode != 0:
             return {"ok": False, "stage": "fast_tests", "detail": (r.stdout or r.stderr).strip()[-500:]}
     except Exception as e:

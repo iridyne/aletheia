@@ -2023,3 +2023,48 @@ async def test_bitget_exact_close_absence_codes_preserve_profile_and_purpose(mon
         assert report.order is None
     finally:
         await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface,endpoint,reason", [
+    ("order", "fetch_order", "private_exact_order_unavailable"),
+    ("fills", "fetch_my_trades", "private_fills_unavailable"),
+    ("funding", "fetch_ledger", "private_funding_ledger_unavailable"),
+    ("authority", "fetch_balance", "account_authority_unavailable"),
+])
+async def test_private_read_failure_logs_only_safe_diagnostics(monkeypatch, caplog, surface, endpoint, reason):
+    import logging
+
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    marker = "SYNTHETIC_PRIVATE_RESPONSE_PAYLOAD"
+
+    async def rejected(*args, **kwargs):
+        raise RuntimeError(marker)
+
+    monkeypatch.setattr(exchange, endpoint, rejected)
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    caplog.set_level(logging.WARNING, logger="aletheia.exchanges.ccxt.adapter")
+    scope = QueryScope(start_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    try:
+        if surface == "order":
+            report = await adapter.get_order(OrderQuery(scope=scope, venue_order_id="synthetic-order"))
+        elif surface == "fills":
+            report = await adapter.get_fills(FillQuery(scope=scope))
+        elif surface == "funding":
+            report = await adapter.get_funding_ledger(FundingLedgerQuery(
+                scope=_funding_scope(datetime.now(timezone.utc), age_days=1)
+            ))
+        else:
+            report = await adapter.probe_account_authority()
+        assert report.completeness is ReadCompleteness.UNAVAILABLE
+        assert report.reason_code == reason
+        assert marker not in report.model_dump_json()
+        records = [record for record in caplog.records if record.name == "aletheia.exchanges.ccxt.adapter"]
+        assert any(record.levelno == logging.WARNING for record in records)
+        assert all(marker not in record.getMessage() for record in records)
+        assert all(record.exc_info is None for record in records)
+        assert any("RuntimeError" in record.getMessage() for record in records)
+    finally:
+        await adapter.close()
