@@ -39,6 +39,8 @@ def client(api_only_runtime):
     {"Sec-Fetch-Site": "none"},
     {"Sec-Fetch-Site": ""},
     {"Sec-Fetch-Mode": "navigate"},
+    {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"},
+    {"Sec-Fetch-Mode": "cors", "Referer": "https://attacker.example/form"},
     {"Referer": "https://attacker.example/form"},
     [("Origin", "http://127.0.0.1:8787"), ("Origin", "https://attacker.example")],
 ])
@@ -90,6 +92,7 @@ def test_hostile_empty_restart_rejected_before_audit_or_scheduling(client, monke
 
 @pytest.mark.parametrize("headers", [
     {},  # Explicit non-browser CLI.
+    {"Sec-Fetch-Mode": "cors"},  # Native Node fetch, not browser provenance.
     {"Sec-Fetch-Site": "same-origin"},
     {"Origin": "http://127.0.0.1:8787", "Sec-Fetch-Site": "same-origin"},
     {"Origin": "http://localhost:8787"},

@@ -113,6 +113,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 - 渲染测试补齐实际会调用的外部 API 测试响应；不能依赖未配置 localhost 的连接失败维持通过，也不能屏蔽日志来冒充隔离。
 - 终止歧义的行为回归入口是 [test_close_terminal_ambiguity.py](../../../tests/test_close_terminal_ambiguity.py)；D0 修复引用既有 [Execution Contract](../../design/contracts/execution_contract.md)，不向 Contract 写入本轮测试证据。
 - 私有读取失败日志的回归见 [test_ccxt_adapter.py](../../../tests/uta/test_ccxt_adapter.py)：使用合成载荷验证安全诊断与原有 unavailable/reason 结果，不读取真实凭据；业务目标引用既有安全与执行契约。
+- HTTP 来源回归见 [test_http_mutation_origin.py](../../../tests/test_http_mutation_origin.py) 和 [test_operator_service_auth.py](../../../tests/test_operator_service_auth.py)：Node 原生 fetch 的单独 `Sec-Fetch-Mode: cors` 不代表浏览器来源；保留 Origin/Referer/跨站元数据拒绝以及独立服务凭据和路由白名单校验。
 
 ---
 
