@@ -642,7 +642,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                 attempts=int(order.get("entry_cancel_attempts") or 0) + 1,
             )
             if result.evidence is not CommandEvidence.ACKNOWLEDGED:
-                return pending()
+                return pending_with_defer()
     except Exception:
         # A catch-all that returns `pending()` re-enters reconciliation on the next
         # watcher cycle. Without this log the real cause (identity mismatch, venue
@@ -711,6 +711,11 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             OrderLifecycle.REJECTED,
             OrderLifecycle.FILLED,
         }:
+            if not reconciling_cancel:
+                # This call already submitted the cancel; the venue has not had time
+                # to process it. Submitting again now only burns the rate limit the
+                # re-attempt exists to survive.
+                return pending_with_defer()
             # The venue still holds this Order, so the earlier cancel never landed
             # (rejected, lost to a credential/config generation change, or never
             # processed). A cancel is idempotent by client_order_id, so re-attempt

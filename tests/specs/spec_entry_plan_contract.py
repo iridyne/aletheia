@@ -650,6 +650,7 @@ def test_entry_cancel_reattempt_reuses_the_client_order_identity(monkeypatch):
     from types import SimpleNamespace
 
     from aletheia.execution import coordinator, gateway, reconciliation
+    from aletheia.storage import repositories as repo
     from aletheia.uta import manager
     from aletheia.uta.models import OrderLifecycle, ReadCompleteness
     from tests.test_entry_plan_execution import _cancel_ack, _persist_ordered_plan
@@ -688,8 +689,12 @@ def test_entry_cancel_reattempt_reuses_the_client_order_identity(monkeypatch):
     monkeypatch.setattr(manager, "query_uta", still_working)
 
     gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")
+    row = repo.get_order(order.id)
+    assert row is not None
+    repo.update_order_metadata(row["id"], entry_cancel_retry_after="2026-01-01T00:00:00+00:00")
+    gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")
 
-    assert len(cancels) == 2, "the still-working Order is re-attempted"
+    assert len(cancels) == 2, "the still-working Order is re-attempted once the retry window elapses"
     identities = {(command.target_venue_order_id, command.target_client_order_id) for command in cancels}
     assert identities == {(order.exchange_order_id, order.client_order_id)}, (
         "the re-attempt must keep the same venue/client order identity, so the venue cannot see two cancels"

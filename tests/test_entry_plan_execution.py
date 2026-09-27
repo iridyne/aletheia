@@ -1830,12 +1830,18 @@ def test_gateway_cancel_reattempts_idempotent_cancel_until_venue_confirms(monkey
     )
 
     assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
-    assert len(cancels) == 2, "the first attempt and the still-working re-attempt both submit"
+    assert len(cancels) == 1, "one submission per call: the venue has not processed the first cancel yet"
     pending_row = repo.get_order(order.id)
     assert pending_row is not None
-    assert pending_row["entry_cancel_attempts"] == 2
+    assert pending_row["entry_cancel_attempts"] == 1
     assert pending_row["entry_cancel_retry_after"] is not None
     assert pending_row["status"] == "submitted"
+
+    _expire_cancel_retry_window(order.id)
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+    assert len(cancels) == 2, "the venue still holds the Order, so the cancel is re-attempted once the window elapses"
+    reattempt_row = repo.get_order(order.id)
+    assert reattempt_row is not None and reattempt_row["entry_cancel_attempts"] == 2
 
     _expire_cancel_retry_window(order.id)
     state["value"] = OrderLifecycle.CANCELED
@@ -1863,7 +1869,7 @@ def test_gateway_cancel_retry_window_skips_the_venue_read(monkeypatch):
 
     assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
     assert len(queries) == reads_after_first, "no venue read happens inside the backoff window"
-    assert len(cancels) == 2
+    assert len(cancels) == 1
 
 
 def test_gateway_cancel_reanchors_generation_drift_only_after_exact_order_proof(monkeypatch):
@@ -1883,6 +1889,12 @@ def test_gateway_cancel_reanchors_generation_drift_only_after_exact_order_proof(
         queries=queries,
     )
 
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+    assert repo.list_audit_events(limit=50, event_type="uta_account_reanchored") == [], (
+        "the first call only submits; the drift is re-anchored when a venue read authorises a re-attempt"
+    )
+
+    _expire_cancel_retry_window(order.id)
     assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
 
     reanchors = [event for event in repo.list_audit_events(limit=50, event_type="uta_account_reanchored")]

@@ -26,7 +26,10 @@ import threading
 
 # One reusable loop per calling thread (see `run_coro_from_sync`). Loops stay
 # registered for the process lifetime so a later call from the same thread finds
-# the same loop instead of a fresh one.
+# the same loop instead of a fresh one. Ceiling: a process that churns many
+# short-lived bridge threads accumulates one idle loop per thread it has used —
+# bounded by that churn, and never freed, which is the price of keeping a
+# loop-bound adapter valid across calls.
 _THREAD_LOOPS: dict[int, asyncio.AbstractEventLoop] = {}
 _BRIDGE_LOOPS: dict[int, asyncio.AbstractEventLoop] = {}
 _LOOP_LOCK = threading.Lock()
@@ -93,6 +96,10 @@ def run_coro_from_sync(coro, *, timeout: float | None = None):
     A coroutine already running on the bridge loop must not call this function —
     the same loop cannot be driven from its own thread. No current caller does
     (bridged coroutines await, they never re-enter the bridge).
+
+    The loop is not closed per call, so async generators a call abandons are
+    finalized at garbage collection rather than at the end of the call; task
+    teardown (above) is what remains per call.
     """
     try:
         running = asyncio.get_running_loop()
