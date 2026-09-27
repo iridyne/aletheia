@@ -1178,24 +1178,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         params=("dreaming_agent", cutoff_24h),
         limit=5,
     )
-    recent_research_notes = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("research_note", cutoff_24h),
-        limit=20,
-    )
-    recent_strategy_hypotheses = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("strategy_memory", cutoff_24h),
-        limit=20,
-    )
-    recent_strategy_designer_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("strategy_designer", cutoff_24h),
-        limit=5,
-    )
     recent_risk_critic_runs = repo._select_all(
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
@@ -1307,69 +1289,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
-    strategies = repo.list_strategies(limit=200)
-    under_review_strategies = [item for item in strategies if _truthy_flag(item.get("under_review"))]
-    paused_paper_strategies = [item for item in strategies if _truthy_flag(item.get("paper_trading_paused"))]
-    active_paper_strategies = [
-        item for item in strategies if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
-    ]
-    raw_recent_strategy_evaluations = [
-        artifact
-        for artifact in recent_artifacts
-        if artifact.get("artifact_type") == "strategy_evaluation"
-        and (parse_utc(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
-        > datetime.now(timezone.utc) - timedelta(hours=24)
-    ]
-    recent_strategy_evaluations = []
-    for artifact in raw_recent_strategy_evaluations:
-        content = artifact.get("content")
-        if not isinstance(content, dict):
-            content = {}
-        recent_strategy_evaluations.append(
-            {
-                "strategy_id": content.get("strategy_id"),
-                "strategy_name": content.get("strategy_name"),
-                "evaluation": content.get("evaluation"),
-            }
-        )
-    flagged_strategy_ids = {
-        str(item.get("id"))
-        for item in [*under_review_strategies, *paused_paper_strategies]
-        if item.get("id")
-    }
-    under_review_strategy_ids = {
-        str(item.get("id"))
-        for item in under_review_strategies
-        if item.get("id")
-    }
-    evaluated_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_strategy_evaluations
-        if item.get("strategy_id")
-    }
-    needs_operator_evaluation_strategy_ids = sorted(flagged_strategy_ids - evaluated_strategy_ids)
-    failed_under_review_candidate = next(
-        (
-            (
-                str(item.get("strategy_id") or ""),
-                str(item.get("strategy_name") or "") or None,
-                [
-                    str(failure)
-                    for failure in (((item.get("evaluation") or {}).get("promotion_gates") or {}).get("failures") or [])
-                    if str(failure).strip()
-                ],
-            )
-            for item in recent_strategy_evaluations
-            if item.get("strategy_id")
-            and str(item.get("strategy_id")) not in under_review_strategy_ids
-            and isinstance(item.get("evaluation"), dict)
-            and isinstance(item["evaluation"].get("strategy"), dict)
-            and str(item["evaluation"]["strategy"].get("state") or "") in {"paper_running", "paper_passed"}
-            and isinstance(item["evaluation"].get("promotion_gates"), dict)
-            and bool(item["evaluation"]["promotion_gates"].get("passed")) is False
-        ),
-        None,
-    )
     recent_agent_runs = repo.list_agent_runs_window(hours=24)
     recent_run_ids = {str(run.get("id")) for run in recent_agent_runs}
     recent_agent_runs.extend(
