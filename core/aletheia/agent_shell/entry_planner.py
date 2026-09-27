@@ -72,6 +72,114 @@ def _intent_validation_code(exc: BaseException) -> str:
     return "VALIDATION_FAILED"
 
 
+def _parse_candidate_opportunity(candidate: dict) -> tuple:
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    opportunity = CandidateOpportunityContextV1.model_validate_json(
+        candidate.get("candidate_opportunity_context_json") or ""
+    )
+    if (opportunity.candidate_id != candidate["id"]
+        or opportunity.context_hash != candidate.get("candidate_opportunity_context_hash")):
+        raise ValueError("candidate_opportunity_context_identity_mismatch")
+    return (opportunity,)
+
+
+async def _ensure_entry_orderbook(generation: dict) -> dict | None:
+    from aletheia.data.providers import MarketDataObservationError, get_market_data_provider
+
+    orderbook = repo.latest_orderbook(
+        generation["symbol"], generation["venue"], generation["market_type"]
+    )
+    if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+        started = asyncio.get_running_loop().time()
+        category, phase, exception_type = "invalid_payload", "parse", None
+        book_age_ms = None
+        orderbook = None
+        try:
+            async with asyncio.timeout(5):
+                try:
+                    provider = get_market_data_provider(
+                        generation["venue"], exact_venue=True,
+                    )
+                except Exception as exc:
+                    raise MarketDataObservationError("provider_setup", exc) from None
+                try:
+                    candidate_book = await provider.get_orderbook_observation(
+                        generation["symbol"], market_type=generation["market_type"],
+                    )
+                finally:
+                    await provider.close()
+            if isinstance(candidate_book, dict):
+                if tuple(candidate_book.get(key) for key in ("exchange", "symbol", "market_type")) != (
+                    generation["venue"], generation["symbol"], generation["market_type"]
+                ):
+                    category = "identity_mismatch"
+                else:
+                    now = datetime.now(timezone.utc)
+                    observed = datetime.fromisoformat(candidate_book["observed_at"].replace("Z", "+00:00"))
+                    if observed.tzinfo is not None:
+                        book_age_ms = int((now - observed).total_seconds() * 1000)
+                    if entry_orderbook_available(candidate_book, now):
+                        orderbook = candidate_book
+                    elif book_age_ms is not None:
+                        category = "future" if book_age_ms < 0 else "stale"
+        except MarketDataObservationError as exc:
+            category = "collector_error"
+            if exc.phase in {"provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse"}:
+                phase = exc.phase
+            if exc.exception_type.isascii() and exc.exception_type.isidentifier() and len(exc.exception_type) <= 80:
+                exception_type = exc.exception_type
+        except Exception as exc:
+            category = "timeout" if isinstance(exc, TimeoutError) else "collector_error"
+            phase, exception_type = "collect", type(exc).__name__
+        if orderbook is not None:
+            try:
+                repo.insert_orderbook_snapshot(orderbook)
+            except Exception as exc:
+                orderbook = None
+                category, phase, exception_type = "persistence_error", "persistence", type(exc).__name__
+        if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+            if orderbook is not None:
+                book_age_ms = int((datetime.now(timezone.utc) - observed).total_seconds() * 1000)
+                category, phase, exception_type = "stale", "freshness", None
+            logger.warning("entry_orderbook_unavailable", extra={
+                "generation_id": generation["id"], "venue": generation["venue"],
+                "symbol": generation["symbol"], "market_type": generation["market_type"],
+                "category": category, "phase": phase, "exception_type": exception_type,
+                "elapsed_ms": int((asyncio.get_running_loop().time() - started) * 1000),
+                "book_age_ms": book_age_ms,
+            })
+    return orderbook
+
+
+def _build_fresh_entry_context(
+    generation: dict, candidate: dict, orderbook: dict, model_provider: str | None,
+) -> tuple[dict, EntryAnalysisContext]:
+    feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
+    cutoff = datetime.now(timezone.utc)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    from aletheia.data.providers import timeframe_ms
+
+    windows = {
+        timeframe: repo.get_ohlcv_candles(
+            generation["symbol"], timeframe, limit, generation["venue"],
+            generation["market_type"], cutoff_ms - timeframe_ms(timeframe) + 1,
+            include_provenance=True,
+        )
+        for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96))
+    }
+    context_model = build_entry_analysis_context(
+        generation, candidate, feature, windows, cutoff_at=cutoff,
+        candidate_detected_at=repo.get_universe_snapshot_created_at(
+            str(candidate["snapshot_id"])
+        ),
+        positions=repo.list_all_open_positions(),
+        orderbook=orderbook,
+        model_provider=model_provider,
+    )
+    return feature, context_model
+
+
 async def plan_next_candidate(
     planner: PlannerFn,
     *,
@@ -129,17 +237,10 @@ async def plan_next_candidate(
             candidate: dict | None = None
             feature: dict = {}
             if generation.get("entry_behavior_fingerprint"):
-                from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
-
                 candidate = repo.get_candidate(generation["last_candidate_id"])
                 if candidate is None:
                     raise ValueError("candidate_not_found")
-                opportunity = CandidateOpportunityContextV1.model_validate_json(
-                    candidate.get("candidate_opportunity_context_json") or ""
-                )
-                if (opportunity.candidate_id != candidate["id"]
-                    or opportunity.context_hash != candidate.get("candidate_opportunity_context_hash")):
-                    raise ValueError("candidate_opportunity_context_identity_mismatch")
+                opportunity, = _parse_candidate_opportunity(candidate)
                 capability = opportunity.opportunity["capability_status"]
                 if capability != "supported":
                     stored = repo.block_candidate_planning(
@@ -168,97 +269,15 @@ async def plan_next_candidate(
                 if generation.get("planner_input_json"):
                     context_model = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
                 else:
-                    from aletheia.data.providers import MarketDataObservationError, get_market_data_provider
-
-                    orderbook = repo.latest_orderbook(
-                        generation["symbol"], generation["venue"], generation["market_type"]
-                    )
-                    if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
-                        started = asyncio.get_running_loop().time()
-                        category, phase, exception_type = "invalid_payload", "parse", None
-                        book_age_ms = None
-                        orderbook = None
-                        try:
-                            async with asyncio.timeout(5):
-                                try:
-                                    provider = get_market_data_provider(
-                                        generation["venue"], exact_venue=True,
-                                    )
-                                except Exception as exc:
-                                    raise MarketDataObservationError("provider_setup", exc) from None
-                                try:
-                                    candidate_book = await provider.get_orderbook_observation(
-                                        generation["symbol"], market_type=generation["market_type"],
-                                    )
-                                finally:
-                                    await provider.close()
-                            if isinstance(candidate_book, dict):
-                                if tuple(candidate_book.get(key) for key in ("exchange", "symbol", "market_type")) != (
-                                    generation["venue"], generation["symbol"], generation["market_type"]
-                                ):
-                                    category = "identity_mismatch"
-                                else:
-                                    now = datetime.now(timezone.utc)
-                                    observed = datetime.fromisoformat(candidate_book["observed_at"].replace("Z", "+00:00"))
-                                    if observed.tzinfo is not None:
-                                        book_age_ms = int((now - observed).total_seconds() * 1000)
-                                    if entry_orderbook_available(candidate_book, now):
-                                        orderbook = candidate_book
-                                    elif book_age_ms is not None:
-                                        category = "future" if book_age_ms < 0 else "stale"
-                        except MarketDataObservationError as exc:
-                            category = "collector_error"
-                            if exc.phase in {"provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse"}:
-                                phase = exc.phase
-                            if exc.exception_type.isascii() and exc.exception_type.isidentifier() and len(exc.exception_type) <= 80:
-                                exception_type = exc.exception_type
-                        except Exception as exc:
-                            category = "timeout" if isinstance(exc, TimeoutError) else "collector_error"
-                            phase, exception_type = "collect", type(exc).__name__
-                        if orderbook is not None:
-                            try:
-                                repo.insert_orderbook_snapshot(orderbook)
-                            except Exception as exc:
-                                orderbook = None
-                                category, phase, exception_type = "persistence_error", "persistence", type(exc).__name__
-                        if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
-                            if orderbook is not None:
-                                book_age_ms = int((datetime.now(timezone.utc) - observed).total_seconds() * 1000)
-                                category, phase, exception_type = "stale", "freshness", None
-                            logger.warning("entry_orderbook_unavailable", extra={
-                                "generation_id": generation["id"], "venue": generation["venue"],
-                                "symbol": generation["symbol"], "market_type": generation["market_type"],
-                                "category": category, "phase": phase, "exception_type": exception_type,
-                                "elapsed_ms": int((asyncio.get_running_loop().time() - started) * 1000),
-                                "book_age_ms": book_age_ms,
-                            })
+                    orderbook = await _ensure_entry_orderbook(generation)
                     if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
                         repo.release_candidate_planning_claim(
                             generation["id"], owner, "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
                             retry_seconds=60,
                         )
                         return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
-                    feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
-                    cutoff = datetime.now(timezone.utc)
-                    cutoff_ms = int(cutoff.timestamp() * 1000)
-                    from aletheia.data.providers import timeframe_ms
-
-                    windows = {
-                        timeframe: repo.get_ohlcv_candles(
-                            generation["symbol"], timeframe, limit, generation["venue"],
-                            generation["market_type"], cutoff_ms - timeframe_ms(timeframe) + 1,
-                            include_provenance=True,
-                        )
-                        for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96))
-                    }
-                    context_model = build_entry_analysis_context(
-                        generation, candidate, feature, windows, cutoff_at=cutoff,
-                        candidate_detected_at=repo.get_universe_snapshot_created_at(
-                            str(candidate["snapshot_id"])
-                        ),
-                        positions=repo.list_all_open_positions(),
-                        orderbook=orderbook,
-                        model_provider=model_provider,
+                    _feature, context_model = _build_fresh_entry_context(
+                        generation, candidate, orderbook, model_provider,
                     )
                     if (
                         context_model.candle_windows["15m"]["availability"] != "available"
