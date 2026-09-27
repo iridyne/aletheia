@@ -80,6 +80,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 ```
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
+- 离线交易测试同时隔离私有下单和公共 listing I/O；保留真实能力刷新、Gateway 校验与记账断言。
 - DB 测试用真实 SQLite in-memory，不 mock
 
 ---
