@@ -3494,6 +3494,264 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
     return {**proof, "proof_hash": fingerprint(proof)}
 
 
+def _candidate_planning_existing_state(candidate_id: str, candidate: dict, context, timestamp: str):
+    """Read the current owner and requalification state inside the caller's transaction."""
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    existing_row = (
+        get_db().execute(
+            "SELECT * FROM candidate_planning_generations "
+            "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
+            "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1",
+            (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"])),
+        ).fetchone()
+    )
+    existing = dict(existing_row) if existing_row else None
+    existing_candidate = get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
+    eligibility_recovered = bool(
+        existing is not None
+        and (
+            existing.get("attention_terminal_reason") == "admission_lost"
+            or (existing_candidate is not None and not bool(existing_candidate.get("execution_eligible")))
+        )
+    )
+    existing_plan_row = (
+        get_db().execute(
+            "SELECT * FROM entry_plans WHERE planning_generation_id=?",
+            (existing["id"],),
+        ).fetchone()
+        if existing is not None else None
+    )
+    existing_plan = dict(existing_plan_row) if existing_plan_row else None
+    plan_expiry = None
+    if existing_plan is not None:
+        try:
+            plan_expiry = json.loads(str(existing_plan.get("plan_json") or ""))["expires_at"]
+        except (KeyError, TypeError, json.JSONDecodeError):
+            plan_expiry = None
+    candidate_snapshot_complete = bool(
+        get_db().execute(
+            "SELECT 1 FROM universe_snapshots WHERE id=? AND status='active'",
+            (candidate["snapshot_id"],),
+        ).fetchone()
+    )
+    try:
+        newer_requalification_cutoff = bool(
+            plan_expiry
+            and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
+            > _normalized_utc_datetime(str(plan_expiry))
+        )
+    except (TypeError, ValueError):
+        newer_requalification_cutoff = False
+    try:
+        existing_context = (
+            CandidateOpportunityContextV1.model_validate_json(
+                existing_candidate["candidate_opportunity_context_json"]
+            )
+            if existing_candidate and existing_candidate.get("candidate_opportunity_context_json")
+            else None
+        )
+        later_completed_requalification = bool(
+            existing_candidate
+            and str(existing.get("last_candidate_id")) != candidate_id
+            and candidate_snapshot_complete
+            and existing_context is not None
+            and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
+            > _normalized_utc_datetime(
+                str(existing_context.source["source_cutoff_at"])
+            )
+        )
+    except (TypeError, ValueError):
+        later_completed_requalification = False
+    unresolved_execution = bool(
+        existing_plan is not None
+        and (
+            existing_plan.get("status") in {"ordered", "partially_filled"}
+            or get_db().execute(
+                "SELECT 1 FROM trade_proposals p LEFT JOIN proposal_execution_claims c ON c.proposal_id=p.id "
+                "WHERE p.entry_plan_id=? AND (c.lease_expires_at>? "
+                "OR p.status IN ('executing','submission_unknown','materialization_missing') "
+                "OR (p.status='executed' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id))) LIMIT 1",
+                (existing_plan["id"], timestamp),
+            ).fetchone()
+            or get_db().execute(
+                "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
+                "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
+                "'submission_unknown','materialization_missing') OR "
+                "EXISTS (SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='open') OR "
+                "EXISTS (SELECT 1 FROM fills f WHERE f.order_id=o.id AND NOT EXISTS "
+                "(SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='closed'))) LIMIT 1",
+                (existing_plan["id"],),
+            ).fetchone()
+        )
+    )
+    source_changed = False
+    if existing is not None:
+        birth = get_candidate(str(existing["candidate_id"]))
+        birth_context = json.loads(existing["requalification_source_json"] or "{}").get("candidate_opportunity_context")
+        if birth_context is None:
+            birth_context = json.loads(birth["candidate_opportunity_context_json"]) if birth and birth.get("candidate_opportunity_context_json") else {}
+        birth_source = birth_context.get("source", {})
+        source_changed = (birth_source.get("kind", "universe") != context.source.get("kind", "universe")
+            or (context.source.get("kind") == "serenity" and birth_source.get("id") != context.source["id"]))
+        if source_changed and (existing["attention_status"] == "active" or unresolved_execution
+            or (existing_plan is not None and existing_plan["status"] in _ACTIVE_ENTRY_PLAN_STATUSES)):
+            raise ValueError("instrument_owned")
+    return (
+        existing, eligibility_recovered, existing_plan, candidate_snapshot_complete,
+        newer_requalification_cutoff, existing_context if later_completed_requalification else None,
+        later_completed_requalification, unresolved_execution, source_changed,
+    )
+
+
+def _candidate_planning_requalification(
+    requalification: dict | None, *, candidate_id: str, candidate: dict, context,
+    existing: dict | None, existing_plan: dict | None, existing_context,
+    planning_key: str, entry_behavior_fingerprint: str, schema_fingerprint: str,
+    candidate_snapshot_complete: bool, current_time: datetime,
+    unresolved_execution: bool, later_completed_requalification: bool,
+    fingerprint: Callable, planning_structure_material: Callable,
+) -> tuple[dict | None, bool, bool]:
+    """Recheck prepared evidence and recovery without leaving the caller's transaction."""
+    # The proof is prepared without the writer. Recheck its exact owner and
+    # publication identity here; a concurrent successor makes it stale.
+    if requalification is not None:
+        proof_payload = {k: v for k, v in requalification.items() if k != "proof_hash"}
+        expected = {
+            "candidate_id": candidate_id, "snapshot_id": candidate["snapshot_id"],
+            "candidate_context_hash": context.context_hash,
+            "expected_generation_id": existing["id"] if existing else None,
+            "planning_key": planning_key,
+            "instrument": {k: candidate[k] for k in ("venue", "symbol", "market_type")},
+            "source_cutoff_at": _normalized_utc_datetime(str(context.source["source_cutoff_at"])).isoformat(),
+            "entry_behavior_fingerprint": entry_behavior_fingerprint,
+            "schema_fingerprint": schema_fingerprint,
+        }
+        if (not candidate_snapshot_complete
+            or context.candidate_id != candidate_id
+            or context.context_hash != candidate.get("candidate_opportunity_context_hash")
+            or _normalized_utc_datetime(expected["source_cutoff_at"]) > current_time
+            or any(requalification.get(k) != v for k, v in expected.items())
+            or fingerprint(proof_payload) != requalification.get("proof_hash")):
+            requalification = None
+        if requalification is not None:
+            # Candle corrections may land between preparation and this writer.
+            # Compare the exact admitted rows; do not rerun the structure kernel here.
+            rows = get_ohlcv_candles(
+                candidate["symbol"], "15m", 96, candidate["venue"],
+                candidate["market_type"],
+                int(_normalized_utc_datetime(expected["source_cutoff_at"]).timestamp()*1000) - 900_000 + 1,
+                include_provenance=True,
+            )
+            if (fingerprint(rows) != requalification.get("source_fingerprint")
+                or not rows
+                or rows[-1]["ts"] + 900_000 != requalification.get("last_closed_at_ms")):
+                requalification = None
+    structure_requalified = False
+    dependency_recovered = False
+    if (requalification is not None and existing is not None
+        and existing["planning_key"] == planning_key
+        and existing.get("entry_behavior_fingerprint") == entry_behavior_fingerprint
+        and existing.get("schema_fingerprint") == schema_fingerprint
+        and existing.get("attention_status") == "terminal"
+        and existing_plan is None and not unresolved_execution
+        and later_completed_requalification):
+        birth = json.loads(existing["requalification_source_json"] or "{}").get("birth_material")
+        baseline = birth["material"] if birth else None
+        compared_at = birth["source_cutoff_at"] if birth else existing_context.source["source_cutoff_at"]
+        if existing.get("planner_input_json"):
+            frozen = json.loads(existing["planner_input_json"])
+            frozen_material = planning_structure_material(frozen.get("market_structure", {}))
+            if frozen_material is not None:
+                baseline = frozen_material
+            compared_at = max(_normalized_utc_datetime(compared_at),
+                _normalized_utc_datetime(frozen["analysis_cutoff_at"])).isoformat()
+        material = requalification["material"]
+        prior_ids = {f["id"] for f in baseline["facts"]} if baseline else set()
+        structure_requalified = bool(
+            baseline and baseline["fingerprint"] != material["fingerprint"]
+            and any(f["id"] not in prior_ids
+                and f["known_at_ms"] > _normalized_utc_datetime(compared_at).timestamp()*1000
+                for f in material["facts"])
+        )
+        blocked_reason = json.loads(existing["result_json"] or "{}").get("reason")
+        dependency_failure = blocked_reason in {
+            "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+            "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+            "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
+        }
+        if dependency_failure:
+            structure_requalified = False
+        book = requalification.get("orderbook")
+        dependency_recovered = bool(
+            existing.get("result_kind") == "unavailable"
+            and not existing.get("model_invoked") and not existing.get("planner_input_json")
+            and dependency_failure
+            and book and existing.get("attention_terminal_at")
+            and requalification.get("last_closed_at_ms", 0)
+                > max(_normalized_utc_datetime(compared_at),
+                    _normalized_utc_datetime(existing["attention_terminal_at"])).timestamp()*1000
+            and _normalized_utc_datetime(book["observed_at"])
+                > _normalized_utc_datetime(existing["attention_terminal_at"])
+        )
+    return requalification, structure_requalified, dependency_recovered
+
+
+def _candidate_planning_generation_data(
+    *, candidate_id: str, candidate: dict, context, planning_key: str, planning_identity: str,
+    timestamp: str, current_time: datetime, soft_lease_sec: int, max_attention_age_sec: int,
+    existing: dict | None, cycle_reason: str, requalification: dict | None,
+    entry_behavior_fingerprint: str, schema_fingerprint: str,
+) -> dict:
+    """Assemble the next generation and provenance inside the caller's transaction."""
+    generation = CandidatePlanningGeneration(
+        planning_key=planning_key,
+        planning_identity=planning_identity,
+        candidate_id=candidate_id,
+        last_candidate_id=candidate_id,
+        venue=str(candidate["venue"]),
+        symbol=str(candidate["symbol"]),
+        market_type=str(candidate["market_type"]),
+        candidate_family=str(candidate["scanner_family"]),
+        direction=str(candidate["scanner_direction"]),
+        opportunity_mechanism=(
+            str(context.opportunity["primary_mechanism"]) if context else None
+        ),
+        candidate_selection_policy=(
+            str(context.candidate_selection["policy"]) if context else None
+        ),
+        candidate_selection_policy_epoch=(
+            context.candidate_selection.get("policy_epoch") if context else None
+        ),
+        mechanism_version=(
+            str(context.opportunity["mechanism_version"]) if context else None
+        ),
+        created_at=timestamp,
+        updated_at=timestamp,
+        attention_started_at=timestamp,
+        soft_expires_at=(current_time + timedelta(seconds=int(soft_lease_sec))).isoformat(),
+        hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
+        attention_max_age_sec=int(max_attention_age_sec),
+        cycle_number=(
+            int(
+                get_db().execute(
+                    "SELECT COALESCE(MAX(cycle_number),0)+1 FROM candidate_planning_generations WHERE planning_key=?",
+                    (planning_key,),
+                ).fetchone()[0]
+            )
+        ),
+        previous_generation_id=str(existing["id"]) if existing is not None else None,
+        cycle_reason=cycle_reason,
+        requalification_source_json=json.dumps({"candidate_opportunity_context": context.model_dump(mode="json"),
+            **({"birth_material": requalification} if requalification is not None else {})}, sort_keys=True, separators=(",", ":")),
+        requalification_candidate_id=candidate_id,
+        entry_behavior_fingerprint=entry_behavior_fingerprint,
+        schema_fingerprint=schema_fingerprint,
+    )
+    data = _stamp_provenance(generation.model_dump())
+    return data
+
+
 def ensure_candidate_planning_generation(
     candidate_id: str,
     *,
@@ -3535,188 +3793,20 @@ def ensure_candidate_planning_generation(
             raise ValueError("candidate_opportunity_context_missing")
         entry_behavior_fingerprint, schema_fingerprint = entry_contract_fingerprints()
         planning_key, planning_identity = candidate_planning_identity(candidate)
-        existing_row = (
-            get_db().execute(
-                "SELECT * FROM candidate_planning_generations "
-                "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
-                "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1",
-                (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"])),
-            ).fetchone()
+        (
+            existing, eligibility_recovered, existing_plan, candidate_snapshot_complete,
+            newer_requalification_cutoff, existing_context, later_completed_requalification,
+            unresolved_execution, source_changed,
+        ) = _candidate_planning_existing_state(candidate_id, candidate, context, timestamp)
+        requalification, structure_requalified, dependency_recovered = _candidate_planning_requalification(
+            requalification, candidate_id=candidate_id, candidate=candidate, context=context,
+            existing=existing, existing_plan=existing_plan, existing_context=existing_context,
+            planning_key=planning_key, entry_behavior_fingerprint=entry_behavior_fingerprint,
+            schema_fingerprint=schema_fingerprint, candidate_snapshot_complete=candidate_snapshot_complete,
+            current_time=current_time, unresolved_execution=unresolved_execution,
+            later_completed_requalification=later_completed_requalification,
+            fingerprint=fingerprint, planning_structure_material=planning_structure_material,
         )
-        existing = dict(existing_row) if existing_row else None
-        existing_candidate = get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
-        eligibility_recovered = bool(
-            existing is not None
-            and (
-                existing.get("attention_terminal_reason") == "admission_lost"
-                or (existing_candidate is not None and not bool(existing_candidate.get("execution_eligible")))
-            )
-        )
-        existing_plan_row = (
-            get_db().execute(
-                "SELECT * FROM entry_plans WHERE planning_generation_id=?",
-                (existing["id"],),
-            ).fetchone()
-            if existing is not None else None
-        )
-        existing_plan = dict(existing_plan_row) if existing_plan_row else None
-        plan_expiry = None
-        if existing_plan is not None:
-            try:
-                plan_expiry = json.loads(str(existing_plan.get("plan_json") or ""))["expires_at"]
-            except (KeyError, TypeError, json.JSONDecodeError):
-                plan_expiry = None
-        candidate_snapshot_complete = bool(
-            get_db().execute(
-                "SELECT 1 FROM universe_snapshots WHERE id=? AND status='active'",
-                (candidate["snapshot_id"],),
-            ).fetchone()
-        )
-        try:
-            newer_requalification_cutoff = bool(
-                plan_expiry
-                and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
-                > _normalized_utc_datetime(str(plan_expiry))
-            )
-        except (TypeError, ValueError):
-            newer_requalification_cutoff = False
-        try:
-            existing_context = (
-                CandidateOpportunityContextV1.model_validate_json(
-                    existing_candidate["candidate_opportunity_context_json"]
-                )
-                if existing_candidate and existing_candidate.get("candidate_opportunity_context_json")
-                else None
-            )
-            later_completed_requalification = bool(
-                existing_candidate
-                and str(existing.get("last_candidate_id")) != candidate_id
-                and candidate_snapshot_complete
-                and existing_context is not None
-                and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
-                > _normalized_utc_datetime(
-                    str(existing_context.source["source_cutoff_at"])
-                )
-            )
-        except (TypeError, ValueError):
-            later_completed_requalification = False
-        unresolved_execution = bool(
-            existing_plan is not None
-            and (
-                existing_plan.get("status") in {"ordered", "partially_filled"}
-                or get_db().execute(
-                    "SELECT 1 FROM trade_proposals p LEFT JOIN proposal_execution_claims c ON c.proposal_id=p.id "
-                    "WHERE p.entry_plan_id=? AND (c.lease_expires_at>? "
-                    "OR p.status IN ('executing','submission_unknown','materialization_missing') "
-                    "OR (p.status='executed' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id))) LIMIT 1",
-                    (existing_plan["id"], timestamp),
-                ).fetchone()
-                or get_db().execute(
-                    "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
-                    "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
-                    "'submission_unknown','materialization_missing') OR "
-                    "EXISTS (SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='open') OR "
-                    "EXISTS (SELECT 1 FROM fills f WHERE f.order_id=o.id AND NOT EXISTS "
-                    "(SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='closed'))) LIMIT 1",
-                    (existing_plan["id"],),
-                ).fetchone()
-            )
-        )
-        source_changed = False
-        if existing is not None:
-            birth = get_candidate(str(existing["candidate_id"]))
-            birth_context = json.loads(existing["requalification_source_json"] or "{}").get("candidate_opportunity_context")
-            if birth_context is None:
-                birth_context = json.loads(birth["candidate_opportunity_context_json"]) if birth and birth.get("candidate_opportunity_context_json") else {}
-            birth_source = birth_context.get("source", {})
-            source_changed = (birth_source.get("kind", "universe") != context.source.get("kind", "universe")
-                or (context.source.get("kind") == "serenity" and birth_source.get("id") != context.source["id"]))
-            if source_changed and (existing["attention_status"] == "active" or unresolved_execution
-                or (existing_plan is not None and existing_plan["status"] in _ACTIVE_ENTRY_PLAN_STATUSES)):
-                raise ValueError("instrument_owned")
-        # The proof is prepared without the writer. Recheck its exact owner and
-        # publication identity here; a concurrent successor makes it stale.
-        if requalification is not None:
-            proof_payload = {k: v for k, v in requalification.items() if k != "proof_hash"}
-            expected = {
-                "candidate_id": candidate_id, "snapshot_id": candidate["snapshot_id"],
-                "candidate_context_hash": context.context_hash,
-                "expected_generation_id": existing["id"] if existing else None,
-                "planning_key": planning_key,
-                "instrument": {k: candidate[k] for k in ("venue", "symbol", "market_type")},
-                "source_cutoff_at": _normalized_utc_datetime(str(context.source["source_cutoff_at"])).isoformat(),
-                "entry_behavior_fingerprint": entry_behavior_fingerprint,
-                "schema_fingerprint": schema_fingerprint,
-            }
-            if (not candidate_snapshot_complete
-                or context.candidate_id != candidate_id
-                or context.context_hash != candidate.get("candidate_opportunity_context_hash")
-                or _normalized_utc_datetime(expected["source_cutoff_at"]) > current_time
-                or any(requalification.get(k) != v for k, v in expected.items())
-                or fingerprint(proof_payload) != requalification.get("proof_hash")):
-                requalification = None
-            if requalification is not None:
-                # Candle corrections may land between preparation and this writer.
-                # Compare the exact admitted rows; do not rerun the structure kernel here.
-                rows = get_ohlcv_candles(
-                    candidate["symbol"], "15m", 96, candidate["venue"],
-                    candidate["market_type"],
-                    int(_normalized_utc_datetime(expected["source_cutoff_at"]).timestamp()*1000) - 900_000 + 1,
-                    include_provenance=True,
-                )
-                if (fingerprint(rows) != requalification.get("source_fingerprint")
-                    or not rows
-                    or rows[-1]["ts"] + 900_000 != requalification.get("last_closed_at_ms")):
-                    requalification = None
-        structure_requalified = False
-        dependency_recovered = False
-        if (requalification is not None and existing is not None
-            and existing["planning_key"] == planning_key
-            and existing.get("entry_behavior_fingerprint") == entry_behavior_fingerprint
-            and existing.get("schema_fingerprint") == schema_fingerprint
-            and existing.get("attention_status") == "terminal"
-            and existing_plan is None and not unresolved_execution
-            and later_completed_requalification):
-            birth = json.loads(existing["requalification_source_json"] or "{}").get("birth_material")
-            baseline = birth["material"] if birth else None
-            compared_at = birth["source_cutoff_at"] if birth else existing_context.source["source_cutoff_at"]
-            if existing.get("planner_input_json"):
-                frozen = json.loads(existing["planner_input_json"])
-                frozen_material = planning_structure_material(frozen.get("market_structure", {}))
-                if frozen_material is not None:
-                    baseline = frozen_material
-                compared_at = max(_normalized_utc_datetime(compared_at),
-                    _normalized_utc_datetime(frozen["analysis_cutoff_at"])).isoformat()
-            material = requalification["material"]
-            prior_ids = {f["id"] for f in baseline["facts"]} if baseline else set()
-            structure_requalified = bool(
-                baseline and baseline["fingerprint"] != material["fingerprint"]
-                and any(f["id"] not in prior_ids
-                    and f["known_at_ms"] > _normalized_utc_datetime(compared_at).timestamp()*1000
-                    for f in material["facts"])
-            )
-            blocked_reason = json.loads(existing["result_json"] or "{}").get("reason")
-            dependency_failure = blocked_reason in {
-                "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
-                "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
-                "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
-            }
-            if dependency_failure:
-                structure_requalified = False
-            book = requalification.get("orderbook")
-            dependency_recovered = bool(
-                existing.get("result_kind") == "unavailable"
-                and not existing.get("model_invoked") and not existing.get("planner_input_json")
-                and dependency_failure
-                and book and existing.get("attention_terminal_at")
-                and requalification.get("last_closed_at_ms", 0)
-                    > max(_normalized_utc_datetime(compared_at),
-                        _normalized_utc_datetime(existing["attention_terminal_at"])).timestamp()*1000
-                and _normalized_utc_datetime(book["observed_at"])
-                    > _normalized_utc_datetime(existing["attention_terminal_at"])
-            )
-
-
         eligibility_recovered = bool(
             eligibility_recovered
             and later_completed_requalification
@@ -3821,60 +3911,32 @@ def ensure_candidate_planning_generation(
                 (timestamp, reason, timestamp, existing["id"]),
             )
 
-        generation = CandidatePlanningGeneration(
+        cycle_reason = (
+            "explicit_owner_replan" if manual_replan_allowed
+            else "plan_expired_requalified" if expired_requalified
+            else "canonical_compatibility_cutover" if compatibility_cutover
+            else "runtime_authority_recovered" if eligibility_recovered
+            else "material_input_changed" if material_input_changed
+            else "confirmed_structure_requalified" if structure_requalified
+            else "planning_dependencies_recovered" if dependency_recovered
+            else "initial_candidate"
+        )
+        data = _candidate_planning_generation_data(
+            candidate_id=candidate_id,
+            candidate=candidate,
+            context=context,
             planning_key=planning_key,
             planning_identity=planning_identity,
-            candidate_id=candidate_id,
-            last_candidate_id=candidate_id,
-            venue=str(candidate["venue"]),
-            symbol=str(candidate["symbol"]),
-            market_type=str(candidate["market_type"]),
-            candidate_family=str(candidate["scanner_family"]),
-            direction=str(candidate["scanner_direction"]),
-            opportunity_mechanism=(
-                str(context.opportunity["primary_mechanism"]) if context else None
-            ),
-            candidate_selection_policy=(
-                str(context.candidate_selection["policy"]) if context else None
-            ),
-            candidate_selection_policy_epoch=(
-                context.candidate_selection.get("policy_epoch") if context else None
-            ),
-            mechanism_version=(
-                str(context.opportunity["mechanism_version"]) if context else None
-            ),
-            created_at=timestamp,
-            updated_at=timestamp,
-            attention_started_at=timestamp,
-            soft_expires_at=(current_time + timedelta(seconds=int(soft_lease_sec))).isoformat(),
-            hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
-            attention_max_age_sec=int(max_attention_age_sec),
-            cycle_number=(
-                int(
-                    get_db().execute(
-                        "SELECT COALESCE(MAX(cycle_number),0)+1 FROM candidate_planning_generations WHERE planning_key=?",
-                        (planning_key,),
-                    ).fetchone()[0]
-                )
-            ),
-            previous_generation_id=str(existing["id"]) if existing is not None else None,
-            cycle_reason=(
-                "explicit_owner_replan" if manual_replan_allowed
-                else "plan_expired_requalified" if expired_requalified
-                else "canonical_compatibility_cutover" if compatibility_cutover
-                else "runtime_authority_recovered" if eligibility_recovered
-                else "material_input_changed" if material_input_changed
-                else "confirmed_structure_requalified" if structure_requalified
-                else "planning_dependencies_recovered" if dependency_recovered
-                else "initial_candidate"
-            ),
-            requalification_source_json=json.dumps({"candidate_opportunity_context": context.model_dump(mode="json"),
-                **({"birth_material": requalification} if requalification is not None else {})}, sort_keys=True, separators=(",", ":")),
-            requalification_candidate_id=candidate_id,
+            timestamp=timestamp,
+            current_time=current_time,
+            soft_lease_sec=soft_lease_sec,
+            max_attention_age_sec=max_attention_age_sec,
+            existing=existing,
+            cycle_reason=cycle_reason,
+            requalification=requalification,
             entry_behavior_fingerprint=entry_behavior_fingerprint,
             schema_fingerprint=schema_fingerprint,
         )
-        data = _stamp_provenance(generation.model_dump())
         _insert("candidate_planning_generations", data)
         return data, True
 
