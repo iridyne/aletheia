@@ -33,6 +33,12 @@ _EPOCH_START = _ANCHOR + timedelta(days=2)
 _CUTOFF = _ANCHOR + timedelta(days=14)
 
 
+def _database(request) -> sqlite3.Connection:
+    db = sqlite3.connect(":memory:")
+    request.addfinalizer(db.close)
+    return db
+
+
 def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     first = evidence.build_profit_gradient_evidence(
         evidence_epoch_id="missing-epoch",
@@ -74,8 +80,8 @@ def test_compiler_does_not_write_database():
     assert report["read_only"] is True
 
 
-def test_cost_model_source_does_not_admit_future_settlement():
-    db = sqlite3.connect(":memory:")
+def test_cost_model_source_does_not_admit_future_settlement(request):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     db.execute(
         "CREATE TABLE filter_candidate_outcomes ("
@@ -104,8 +110,8 @@ def test_cost_model_source_does_not_admit_future_settlement():
     assert resolved["reason"] == "cost_model_not_recorded"
 
 
-def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
-    db = sqlite3.connect(":memory:")
+def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists(request):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     db.execute(
         "CREATE TABLE filter_candidate_outcomes ("
@@ -144,8 +150,8 @@ def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
     assert resolved["source_count"] == 1
 
 
-def test_candidate_provenance_requires_exposure_and_settlement_identity():
-    db = sqlite3.connect(":memory:")
+def test_candidate_provenance_requires_exposure_and_settlement_identity(request):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     db.execute(
         "CREATE TABLE runtime_sessions ("
@@ -191,8 +197,8 @@ def test_candidate_provenance_requires_exposure_and_settlement_identity():
     assert evidence._candidate_provenance_reason(db, outcome, registration) is None
 
 
-def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
-    db = sqlite3.connect(":memory:")
+def test_position_replay_cost_model_identity_is_explicit_and_resolvable(request):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     cost_model_id = "fixture-cost/v1"
 
@@ -220,8 +226,8 @@ def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
     assert resolved["source_tables"] == ["position_replays"]
 
 
-def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
-    db = sqlite3.connect(":memory:")
+def test_candidate_source_hash_includes_exclusion_identity(request, monkeypatch):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     reports = iter(
         [
@@ -237,7 +243,7 @@ def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
     assert first["source_hash"] != second["source_hash"]
 
 
-def test_candidate_loader_threads_epoch_bounds_into_source_identity(monkeypatch):
+def test_candidate_loader_threads_epoch_bounds_into_source_identity(request, monkeypatch):
     captured: dict[str, object] = {}
 
     def _report(**kwargs):
@@ -260,7 +266,7 @@ def test_candidate_loader_threads_epoch_bounds_into_source_identity(monkeypatch)
     cutoff = _CUTOFF
     epoch_start = _EPOCH_START
     source, facts = evidence._load_candidates(
-        sqlite3.connect(":memory:"),
+        _database(request),
         cutoff,
         epoch_start,
     )
@@ -271,9 +277,9 @@ def test_candidate_loader_threads_epoch_bounds_into_source_identity(monkeypatch)
     assert facts == []
 
 
-def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable():
+def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable(request):
     _, stats = evidence._add_layer_samples(
-        db=sqlite3.connect(":memory:"),
+        db=_database(request),
         candidate_facts=[{
             "fact_id": "candidate-temporal",
             "fixed_horizon_outcome": None,
@@ -362,7 +368,7 @@ def _cost_fact(**ce_overrides) -> dict:
         ("avoidable_extra_cost_quote", None, "avoidable_cost_amount_invalid"),
     ],
 )
-def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, monkeypatch):
+def test_cost_evidence_granular_rejection_codes(request, field, value, expected_reason, monkeypatch):
     monkeypatch.setattr(
         evidence,
         "_position_assignment",
@@ -370,7 +376,7 @@ def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, m
     )
     fact = _cost_fact(**{field: value})
     sample, reason = evidence._position_cost_sample(
-        sqlite3.connect(":memory:"),
+        _database(request),
         fact,
         cutoff=_CUTOFF,
         epoch_start=_EPOCH_START,
@@ -381,7 +387,7 @@ def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, m
     assert reason == expected_reason
 
 
-def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
+def test_cost_evidence_all_valid_baseline_kinds_are_admitted(request, monkeypatch):
     monkeypatch.setattr(
         evidence,
         "_position_assignment",
@@ -390,7 +396,7 @@ def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
     for kind in ("realizable_limit", "spot_vs_perpetual", "turnover", "venue"):
         fact = _cost_fact(baseline_kind=kind)
         sample, reason = evidence._position_cost_sample(
-            sqlite3.connect(":memory:"),
+            _database(request),
             fact,
             cutoff=_CUTOFF,
             epoch_start=_EPOCH_START,
@@ -403,7 +409,7 @@ def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
         assert sample["cost_applied_once"] is True
 
 
-def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
+def test_cost_evidence_absent_is_baseline_unavailable_not_zero(request, monkeypatch):
     monkeypatch.setattr(
         evidence,
         "_position_assignment",
@@ -411,7 +417,7 @@ def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
     )
     fact = _execution_fact()
     sample, reason = evidence._position_cost_sample(
-        sqlite3.connect(":memory:"),
+        _database(request),
         fact,
         cutoff=_CUTOFF,
         epoch_start=_EPOCH_START,
@@ -691,8 +697,8 @@ def test_paired_execution_evidence_preserves_both_arms_and_reconciles_delta():
     assert "execution_component_delta_mismatch" in exclusions
 
 
-def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once():
-    db = sqlite3.connect(":memory:")
+def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once(request):
+    db = _database(request)
     db.row_factory = sqlite3.Row
     db.executescript(
         """
@@ -936,9 +942,9 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
     assert "wrote" in result.stdout
 
 
-def test_execution_layer_has_no_external_paired_reference():
+def test_execution_layer_has_no_external_paired_reference(request):
     samples, stats = evidence._add_layer_samples(
-        db=sqlite3.connect(":memory:"), candidate_facts=[], position_facts=[_execution_fact()],
+        db=_database(request), candidate_facts=[], position_facts=[_execution_fact()],
         cutoff=_CUTOFF,
         epoch_start=_EPOCH_START,
         cost_model_id="fixture-cost/v1", epoch_id="epoch-1",
