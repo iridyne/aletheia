@@ -1542,3 +1542,87 @@ def test_derivative_collection_does_not_expand_from_archived_positions(monkeypat
     assert scheduler._get_derivative_symbols([
         SimpleNamespace(symbol="BTC/USDT"), SimpleNamespace(symbol="BTC/USDT"),
     ]) == ["BTC/USDT"]
+
+
+def test_scheduler_escalated_only_result_does_not_count_as_failure(monkeypatch):
+    """A durably escalated finding is not a fresh failure (INV-SCH-11)."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.infra.events import clear_infra_events
+    from aletheia.storage import sqlite
+    from extensions.learning import control
+
+    monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)
+    monkeypatch.setattr(control, "record_learning_job_success", lambda _job: None)
+    monkeypatch.setattr(sqlite, "rollback_if_in_transaction", lambda: False)
+    monkeypatch.setattr(sqlite, "close_db", lambda: None)
+
+    result = {
+        "checked": 1,
+        "closed": 0,
+        "errors": [],
+        "escalated": [{
+            "position_id": "pos-escalated-only",
+            "symbol": "KORU/USDT",
+            "market_type": "usdt_futures",
+            "code": "pending_close_reconciliation_required",
+            "escalated_at": "2026-09-27T00:00:00+00:00",
+            "claim_identity": "order:stuck-close",
+        }],
+    }
+    _patch_scheduler_result(monkeypatch, scheduler, "position_manager", result)
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler, "_record_job_failure", lambda *args, **kwargs: failures.append(args)
+    )
+    clear_infra_events()
+
+    scheduler._consecutive_failures.clear()
+    scheduler._run_job_guarded("position_manager", scheduler._run_position_manager)
+
+    assert failures == []
+    assert scheduler._consecutive_failures["position_manager"] == 0
+
+
+def test_scheduler_errors_and_escalated_both_present_still_fails(monkeypatch):
+    """Non-empty errors still fail the job; escalated never adds a second signal."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.infra.events import clear_infra_events
+    from aletheia.storage import sqlite
+    from extensions.learning import control
+
+    monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)
+    monkeypatch.setattr(control, "record_learning_job_success", lambda _job: None)
+    monkeypatch.setattr(sqlite, "rollback_if_in_transaction", lambda: False)
+    monkeypatch.setattr(sqlite, "close_db", lambda: None)
+
+    result = {
+        "checked": 2,
+        "closed": 0,
+        "errors": [{
+            "position_id": "pos-both",
+            "symbol": "XYZ/USDT",
+            "market_type": "spot",
+            "code": "close_failed",
+        }],
+        "escalated": [{
+            "position_id": "pos-both",
+            "symbol": "XYZ/USDT",
+            "market_type": "spot",
+            "code": "pending_close_reconciliation_required",
+            "escalated_at": "2026-09-27T00:00:00+00:00",
+            "claim_identity": "order:stuck-close",
+        }],
+    }
+    _patch_scheduler_result(monkeypatch, scheduler, "position_manager", result)
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler, "_record_job_failure", lambda *args, **kwargs: failures.append(args)
+    )
+    clear_infra_events()
+
+    scheduler._consecutive_failures.clear()
+    scheduler._run_job_guarded("position_manager", scheduler._run_position_manager)
+
+    assert failures == [("position_manager", "position_manager_reported_errors")]

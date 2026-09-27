@@ -464,6 +464,7 @@ export interface SystemStatus {
   health_status: string
   health_issues: string[]
   infra_events?: InfraEvent[]
+  outstanding_infra_events?: InfraEvent[]
   llm_model_health?: Record<string, unknown>[]
   boot_commit: string | null
   current_commit: string | null

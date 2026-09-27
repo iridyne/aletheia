@@ -11,6 +11,7 @@ import logging
 import math
 import sqlite3
 from datetime import datetime, timezone
+from enum import Enum
 
 from aletheia.config.exchanges import (
     DEMO_EXECUTION_MODES,
@@ -26,12 +27,14 @@ from aletheia.data.price_feed import (
 from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     PENDING_CLOSE_STALE_HOURS,
+    SUBMISSION_UNKNOWN_TERMINAL_HOURS,
     has_unresolved_close_claim,
     pending_close_age_hours,
 )
 from aletheia.storage.repositories import (
     list_all_open_positions,
 )
+from aletheia.storage.sqlite import get_db
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
 from aletheia.portfolio.pnl import build_exit_reasoning, close_position
 logger = logging.getLogger("aletheia.position_manager")
@@ -39,6 +42,11 @@ logger = logging.getLogger("aletheia.position_manager")
 _DEMO_MODES = DEMO_EXECUTION_MODES
 _OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
+# Terminal, human-owned close claim state. In CLOSE_CLAIM_STATES (so the fence
+# keeps holding) but never in IMMEDIATE_RECONCILIATION_STATES (so the retry
+# churn stops). Set once at SUBMISSION_UNKNOWN_TERMINAL_HOURS; only a human
+# resolution (PR4) or later venue proof leaves it.
+_MANUAL_RECONCILIATION_PENDING = "manual_reconciliation_pending"
 
 
 def _pending_close_age_hours(requested_at: str | None) -> float | None:
@@ -48,37 +56,301 @@ def _pending_close_age_hours(requested_at: str | None) -> float | None:
     return age_hours
 
 
-def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
-    """Durably surface each stale close claim once without releasing or retrying it."""
+class _EscalationOutcome(str, Enum):
+    """Durable-record outcome of one stale pending-close escalation attempt."""
+
+    FRESH = "fresh"                      # we wrote the audit row this call
+    ALREADY_DURABLE = "already_durable"  # insert was a dedup no-op; re-read confirmed the row
+    UNKNOWN = "unknown"                  # write raised, or no-op could not be confirmed
+
+
+def _pending_close_claim_identity(position: dict) -> str:
+    """Return the durable identity of the exchange close claim on this position."""
+    order_id = position.get("pending_close_order_id")
+    if order_id:
+        return f"order:{order_id}"
+    return (
+        "unidentified:"
+        f"{position.get('pending_close_requested_at') or 'missing'}:"
+        f"{position.get('pending_close_status') or 'missing'}"
+    )
+
+
+def _pending_close_escalated_at(position_id: str) -> str | None:
+    """Return the timestamp of the durable escalation row for one position."""
+    row = get_db().execute(
+        "SELECT timestamp FROM audit_events "
+        "WHERE event_type='pending_close_reconciliation_required' "
+        "AND entity_type='position' AND entity_id=? "
+        "ORDER BY timestamp DESC LIMIT 1",
+        (position_id,),
+    ).fetchone()
+    return row["timestamp"] if row else None
+
+
+def _already_escalated_position_ids() -> set[str]:
+    """Reconstruct durable stable-escalation state from the audit table.
+
+    Returns the set of position IDs for which a pending-close-reconciliation
+    audit row already exists. Used to route findings to `escalated` vs `errors`
+    without depending on the return of insert_audit_event_once (which is dedup
+    status, NOT delivery acknowledgement).
+    """
+    rows = get_db().execute(
+        "SELECT entity_id FROM audit_events "
+        "WHERE event_type='pending_close_reconciliation_required' "
+        "AND entity_type='position'"
+    ).fetchall()
+    return {r["entity_id"] for r in rows if r["entity_id"]}
+
+
+def _escalate_stale_pending_close(
+    position: dict, age_hours: float
+) -> _EscalationOutcome:
+    """Durably surface each stale close claim once without releasing or retrying it.
+
+    The conditional-insert boolean is dedup status, NOT delivery acknowledgement:
+    a ``False`` return only means "already durable" after a re-read confirms the
+    row exists. A write that raises, or a no-op that cannot be confirmed, is
+    ``UNKNOWN`` and fails closed at the caller.
+    """
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
 
     order_id = position.get("pending_close_order_id")
-    claim_identity = (
-        f"order:{order_id}"
-        if order_id
-        else (
-            "unidentified:"
-            f"{position.get('pending_close_requested_at') or 'missing'}:"
-            f"{position.get('pending_close_status') or 'missing'}"
-        )
-    )
+    claim_identity = _pending_close_claim_identity(position)
     incident_digest = hashlib.sha256(
         f"{position['id']}\0{claim_identity}".encode()
     ).hexdigest()
-    repo.insert_audit_event_once(AuditEvent(
-        id=f"pending-close-reconciliation-{incident_digest}",
-        actor="system",
+    audit_id = f"pending-close-reconciliation-{incident_digest}"
+    try:
+        inserted = repo.insert_audit_event_once(AuditEvent(
+            id=audit_id,
+            actor="system",
+            source="position_manager",
+            event_type="pending_close_reconciliation_required",
+            entity_type="position",
+            entity_id=position["id"],
+            message=(
+                f"Pending close {order_id} has remained "
+                f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
+                "retain the claim and reconcile before any further close action."
+            ),
+        ))
+    except Exception:
+        logger.warning(
+            "pending close escalation write failed for %s", position["id"],
+            exc_info=True,
+        )
+        return _EscalationOutcome.UNKNOWN
+    if inserted:
+        return _EscalationOutcome.FRESH
+    if get_db().execute(
+        "SELECT 1 FROM audit_events WHERE id = ?", (audit_id,)
+    ).fetchone() is not None:
+        return _EscalationOutcome.ALREADY_DURABLE
+    return _EscalationOutcome.UNKNOWN
+
+
+def _route_pending_close_finding(
+    position: dict,
+    *,
+    outcome: _EscalationOutcome,
+    already_escalated_ids: set[str],
+    errors: list[dict],
+    escalated: list[dict],
+) -> None:
+    """Route one stale pending-close finding to `escalated` or `errors`.
+
+    A finding is `escalated` only when the durable record is confirmed present
+    both by this call's re-read and by the pass-start bulk read. Every other
+    outcome — fresh, unconfirmed, or the defensive contradiction where the two
+    reads disagree — fails closed to `errors`. Exclusivity is per finding
+    (`code` + `position_id`): other findings for the same position are routed on
+    their own merit.
+    """
+    payload = {
+        "position_id": position["id"],
+        "symbol": position.get("symbol"),
+        "market_type": position.get("market_type"),
+        "code": "pending_close_reconciliation_required",
+    }
+    if (
+        outcome == _EscalationOutcome.ALREADY_DURABLE
+        and position["id"] in already_escalated_ids
+    ):
+        payload["escalated_at"] = _pending_close_escalated_at(position["id"])
+        payload["claim_identity"] = _pending_close_claim_identity(position)
+        escalated.append(payload)
+    else:
+        errors.append(payload)
+
+
+def _terminal_ambiguity_digest(position: dict) -> str:
+    """Stable identity of the terminally ambiguous close claim on one Position."""
+    claim_identity = _pending_close_claim_identity(position)
+    return hashlib.sha256(f"{position['id']}\0{claim_identity}".encode()).hexdigest()
+
+
+def _upsert_manual_close_critical(position: dict) -> None:
+    """Re-affirm the outstanding terminally-ambiguous close incident.
+
+    Uses PR3's non-evicting critical registry instead of ``emit_infra_event``:
+    the fence stays raised until PR4 resolves it, so every pass must re-affirm
+    the still-open state without adding deque pressure, and a crash/restart is
+    recovered by the next pass's durable reconstruction. The upsert is
+    idempotent on ``(source, code, entity_id)``.
+    """
+    from aletheia.infra.events import upsert_critical_unresolved
+
+    upsert_critical_unresolved(
         source="position_manager",
-        event_type="pending_close_reconciliation_required",
-        entity_type="position",
+        code="manual_close_reconciliation_required",
         entity_id=position["id"],
         message=(
-            f"Pending close {order_id} has remained "
-            f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
-            "retain the claim and reconcile before any further close action."
+            f"Pending close order {position.get('pending_close_order_id')} for "
+            f"{position.get('symbol')} stayed submission_unknown beyond "
+            f"{SUBMISSION_UNKNOWN_TERMINAL_HOURS}h; the claim is now "
+            "manual_reconciliation_pending and requires human reconciliation."
         ),
-    ))
+        metadata={
+            "position_id": position["id"],
+            "symbol": position.get("symbol"),
+            "market_type": position.get("market_type"),
+            "pending_close_order_id": position.get("pending_close_order_id"),
+            "pending_close_status": _MANUAL_RECONCILIATION_PENDING,
+            "claim_identity": _pending_close_claim_identity(position),
+            "terminal_hours": SUBMISSION_UNKNOWN_TERMINAL_HOURS,
+        },
+    )
+
+
+def _ensure_manual_close_wake(position: dict) -> bool:
+    """Deliver the P1 manual-close wake once per claim, durably.
+
+    ``insert_audit_event_once`` reports dedup status, not delivery. The delivery
+    audit row is written only after ``_emit_wake`` reports scheduling, so a crash
+    between the emit and its audit re-emits on the next pass instead of silently
+    dropping a must-answer wake. Once the delivery row exists, no further
+    attempt is made.
+    """
+    digest = _terminal_ambiguity_digest(position)
+    delivery_id = f"manual-close-wake-delivered-{digest}"
+    if get_db().execute(
+        "SELECT 1 FROM audit_events WHERE id = ?", (delivery_id,)
+    ).fetchone() is not None:
+        return False
+
+    from aletheia.agent_runtime.wake_events import (
+        MANUAL_CLOSE_RECONCILIATION_REQUIRED,
+    )
+
+    delivered = _emit_wake(
+        position,
+        MANUAL_CLOSE_RECONCILIATION_REQUIRED,
+        {
+            "symbol": position.get("symbol"),
+            "market_type": position.get("market_type"),
+            "pending_close_order_id": position.get("pending_close_order_id"),
+            "pending_close_status": _MANUAL_RECONCILIATION_PENDING,
+            "reason": "submission_unknown_terminal_bound",
+        },
+        source="pending_close_terminal",
+    )
+    if not delivered:
+        return False
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    try:
+        repo.insert_audit_event_once(AuditEvent(
+            id=delivery_id,
+            actor="system",
+            source="position_manager",
+            event_type="manual_close_wake_delivered",
+            entity_type="position",
+            entity_id=position["id"],
+            message=(
+                "Manual close reconciliation wake delivered at "
+                f"{datetime.now(timezone.utc).isoformat()}."
+            ),
+        ))
+    except Exception:
+        logger.warning(
+            "manual close wake delivery audit write failed for %s",
+            position["id"], exc_info=True,
+        )
+    return True
+
+
+def _apply_terminal_ambiguity_bound(position: dict) -> bool:
+    """Set ``manual_reconciliation_pending`` once at the 24h terminal bound.
+
+    Returns True when this pass transitioned the claim. The order status is
+    never touched, the claim is never released, and no fill is synthesised: the
+    order stays in an open local state so a late fill is still materialized by
+    the ordinary reconciler. Age is a purely local-DB judgment — no venue read
+    is required.
+
+    Fail-closed: a NULL, malformed, or future ``pending_close_requested_at``
+    cannot be proven safe and is treated as terminal.
+    """
+    if position.get("pending_close_status") != "submission_unknown":
+        return False
+    position_id = position.get("id")
+    if not position_id:
+        return False
+    age_hours = _pending_close_age_hours(position.get("pending_close_requested_at"))
+    if age_hours is not None and age_hours < SUBMISSION_UNKNOWN_TERMINAL_HOURS:
+        return False
+    order_id = position.get("pending_close_order_id")
+    if not order_id:
+        # The durable claim transition requires the exact claim identity.
+        return False
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    try:
+        repo.update_position_close_claim(
+            position_id,
+            order_id=order_id,
+            status=_MANUAL_RECONCILIATION_PENDING,
+        )
+    except Exception:
+        logger.warning(
+            "terminal close-ambiguity transition failed for %s", position_id,
+            exc_info=True,
+        )
+        return False
+
+    digest = _terminal_ambiguity_digest(position)
+    try:
+        repo.insert_audit_event_once(AuditEvent(
+            id=f"manual-close-reconciliation-{digest}",
+            actor="system",
+            source="position_manager",
+            event_type="manual_close_reconciliation_required",
+            entity_type="position",
+            entity_id=position_id,
+            message=(
+                f"Pending close {order_id} stayed submission_unknown for "
+                f"{age_hours:.1f}h (terminal bound "
+                f"{SUBMISSION_UNKNOWN_TERMINAL_HOURS}h); the claim is now "
+                "human-owned manual_reconciliation_pending."
+            ),
+        ))
+    except Exception:
+        logger.warning(
+            "terminal close-ambiguity audit write failed for %s", position_id,
+            exc_info=True,
+        )
+
+    position["pending_close_status"] = _MANUAL_RECONCILIATION_PENDING
+    _upsert_manual_close_critical(position)
+    _ensure_manual_close_wake(position)
+    return True
 
 
 def close_position_routed(
@@ -978,6 +1250,7 @@ def evaluate_open_positions() -> dict:
     market_exits = 0
     failed_close_count = 0
     errors: list[dict] = []
+    escalated: list[dict] = []
     observations: list[dict] = []
     market_signal_wakes = 0
     catastrophic_exits = 0
@@ -1044,21 +1317,47 @@ def evaluate_open_positions() -> dict:
         except Exception as e:
             logger.warning("market_signal_index build failed: %s", e)
 
+    # Reconstruct durable escalation state once per pass from the audit table.
+    # insert_audit_event_once reports dedup status, not delivery, so the report
+    # routing must not depend on its return alone. See INV-SCH-11.
+    already_escalated_ids = _already_escalated_position_ids()
+
     for p in all_open:
         if p.get("execution_mode") not in _DEMO_MODES:
             continue
         checked += 1
         pending_close = has_unresolved_close_claim(p)
         if pending_close:
+            if p.get("pending_close_status") == _MANUAL_RECONCILIATION_PENDING:
+                # Human-owned terminal claim: re-affirm the durable critical
+                # registry each pass (survives restart/crash) and keep the P1
+                # wake delivered exactly once per claim. Skip both the 4h and
+                # 24h paths; it never contributes to errors/escalated.
+                _upsert_manual_close_critical(p)
+                _ensure_manual_close_wake(p)
+                continue
+            if _apply_terminal_ambiguity_bound(p):
+                # The claim aged past the terminal bound this pass. It is routed
+                # to the operator through the critical registry + a P1 wake, not
+                # through errors/escalated (nothing fresh failed), and the
+                # position is never double-closed.
+                logger.warning(
+                    "pending close terminally ambiguous for %s: order=%s "
+                    "status=%s — now manual_reconciliation_pending",
+                    p["id"], p.get("pending_close_order_id"),
+                    p.get("pending_close_status"),
+                )
+                continue
             age_hours = _pending_close_age_hours(p.get("pending_close_requested_at"))
             if age_hours is not None and age_hours >= _PENDING_CLOSE_STALE_HOURS:
-                _escalate_stale_pending_close(p, age_hours)
-                errors.append({
-                    "position_id": p["id"],
-                    "symbol": p.get("symbol"),
-                    "market_type": p.get("market_type"),
-                    "code": "pending_close_reconciliation_required",
-                })
+                outcome = _escalate_stale_pending_close(p, age_hours)
+                _route_pending_close_finding(
+                    p,
+                    outcome=outcome,
+                    already_escalated_ids=already_escalated_ids,
+                    errors=errors,
+                    escalated=escalated,
+                )
                 logger.warning(
                     "pending close requires reconciliation for %s: order=%s status=%s age=%.1fh",
                     p["id"], p.get("pending_close_order_id"),
@@ -1239,6 +1538,7 @@ def evaluate_open_positions() -> dict:
         "market_exits": market_exits,
         "failed_close_count": failed_close_count,
         "errors": errors,
+        "escalated": escalated,
         "observations": observations,
         "market_signal_wakes": market_signal_wakes,
         "catastrophic_exits": catastrophic_exits,

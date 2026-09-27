@@ -23,11 +23,21 @@ CLOSE_CLAIM_STATES = frozenset({
     "materialization_missing",
     "position_absence_unverified",
     "overfilled",
+    "manual_reconciliation_pending",
 })
 
 # Compatibility name used by the existing Position Manager and broker tests.
 _OPEN_CLOSE_STATES = CLOSE_CLAIM_STATES
 PENDING_CLOSE_STALE_HOURS = 4
+# Terminal bound for a close-side submission ambiguity. After this many hours a
+# `submission_unknown` close claim stops being machine-owned and becomes a
+# human-owned `manual_reconciliation_pending` fact. It is NOT a resolution:
+# the order status and the close claim are never touched here.
+SUBMISSION_UNKNOWN_TERMINAL_HOURS = 24
+# A terminal bound at or below the stale-retry bound would make the two
+# thresholds fight: the claim would be terminally bound on the very pass it
+# first becomes stale. Keep the ordering explicit and fail fast if it breaks.
+assert SUBMISSION_UNKNOWN_TERMINAL_HOURS > PENDING_CLOSE_STALE_HOURS  # 24 > 4
 
 _STATE_LABELS = {
     "pending": ("close_claimed", "close claimed; awaiting submission"),
@@ -48,6 +58,10 @@ _STATE_LABELS = {
         "manual attention required",
     ),
     "overfilled": ("manual_attention_required", "manual attention required"),
+    "manual_reconciliation_pending": (
+        "manual_attention_required",
+        "manual reconciliation required",
+    ),
     "error": ("manual_attention_required", "manual attention required"),
 }
 

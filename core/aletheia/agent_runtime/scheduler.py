@@ -2540,6 +2540,29 @@ def _run_position_manager():
             _record_job_failure(
                 "position_manager", "position_manager_reported_errors"
             )
+        # Durable stable escalations stay observable but never fail the job.
+        # Emitted on EVERY pass (dedupe-bounded) so a process that died between
+        # the audit insert and this emit is recovered by the next process.
+        from aletheia.infra.events import emit_infra_event
+
+        stabilized = list(summary.get("escalated") or []) if isinstance(summary, dict) else []
+        for item in stabilized:
+            emit_infra_event(
+                severity="warning",
+                source="position_manager",
+                code="position_manager_stable_escalation",
+                message=(
+                    "Stable escalation still active: "
+                    f"{item.get('code', '?')} on position {item.get('position_id', '?')}"
+                ),
+                entity_id=item.get("position_id"),
+                metadata={
+                    "finding_code": item.get("code"),
+                    "escalated_at": item.get("escalated_at"),
+                    "claim_identity": item.get("claim_identity"),
+                },
+                dedupe_sec=600,  # bounds deque pressure to <=6 events/hour/claim
+            )
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
         _record_job_failure("position_manager", str(e))

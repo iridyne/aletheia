@@ -453,8 +453,9 @@ def validate_native_order_authority(order: Order | Mapping[str, object]) -> None
         # Full close: quantity must equal position quantity and client_order_id must be durable
         if abs(requested - position_quantity) > tolerance:
             raise ValueError("native close Order quantity does not match Position")
-        expected_client_id = f"close-{position_id}"
-        if data.get("client_order_id") != expected_client_id:
+        from aletheia.execution.pending_close_recovery import is_durable_close_client_oid
+
+        if not is_durable_close_client_oid(str(position_id), data.get("client_order_id")):
             raise ValueError("native close Order client identity is not durable")
         return
 

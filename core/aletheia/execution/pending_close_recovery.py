@@ -83,7 +83,14 @@ def is_durable_close_client_oid(position_id: str, client_order_id: str | None) -
 
 
 def next_close_client_oid(position_id: str) -> str:
-    """Allocate a Bitget clientOid for a close retry after recoverable cancellation."""
+    """Allocate a Bitget clientOid for a close retry after recoverable cancellation.
+
+    Consumers: ``execution.coordinator._claim_close``. Must be called inside the
+    writer lock of ``sqlite.transaction(immediate=True)``; a read-then-compute
+    outside that lock would race with any concurrent close-claim allocation on the
+    same position (safe today under Fedora's single-process uvicorn, guarded by
+    tests/audit/close_client_oid_transaction_guard.py).
+    """
     base = f"close-{position_id}"
     row = get_db().execute(
         "SELECT client_order_id FROM orders WHERE position_id=? "

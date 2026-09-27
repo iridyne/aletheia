@@ -20,6 +20,7 @@ from aletheia.config.exchanges import execution_mode_environment, execution_mode
 from aletheia.data.symbols import to_bitget
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
+from aletheia.execution.errors import IncompleteReadError
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     durable_private_fill_id,
@@ -73,14 +74,28 @@ _OPEN_LOCAL_STATES = (
 
 
 def _list_unresolved_core_orders() -> list[dict]:
-    """Read every unresolved core Order; reconciliation must not truncate risk."""
+    """Read every unresolved core Order; reconciliation must not truncate risk.
+
+    Orders whose linked Position carries the terminally ambiguous
+    ``manual_reconciliation_pending`` close state are excluded from the ordinary
+    scan. That claim is human-owned, and polling it every pass would only keep
+    writing ``order_reconciliation_inconclusive`` rows for a condition no
+    machine action can resolve. The Order itself stays in an open local state,
+    so a fill arriving after the bound is still materialized once an operator
+    resolves the claim (PR4).
+    """
     placeholders = ",".join("?" for _ in _OPEN_LOCAL_STATES)
     rows = get_db().execute(
         f"""
-        SELECT *
+        SELECT orders.*
         FROM orders
-        WHERE status IN ({placeholders})
-        ORDER BY created_at ASC, rowid ASC
+        LEFT JOIN positions ON positions.id = orders.position_id
+        WHERE orders.status IN ({placeholders})
+          AND (
+              positions.pending_close_status IS NULL
+              OR positions.pending_close_status != 'manual_reconciliation_pending'
+          )
+        ORDER BY orders.created_at ASC, orders.rowid ASC
         """,
         _OPEN_LOCAL_STATES,
     ).fetchall()
@@ -808,7 +823,13 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_open_orders_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_open_orders",
+                self.execution_mode,
+                market_type,
+                completeness=report.completeness,
+            )
         return [
             self._order_row(order)
             for order in report.orders
@@ -836,7 +857,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_fills_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_fills",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return [
             fill for fill in report.fills
             if fill.instrument.market_type == market_type
@@ -862,7 +890,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_fills",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return list(report.fills)
     async def get_order_status(
         self,
@@ -884,7 +919,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_order",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return report.found
 
     async def get_order_detail_by_client_oid(
@@ -900,7 +942,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_order",
+                self.execution_mode,
+                "usdt_futures",
+                symbol,
+                completeness=report.completeness,
+            )
         return self._order_row(report.found) if report.found else None
 
     async def get_funding_ledger(
@@ -925,7 +974,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_funding_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_funding_ledger",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         events = [
             {
                 "event_id": entry.venue_ledger_id,
@@ -1067,9 +1123,10 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
             inconclusive += 1
             errors.append("bitget_demo: historical exact fill history unavailable")
             logger.warning(
-                "reconcile: historical exact fills failed for order %s (%s)",
+                "reconcile: historical exact fills failed for order %s (%s: %s)",
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
             _write_filled_gap_event(
                 order,
@@ -1184,10 +1241,11 @@ def _reconcile_multibroker_orders(multibroker_orders) -> dict:
                 f"{execution_mode}/{market_type}: private fill query unavailable"
             )
             logger.warning(
-                "reconcile: private fill query failed for %s order %s (%s)",
+                "reconcile: private fill query failed for %s order %s (%s: %s)",
                 execution_mode,
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
             _write_reconcile_event(
                 order,
@@ -1209,10 +1267,11 @@ def _reconcile_multibroker_orders(multibroker_orders) -> dict:
                         f"{execution_mode}/{market_type}: private funding history unavailable"
                     )
                     logger.warning(
-                        "reconcile: funding query failed for %s order %s (%s)",
+                        "reconcile: funding query failed for %s order %s (%s: %s)",
                         execution_mode,
                         order["id"],
                         type(exc).__name__,
+                        getattr(exc, "reason_code", "no_reason_code"),
                     )
         try:
             result = (
@@ -1364,10 +1423,11 @@ def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> 
                 f"{execution_mode}/{market_type}: open-order query unavailable"
             )
             logger.warning(
-                "reconcile: open-order query failed for %s/%s (%s)",
+                "reconcile: open-order query failed for %s/%s (%s: %s)",
                 execution_mode,
                 market_type,
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
         try:
             fill_rows[market_type] = _response_rows(
@@ -1379,10 +1439,11 @@ def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> 
             fill_rows[market_type] = []
             failed_default_fill_markets.add(market_type)
             logger.warning(
-                "reconcile: default private fills failed for %s/%s (%s)",
+                "reconcile: default private fills failed for %s/%s (%s: %s)",
                 execution_mode,
                 market_type,
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
     return {
         "mode_orders": mode_orders,
@@ -1429,9 +1490,10 @@ def _recover_exchange_order_id(
                 )
             except Exception as exc:
                 logger.warning(
-                    "reconcile: clientOid detail lookup failed for order %s (%s)",
+                    "reconcile: clientOid detail lookup (get_order) failed for order %s (%s: %s)",
                     order["id"],
                     type(exc).__name__,
+                    getattr(exc, "reason_code", "no_reason_code"),
                 )
                 detail = None
             if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
@@ -1478,10 +1540,11 @@ def _fetch_order_history_and_ioc_state(
                 f"{execution_mode}/{market_type}: exact fill history unavailable"
             )
             logger.warning(
-                "reconcile: exact fills failed for %s order %s (%s)",
+                "reconcile: exact fills failed for %s order %s (%s: %s)",
                 execution_mode,
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
             _write_reconcile_event(
                 order,
@@ -1514,11 +1577,12 @@ def _fetch_order_history_and_ioc_state(
             except Exception as exc:
                 symbol_fill_rows[cache_key] = None
                 logger.warning(
-                    "reconcile: symbol private fills failed for %s/%s/%s (%s)",
+                    "reconcile: symbol private fills failed for %s/%s/%s (%s: %s)",
                     execution_mode,
                     market_type,
                     exchange_symbol,
                     type(exc).__name__,
+                    getattr(exc, "reason_code", "no_reason_code"),
                 )
         scoped_rows = symbol_fill_rows.get(cache_key) if exchange_symbol else None
         if scoped_rows is None:
@@ -1573,9 +1637,10 @@ def _fetch_order_history_and_ioc_state(
                 ioc_terminal_quantity = float(exact_order.filled_quantity)
         except Exception as exc:
             logger.warning(
-                "reconcile: exact IOC status failed for order %s (%s)",
+                "reconcile: exact IOC status failed for order %s (%s: %s)",
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
     return rows, ioc_terminal, ioc_terminal_quantity
 
@@ -1654,9 +1719,10 @@ def _materialize_native_order(
                     "private funding history unavailable"
                 )
                 logger.warning(
-                    "reconcile: funding query failed for order %s (%s)",
+                    "reconcile: funding query failed for order %s (%s: %s)",
                     order["id"],
                     type(exc).__name__,
+                    getattr(exc, "reason_code", "no_reason_code"),
                 )
     try:
         result = (
@@ -1842,7 +1908,7 @@ def reconcile() -> dict:
     filled += gap_result["filled"]
     materialized_fills += gap_result["materialized_fills"]
 
-    for execution_mode, account_mode in _BITGET_ACCOUNT_MODES.items():
+    for execution_mode in _BITGET_ACCOUNT_MODES:
         views = _prepare_bitget_private_views(execution_mode, bitget_orders, configured)
         if views is None:
             continue

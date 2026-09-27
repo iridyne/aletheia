@@ -246,6 +246,16 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
 | 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
 
+UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
+（`core/aletheia/execution/errors.py`）抛出，不得使用裸 `RuntimeError`。异常携带
+`reason_code`、`completeness`、`endpoint`、`execution_mode`、`market_type`、`symbol`，
+使调用方能在不匹配消息文本的前提下区分**结构性** `PARTIAL`/`UNSUPPORTED`（venue profile
+无法服务该 scope，重试必然同样失败）与**瞬时** `UNAVAILABLE`。裸 `RuntimeError` 会把全部
+诊断信息压缩成 `errors.log` 里的字符串 `"RuntimeError"`，使实际故障原因不可观测。
+凡包裹此类读取的 `except … as exc:` 处理器，其 `logger.warning` 必须同时记录
+`type(exc).__name__` 与该异常的 `reason_code`。类型化只增加诊断词汇，不授予任何新权限：
+不得据此自动重试，不得把 incomplete 读取变成空、零或"仓位已消失"的证据。见 `INV-EX-1`。
+
 **Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
 
 Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
@@ -424,6 +434,8 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
   `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
   价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
+  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）是 order-attempt rate-limit 标记，
+  **不是** `CLOSE_CLAIM_STATES` 成员，因此不参与 `has_unresolved_close_claim` 的 claim 判定。
 - **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
   撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
   按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
@@ -450,6 +462,100 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
+- **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
+  not been used by a prior close attempt on the same position. The coordinator's `_claim_close`
+  obtains the identifier via `pending_close_recovery.next_close_client_oid(position_id)`, which
+  selects `close-{position_id}` when no prior attempt exists and `close-{position_id}-r{N+1}`
+  otherwise, where `N` is the max retry index observed in the orders table for that position.
+  Allocation MUST occur inside the same `sqlite.transaction(immediate=True)` writer lock that
+  mutates `positions.pending_close_*`; a read-then-compute outside that lock would race with
+  concurrent close-claim allocation on the same position. A structural AST guard test
+  (`tests/audit/close_client_oid_transaction_guard.py`) enforces this containment.
+
+#### 10.2.4 Terminal bound on close-side submission ambiguity
+
+> A close-side order in `submission_unknown` MUST NOT remain machine-owned without
+> bound. Two thresholds apply from the claim's `pending_close_requested_at`:
+>
+> - `PENDING_CLOSE_STALE_HOURS` (4 h): the claim is *stale*. Escalate once per
+>   claim identity and keep retrying. Unchanged.
+> - `SUBMISSION_UNKNOWN_TERMINAL_HOURS` (24 h): the claim is *terminally ambiguous*.
+>   Exactly one action follows, and it is not a resolution: set
+>   `positions.pending_close_status = "manual_reconciliation_pending"`, record the
+>   fact once under the `manual-close-reconciliation-` audit identity namespace,
+>   raise one P1 `MANUAL_CLOSE_RECONCILIATION_REQUIRED` operator wake, and record
+>   one critical outstanding infra state.
+>
+> At the terminal bound the system MUST NOT transition the order's status, MUST NOT
+> release the close claim, MUST NOT close the position, and MUST NOT synthesise,
+> infer, or assume a fill. The order remains in an open local state so that a fill
+> arriving after the bound is materialized by the ordinary reconciliation path.
+> `manual_reconciliation_pending` satisfies `has_unresolved_close_claim` and MUST
+> NOT be a member of `IMMEDIATE_RECONCILIATION_STATES`.
+>
+> A NULL, malformed, or future `pending_close_requested_at` MUST be treated as
+> terminal ambiguity (fail-closed): the system cannot prove such a claim safe.
+>
+> A read reporting `ReadCompleteness.COMPLETE` with no matching order does **not**
+> prove the venue never received the order; it proves only that the read window
+> completed. Automatic machine logic MUST NOT treat it as proof of non-existence.
+>
+> Incompleteness MUST be typed, not stringly-raised. Any UTA read that cannot prove
+> `ReadCompleteness.COMPLETE` MUST fail with `IncompleteReadError`
+> (`core/aletheia/execution/errors.py`), never a bare `RuntimeError`. The exception
+> carries `reason_code`, `completeness`, `endpoint`, `execution_mode`, `market_type`,
+> and `symbol`, so a caller can distinguish a *structural* `PARTIAL`/`UNSUPPORTED` —
+> the venue profile cannot serve the requested scope, and every identical retry will
+> fail the same way — from a *transient* `UNAVAILABLE`, without matching on message
+> text. A bare `RuntimeError` conflated the two and reduced the whole diagnostic to
+> the literal string `"RuntimeError"` in `errors.log`. `IncompleteReadError`
+> subclasses `RuntimeError`, so existing fail-closed `except Exception` handlers keep
+> their current behaviour and no caller is forced to change. Typing the failure grants
+> no new authority: it MUST NOT be read as permission to retry, to synthesise an empty
+> or zero result, or to treat an incomplete read as evidence of absence.
+>
+> Terminal resolution is exclusively human-authorized, through an operator tool
+> that revalidates the full evidence snapshot under the writer lock immediately
+> before mutation and records `manual_close_claim_resolved` with `actor=human`.
+> The only permitted resolutions are: venue-confirmed fill (requires a
+> venue-sourced fill identifier), venue-confirmed absence (order →
+> `submission_rejected`, claim released, any subsequent close MUST use a freshly
+> allocated close `client_order_id`), and operator-settled-outside-gateway (audit
+> only).
+>
+> When operator-authorized resolution transitions the ambiguous order to
+> `submission_rejected`, any subsequent close attempt on the same position MUST use a
+> freshly allocated `client_order_id` returned by `next_close_client_oid` (never the
+> historical `close-{position_id}` literal). This is enforced by construction in
+> `_claim_close` and by the uniqueness guard tests above.
+>
+> The terminal bound is evaluated for every unresolved close claim on each
+> `position_manager` pass and is a purely local-DB judgment (no venue read is
+> required to apply it).
+
+**Close-claim state table**
+
+| Claim state | Meaning | Membership / behavior |
+|---|---|---|
+| `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
+
+**INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
+raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`
+handler that wraps such a read MUST include that exception's `reason_code` alongside
+`type(exc).__name__`, so the venue-reported reason reaches `errors.log` instead of the
+opaque type name. Structurally guarded by
+`tests/audit/test_reconciliation_incomplete_read_logging.py`, which discovers the
+call sites from the module AST rather than from a maintained list, and which fails if
+the set of discovered sites is empty — a guard that silently matches nothing is not
+a guard.
+
+> **Documented limitation**: `get_order_detail_by_client_oid`
+> (`core/aletheia/execution/reconciliation.py`, method `get_order_detail_by_client_oid`)
+> issues a scope without `start_at`; for a venue profile with no client-order lookup
+> parameter this read is structurally `PARTIAL`
+> (`private_order_history_start_required`). Such claims reach the terminal bound for
+> that reason alone. Accepted; tracked separately. After `INV-EX-1` this reason is
+> visible in `errors.log` rather than hidden behind `RuntimeError`.
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 
