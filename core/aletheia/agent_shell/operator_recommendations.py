@@ -1294,53 +1294,17 @@ def _build_task_backlog_recommendations(
     return recommendations
 
 
-def build_recommendations(limit: int = 10) -> list[dict]:
-    from aletheia.agent_runtime.health import compute_health
-
-    cfg = load_config()
-    recommendations: list[dict] = []
-    heartbeat = get_latest_heartbeat()
-    failed_tasks = list_tasks(limit=10, status="failed")
-    running_tasks = list_tasks(limit=20, status="running")
-    queued_tasks = list_tasks(limit=20, status="queued")
-    recent_events = list_events(limit=100)
-    recent_artifacts = list_artifacts(limit=500)
-
-    if heartbeat is None or heartbeat.get("status") == "offline":
-        recommendations.append(
-            {
-                "id": "operator-offline",
-                "kind": "operator_offline",
-                "severity": "high",
-                "summary": "Operator shell is offline. Wake or restart it before relying on background supervision.",
-            }
-        )
-    elif heartbeat.get("stale"):
-        recommendations.append(
-            {
-                "id": "operator-stale",
-                "kind": "heartbeat_stale",
-                "severity": "high",
-                "summary": "Operator heartbeat is stale. Inspect shell logs or let the supervisor restart it.",
-            }
-        )
-
-    if cfg.runtime.paused:
-        recommendations.append(
-            {
-                "id": "gateway-paused",
-                "kind": "operator_paused",
-                "severity": "medium",
-                "summary": "Gateway is paused. Resume it when background monitoring and scheduled work should continue.",
-            }
-        )
-
-    health_snapshot = compute_health()
+def _build_health_report_recommendations(
+    health_snapshot: dict,
+    recent_artifacts: list[dict],
+) -> list[dict]:
     health_issues = [
         str(issue)
         for issue in (health_snapshot.get("issues") or [])
         if str(issue) != "trading_paused"
     ]
+    recommendations: list[dict] = []
+
     if health_issues and not _has_fresh_report_artifact(
         recent_artifacts,
         artifact_type="diagnostic_report",
@@ -1456,6 +1420,226 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                 },
             )
         )
+
+    return recommendations
+
+
+def _build_risk_recommendations(
+    cfg,
+    risk_summary: dict,
+    recent_risk_critic_runs: list[dict],
+    recent_artifacts: list[dict],
+) -> list[dict]:
+    recommendations: list[dict] = []
+
+    if (
+        not cfg.runtime.paused
+        and risk_summary["recent_rejected_decisions"]
+        and not recent_risk_critic_runs
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="risk-critique-due",
+                kind="risk_critique_due",
+                severity="medium",
+                summary=(
+                    "Recent risk rejections exist without a fresh risk-critic pass. "
+                    "Delegate risk_critic to record a new risk lesson note."
+                ),
+                task_type="run_risk_critique",
+                metadata={
+                    "task_type": "run_risk_critique",
+                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
+                },
+            )
+        )
+
+    if (
+        not cfg.runtime.paused
+        and risk_summary["recent_rejected_decisions"]
+        and not _has_fresh_report_artifact(
+            recent_artifacts,
+            artifact_type="review_report",
+            report_type="risk_review",
+            within_minutes=360,
+        )
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="risk-review-report-refresh",
+                kind="risk_review_report_refresh_due",
+                severity="medium",
+                summary=(
+                    "Recent risk rejections exist and no fresh risk review report is visible. "
+                    "Refresh a risk-focused operator summary."
+                ),
+                task_type="create_review_report",
+                metadata={
+                    "task_type": "create_review_report",
+                    "report_type": "risk_review",
+                    "title": "Risk Review Report",
+                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
+                    "proposal_candidate_count": len(
+                        risk_summary["needs_operator_risk_boundary_proposals"]
+                    ),
+                    "refresh_window_minutes": 360,
+                },
+            )
+        )
+
+    due_risk_boundary_changes = risk_summary["needs_operator_risk_boundary_proposals"]
+    if not cfg.runtime.paused and due_risk_boundary_changes:
+        first_candidate = due_risk_boundary_changes[0]
+        recommendations.append(
+            _make_task_recommendation(
+                id_=(
+                    "risk-boundary-proposal:"
+                    f"{first_candidate['risk_mode']}:"
+                    f"{first_candidate['policy_hash']}:"
+                    f"{first_candidate['boundary_key']}"
+                ),
+                kind="risk_boundary_change_proposal_due",
+                severity="medium",
+                summary=first_candidate["summary"],
+                task_type="create_repair_proposal",
+                metadata={
+                    "boundary_key": first_candidate["boundary_key"],
+                    "violation_kind": first_candidate["violation_kind"],
+                    "risk_mode": first_candidate["risk_mode"],
+                    "policy_id": first_candidate["policy_id"],
+                    "policy_revision": first_candidate["policy_revision"],
+                    "policy_hash": first_candidate["policy_hash"],
+                    "rejection_count": first_candidate["rejection_count"],
+                    "changes": first_candidate["changes"],
+                    "sample_violations": first_candidate["sample_violations"],
+                    "decision_ids": first_candidate["decision_ids"][:5],
+                    "affected_symbols": first_candidate["affected_symbols"][:5],
+                    "execution_modes": first_candidate["execution_modes"],
+                    "proposal_command": "propose_risk_boundary_change",
+                },
+            )
+        )
+
+    due_observe_only_symbols = risk_summary.get("needs_operator_observe_only_symbols") or []
+    if not cfg.runtime.paused and due_observe_only_symbols:
+        first_candidate = due_observe_only_symbols[0]
+        recommendations.append(
+            _make_task_recommendation(
+                id_=f"symbol-observe-only:{first_candidate['symbol']}",
+                kind="symbol_observe_only_due",
+                severity="medium",
+                summary=first_candidate["summary"],
+                task_type="set_symbol_observe_only",
+                metadata={
+                    "task_type": "set_symbol_observe_only",
+                    "symbol": first_candidate["symbol"],
+                    "rejection_count": first_candidate["rejection_count"],
+                    "decision_ids": first_candidate["decision_ids"][:5],
+                    "execution_modes": first_candidate.get("execution_modes", [])[:5],
+                },
+            )
+        )
+
+    return recommendations
+
+
+def _build_failed_agent_rerun_recommendation(
+    cfg,
+    recent_runs_by_agent: dict,
+    failed_run_statuses: set[str],
+) -> dict | None:
+    failed_rerun_candidate = None
+    for agent_name, runs in recent_runs_by_agent.items():
+        sorted_runs = sorted(
+            runs,
+            key=lambda run: (
+                parse_utc(run.get("ended_at") or run.get("started_at"))
+                or datetime.min.replace(tzinfo=timezone.utc)
+            ),
+            reverse=True,
+        )
+        latest_run = sorted_runs[0] if sorted_runs else None
+        if latest_run is None:
+            continue
+        if str(latest_run.get("status") or "") not in failed_run_statuses:
+            continue
+        if str(latest_run.get("trigger_type") or "") == "manual":
+            continue
+        latest_failure_age_minutes = _run_age_minutes(latest_run)
+        if latest_failure_age_minutes is None or latest_failure_age_minutes < 15:
+            continue
+        failed_run_count = sum(
+            1 for run in sorted_runs if str(run.get("status") or "") in failed_run_statuses
+        )
+        if failed_run_count >= 2:
+            continue
+        failed_rerun_candidate = (agent_name, latest_run, int(latest_failure_age_minutes))
+        break
+
+    if not cfg.runtime.paused and failed_rerun_candidate:
+        agent_name, latest_failed_run, stale_minutes = failed_rerun_candidate
+        return _make_task_recommendation(
+            id_=f"failed-agent-rerun:{latest_failed_run['id']}",
+            kind="failed_agent_rerun_due",
+            severity="medium",
+            summary=f"{agent_name} has a recent failed run with no newer recovery. Rerun the failed task to restore scheduled coverage.",
+            task_type="rerun_failed_agent_task",
+            metadata={
+                "task_type": "rerun_failed_agent_task",
+                "agent_name": agent_name,
+                "failed_run_id": latest_failed_run["id"],
+                "failed_run_status": latest_failed_run.get("status"),
+                "stale_minutes": stale_minutes,
+            },
+        )
+    return None
+
+
+def build_recommendations(limit: int = 10) -> list[dict]:
+    from aletheia.agent_runtime.health import compute_health
+
+    cfg = load_config()
+    recommendations: list[dict] = []
+    heartbeat = get_latest_heartbeat()
+    failed_tasks = list_tasks(limit=10, status="failed")
+    running_tasks = list_tasks(limit=20, status="running")
+    queued_tasks = list_tasks(limit=20, status="queued")
+    recent_events = list_events(limit=100)
+    recent_artifacts = list_artifacts(limit=500)
+
+    if heartbeat is None or heartbeat.get("status") == "offline":
+        recommendations.append(
+            {
+                "id": "operator-offline",
+                "kind": "operator_offline",
+                "severity": "high",
+                "summary": "Operator shell is offline. Wake or restart it before relying on background supervision.",
+            }
+        )
+    elif heartbeat.get("stale"):
+        recommendations.append(
+            {
+                "id": "operator-stale",
+                "kind": "heartbeat_stale",
+                "severity": "high",
+                "summary": "Operator heartbeat is stale. Inspect shell logs or let the supervisor restart it.",
+            }
+        )
+
+    if cfg.runtime.paused:
+        recommendations.append(
+            {
+                "id": "gateway-paused",
+                "kind": "operator_paused",
+                "severity": "medium",
+                "summary": "Gateway is paused. Resume it when background monitoring and scheduled work should continue.",
+            }
+        )
+
+    health_snapshot = compute_health()
+    recommendations.extend(
+        _build_health_report_recommendations(health_snapshot, recent_artifacts)
+    )
 
     recommendations.extend(
         _build_task_backlog_recommendations(
@@ -1611,52 +1795,13 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         manual_runs_by_agent,
     ) = _group_agent_runs(recent_agent_runs, failed_run_statuses)
 
-    failed_rerun_candidate = None
-    for agent_name, runs in recent_runs_by_agent.items():
-        sorted_runs = sorted(
-            runs,
-            key=lambda run: (
-                parse_utc(run.get("ended_at") or run.get("started_at"))
-                or datetime.min.replace(tzinfo=timezone.utc)
-            ),
-            reverse=True,
-        )
-        latest_run = sorted_runs[0] if sorted_runs else None
-        if latest_run is None:
-            continue
-        if str(latest_run.get("status") or "") not in failed_run_statuses:
-            continue
-        if str(latest_run.get("trigger_type") or "") == "manual":
-            continue
-        latest_failure_age_minutes = _run_age_minutes(latest_run)
-        if latest_failure_age_minutes is None or latest_failure_age_minutes < 15:
-            continue
-        failed_run_count = sum(
-            1 for run in sorted_runs if str(run.get("status") or "") in failed_run_statuses
-        )
-        if failed_run_count >= 2:
-            continue
-        failed_rerun_candidate = (agent_name, latest_run, int(latest_failure_age_minutes))
-        break
-
-    if not cfg.runtime.paused and failed_rerun_candidate:
-        agent_name, latest_failed_run, stale_minutes = failed_rerun_candidate
-        recommendations.append(
-            _make_task_recommendation(
-                id_=f"failed-agent-rerun:{latest_failed_run['id']}",
-                kind="failed_agent_rerun_due",
-                severity="medium",
-                summary=f"{agent_name} has a recent failed run with no newer recovery. Rerun the failed task to restore scheduled coverage.",
-                task_type="rerun_failed_agent_task",
-                metadata={
-                    "task_type": "rerun_failed_agent_task",
-                    "agent_name": agent_name,
-                    "failed_run_id": latest_failed_run["id"],
-                    "failed_run_status": latest_failed_run.get("status"),
-                    "stale_minutes": stale_minutes,
-                },
-            )
-        )
+    result = _build_failed_agent_rerun_recommendation(
+        cfg,
+        recent_runs_by_agent,
+        failed_run_statuses,
+    )
+    if result:
+        recommendations.append(result)
 
     recent_prompt_change_proposals = []
     for artifact in recent_artifacts:
@@ -1764,113 +1909,14 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         recommendations.append(result)
 
     risk_summary = build_risk_summary(cfg=cfg, recent_artifacts=recent_artifacts)
-    if (
-        not cfg.runtime.paused
-        and risk_summary["recent_rejected_decisions"]
-        and not recent_risk_critic_runs
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_="risk-critique-due",
-                kind="risk_critique_due",
-                severity="medium",
-                summary=(
-                    "Recent risk rejections exist without a fresh risk-critic pass. "
-                    "Delegate risk_critic to record a new risk lesson note."
-                ),
-                task_type="run_risk_critique",
-                metadata={
-                    "task_type": "run_risk_critique",
-                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
-                },
-            )
-        )
-
-    if (
-        not cfg.runtime.paused
-        and risk_summary["recent_rejected_decisions"]
-        and not _has_fresh_report_artifact(
+    recommendations.extend(
+        _build_risk_recommendations(
+            cfg,
+            risk_summary,
+            recent_risk_critic_runs,
             recent_artifacts,
-            artifact_type="review_report",
-            report_type="risk_review",
-            within_minutes=360,
         )
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_="risk-review-report-refresh",
-                kind="risk_review_report_refresh_due",
-                severity="medium",
-                summary=(
-                    "Recent risk rejections exist and no fresh risk review report is visible. "
-                    "Refresh a risk-focused operator summary."
-                ),
-                task_type="create_review_report",
-                metadata={
-                    "task_type": "create_review_report",
-                    "report_type": "risk_review",
-                    "title": "Risk Review Report",
-                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
-                    "proposal_candidate_count": len(
-                        risk_summary["needs_operator_risk_boundary_proposals"]
-                    ),
-                    "refresh_window_minutes": 360,
-                },
-            )
-        )
-
-    due_risk_boundary_changes = risk_summary["needs_operator_risk_boundary_proposals"]
-    if not cfg.runtime.paused and due_risk_boundary_changes:
-        first_candidate = due_risk_boundary_changes[0]
-        recommendations.append(
-            _make_task_recommendation(
-                id_=(
-                    "risk-boundary-proposal:"
-                    f"{first_candidate['risk_mode']}:"
-                    f"{first_candidate['policy_hash']}:"
-                    f"{first_candidate['boundary_key']}"
-                ),
-                kind="risk_boundary_change_proposal_due",
-                severity="medium",
-                summary=first_candidate["summary"],
-                task_type="create_repair_proposal",
-                metadata={
-                    "boundary_key": first_candidate["boundary_key"],
-                    "violation_kind": first_candidate["violation_kind"],
-                    "risk_mode": first_candidate["risk_mode"],
-                    "policy_id": first_candidate["policy_id"],
-                    "policy_revision": first_candidate["policy_revision"],
-                    "policy_hash": first_candidate["policy_hash"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "changes": first_candidate["changes"],
-                    "sample_violations": first_candidate["sample_violations"],
-                    "decision_ids": first_candidate["decision_ids"][:5],
-                    "affected_symbols": first_candidate["affected_symbols"][:5],
-                    "execution_modes": first_candidate["execution_modes"],
-                    "proposal_command": "propose_risk_boundary_change",
-                },
-            )
-        )
-
-    due_observe_only_symbols = risk_summary.get("needs_operator_observe_only_symbols") or []
-    if not cfg.runtime.paused and due_observe_only_symbols:
-        first_candidate = due_observe_only_symbols[0]
-        recommendations.append(
-            _make_task_recommendation(
-                id_=f"symbol-observe-only:{first_candidate['symbol']}",
-                kind="symbol_observe_only_due",
-                severity="medium",
-                summary=first_candidate["summary"],
-                task_type="set_symbol_observe_only",
-                metadata={
-                    "task_type": "set_symbol_observe_only",
-                    "symbol": first_candidate["symbol"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "decision_ids": first_candidate["decision_ids"][:5],
-                    "execution_modes": first_candidate.get("execution_modes", [])[:5],
-                },
-            )
-        )
+    )
 
     command_center_summary = build_command_center_behavior_summary(
         cfg=cfg,
