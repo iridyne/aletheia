@@ -1225,7 +1225,7 @@ export interface components {
             diagnostics_days: number;
             /**
              * Filter Candidate Outcomes Days
-             * @default 30
+             * @default 45
              */
             filter_candidate_outcomes_days: number;
             /**
@@ -1494,7 +1494,7 @@ export interface components {
             max_account_leverage_live: number;
             /**
              * Max Daily Loss Pct
-             * @default 1
+             * @default 0
              */
             max_daily_loss_pct: number;
             /**
@@ -1739,7 +1739,7 @@ export interface components {
         RiskLossPolicy: {
             /**
              * Max Daily Loss Pct
-             * @default 1
+             * @default 0
              */
             max_daily_loss_pct: number;
             /**
