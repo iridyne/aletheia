@@ -106,7 +106,7 @@
     },
     {
       "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 1053,
+      "line": 1054,
       "reason": "RuntimeError means no loop on this thread; the probe drives one deliberately"
     },
     {
