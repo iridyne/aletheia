@@ -600,15 +600,23 @@ def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
             "command": ["cargo", "test", "--locked", "--all-targets"],
             "working_directory": "native/aletheia-host",
         })
+    exhaustive_python = all(
+        required.get(lane) for lane in ("python_unit", "integration", "specifications", "e2e")
+    )
     for lane, marker in (
         ("python_unit", "tier_unit"), ("runtime", "domain_runtime"),
         ("integration", "tier_integration"), ("specifications", "tier_spec"), ("e2e", "tier_e2e"),
     ):
         if required.get(lane):
-            checks.append({
-                "name": f"python {lane} proof", "lane": lane,
-                "command": ["uv", "run", "pytest", "tests/", "-m", marker, "-q", "--tb=short", "--timeout=120"],
-            })
+            check: dict[str, Any] = {"name": f"python {lane} proof", "lane": lane}
+            if exhaustive_python:
+                check["unavailable_reason"] = (
+                    "Combined Python tiers are the full suite, not focused local proof; "
+                    "run them in the credential-isolated Fedora executor."
+                )
+            else:
+                check["command"] = ["uv", "run", "pytest", "tests/", "-m", marker, "-q", "--tb=short", "--timeout=120"]
+            checks.append(check)
     if required.get("coverage"):
         checks.extend([
             {
