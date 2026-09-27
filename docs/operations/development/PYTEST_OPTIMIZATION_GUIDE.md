@@ -295,11 +295,14 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 | `tier_e2e` | 端到端 pipeline 和 `_e2e` 文件 |
 | `tier_spec` | `tests/specs/spec_*.py` 与 spec conformance matrix |
 
-**`tier_unit` 的准入规则（2026-09-27 修订）**：只有「模块自身的**顶层 import**
-不跨真实边界」的测试才算 unit。名单是 `tests/conftest.py::_BOUNDARY_MODULE_PREFIXES`
+**`tier_unit` 的准入规则（2026-09-28 修订）**：模块自身的 import（包括测试、
+类和 fixture 内的延迟 import）不能命中 `tests/conftest.py::_BOUNDARY_MODULE_PREFIXES`
 —— `sqlite3` / `subprocess` / `httpx` / `fastapi` / `aletheia.storage|server|gateway|
 agent_runtime|execution|portfolio|uta|...`。文件名仍先区分 e2e / spec / integration，
-剩余模块再检查顶层 import；判定用 AST 缓存，每文件一次。
+剩余模块再检查全部 AST import 节点；判定用 AST 缓存，每文件一次。
+这是保守的模块级静态分类，不是无 I/O 的运行证明；混合模块中的纯计算用例也随模块归入 integration。
+`tests/test_pytest_tiering.py::test_collected_unit_cases_obey_boundary_admission`
+检查真实收集项，手工 `tier_unit` 标记不能绕过分类结果。既有用例继续在 integration/full 中执行。
 
 修订原因：旧规则是「文件名里没有 19 个 integration token 就算 unit」，于是 8562 个
 用例、平均 40ms/test（真 unit 是 2.2ms/test）全被算成 unit，最快的反馈层要跑 5m47s。

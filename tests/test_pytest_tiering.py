@@ -2,6 +2,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 import tests.conftest as pytest_conftest
 
 
@@ -138,3 +140,23 @@ def test_slow_duration_classifier_parses_and_binary_labels_pytest_output():
     summary = classifier.summarize(records)
     assert summary["slow_optimizable"]["count"] == 2
     assert summary["slow_structural"]["count"] == 1
+
+
+@pytest.mark.parametrize("source", [
+    "def test_query():\n    import sqlite3\n",
+    "class TestQuery:\n    def test_query(self):\n        from aletheia.storage import repositories\n",
+])
+def test_late_boundary_imports_are_integration(tmp_path, monkeypatch, source):
+    path = tmp_path / "tests/test_query.py"
+    path.parent.mkdir()
+    path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(pytest_conftest, "_REPO_ROOT", tmp_path)
+
+    assert pytest_conftest._classify_test_tier("tests/test_query.py") == "tier_integration"
+
+
+def test_collected_unit_cases_obey_boundary_admission(request):
+    for item in request.session.items:
+        if item.get_closest_marker("tier_unit"):
+            path = pytest_conftest._normalized_node_path(item)
+            assert pytest_conftest._classify_test_tier(path) == "tier_unit", item.nodeid

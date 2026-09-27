@@ -18,7 +18,6 @@ runner = CliRunner()
 # Pure unit helpers — no subprocess, no file I/O
 # ---------------------------------------------------------------------------
 
-@pytest.mark.tier_unit
 def test_unix_shim_content():
     root = Path("/home/alice/aletheia")
     content = install_cli._shim_content(root, platform="posix")
@@ -29,7 +28,6 @@ def test_unix_shim_content():
     assert "-- aletheia" in content
 
 
-@pytest.mark.tier_unit
 def test_windows_cmd_shim_content():
     root = Path("C:/Users/alice/aletheia")
     content = install_cli._shim_content(root, platform="nt")
@@ -40,7 +38,6 @@ def test_windows_cmd_shim_content():
     assert "\r\n" in content
 
 
-@pytest.mark.tier_unit
 def test_shim_content_path_with_spaces_unix():
     root = Path("/home/alice/Source Projects/aletheia")
     content = install_cli._shim_content(root, platform="posix")
@@ -48,14 +45,12 @@ def test_shim_content_path_with_spaces_unix():
     assert shlex.quote(str(root)) in content
 
 
-@pytest.mark.tier_unit
 def test_shim_content_path_with_spaces_windows():
     root = Path("C:/Users/Alice/Source Projects/aletheia")
     content = install_cli._shim_content(root, platform="nt")
     assert '"C:/Users/Alice/Source Projects/aletheia"' in content
 
 
-@pytest.mark.tier_unit
 def test_shim_content_unicode_path():
     root = Path("/home/用户/aletheia_项目")
     unix_content = install_cli._shim_content(root, platform="posix")
@@ -64,7 +59,6 @@ def test_shim_content_unicode_path():
     assert "用户" in win_content
 
 
-@pytest.mark.tier_unit
 def test_shim_content_strips_trailing_separator():
     root = Path("/home/alice/aletheia/")
     content = install_cli._shim_content(root, platform="posix")
@@ -72,21 +66,18 @@ def test_shim_content_strips_trailing_separator():
     assert "/home/alice/aletheia" in content
 
 
-@pytest.mark.tier_unit
 def test_is_managed_shim_detects_marker(tmp_path):
     f = tmp_path / "aletheia"
     f.write_text(f"#!/bin/sh\n# {install_cli._MARKER}\nexec uv run ...\n")
     assert install_cli._is_managed_shim(f) is True
 
 
-@pytest.mark.tier_unit
 def test_is_managed_shim_rejects_unmanaged(tmp_path):
     f = tmp_path / "aletheia"
     f.write_text("#!/bin/sh\necho 'some other tool'\n")
     assert install_cli._is_managed_shim(f) is False
 
 
-@pytest.mark.tier_unit
 def test_is_managed_shim_missing_file(tmp_path):
     assert install_cli._is_managed_shim(tmp_path / "nonexistent") is False
 
@@ -108,7 +99,6 @@ def _make_fake_run(bin_dir, *, update_shell_calls=None, update_shell_rc=0):
     return fake_run
 
 
-@pytest.mark.tier_unit
 def test_install_writes_shim_and_reports_ready(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
@@ -125,7 +115,6 @@ def test_install_writes_shim_and_reports_ready(monkeypatch, tmp_path):
     assert "You can now run `aletheia`" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_shim_points_to_project_root(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
@@ -139,7 +128,6 @@ def test_install_shim_points_to_project_root(monkeypatch, tmp_path):
     assert root_str in shim.read_text()
 
 
-@pytest.mark.tier_unit
 def test_install_refuses_unmanaged_collision(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -155,7 +143,6 @@ def test_install_refuses_unmanaged_collision(monkeypatch, tmp_path):
     assert shim.read_text() == "#!/bin/sh\necho external\n"
 
 
-@pytest.mark.tier_unit
 def test_install_force_replaces_unmanaged(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -171,7 +158,6 @@ def test_install_force_replaces_unmanaged(monkeypatch, tmp_path):
     assert install_cli._MARKER in shim.read_text()
 
 
-@pytest.mark.tier_unit
 def test_install_idempotent(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
@@ -187,7 +173,6 @@ def test_install_idempotent(monkeypatch, tmp_path):
     assert content.count(install_cli._MARKER) == 1
 
 
-@pytest.mark.tier_unit
 def test_install_path_already_set(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
@@ -199,7 +184,6 @@ def test_install_path_already_set(monkeypatch, tmp_path):
     assert "You can now run `aletheia`" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_path_missing_interactive_yes(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     update_shell_calls: list[bool] = []
@@ -214,7 +198,6 @@ def test_install_path_missing_interactive_yes(monkeypatch, tmp_path):
     assert "PATH configuration updated" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_path_missing_interactive_no(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     update_shell_calls: list[bool] = []
@@ -229,7 +212,6 @@ def test_install_path_missing_interactive_no(monkeypatch, tmp_path):
     assert "manually" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_non_interactive_no_block(monkeypatch, tmp_path):
     """Non-interactive mode must not prompt and must not run update-shell."""
     bin_dir = tmp_path / "bin"
@@ -245,7 +227,6 @@ def test_install_non_interactive_no_block(monkeypatch, tmp_path):
     assert "not on PATH" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_yes_flag_runs_update_shell(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     update_shell_calls: list[bool] = []
@@ -258,7 +239,6 @@ def test_install_yes_flag_runs_update_shell(monkeypatch, tmp_path):
     assert update_shell_calls
 
 
-@pytest.mark.tier_unit
 def test_install_no_update_shell_flag(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     update_shell_calls: list[bool] = []
@@ -272,7 +252,6 @@ def test_install_no_update_shell_flag(monkeypatch, tmp_path):
     assert "not on PATH" in result.output
 
 
-@pytest.mark.tier_unit
 def test_install_update_shell_failure_surfaced(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir, update_shell_rc=1))
@@ -284,7 +263,6 @@ def test_install_update_shell_failure_surfaced(monkeypatch, tmp_path):
     assert "Warning" in result.output or "failed" in result.output.lower()
 
 
-@pytest.mark.tier_unit
 def test_install_uv_dir_bin_failure(monkeypatch, tmp_path):
     def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "uv not found")
@@ -308,7 +286,6 @@ def _make_uninstall_app():
     return _app
 
 
-@pytest.mark.tier_unit
 def test_uninstall_removes_managed_shim(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -324,7 +301,6 @@ def test_uninstall_removes_managed_shim(monkeypatch, tmp_path):
     assert "Removed" in result.output
 
 
-@pytest.mark.tier_unit
 def test_uninstall_nothing_to_do(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
@@ -335,7 +311,6 @@ def test_uninstall_nothing_to_do(monkeypatch, tmp_path):
     assert "nothing to uninstall" in result.output
 
 
-@pytest.mark.tier_unit
 def test_uninstall_refuses_unmanaged_shim(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -349,7 +324,6 @@ def test_uninstall_refuses_unmanaged_shim(monkeypatch, tmp_path):
     assert shim.exists()
 
 
-@pytest.mark.tier_unit
 def test_uninstall_removes_asked_marker(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -368,7 +342,6 @@ def test_uninstall_removes_asked_marker(monkeypatch, tmp_path):
     assert not asked.exists()
 
 
-@pytest.mark.tier_unit
 def test_uninstall_non_interactive_skips_prompt(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -384,7 +357,6 @@ def test_uninstall_non_interactive_skips_prompt(monkeypatch, tmp_path):
     assert not shim.exists()
 
 
-@pytest.mark.tier_unit
 def test_install_moved_checkout_updates_managed_shim(monkeypatch, tmp_path):
     """Reinstalling after moving the clone should update the shim to the new root."""
     bin_dir = tmp_path / "bin"
