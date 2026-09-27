@@ -10,8 +10,9 @@ import aletheia.analytics.position_replay as position_replay
 from aletheia.cli.inspect_cmd import inspect_app
 
 
-def _database() -> sqlite3.Connection:
+def _database(request) -> sqlite3.Connection:
     db = sqlite3.connect(":memory:")
+    request.addfinalizer(db.close)
     db.row_factory = sqlite3.Row
     db.executescript(
         """
@@ -196,10 +197,8 @@ def _assessment():
     )
 
 
-def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_hash(
-    monkeypatch,
-):
-    db = _database()
+def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_hash(request, monkeypatch,):
+    db = _database(request)
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
@@ -234,8 +233,8 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
 
 
-def test_replay_does_not_backfill_post_cutoff_economics(monkeypatch):
-    db = _database()
+def test_replay_does_not_backfill_post_cutoff_economics(request, monkeypatch):
+    db = _database(request)
     db.execute(
         "UPDATE positions SET realized_pnl=?, funding_cost=?, "
         "reconciliation_evidence=? WHERE id='position-1'",
@@ -272,8 +271,8 @@ def test_replay_does_not_backfill_post_cutoff_economics(monkeypatch):
     assert replay["stages"]["exit"]["position"]["realized_pnl"] is None
 
 
-def test_replay_does_not_admit_post_cutoff_ohlcv_mutation(monkeypatch):
-    db = _database()
+def test_replay_does_not_admit_post_cutoff_ohlcv_mutation(request, monkeypatch):
+    db = _database(request)
     candles = _candles()
     candles[0]["last_mutated_at"] = "2026-08-13T00:11:00+00:00"
     monkeypatch.setattr(
@@ -292,8 +291,8 @@ def test_replay_does_not_admit_post_cutoff_ohlcv_mutation(monkeypatch):
     assert replay["stages"]["holding"]["ohlcv"]["unavailable_reason"] == "ohlcv_materialized_after_cutoff"
 
 
-def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeypatch):
-    db = _database()
+def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(request, monkeypatch):
+    db = _database(request)
     frozen_identity = {
         "contract_version": "trading_mandate/v1",
         "mandate_id": "redacted-mandate",
@@ -339,8 +338,8 @@ def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeyp
     }
 
 
-def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
-    db = _database()
+def test_replay_fails_closed_when_a_producer_session_is_unresolved(request, monkeypatch):
+    db = _database(request)
     db.execute(
         "UPDATE positions SET closed_runtime_session_id='missing-session', "
         "closed_producer_commit='commit-a', closed_behavior_fingerprint=NULL"
@@ -359,8 +358,8 @@ def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
     assert replay["producer"]["unresolved_runtime_session_ids"] == ["missing-session"]
 
 
-def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
-    db = _database()
+def test_replay_fails_closed_when_a_producer_row_has_no_identity(request, monkeypatch):
+    db = _database(request)
     db.execute("UPDATE fills SET runtime_session_id=NULL, producer_commit=NULL WHERE id='close-fill'")
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
@@ -376,8 +375,8 @@ def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
     assert replay["producer"]["errors"] == ["producer_identity_incomplete"]
 
 
-def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch):
-    db = _database()
+def test_replay_rejects_direct_identity_that_disagrees_with_session(request, monkeypatch):
+    db = _database(request)
     db.execute("UPDATE fills SET producer_commit='different-commit' WHERE id='close-fill'")
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
@@ -393,8 +392,8 @@ def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch)
     assert replay["producer"]["errors"] == ["producer_identity_mismatch"]
 
 
-def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
-    db = _database()
+def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(request, monkeypatch):
+    db = _database(request)
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
@@ -409,15 +408,15 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
     assert "ambiguous_pi_decision_for_proposal" in replay["causal_link"]["errors"]
 
 
-def test_replay_hides_mutable_position_state_after_historical_cutoff():
-    db = _database()
+def test_replay_hides_mutable_position_state_after_historical_cutoff(request):
+    db = _database(request)
     replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:00:25+00:00", db=db)
     assert replay["availability"] == "unavailable"
     assert replay["unavailable_reason"] == "position_state_mutated_after_cutoff"
 
 
-def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatch):
-    db = _database()
+def test_replay_requests_candles_through_fixed_counterfactual_horizon(request, monkeypatch):
+    db = _database(request)
     captured = {}
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
@@ -437,8 +436,8 @@ def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatc
     assert ohlcv["availability"] == "unavailable"
 
 
-def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(monkeypatch):
-    db = _database()
+def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(request, monkeypatch):
+    db = _database(request)
     captured = {}
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
@@ -480,9 +479,9 @@ def test_position_replay_cli_emits_json(monkeypatch):
     assert json.loads(result.output)["fact_id"] == "position-1"
 
 
-def test_replay_rejects_invalid_as_of_at():
+def test_replay_rejects_invalid_as_of_at(request):
     """#1250 — non-empty unparsable as_of_at raises ValueError."""
-    db = _database()
+    db = _database(request)
     try:
         position_replay.build_position_replay("position-1", as_of_at="not-a-date", db=db)
         raise AssertionError("expected ValueError")
@@ -490,9 +489,9 @@ def test_replay_rejects_invalid_as_of_at():
         assert "invalid as_of_at" in str(exc)
 
 
-def test_replay_protection_state_activated_before_updated_after_cutoff(monkeypatch):
+def test_replay_protection_state_activated_before_updated_after_cutoff(request, monkeypatch):
     """#1270 — protection activated before cutoff but updated after: emit identity only."""
-    db = _database()
+    db = _database(request)
     db.execute("ALTER TABLE position_protection_state ADD COLUMN activated_at TEXT")
     db.execute("ALTER TABLE position_protection_state ADD COLUMN updated_at TEXT")
     db.execute("ALTER TABLE position_protection_state ADD COLUMN extra_field TEXT")
@@ -521,9 +520,9 @@ def test_replay_protection_state_activated_before_updated_after_cutoff(monkeypat
     assert "extra_field" not in prot
 
 
-def test_replay_protection_state_activated_after_cutoff_omitted(monkeypatch):
+def test_replay_protection_state_activated_after_cutoff_omitted(request, monkeypatch):
     """#1270 — protection activated after cutoff must be omitted entirely."""
-    db = _database()
+    db = _database(request)
     db.execute("ALTER TABLE position_protection_state ADD COLUMN activated_at TEXT")
     db.execute("ALTER TABLE position_protection_state ADD COLUMN updated_at TEXT")
     db.execute(
@@ -547,9 +546,9 @@ def test_replay_protection_state_activated_after_cutoff_omitted(monkeypatch):
     assert replay["stages"]["holding"]["protection_state"] is None
 
 
-def test_replay_missing_entry_fills_adds_causal_error(monkeypatch):
+def test_replay_missing_entry_fills_adds_causal_error(request, monkeypatch):
     """#1271 — entry order with no fills → causal error entry_fills_missing."""
-    db = _database()
+    db = _database(request)
     db.execute("DELETE FROM fills WHERE id='entry-fill'")
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
@@ -567,9 +566,9 @@ def test_replay_missing_entry_fills_adds_causal_error(monkeypatch):
     assert replay["causal_link"]["status"] == "unavailable"
 
 
-def test_replay_scale_in_order_included_in_entry_legs(monkeypatch):
+def test_replay_scale_in_order_included_in_entry_legs(request, monkeypatch):
     """#1271 — a second order with same position_id and empty close_reason appears in entry_order_ids."""
-    db = _database()
+    db = _database(request)
     db.execute(
         "INSERT INTO orders VALUES "
         "('scale-order','proposal-1','risk-1','position-1',NULL,"
@@ -597,9 +596,9 @@ def test_replay_scale_in_order_included_in_entry_legs(monkeypatch):
     assert "scale-fill" in replay["identity"]["entry_fill_ids"]
 
 
-def test_replay_ohlcv_gap_returns_unavailable(monkeypatch):
+def test_replay_ohlcv_gap_returns_unavailable(request, monkeypatch):
     """#1272 — OHLCV with a missing bar → availability=unavailable."""
-    db = _database()
+    db = _database(request)
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
@@ -622,9 +621,9 @@ def test_replay_ohlcv_gap_returns_unavailable(monkeypatch):
     assert ohlcv["unavailable_reason"] == "holding_path_continuity_unavailable"
 
 
-def test_replay_ohlcv_contiguous_returns_available(monkeypatch):
+def test_replay_ohlcv_contiguous_returns_available(request, monkeypatch):
     """#1272 — OHLCV with all contiguous expected slots → availability=available."""
-    db = _database()
+    db = _database(request)
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
