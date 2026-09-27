@@ -1,7 +1,10 @@
 """Read-only Position lifecycle explanation and its public rendering API.
 
-service assembles persisted facts; events owns pure vocabulary and projection;
-render consumes the finished Story. None grants trading authority.
+readers owns exact persisted reads and cutoff masking; service assembles Story
+projections; events owns pure vocabulary and projection; render consumes the
+finished Story. None grants trading authority.
+
+Focused check: uv run pytest tests/test_position_lifecycle_story.py -q
 """
 
 from .events import POSITION_LIFECYCLE_EVENT_TYPES
