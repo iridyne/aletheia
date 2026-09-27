@@ -1,13 +1,13 @@
 """Read-only Position lifecycle explanation and its public rendering API.
 
-service builds structured facts from persisted evidence; render consumes the
-finished Story without database access. Neither grants trading authority.
+service assembles persisted facts; events owns pure vocabulary and projection;
+render consumes the finished Story. None grants trading authority.
 """
 
+from .events import POSITION_LIFECYCLE_EVENT_TYPES
 from .render import render_position_lifecycle_story
 from .service import (
     MEANINGFUL_EXCURSION_RULE_VERSION,
-    POSITION_LIFECYCLE_EVENT_TYPES,
     STORY_CONTRACT_VERSION,
     build_position_lifecycle_story,
 )
