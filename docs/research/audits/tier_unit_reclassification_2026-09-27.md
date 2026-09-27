@@ -148,7 +148,7 @@ A/B, same conditions, four files (`planning_writer_boundary`,
 −5.9 s (−19 %) on those four files, and the saving repeats for every additional
 `assert_writer_boundary` caller.
 
-## 7. Open decision (needs the owner)
+## 7. Decision at the time of the initial audit (historical)
 
 Reclassifying 271 of 537 modules moves ~5500 tests out of `-m fast`, which is
 the documented every-bug-fix-loop gate. That is a change to what the mandatory
@@ -165,3 +165,29 @@ local gate covers, not just a timing fix. Three options:
 
 Nothing in this report has been applied to `tests/conftest.py`; option (1) and
 (2) both need the owner's acceptance before the default gate changes.
+
+## 8. Follow-up measurement — 2026-09-28
+
+The content classifier is now present; the current campaign (#3438) authorizes
+content-based classification. Filename integration rules still run before its
+top-level-import check. The historical counts above are not current receipts.
+
+At `77e143885`, a serial `uv run pytest tests -q -m tier_unit --timeout=90
+--durations=30` run produced **3789 passed, 1 skipped, 7807 deselected**,
+12 warnings, pytest 102.80 s, wall **107.64 s**. This does not meet 60 s.
+
+An unchanged four-file selection (`test_planning_writer_boundary.py`,
+`test_proposal_writer_boundary.py`, `test_order_writer_boundary.py`,
+`test_architecture_fitness.py`) was measured before/after avoiding enclosing-owner
+lookups for AST node kinds that have no writer/SQL checks in the final scan.
+No assertion, marker, case, or scan directory changed.
+
+| Selection | Before | After |
+|---|---:|---:|
+| Collected/passed | 429/429 | 429/429 |
+| Pytest seconds | 23.98 | 19.30 |
+| Wall seconds | 27.32 | 22.65 |
+
+This is a same-selection **4.67 s** reduction, not a reclassification gain and
+not the required three-run unit-tier acceptance. Existing non-owner/alias/SQL
+negative cases remain in the selection. Further unit-tier work is still needed.
