@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import get_universe_twin_shadow_batch
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -421,7 +423,7 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
     from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
 
     bundle, legacy = _authority_bundle()
-    assert repo.get_universe_twin_shadow_batch(bundle.batch.scanner_run_id) is None
+    assert get_universe_twin_shadow_batch(bundle.batch.scanner_run_id) is None
     projected = target_candidates_from_bundle(bundle, legacy)
     assert projected
     candidate = projected[0]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import retention_metrics_snapshot
+
 import logging
 from types import SimpleNamespace
 
@@ -120,7 +122,7 @@ def test_retention_deletes_in_bounded_batches_and_records_metrics(tmp_path, monk
         "VALUES(?,?,?,?,?)",
         [(f"m{i}", "BTC/USDT", "spot", 100.0, "2020-01-01") for i in range(5)],
     )
-    before = repo.retention_metrics_snapshot().get("market_snapshots", {}).get("batches", 0)
+    before = retention_metrics_snapshot().get("market_snapshots", {}).get("batches", 0)
 
     deleted = repo._delete_by_rowid_batches(
         "market_snapshots",
@@ -129,7 +131,7 @@ def test_retention_deletes_in_bounded_batches_and_records_metrics(tmp_path, monk
         batch_size=2,
     )
 
-    metrics = repo.retention_metrics_snapshot()["market_snapshots"]
+    metrics = retention_metrics_snapshot()["market_snapshots"]
     assert deleted == 5
     assert metrics["batches"] - before == 3
     assert metrics["deleted"] >= 5

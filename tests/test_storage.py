@@ -1,5 +1,7 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
+from tests.fixtures.repo_test_helpers import insert_agent_run
+
 import json
 import sqlite3
 import threading
@@ -61,7 +63,7 @@ def test_audit_event_crud(tmp_path):
 def test_agent_run_lifecycle_cas_and_db_constraints(tmp_path):
     setup_test_db(tmp_path)
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
-    repo.insert_agent_run(run)
+    insert_agent_run(run)
     assert repo.finish_agent_run(
         run.id,
         expected_status="running",
@@ -486,7 +488,7 @@ def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
     _real_db_env(tmp_path, monkeypatch)
 
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
-    repo.insert_agent_run(run)
+    insert_agent_run(run)
     assert repo.finish_agent_run(
         run.id,
         expected_status="running",

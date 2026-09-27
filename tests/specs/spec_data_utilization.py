@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.module_source import module_source
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -233,7 +234,7 @@ def test_local_paper_funding_consumer_remains_retired():
 )
 def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    doctor = _DOCTOR.read_text(encoding="utf-8")
+    doctor = module_source("core/aletheia/diagnostics/doctor.py")
     assert "operator_evaluation_events" in doc
     assert "observation-only" in doc
     assert "operator_evaluation_events" in doctor
@@ -455,7 +456,7 @@ def test_perp_structure_registered_and_consumed():
 
     collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
     ctx = _CONTEXT_BUILDER.read_text(encoding="utf-8")
-    doctor = _DOCTOR.read_text(encoding="utf-8")
+    doctor = module_source("core/aletheia/diagnostics/doctor.py")
     assert "VergexStructureCollector" in collector and "_ALLOWED_FIELDS" in collector, (
         "perp structure must have a whitelisted fixture collector"
     )

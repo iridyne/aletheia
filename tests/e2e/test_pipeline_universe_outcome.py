@@ -4,6 +4,8 @@ The shared ancestry/closure/read-cohort and consumer code is never mocked.
 Account/fill/funding transport qualification remains owned by its existing suites.
 """
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 import json
 from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 import pytest
@@ -87,7 +89,7 @@ def test_universe_close_reaches_shared_outcome_and_consumers(universe_position, 
     assert attribution["planning_generation_id"] == plan.planning_generation_id
     assert attribution["universe_member_id"] == plan.candidate_id
     assert attribution["opportunity_id"] is None
-    jobs = repo.list_outcome_hook_jobs(position_id=position["id"])
+    jobs = list_outcome_hook_jobs(position_id=position["id"])
     assert jobs and all(job["status"] == "completed" for job in jobs)
     assert outcome_hooks.process_outcome_hook_jobs(position_id=position["id"])["claimed"] == 0
 

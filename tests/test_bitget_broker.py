@@ -5,6 +5,8 @@ private-fill reconciliation, and exchange_order_id, plus gateway routing for a
 fully-approved live proposal while live-disabled remains blocked.
 """
 
+from tests.fixtures.repo_test_helpers import insert_forward_outcome
+
 import sqlite3
 
 import pytest
@@ -208,7 +210,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     # family so the proposal passes gate #14 and routes to the broker.
     now = datetime.now(timezone.utc).isoformat()
     for i in range(30):
-        repo.insert_forward_outcome(UniverseForwardOutcome(
+        insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
             venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",

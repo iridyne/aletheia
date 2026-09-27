@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from datetime import datetime, timezone
 
 import pytest
@@ -115,7 +117,7 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
     assert stored["exit_fill_verified"] == 1
     assert stored["outcome_eligible"] == 0
     assert stored["outcome_exclusion_reason"] == "administrative_close"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
     close_order = db.execute(
         "SELECT * FROM orders WHERE position_id=? AND close_reason=?",

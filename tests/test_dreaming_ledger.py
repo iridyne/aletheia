@@ -509,8 +509,8 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
 
     # Seed strategies across lifecycle states + a couple of knowledge items.
     from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-    from aletheia.storage.repositories import update_strategy
+    from tests.fixtures.repo_test_helpers import insert_strategy
+    from tests.fixtures.repo_test_helpers import update_strategy
     s1 = StrategyRecord(name="S1", description="draft one", state="draft")
     insert_strategy(s1)
     s2 = StrategyRecord(name="S2", description="to hypothesis", state="draft")

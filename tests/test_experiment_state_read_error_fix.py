@@ -12,6 +12,8 @@ Contract verified here:
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import prune_filter_shadow_evaluations, prune_universe_members
+
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
@@ -157,9 +159,9 @@ def test_guarded_retention_skips_deletion_when_authority_is_unavailable(monkeypa
     guarded = (
         (repo.prune_filter_candidate_outcomes, {"min_experiment_started_at": None}),
         (repo.prune_universe_forward_outcomes, {"min_experiment_started_at": None}),
-        (repo.prune_universe_members, {"min_experiment_started_at": None}),
+        (prune_universe_members, {"min_experiment_started_at": None}),
         (repo.prune_universe_snapshots, {"min_experiment_started_at": None}),
-        (repo.prune_filter_shadow_evaluations, {}),
+        (prune_filter_shadow_evaluations, {}),
         (repo.prune_filter_shadow_experiments, {}),
     )
     assert all(pruner(days=1, **kwargs) == 0 for pruner, kwargs in guarded)

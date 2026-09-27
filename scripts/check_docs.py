@@ -389,7 +389,29 @@ def _has_assertion(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
-def vacuous_test_failures() -> list[str]:
+def _vacuous_failures_in_file(path: Path) -> list[str]:
+    """Vacuous-test findings for one test module. Shared by the whole-repo gate
+    and the changed-file gate so the two can never disagree."""
+    relative = path.relative_to(ROOT)
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        return [f"{relative}:{exc.lineno}: vacuous test check: syntax error"]
+    failures: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        if _has_assertion(node):
+            continue
+        if (str(relative), node.name) in BASELINE_VACUOUS_TESTS:
+            continue
+        failures.append(f"{relative}:{node.lineno}: vacuous test (no assertion): {node.name}")
+    return failures
+
+
+def vacuous_test_failures(paths: list[str] | None = None) -> list[str]:
     """Test functions must actually assert something.
 
     Scopes to Python sources under ``tests/``. Flags any function whose name
@@ -406,6 +428,9 @@ def vacuous_test_failures() -> list[str]:
     placeholders whose body is only a docstring and/or ``pass``/``...`` (flagged
     anyway they would be pure noise).
 
+    ``paths`` (repository-relative test modules) narrows the scan to those files
+    for the changed-file gate; ``None`` scans every test module.
+
     Non-goals (deliberately not detected here, need semantic analysis):
       - tautological assertions like ``assert True`` / ``assert x == x``;
       - assertions on the wrong object;
@@ -414,24 +439,15 @@ def vacuous_test_failures() -> list[str]:
     unrecognized is ignored, never flagged. Files that fail to parse are
     reported (not silently skipped).
     """
+    if paths is None:
+        targets = sorted((ROOT / "tests").rglob("*.py"))
+    else:
+        targets = [ROOT / path for path in paths]
     failures: list[str] = []
-    for path in sorted((ROOT / "tests").rglob("*.py")):
-        relative = path.relative_to(ROOT)
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError as exc:
-            failures.append(f"{relative}:{exc.lineno}: vacuous test check: syntax error")
+    for path in targets:
+        if not path.is_file():
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not node.name.startswith("test_"):
-                continue
-            if _has_assertion(node):
-                continue
-            if (str(relative), node.name) in BASELINE_VACUOUS_TESTS:
-                continue
-            failures.append(f"{relative}:{node.lineno}: vacuous test (no assertion): {node.name}")
+        failures.extend(_vacuous_failures_in_file(path))
     return failures
 
 

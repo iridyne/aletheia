@@ -4,14 +4,13 @@ import logging
 
 import asyncio
 import json
-from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from typing_extensions import TypedDict
 
-from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
+from aletheia.config.loader import load_config, save_config, mutate_config
 from aletheia.config.execution_costs import (
     EXECUTION_FEE_PCT_BOUNDS,
     FALLBACK_SPREAD_BPS_BOUNDS,
@@ -48,7 +47,6 @@ from aletheia.config.schema import (
     NotificationHour,
     TelegramConfig,
     TradingConfig,
-    TunnelConfig,
     UniverseConfig,
     UpdateConfig,
     WebhookConfig,
@@ -596,9 +594,8 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         )
 
     old = None
-    changed = False
     def mutator(cfg):
-        nonlocal old, changed
+        nonlocal old
         old = cfg.exchange.model_dump(mode="json")
         cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
         if req.paper_execution_mode is not None:
@@ -616,7 +613,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
                         generations[execution_mode] = generations.get(execution_mode, 0) + 1
                 cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
-        changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
     _mutate_config_with_candidate_publication_permit(mutator)
@@ -2498,11 +2494,9 @@ def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "refresh_interval_min": (1, 60),
     "max_candidates": (5, 100),
-    "core_pool_size": (1, 50),
     "min_volume_24h_usdt": (100_000, 500_000_000),
     "max_spread_bps": FALLBACK_SPREAD_BPS_BOUNDS,
     "min_depth_10bps_usd": (1_000, 10_000_000),
-    "explore_ratio": (0.0, 0.5),
     "snapshot_ttl_hours": (1, 72),
     "entry_ttl_sec": (300, 3600),
     "candidate_max_continuous_age_sec": (300, 86_400),
@@ -2607,15 +2601,6 @@ def get_candidate_selection_status():
 
     recover_candidate_selection_authority_transition()
     return _candidate_selection_status(load_config())
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# Strategy Factory config  (DEPRECATED — subsystem removed 2026-07-02)
-# ---------------------------------------------------------------------------
-
 
 
 # ---------------------------------------------------------------------------

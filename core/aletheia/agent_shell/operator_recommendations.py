@@ -916,169 +916,312 @@ def build_command_center_behavior_summary(
     }
 
 
-def build_recommendations(limit: int = 10) -> list[dict]:
-    from aletheia.agent_runtime.health import compute_health
+def _make_task_recommendation(
+    id_: str,
+    kind: str,
+    severity: str,
+    summary: str,
+    task_type: str,
+    metadata: dict,
+) -> dict:
+    """Canonical shape for actionable operator recommendations."""
+    return {
+        "id": id_,
+        "kind": kind,
+        "severity": severity,
+        "summary": summary,
+        "taskType": task_type,
+        "metadata": dict(metadata),
+    }
 
-    cfg = load_config()
+
+def _missing_review_strategy_ids(
+    recent_post_trade_reviews: list[dict],
+    recent_closed_positions: list[dict],
+) -> list[str]:
+    # Position-level coverage: a strategy is covered only if the eligible
+    # Position's exact ID appears in an active review's tags (#269).
+    reviewed_position_ids: set[str] = set()
+    for item in recent_post_trade_reviews:
+        try:
+            tags = json.loads(item.get("tags") or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        reviewed_position_ids.update(
+            str(tag).split(":", 1)[1]
+            for tag in tags
+            if str(tag).startswith("position:")
+        )
+    return sorted(
+        {
+            str(position.get("strategy_id"))
+            for position in recent_closed_positions
+            if position.get("strategy_id")
+            and str(position.get("id")) not in reviewed_position_ids
+        }
+    )
+
+
+def _group_agent_runs(
+    recent_agent_runs: list[dict],
+    failed_run_statuses: set[str],
+) -> tuple[dict[str, list[dict]], dict[str, list[dict]], dict[str, list[dict]]]:
+    recent_runs_by_agent: dict[str, list[dict]] = {}
+    failed_runs_by_agent: dict[str, list[dict]] = {}
+    for run in recent_agent_runs:
+        agent_name = str(run.get("agent_name") or "").strip()
+        if agent_name:
+            recent_runs_by_agent.setdefault(agent_name, []).append(run)
+        if run.get("status") not in failed_run_statuses:
+            continue
+        started_at = parse_utc(run.get("started_at"))
+        if started_at is None or started_at <= datetime.now(timezone.utc) - timedelta(hours=24):
+            continue
+        if not agent_name:
+            continue
+        failed_runs_by_agent.setdefault(agent_name, []).append(run)
+
+    manual_runs_by_agent: dict[str, list[dict]] = {}
+    for run in recent_agent_runs:
+        if str(run.get("trigger_type") or "") != "manual":
+            continue
+        agent_name = str(run.get("agent_name") or "").strip()
+        if not agent_name:
+            continue
+        manual_runs_by_agent.setdefault(agent_name, []).append(run)
+
+    return recent_runs_by_agent, failed_runs_by_agent, manual_runs_by_agent
+
+
+def _build_portfolio_snapshot_recommendation(
+    cfg,
+    open_positions: list[dict],
+    latest_portfolio_snapshot: dict | None,
+) -> dict | None:
+    portfolio_snapshot_age_minutes = (
+        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
+        if latest_portfolio_snapshot is not None
+        else None
+    )
+    if (
+        not cfg.runtime.paused
+        and open_positions
+        and (
+            latest_portfolio_snapshot is None
+            or (
+                portfolio_snapshot_age_minutes is not None
+                and portfolio_snapshot_age_minutes >= 15
+            )
+        )
+    ):
+        return _make_task_recommendation(
+            id_="portfolio-snapshot-refresh-due",
+            kind="portfolio_snapshot_refresh_due",
+            severity="medium",
+            summary=(
+                "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
+                if latest_portfolio_snapshot is None
+                else (
+                    "Open positions exist and the latest portfolio snapshot is about "
+                    f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
+                )
+            ),
+            task_type="run_portfolio_snapshot",
+            metadata={
+                "task_type": "run_portfolio_snapshot",
+                "open_positions_count": len(open_positions),
+                "last_snapshot_id": (
+                    latest_portfolio_snapshot.get("id")
+                    if latest_portfolio_snapshot
+                    else None
+                ),
+                "stale_minutes": (
+                    int(portfolio_snapshot_age_minutes)
+                    if portfolio_snapshot_age_minutes is not None
+                    else None
+                ),
+            },
+        )
+    return None
+
+
+def _build_command_center_recommendation(
+    cfg,
+    command_center_summary: dict,
+) -> dict | None:
+    due_command_center_behavior_changes = command_center_summary[
+        "needs_command_center_behavior_proposals"
+    ]
+    if not cfg.runtime.paused and due_command_center_behavior_changes:
+        first_candidate = due_command_center_behavior_changes[0]
+        return _make_task_recommendation(
+            id_=f"command-center-behavior:{first_candidate['target_command']}",
+            kind="command_center_behavior_change_proposal_due",
+            severity="medium",
+            summary=first_candidate["summary"],
+            task_type="create_repair_proposal",
+            metadata={
+                "target_command": first_candidate["target_command"],
+                "rejection_count": first_candidate["rejection_count"],
+                "requested_behavior": first_candidate["requested_behavior"],
+                "sample_responses": first_candidate["sample_responses"],
+                "sample_inputs": first_candidate["sample_inputs"],
+                "session_ids": first_candidate["session_ids"],
+                "command_ids": first_candidate["command_ids"],
+                "proposal_command": "propose_command_center_behavior_change",
+            },
+        )
+    return None
+
+
+def _build_extension_enablement_recommendation(cfg) -> dict | None:
+    passed_extensions = list_extensions(status="sandbox_passed", limit=20)
+    if not cfg.runtime.paused and passed_extensions:
+        ready_extensions = []
+        for extension in passed_extensions:
+            if extension.get("proposal_artifact_id"):
+                continue
+            latest_run = next(
+                iter(list_extension_runs(extension_id=str(extension["id"]), limit=1)),
+                None,
+            )
+            if latest_run is None or str(latest_run.get("status") or "") != "passed":
+                continue
+            ready_extensions.append((extension, latest_run))
+
+        if ready_extensions:
+            extension, latest_run = ready_extensions[0]
+            slash_command = str(extension.get("slash_command") or extension["id"])
+            return _make_task_recommendation(
+                id_=f"extension-enable:{extension['id']}",
+                kind="extension_enablement_proposal_due",
+                severity="medium",
+                summary=(
+                    f"Extension {slash_command} passed sandbox validation and is ready "
+                    "for a human-reviewed enablement proposal."
+                ),
+                task_type="create_repair_proposal",
+                metadata={
+                    "extension_id": extension["id"],
+                    "extension_name": extension.get("extension_name"),
+                    "slash_command": extension.get("slash_command"),
+                    "target_command": extension.get("target_command"),
+                    "latest_sandbox_run_id": latest_run.get("id"),
+                    "latest_sandbox_status": latest_run.get("status"),
+                    "latest_sandbox_summary": latest_run.get("summary"),
+                    "proposal_command": "propose_extension_enablement",
+                },
+            )
+    return None
+
+
+def _build_daily_review_recommendation(
+    cfg,
+    recent_agent_runs: list[dict],
+) -> dict | None:
+    target_date = datetime.now(timezone.utc).date().isoformat()
+    start_of_target_date = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    recent_daily_reviews = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at >= ?",
+        params=("daily_review", start_of_target_date),
+        limit=10,
+    )
+    recent_activity_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    if (
+        not cfg.runtime.paused
+        and not recent_daily_reviews
+        and recent_activity_run_count > 0
+    ):
+        return _make_task_recommendation(
+            id_=f"daily-review-refresh:{target_date}",
+            kind="daily_review_refresh_due",
+            severity="medium",
+            summary=f"No daily review has been written for {target_date} UTC. Refresh the non-critical operator summary report.",
+            task_type="create_daily_review",
+            metadata={
+                "task_type": "create_daily_review",
+                "target_date": target_date,
+                "recent_activity_run_count": recent_activity_run_count,
+                "title": f"Operator Daily Review {target_date}",
+            },
+        )
+    return None
+
+
+def _build_agent_performance_recommendation(
+    cfg,
+    recent_agent_runs: list[dict],
+    failed_run_statuses: set[str],
+    recent_artifacts: list[dict],
+) -> dict | None:
+    recent_activity_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    recent_failed_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if str(run.get("status") or "") in failed_run_statuses
+        and (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    if (
+        not cfg.runtime.paused
+        and (recent_failed_run_count > 0 or recent_activity_run_count >= 5)
+        and not _has_fresh_report_artifact(
+            recent_artifacts,
+            artifact_type="review_report",
+            report_type="agent_performance",
+            within_minutes=360,
+        )
+    ):
+        return _make_task_recommendation(
+            id_="agent-performance-report-refresh",
+            kind="agent_performance_report_refresh_due",
+            severity="medium",
+            summary=(
+                "Recent agent activity warrants a fresh agent-performance report for operator review."
+            ),
+            task_type="create_review_report",
+            metadata={
+                "task_type": "create_review_report",
+                "report_type": "agent_performance",
+                "title": "Agent Performance Report",
+                "recent_activity_run_count": recent_activity_run_count,
+                "failed_run_count": recent_failed_run_count,
+                "refresh_window_minutes": 360,
+            },
+        )
+    return None
+
+
+def _build_task_backlog_recommendations(
+    failed_tasks: list[dict],
+    running_tasks: list[dict],
+    queued_tasks: list[dict],
+) -> list[dict]:
     recommendations: list[dict] = []
-    heartbeat = get_latest_heartbeat()
-    failed_tasks = list_tasks(limit=10, status="failed")
-    running_tasks = list_tasks(limit=20, status="running")
-    queued_tasks = list_tasks(limit=20, status="queued")
-    recent_events = list_events(limit=100)
-    recent_artifacts = list_artifacts(limit=500)
-
-    if heartbeat is None or heartbeat.get("status") == "offline":
-        recommendations.append(
-            {
-                "id": "operator-offline",
-                "kind": "operator_offline",
-                "severity": "high",
-                "summary": "Operator shell is offline. Wake or restart it before relying on background supervision.",
-            }
-        )
-    elif heartbeat.get("stale"):
-        recommendations.append(
-            {
-                "id": "operator-stale",
-                "kind": "heartbeat_stale",
-                "severity": "high",
-                "summary": "Operator heartbeat is stale. Inspect shell logs or let the supervisor restart it.",
-            }
-        )
-
-    if cfg.runtime.paused:
-        recommendations.append(
-            {
-                "id": "gateway-paused",
-                "kind": "operator_paused",
-                "severity": "medium",
-                "summary": "Gateway is paused. Resume it when background monitoring and scheduled work should continue.",
-            }
-        )
-
-    health_snapshot = compute_health()
-    health_issues = [
-        str(issue)
-        for issue in (health_snapshot.get("issues") or [])
-        if str(issue) != "trading_paused"
-    ]
-    if health_issues and not _has_fresh_report_artifact(
-        recent_artifacts,
-        artifact_type="diagnostic_report",
-        report_type="system_health",
-        within_minutes=60,
-    ):
-        recommendations.append(
-            {
-                "id": "system-health-report-refresh",
-                "kind": "system_health_report_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Gateway health is degraded and no recent system-health diagnostic report exists. "
-                    "Refresh a diagnostic report for operator follow-up."
-                ),
-                "taskType": "create_diagnostic_report",
-                "metadata": {
-                    "task_type": "create_diagnostic_report",
-                    "report_type": "system_health",
-                    "title": "System Health Diagnostic Report",
-                    "health_issues": health_issues,
-                    "refresh_window_minutes": 60,
-                },
-            }
-        )
-
-    worker_health_issues = [
-        issue for issue in health_issues if issue.startswith("agent_failure_ratio:")
-    ]
-    if worker_health_issues and not _has_fresh_report_artifact(
-        recent_artifacts,
-        artifact_type="diagnostic_report",
-        report_type="worker_health",
-        within_minutes=60,
-    ):
-        recommendations.append(
-            {
-                "id": "worker-health-review",
-                "kind": "worker_health_review_due",
-                "severity": "medium",
-                "summary": (
-                    "Worker health is degraded and no recent worker-health diagnostic report exists. "
-                    "Refresh a diagnostic report for operator follow-up."
-                ),
-                "taskType": "create_diagnostic_report",
-                "metadata": {
-                    "task_type": "create_diagnostic_report",
-                    "report_type": "worker_health",
-                    "title": "Worker Health Diagnostic Report",
-                    "health_issues": worker_health_issues,
-                    "refresh_window_minutes": 60,
-                },
-            }
-        )
-
-    model_runtime_health_issues = [
-        issue
-        for issue in health_issues
-        if issue.startswith("llm_unavailable:")
-        or issue.startswith("code_updated_pending_restart:")
-    ]
-    if model_runtime_health_issues and not _has_fresh_report_artifact(
-        recent_artifacts,
-        artifact_type="diagnostic_report",
-        report_type="model_runtime_health",
-        within_minutes=60,
-    ):
-        recommendations.append(
-            {
-                "id": "model-runtime-health-review",
-                "kind": "model_runtime_health_review_due",
-                "severity": "medium",
-                "summary": (
-                    "Model/runtime health is degraded and no recent model-runtime diagnostic report exists. "
-                    "Refresh a diagnostic report for operator follow-up."
-                ),
-                "taskType": "create_diagnostic_report",
-                "metadata": {
-                    "task_type": "create_diagnostic_report",
-                    "report_type": "model_runtime_health",
-                    "title": "Model Runtime Health Diagnostic Report",
-                    "health_issues": model_runtime_health_issues,
-                    "refresh_window_minutes": 60,
-                },
-            }
-        )
-
-    data_source_health_issues = [
-        issue for issue in health_issues if issue.startswith("market_data_stale:")
-    ]
-    if data_source_health_issues and not _has_fresh_report_artifact(
-        recent_artifacts,
-        artifact_type="diagnostic_report",
-        report_type="data_source_health",
-        within_minutes=60,
-    ):
-        recommendations.append(
-            {
-                "id": "data-source-health-review",
-                "kind": "data_source_health_review_due",
-                "severity": "medium",
-                "summary": (
-                    "Data-source health is degraded and no recent data-source diagnostic report exists. "
-                    "Refresh a diagnostic report for operator follow-up."
-                ),
-                "taskType": "create_diagnostic_report",
-                "metadata": {
-                    "task_type": "create_diagnostic_report",
-                    "report_type": "data_source_health",
-                    "title": "Data Source Health Diagnostic Report",
-                    "health_issues": data_source_health_issues,
-                    "refresh_window_minutes": 60,
-                },
-            }
-        )
-
     if failed_tasks:
         recommendations.append(
             {
@@ -1148,300 +1291,263 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                 }
             )
 
-    rejected_commands = [
-        event for event in recent_events if event["event_type"] == "command_rejected"
+    return recommendations
+
+
+def _build_health_report_recommendations(
+    health_snapshot: dict,
+    recent_artifacts: list[dict],
+) -> list[dict]:
+    health_issues = [
+        str(issue)
+        for issue in (health_snapshot.get("issues") or [])
+        if str(issue) != "trading_paused"
     ]
-    if rejected_commands:
-        recommendations.append(
-            {
-                "id": "command-rejections",
-                "kind": "command_rejections_present",
-                "severity": "medium",
-                "summary": "Recent operator commands were rejected. Review permission mode or command intent.",
-                "count": len(rejected_commands),
-            }
-        )
+    recommendations: list[dict] = []
 
-    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    cutoff_6h = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
-    cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
-
-    recent_dreaming_logs = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("dreaming_log", cutoff_24h),
-        limit=10,
-    )
-    recent_dreaming_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("dreaming_agent", cutoff_24h),
-        limit=5,
-    )
-    recent_research_notes = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("research_note", cutoff_24h),
-        limit=20,
-    )
-    recent_strategy_hypotheses = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("strategy_memory", cutoff_24h),
-        limit=20,
-    )
-    recent_strategy_designer_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("strategy_designer", cutoff_24h),
-        limit=5,
-    )
-    recent_risk_critic_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("risk_critic", cutoff_6h),
-        limit=5,
-    )
-    if not cfg.runtime.paused and not recent_dreaming_logs and not recent_dreaming_runs:
+    if health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="system_health",
+        within_minutes=60,
+    ):
         recommendations.append(
-            {
-                "id": "dreaming-due",
-                "kind": "dreaming_due",
-                "severity": "medium",
-                "summary": "No recent dreaming consolidation is visible. Queue a dreaming run to refresh operator memory.",
-                "taskType": "run_dreaming",
-                "metadata": {
-                    "reason": "no_recent_dreaming_activity",
-                },
-            }
-        )
-
-    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
-    recent_closed_positions = list(reversed(
-        eligible_strategy_outcomes(closed_after=cutoff_24h)
-    ))[:20]
-    # Exclude archived/deprecated reviews so they do not suppress regeneration
-    # after an owner archives an invalid review (#269).
-    recent_post_trade_reviews = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND status NOT IN ('archived', 'deprecated') AND created_at > ?",
-        params=("post_trade_review", cutoff_24h),
-        limit=20,
-    )
-    recent_reviewer_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("post_trade_reviewer", cutoff_15m),
-        limit=5,
-    )
-    # Position-level coverage: a strategy is covered only if the eligible
-    # Position's exact ID appears in an active review's tags (#269).
-    reviewed_position_ids: set[str] = set()
-    for item in recent_post_trade_reviews:
-        try:
-            tags = json.loads(item.get("tags") or "[]")
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(tags, list):
-            continue
-        reviewed_position_ids.update(
-            str(tag).split(":", 1)[1]
-            for tag in tags
-            if str(tag).startswith("position:")
-        )
-    missing_review_strategy_ids = sorted(
-        {
-            str(position.get("strategy_id"))
-            for position in recent_closed_positions
-            if position.get("strategy_id")
-            and str(position.get("id")) not in reviewed_position_ids
-        }
-    )
-    if not cfg.runtime.paused and missing_review_strategy_ids and not recent_reviewer_runs:
-        recommendations.append(
-            {
-                "id": "review-due",
-                "kind": "review_due",
-                "severity": "medium",
-                "summary": (
-                    f"Closed strategy {missing_review_strategy_ids[0]} still lacks a recent post-trade review."
-                    if len(missing_review_strategy_ids) == 1
-                    else f"{len(missing_review_strategy_ids)} closed strategies still lack recent post-trade reviews."
+            _make_task_recommendation(
+                id_="system-health-report-refresh",
+                kind="system_health_report_refresh_due",
+                severity="medium",
+                summary=(
+                    "Gateway health is degraded and no recent system-health diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
                 ),
-                "taskType": "generate_review",
-                "metadata": {
-                    "missing_review_strategy_ids": missing_review_strategy_ids,
-                    "closed_position_count": len(recent_closed_positions),
+                task_type="create_diagnostic_report",
+                metadata={
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "system_health",
+                    "title": "System Health Diagnostic Report",
+                    "health_issues": health_issues,
+                    "refresh_window_minutes": 60,
                 },
-            }
+            )
+        )
+
+    worker_health_issues = [
+        issue for issue in health_issues if issue.startswith("agent_failure_ratio:")
+    ]
+    if worker_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="worker_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="worker-health-review",
+                kind="worker_health_review_due",
+                severity="medium",
+                summary=(
+                    "Worker health is degraded and no recent worker-health diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                task_type="create_diagnostic_report",
+                metadata={
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "worker_health",
+                    "title": "Worker Health Diagnostic Report",
+                    "health_issues": worker_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            )
+        )
+
+    model_runtime_health_issues = [
+        issue
+        for issue in health_issues
+        if issue.startswith("llm_unavailable:")
+        or issue.startswith("code_updated_pending_restart:")
+    ]
+    if model_runtime_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="model_runtime_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="model-runtime-health-review",
+                kind="model_runtime_health_review_due",
+                severity="medium",
+                summary=(
+                    "Model/runtime health is degraded and no recent model-runtime diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                task_type="create_diagnostic_report",
+                metadata={
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "model_runtime_health",
+                    "title": "Model Runtime Health Diagnostic Report",
+                    "health_issues": model_runtime_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            )
+        )
+
+    data_source_health_issues = [
+        issue for issue in health_issues if issue.startswith("market_data_stale:")
+    ]
+    if data_source_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="data_source_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="data-source-health-review",
+                kind="data_source_health_review_due",
+                severity="medium",
+                summary=(
+                    "Data-source health is degraded and no recent data-source diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                task_type="create_diagnostic_report",
+                metadata={
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "data_source_health",
+                    "title": "Data Source Health Diagnostic Report",
+                    "health_issues": data_source_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            )
+        )
+
+    return recommendations
+
+
+def _build_risk_recommendations(
+    cfg,
+    risk_summary: dict,
+    recent_risk_critic_runs: list[dict],
+    recent_artifacts: list[dict],
+) -> list[dict]:
+    recommendations: list[dict] = []
+
+    if (
+        not cfg.runtime.paused
+        and risk_summary["recent_rejected_decisions"]
+        and not recent_risk_critic_runs
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="risk-critique-due",
+                kind="risk_critique_due",
+                severity="medium",
+                summary=(
+                    "Recent risk rejections exist without a fresh risk-critic pass. "
+                    "Delegate risk_critic to record a new risk lesson note."
+                ),
+                task_type="run_risk_critique",
+                metadata={
+                    "task_type": "run_risk_critique",
+                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
+                },
+            )
         )
 
     if (
         not cfg.runtime.paused
-        and recent_closed_positions
+        and risk_summary["recent_rejected_decisions"]
         and not _has_fresh_report_artifact(
             recent_artifacts,
             artifact_type="review_report",
-            report_type="trade_review",
+            report_type="risk_review",
             within_minutes=360,
         )
     ):
         recommendations.append(
-            {
-                "id": "trade-review-report-refresh",
-                "kind": "trade_review_report_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Recent closed positions exist and no fresh trade review report is visible. "
-                    "Refresh a non-trading trade review summary."
+            _make_task_recommendation(
+                id_="risk-review-report-refresh",
+                kind="risk_review_report_refresh_due",
+                severity="medium",
+                summary=(
+                    "Recent risk rejections exist and no fresh risk review report is visible. "
+                    "Refresh a risk-focused operator summary."
                 ),
-                "taskType": "create_review_report",
-                "metadata": {
+                task_type="create_review_report",
+                metadata={
                     "task_type": "create_review_report",
-                    "report_type": "trade_review",
-                    "title": "Trade Review Report",
-                    "closed_position_count": len(recent_closed_positions),
-                    "missing_review_strategy_ids": missing_review_strategy_ids,
+                    "report_type": "risk_review",
+                    "title": "Risk Review Report",
+                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
+                    "proposal_candidate_count": len(
+                        risk_summary["needs_operator_risk_boundary_proposals"]
+                    ),
                     "refresh_window_minutes": 360,
                 },
-            }
+            )
         )
 
-    strategies = repo.list_strategies(limit=200)
-    under_review_strategies = [item for item in strategies if _truthy_flag(item.get("under_review"))]
-    paused_paper_strategies = [item for item in strategies if _truthy_flag(item.get("paper_trading_paused"))]
-    active_paper_strategies = [
-        item for item in strategies if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
-    ]
-    raw_recent_strategy_evaluations = [
-        artifact
-        for artifact in recent_artifacts
-        if artifact.get("artifact_type") == "strategy_evaluation"
-        and (parse_utc(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
-        > datetime.now(timezone.utc) - timedelta(hours=24)
-    ]
-    recent_strategy_evaluations = []
-    for artifact in raw_recent_strategy_evaluations:
-        content = artifact.get("content")
-        if not isinstance(content, dict):
-            content = {}
-        recent_strategy_evaluations.append(
-            {
-                "strategy_id": content.get("strategy_id"),
-                "strategy_name": content.get("strategy_name"),
-                "evaluation": content.get("evaluation"),
-            }
-        )
-    flagged_strategy_ids = {
-        str(item.get("id"))
-        for item in [*under_review_strategies, *paused_paper_strategies]
-        if item.get("id")
-    }
-    under_review_strategy_ids = {
-        str(item.get("id"))
-        for item in under_review_strategies
-        if item.get("id")
-    }
-    evaluated_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_strategy_evaluations
-        if item.get("strategy_id")
-    }
-    needs_operator_evaluation_strategy_ids = sorted(flagged_strategy_ids - evaluated_strategy_ids)
-    failed_under_review_candidate = next(
-        (
-            (
-                str(item.get("strategy_id") or ""),
-                str(item.get("strategy_name") or "") or None,
-                [
-                    str(failure)
-                    for failure in (((item.get("evaluation") or {}).get("promotion_gates") or {}).get("failures") or [])
-                    if str(failure).strip()
-                ],
-            )
-            for item in recent_strategy_evaluations
-            if item.get("strategy_id")
-            and str(item.get("strategy_id")) not in under_review_strategy_ids
-            and isinstance(item.get("evaluation"), dict)
-            and isinstance(item["evaluation"].get("strategy"), dict)
-            and str(item["evaluation"]["strategy"].get("state") or "") in {"paper_running", "paper_passed"}
-            and isinstance(item["evaluation"].get("promotion_gates"), dict)
-            and bool(item["evaluation"]["promotion_gates"].get("passed")) is False
-        ),
-        None,
-    )
-    recent_agent_runs = repo.list_agent_runs_window(hours=24)
-    recent_run_ids = {str(run.get("id")) for run in recent_agent_runs}
-    recent_agent_runs.extend(
-        run
-        for run in repo.list_latest_agent_runs()
-        if str(run.get("id")) not in recent_run_ids
-    )
-    open_positions = repo.list_positions(status="open", limit=200)
-    latest_portfolio_snapshot = repo.get_latest_portfolio_snapshot()
-    portfolio_snapshot_age_minutes = (
-        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
-        if latest_portfolio_snapshot is not None
-        else None
-    )
-    if (
-        not cfg.runtime.paused
-        and open_positions
-        and (
-            latest_portfolio_snapshot is None
-            or (
-                portfolio_snapshot_age_minutes is not None
-                and portfolio_snapshot_age_minutes >= 15
-            )
-        )
-    ):
+    due_risk_boundary_changes = risk_summary["needs_operator_risk_boundary_proposals"]
+    if not cfg.runtime.paused and due_risk_boundary_changes:
+        first_candidate = due_risk_boundary_changes[0]
         recommendations.append(
-            {
-                "id": "portfolio-snapshot-refresh-due",
-                "kind": "portfolio_snapshot_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
-                    if latest_portfolio_snapshot is None
-                    else (
-                        "Open positions exist and the latest portfolio snapshot is about "
-                        f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
-                    )
+            _make_task_recommendation(
+                id_=(
+                    "risk-boundary-proposal:"
+                    f"{first_candidate['risk_mode']}:"
+                    f"{first_candidate['policy_hash']}:"
+                    f"{first_candidate['boundary_key']}"
                 ),
-                "taskType": "run_portfolio_snapshot",
-                "metadata": {
-                    "task_type": "run_portfolio_snapshot",
-                    "open_positions_count": len(open_positions),
-                    "last_snapshot_id": (
-                        latest_portfolio_snapshot.get("id")
-                        if latest_portfolio_snapshot
-                        else None
-                    ),
-                    "stale_minutes": (
-                        int(portfolio_snapshot_age_minutes)
-                        if portfolio_snapshot_age_minutes is not None
-                        else None
-                    ),
+                kind="risk_boundary_change_proposal_due",
+                severity="medium",
+                summary=first_candidate["summary"],
+                task_type="create_repair_proposal",
+                metadata={
+                    "boundary_key": first_candidate["boundary_key"],
+                    "violation_kind": first_candidate["violation_kind"],
+                    "risk_mode": first_candidate["risk_mode"],
+                    "policy_id": first_candidate["policy_id"],
+                    "policy_revision": first_candidate["policy_revision"],
+                    "policy_hash": first_candidate["policy_hash"],
+                    "rejection_count": first_candidate["rejection_count"],
+                    "changes": first_candidate["changes"],
+                    "sample_violations": first_candidate["sample_violations"],
+                    "decision_ids": first_candidate["decision_ids"][:5],
+                    "affected_symbols": first_candidate["affected_symbols"][:5],
+                    "execution_modes": first_candidate["execution_modes"],
+                    "proposal_command": "propose_risk_boundary_change",
                 },
-            }
+            )
         )
 
-    failed_run_statuses = {"failed", "error", "completed_with_errors"}
-    recent_runs_by_agent: dict[str, list[dict]] = {}
-    failed_runs_by_agent: dict[str, list[dict]] = {}
-    for run in recent_agent_runs:
-        agent_name = str(run.get("agent_name") or "").strip()
-        if agent_name:
-            recent_runs_by_agent.setdefault(agent_name, []).append(run)
-        if run.get("status") not in failed_run_statuses:
-            continue
-        started_at = parse_utc(run.get("started_at"))
-        if started_at is None or started_at <= datetime.now(timezone.utc) - timedelta(hours=24):
-            continue
-        if not agent_name:
-            continue
-        failed_runs_by_agent.setdefault(agent_name, []).append(run)
+    due_observe_only_symbols = risk_summary.get("needs_operator_observe_only_symbols") or []
+    if not cfg.runtime.paused and due_observe_only_symbols:
+        first_candidate = due_observe_only_symbols[0]
+        recommendations.append(
+            _make_task_recommendation(
+                id_=f"symbol-observe-only:{first_candidate['symbol']}",
+                kind="symbol_observe_only_due",
+                severity="medium",
+                summary=first_candidate["summary"],
+                task_type="set_symbol_observe_only",
+                metadata={
+                    "task_type": "set_symbol_observe_only",
+                    "symbol": first_candidate["symbol"],
+                    "rejection_count": first_candidate["rejection_count"],
+                    "decision_ids": first_candidate["decision_ids"][:5],
+                    "execution_modes": first_candidate.get("execution_modes", [])[:5],
+                },
+            )
+        )
 
+    return recommendations
+
+
+def _build_failed_agent_rerun_recommendation(
+    cfg,
+    recent_runs_by_agent: dict,
+    failed_run_statuses: set[str],
+) -> dict | None:
     failed_rerun_candidate = None
     for agent_name, runs in recent_runs_by_agent.items():
         sorted_runs = sorted(
@@ -1472,22 +1578,230 @@ def build_recommendations(limit: int = 10) -> list[dict]:
 
     if not cfg.runtime.paused and failed_rerun_candidate:
         agent_name, latest_failed_run, stale_minutes = failed_rerun_candidate
+        return _make_task_recommendation(
+            id_=f"failed-agent-rerun:{latest_failed_run['id']}",
+            kind="failed_agent_rerun_due",
+            severity="medium",
+            summary=f"{agent_name} has a recent failed run with no newer recovery. Rerun the failed task to restore scheduled coverage.",
+            task_type="rerun_failed_agent_task",
+            metadata={
+                "task_type": "rerun_failed_agent_task",
+                "agent_name": agent_name,
+                "failed_run_id": latest_failed_run["id"],
+                "failed_run_status": latest_failed_run.get("status"),
+                "stale_minutes": stale_minutes,
+            },
+        )
+    return None
+
+
+def build_recommendations(limit: int = 10) -> list[dict]:
+    from aletheia.agent_runtime.health import compute_health
+
+    cfg = load_config()
+    recommendations: list[dict] = []
+    heartbeat = get_latest_heartbeat()
+    failed_tasks = list_tasks(limit=10, status="failed")
+    running_tasks = list_tasks(limit=20, status="running")
+    queued_tasks = list_tasks(limit=20, status="queued")
+    recent_events = list_events(limit=100)
+    recent_artifacts = list_artifacts(limit=500)
+
+    if heartbeat is None or heartbeat.get("status") == "offline":
         recommendations.append(
             {
-                "id": f"failed-agent-rerun:{latest_failed_run['id']}",
-                "kind": "failed_agent_rerun_due",
-                "severity": "medium",
-                "summary": f"{agent_name} has a recent failed run with no newer recovery. Rerun the failed task to restore scheduled coverage.",
-                "taskType": "rerun_failed_agent_task",
-                "metadata": {
-                    "task_type": "rerun_failed_agent_task",
-                    "agent_name": agent_name,
-                    "failed_run_id": latest_failed_run["id"],
-                    "failed_run_status": latest_failed_run.get("status"),
-                    "stale_minutes": stale_minutes,
-                },
+                "id": "operator-offline",
+                "kind": "operator_offline",
+                "severity": "high",
+                "summary": "Operator shell is offline. Wake or restart it before relying on background supervision.",
             }
         )
+    elif heartbeat.get("stale"):
+        recommendations.append(
+            {
+                "id": "operator-stale",
+                "kind": "heartbeat_stale",
+                "severity": "high",
+                "summary": "Operator heartbeat is stale. Inspect shell logs or let the supervisor restart it.",
+            }
+        )
+
+    if cfg.runtime.paused:
+        recommendations.append(
+            {
+                "id": "gateway-paused",
+                "kind": "operator_paused",
+                "severity": "medium",
+                "summary": "Gateway is paused. Resume it when background monitoring and scheduled work should continue.",
+            }
+        )
+
+    health_snapshot = compute_health()
+    recommendations.extend(
+        _build_health_report_recommendations(health_snapshot, recent_artifacts)
+    )
+
+    recommendations.extend(
+        _build_task_backlog_recommendations(
+            failed_tasks,
+            running_tasks,
+            queued_tasks,
+        )
+    )
+
+    rejected_commands = [
+        event for event in recent_events if event["event_type"] == "command_rejected"
+    ]
+    if rejected_commands:
+        recommendations.append(
+            {
+                "id": "command-rejections",
+                "kind": "command_rejections_present",
+                "severity": "medium",
+                "summary": "Recent operator commands were rejected. Review permission mode or command intent.",
+                "count": len(rejected_commands),
+            }
+        )
+
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff_6h = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+
+    recent_dreaming_logs = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at > ?",
+        params=("dreaming_log", cutoff_24h),
+        limit=10,
+    )
+    recent_dreaming_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("dreaming_agent", cutoff_24h),
+        limit=5,
+    )
+    recent_risk_critic_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("risk_critic", cutoff_6h),
+        limit=5,
+    )
+    if not cfg.runtime.paused and not recent_dreaming_logs and not recent_dreaming_runs:
+        recommendations.append(
+            _make_task_recommendation(
+                id_="dreaming-due",
+                kind="dreaming_due",
+                severity="medium",
+                summary="No recent dreaming consolidation is visible. Queue a dreaming run to refresh operator memory.",
+                task_type="run_dreaming",
+                metadata={
+                    "reason": "no_recent_dreaming_activity",
+                },
+            )
+        )
+
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    recent_closed_positions = list(reversed(
+        eligible_strategy_outcomes(closed_after=cutoff_24h)
+    ))[:20]
+    # Exclude archived/deprecated reviews so they do not suppress regeneration
+    # after an owner archives an invalid review (#269).
+    recent_post_trade_reviews = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND status NOT IN ('archived', 'deprecated') AND created_at > ?",
+        params=("post_trade_review", cutoff_24h),
+        limit=20,
+    )
+    recent_reviewer_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("post_trade_reviewer", cutoff_15m),
+        limit=5,
+    )
+    missing_review_strategy_ids = _missing_review_strategy_ids(
+        recent_post_trade_reviews,
+        recent_closed_positions,
+    )
+    if not cfg.runtime.paused and missing_review_strategy_ids and not recent_reviewer_runs:
+        recommendations.append(
+            _make_task_recommendation(
+                id_="review-due",
+                kind="review_due",
+                severity="medium",
+                summary=(
+                    f"Closed strategy {missing_review_strategy_ids[0]} still lacks a recent post-trade review."
+                    if len(missing_review_strategy_ids) == 1
+                    else f"{len(missing_review_strategy_ids)} closed strategies still lack recent post-trade reviews."
+                ),
+                task_type="generate_review",
+                metadata={
+                    "missing_review_strategy_ids": missing_review_strategy_ids,
+                    "closed_position_count": len(recent_closed_positions),
+                },
+            )
+        )
+
+    if (
+        not cfg.runtime.paused
+        and recent_closed_positions
+        and not _has_fresh_report_artifact(
+            recent_artifacts,
+            artifact_type="review_report",
+            report_type="trade_review",
+            within_minutes=360,
+        )
+    ):
+        recommendations.append(
+            _make_task_recommendation(
+                id_="trade-review-report-refresh",
+                kind="trade_review_report_refresh_due",
+                severity="medium",
+                summary=(
+                    "Recent closed positions exist and no fresh trade review report is visible. "
+                    "Refresh a non-trading trade review summary."
+                ),
+                task_type="create_review_report",
+                metadata={
+                    "task_type": "create_review_report",
+                    "report_type": "trade_review",
+                    "title": "Trade Review Report",
+                    "closed_position_count": len(recent_closed_positions),
+                    "missing_review_strategy_ids": missing_review_strategy_ids,
+                    "refresh_window_minutes": 360,
+                },
+            )
+        )
+
+    recent_agent_runs = repo.list_agent_runs_window(hours=24)
+    recent_run_ids = {str(run.get("id")) for run in recent_agent_runs}
+    recent_agent_runs.extend(
+        run
+        for run in repo.list_latest_agent_runs()
+        if str(run.get("id")) not in recent_run_ids
+    )
+    open_positions = repo.list_positions(status="open", limit=200)
+    latest_portfolio_snapshot = repo.get_latest_portfolio_snapshot()
+    result = _build_portfolio_snapshot_recommendation(
+        cfg,
+        open_positions,
+        latest_portfolio_snapshot,
+    )
+    if result:
+        recommendations.append(result)
+
+    failed_run_statuses = {"failed", "error", "completed_with_errors"}
+    (
+        recent_runs_by_agent,
+        failed_runs_by_agent,
+        manual_runs_by_agent,
+    ) = _group_agent_runs(recent_agent_runs, failed_run_statuses)
+
+    result = _build_failed_agent_rerun_recommendation(
+        cfg,
+        recent_runs_by_agent,
+        failed_run_statuses,
+    )
+    if result:
+        recommendations.append(result)
 
     recent_prompt_change_proposals = []
     for artifact in recent_artifacts:
@@ -1517,20 +1831,20 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         for run in runs:
             error_samples.extend(_parse_json_list(run.get("errors")))
         recommendations.append(
-            {
-                "id": f"agent-prompt-proposal:{agent_name}",
-                "kind": "agent_prompt_change_proposal_due",
-                "severity": "medium",
-                "summary": f"{agent_name} failed {len(runs)} recent runs and should get a prompt/playbook change proposal for human review.",
-                "taskType": "create_repair_proposal",
-                "metadata": {
+            _make_task_recommendation(
+                id_=f"agent-prompt-proposal:{agent_name}",
+                kind="agent_prompt_change_proposal_due",
+                severity="medium",
+                summary=f"{agent_name} failed {len(runs)} recent runs and should get a prompt/playbook change proposal for human review.",
+                task_type="create_repair_proposal",
+                metadata={
                     "agent_name": agent_name,
                     "target": agent_name,
                     "failed_run_ids": [run["id"] for run in runs[:5]],
                     "error_samples": error_samples[:3],
                     "proposal_command": "propose_prompt_change",
                 },
-            }
+            )
         )
 
     recent_schedule_change_proposals = []
@@ -1546,15 +1860,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         agent_name = content.get("agent_name")
         if agent_name:
             recent_schedule_change_proposals.append(str(agent_name))
-
-    manual_runs_by_agent: dict[str, list[dict]] = {}
-    for run in recent_agent_runs:
-        if str(run.get("trigger_type") or "") != "manual":
-            continue
-        agent_name = str(run.get("agent_name") or "").strip()
-        if not agent_name:
-            continue
-        manual_runs_by_agent.setdefault(agent_name, []).append(run)
 
     repeated_manual_agent = next(
         (
@@ -1574,287 +1879,56 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     if not cfg.runtime.paused and repeated_manual_agent and _hb_permission != "ReadOnly":
         agent_name, runs = repeated_manual_agent
         recommendations.append(
-            {
-                "id": f"agent-schedule-proposal:{agent_name}",
-                "kind": "agent_schedule_change_proposal_due",
-                "severity": "medium",
-                "summary": f"{agent_name} needed {len(runs)} recent manual runs on top of its scheduled cadence and should get a schedule-change proposal for human review.",
-                "taskType": "create_repair_proposal",
-                "metadata": {
+            _make_task_recommendation(
+                id_=f"agent-schedule-proposal:{agent_name}",
+                kind="agent_schedule_change_proposal_due",
+                severity="medium",
+                summary=f"{agent_name} needed {len(runs)} recent manual runs on top of its scheduled cadence and should get a schedule-change proposal for human review.",
+                task_type="create_repair_proposal",
+                metadata={
                     "agent_name": agent_name,
                     "current_schedule": _default_schedule_for(agent_name),
                     "requested_schedule": _suggested_schedule_for(agent_name),
                     "manual_run_ids": [run["id"] for run in runs[:5]],
                     "proposal_command": "propose_schedule_change",
                 },
-            }
+            )
         )
 
-    recent_activity_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if (
-            (parse_utc(run.get("ended_at") or run.get("started_at"))
-             or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
+    result = _build_agent_performance_recommendation(
+        cfg,
+        recent_agent_runs,
+        failed_run_statuses,
+        recent_artifacts,
     )
-    recent_failed_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if str(run.get("status") or "") in failed_run_statuses
-        and (
-            (parse_utc(run.get("ended_at") or run.get("started_at"))
-             or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
-    )
-    if (
-        not cfg.runtime.paused
-        and (recent_failed_run_count > 0 or recent_activity_run_count >= 5)
-        and not _has_fresh_report_artifact(
-            recent_artifacts,
-            artifact_type="review_report",
-            report_type="agent_performance",
-            within_minutes=360,
-        )
-    ):
-        recommendations.append(
-            {
-                "id": "agent-performance-report-refresh",
-                "kind": "agent_performance_report_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Recent agent activity warrants a fresh agent-performance report for operator review."
-                ),
-                "taskType": "create_review_report",
-                "metadata": {
-                    "task_type": "create_review_report",
-                    "report_type": "agent_performance",
-                    "title": "Agent Performance Report",
-                    "recent_activity_run_count": recent_activity_run_count,
-                    "failed_run_count": recent_failed_run_count,
-                    "refresh_window_minutes": 360,
-                },
-            }
-        )
+    if result:
+        recommendations.append(result)
 
-    target_date = datetime.now(timezone.utc).date().isoformat()
-    start_of_target_date = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).isoformat()
-    recent_daily_reviews = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at >= ?",
-        params=("daily_review", start_of_target_date),
-        limit=10,
-    )
-    recent_activity_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if (
-            (parse_utc(run.get("ended_at") or run.get("started_at")) or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
-    )
-    if (
-        not cfg.runtime.paused
-        and not recent_daily_reviews
-        and recent_activity_run_count > 0
-    ):
-        recommendations.append(
-            {
-                "id": f"daily-review-refresh:{target_date}",
-                "kind": "daily_review_refresh_due",
-                "severity": "medium",
-                "summary": f"No daily review has been written for {target_date} UTC. Refresh the non-critical operator summary report.",
-                "taskType": "create_daily_review",
-                "metadata": {
-                    "task_type": "create_daily_review",
-                    "target_date": target_date,
-                    "recent_activity_run_count": recent_activity_run_count,
-                    "title": f"Operator Daily Review {target_date}",
-                },
-            }
-        )
+    result = _build_daily_review_recommendation(cfg, recent_agent_runs)
+    if result:
+        recommendations.append(result)
 
     risk_summary = build_risk_summary(cfg=cfg, recent_artifacts=recent_artifacts)
-    if (
-        not cfg.runtime.paused
-        and risk_summary["recent_rejected_decisions"]
-        and not recent_risk_critic_runs
-    ):
-        recommendations.append(
-            {
-                "id": "risk-critique-due",
-                "kind": "risk_critique_due",
-                "severity": "medium",
-                "summary": (
-                    "Recent risk rejections exist without a fresh risk-critic pass. "
-                    "Delegate risk_critic to record a new risk lesson note."
-                ),
-                "taskType": "run_risk_critique",
-                "metadata": {
-                    "task_type": "run_risk_critique",
-                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
-                },
-            }
-        )
-
-    if (
-        not cfg.runtime.paused
-        and risk_summary["recent_rejected_decisions"]
-        and not _has_fresh_report_artifact(
+    recommendations.extend(
+        _build_risk_recommendations(
+            cfg,
+            risk_summary,
+            recent_risk_critic_runs,
             recent_artifacts,
-            artifact_type="review_report",
-            report_type="risk_review",
-            within_minutes=360,
         )
-    ):
-        recommendations.append(
-            {
-                "id": "risk-review-report-refresh",
-                "kind": "risk_review_report_refresh_due",
-                "severity": "medium",
-                "summary": (
-                    "Recent risk rejections exist and no fresh risk review report is visible. "
-                    "Refresh a risk-focused operator summary."
-                ),
-                "taskType": "create_review_report",
-                "metadata": {
-                    "task_type": "create_review_report",
-                    "report_type": "risk_review",
-                    "title": "Risk Review Report",
-                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
-                    "proposal_candidate_count": len(
-                        risk_summary["needs_operator_risk_boundary_proposals"]
-                    ),
-                    "refresh_window_minutes": 360,
-                },
-            }
-        )
-
-    due_risk_boundary_changes = risk_summary["needs_operator_risk_boundary_proposals"]
-    if not cfg.runtime.paused and due_risk_boundary_changes:
-        first_candidate = due_risk_boundary_changes[0]
-        recommendations.append(
-            {
-                "id": (
-                    "risk-boundary-proposal:"
-                    f"{first_candidate['risk_mode']}:"
-                    f"{first_candidate['policy_hash']}:"
-                    f"{first_candidate['boundary_key']}"
-                ),
-                "kind": "risk_boundary_change_proposal_due",
-                "severity": "medium",
-                "summary": first_candidate["summary"],
-                "taskType": "create_repair_proposal",
-                "metadata": {
-                    "boundary_key": first_candidate["boundary_key"],
-                    "violation_kind": first_candidate["violation_kind"],
-                    "risk_mode": first_candidate["risk_mode"],
-                    "policy_id": first_candidate["policy_id"],
-                    "policy_revision": first_candidate["policy_revision"],
-                    "policy_hash": first_candidate["policy_hash"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "changes": first_candidate["changes"],
-                    "sample_violations": first_candidate["sample_violations"],
-                    "decision_ids": first_candidate["decision_ids"][:5],
-                    "affected_symbols": first_candidate["affected_symbols"][:5],
-                    "execution_modes": first_candidate["execution_modes"],
-                    "proposal_command": "propose_risk_boundary_change",
-                },
-            }
-        )
-
-    due_observe_only_symbols = risk_summary.get("needs_operator_observe_only_symbols") or []
-    if not cfg.runtime.paused and due_observe_only_symbols:
-        first_candidate = due_observe_only_symbols[0]
-        recommendations.append(
-            {
-                "id": f"symbol-observe-only:{first_candidate['symbol']}",
-                "kind": "symbol_observe_only_due",
-                "severity": "medium",
-                "summary": first_candidate["summary"],
-                "taskType": "set_symbol_observe_only",
-                "metadata": {
-                    "task_type": "set_symbol_observe_only",
-                    "symbol": first_candidate["symbol"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "decision_ids": first_candidate["decision_ids"][:5],
-                    "execution_modes": first_candidate.get("execution_modes", [])[:5],
-                },
-            }
-        )
+    )
 
     command_center_summary = build_command_center_behavior_summary(
         cfg=cfg,
         recent_artifacts=recent_artifacts,
     )
-    due_command_center_behavior_changes = command_center_summary[
-        "needs_command_center_behavior_proposals"
-    ]
-    if not cfg.runtime.paused and due_command_center_behavior_changes:
-        first_candidate = due_command_center_behavior_changes[0]
-        recommendations.append(
-            {
-                "id": f"command-center-behavior:{first_candidate['target_command']}",
-                "kind": "command_center_behavior_change_proposal_due",
-                "severity": "medium",
-                "summary": first_candidate["summary"],
-                "taskType": "create_repair_proposal",
-                "metadata": {
-                    "target_command": first_candidate["target_command"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "requested_behavior": first_candidate["requested_behavior"],
-                    "sample_responses": first_candidate["sample_responses"],
-                    "sample_inputs": first_candidate["sample_inputs"],
-                    "session_ids": first_candidate["session_ids"],
-                    "command_ids": first_candidate["command_ids"],
-                    "proposal_command": "propose_command_center_behavior_change",
-                },
-            }
-        )
+    result = _build_command_center_recommendation(cfg, command_center_summary)
+    if result:
+        recommendations.append(result)
 
-    passed_extensions = list_extensions(status="sandbox_passed", limit=20)
-    if not cfg.runtime.paused and passed_extensions:
-        ready_extensions = []
-        for extension in passed_extensions:
-            if extension.get("proposal_artifact_id"):
-                continue
-            latest_run = next(
-                iter(list_extension_runs(extension_id=str(extension["id"]), limit=1)),
-                None,
-            )
-            if latest_run is None or str(latest_run.get("status") or "") != "passed":
-                continue
-            ready_extensions.append((extension, latest_run))
-
-        if ready_extensions:
-            extension, latest_run = ready_extensions[0]
-            slash_command = str(extension.get("slash_command") or extension["id"])
-            recommendations.append(
-                {
-                    "id": f"extension-enable:{extension['id']}",
-                    "kind": "extension_enablement_proposal_due",
-                    "severity": "medium",
-                    "summary": (
-                        f"Extension {slash_command} passed sandbox validation and is ready "
-                        "for a human-reviewed enablement proposal."
-                    ),
-                    "taskType": "create_repair_proposal",
-                    "metadata": {
-                        "extension_id": extension["id"],
-                        "extension_name": extension.get("extension_name"),
-                        "slash_command": extension.get("slash_command"),
-                        "target_command": extension.get("target_command"),
-                        "latest_sandbox_run_id": latest_run.get("id"),
-                        "latest_sandbox_status": latest_run.get("status"),
-                        "latest_sandbox_summary": latest_run.get("summary"),
-                        "proposal_command": "propose_extension_enablement",
-                    },
-                }
-            )
+    result = _build_extension_enablement_recommendation(cfg)
+    if result:
+        recommendations.append(result)
 
     archived_ids = _archived_recommendation_ids(cfg.operator.main_session_id)
     if archived_ids:

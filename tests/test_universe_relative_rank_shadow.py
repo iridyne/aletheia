@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_relative_rank_shadow_bundle, list_relative_rank_shadow_batches
+
 from dataclasses import replace
 
 from aletheia.config.schema import UniverseConfig
@@ -117,7 +119,7 @@ def test_relative_rank_persists_isolated_cluster_and_outcome(monkeypatch):
     )
 
     assert (
-        repo.insert_relative_rank_shadow_bundle(
+        insert_relative_rank_shadow_bundle(
             bundle.batch,
             outcomes=bundle.outcomes,
             min_interval_sec=0,
@@ -125,14 +127,14 @@ def test_relative_rank_persists_isolated_cluster_and_outcome(monkeypatch):
         == 1
     )
     assert (
-        repo.insert_relative_rank_shadow_bundle(
+        insert_relative_rank_shadow_bundle(
             bundle.batch,
             outcomes=bundle.outcomes,
             min_interval_sec=0,
         )
         == 0
     )
-    stored = repo.list_relative_rank_shadow_batches(bundle.batch.policy_epoch_id)
+    stored = list_relative_rank_shadow_batches(bundle.batch.policy_epoch_id)
     assert len(stored) == 1
     assert stored[0]["promotion_eligible"] == 0
     assert len(bundle.outcomes) == 1
@@ -197,7 +199,7 @@ def test_relative_rank_excludes_temporally_invalid_settled_outcomes():
         regime_state="sideways",
         captured_at="2026-09-24T00:00:00+00:00",
     )
-    repo.insert_relative_rank_shadow_bundle(
+    insert_relative_rank_shadow_bundle(
         bundle.batch,
         outcomes=bundle.outcomes,
         min_interval_sec=0,

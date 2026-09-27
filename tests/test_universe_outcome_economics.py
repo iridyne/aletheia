@@ -1,5 +1,7 @@
 """Focused tests for market-aware, cost-aware forward outcomes."""
 
+from tests.fixtures.repo_test_helpers import insert_forward_outcome
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -24,7 +26,7 @@ def test_optional_guard_absence_does_not_interrupt_settlement(monkeypatch, caplo
         entry_ts=(now - timedelta(hours=5)).isoformat(),
         due_at=(now - timedelta(hours=1)).isoformat(),
     )
-    repo.insert_forward_outcome(row)
+    insert_forward_outcome(row)
     monkeypatch.setattr(outcome_recorder, "_batch_fetch_market_observations", AsyncMock(
         return_value={row.id: {
             "exit_price": 95.0, "range_high": 101.0, "range_low": 94.0,
@@ -131,7 +133,7 @@ def test_decision_grade_settlement_writers_require_price_provenance():
         outcome_candidate_key="writer-gross-only",
         **common,
     )
-    repo.insert_forward_outcome(forward)
+    insert_forward_outcome(forward)
     repo.insert_filter_candidate_outcomes_batch([filtered, gross_only])
     economics = estimate_outcome_economics(
         entry_price=100.0,
@@ -377,7 +379,7 @@ def test_pending_forward_outcome_writer_rejects_missing_venue_atomically():
     legacy = UniverseForwardOutcome(
         member_id="legacy", venue=None, status="settled", **common
     )
-    repo.insert_forward_outcome(legacy)
+    insert_forward_outcome(legacy)
     assert repo._select_one("universe_forward_outcomes", legacy.id)["venue"] is None
     get_db().execute(
         "UPDATE universe_forward_outcomes SET status='pending' WHERE id=?",

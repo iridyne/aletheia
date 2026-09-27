@@ -1,5 +1,7 @@
 """Optional research feedback cannot own Core closure or delivery state."""
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from pathlib import Path
 import subprocess
 import sys
@@ -57,14 +59,14 @@ def test_absent_feedback_preserves_close_and_replays_under_core_lease(tmp_path, 
     outcome_closure.close_position_verified(position.id, _verified_result(position))
     before = repo.get_position(position.id)
     assert before['status'] == 'closed' and before['outcome_eligible']
-    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [job] = list_outcome_hook_jobs(position_id=position.id)
     assert job['status'] == 'failed'
     assert 'outcome_feedback_unavailable' in job['last_error']
     calls = []
 
     def feedback(hook_type, row):
         assert repo.get_db().in_transaction
-        [current] = repo.list_outcome_hook_jobs(position_id=position.id)
+        [current] = list_outcome_hook_jobs(position_id=position.id)
         assert current['status'] == 'processing' and current['claim_token']
         calls.append((hook_type, row['id']))
 

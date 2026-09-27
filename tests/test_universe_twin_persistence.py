@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import get_universe_twin_shadow_batch, universe_twin_shadow_capture_due
+
 from datetime import datetime, timedelta, timezone
 import json
 import random
@@ -199,7 +201,7 @@ def test_bundle_persistence_is_atomic_idempotent_and_replayable() -> None:
     )
     assert retry_records == 0
 
-    batch = repo.get_universe_twin_shadow_batch("run-1")
+    batch = get_universe_twin_shadow_batch("run-1")
     records = repo.list_universe_twin_shadow_records("run-1")
     assert batch is not None
     report = replay_twin_shadow_bundle(batch, records)
@@ -254,8 +256,8 @@ def test_capture_cadence_is_enforced_inside_repository_transaction() -> None:
 
     assert repo.insert_universe_twin_shadow_bundle(first.batch, first.evidence) == 1
     assert repo.insert_universe_twin_shadow_bundle(too_soon.batch, too_soon.evidence) == 0
-    assert repo.get_universe_twin_shadow_batch("run-2") is None
-    assert repo.universe_twin_shadow_capture_due(
+    assert get_universe_twin_shadow_batch("run-2") is None
+    assert universe_twin_shadow_capture_due(
         due.batch.captured_at,
         min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
     ) is True
@@ -281,7 +283,7 @@ def test_twin_retention_deletes_children_before_batches_on_fixed_window() -> Non
 
     deleted = repo.prune_universe_twin_shadow_evidence(days=30)
     assert deleted == 2
-    assert repo.get_universe_twin_shadow_batch("run-1") is None
+    assert get_universe_twin_shadow_batch("run-1") is None
     assert repo.list_universe_twin_shadow_records("run-1") == []
 
 
@@ -308,7 +310,7 @@ def test_candidate_selection_fixed_look_evidence_is_not_pruned() -> None:
     repo.get_db().commit()
 
     assert repo.prune_universe_twin_shadow_evidence(days=30) == 0
-    assert repo.get_universe_twin_shadow_batch("candidate-selection-retained") is not None
+    assert get_universe_twin_shadow_batch("candidate-selection-retained") is not None
     assert repo.list_universe_twin_shadow_records("candidate-selection-retained")
 
 
@@ -357,8 +359,8 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
     repo.get_db().commit()
 
     assert repo.prune_universe_twin_shadow_evidence(days=30) == 2
-    assert repo.get_universe_twin_shadow_batch("candidate-selection-audit-retained")
-    assert repo.get_universe_twin_shadow_batch("candidate-selection-post-admission") is None
+    assert get_universe_twin_shadow_batch("candidate-selection-audit-retained")
+    assert get_universe_twin_shadow_batch("candidate-selection-post-admission") is None
 
 
 def test_task5_payload_does_not_invent_experiment_identity() -> None:

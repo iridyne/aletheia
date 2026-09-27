@@ -5,6 +5,8 @@ All tests are offline. We mock ccxt/httpx and use temporary repository fixtures.
 
 from __future__ import annotations
 
+from aletheia.storage.repositories import latest_perp_structure
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta, timezone
@@ -816,7 +818,7 @@ async def test_vergex_structure_fixture_persists_btc_eth_sol():
         repo.insert_perp_structure_snapshot(snap.model_dump())
 
     for sym in ("BTC/USDT", "ETH/USDT", "SOL/USDT"):
-        latest = repo.latest_perp_structure(sym)
+        latest = latest_perp_structure(sym)
         assert latest is not None
         assert latest["source"] == "vergex"
         assert latest["venue"] == "hyperliquid"
@@ -872,14 +874,14 @@ def test_perp_structure_repository_roundtrip_and_prune():
         "raw_json": "{}",
     })
 
-    latest = repo.latest_perp_structure("BTC/USDT")
+    latest = latest_perp_structure("BTC/USDT")
     assert latest is not None
     assert latest["id"] == "ps-fresh"
     assert latest["data_quality"] == "degraded"
     assert latest["poc"] == 62267.64
 
     assert repo.prune_perp_structure_snapshots(days=30) == 1
-    assert repo.latest_perp_structure("BTC/USDT")["id"] == "ps-fresh"
+    assert latest_perp_structure("BTC/USDT")["id"] == "ps-fresh"
 
 
 

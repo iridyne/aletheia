@@ -1,6 +1,8 @@
 """Unit tests for aletheia.analytics.factor_feedback."""
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_universe_asset
+
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -41,7 +43,7 @@ def _eligible_factor_row(
     opened = closed - timedelta(hours=holding_hours)
     asset_id = f"factor-asset-{symbol.lower().replace('/', '-')}"
     if repo.get_universe_asset(asset_id) is None:
-        repo.insert_universe_asset(UniverseAsset(
+        insert_universe_asset(UniverseAsset(
             id=asset_id,
             venue="bitget",
             market_type="usdt_futures",

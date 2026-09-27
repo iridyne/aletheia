@@ -1,3 +1,5 @@
+from aletheia.storage.repositories import plan_market_ohlcv_tiering
+
 import pytest
 import sqlite3
 
@@ -81,7 +83,7 @@ def test_repository_exposes_read_only_tiering_plan(monkeypatch) -> None:
     )
     monkeypatch.setattr(repo, "get_db", lambda: db)
 
-    plan = repo.plan_market_ohlcv_tiering(
+    plan = plan_market_ohlcv_tiering(
         exchange="bitget", symbol="BTC/USDT", market_type="perp", timeframe="1m",
         hot_bars=64, cold_chunk_bars=64,
     )

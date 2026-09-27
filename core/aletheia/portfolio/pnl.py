@@ -158,6 +158,7 @@ def _btc_price_at_close() -> float | None:
         snap = latest_snapshot("BTC/USDT")
         return float(snap["price"]) if snap else None
     except Exception:
+        logger.debug("pnl: BTC close-benchmark price unavailable", exc_info=True)
         return None
 
 
@@ -168,7 +169,7 @@ def _btc_benchmark_applicable(row: dict) -> bool:
         return True  # legacy Position rows have no frozen applicability context
     try:
         summary = json.loads(raw_summary) if isinstance(raw_summary, str) else raw_summary
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except json.JSONDecodeError:
         return True
     if not isinstance(summary, dict):
         return True
@@ -185,6 +186,10 @@ def _close_provenance() -> dict | None:
 
         return {key: value for key, value in current_close_provenance().items() if value is not None}
     except Exception:
+        logger.warning(
+            "pnl: close provenance unavailable; producer/session identity lost",
+            exc_info=True,
+        )
         return None
 
 
@@ -239,6 +244,10 @@ def _local_upnl_identity(position: dict) -> tuple[str, str | None, bool]:
         # Fingerprint derivation unavailable: the account scope cannot be proven,
         # so exchange-uPnL matching for this position must fail closed rather than
         # treat the failure as "no fingerprint, legacy row".
+        logger.warning(
+            "pnl: account fingerprint derivation failed; exchange uPnL matching disabled",
+            exc_info=True,
+        )
         return "", None, False
 
     raw_identity = position.get("reconciliation_identity")
@@ -246,7 +255,7 @@ def _local_upnl_identity(position: dict) -> tuple[str, str | None, bool]:
         return default_fingerprint, None, True
     try:
         identity = json.loads(raw_identity) if isinstance(raw_identity, str) else raw_identity
-    except (TypeError, json.JSONDecodeError):
+    except json.JSONDecodeError:
         return "", None, False
     if not isinstance(identity, dict):
         return "", None, False
@@ -338,9 +347,8 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
             try:
                 parsed_upnl = float(upnl)
             except (TypeError, ValueError):
-                logger.debug(
-                    "pnl: exchange uPnL row has a non-numeric unrealized_pnl (%r); row excluded from the venue index",
-                    upnl,
+                logger.warning(
+                    "pnl: exchange uPnL row skipped due to non-numeric value",
                     exc_info=True,
                 )
                 continue
@@ -1614,7 +1622,7 @@ def _compute_portfolio(
             # numbers without a signal. Log so a regression in the UTA
             # cache path is visible.
             logger.warning(
-                "pnl: UTA unified state read failed (keeping single-broker values)",
+                "pnl: UTA aggregate unavailable; single-broker values may be incomplete",
                 exc_info=True,
             )
 

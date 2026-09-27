@@ -1,5 +1,7 @@
 """Optional supplements cannot become Core boot or settlement requirements."""
 
+from tests.fixtures.repo_test_helpers import insert_forward_outcome
+
 import asyncio
 import ast
 import builtins
@@ -142,7 +144,7 @@ def test_canonical_settlement_survives_absent_structure_settler(monkeypatch):
         horizon="4h", entry_price_usd=100.0,
         entry_ts=(now-timedelta(hours=5)).isoformat(), due_at=(now-timedelta(hours=1)).isoformat(),
     )
-    repo.insert_forward_outcome(row)
+    insert_forward_outcome(row)
     monkeypatch.setattr(outcome_recorder, "_batch_fetch_market_observations", AsyncMock(return_value={row.id: {
         "exit_price": 101.0, "range_high": 101.0, "range_low": 100.0,
         "price_source": "horizon_ohlcv", "price_quality_ok": True, "settlement_lag_sec": 0,

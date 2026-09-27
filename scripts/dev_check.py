@@ -190,11 +190,15 @@ def step_ruff(files: list[str], ranges: Mapping[str, set[int] | None]) -> list[s
 
 
 def step_hygiene(files: list[str]) -> list[str]:
-    """Skip/xfail census and data-guarded silent-pass audit on changed test files."""
+    """Skip/xfail census, data-guarded silent-pass audit, and assertion presence
+    on changed test files."""
     findings: list[str] = []
-    for path in files:
-        if path.startswith("tests/") and path.endswith(".py"):
-            findings.extend(check_test_hygiene.audit_path(REPO_ROOT / path))
+    test_files = [
+        path for path in files if path.startswith("tests/") and path.endswith(".py")
+    ]
+    for path in test_files:
+        findings.extend(check_test_hygiene.audit_path(REPO_ROOT / path))
+    findings.extend(check_docs.vacuous_test_failures(test_files))
     return findings
 
 
@@ -230,14 +234,49 @@ def step_docs_governance(files: list[str]) -> list[str]:
     return findings
 
 
-def last_failed_exists() -> bool:
-    cache = REPO_ROOT / ".pytest_cache" / "v" / "cache" / "lastfailed"
-    if not cache.exists():
+_DEF_PATTERN = "def {name}("
+
+
+def _node_id_resolves(node: str) -> bool:
+    """True when ``node`` names a test function that still exists in its file."""
+    path_text, _, selector = node.partition("::")
+    path = REPO_ROOT / path_text
+    if not selector or not path.is_file():
         return False
+    # ``test_x[param]`` and ``Class::test_x`` both end in the function name.
+    name = selector.rsplit("::", 1)[-1].split("[", 1)[0]
     try:
-        return bool(json.loads(cache.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, OSError):
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return False
+    return re.search(rf"^def {re.escape(name)}\(", source, re.M) is not None
+
+
+def previous_failed_node_ids() -> list[str]:
+    """``lastfailed`` ids that still resolve to a test, pruning the rest.
+
+    ``pytest --lf`` is only bounded while the cached ids still resolve. Stale
+    entries make pytest fall back to **running the whole suite** — measured
+    2026-09-27: a 9-entry cache whose files were gone selected 11 521 tests, and
+    ``--last-failed-no-failures=none`` did not prevent it (that flag only covers
+    the empty-cache case). Running the surviving ids explicitly keeps this step
+    proportional to the real previous red set; pruning the dead ids is what
+    pytest itself should have done, and lets the cache converge.
+    """
+    cache = REPO_ROOT / ".pytest_cache" / "v" / "cache" / "lastfailed"
+    try:
+        failed = json.loads(cache.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    stale = [node for node in failed if not _node_id_resolves(node)]
+    if stale:
+        for node in stale:
+            failed.pop(node, None)
+        try:
+            cache.write_text(json.dumps(failed), encoding="utf-8")
+        except OSError:
+            pass
+    return sorted(failed)
 
 
 def focused_tests(changed: list[str]) -> list[str]:
@@ -401,15 +440,16 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FINDINGS
 
     if not args.no_tests:
-        if last_failed_exists():
-            print("  pytest --lf  running previous red set ...")
-            if run_pytest(["--lf"]) != 0:
-                failures.append("pytest --lf: previous failures still red — fix those first")
-                print("  pytest --lf  FAIL")
+        previous_failures = previous_failed_node_ids()
+        if previous_failures:
+            print(f"  previous red  running {len(previous_failures)} cached failure(s) ...")
+            if run_pytest(previous_failures) != 0:
+                failures.append("previous failures still red — fix those first")
+                print("  previous red  FAIL")
             else:
-                print("  pytest --lf  ok")
+                print("  previous red  ok")
         else:
-            print("  pytest --lf  skipped (no pytest cache)")
+            print("  previous red  skipped (no resolvable cached failures)")
 
         if not failures:
             focused = focused_tests(changed)

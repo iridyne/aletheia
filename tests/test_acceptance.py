@@ -4,6 +4,8 @@ The old implementation-guide checklist is archived; these tests cover current
 storage, read models, review coverage, permissions and runtime interfaces.
 """
 
+from tests.fixtures.repo_test_helpers import insert_strategy
+
 import json
 import asyncio
 from datetime import datetime, timezone
@@ -102,8 +104,8 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
     c, _ = client
     from aletheia.storage.models import StrategyRecord
 
-    repo.insert_strategy(StrategyRecord(id="paper-running", name="Paper Running", state="paper_running"))
-    repo.insert_strategy(
+    insert_strategy(StrategyRecord(id="paper-running", name="Paper Running", state="paper_running"))
+    insert_strategy(
         StrategyRecord(
             id="under-review",
             name="Under Review",
@@ -111,7 +113,7 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
             under_review=True,
         )
     )
-    repo.insert_strategy(
+    insert_strategy(
         StrategyRecord(
             id="paused-paper",
             name="Paused Paper",
@@ -119,8 +121,8 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
             paper_trading_paused=True,
         )
     )
-    repo.insert_strategy(StrategyRecord(id="paper-passed", name="Paper Passed", state="paper_passed"))
-    repo.insert_strategy(StrategyRecord(id="live-candidate", name="Live Candidate", state="live_candidate"))
+    insert_strategy(StrategyRecord(id="paper-passed", name="Paper Passed", state="paper_passed"))
+    insert_strategy(StrategyRecord(id="live-candidate", name="Live Candidate", state="live_candidate"))
 
     response = await c.get("/api/strategies/summary")
 

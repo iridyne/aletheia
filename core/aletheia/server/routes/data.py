@@ -1991,11 +1991,6 @@ def get_knowledge(
     return [dict(row) for row in rows]
 
 
-@router.get("/knowledge/research-notes")
-def get_research_notes():
-    return get_knowledge(type="research_note", limit=50)
-
-
 @router.get("/knowledge/dreaming-logs")
 def get_dreaming_logs():
     return get_knowledge(type="dreaming_log", limit=50)

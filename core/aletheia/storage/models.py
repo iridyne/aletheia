@@ -375,32 +375,6 @@ class FilterCandidateOutcome(BaseModel):
     benchmark_path_facts: str | None = None
 
 
-class UniverseDiscoveryBenchmark(BaseModel):
-    """Frozen, read-only prospective Universe discovery measurement window."""
-
-    id: str = Field(default_factory=new_id)
-    status: Literal["active", "finalized", "invalidated", "aborted"] = "active"
-    contract_json: str
-    contract_hash: str
-    code_commit: str
-    started_at: str = Field(default_factory=_utcnow)
-    capture_ends_at: str
-    finalize_not_before: str
-    created_at: str = Field(default_factory=_utcnow)
-    invalidated_at: str | None = None
-    invalidation_reason: str | None = None
-    aborted_at: str | None = None
-    abort_reason: str | None = None
-    finalized_at: str | None = None
-    summary_json: str | None = None
-    artifact_path: str | None = None
-    artifact_sha256: str | None = None
-    artifact_size: int | None = None
-    capture_count: int = 0
-    last_capture_at: str | None = None
-    promotion_eligible: bool = False
-
-
 class TradeProposal(_Provenanced):
     id: str = Field(default_factory=new_id)
     # Deprecated compatibility column. New Operator proposals leave this NULL;
@@ -1196,22 +1170,6 @@ class PSGatewaySession(BaseModel):
     config_hash: str | None = None
 
 
-class PSGatewayLock(BaseModel):
-    lock_name: str
-    owner_id: str
-    lease_until: str
-    heartbeat_at: str = Field(default_factory=_utcnow)
-
-
-class PSReconciliationDiff(BaseModel):
-    diff_type: str
-    severity: str  # info | warning | critical
-    local_ref: dict | None = None
-    remote_ref: dict | None = None
-    message: str
-    recommended_action: str
-
-
 class PSReconciliationReport(BaseModel):
     reconciliation_report_id: str = Field(default_factory=new_id)
     gateway_session_id: str
@@ -1222,17 +1180,6 @@ class PSReconciliationReport(BaseModel):
     actions_json: str = "[]"
     artifact_path: str | None = None
     created_at: str = Field(default_factory=_utcnow)
-
-
-class PSExecutionIntent(BaseModel):
-    execution_intent_id: str = Field(default_factory=new_id)
-    proposal_id: str
-    mode: str  # paper | live
-    status: str = "draft"  # draft | approved | submitted | cancelled | failed
-    risk_check_json: str | None = None
-    unlock_token_hash: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-    updated_at: str = Field(default_factory=_utcnow)
 
 
 class PSOrderIntent(BaseModel):
@@ -1253,61 +1200,6 @@ class PSOrderIntent(BaseModel):
     idempotency_key: str = ""
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
-
-
-class PSOrder(BaseModel):
-    order_id: str = Field(default_factory=new_id)
-    intent_id: str
-    mode: str
-    venue: str
-    venue_order_id: str | None = None
-    client_order_id: str
-    symbol: str
-    side: str
-    order_type: str
-    quantity: str
-    price: str | None = None
-    status: str = "submitted"
-    submitted_at: str | None = None
-    acknowledged_at: str | None = None
-    updated_at: str = Field(default_factory=_utcnow)
-    raw_json: str | None = None
-
-
-class PSFill(BaseModel):
-    fill_id: str = Field(default_factory=new_id)
-    order_id: str | None = None
-    mode: str
-    venue: str
-    venue_trade_id: str | None = None
-    client_order_id: str | None = None
-    symbol: str
-    side: str
-    quantity: str
-    price: str
-    fee: str | None = None
-    fee_currency: str | None = None
-    filled_at: str = Field(default_factory=_utcnow)
-    raw_json: str | None = None
-
-
-class PSPosition(BaseModel):
-    position_id: str = Field(default_factory=new_id)
-    mode: str
-    strategy_id: str
-    proposal_id: str | None = None
-    venue: str
-    symbol: str
-    side: str  # long | short | flat
-    quantity: str
-    avg_entry_price: str | None = None
-    realized_pnl: str | None = None
-    unrealized_pnl: str | None = None
-    status: str = "open"  # open | closed | orphan | unknown
-    opened_at: str | None = None
-    closed_at: str | None = None
-    updated_at: str = Field(default_factory=_utcnow)
-    raw_json: str | None = None
 
 
 class PSLesson(BaseModel):
@@ -1731,75 +1623,6 @@ class UniverseSetup(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
     valid_until: str
-
-
-class ConditionalEntryAuthorization(_Provenanced):
-    """System Operator's expiring formula authority, never a future order."""
-
-    id: str = Field(default_factory=new_id)
-    setup_id: str
-    operator_decision_id: str
-    authorized_mode: Literal["shadow", "execute"]
-    trigger_spec_hash: str
-    direction: Literal["long", "short"]
-    entry_zone: str
-    invalidation_price: float = Field(gt=0)
-    max_spread_bps: float = Field(gt=0)
-    min_depth_10bps_usd: float = Field(gt=0)
-    max_risk_pct: float = Field(gt=0)
-    max_leverage: int = Field(ge=1)
-    target_risk_reward: Literal[2.0] = 2.0
-    expected_horizon_hours: float = Field(gt=0, le=48)
-    authorized_at: str = Field(default_factory=_utcnow)
-    valid_until: str
-
-
-class FastTriggerMarketSnapshot(BaseModel):
-    """Immutable same-venue T0 evidence captured before Risk/Gateway I/O."""
-
-    id: str = Field(default_factory=new_id)
-    setup_id: str
-    authorization_id: str
-    opportunity_id: str
-    proposal_id: str
-    venue: str
-    symbol: str
-    market_type: str
-    observed_at: str
-    bid: float = Field(gt=0)
-    ask: float = Field(gt=0)
-    spread_bps: float = Field(ge=0)
-    depth_10bps_usd: float = Field(ge=0)
-    taker_buy_ratio: float = Field(ge=0, le=1)
-    quote_exchange_timestamp_ms: int = Field(ge=0)
-    quote_received_timestamp_ms: int = Field(ge=0)
-    trade_exchange_timestamp_ms: int = Field(ge=0)
-    trade_received_timestamp_ms: int = Field(ge=0)
-    depth_exchange_timestamp_ms: int = Field(ge=0)
-    depth_received_timestamp_ms: int = Field(ge=0)
-    quote_sequence: int = Field(ge=0)
-    trade_sequence: int = Field(ge=0)
-    depth_sequence: int = Field(ge=0)
-    created_at: str = Field(default_factory=_utcnow)
-
-
-class OpportunityEntryValidityAssessment(BaseModel):
-    """Append-only hard or counterfactual entry-validity evidence."""
-
-    id: str = Field(default_factory=new_id)
-    opportunity_id: str
-    setup_id: str | None = None
-    venue: str
-    symbol: str
-    market_type: Literal["spot", "perp"]
-    check_type: Literal["entry_zone", "structural_price", "market_structure"]
-    authority: Literal["hard", "shadow"]
-    verdict: Literal["allow", "block", "unavailable"]
-    observed_at: str
-    algorithm_version: str
-    evidence_json: str
-    evidence_hash: str = Field(min_length=64, max_length=64)
-    created_at: str = Field(default_factory=_utcnow)
 
 
 class UniverseForwardOutcome(BaseModel):

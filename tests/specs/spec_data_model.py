@@ -4,8 +4,11 @@ SQLite WAL, per-thread connections, additive-only migrations,
 causal chain tables never pruned.
 """
 
+from tests.fixtures.repo_test_helpers import latest_pi_decision, list_pi_decisions
+
 import pytest
 
+from tests.module_source import module_source
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -271,7 +274,7 @@ def test_account_equity_snapshot_contract_is_explicit():
 
     root = Path(__file__).parent.parent.parent
     migration = (root / "core" / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
-    repository = (root / "core" / "aletheia" / "storage" / "repositories.py").read_text(encoding="utf-8")
+    repository = module_source("core/aletheia/storage/repositories.py")
     overview = (root / "frontend" / "src" / "charts" / "AccountEquityChart.tsx").read_text(encoding="utf-8")
     assert '"account_equity_usdt", "portfolio_snapshots", "REAL"' in migration
     assert "account_equity_usdt IS NOT NULL" in repository
@@ -600,14 +603,14 @@ def test_pi_decisions_tie_broken_by_rowid(tmp_path, monkeypatch):
     repo.insert_pi_decision(pending)
     repo.insert_pi_decision(final)
 
-    rows = repo.list_pi_decisions(limit=5)
+    rows = list_pi_decisions(limit=5)
     assert rows[0]["id"] == "final-tie-test", (
         f"final (higher rowid) must sort first; got {rows[0]['id']!r}. "
         "rowid DESC tie-breaker missing from list_pi_decisions ORDER BY."
     )
     assert rows[1]["id"] == "pending-tie-test"
 
-    latest = repo.latest_pi_decision("BTC/USDT", max_age_minutes=60 * 24 * 365)
+    latest = latest_pi_decision("BTC/USDT", max_age_minutes=60 * 24 * 365)
     assert latest is not None
     assert latest["id"] == "final-tie-test", (
         f"latest_pi_decision must return final row; got {latest['id']!r}. "

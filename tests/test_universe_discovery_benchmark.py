@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_universe_discovery_benchmark
+
 import asyncio
 import gzip
 import hashlib
@@ -73,7 +75,7 @@ def _population(count: int = 18) -> list[dict]:
 
 
 def test_start_supersedes_legacy_active_without_copying_samples(benchmark_db):
-    legacy = repo.insert_universe_discovery_benchmark({
+    legacy = insert_universe_discovery_benchmark({
         "id": "legacy-active",
         "status": "active",
         "contract_json": json.dumps({"legacy": True}),
@@ -1211,7 +1213,7 @@ def test_finalized_manifest_unions_capture_and_settlement_sessions(benchmark_db)
 
 
 def test_legacy_cutover_failure_compensates_new_window(benchmark_db, monkeypatch):
-    legacy = repo.insert_universe_discovery_benchmark({
+    legacy = insert_universe_discovery_benchmark({
         "id": "legacy-cutover-failure", "status": "active",
         "contract_json": "{}", "contract_hash": "a" * 64,
         "code_commit": "legacy", "started_at": "2025-12-01T00:00:00+00:00",

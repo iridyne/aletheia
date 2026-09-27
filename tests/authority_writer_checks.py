@@ -1,8 +1,23 @@
 """Bounded static checks shared by declared storage-writer inventories."""
 
 import ast
+from functools import lru_cache
 from importlib.util import resolve_name
+from pathlib import Path
 import re
+
+
+@lru_cache(maxsize=None)
+def _parse_cached(path: str, mtime_ns: int, size: int) -> ast.Module:
+    """Parse a source file once per (path, mtime, size).
+
+    Every ``assert_writer_boundary`` call re-walks the whole tree, and the
+    writer-boundary tests call it once per owned table across four test modules.
+    Without this cache each call re-parses ~1.5k files (~25s of the tier_unit
+    wall clock in 2026-09). The stamp keeps a rewritten file from being served
+    stale.
+    """
+    return ast.parse(Path(path).read_text(encoding="utf-8"))
 
 
 _SQL_COMMENTS = re.compile(r'''"(?:""|[^"])*"|'(?:''|[^'])*'|`(?:``|[^`])*`|\[[^\]]*\]|(?P<comment>/\*.*?\*/|--[^\r\n]*)''', re.S)
@@ -44,7 +59,8 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
     for directory in ("core/aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
             scanned += 1
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            stat = path.stat()
+            tree = _parse_cached(str(path), stat.st_mtime_ns, stat.st_size)
             parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             canonical = {}
             allowed_literals = {

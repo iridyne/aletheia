@@ -92,8 +92,13 @@ def _identity_generation_drift(persisted: UTAAccountIdentity, current: UTAAccoun
 
 
 async def _venue_positions(adapter) -> list | None:
-    """Read venue positions under current credentials; ``None`` when not complete."""
-    report = await adapter.get_positions(PositionQuery(scope=QueryScope()))
+    """Read venue positions under current credentials; ``None`` when not complete.
+
+    Uses ``_call_and_close`` so the adapter is torn down inside its owning loop —
+    otherwise a subsequent ``_run(_reanchor_...)`` reuses the same adapter on a
+    fresh loop and CCXT rejects it with ``cross_loop_adapter_reuse``.
+    """
+    report = await _call_and_close(adapter, "get_positions", PositionQuery(scope=QueryScope()))
     if report.completeness is not ReadCompleteness.COMPLETE:
         return None
     return list(report.positions)
@@ -475,6 +480,10 @@ def execute_order(
         if not _all_rows_match_current_identity(rows, adapter.identity):
             if not run_coro_from_sync(_reanchor_generation_drift_rows(execution_mode, adapter, rows)):
                 raise ValueError("uta_account_identity_mismatch")
+            # _reanchor_...'s venue read closes the adapter inside its own loop;
+            # rebind for the subsequent submit_order call so we do not reuse a
+            # closed adapter across loops.
+            adapter = _create_bound_adapter(execution_mode, adapter.identity)
         order.uta_account_identity_json = adapter.identity.model_dump_json()
         if before_submission is None:
             update_order_metadata(order.id, uta_account_identity_json=order.uta_account_identity_json)

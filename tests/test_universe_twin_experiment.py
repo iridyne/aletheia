@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import get_universe_twin_shadow_batch
+
 import json
 import random
 from datetime import datetime, timedelta
@@ -341,7 +343,7 @@ def test_task6_bundle_persistence_is_atomic_with_outcome_registration() -> None:
             inconsistent_evidence,
             outcomes=bundle.outcomes,
         )
-    assert repo.get_universe_twin_shadow_batch("run-persist") is None
+    assert get_universe_twin_shadow_batch("run-persist") is None
 
     inserted = repo.insert_universe_twin_shadow_bundle(
         bundle.batch,
@@ -366,7 +368,7 @@ def test_task6_bundle_persistence_is_atomic_with_outcome_registration() -> None:
     )
     assert repo.list_open_universe_twin_outcome_candidate_keys() == pending_keys
     assert all(bool(row["allocation_selected"]) for row in rows)
-    stored_batch = repo.get_universe_twin_shadow_batch("run-persist")
+    stored_batch = get_universe_twin_shadow_batch("run-persist")
     stored_records = repo.list_universe_twin_shadow_records("run-persist")
     assert stored_batch is not None
     assert replay_twin_shadow_bundle(stored_batch, stored_records).matches is True

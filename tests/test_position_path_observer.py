@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_positions_for_path_observation_bucket
+
 from tests.position_fixture import force_update_position
 
 import asyncio
@@ -1617,7 +1619,7 @@ def test_position_path_bucket_membership_preserves_exact_subsecond_instants():
         ],
     )
 
-    listed = repo.list_positions_for_path_observation_bucket(
+    listed = list_positions_for_path_observation_bucket(
         bucket_open="2026-08-13T00:05:00.000500Z",
         bucket_end="2026-08-13T00:10:00.000500Z",
     )

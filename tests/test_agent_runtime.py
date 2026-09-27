@@ -1,5 +1,7 @@
 """Tests for agent runtime: permissions, tool registry, orchestrator."""
 
+from tests.fixtures.repo_test_helpers import insert_agent_run
+
 import json
 import pytest
 from unittest.mock import MagicMock
@@ -96,9 +98,9 @@ def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkey
         ended_at="2026-01-01T00:00:00+00:00",
         errors=json.dumps(["already done"]),
     )
-    repo.insert_agent_run(running)
-    repo.insert_agent_run(queued)
-    repo.insert_agent_run(completed)
+    insert_agent_run(running)
+    insert_agent_run(queued)
+    insert_agent_run(completed)
 
     count = mark_stale_running_runs(reason="gateway startup recovery", source="test")
 

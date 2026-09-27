@@ -6,6 +6,8 @@ The live family gate remains separate. Open positions are not closed.
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_forward_outcome
+
 import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -364,7 +366,7 @@ def _insert_family_outcomes(family, direction, *, n, net_return_pct, market_type
     now = datetime.now(timezone.utc).isoformat()
     gross_return_pct = net_return_pct if direction == "long" else -net_return_pct
     for i in range(n):
-        repo.insert_forward_outcome(UniverseForwardOutcome(
+        insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}",
             snapshot_id="snap1",
             symbol="BTC/USDT",

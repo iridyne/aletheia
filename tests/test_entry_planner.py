@@ -1,3 +1,5 @@
+from tests.fixtures.repo_test_helpers import list_active_candidate_attention
+
 import asyncio
 import builtins
 import hashlib
@@ -1475,7 +1477,7 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
     after_hard_deadline = start + timedelta(hours=2)
 
-    assert repo.list_active_candidate_attention() == []
+    assert list_active_candidate_attention() == []
     detail = get_candidate(candidate.id)["attention"]
     [history] = repo.list_planning_history(now=after_hard_deadline)
 

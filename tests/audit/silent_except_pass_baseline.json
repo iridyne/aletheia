@@ -105,8 +105,8 @@
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {
-      "file": "core/aletheia/diagnostics/doctor.py",
-      "line": 1048,
+      "file": "core/aletheia/diagnostics/probes/environment.py",
+      "line": 681,
       "reason": "RuntimeError means no loop on this thread; the probe drives one deliberately"
     },
     {

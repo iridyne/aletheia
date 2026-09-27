@@ -55,7 +55,7 @@ from aletheia.model_provider.base import (
     StreamChunk,
 )
 from aletheia.storage.models import AgentRun
-from aletheia.storage.repositories import insert_agent_run
+from tests.fixtures.repo_test_helpers import insert_agent_run
 from aletheia.storage.sqlite import get_db
 
 

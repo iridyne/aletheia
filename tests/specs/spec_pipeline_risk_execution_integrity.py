@@ -6,6 +6,8 @@ exchange network.
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from tests.position_fixture import force_update_position
 
 import json
@@ -2044,7 +2046,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(tmp_path,
     assert len([row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]) == 1
     assert [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None][0]["id"] == first_order["id"]
     assert repo.list_fills(limit=20) == []
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
     candidate = repo.list_position_disappearance_candidates(limit=5)[0]
     assert candidate["status"] == "settled_administrative"

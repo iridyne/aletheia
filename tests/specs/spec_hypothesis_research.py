@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import update_opportunity
+
 from tests.position_fixture import force_update_position
 
 import json
@@ -317,7 +319,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         opportunity_id = position["opportunity_id"]
         proposal_id = position["proposal_id"]
         opportunity_ids.append(opportunity_id)
-        repo.update_opportunity(
+        update_opportunity(
             opportunity_id,
             regime_tag="risk_off",
             funding_rate=0.001,

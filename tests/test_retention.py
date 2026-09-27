@@ -5,6 +5,8 @@ risk_decisions, orders, fills, positions, knowledge_items). Only high-volume
 telemetry is pruned. JSONL rotates at a size cap without losing content.
 """
 
+from tests.fixtures.repo_test_helpers import prune_universe_members
+
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
@@ -86,6 +88,35 @@ def _run_cleanup_with_test_config(monkeypatch):
 
     monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
     scheduler._run_cleanup()
+
+
+def test_scheduler_cleanup_failure_keeps_shared_health_and_releases_db(monkeypatch):
+    from unittest.mock import Mock
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.infra import events
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(scheduler, "_consecutive_failures", {})
+    monkeypatch.setattr(scheduler, "_learning_job_failed", None)
+    emitted = Mock()
+    monkeypatch.setattr(events, "emit_infra_event", emitted)
+
+    def fail_prune(_days):
+        get_db().execute("BEGIN")
+        raise RuntimeError("retention unavailable")
+
+    monkeypatch.setattr(repo, "prune_run_steps", fail_prune)
+    for count in range(1, 4):
+        connection = get_db()
+        scheduler._guarded("cleanup", scheduler._run_cleanup)()
+        assert scheduler._consecutive_failures["cleanup"] == count
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+    assert any(call.kwargs["code"] == "job_consecutive_failure:cleanup" for call in emitted.call_args_list)
+    assert scheduler._guarded("following_job", lambda: "completed")() == "completed"
 
 
 def test_cleanup_catchup_due_uses_last_successful_audit(tmp_path, monkeypatch):
@@ -261,7 +292,7 @@ def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path
     conn.commit()
 
     assert repo.prune_universe_forward_outcomes(days=30) == 0
-    assert repo.prune_universe_members(days=30) == 0
+    assert prune_universe_members(days=30) == 0
     assert repo.prune_universe_snapshots(days=30) == 0
     assert conn.execute(
         "SELECT 1 FROM universe_forward_outcomes WHERE id='fallback'"
@@ -345,7 +376,7 @@ def test_explicit_experiment_floor_protects_real_rows_without_reread(tmp_path, m
 
     assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=floor) == 0
     assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=floor) == 0
-    assert repo.prune_universe_members(30, min_experiment_started_at=floor) == 0
+    assert prune_universe_members(30, min_experiment_started_at=floor) == 0
     assert repo.prune_universe_snapshots(30, min_experiment_started_at=floor) == 0
     assert conn.execute("SELECT 1 FROM filter_candidate_outcomes").fetchone() is not None
     assert conn.execute("SELECT 1 FROM universe_forward_outcomes").fetchone() is not None

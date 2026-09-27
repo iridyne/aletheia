@@ -1661,6 +1661,179 @@ def _position_path_events(
     return events
 
 
+def _excursion_events(
+    metrics: Mapping[str, Any],
+    *,
+    cost_pct: float | None,
+    threshold: float | None,
+    entry_fill: Mapping[str, Any] | None,
+    path_reason: str,
+) -> list[dict[str, Any]]:
+    timeline: list[dict[str, Any]] = []
+    if metrics.get("first_meaningful_status") == "available":
+        timeline.append(
+            _event(
+                "first_meaningful_favorable_excursion",
+                occurred_at=metrics.get("first_meaningful_at"),
+                evidence_status="available",
+                source_entity_type=metrics.get("first_meaningful_source_entity_type"),
+                source_entity_id=metrics.get("first_meaningful_source_entity_id"),
+                facts={
+                    "return_pct": metrics.get("first_meaningful_return_pct"),
+                    "rule": {
+                        "version": MEANINGFUL_EXCURSION_RULE_VERSION,
+                        "verified_cost_pct": cost_pct,
+                        "minimum_net_edge_buffer_pct": MEANINGFUL_NET_EDGE_BUFFER_PCT,
+                        "required_favorable_return_pct": threshold,
+                    },
+                },
+            )
+        )
+    elif metrics.get("first_meaningful_status") == "ambiguous":
+        timeline.append(
+            _event(
+                "first_meaningful_favorable_excursion",
+                evidence_status="ambiguous",
+                facts={"rule_version": MEANINGFUL_EXCURSION_RULE_VERSION},
+                unavailable_reason="same_bar_intrabar_order_unavailable",
+            )
+        )
+    else:
+        timeline.append(
+            _event(
+                "first_meaningful_favorable_excursion",
+                evidence_status="unavailable",
+                facts={
+                    "rule": {
+                        "version": MEANINGFUL_EXCURSION_RULE_VERSION,
+                        "verified_cost_pct": cost_pct,
+                        "minimum_net_edge_buffer_pct": MEANINGFUL_NET_EDGE_BUFFER_PCT,
+                        "required_favorable_return_pct": threshold,
+                    }
+                },
+                unavailable_reason=(
+                    "cost_complete_evidence_unavailable"
+                    if threshold is None
+                    else str(metrics.get("first_meaningful_reason") or "threshold_not_reached")
+                ),
+            )
+        )
+
+    if metrics.get("availability") == "available":
+        timeline.append(
+            _event(
+                "maximum_favorable_excursion",
+                occurred_at=metrics.get("peak_at"),
+                evidence_status="available",
+                source_entity_type=metrics.get("peak_source_entity_type"),
+                source_entity_id=metrics.get("peak_source_entity_id"),
+                facts={"mfe_pct": metrics.get("maximum_favorable_excursion_pct")},
+            )
+        )
+        timeline.append(
+            _event(
+                "maximum_adverse_excursion",
+                occurred_at=metrics.get("adverse_peak_at"),
+                evidence_status="available",
+                source_entity_type=metrics.get("adverse_peak_source_entity_type"),
+                source_entity_id=metrics.get("adverse_peak_source_entity_id") or (
+                    str(entry_fill.get("id"))
+                    if entry_fill and entry_fill.get("id")
+                    else None
+                ),
+                facts={"mae_pct": metrics.get("maximum_adverse_excursion_pct")},
+            )
+        )
+    else:
+        timeline.extend(
+            [
+                _event("maximum_favorable_excursion", unavailable_reason=path_reason),
+                _event("maximum_adverse_excursion", unavailable_reason=path_reason),
+            ]
+        )
+    return timeline
+
+
+def _hypothesis_horizon_events(
+    hypothesis: Mapping[str, Any] | None,
+    bars: Sequence[Sequence[Any]],
+    result: Mapping[str, Any],
+    *,
+    entry_at: datetime | None,
+    lifecycle_cutoff: datetime,
+    proposal: Mapping[str, Any] | None,
+    position_id: str,
+) -> dict[str, Any]:
+    timeline: list[dict[str, Any]] = []
+    hypothesis_lifecycle, hypothesis_events = _hypothesis_lifecycle(hypothesis, bars)
+    timeline.extend(hypothesis_events)
+
+    expected_hours = _finite(result["opening"].get("expected_holding_horizon_hours"))
+    horizon_at = (
+        entry_at + timedelta(hours=expected_hours)
+        if entry_at is not None and expected_hours is not None and expected_hours > 0
+        else None
+    )
+    if horizon_at is not None and horizon_at <= lifecycle_cutoff:
+        timeline.append(
+            _event(
+                "expected_horizon_reached",
+                occurred_at=horizon_at,
+                evidence_status="available",
+                source_entity_type="position_hypothesis",
+                source_entity_id=str((proposal or {}).get("id") or position_id),
+                facts={"expected_horizon_hours": expected_hours},
+            )
+        )
+    else:
+        timeline.append(
+            _event(
+                "expected_horizon_reached",
+                unavailable_reason="expected_horizon_not_reached" if horizon_at else "expected_horizon_not_recorded",
+            )
+        )
+
+    return {
+        "hypothesis_lifecycle": hypothesis_lifecycle,
+        "hypothesis_events": hypothesis_events,
+        "expected_hours": expected_hours,
+        "horizon_at": horizon_at,
+        "timeline": timeline,
+    }
+
+
+def _observed_mechanisms(
+    economics: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+    timeline: Sequence[Mapping[str, Any]],
+    hypothesis_events: Sequence[Mapping[str, Any]],
+    *,
+    exit_at: datetime | None,
+    horizon_at: datetime | None,
+    closed_visible: bool,
+) -> list[str]:
+    invalidated_at = _utc(next((event.get("occurred_at") for event in hypothesis_events if event.get("event_type") == "hypothesis_invalidated"), None))
+    mechanisms: list[str] = []
+    net = _finite(economics.get("verified_net_pnl"))
+    gross = _finite(economics.get("verified_gross_pnl"))
+    if net is not None and net < 0:
+        if metrics.get("first_meaningful_status") == "not_reached":
+            mechanisms.append("never_economically_favorable")
+        if any(event.get("event_type") == "profit_giveback" and event.get("evidence_status") == "available" for event in timeline):
+            mechanisms.append("profit_giveback")
+        if invalidated_at is not None and exit_at is not None and invalidated_at < exit_at:
+            mechanisms.append("hypothesis_invalidated_before_exit")
+        if horizon_at is not None and exit_at is not None and exit_at > horizon_at:
+            mechanisms.append("expected_horizon_exceeded")
+        if gross is not None and gross >= 0:
+            mechanisms.append("cost_flip")
+    if closed_visible and economics.get("availability") != "available":
+        mechanisms.append("accounting_gap")
+    if any(event.get("event_type") == "stop_revised" for event in timeline):
+        mechanisms.append("protection_tightened")
+    return list(dict.fromkeys(mechanisms))
+
+
 # ---------------------------------------------------------------------------
 # Public builder and deterministic renderer
 # ---------------------------------------------------------------------------
@@ -1917,115 +2090,28 @@ def build_position_lifecycle_story(
         threshold_pct=threshold,
     )
 
-    if metrics.get("first_meaningful_status") == "available":
-        timeline.append(
-            _event(
-                "first_meaningful_favorable_excursion",
-                occurred_at=metrics.get("first_meaningful_at"),
-                evidence_status="available",
-                source_entity_type=metrics.get("first_meaningful_source_entity_type"),
-                source_entity_id=metrics.get("first_meaningful_source_entity_id"),
-                facts={
-                    "return_pct": metrics.get("first_meaningful_return_pct"),
-                    "rule": {
-                        "version": MEANINGFUL_EXCURSION_RULE_VERSION,
-                        "verified_cost_pct": cost_pct,
-                        "minimum_net_edge_buffer_pct": MEANINGFUL_NET_EDGE_BUFFER_PCT,
-                        "required_favorable_return_pct": threshold,
-                    },
-                },
-            )
-        )
-    elif metrics.get("first_meaningful_status") == "ambiguous":
-        timeline.append(
-            _event(
-                "first_meaningful_favorable_excursion",
-                evidence_status="ambiguous",
-                facts={"rule_version": MEANINGFUL_EXCURSION_RULE_VERSION},
-                unavailable_reason="same_bar_intrabar_order_unavailable",
-            )
-        )
-    else:
-        timeline.append(
-            _event(
-                "first_meaningful_favorable_excursion",
-                evidence_status="unavailable",
-                facts={
-                    "rule": {
-                        "version": MEANINGFUL_EXCURSION_RULE_VERSION,
-                        "verified_cost_pct": cost_pct,
-                        "minimum_net_edge_buffer_pct": MEANINGFUL_NET_EDGE_BUFFER_PCT,
-                        "required_favorable_return_pct": threshold,
-                    }
-                },
-                unavailable_reason=(
-                    "cost_complete_evidence_unavailable"
-                    if threshold is None
-                    else str(metrics.get("first_meaningful_reason") or "threshold_not_reached")
-                ),
-            )
-        )
+    timeline.extend(_excursion_events(
+        metrics,
+        cost_pct=cost_pct,
+        threshold=threshold,
+        entry_fill=entry_fill,
+        path_reason=path_reason,
+    ))
 
-    if metrics.get("availability") == "available":
-        timeline.append(
-            _event(
-                "maximum_favorable_excursion",
-                occurred_at=metrics.get("peak_at"),
-                evidence_status="available",
-                source_entity_type=metrics.get("peak_source_entity_type"),
-                source_entity_id=metrics.get("peak_source_entity_id"),
-                facts={"mfe_pct": metrics.get("maximum_favorable_excursion_pct")},
-            )
-        )
-        timeline.append(
-            _event(
-                "maximum_adverse_excursion",
-                occurred_at=metrics.get("adverse_peak_at"),
-                evidence_status="available",
-                source_entity_type=metrics.get("adverse_peak_source_entity_type"),
-                source_entity_id=metrics.get("adverse_peak_source_entity_id") or (
-                    str(entry_fill.get("id"))
-                    if entry_fill and entry_fill.get("id")
-                    else None
-                ),
-                facts={"mae_pct": metrics.get("maximum_adverse_excursion_pct")},
-            )
-        )
-    else:
-        timeline.extend(
-            [
-                _event("maximum_favorable_excursion", unavailable_reason=path_reason),
-                _event("maximum_adverse_excursion", unavailable_reason=path_reason),
-            ]
-        )
-
-    hypothesis_lifecycle, hypothesis_events = _hypothesis_lifecycle(hypothesis, bars)
-    timeline.extend(hypothesis_events)
-
-    expected_hours = _finite(result["opening"].get("expected_holding_horizon_hours"))
-    horizon_at = (
-        entry_at + timedelta(hours=expected_hours)
-        if entry_at is not None and expected_hours is not None and expected_hours > 0
-        else None
+    hypothesis_horizon = _hypothesis_horizon_events(
+        hypothesis,
+        bars,
+        result,
+        entry_at=entry_at,
+        lifecycle_cutoff=lifecycle_cutoff,
+        proposal=proposal,
+        position_id=position_id,
     )
-    if horizon_at is not None and horizon_at <= lifecycle_cutoff:
-        timeline.append(
-            _event(
-                "expected_horizon_reached",
-                occurred_at=horizon_at,
-                evidence_status="available",
-                source_entity_type="position_hypothesis",
-                source_entity_id=str((proposal or {}).get("id") or position_id),
-                facts={"expected_horizon_hours": expected_hours},
-            )
-        )
-    else:
-        timeline.append(
-            _event(
-                "expected_horizon_reached",
-                unavailable_reason="expected_horizon_not_reached" if horizon_at else "expected_horizon_not_recorded",
-            )
-        )
+    hypothesis_lifecycle = hypothesis_horizon["hypothesis_lifecycle"]
+    hypothesis_events = hypothesis_horizon["hypothesis_events"]
+    expected_hours = hypothesis_horizon["expected_hours"]
+    horizon_at = hypothesis_horizon["horizon_at"]
+    timeline.extend(hypothesis_horizon["timeline"])
 
     reviews = _exact_reviews(source, position_id, lifecycle_cutoff)
     for review in reviews:
@@ -2308,26 +2394,15 @@ def build_position_lifecycle_story(
     result["hypothesis_lifecycle"] = hypothesis_lifecycle
     result["management_opportunities"] = _management_opportunities(timeline, reviews, plans)
 
-    invalidated_at = _utc(next((event.get("occurred_at") for event in hypothesis_events if event.get("event_type") == "hypothesis_invalidated"), None))
-    mechanisms: list[str] = []
-    net = _finite(economics.get("verified_net_pnl"))
-    gross = _finite(economics.get("verified_gross_pnl"))
-    if net is not None and net < 0:
-        if metrics.get("first_meaningful_status") == "not_reached":
-            mechanisms.append("never_economically_favorable")
-        if any(event.get("event_type") == "profit_giveback" and event.get("evidence_status") == "available" for event in timeline):
-            mechanisms.append("profit_giveback")
-        if invalidated_at is not None and exit_at is not None and invalidated_at < exit_at:
-            mechanisms.append("hypothesis_invalidated_before_exit")
-        if horizon_at is not None and exit_at is not None and exit_at > horizon_at:
-            mechanisms.append("expected_horizon_exceeded")
-        if gross is not None and gross >= 0:
-            mechanisms.append("cost_flip")
-    if closed_visible and economics.get("availability") != "available":
-        mechanisms.append("accounting_gap")
-    if any(event.get("event_type") == "stop_revised" for event in timeline):
-        mechanisms.append("protection_tightened")
-    result["observed_mechanisms"] = list(dict.fromkeys(mechanisms))
+    result["observed_mechanisms"] = _observed_mechanisms(
+        economics,
+        metrics,
+        timeline,
+        hypothesis_events,
+        exit_at=exit_at,
+        horizon_at=horizon_at,
+        closed_visible=closed_visible,
+    )
 
     observer = _observer_audit(
         source,

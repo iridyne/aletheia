@@ -222,7 +222,7 @@ def test_expired_opportunity_cannot_transition_to_reviewed(tmp_path, monkeypatch
     _insert_opportunity(conn, "expired", status="expired")
     conn.commit()
 
-    from aletheia.storage.repositories import transition_opportunity_to_reviewed
+    from tests.fixtures.repo_test_helpers import transition_opportunity_to_reviewed
 
     assert transition_opportunity_to_reviewed("expired") is False
     assert conn.execute(
