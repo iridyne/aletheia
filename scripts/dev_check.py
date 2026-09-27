@@ -234,49 +234,23 @@ def step_docs_governance(files: list[str]) -> list[str]:
     return findings
 
 
-_DEF_PATTERN = "def {name}("
+def previous_failed_test_files() -> list[str]:
+    """Bound pytest's native last-failed selection to existing cached files.
 
-
-def _node_id_resolves(node: str) -> bool:
-    """True when ``node`` names a test function that still exists in its file."""
-    path_text, _, selector = node.partition("::")
-    path = REPO_ROOT / path_text
-    if not selector or not path.is_file():
-        return False
-    # ``test_x[param]`` and ``Class::test_x`` both end in the function name.
-    name = selector.rsplit("::", 1)[-1].split("[", 1)[0]
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return False
-    return re.search(rf"^def {re.escape(name)}\(", source, re.M) is not None
-
-
-def previous_failed_node_ids() -> list[str]:
-    """``lastfailed`` ids that still resolve to a test, pruning the rest.
-
-    ``pytest --lf`` is only bounded while the cached ids still resolve. Stale
-    entries make pytest fall back to **running the whole suite** — measured
-    2026-09-27: a 9-entry cache whose files were gone selected 11 521 tests, and
-    ``--last-failed-no-failures=none`` did not prevent it (that flag only covers
-    the empty-cache case). Running the surviving ids explicitly keeps this step
-    proportional to the real previous red set; pruning the dead ids is what
-    pytest itself should have done, and lets the cache converge.
+    Pytest owns async, inherited and parametrized node selection. Do not parse
+    Python definitions or rewrite its cache: that can erase real failures.
+    Stale selectors may cause a whole-file retry, never a whole-repository run.
     """
     cache = REPO_ROOT / ".pytest_cache" / "v" / "cache" / "lastfailed"
     try:
         failed = json.loads(cache.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
-    stale = [node for node in failed if not _node_id_resolves(node)]
-    if stale:
-        for node in stale:
-            failed.pop(node, None)
-        try:
-            cache.write_text(json.dumps(failed), encoding="utf-8")
-        except OSError:
-            pass
-    return sorted(failed)
+    return sorted({
+        node.split("::", 1)[0]
+        for node, was_failed in failed.items()
+        if was_failed and (REPO_ROOT / node.split("::", 1)[0]).is_file()
+    })
 
 
 def focused_tests(changed: list[str]) -> list[str]:
@@ -440,16 +414,16 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FINDINGS
 
     if not args.no_tests:
-        previous_failures = previous_failed_node_ids()
+        previous_failures = previous_failed_test_files()
         if previous_failures:
-            print(f"  previous red  running {len(previous_failures)} cached failure(s) ...")
-            if run_pytest(previous_failures) != 0:
+            print(f"  previous red  retrying failures in {len(previous_failures)} cached file(s) ...")
+            if run_pytest(["--lf", "--last-failed-no-failures=none", *previous_failures]) != 0:
                 failures.append("previous failures still red — fix those first")
                 print("  previous red  FAIL")
             else:
                 print("  previous red  ok")
         else:
-            print("  previous red  skipped (no resolvable cached failures)")
+            print("  previous red  skipped (no existing cached test files)")
 
         if not failures:
             focused = focused_tests(changed)
