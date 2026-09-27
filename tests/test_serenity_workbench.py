@@ -113,9 +113,23 @@ async def test_absent_research_preserves_cancel_and_history(client, monkeypatch)
 
 @pytest.fixture
 def fast_tier(monkeypatch):
+    """Hermetic provider + no outbound fundamentals fetch.
+
+    ``_process_research_run`` builds its prompt through
+    ``_get_equity_context_block``, which calls yfinance for the observed tickers.
+    Left unpatched the worker makes a live HTTP request: it blocks until the
+    socket timeout wherever egress is closed, and ``pytest-timeout``'s default
+    signal method cannot interrupt it (the block is inside curl_cffi's C call),
+    so the whole integration tier stalls on the first worker test. Same patch as
+    ``tests/specs/spec_serenity_verdict.py``.
+    """
     from aletheia.config.schema import ModelSelection
     monkeypatch.setattr("aletheia.model_provider.router.get_provider_for_tier",
                         lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
+    monkeypatch.setattr(
+        "extensions.research.research_worker._get_equity_context_block", lambda: ""
+    )
+
 
 @pytest.mark.anyio
 async def test_status_no_runs(client):
