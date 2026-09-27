@@ -427,7 +427,7 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
             level="critical",
         )
     except Exception:
-        pass
+        logger.debug("connectivity_monitor: exchange-loss notification delivery failed; pause and audit state already recorded", exc_info=True)
 
     # Start auto-resume loop on a loop that SURVIVES (#145). The periodic connectivity
     # check runs on an ephemeral per-job loop torn down right after the job returns, so
@@ -549,7 +549,7 @@ def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
             error_log=True,
         )
     except Exception:
-        pass
+        logger.debug("connectivity_monitor: stall notification delivery failed; stall warning already logged", exc_info=True)
     try:
         from aletheia.files.jsonl import write_audit
         write_audit({
@@ -562,7 +562,7 @@ def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
             "metadata": {"exchange": exchange, "consecutive_failures": consecutive},
         })
     except Exception:
-        pass
+        logger.warning("connectivity_monitor: failed to persist exchange auto-resume stall audit event", exc_info=True)
 
 
 async def _resume_from_network(
@@ -724,7 +724,7 @@ async def _resume_from_network(
             level="info",
         )
     except Exception:
-        pass
+        logger.debug("connectivity_monitor: recovery notification delivery failed; connectivity state and audit already recorded", exc_info=True)
 
     logger.info("exchange_auto_resume: connectivity restored — scheduler resumed")
     return True

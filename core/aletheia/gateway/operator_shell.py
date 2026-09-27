@@ -157,7 +157,7 @@ def _clear_operator_shell_pid(expected_pid: int | None = None) -> None:
     try:
         path.unlink()
     except OSError:
-        pass
+        logger.debug("operator_shell: pidfile unlink failed during best-effort cleanup", exc_info=True)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -189,7 +189,7 @@ def _read_process_command_line(pid: int) -> str | None:
             raw = proc_cmdline.read_bytes()
             return raw.replace(b"\0", b" ").decode("utf-8", errors="replace")
     except OSError:
-        pass
+        logger.debug("operator_shell: /proc command-line probe failed; falling back to ps", exc_info=True)
     try:
         return subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
@@ -510,7 +510,7 @@ def spawn_operator_shell(
 
                         kill_pid_tree(existing_pid)
                     except Exception:
-                        pass
+                        logger.warning("operator_shell: failed to terminate existing shell before respawn; old process may remain", exc_info=True)
                     _clear_operator_shell_pid(expected_pid=existing_pid)
                 else:
                     _clear_operator_shell_pid(expected_pid=existing_pid)
@@ -529,7 +529,7 @@ def _watch_and_revoke_session_token(proc, token: str) -> None:
         try:
             proc.wait()
         except Exception:
-            pass
+            logger.debug("operator_shell: session-token watcher could not wait for child; token revocation was still attempted", exc_info=True)
         finally:
             revoke_session_token(token)
     threading.Thread(target=_watcher, daemon=True, name="operator-session-token-watcher").start()
@@ -578,7 +578,7 @@ def _default_record_event(kind: str, payload: dict) -> None:
                 }
             )
     except Exception:
-        pass
+        logger.warning("operator_shell: failed to persist operator-shell lifecycle event; audit trail may be incomplete", exc_info=True)
 
 
 def _post_operator_heartbeat(cfg, payload: dict) -> bool:
@@ -823,7 +823,7 @@ class OperatorShellMonitor:
 
                 kill_pid_tree(proc_pid)
             except Exception:
-                pass
+                logger.warning("operator_shell: failed to terminate stale shell before restart; old process may remain", exc_info=True)
             _clear_operator_shell_pid(expected_pid=proc_pid)
         self.proc = None
         self._proc_started_at = None
@@ -885,7 +885,7 @@ class OperatorShellMonitor:
                     try:
                         proc.kill()
                     except Exception:
-                        pass
+                        logger.warning("operator_shell: failed to kill child after terminate/wait failed; shutdown may have leaked the process", exc_info=True)
                 if proc_pid is not None:
                     _clear_operator_shell_pid(expected_pid=proc_pid)
         if self._thread is not None:

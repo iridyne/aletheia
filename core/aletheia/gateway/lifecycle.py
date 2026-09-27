@@ -373,7 +373,7 @@ def _audit_slow_start(timeout: float) -> None:
             ),
         })
     except Exception:
-        pass
+        logger.warning("gateway_lifecycle: failed to persist slow-start audit event", exc_info=True)
 
 
 def _circuit_break_state_path():
@@ -756,7 +756,7 @@ def _audit_stop(*, freed: bool, killed_any: bool) -> None:
             "message": f"Gateway stopped (killed={killed_any}, port_freed={freed})",
         })
     except Exception:
-        pass
+        logger.warning("gateway_lifecycle: failed to persist gateway-stop audit event", exc_info=True)
 
 
 def _audit_stop_blocked(*, platform_name: str, reason: str) -> None:
@@ -769,7 +769,7 @@ def _audit_stop_blocked(*, platform_name: str, reason: str) -> None:
             "message": f"Gateway stop blocked by {platform_name}: {reason}",
         })
     except Exception:
-        pass
+        logger.warning("gateway_lifecycle: failed to persist stop-blocked audit event", exc_info=True)
 
 
 def do_status() -> None:
@@ -914,7 +914,7 @@ def _audit_orphan_cleanup(orphan_pids: list[int]) -> None:
             "message": f"Lifecycle cleaned {len(orphan_pids)} orphan(s): {orphan_pids}",
         })
     except Exception:
-        pass
+        logger.warning("gateway_lifecycle: failed to persist orphan-cleanup audit event", exc_info=True)
 
 
 def _notify_gateway_problem(
@@ -940,7 +940,7 @@ def _notify_gateway_problem(
             error_log=error_log,
         )
     except Exception:
-        pass
+        logger.debug("gateway_lifecycle: operator notification delivery failed for lifecycle problem", exc_info=True)
 
 
 def do_pause() -> None:
@@ -1130,4 +1130,4 @@ def _auto_stop_tunnel() -> None:
         if is_tunnel_running():
             stop_tunnel()
     except Exception:
-        pass
+        logger.warning("gateway_lifecycle: tunnel shutdown failed; tunnel may remain active after gateway stop", exc_info=True)

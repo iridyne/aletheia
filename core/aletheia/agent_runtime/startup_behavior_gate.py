@@ -510,7 +510,7 @@ def _audit(event_type: str, message: str) -> None:
             "message": message,
         })
     except Exception:
-        pass
+        logger.warning("startup_behavior_gate: failed to persist gate audit event; transition audit may be missing", exc_info=True)
 
 
 def _notify(title: str, message: str) -> None:
@@ -520,7 +520,7 @@ def _notify(title: str, message: str) -> None:
         notify_operator(title, message, source="startup_behavior_gate",
                         event_type=None, audit=False, error_log=True)
     except Exception:
-        pass
+        logger.debug("startup_behavior_gate: operator notification delivery failed; gate transition still logged", exc_info=True)
 
 
 def _persist_paused(paused: bool, *, generation: str | None = None):

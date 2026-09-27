@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import threading
 
 from aletheia.config import loader as _config_loader
 from aletheia.config.schema import PauseOwnerLease
+
+logger = logging.getLogger("aletheia.pause_ownership")
 
 MANUAL_OWNER = "manual"
 CONNECTIVITY_OWNER = "exchange_connectivity"
@@ -99,7 +102,7 @@ def _audit(
             }
         )
     except Exception:
-        pass
+        logger.warning("pause_ownership: audit write failed; transition audit trail may be lost", exc_info=True)
 
 
 def _audit_release_rejected(
@@ -134,7 +137,7 @@ def _audit_release_rejected(
             }
         )
     except Exception:
-        pass
+        logger.warning("pause_ownership: rejection audit write failed; stale-release audit trail may be lost", exc_info=True)
 
 
 def acquire_pause(
@@ -170,7 +173,7 @@ def acquire_pause(
         except Exception:
             # The durable owner remains fail-closed even if the in-process
             # scheduler hook is unavailable; jobs also consult runtime.paused.
-            pass
+            logger.warning("pause_ownership: pause_scheduler hook failed; durable pause holds but scheduler propagation degraded", exc_info=True)
         remaining = _active_owner_names(cfg)
         _audit(
             "pause_owner_acquired",

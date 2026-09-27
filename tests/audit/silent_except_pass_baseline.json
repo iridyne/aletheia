@@ -30,40 +30,8 @@
       "reason": "best-effort ready-beacon unlink; docstring: 'Best-effort; never raises'"
     },
     {
-      "file": "core/aletheia/agent_runtime/auto_resume.py",
-      "line": 80
-    },
-    {
-      "file": "core/aletheia/agent_runtime/auto_resume.py",
-      "line": 94
-    },
-    {
-      "file": "core/aletheia/agent_runtime/auto_resume.py",
-      "line": 228
-    },
-    {
       "file": "core/aletheia/agent_runtime/build_info.py",
       "line": 38
-    },
-    {
-      "file": "core/aletheia/agent_runtime/connectivity.py",
-      "line": 68
-    },
-    {
-      "file": "core/aletheia/agent_runtime/connectivity.py",
-      "line": 429
-    },
-    {
-      "file": "core/aletheia/agent_runtime/connectivity.py",
-      "line": 551
-    },
-    {
-      "file": "core/aletheia/agent_runtime/connectivity.py",
-      "line": 564
-    },
-    {
-      "file": "core/aletheia/agent_runtime/connectivity.py",
-      "line": 726
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
@@ -90,30 +58,6 @@
       "line": 135
     },
     {
-      "file": "core/aletheia/agent_runtime/pause_ownership.py",
-      "line": 101
-    },
-    {
-      "file": "core/aletheia/agent_runtime/pause_ownership.py",
-      "line": 136
-    },
-    {
-      "file": "core/aletheia/agent_runtime/pause_ownership.py",
-      "line": 170
-    },
-    {
-      "file": "core/aletheia/agent_runtime/pi_daemon.py",
-      "line": 267
-    },
-    {
-      "file": "core/aletheia/agent_runtime/pi_daemon.py",
-      "line": 322
-    },
-    {
-      "file": "core/aletheia/agent_runtime/pi_daemon.py",
-      "line": 677
-    },
-    {
       "file": "core/aletheia/agent_runtime/resume_gate.py",
       "line": 99
     },
@@ -130,36 +74,8 @@
       "line": 134
     },
     {
-      "file": "core/aletheia/agent_runtime/runtime_session.py",
-      "line": 192
-    },
-    {
-      "file": "core/aletheia/agent_runtime/runtime_session.py",
-      "line": 242
-    },
-    {
-      "file": "core/aletheia/agent_runtime/runtime_session.py",
-      "line": 283
-    },
-    {
       "file": "core/aletheia/agent_runtime/scheduler.py",
       "line": 4193
-    },
-    {
-      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
-      "line": 111
-    },
-    {
-      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
-      "line": 512
-    },
-    {
-      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
-      "line": 522
-    },
-    {
-      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
-      "line": 845
     },
     {
       "file": "core/aletheia/agent_shell/audit.py",
@@ -357,30 +273,6 @@
       "line": 589
     },
     {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 375
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 758
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 771
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 916
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 942
-    },
-    {
-      "file": "core/aletheia/gateway/lifecycle.py",
-      "line": 1132
-    },
-    {
       "file": "core/aletheia/gateway/logs.py",
       "line": 85
     },
@@ -395,54 +287,6 @@
     {
       "file": "core/aletheia/gateway/managed_service.py",
       "line": 512
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 159
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 191
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 512
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 531
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 580
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 825
-    },
-    {
-      "file": "core/aletheia/gateway/operator_shell.py",
-      "line": 887
-    },
-    {
-      "file": "core/aletheia/gateway/pidfile.py",
-      "line": 256,
-      "reason": "outer wrap of pid-tree teardown; comment: 'best-effort teardown; never raise'"
-    },
-    {
-      "file": "core/aletheia/gateway/pidfile.py",
-      "line": 369,
-      "reason": "expected int parse skip when walking /proc or ps output; non-integer rows (headers, warnings) are noise, not defects"
-    },
-    {
-      "file": "core/aletheia/gateway/pidfile.py",
-      "line": 381,
-      "reason": "expected int parse skip when reading Linux /proc/<pid>/task/*/children"
-    },
-    {
-      "file": "core/aletheia/gateway/pidfile.py",
-      "line": 383,
-      "reason": "outer wrap of process-tree enumeration; used only as best-effort teardown, must not throw"
     },
     {
       "file": "core/aletheia/gateway/session_service.py",
@@ -820,6 +664,51 @@
     {
       "file": "extensions/telegram/bot.py",
       "line": 451
+    },
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "line": 68,
+      "reason": "asyncio.CancelledError/InvalidStateError expected during auto-resume task shutdown"
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 369,
+      "reason": "expected int parse skip when walking netstat rows; non-integer headers are noise"
+    },
+    {
+      "file": "core/aletheia/gateway/pidfile.py",
+      "line": 381,
+      "reason": "expected int parse skip when reading lsof PID column"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 111,
+      "reason": "FileNotFoundError expected when gate state already absent; idempotent clear"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "line": 845,
+      "reason": "asyncio.CancelledError/InvalidStateError expected when stopping recheck task"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/auto_resume.py",
+      "line": 228,
+      "reason": "asyncio.CancelledError is expected task-stop signal during shutdown"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pi_daemon.py",
+      "line": 267,
+      "reason": "asyncio.CancelledError expected during pi_daemon task stop; non-Cancelled paths now log"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/pi_daemon.py",
+      "line": 324,
+      "reason": "asyncio.CancelledError expected during pi_daemon reconfigure cancel; non-Cancelled paths now log"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/runtime_session.py",
+      "line": 283,
+      "reason": "OSError swallow after unlink(missing_ok=True); already-inside except block for outer error"
     }
   ]
 }

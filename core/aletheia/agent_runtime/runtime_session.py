@@ -190,7 +190,7 @@ def _boot_commit() -> str | None:
         if commit:
             return commit
     except Exception:
-        pass
+        logger.debug("runtime_session: boot-commit probe unavailable; falling back to git commit probe", exc_info=True)
     try:
         from aletheia.update.git_ops import current_commit
 
@@ -240,7 +240,7 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
 
         economics_tracing_enabled = tracing_enabled()
     except Exception:
-        pass
+        logger.warning("runtime_session: economics tracing state probe failed; runtime provenance is incomplete", exc_info=True)
 
     session = RuntimeSession(
         runtime_id=_runtime_id(runtime_context),

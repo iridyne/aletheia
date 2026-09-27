@@ -78,7 +78,7 @@ def _escalate_stall(cause: str, consecutive_failures: int) -> None:
             error_log=True,
         )
     except Exception:
-        pass
+        logger.warning("auto_resume: stall notification delivery failed", exc_info=True)
 
     try:
         from aletheia.files.jsonl import write_audit
@@ -92,7 +92,7 @@ def _escalate_stall(cause: str, consecutive_failures: int) -> None:
             "metadata": {"cause": cause, "consecutive_failures": consecutive_failures},
         })
     except Exception:
-        pass
+        logger.warning("auto_resume: stall escalation audit write failed; audit trail may be lost", exc_info=True)
 
 
 async def _auto_resume_loop(interval_sec: int = 300) -> None:

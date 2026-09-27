@@ -254,7 +254,7 @@ def kill_pid_tree(pid: int) -> None:
             except Exception:
                 os.kill(pid, signal.SIGTERM)
     except Exception:
-        pass  # best-effort teardown; never raise
+        logger.warning("pidfile: failed to terminate process tree for pid %s; a child or port-holding resource may remain", pid, exc_info=True)
 
 
 def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -381,5 +381,5 @@ def find_port_holders(port: int) -> list[int]:
                 except ValueError:
                     pass
     except Exception:
-        pass
+        logger.debug("pidfile: port-holder probe unavailable; returning no holders from this best-effort probe", exc_info=True)
     return list(pids)

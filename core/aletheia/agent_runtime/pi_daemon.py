@@ -264,8 +264,10 @@ async def reconfigure_pi_daemon(
             _daemon_task.cancel()
             try:
                 await _daemon_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.warning("pi_daemon: task raised on stop() cancel", exc_info=True)
             _daemon_task = None
             _uvicorn_loop = None
             _started_at = None
@@ -319,8 +321,10 @@ async def reconfigure_pi_daemon(
         _daemon_task.cancel()
         try:
             await _daemon_task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.warning("pi_daemon: task raised while cancelling for restart", exc_info=True)
         _daemon_task = None
         _started_at = None
         _active_params = None
@@ -675,4 +679,4 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             rollback_if_in_transaction()
             close_db()
         except Exception:
-            pass
+            logger.warning("pi_daemon: DB cleanup on stop failed", exc_info=True)
