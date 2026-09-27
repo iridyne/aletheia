@@ -1653,23 +1653,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/knowledge/research-notes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Research Notes */
-        get: operations["get_research_notes_api_knowledge_research_notes_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/knowledge/strategy-memory": {
         parameters: {
             query?: never;
@@ -10812,7 +10795,7 @@ export interface components {
             diagnostics_days: number;
             /**
              * Filter Candidate Outcomes Days
-             * @default 30
+             * @default 45
              */
             filter_candidate_outcomes_days: number;
             /**
@@ -11102,7 +11085,7 @@ export interface components {
             max_account_leverage_live: number;
             /**
              * Max Daily Loss Pct
-             * @default 1
+             * @default 0
              */
             max_daily_loss_pct: number;
             /**
@@ -11416,7 +11399,7 @@ export interface components {
         RiskLossPolicy: {
             /**
              * Max Daily Loss Pct
-             * @default 1
+             * @default 0
              */
             max_daily_loss_pct: number;
             /**
@@ -12959,6 +12942,8 @@ export interface components {
         };
         /** UniverseConfig */
         UniverseConfig: {
+            /** Allowlist */
+            allowlist?: string[];
             /** Blacklist */
             blacklist?: string[];
             /**
@@ -13058,6 +13043,8 @@ export interface components {
         };
         /** UniverseConfigUpdate */
         UniverseConfigUpdate: {
+            /** Allowlist */
+            allowlist?: string[] | null;
             /** Blacklist */
             blacklist?: string[] | null;
             /** Candidate Max Continuous Age Sec */
@@ -15499,26 +15486,6 @@ export interface operations {
         };
     };
     get_guard_stats_api_knowledge_guards_stats_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_research_notes_api_knowledge_research_notes_get: {
         parameters: {
             query?: never;
             header?: never;
