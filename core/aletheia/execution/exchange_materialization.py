@@ -107,6 +107,19 @@ def claim_observed_tpsl_close(
         return repo.get_order(close_order.id), True
 
 
+def record_operator_confirmed_fill(fill: Fill) -> None:
+    """Persist one operator-venue-confirmed Fill.
+
+    Fill writes are owned by this module (``tests/test_architecture_fitness.py::
+    test_fill_writes_stay_with_exchange_materialization``). The manual-close
+    resolver is an operator surface (``execution_contract`` §10.2.4): it decides
+    *whether* to record a venue-confirmed fill, and this module performs the
+    write. The caller keeps its own ``transaction(immediate=True)`` and
+    compare-and-swap, so the delegation adds no new authority.
+    """
+    repo.insert_fill(fill)
+
+
 def materialize_observed_close_chain(
     position: dict,
     evidence: VerifiedExitResult,

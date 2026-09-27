@@ -290,6 +290,23 @@ def _uta_history_lookup(order: dict):
         return _HISTORY_FAILED
 
 
+def record_operator_confirmed_order_absence(order_id: str, *, reason: str) -> None:
+    """Mark one order rejected after the operator confirmed the venue never got it.
+
+    ``transition_order`` writes are owned by the execution modules
+    (``tests/order_writer_boundary.py``). The manual-close resolver decides
+    *whether* the absence is confirmed (``execution_contract`` §10.2.4); the
+    transition is performed here so the operator surface holds no writer itself.
+    The error_reason string is part of the durable audit trail and must keep its
+    exact form.
+    """
+    repo.transition_order(
+        order_id,
+        status="submission_rejected",
+        error_reason=f"operator_venue_confirmed_absence: {reason}",
+    )
+
+
 def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
     if not _is_close_order(order):
         return None

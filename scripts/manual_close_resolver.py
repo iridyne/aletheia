@@ -50,6 +50,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from aletheia.execution.exchange_materialization import record_operator_confirmed_fill
+from aletheia.execution.pending_close_recovery import (
+    record_operator_confirmed_order_absence,
+)
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill
 
@@ -172,7 +176,7 @@ def _apply_resolution(args: argparse.Namespace, snapshot: dict) -> None:
         )
 
     if args.mode == MODE_VENUE_FILL:
-        repo.insert_fill(
+        record_operator_confirmed_fill(
             Fill(
                 id=args.fill_id,
                 order_id=order_id,
@@ -183,11 +187,7 @@ def _apply_resolution(args: argparse.Namespace, snapshot: dict) -> None:
             )
         )
     elif args.mode == MODE_VENUE_ABSENCE:
-        repo.transition_order(
-            order_id,
-            status="submission_rejected",
-            error_reason=f"operator_venue_confirmed_absence: {args.reason}",
-        )
+        record_operator_confirmed_order_absence(order_id, reason=args.reason)
     elif args.mode != MODE_OPERATOR_SETTLED:
         raise _ResolutionAbort(EXIT_NOT_MANUAL, f"unsupported resolution mode: {args.mode}")
 
