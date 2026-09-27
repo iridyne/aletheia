@@ -57,6 +57,45 @@ aletheia-trading-os/
 
 ---
 
+## Module Seams
+
+大文件按领域拆成 seam 模块（facade + `<facade>_<domain>.py`）。facade 保留 shared writers、事务 helper 和公开签名；seam 只承担该域的读/纯计算。所有 seam 通过 facade `from ... import *` 再导出，`from aletheia.<pkg> import <name>` 的旧用法不变。
+
+| Facade | Seams | Facade 只留 |
+|---|---|---|
+| `storage/repositories.py` | `repositories_positions` `repositories_universe` `repositories_research` `repositories_market_data` `repositories_execution` | `_stamp_provenance` / `_insert` / `_update` / `_select_*` / `transaction`；所有 writers（domain seam 因 ownership guard 拒绝导入 generic writers）|
+| `diagnostics/doctor.py` | `probes/content` `probes/storage_trust` `probes/environment` `probes/data_quality` `probes/trading` | `Check` / `Report` 类；`_build_report` 编排；shared helpers（`_age_minutes`, `_fmt_age`, `_parse_iso_datetime`）|
+| `observation_lab/canonical.py` | `canonical_adapters`（Domain A：value helpers + adapter Protocol/registry singleton）`canonical_lifecycle`（Domain B：Lab 证据 + lifecycle writes）| Domain C/D/E（authority/treatment 决策 · Main/Lab transport · retention/archive）— 跨事务边界，暂未拆 |
+| `agent_runtime/scheduler.py` | `scheduler_retention`（`_prune_*` × 7 + `_cleanup_catchup_due`）| `_run_cleanup` 因 `spec_agent_contracts` AST-scan 阻拦保留；所有 `add_job()`、`_ESSENTIAL_JOBS`、timeout workers |
+| `analytics/profit_gradient_evidence.py` | `profit_gradient_evidence_utils`（8 SAFE：`_json` `_hash` `_utc_text` `_text` `_safe_json_object` `_parse_utc` `_iso` `_finite`）| builder / verifier / registration / pairing / coverage — 跨事务 + `source_hash` binding，未拆 |
+
+### 单函数解构
+
+不新增文件，直接把巨型函数拆成同模块 `_` prefix helpers：
+
+| 函数 | 起始 → 当前 | Helpers |
+|---|---|---|
+| `execution/reconciliation.py::reconcile()` | 767 → 123 (-84%) | `_validate_reconcile_identities` `_recover_filled_gap_orders` `_reconcile_multibroker_orders` `_prepare_bitget_private_views` `_recover_exchange_order_id` `_fetch_order_history_and_ioc_state` `_converge_legacy_order_status` `_materialize_native_order` |
+| `agent_shell/operator_recommendations.py::build_recommendations()` | 946 单函数 → 完全解构 | 11 helpers：`_make_task_recommendation` factory + `_build_*_recommendation(s)` × 8 + `_missing_review_strategy_ids` + `_group_agent_runs` |
+| `storage/repositories.py::ensure_candidate_planning_generation()` | 383 → 187 (-51%) | `_candidate_planning_existing_state` `_candidate_planning_requalification` `_candidate_planning_generation_data` |
+| `agent_shell/entry_planner.py::plan_next_candidate()` | 430 → 226 (-47%) | `_parse_candidate_opportunity` `_ensure_entry_orderbook` `_build_fresh_entry_context` `_validate_and_bind_hypothesis` `_compile_current_entry_plan` `_load_or_invoke_hypothesis` |
+| `agent_shell/commands.py::review_portfolio_state()` | 638 → 部分拆 | `_collect_fresh_review_marks` `_collect_review_scope` `_record_unavailable_review` `_normalize_review_and_select_target` `_build_review_request`（`_apply_review_effect` + `_finalize_review` 契约敏感未拆）|
+| `analytics/position_lifecycle_story.py::build_position_lifecycle_story()` | 697 → 抽 7 | `_excursion_events` `_observed_mechanisms` `_hypothesis_horizon_events` + T35 § 9 里 5 个 MEDIUM/RISKY（`_resolve_path_evidence` `_management_protection_events` `_exit_cost_events` `_economic_path_section` `_story_audit`）未拆 |
+
+### 未拆的巨型函数（audit 完成，拆分成本 > 收益）
+
+| 函数 | 行数 | 阻拦 |
+|---|---|---|
+| `universe/service.py::refresh()` | 564 | 4 spec 用 `inspect.getsource(refresh)` 或按文件路径截取函数体做 AST 断言；改行为断言的工作在 #3561 |
+| `agent_runtime/scheduler.py::init_scheduler` | 467 | INV-SCH-5 spec 用 AST 扫 scheduler.py 检查每个 `add_job` wrapper；改行为断言的工作也在 #3561 |
+| `risk/engine.py::_evaluate_proposal_locked` | 595 | 未 audit；D2 敏感，风控决策核心 |
+| `execution/gateway.py::_execute_proposal` | 516 | 未 audit；段 3 主入口 |
+| `universe/features.py::_fetch_single_feature` | 487 | 未 audit |
+| `universe/filter_outcome_recorder.py::settle_due_filter_outcomes` | 455 | 未 audit |
+| `extensions/observation_lab/canonical.py::resolve_observation_treatment` | 480 | Domain C（authority/treatment 决策），跨 Main/Lab 事务边界，RISKY |
+
+---
+
 ## Data Flow（简版）
 
 ```mermaid
