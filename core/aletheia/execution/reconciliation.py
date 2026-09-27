@@ -1341,7 +1341,7 @@ def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> 
     client = _UTAReconciliationProjection(execution_mode, configured[execution_mode])
     markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
     open_rows: dict[str, list[dict]] = {}
-    fill_rows: dict[str, list[dict]] = {}
+    fill_rows: dict[str, list[FillReport]] = {}
     failed_default_fill_markets: set[str] = set()
 
     for market_type in markets:
@@ -1449,6 +1449,340 @@ def _recover_exchange_order_id(
     return order.get("exchange_order_id"), False, is_close_order, use_exact_order_history
 
 
+def _fetch_order_history_and_ioc_state(
+    order: dict,
+    client: _UTAReconciliationProjection,
+    use_exact_order_history: bool,
+    fill_rows: dict[str, list[FillReport]],
+    failed_default_fill_markets: set[str],
+    symbol_fill_rows: dict[tuple[str, str], list[FillReport] | None],
+    errors: list[str],
+) -> tuple[list[FillReport], bool, float | None] | None:
+    """Read private fill/IOC evidence; None means history was unavailable."""
+    execution_mode = order["execution_mode"]
+    market_type = str(order.get("market_type") or "spot")
+    if use_exact_order_history:
+        try:
+            rows = _response_rows(
+                run_coro_from_sync(
+                        client.get_order_fills(
+                            order_id=str(order["exchange_order_id"]),
+                            symbol=to_bitget(str(order["symbol"])),
+                            market_type=market_type,
+                            start_at=order.get("created_at"),
+                        )
+                )
+            )
+        except Exception as exc:
+            errors.append(
+                f"{execution_mode}/{market_type}: exact fill history unavailable"
+            )
+            logger.warning(
+                "reconcile: exact fills failed for %s order %s (%s)",
+                execution_mode,
+                order["id"],
+                type(exc).__name__,
+            )
+            _write_reconcile_event(
+                order,
+                state=str(order.get("status") or "unresolved"),
+                reason="exact_fill_history_unavailable",
+            )
+            return None
+    else:
+        rows = list(fill_rows.get(market_type, []))
+    if not use_exact_order_history and _needs_symbol_scoped_history(order, rows):
+        # `to_bitget()` is pure string canonicalisation over `str`
+        # (see `data/symbols.py`) — it cannot raise on a `str` input,
+        # so the historical `except Exception: exchange_symbol = None`
+        # was masking data-integrity issues rather than protecting a
+        # real failure path. Other call sites (`:1211`, `:1416`) call
+        # it directly with no guard, which is the correct pattern.
+        exchange_symbol = to_bitget(str(order["symbol"]))
+        cache_key = (market_type, exchange_symbol)
+        if exchange_symbol and cache_key not in symbol_fill_rows:
+            try:
+                symbol_fill_rows[cache_key] = _response_rows(
+                    run_coro_from_sync(
+                        client.get_fills(
+                            symbol=exchange_symbol,
+                            market_type=market_type,
+                            start_at=order.get("created_at"),
+                        )
+                    )
+                )
+            except Exception as exc:
+                symbol_fill_rows[cache_key] = None
+                logger.warning(
+                    "reconcile: symbol private fills failed for %s/%s/%s (%s)",
+                    execution_mode,
+                    market_type,
+                    exchange_symbol,
+                    type(exc).__name__,
+                )
+        scoped_rows = symbol_fill_rows.get(cache_key) if exchange_symbol else None
+        if scoped_rows is None:
+            errors.append(
+                f"{execution_mode}/{market_type}: private fill history unavailable"
+            )
+            _write_reconcile_event(
+                order,
+                state=str(order.get("status") or "unresolved"),
+                reason="private_fill_history_unavailable",
+            )
+            return None
+        rows.extend(scoped_rows)
+    elif (
+        not use_exact_order_history
+        and market_type in failed_default_fill_markets
+    ):
+        # Defensive: a failed default query cannot normally contain
+        # evidence. Keep the explicit state if a future client returns a
+        # partial payload alongside an exception.
+        errors.append(
+            f"{execution_mode}/{market_type}: default private fill history unavailable"
+        )
+    ioc_terminal = False
+    ioc_terminal_quantity: float | None = None
+    if (
+        order.get("source") == "native"
+        and order.get("order_tactic") == "OPPOSING_BBO_IOC"
+        and use_exact_order_history
+    ):
+        try:
+            exact_order = run_coro_from_sync(client.get_order_status(
+                order_id=str(order["exchange_order_id"]),
+                client_order_id=(
+                    str(order["client_order_id"])
+                    if order.get("client_order_id")
+                    else None
+                ),
+                symbol=str(order["symbol"]),
+                market_type=market_type,
+                start_at=order.get("created_at"),
+            ))
+            ioc_terminal = bool(
+                exact_order
+                and exact_order.state in {
+                    OrderLifecycle.CANCELED,
+                    OrderLifecycle.EXPIRED,
+                    OrderLifecycle.REJECTED,
+                }
+            )
+            if ioc_terminal and exact_order is not None:
+                ioc_terminal_quantity = float(exact_order.filled_quantity)
+        except Exception as exc:
+            logger.warning(
+                "reconcile: exact IOC status failed for order %s (%s)",
+                order["id"],
+                type(exc).__name__,
+            )
+    return rows, ioc_terminal, ioc_terminal_quantity
+
+
+def _converge_legacy_order_status(
+    order: dict, rows: list[FillReport], open_rows: dict[str, list[dict]],
+) -> tuple[int, int]:
+    """Converge existing local chains; return filled and inconclusive counts."""
+    market_type = str(order.get("market_type") or "spot")
+    # Historical/adopted Orders remain read-only: reconciliation may
+    # converge their status only when both private quantity evidence and
+    # a complete local Fill/Position chain already exist.
+    quantities = _filled_quantity_by_order(rows)
+    exchange_order_id = str(order.get("exchange_order_id") or "")
+    reported_quantity = quantities.get(exchange_order_id, 0.0)
+    requested_quantity = float(order.get("quantity") or 0.0)
+    tolerance = max(1e-12, requested_quantity * 1e-9)
+    complete = (
+        requested_quantity > 0
+        and abs(reported_quantity - requested_quantity) <= tolerance
+    )
+    if complete and _local_fill_chain_materialized(order):
+        transition_order(order["id"], status="filled")
+        _write_reconcile_event(
+            order, state="filled", reason="legacy_local_chain_verified"
+        )
+        return 1, 0
+
+    remote_open = exchange_order_id and any(
+        str(row.get("orderId") or row.get("order_id") or "")
+        == exchange_order_id
+        for row in open_rows.get(market_type, [])
+    )
+    if remote_open and reported_quantity <= 0:
+        return 0, 0
+    _write_reconcile_event(
+        order,
+        state=str(order.get("status") or "unresolved"),
+        reason=(
+            "exchange_fill_seen_local_materialization_missing"
+            if complete
+            else "complete_exchange_fill_not_proven"
+        ),
+    )
+    return 0, 1
+
+
+def _materialize_native_order(
+    order: dict,
+    client: _UTAReconciliationProjection,
+    rows: list[FillReport],
+    is_close_order: bool,
+    ioc_terminal: bool,
+    ioc_terminal_quantity: float | None,
+    errors: list[str],
+) -> tuple[str | None, int]:
+    """Return the summary category and new-fill count; None needs chain checks."""
+    execution_mode = order["execution_mode"]
+    market_type = str(order.get("market_type") or "spot")
+    funding_ledger = None
+    if is_close_order:
+        funding_request = funding_request_for_complete_close(
+            order["id"], rows
+        )
+        if funding_request is not None:
+            try:
+                funding_ledger = run_coro_from_sync(client.get_funding_ledger(
+                    broker_id=execution_mode,
+                    symbol=str(funding_request["position"]["symbol"]),
+                    start_time_ms=int(funding_request["start_time_ms"]),
+                    end_time_ms=int(funding_request["end_time_ms"]),
+                ))
+            except Exception as exc:
+                errors.append(
+                    f"{execution_mode}/{market_type}: "
+                    "private funding history unavailable"
+                )
+                logger.warning(
+                    "reconcile: funding query failed for order %s (%s)",
+                    order["id"],
+                    type(exc).__name__,
+                )
+    try:
+        result = (
+            materialize_bitget_close(
+                order["id"], rows, funding_ledger=funding_ledger
+            )
+            if is_close_order
+            else materialize_bitget_entry(order["id"], rows)
+        )
+    except (MaterializationIntegrityError, ValueError) as exc:
+        errors.append(
+            f"{execution_mode}/{market_type}: local materialization rejected"
+        )
+        logger.warning(
+            "reconcile: materialization rejected for order %s (%s)",
+            order["id"],
+            type(exc).__name__,
+        )
+        _write_reconcile_event(
+            order,
+            state=str(order.get("status") or "unresolved"),
+            reason="local_materialization_rejected",
+        )
+        return "inconclusive", 0
+    except Exception as exc:
+        errors.append(
+            f"{execution_mode}/{market_type}: local materialization failed"
+        )
+        logger.warning(
+            "reconcile: materialization failed for order %s (%s)",
+            order["id"],
+            type(exc).__name__,
+        )
+        try:
+            transition_order(
+                order["id"],
+                status="materialization_missing",
+                error_reason="exchange_fill_local_materialization_missing",
+                filled_at=None,
+            )
+        except Exception as transition_exc:
+            # See sibling block above (~line 1130): database
+            # state did not reach `materialization_missing`;
+            # do not emit an audit event that would claim it
+            # did. Surface via `errors` + warning.
+            errors.append(
+                f"{order['id']}:materialization_missing_transition_failed"
+            )
+            logger.warning(
+                "reconcile: materialization_missing transition failed "
+                "for order %s (%s)",
+                order["id"],
+                type(transition_exc).__name__,
+            )
+        else:
+            try:
+                _write_reconcile_event(
+                    order,
+                    state="materialization_missing",
+                    reason="local_materialization_failed",
+                )
+            except Exception as audit_exc:
+                logger.warning(
+                    "reconcile: materialization failure audit write failed "
+                    "for order %s (%s)",
+                    order["id"],
+                    type(audit_exc).__name__,
+                )
+        return "inconclusive", 0
+
+    materialized_fills = result.new_fill_count
+    if ioc_terminal_quantity is not None:
+        local_fill_row = get_db().execute(
+            "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity "
+            "FROM fills WHERE order_id=?",
+            (order["id"],),
+        ).fetchone()
+        local_quantity = float(local_fill_row["quantity"] or 0.0)
+        tolerance = max(1e-12, float(order["quantity"]) * 1e-9)
+        ioc_terminal = abs(local_quantity - ioc_terminal_quantity) <= tolerance
+    if result.state == "filled":
+        _write_reconcile_event(
+            order, state="filled", reason="private_fill_materialized"
+        )
+        return "filled", materialized_fills
+    if result.state == "partially_filled":
+        if ioc_terminal:
+            transition_order(
+                order["id"],
+                status="cancelled",
+                error_reason="ioc_remainder_terminal",
+            )
+            _write_reconcile_event(
+                order,
+                state="cancelled",
+                reason="ioc_partial_fill_remainder_terminal",
+            )
+            return "cancelled", materialized_fills
+        _write_reconcile_event(
+            order,
+            state="partially_filled",
+            reason="partial_private_fill_materialized",
+        )
+        return "partially_filled", materialized_fills
+    if result.state == "evidence_missing" and ioc_terminal:
+        transition_order(
+            order["id"],
+            status="cancelled",
+            error_reason="ioc_zero_fill_terminal",
+        )
+        _write_reconcile_event(
+            order,
+            state="cancelled",
+            reason="ioc_zero_fill_terminal",
+        )
+        return "cancelled", materialized_fills
+    if result.state == "overfilled":
+        _write_reconcile_event(
+            order,
+            state="overfilled",
+            reason="exchange_quantity_exceeds_local_authority",
+        )
+        return "inconclusive", materialized_fills
+    return None, materialized_fills
+
+
 def reconcile() -> dict:
     """Reconcile unresolved exchange Orders and materialize proven fills."""
     all_orders = _list_unresolved_core_orders()
@@ -1518,11 +1852,9 @@ def reconcile() -> dict:
         fill_rows = views["fill_rows"]
         failed_default_fill_markets = views["failed_default_fill_markets"]
         errors.extend(views["errors"])
-        symbol_fill_rows: dict[tuple[str, str], list[dict] | None] = {}
+        symbol_fill_rows: dict[tuple[str, str], list[FillReport] | None] = {}
 
         for order in mode_orders:
-            market_type = str(order.get("market_type") or "spot")
-
             _, ambiguous, is_close_order, use_exact_order_history = (
                 _recover_exchange_order_id(order, client, open_rows)
             )
@@ -1534,313 +1866,31 @@ def reconcile() -> dict:
                     reason="client_order_identity_ambiguous",
                 )
                 continue
-            if use_exact_order_history:
-                try:
-                    rows = _response_rows(
-                        run_coro_from_sync(
-                                client.get_order_fills(
-                                    order_id=str(order["exchange_order_id"]),
-                                    symbol=to_bitget(str(order["symbol"])),
-                                    market_type=market_type,
-                                    start_at=order.get("created_at"),
-                                )
-                        )
-                    )
-                except Exception as exc:
-                    inconclusive += 1
-                    errors.append(
-                        f"{execution_mode}/{market_type}: exact fill history unavailable"
-                    )
-                    logger.warning(
-                        "reconcile: exact fills failed for %s order %s (%s)",
-                        execution_mode,
-                        order["id"],
-                        type(exc).__name__,
-                    )
-                    _write_reconcile_event(
-                        order,
-                        state=str(order.get("status") or "unresolved"),
-                        reason="exact_fill_history_unavailable",
-                    )
-                    continue
-            else:
-                rows = list(fill_rows.get(market_type, []))
-            if not use_exact_order_history and _needs_symbol_scoped_history(order, rows):
-                # `to_bitget()` is pure string canonicalisation over `str`
-                # (see `data/symbols.py`) — it cannot raise on a `str` input,
-                # so the historical `except Exception: exchange_symbol = None`
-                # was masking data-integrity issues rather than protecting a
-                # real failure path. Other call sites (`:1211`, `:1416`) call
-                # it directly with no guard, which is the correct pattern.
-                exchange_symbol = to_bitget(str(order["symbol"]))
-                cache_key = (market_type, exchange_symbol)
-                if exchange_symbol and cache_key not in symbol_fill_rows:
-                    try:
-                        symbol_fill_rows[cache_key] = _response_rows(
-                            run_coro_from_sync(
-                                client.get_fills(
-                                    symbol=exchange_symbol,
-                                    market_type=market_type,
-                                    start_at=order.get("created_at"),
-                                )
-                            )
-                        )
-                    except Exception as exc:
-                        symbol_fill_rows[cache_key] = None
-                        logger.warning(
-                            "reconcile: symbol private fills failed for %s/%s/%s (%s)",
-                            execution_mode,
-                            market_type,
-                            exchange_symbol,
-                            type(exc).__name__,
-                        )
-                scoped_rows = symbol_fill_rows.get(cache_key) if exchange_symbol else None
-                if scoped_rows is None:
-                    inconclusive += 1
-                    errors.append(
-                        f"{execution_mode}/{market_type}: private fill history unavailable"
-                    )
-                    _write_reconcile_event(
-                        order,
-                        state=str(order.get("status") or "unresolved"),
-                        reason="private_fill_history_unavailable",
-                    )
-                    continue
-                rows.extend(scoped_rows)
-            elif (
-                not use_exact_order_history
-                and market_type in failed_default_fill_markets
-            ):
-                # Defensive: a failed default query cannot normally contain
-                # evidence. Keep the explicit state if a future client returns a
-                # partial payload alongside an exception.
-                errors.append(
-                    f"{execution_mode}/{market_type}: default private fill history unavailable"
-                )
-            ioc_terminal = False
-            ioc_terminal_quantity: float | None = None
-            if (
-                order.get("source") == "native"
-                and order.get("order_tactic") == "OPPOSING_BBO_IOC"
-                and use_exact_order_history
-            ):
-                try:
-                    exact_order = run_coro_from_sync(client.get_order_status(
-                        order_id=str(order["exchange_order_id"]),
-                        client_order_id=(
-                            str(order["client_order_id"])
-                            if order.get("client_order_id")
-                            else None
-                        ),
-                        symbol=str(order["symbol"]),
-                        market_type=market_type,
-                        start_at=order.get("created_at"),
-                    ))
-                    ioc_terminal = bool(
-                        exact_order
-                        and exact_order.state in {
-                            OrderLifecycle.CANCELED,
-                            OrderLifecycle.EXPIRED,
-                            OrderLifecycle.REJECTED,
-                        }
-                    )
-                    if ioc_terminal:
-                        ioc_terminal_quantity = float(exact_order.filled_quantity)
-                except Exception as exc:
-                    logger.warning(
-                        "reconcile: exact IOC status failed for order %s (%s)",
-                        order["id"],
-                        type(exc).__name__,
-                    )
+            history = _fetch_order_history_and_ioc_state(
+                order, client, use_exact_order_history, fill_rows,
+                failed_default_fill_markets, symbol_fill_rows, errors,
+            )
+            if history is None:
+                inconclusive += 1
+                continue
+            rows, ioc_terminal, ioc_terminal_quantity = history
             if order.get("source") == "native":
-                funding_ledger = None
-                if is_close_order:
-                    funding_request = funding_request_for_complete_close(
-                        order["id"], rows
-                    )
-                    if funding_request is not None:
-                        try:
-                            funding_ledger = run_coro_from_sync(client.get_funding_ledger(
-                                broker_id=execution_mode,
-                                symbol=str(funding_request["position"]["symbol"]),
-                                start_time_ms=int(funding_request["start_time_ms"]),
-                                end_time_ms=int(funding_request["end_time_ms"]),
-                            ))
-                        except Exception as exc:
-                            errors.append(
-                                f"{execution_mode}/{market_type}: "
-                                "private funding history unavailable"
-                            )
-                            logger.warning(
-                                "reconcile: funding query failed for order %s (%s)",
-                                order["id"],
-                                type(exc).__name__,
-                            )
-                try:
-                    result = (
-                        materialize_bitget_close(
-                            order["id"], rows, funding_ledger=funding_ledger
-                        )
-                        if is_close_order
-                        else materialize_bitget_entry(order["id"], rows)
-                    )
-                except (MaterializationIntegrityError, ValueError) as exc:
-                    inconclusive += 1
-                    errors.append(
-                        f"{execution_mode}/{market_type}: local materialization rejected"
-                    )
-                    logger.warning(
-                        "reconcile: materialization rejected for order %s (%s)",
-                        order["id"],
-                        type(exc).__name__,
-                    )
-                    _write_reconcile_event(
-                        order,
-                        state=str(order.get("status") or "unresolved"),
-                        reason="local_materialization_rejected",
-                    )
-                    continue
-                except Exception as exc:
-                    inconclusive += 1
-                    errors.append(
-                        f"{execution_mode}/{market_type}: local materialization failed"
-                    )
-                    logger.warning(
-                        "reconcile: materialization failed for order %s (%s)",
-                        order["id"],
-                        type(exc).__name__,
-                    )
-                    try:
-                        transition_order(
-                            order["id"],
-                            status="materialization_missing",
-                            error_reason="exchange_fill_local_materialization_missing",
-                            filled_at=None,
-                        )
-                    except Exception as transition_exc:
-                        # See sibling block above (~line 1130): database
-                        # state did not reach `materialization_missing`;
-                        # do not emit an audit event that would claim it
-                        # did. Surface via `errors` + warning.
-                        errors.append(
-                            f"{order['id']}:materialization_missing_transition_failed"
-                        )
-                        logger.warning(
-                            "reconcile: materialization_missing transition failed "
-                            "for order %s (%s)",
-                            order["id"],
-                            type(transition_exc).__name__,
-                        )
-                    else:
-                        try:
-                            _write_reconcile_event(
-                                order,
-                                state="materialization_missing",
-                                reason="local_materialization_failed",
-                            )
-                        except Exception as audit_exc:
-                            logger.warning(
-                                "reconcile: materialization failure audit write failed "
-                                "for order %s (%s)",
-                                order["id"],
-                                type(audit_exc).__name__,
-                            )
-                    continue
-
-                materialized_fills += result.new_fill_count
-                if ioc_terminal_quantity is not None:
-                    local_fill_row = get_db().execute(
-                        "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity "
-                        "FROM fills WHERE order_id=?",
-                        (order["id"],),
-                    ).fetchone()
-                    local_quantity = float(local_fill_row["quantity"] or 0.0)
-                    tolerance = max(1e-12, float(order["quantity"]) * 1e-9)
-                    ioc_terminal = abs(local_quantity - ioc_terminal_quantity) <= tolerance
-                if result.state == "filled":
-                    filled += 1
-                    _write_reconcile_event(
-                        order, state="filled", reason="private_fill_materialized"
-                    )
-                    continue
-                if result.state == "partially_filled":
-                    if ioc_terminal:
-                        transition_order(
-                            order["id"],
-                            status="cancelled",
-                            error_reason="ioc_remainder_terminal",
-                        )
-                        _write_reconcile_event(
-                            order,
-                            state="cancelled",
-                            reason="ioc_partial_fill_remainder_terminal",
-                        )
-                        continue
-                    partially_filled += 1
-                    _write_reconcile_event(
-                        order,
-                        state="partially_filled",
-                        reason="partial_private_fill_materialized",
-                    )
-                    continue
-                if result.state == "evidence_missing" and ioc_terminal:
-                    transition_order(
-                        order["id"],
-                        status="cancelled",
-                        error_reason="ioc_zero_fill_terminal",
-                    )
-                    _write_reconcile_event(
-                        order,
-                        state="cancelled",
-                        reason="ioc_zero_fill_terminal",
-                    )
-                    continue
-                if result.state == "overfilled":
-                    inconclusive += 1
-                    _write_reconcile_event(
-                        order,
-                        state="overfilled",
-                        reason="exchange_quantity_exceeds_local_authority",
-                    )
-                    continue
-
-            # Historical/adopted Orders remain read-only: reconciliation may
-            # converge their status only when both private quantity evidence and
-            # a complete local Fill/Position chain already exist.
-            quantities = _filled_quantity_by_order(rows)
-            exchange_order_id = str(order.get("exchange_order_id") or "")
-            reported_quantity = quantities.get(exchange_order_id, 0.0)
-            requested_quantity = float(order.get("quantity") or 0.0)
-            tolerance = max(1e-12, requested_quantity * 1e-9)
-            complete = (
-                requested_quantity > 0
-                and abs(reported_quantity - requested_quantity) <= tolerance
-            )
-            if complete and _local_fill_chain_materialized(order):
-                transition_order(order["id"], status="filled")
-                filled += 1
-                _write_reconcile_event(
-                    order, state="filled", reason="legacy_local_chain_verified"
+                native_state, new_fill_count = _materialize_native_order(
+                    order, client, rows, is_close_order,
+                    ioc_terminal, ioc_terminal_quantity, errors,
                 )
-                continue
+                materialized_fills += new_fill_count
+                filled += native_state == "filled"
+                partially_filled += native_state == "partially_filled"
+                inconclusive += native_state == "inconclusive"
+                if native_state is not None:
+                    continue
 
-            remote_open = exchange_order_id and any(
-                str(row.get("orderId") or row.get("order_id") or "")
-                == exchange_order_id
-                for row in open_rows.get(market_type, [])
+            legacy_filled, legacy_inconclusive = _converge_legacy_order_status(
+                order, rows, open_rows,
             )
-            if remote_open and reported_quantity <= 0:
-                continue
-            inconclusive += 1
-            _write_reconcile_event(
-                order,
-                state=str(order.get("status") or "unresolved"),
-                reason=(
-                    "exchange_fill_seen_local_materialization_missing"
-                    if complete
-                    else "complete_exchange_fill_not_proven"
-                ),
-            )
+            filled += legacy_filled
+            inconclusive += legacy_inconclusive
 
     return {
         "checked": checked,
