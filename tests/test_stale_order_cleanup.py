@@ -185,7 +185,7 @@ def test_exact_unknown_order_is_not_treated_as_absent(monkeypatch):
         coro.close()
         return report
 
-    monkeypatch.setattr(soc, "_run_coro", fake_run)
+    monkeypatch.setattr(soc, "run_coro_from_sync", fake_run)
 
     assert soc._exchange_order_absent_unfilled(order) is False
 
@@ -207,7 +207,7 @@ def test_exact_terminal_order_is_treated_as_absent(monkeypatch, state):
         coro.close()
         return report
 
-    monkeypatch.setattr(soc, "_run_coro", fake_run)
+    monkeypatch.setattr(soc, "run_coro_from_sync", fake_run)
 
     assert soc._exchange_order_absent_unfilled(order) is True
 
@@ -235,7 +235,7 @@ def test_exact_non_terminal_order_is_not_treated_as_absent(monkeypatch, state):
         coro.close()
         return report
 
-    monkeypatch.setattr(soc, "_run_coro", fake_run)
+    monkeypatch.setattr(soc, "run_coro_from_sync", fake_run)
 
     assert soc._exchange_order_absent_unfilled(order) is False
 
@@ -254,7 +254,7 @@ def test_exact_terminal_order_with_fill_is_not_treated_as_absent(monkeypatch):
         coro.close()
         return report
 
-    monkeypatch.setattr(soc, "_run_coro", fake_run)
+    monkeypatch.setattr(soc, "run_coro_from_sync", fake_run)
 
     assert soc._exchange_order_absent_unfilled(order) is False
 

@@ -23,12 +23,12 @@ and is wired into the daily ``_run_cleanup`` scheduler job.
 """
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import logging
 
 from aletheia.storage import repositories as repo
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -50,16 +50,6 @@ _OPEN_LOCAL_STATES = (
 _STALE_ORDER_SOFT_HOURS = 48
 
 _UTA_ACCOUNT_MODES = EXTERNAL_EXECUTION_MODES
-
-
-def _run_coro(coro):
-    """Run an async broker call from this sync job (mirrors reconciliation)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
 
 
 def _age_hours(created_at) -> float | None:
@@ -147,7 +137,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
-        report = _run_coro(query_uta(
+        report = run_coro_from_sync(query_uta(
             execution_mode,
             "get_mass_status",
             ReconciliationQuery(

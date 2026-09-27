@@ -21,24 +21,92 @@ is the correct Windows-Selector DNS approach.)
 
 import asyncio
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import threading
+
+
+# One reusable loop per calling thread (see `run_coro_from_sync`). Loops stay
+# registered for the process lifetime so a later call from the same thread finds
+# the same loop instead of a fresh one.
+_THREAD_LOOPS: dict[int, asyncio.AbstractEventLoop] = {}
+_BRIDGE_LOOPS: dict[int, asyncio.AbstractEventLoop] = {}
+_LOOP_LOCK = threading.Lock()
+
+
+async def _cancel_leftover_tasks() -> None:
+    """Tear down what a completed bridge call left behind.
+
+    ``asyncio.run`` used to close its loop after every call, which cancelled any
+    task the coroutine had leaked. Reusing one loop means that teardown must be
+    done explicitly, or a leaked retry task would keep running into the next call.
+    """
+    current = asyncio.current_task()
+    leftovers = [task for task in asyncio.all_tasks() if task is not current and not task.done()]
+    for task in leftovers:
+        task.cancel()
+    if leftovers:
+        await asyncio.gather(*leftovers, return_exceptions=True)
+
+
+def _caller_thread_loop() -> asyncio.AbstractEventLoop:
+    """The reusable loop owned by the calling thread."""
+    with _LOOP_LOCK:
+        loop = _THREAD_LOOPS.get(threading.get_ident())
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _THREAD_LOOPS[threading.get_ident()] = loop
+        return loop
+
+
+def _bridge_loop() -> asyncio.AbstractEventLoop:
+    """The reusable loop that drives work for a caller thread already running one.
+
+    The caller's loop cannot run this coroutine without re-entrancy, so a
+    dedicated loop thread runs it — but the same one on every call, because a
+    loop-bound adapter (``CCXTUTAAdapter.connect`` raises
+    ``cross_loop_adapter_reuse``) must not be moved between loops.
+    """
+    with _LOOP_LOCK:
+        loop = _BRIDGE_LOOPS.get(threading.get_ident())
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever,
+                name="aletheia-sync-bridge",
+                daemon=True,
+            ).start()
+            _BRIDGE_LOOPS[threading.get_ident()] = loop
+        return loop
 
 
 def run_coro_from_sync(coro, *, timeout: float | None = None):
     """Run a coroutine from synchronous code, even inside a running event loop.
 
-    Spawns a fresh loop in a thread when a loop is already running (avoids
-    blocking the caller's loop). Otherwise runs directly with asyncio.run().
+    The event loop is reused across calls from the same calling thread: adapters,
+    aiohttp sessions and other loop-bound objects created by one call must remain
+    valid in the next one. ``asyncio.run`` — which closes its loop at the end of
+    every call — silently invalidated them (``cross_loop_adapter_reuse``).
+
+    Callers with no running loop keep executing on their own thread; callers with
+    one are driven by a per-thread bridge loop thread. Leftover tasks from a
+    completed call are cancelled before the next call starts.
     """
     try:
-        loop = asyncio.get_running_loop()
+        running = asyncio.get_running_loop()
     except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=timeout)
-    return asyncio.run(coro)
+        running = None
+    if running is not None and running.is_running():
+        bridge = _bridge_loop()
+        asyncio.run_coroutine_threadsafe(_cancel_leftover_tasks(), bridge).result(
+            timeout=timeout
+        )
+        future = asyncio.run_coroutine_threadsafe(coro, bridge)
+        return future.result(timeout=timeout)
+    loop = _caller_thread_loop()
+    loop.run_until_complete(_cancel_leftover_tasks())
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.run_until_complete(_cancel_leftover_tasks())
 
 
 def apply_windows_selector_policy() -> None:

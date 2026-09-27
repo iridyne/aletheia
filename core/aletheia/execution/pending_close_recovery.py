@@ -33,6 +33,7 @@ import json
 import logging
 
 from aletheia.utils.dt import parse_utc
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
@@ -124,14 +125,6 @@ _RECOVERABLE_ORDER_STATES = (
 _UTA_ACCOUNT_MODES = EXTERNAL_EXECUTION_MODES
 
 
-def _run_coro(coro):
-    from aletheia.async_utils import run_coro_from_sync
-
-    return run_coro_from_sync(coro)
-
-
-
-
 def _age_hours(*timestamps: str | None) -> float | None:
     candidates = [parse_utc(value) for value in timestamps if value]
     candidates = [value for value in candidates if value is not None]
@@ -172,7 +165,7 @@ def _exchange_open_order_ids(order: dict) -> set[str] | None:
         from aletheia.uta.manager import query_uta
         from aletheia.uta.models import OrderQuery, ReadCompleteness
 
-        report = _run_coro(query_uta(
+        report = run_coro_from_sync(query_uta(
             execution_mode,
             "get_open_orders",
             OrderQuery(scope=scope_from_local(
@@ -220,7 +213,7 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
         from aletheia.uta.manager import query_uta
         from aletheia.uta.models import FillQuery, ReadCompleteness
 
-        report = _run_coro(query_uta(
+        report = run_coro_from_sync(query_uta(
             execution_mode,
             "get_fills",
             FillQuery(
@@ -258,7 +251,7 @@ def _uta_history_lookup(order: dict):
         from aletheia.uta.manager import query_uta
         from aletheia.uta.models import OrderQuery, ReadCompleteness
 
-        report = _run_coro(query_uta(
+        report = run_coro_from_sync(query_uta(
             execution_mode,
             "get_order",
             OrderQuery(

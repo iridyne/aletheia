@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
 from aletheia.data.symbols import to_bitget
 from aletheia.portfolio.pnl import fee_in_quote
@@ -641,15 +641,6 @@ def resolve_orders_missing_from_exchange(
     return resolved
 
 
-def _run_coro(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 def _response_rows(rows) -> list[FillReport]:
     if isinstance(rows, FillReport):
         return [rows]
@@ -1049,7 +1040,7 @@ def reconcile() -> dict:
             continue
         try:
             rows = _response_rows(
-                _run_coro(_fetch_multibroker_evidence(order))
+                run_coro_from_sync(_fetch_multibroker_evidence(order))
             )
         except Exception as exc:
             inconclusive += 1
@@ -1074,7 +1065,7 @@ def reconcile() -> dict:
             funding_request = funding_request_for_complete_close(order["id"], rows)
             if funding_request is not None:
                 try:
-                    funding_ledger = _run_coro(
+                    funding_ledger = run_coro_from_sync(
                         _fetch_multibroker_funding(order, funding_request)
                     )
                 except Exception as exc:
@@ -1232,7 +1223,7 @@ def reconcile() -> dict:
             if filled_gap_client is None:
                 filled_gap_client = _UTAReconciliationProjection("bitget_demo", configured["bitget_demo"])
             rows = _response_rows(
-                _run_coro(
+                run_coro_from_sync(
                     filled_gap_client.get_order_fills(
                         order_id=str(order["exchange_order_id"]),
                         symbol=to_bitget(str(order["symbol"])),
@@ -1348,7 +1339,7 @@ def reconcile() -> dict:
                 default=None,
             )
             try:
-                open_rows[market_type] = _run_coro(
+                open_rows[market_type] = run_coro_from_sync(
                     client.get_open_orders(market_type=market_type)
                 )
             except Exception as exc:
@@ -1364,7 +1355,7 @@ def reconcile() -> dict:
                 )
             try:
                 fill_rows[market_type] = _response_rows(
-                    _run_coro(client.get_fills(
+                    run_coro_from_sync(client.get_fills(
                         market_type=market_type, start_at=history_start
                     ))
                 )
@@ -1409,7 +1400,7 @@ def reconcile() -> dict:
                     # Fall back to a direct detail lookup by clientOid (#1779).
                     try:
                         from aletheia.data.symbols import to_bitget as _to_bitget
-                        detail = _run_coro(
+                        detail = run_coro_from_sync(
                             client.get_order_detail_by_client_oid(
                                 str(order["client_order_id"]),
                                 _to_bitget(str(order["symbol"])),
@@ -1437,7 +1428,7 @@ def reconcile() -> dict:
             if use_exact_order_history:
                 try:
                     rows = _response_rows(
-                        _run_coro(
+                        run_coro_from_sync(
                                 client.get_order_fills(
                                     order_id=str(order["exchange_order_id"]),
                                     symbol=to_bitget(str(order["symbol"])),
@@ -1477,7 +1468,7 @@ def reconcile() -> dict:
                 if exchange_symbol and cache_key not in symbol_fill_rows:
                     try:
                         symbol_fill_rows[cache_key] = _response_rows(
-                            _run_coro(
+                            run_coro_from_sync(
                                 client.get_fills(
                                     symbol=exchange_symbol,
                                     market_type=market_type,
@@ -1525,7 +1516,7 @@ def reconcile() -> dict:
                 and use_exact_order_history
             ):
                 try:
-                    exact_order = _run_coro(client.get_order_status(
+                    exact_order = run_coro_from_sync(client.get_order_status(
                         order_id=str(order["exchange_order_id"]),
                         client_order_id=(
                             str(order["client_order_id"])
@@ -1560,7 +1551,7 @@ def reconcile() -> dict:
                     )
                     if funding_request is not None:
                         try:
-                            funding_ledger = _run_coro(client.get_funding_ledger(
+                            funding_ledger = run_coro_from_sync(client.get_funding_ledger(
                                 broker_id=execution_mode,
                                 symbol=str(funding_request["position"]["symbol"]),
                                 start_time_ms=int(funding_request["start_time_ms"]),

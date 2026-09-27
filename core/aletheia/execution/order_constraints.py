@@ -8,16 +8,15 @@ reason to guess at an order size.
 
 from __future__ import annotations
 
-import asyncio
 import math
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, InvalidOperation
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from collections.abc import Awaitable, Callable
 
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
 _VENUES = EXECUTION_MODE_VENUES
@@ -104,17 +103,6 @@ def normalize_quantity(quantity: float, price: float, constraints: OrderConstrai
     return float(adjusted)
 
 
-def _run(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # Gateway functions are synchronous and can be called by an async route.  The
-    # cold refresh must not freeze that route's event loop.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 def get_order_constraints(execution_mode: str, symbol: str, market_type: str) -> OrderConstraints:
     """Read-through, short-lived cache of rules for the actual order venue.
 
@@ -142,7 +130,7 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
         cached = _cache.get(key)
         if cached and now - cached[1] < _CACHE_TTL_SECONDS:
             return cached[0]
-    constraints = _run(reader(execution_mode, venue, symbol, market_type))
+    constraints = run_coro_from_sync(reader(execution_mode, venue, symbol, market_type))
     with _cache_lock:
         _cache[key] = (constraints, time.monotonic())
     return constraints

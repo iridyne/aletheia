@@ -13,6 +13,7 @@ import ccxt
 import pytest
 
 from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
     CancelOrderCommand,
@@ -554,6 +555,31 @@ def test_adapter_refuses_cross_loop_reuse(monkeypatch):
     with pytest.raises(UTAError) as read_exc:
         asyncio.run(adapter.get_account())
     assert read_exc.value.reason == "cross_loop_adapter_reuse"
+
+
+def test_sync_bridge_keeps_one_adapter_valid_across_calls(monkeypatch):
+    """One adapter must survive two bridge calls; a fresh loop per call breaks it.
+
+    ``coordinator.execute_order`` re-anchors a drifted identity through the bridge
+    and then submits through the same adapter. With a loop per call the second
+    call raised ``cross_loop_adapter_reuse`` and the order was never submitted
+    (issue #3507 family: post-rotation execution paths stalling before submission).
+    """
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.balance_responses = [
+        {"total": {"USDT": "10"}, "free": {"USDT": "8"}, "used": {"USDT": "2"}, "info": []}
+        for _ in profile.balance_requests
+    ]
+    session, _calls = _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    run_coro_from_sync(adapter.connect())
+    account = run_coro_from_sync(adapter.get_account())
+    run_coro_from_sync(adapter.close())
+
+    assert account.completeness is ReadCompleteness.COMPLETE
+    assert session.closed is True
 
 
 @pytest.mark.asyncio

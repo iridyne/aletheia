@@ -6,13 +6,13 @@ import asyncio
 import json
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
 logger = logging.getLogger("aletheia.execution.coordinator")
 
+from aletheia.async_utils import run_coro_from_sync
 from aletheia.execution.broker_utils import (
     close_acknowledgement_result,
     entry_acknowledgement_result,
@@ -56,18 +56,9 @@ _RETRY_SUPPRESSING_ORDER_STATES = (
 )
 
 
-def _run(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 def _close_adapter(adapter) -> None:
     try:
-        _run(adapter.close())
+        run_coro_from_sync(adapter.close())
     except Exception:
         # Adapter close is best-effort — the caller is often already in an
         # error path and the exchange session will eventually time out. But
@@ -429,7 +420,7 @@ def execute_order(
             (execution_mode, order.id, *_RETRY_SUPPRESSING_ORDER_STATES, execution_mode),
         ).fetchall()
         if not _all_rows_match_current_identity(rows, adapter.identity):
-            if not _run(_reanchor_generation_drift_rows(execution_mode, adapter, rows)):
+            if not run_coro_from_sync(_reanchor_generation_drift_rows(execution_mode, adapter, rows)):
                 raise ValueError("uta_account_identity_mismatch")
         order.uta_account_identity_json = adapter.identity.model_dump_json()
         if before_submission is None:
@@ -481,7 +472,7 @@ def execute_order(
     try:
         if submission_started is not None:
             submission_started()
-        report = _run(_call_and_close(adapter, "submit_order", command))
+        report = run_coro_from_sync(_call_and_close(adapter, "submit_order", command))
     except Exception:
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
     acknowledgement = _apply_report(
@@ -682,7 +673,7 @@ def close_position(
         # current generation.  Re-bind only after the venue proves the exact open
         # Position still exists under current credentials; otherwise fail closed.
         try:
-            venue_positions = _run(_venue_positions(adapter))
+            venue_positions = run_coro_from_sync(_venue_positions(adapter))
         except Exception:
             venue_positions = None
         venue_position_id = (
@@ -724,7 +715,7 @@ def close_position(
         and adapter.capabilities.match_cap_close_fallback is CapabilitySupport.SUPPORTED
     ):
         try:
-            reference = _run(_close_reference_price(row, adapter.identity.venue))
+            reference = run_coro_from_sync(_close_reference_price(row, adapter.identity.venue))
             venue_buy = row["direction"] not in {"long", "buy"}
             factor = 1.0 + _MARKETABLE_LIMIT_TOLERANCE if venue_buy else 1.0 - _MARKETABLE_LIMIT_TOLERANCE
             limit_price = _quantize_to_reference_precision(reference * factor, reference, up=not venue_buy)
@@ -748,7 +739,7 @@ def close_position(
         reduce_only=True,
     )
     try:
-        report = _run(_call_and_close(adapter, "submit_order", command))
+        report = run_coro_from_sync(_call_and_close(adapter, "submit_order", command))
     except Exception:
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
     acknowledgement = _apply_report(order, report, close_position_id=position_id)
@@ -756,11 +747,11 @@ def close_position(
 
 
 def modify_order(command: ModifyOrderCommand):
-    return _run(_command(command.expected_account.execution_mode, "modify_order", command))
+    return run_coro_from_sync(_command(command.expected_account.execution_mode, "modify_order", command))
 
 
 def cancel_order(command: CancelOrderCommand):
-    return _run(_command(command.expected_account.execution_mode, "cancel_order", command))
+    return run_coro_from_sync(_command(command.expected_account.execution_mode, "cancel_order", command))
 
 
 def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -> str:
@@ -801,7 +792,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
             trigger_price=Decimal(str(trigger_price)),
             reduce_only=True,
         )
-        report = _run(_call_and_close(adapter, "submit_order", command))
+        report = run_coro_from_sync(_call_and_close(adapter, "submit_order", command))
     except Exception:
         if adapter is None or command is None:
             transition_order(order.id, status="error", error_reason="protection_not_sent")
@@ -886,7 +877,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
         reason="replace_protective_stop",
     )
     try:
-        cancelled = _run(_call_and_close(adapter, "cancel_order", command))
+        cancelled = run_coro_from_sync(_call_and_close(adapter, "cancel_order", command))
     except Exception as exc:
         logger.warning(
             "replace_protective_stop: cancel of old stop %s failed for %s (%s)",
