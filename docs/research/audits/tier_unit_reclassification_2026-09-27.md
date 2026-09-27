@@ -168,13 +168,17 @@ Nothing in this report has been applied to `tests/conftest.py`; option (1) and
 
 ## 8. Follow-up measurement — 2026-09-28
 
-The content classifier is now present; the current campaign (#3438) authorizes
-content-based classification. Filename integration rules still run before its
-top-level-import check. The historical counts above are not current receipts.
+At this baseline, filename rules preceded the content classifier
+top-level-import check. The current campaign (#3438) authorizes content-based
+classification; §9 records its later correction. These are historical receipts.
 
-At `77e143885`, a serial `uv run pytest tests -q -m tier_unit --timeout=90
+At [77e143885b17c5db7a60428fd67a324edba3401e](https://github.com/iridyne/aletheia/commit/77e143885b17c5db7a60428fd67a324edba3401e),
+a serial `uv run pytest tests -q -m tier_unit --timeout=90
 --durations=30` run produced **3789 passed, 1 skipped, 7807 deselected**,
 12 warnings, pytest 102.80 s, wall **107.64 s**. This does not meet 60 s.
+This was the measured head of [PR #3586](https://github.com/iridyne/aletheia/pull/3586),
+not an ancestor of this performance PR. Fetch `refs/pull/3586/head` from origin
+to obtain that commit; do not substitute a different source SHA for the receipt.
 
 An unchanged four-file selection (`test_planning_writer_boundary.py`,
 `test_proposal_writer_boundary.py`, `test_order_writer_boundary.py`,
