@@ -426,19 +426,23 @@
     },
     {
       "file": "core/aletheia/gateway/pidfile.py",
-      "line": 256
+      "line": 256,
+      "reason": "outer wrap of pid-tree teardown; comment: 'best-effort teardown; never raise'"
     },
     {
       "file": "core/aletheia/gateway/pidfile.py",
-      "line": 369
+      "line": 369,
+      "reason": "expected int parse skip when walking /proc or ps output; non-integer rows (headers, warnings) are noise, not defects"
     },
     {
       "file": "core/aletheia/gateway/pidfile.py",
-      "line": 381
+      "line": 381,
+      "reason": "expected int parse skip when reading Linux /proc/<pid>/task/*/children"
     },
     {
       "file": "core/aletheia/gateway/pidfile.py",
-      "line": 383
+      "line": 383,
+      "reason": "outer wrap of process-tree enumeration; used only as best-effort teardown, must not throw"
     },
     {
       "file": "core/aletheia/gateway/session_service.py",
