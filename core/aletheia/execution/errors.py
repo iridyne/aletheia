@@ -7,6 +7,7 @@ import json
 import httpx
 
 from aletheia.execution.order_constraints import ConstraintUnavailable
+from aletheia.uta.models import ReadCompleteness
 
 
 class PostSubmitDBError(RuntimeError):
@@ -43,6 +44,60 @@ class SubmissionUnknownError(RuntimeError):
         super().__init__(message)
         self.exchange_order_id = exchange_order_id
         self.client_oid = client_oid
+
+
+class IncompleteReadError(RuntimeError):
+    """A UTA read could not prove ``ReadCompleteness.COMPLETE``.
+
+    Raised at the reconciliation projection boundary in place of a bare
+    ``RuntimeError(reason_code)``. The bare form conflated two different
+    semantics behind one opaque type name: a *structural* PARTIAL (the venue
+    profile cannot serve the requested scope, e.g.
+    ``private_order_history_start_required``) and a *transient* failure
+    (network, rate limit, auth flake). Callers logged only
+    ``type(exc).__name__`` — literally ``"RuntimeError"`` — so the
+    ``reason_code``, which is the entire diagnostic payload, never reached
+    ``errors.log``.
+
+    Subclasses ``RuntimeError`` deliberately: every existing
+    ``except Exception`` handler around a projection read keeps its current
+    fail-closed behaviour unchanged, while handlers that want to dispatch on
+    the failure kind can now read ``completeness`` and ``reason_code``
+    programmatically. This is a subclass *narrowing*, not a compatibility
+    shim: there is exactly one live implementation of "UTA read incompleteness"
+    and nothing reads the old bare-``RuntimeError`` spelling.
+
+    Carrying ``completeness`` separately from ``reason_code`` is what lets a
+    caller distinguish structural from transient without string-matching:
+    ``UNSUPPORTED``/``PARTIAL`` are venue-profile facts that will recur for
+    every identical request, whereas ``UNAVAILABLE`` is typically retryable.
+    Nothing in this class decides retry policy — it only preserves the
+    evidence a policy would need.
+    """
+
+    def __init__(
+        self,
+        reason_code: str | None,
+        endpoint: str,
+        execution_mode: str,
+        market_type: str | None = None,
+        symbol: str | None = None,
+        *,
+        completeness: ReadCompleteness | None = None,
+    ) -> None:
+        self.reason_code: str = reason_code or f"uta_{endpoint}_incomplete"
+        self.endpoint = endpoint
+        self.execution_mode = execution_mode
+        self.market_type = market_type
+        self.symbol = symbol
+        self.completeness = completeness
+        super().__init__(self.reason_code)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.endpoint}({self.execution_mode}/{self.market_type or '*'}/"
+            f"{self.symbol or '*'}) incomplete: {self.reason_code}"
+        )
 
 
 def is_transient_dependency_error(error: BaseException) -> bool:

@@ -246,6 +246,16 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
 | 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
 
+UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
+（`core/aletheia/execution/errors.py`）抛出，不得使用裸 `RuntimeError`。异常携带
+`reason_code`、`completeness`、`endpoint`、`execution_mode`、`market_type`、`symbol`，
+使调用方能在不匹配消息文本的前提下区分**结构性** `PARTIAL`/`UNSUPPORTED`（venue profile
+无法服务该 scope，重试必然同样失败）与**瞬时** `UNAVAILABLE`。裸 `RuntimeError` 会把全部
+诊断信息压缩成 `errors.log` 里的字符串 `"RuntimeError"`，使实际故障原因不可观测。
+凡包裹此类读取的 `except … as exc:` 处理器，其 `logger.warning` 必须同时记录
+`type(exc).__name__` 与该异常的 `reason_code`。类型化只增加诊断词汇，不授予任何新权限：
+不得据此自动重试，不得把 incomplete 读取变成空、零或"仓位已消失"的证据。见 `INV-EX-1`。
+
 **Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
 
 Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
@@ -490,6 +500,20 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 > prove the venue never received the order; it proves only that the read window
 > completed. Automatic machine logic MUST NOT treat it as proof of non-existence.
 >
+> Incompleteness MUST be typed, not stringly-raised. Any UTA read that cannot prove
+> `ReadCompleteness.COMPLETE` MUST fail with `IncompleteReadError`
+> (`core/aletheia/execution/errors.py`), never a bare `RuntimeError`. The exception
+> carries `reason_code`, `completeness`, `endpoint`, `execution_mode`, `market_type`,
+> and `symbol`, so a caller can distinguish a *structural* `PARTIAL`/`UNSUPPORTED` —
+> the venue profile cannot serve the requested scope, and every identical retry will
+> fail the same way — from a *transient* `UNAVAILABLE`, without matching on message
+> text. A bare `RuntimeError` conflated the two and reduced the whole diagnostic to
+> the literal string `"RuntimeError"` in `errors.log`. `IncompleteReadError`
+> subclasses `RuntimeError`, so existing fail-closed `except Exception` handlers keep
+> their current behaviour and no caller is forced to change. Typing the failure grants
+> no new authority: it MUST NOT be read as permission to retry, to synthesise an empty
+> or zero result, or to treat an incomplete read as evidence of absence.
+>
 > Terminal resolution is exclusively human-authorized, through an operator tool
 > that revalidates the full evidence snapshot under the writer lock immediately
 > before mutation and records `manual_close_claim_resolved` with `actor=human`.
@@ -515,11 +539,23 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 |---|---|---|
 | `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
 
+**INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
+raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`
+handler that wraps such a read MUST include that exception's `reason_code` alongside
+`type(exc).__name__`, so the venue-reported reason reaches `errors.log` instead of the
+opaque type name. Structurally guarded by
+`tests/audit/test_reconciliation_incomplete_read_logging.py`, which discovers the
+call sites from the module AST rather than from a maintained list, and which fails if
+the set of discovered sites is empty — a guard that silently matches nothing is not
+a guard.
+
 > **Documented limitation**: `get_order_detail_by_client_oid`
-> (`reconciliation.py:890-904`) issues a scope without `start_at`; for a venue
-> profile with no client-order lookup parameter this read is structurally
-> `PARTIAL` (`private_order_history_start_required`). Such claims reach the
-> terminal bound for that reason alone. Accepted; tracked separately.
+> (`core/aletheia/execution/reconciliation.py`, method `get_order_detail_by_client_oid`)
+> issues a scope without `start_at`; for a venue profile with no client-order lookup
+> parameter this read is structurally `PARTIAL`
+> (`private_order_history_start_required`). Such claims reach the terminal bound for
+> that reason alone. Accepted; tracked separately. After `INV-EX-1` this reason is
+> visible in `errors.log` rather than hidden behind `RuntimeError`.
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 

@@ -20,6 +20,7 @@ from aletheia.config.exchanges import execution_mode_environment, execution_mode
 from aletheia.data.symbols import to_bitget
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
+from aletheia.execution.errors import IncompleteReadError
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     durable_private_fill_id,
@@ -822,7 +823,13 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_open_orders_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_open_orders",
+                self.execution_mode,
+                market_type,
+                completeness=report.completeness,
+            )
         return [
             self._order_row(order)
             for order in report.orders
@@ -850,7 +857,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_fills_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_fills",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return [
             fill for fill in report.fills
             if fill.instrument.market_type == market_type
@@ -876,7 +890,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_fills",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return list(report.fills)
     async def get_order_status(
         self,
@@ -898,7 +919,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_order",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         return report.found
 
     async def get_order_detail_by_client_oid(
@@ -914,7 +942,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_order",
+                self.execution_mode,
+                "usdt_futures",
+                symbol,
+                completeness=report.completeness,
+            )
         return self._order_row(report.found) if report.found else None
 
     async def get_funding_ledger(
@@ -939,7 +974,14 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
-            raise RuntimeError(report.reason_code or "uta_funding_incomplete")
+            raise IncompleteReadError(
+                report.reason_code,
+                "get_funding_ledger",
+                self.execution_mode,
+                market_type,
+                symbol,
+                completeness=report.completeness,
+            )
         events = [
             {
                 "event_id": entry.venue_ledger_id,
@@ -1062,10 +1104,11 @@ def reconcile() -> dict:
                 f"{execution_mode}/{market_type}: private fill query unavailable"
             )
             logger.warning(
-                "reconcile: private fill query failed for %s order %s (%s)",
+                "reconcile: private fill query failed for %s order %s (%s: %s)",
                 execution_mode,
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
             _write_reconcile_event(
                 order,
@@ -1087,10 +1130,11 @@ def reconcile() -> dict:
                         f"{execution_mode}/{market_type}: private funding history unavailable"
                     )
                     logger.warning(
-                        "reconcile: funding query failed for %s order %s (%s)",
+                        "reconcile: funding query failed for %s order %s (%s: %s)",
                         execution_mode,
                         order["id"],
                         type(exc).__name__,
+                        getattr(exc, "reason_code", "no_reason_code"),
                     )
         try:
             result = (
@@ -1251,9 +1295,10 @@ def reconcile() -> dict:
             inconclusive += 1
             errors.append("bitget_demo: historical exact fill history unavailable")
             logger.warning(
-                "reconcile: historical exact fills failed for order %s (%s)",
+                "reconcile: historical exact fills failed for order %s (%s: %s)",
                 order["id"],
                 type(exc).__name__,
+                getattr(exc, "reason_code", "no_reason_code"),
             )
             _write_filled_gap_event(
                 order,
@@ -1362,10 +1407,11 @@ def reconcile() -> dict:
                     f"{execution_mode}/{market_type}: open-order query unavailable"
                 )
                 logger.warning(
-                    "reconcile: open-order query failed for %s/%s (%s)",
+                    "reconcile: open-order query failed for %s/%s (%s: %s)",
                     execution_mode,
                     market_type,
                     type(exc).__name__,
+                    getattr(exc, "reason_code", "no_reason_code"),
                 )
             try:
                 fill_rows[market_type] = _response_rows(
@@ -1377,10 +1423,11 @@ def reconcile() -> dict:
                 fill_rows[market_type] = []
                 failed_default_fill_markets.add(market_type)
                 logger.warning(
-                    "reconcile: default private fills failed for %s/%s (%s)",
+                    "reconcile: default private fills failed for %s/%s (%s: %s)",
                     execution_mode,
                     market_type,
                     type(exc).__name__,
+                    getattr(exc, "reason_code", "no_reason_code"),
                 )
 
         for order in mode_orders:
@@ -1422,9 +1469,10 @@ def reconcile() -> dict:
                         )
                     except Exception as exc:
                         logger.warning(
-                            "reconcile: clientOid detail lookup failed for order %s (%s)",
+                            "reconcile: clientOid detail lookup (get_order) failed for order %s (%s: %s)",
                             order["id"],
                             type(exc).__name__,
+                            getattr(exc, "reason_code", "no_reason_code"),
                         )
                         detail = None
                     if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
@@ -1457,10 +1505,11 @@ def reconcile() -> dict:
                         f"{execution_mode}/{market_type}: exact fill history unavailable"
                     )
                     logger.warning(
-                        "reconcile: exact fills failed for %s order %s (%s)",
+                        "reconcile: exact fills failed for %s order %s (%s: %s)",
                         execution_mode,
                         order["id"],
                         type(exc).__name__,
+                        getattr(exc, "reason_code", "no_reason_code"),
                     )
                     _write_reconcile_event(
                         order,
@@ -1493,11 +1542,12 @@ def reconcile() -> dict:
                     except Exception as exc:
                         symbol_fill_rows[cache_key] = None
                         logger.warning(
-                            "reconcile: symbol private fills failed for %s/%s/%s (%s)",
+                            "reconcile: symbol private fills failed for %s/%s/%s (%s: %s)",
                             execution_mode,
                             market_type,
                             exchange_symbol,
                             type(exc).__name__,
+                            getattr(exc, "reason_code", "no_reason_code"),
                         )
                 scoped_rows = symbol_fill_rows.get(cache_key) if exchange_symbol else None
                 if scoped_rows is None:
@@ -1553,9 +1603,10 @@ def reconcile() -> dict:
                         ioc_terminal_quantity = float(exact_order.filled_quantity)
                 except Exception as exc:
                     logger.warning(
-                        "reconcile: exact IOC status failed for order %s (%s)",
+                        "reconcile: exact IOC status failed for order %s (%s: %s)",
                         order["id"],
                         type(exc).__name__,
+                        getattr(exc, "reason_code", "no_reason_code"),
                     )
             if order.get("source") == "native":
                 funding_ledger = None
@@ -1577,9 +1628,10 @@ def reconcile() -> dict:
                                 "private funding history unavailable"
                             )
                             logger.warning(
-                                "reconcile: funding query failed for order %s (%s)",
+                                "reconcile: funding query failed for order %s (%s: %s)",
                                 order["id"],
                                 type(exc).__name__,
+                                getattr(exc, "reason_code", "no_reason_code"),
                             )
                 try:
                     result = (
