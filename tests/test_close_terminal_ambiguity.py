@@ -211,11 +211,14 @@ def test_null_requested_at_treated_as_terminal_fail_closed(tmp_path, monkeypatch
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
 
-    evaluate_open_positions()
-    assert (
-        _get_position(p.id)["pending_close_status"]
-        == "manual_reconciliation_pending"
-    )
+    result = evaluate_open_positions()
+    row = _get_position(p.id)
+    assert row["pending_close_status"] == "manual_reconciliation_pending"
+    assert row["pending_close_order_id"] == p.pending_close_order_id
+    assert row["pending_close_requested_at"] is None
+    assert result["closed"] == 0
+    assert result["errors"] == []
+    assert result["escalated"] == []
 
 
 def test_malformed_requested_at_treated_as_terminal_fail_closed(tmp_path, monkeypatch):
@@ -242,11 +245,14 @@ def test_future_requested_at_treated_as_terminal_fail_closed(tmp_path, monkeypat
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
 
-    evaluate_open_positions()
-    assert (
-        _get_position(p.id)["pending_close_status"]
-        == "manual_reconciliation_pending"
-    )
+    result = evaluate_open_positions()
+    row = _get_position(p.id)
+    assert row["pending_close_status"] == "manual_reconciliation_pending"
+    assert row["pending_close_order_id"] == p.pending_close_order_id
+    assert row["pending_close_requested_at"] == future
+    assert result["closed"] == 0
+    assert result["errors"] == []
+    assert result["escalated"] == []
 
 
 # ── C. distinct audit namespace + fence ─────────────────────────────────────
