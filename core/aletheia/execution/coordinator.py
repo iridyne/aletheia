@@ -635,6 +635,7 @@ def _position_account(position: dict) -> UTAAccountIdentity:
     return identity
 
 def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
+    from aletheia.execution.pending_close_recovery import next_close_client_oid
     from aletheia.storage import repositories as repo
 
     with transaction(immediate=True):
@@ -645,10 +646,11 @@ def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
             raise ValueError(f"position {position_id} is not open")
         if has_unresolved_close_claim(row):
             return row, None
+        client_order_id = next_close_client_oid(position_id)
         close_order = Order(
             uta_account_identity_json=_position_account(row).model_dump_json(),
             proposal_id=row.get("proposal_id"),
-            client_order_id=f"close-{position_id}",
+            client_order_id=client_order_id,
             position_id=position_id,
             close_reason=reason,
             close_reasoning=close_reasoning,

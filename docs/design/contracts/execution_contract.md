@@ -453,7 +453,14 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
 - **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
-  not been used by a prior close attempt on the same position（PR5 落地执行；本条先锁定契约）。
+  not been used by a prior close attempt on the same position. The coordinator's `_claim_close`
+  obtains the identifier via `pending_close_recovery.next_close_client_oid(position_id)`, which
+  selects `close-{position_id}` when no prior attempt exists and `close-{position_id}-r{N+1}`
+  otherwise, where `N` is the max retry index observed in the orders table for that position.
+  Allocation MUST occur inside the same `sqlite.transaction(immediate=True)` writer lock that
+  mutates `positions.pending_close_*`; a read-then-compute outside that lock would race with
+  concurrent close-claim allocation on the same position. A structural AST guard test
+  (`tests/audit/close_client_oid_transaction_guard.py`) enforces this containment.
 
 #### 10.2.4 Terminal bound on close-side submission ambiguity
 
@@ -491,6 +498,12 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 > `submission_rejected`, claim released, any subsequent close MUST use a freshly
 > allocated close `client_order_id`), and operator-settled-outside-gateway (audit
 > only).
+>
+> When operator-authorized resolution transitions the ambiguous order to
+> `submission_rejected`, any subsequent close attempt on the same position MUST use a
+> freshly allocated `client_order_id` returned by `next_close_client_oid` (never the
+> historical `close-{position_id}` literal). This is enforced by construction in
+> `_claim_close` and by the uniqueness guard tests above.
 >
 > The terminal bound is evaluated for every unresolved close claim on each
 > `position_manager` pass and is a purely local-DB judgment (no venue read is
