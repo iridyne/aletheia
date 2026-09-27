@@ -8,6 +8,7 @@ from tests.fixtures.repo_test_helpers import latest_pi_decision, list_pi_decisio
 
 import pytest
 
+from tests.module_source import module_source
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -273,7 +274,7 @@ def test_account_equity_snapshot_contract_is_explicit():
 
     root = Path(__file__).parent.parent.parent
     migration = (root / "core" / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
-    repository = (root / "core" / "aletheia" / "storage" / "repositories.py").read_text(encoding="utf-8")
+    repository = module_source("core/aletheia/storage/repositories.py")
     overview = (root / "frontend" / "src" / "charts" / "AccountEquityChart.tsx").read_text(encoding="utf-8")
     assert '"account_equity_usdt", "portfolio_snapshots", "REAL"' in migration
     assert "account_equity_usdt IS NOT NULL" in repository
