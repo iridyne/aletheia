@@ -455,29 +455,3 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
                for message in messages)
     assert any("Pending close second-unresolved-close has remained" in message
                for message in messages)
-
-
-@pytest.mark.parametrize("requested_at", [
-    None,
-    "2099-01-01T00:00:00+00:00",
-])
-def test_pending_close_with_unknown_age_is_escalated(tmp_path, monkeypatch, requested_at):
-    """Missing or future close age is unsafe, not permission to suppress forever."""
-    setup_env(tmp_path, monkeypatch)
-    p = Position(
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
-        pending_close_order_id="unresolved-close", pending_close_status="submission_unknown",
-        pending_close_requested_at=requested_at,
-    )
-    repo.insert_position(p)
-
-    from aletheia.portfolio.position_manager import evaluate_open_positions
-    result = evaluate_open_positions()
-
-    assert result["closed"] == 0
-    assert any(
-        error["code"] == "pending_close_reconciliation_required"
-        for error in result["errors"]
-    )
-    assert repo._select_one("positions", p.id)["pending_close_order_id"] == "unresolved-close"

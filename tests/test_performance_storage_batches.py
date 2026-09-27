@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.agents import helpers
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
@@ -98,7 +100,46 @@ def test_collector_tick_uses_one_transaction(tmp_path, monkeypatch):
     assert counts == {"orderbooks": 1, "funding": 1, "open_interest": 1}
     assert sum(statement == "BEGIN" for statement in trace) == 1
     assert sum(statement == "COMMIT" for statement in trace) == 1
+    assert tuple(db.execute(
+        "SELECT symbol, bid_price, ask_price FROM orderbook_snapshots"
+    ).fetchone()) == ("BTC/USDT", 100.0, 101.0)
+    assert tuple(db.execute(
+        "SELECT symbol, funding_rate FROM funding_rate_snapshots"
+    ).fetchone()) == ("BTC/USDT", 0.0001)
+    assert tuple(db.execute(
+        "SELECT symbol, open_interest_usd FROM open_interest_snapshots"
+    ).fetchone()) == ("BTC/USDT", 1_000_000.0)
     reset_db()
+
+
+def test_collector_batch_rolls_back_earlier_snapshots_when_sqlite_rejects_a_later_row(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    db = get_db()
+    db.execute(
+        "CREATE TRIGGER reject_collector_oi BEFORE INSERT ON open_interest_snapshots "
+        "BEGIN SELECT RAISE(ABORT, 'synthetic collector rejection'); END"
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with pytest.raises(repo.CollectorBatchPersistError, match="open_interest"):
+            repo.insert_collector_snapshot_batch(
+                orderbooks=[{
+                    "symbol": "BTC/USDT", "exchange": "okx", "market_type": "spot",
+                    "bid_price": 100.0, "ask_price": 101.0, "observed_at": now,
+                    "spread_bps": 100.0, "bid_depth_10bps_usd": 1_000.0,
+                    "ask_depth_10bps_usd": 900.0, "total_depth_10bps_usd": 1_900.0,
+                    "imbalance_ratio": 0.1, "fetch_latency_ms": 10,
+                }],
+                open_interest=[{
+                    "symbol": "BTC/USDT", "exchange": "okx", "open_interest_usd": 1_000_000.0,
+                    "open_interest_coin": 10_000.0, "observed_at": now,
+                    "oi_change_1h_pct": 1.0, "long_short_ratio": 1.1,
+                }],
+            )
+        assert db.execute("SELECT COUNT(*) FROM orderbook_snapshots").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM open_interest_snapshots").fetchone()[0] == 0
+    finally:
+        reset_db()
 
 
 def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
