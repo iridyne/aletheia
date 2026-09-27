@@ -7,12 +7,12 @@
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 462,
-      "reason": "SIG_IGN under signal handler; signal.signal() raises in worker threads by design — swallow so shutdown flow continues"
+      "reason": "SIG_IGN under signal handler; signal.signal() raises off the main thread by design"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 470,
-      "reason": "signal.signal() raises when supervisor invoked off the main thread; leave default disposition (comment above documents this)"
+      "reason": "signal.signal() raises when supervisor invoked off the main thread; leave default disposition"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -27,7 +27,7 @@
     {
       "file": "core/aletheia/_gateway_runner.py",
       "line": 798,
-      "reason": "best-effort ready-beacon unlink; docstring: 'Best-effort; never raises' — used on shutdown to keep next-start clean"
+      "reason": "best-effort ready-beacon unlink; docstring: 'Best-effort; never raises'"
     },
     {
       "file": "core/aletheia/agent_runtime/auto_resume.py",
@@ -331,31 +331,18 @@
     },
     {
       "file": "core/aletheia/gateway/autostart.py",
-      "line": 94
+      "line": 342,
+      "reason": "tempfile cleanup on failure (finally block); rare OS unlink error is ok to leak"
     },
     {
       "file": "core/aletheia/gateway/autostart.py",
-      "line": 102
+      "line": 924,
+      "reason": "legacy launchd removal fallback; comment: 'disable still succeeds; doctor probe will surface lingering legacy jobs'"
     },
     {
       "file": "core/aletheia/gateway/autostart.py",
-      "line": 339
-    },
-    {
-      "file": "core/aletheia/gateway/autostart.py",
-      "line": 523
-    },
-    {
-      "file": "core/aletheia/gateway/autostart.py",
-      "line": 921
-    },
-    {
-      "file": "core/aletheia/gateway/autostart.py",
-      "line": 961
-    },
-    {
-      "file": "core/aletheia/gateway/autostart.py",
-      "line": 1153
+      "line": 964,
+      "reason": "tempfile cleanup on failure (finally block); rare OS unlink error is ok to leak"
     },
     {
       "file": "core/aletheia/gateway/console_text.py",

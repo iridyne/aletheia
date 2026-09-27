@@ -20,6 +20,7 @@ Governance:
   - Never raises into callers; degrades to honest dicts on every error.
 """
 
+import logging
 import os
 import platform
 import plistlib
@@ -37,6 +38,8 @@ from aletheia.files.jsonl import write_audit
 from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.gateway.windows_identity import current_windows_user as _current_user
+
+logger = logging.getLogger("aletheia.gateway.autostart")
 
 TASK_NAME = "Aletheia Trading OS Gateway"
 LAUNCHD_LABEL = "com.aletheia.trading-os.gateway"
@@ -92,7 +95,7 @@ def _python_for_task() -> str:
                         return str(real_pyw)
                     break
         except (OSError, ValueError):
-            pass
+            logger.debug("pythonw.exe probe: pyvenv.cfg read failed", exc_info=True)
 
     # Fallback: try sibling pythonw.exe (non-uv venvs or system install).
     try:
@@ -100,7 +103,7 @@ def _python_for_task() -> str:
         if _exists(pyw):
             return str(pyw)
     except (ValueError, OSError):
-        pass
+        logger.debug("pythonw.exe probe: sibling path check failed", exc_info=True)
     return exe
 
 
@@ -521,7 +524,7 @@ def _bootout_legacy_macos(
                 "message": f"Removed verified legacy LaunchAgent {label}.",
             })
         except Exception:
-            pass
+            logger.warning("legacy launchd removal audit failed for %s", label, exc_info=True)
         removed.append(label)
     return removed
 
@@ -1151,7 +1154,7 @@ def status() -> dict:
         if list_proc.returncode == 0:
             runtime_info = _parse_runtime_status(list_proc.stdout)
     except Exception:
-        pass
+        logger.debug("schtasks LIST /V query failed; runtime_info left empty", exc_info=True)
 
     last_run_time = runtime_info.get("last_run_time", "")
     last_result = runtime_info.get("last_result", "")
