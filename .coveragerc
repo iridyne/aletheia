@@ -20,6 +20,7 @@ include =
     */core/aletheia/analytics/profit_gradient.py
     */core/aletheia/analytics/profit_gradient_estimators.py
     */core/aletheia/analytics/profit_gradient_evidence.py
+    */core/aletheia/analytics/profit_gradient_evidence_utils.py
     */core/aletheia/analytics/position_replay.py
     */core/aletheia/analytics/momentum_geometry_replay.py
     */extensions/counterfactual/filter_replay.py

@@ -13,13 +13,14 @@ or bypasses a check — nothing else.
 
 ## What is gated
 
-`.coveragerc` scopes measurement to ten files:
+`.coveragerc` scopes measurement to eleven files:
 
 | Boundary | File |
 |---|---|
 | Profit Gradient | `aletheia/analytics/profit_gradient.py` |
 | Profit Gradient estimators | `aletheia/analytics/profit_gradient_estimators.py` |
 | Profit Gradient evidence | `aletheia/analytics/profit_gradient_evidence.py` |
+| Profit Gradient evidence helpers | `aletheia/analytics/profit_gradient_evidence_utils.py` |
 | Policy epoch | `aletheia/learning/policy_epochs.py` |
 | Evidence epoch / cutoff | `aletheia/learning/evidence_epoch.py` |
 | Context-artifact compiler | `aletheia/economics/context_artifacts.py` |
@@ -66,6 +67,7 @@ uv run pytest \
   tests/test_p3_evidence_epoch.py \
   tests/test_filter_replay.py \
   tests/test_position_replay.py \
+  tests/test_momentum_geometry_replay.py \
   tests/test_reconciliation.py \
   tests/test_oco_reconcile.py \
   tests/test_cr_ex01_reconcile.py \

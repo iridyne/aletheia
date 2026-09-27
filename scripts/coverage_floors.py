@@ -35,6 +35,7 @@ FLOORS: dict[str, float] = {
     "core/aletheia/analytics/profit_gradient.py": 90.0,
     "core/aletheia/analytics/profit_gradient_estimators.py": 90.0,
     "core/aletheia/analytics/profit_gradient_evidence.py": 50.0,
+    "core/aletheia/analytics/profit_gradient_evidence_utils.py": 93.0,
     "core/aletheia/analytics/position_replay.py": 75.0,
     "core/aletheia/analytics/momentum_geometry_replay.py": 75.0,
     "extensions/counterfactual/filter_replay.py": 50.0,
