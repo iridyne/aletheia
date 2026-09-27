@@ -4731,8 +4731,3 @@ def _get_observed_instruments(cfg):
 def _get_derivative_symbols(instruments) -> list[str]:
     """Public funding collection follows the currently observed instruments."""
     return list(dict.fromkeys(item.symbol for item in instruments))
-
-
-def _get_observed_symbols(cfg) -> list[str]:
-    """Compatibility view for symbol-only cross-venue consumers and tests."""
-    return list(dict.fromkeys(item.symbol for item in (_get_observed_instruments(cfg) or [])))
