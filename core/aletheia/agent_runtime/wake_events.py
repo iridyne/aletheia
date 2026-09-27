@@ -31,6 +31,9 @@ THESIS_INVALIDATED = "thesis_invalidated"
 HORIZON_DUE = "horizon_due"
 ADVERSE_SIGNAL = "adverse_signal"
 TAKE_PROFIT_NEAR = "take_profit_near"
+# A close claim aged past its terminal-ambiguity bound is human-owned; the wake
+# is P1 must-answer, never dropped under rate pressure.
+MANUAL_CLOSE_RECONCILIATION_REQUIRED = "manual_close_reconciliation_required"
 
 P0, P1, P2, P3 = 0, 1, 2, 3
 _DEFAULT_PRIORITY = P2
@@ -42,6 +45,7 @@ PRIORITY: dict[str, int] = {
     HORIZON_DUE: P1,        # D3: horizon-due is a "must-answer" wake → never dropped
     ADVERSE_SIGNAL: P2,     # caller may override from signal score (see below)
     TAKE_PROFIT_NEAR: P3,
+    MANUAL_CLOSE_RECONCILIATION_REQUIRED: P1,
 }
 
 # Priority at/below this tier is never dropped under rate pressure — it requeues

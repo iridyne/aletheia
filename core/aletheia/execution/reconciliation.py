@@ -73,14 +73,28 @@ _OPEN_LOCAL_STATES = (
 
 
 def _list_unresolved_core_orders() -> list[dict]:
-    """Read every unresolved core Order; reconciliation must not truncate risk."""
+    """Read every unresolved core Order; reconciliation must not truncate risk.
+
+    Orders whose linked Position carries the terminally ambiguous
+    ``manual_reconciliation_pending`` close state are excluded from the ordinary
+    scan. That claim is human-owned, and polling it every pass would only keep
+    writing ``order_reconciliation_inconclusive`` rows for a condition no
+    machine action can resolve. The Order itself stays in an open local state,
+    so a fill arriving after the bound is still materialized once an operator
+    resolves the claim (PR4).
+    """
     placeholders = ",".join("?" for _ in _OPEN_LOCAL_STATES)
     rows = get_db().execute(
         f"""
-        SELECT *
+        SELECT orders.*
         FROM orders
-        WHERE status IN ({placeholders})
-        ORDER BY created_at ASC, rowid ASC
+        LEFT JOIN positions ON positions.id = orders.position_id
+        WHERE orders.status IN ({placeholders})
+          AND (
+              positions.pending_close_status IS NULL
+              OR positions.pending_close_status != 'manual_reconciliation_pending'
+          )
+        ORDER BY orders.created_at ASC, orders.rowid ASC
         """,
         _OPEN_LOCAL_STATES,
     ).fetchall()

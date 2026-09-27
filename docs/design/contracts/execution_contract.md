@@ -424,6 +424,8 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
   `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
   价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
+  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）是 order-attempt rate-limit 标记，
+  **不是** `CLOSE_CLAIM_STATES` 成员，因此不参与 `has_unresolved_close_claim` 的 claim 判定。
 - **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
   撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
   按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
@@ -450,6 +452,61 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
+- **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
+  not been used by a prior close attempt on the same position（PR5 落地执行；本条先锁定契约）。
+
+#### 10.2.4 Terminal bound on close-side submission ambiguity
+
+> A close-side order in `submission_unknown` MUST NOT remain machine-owned without
+> bound. Two thresholds apply from the claim's `pending_close_requested_at`:
+>
+> - `PENDING_CLOSE_STALE_HOURS` (4 h): the claim is *stale*. Escalate once per
+>   claim identity and keep retrying. Unchanged.
+> - `SUBMISSION_UNKNOWN_TERMINAL_HOURS` (24 h): the claim is *terminally ambiguous*.
+>   Exactly one action follows, and it is not a resolution: set
+>   `positions.pending_close_status = "manual_reconciliation_pending"`, record the
+>   fact once under the `manual-close-reconciliation-` audit identity namespace,
+>   raise one P1 `MANUAL_CLOSE_RECONCILIATION_REQUIRED` operator wake, and record
+>   one critical outstanding infra state.
+>
+> At the terminal bound the system MUST NOT transition the order's status, MUST NOT
+> release the close claim, MUST NOT close the position, and MUST NOT synthesise,
+> infer, or assume a fill. The order remains in an open local state so that a fill
+> arriving after the bound is materialized by the ordinary reconciliation path.
+> `manual_reconciliation_pending` satisfies `has_unresolved_close_claim` and MUST
+> NOT be a member of `IMMEDIATE_RECONCILIATION_STATES`.
+>
+> A NULL, malformed, or future `pending_close_requested_at` MUST be treated as
+> terminal ambiguity (fail-closed): the system cannot prove such a claim safe.
+>
+> A read reporting `ReadCompleteness.COMPLETE` with no matching order does **not**
+> prove the venue never received the order; it proves only that the read window
+> completed. Automatic machine logic MUST NOT treat it as proof of non-existence.
+>
+> Terminal resolution is exclusively human-authorized, through an operator tool
+> that revalidates the full evidence snapshot under the writer lock immediately
+> before mutation and records `manual_close_claim_resolved` with `actor=human`.
+> The only permitted resolutions are: venue-confirmed fill (requires a
+> venue-sourced fill identifier), venue-confirmed absence (order →
+> `submission_rejected`, claim released, any subsequent close MUST use a freshly
+> allocated close `client_order_id`), and operator-settled-outside-gateway (audit
+> only).
+>
+> The terminal bound is evaluated for every unresolved close claim on each
+> `position_manager` pass and is a purely local-DB judgment (no venue read is
+> required to apply it).
+
+**Close-claim state table**
+
+| Claim state | Meaning | Membership / behavior |
+|---|---|---|
+| `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
+
+> **Documented limitation**: `get_order_detail_by_client_oid`
+> (`reconciliation.py:890-904`) issues a scope without `start_at`; for a venue
+> profile with no client-order lookup parameter this read is structurally
+> `PARTIAL` (`private_order_history_start_required`). Such claims reach the
+> terminal bound for that reason alone. Accepted; tracked separately.
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 
