@@ -19,6 +19,10 @@ nonzero, never pass. Full-suite proof requires the credential-isolated Fedora
 identity/container described in DEVELOPMENT_WORKFLOW.md; the local executor
 currently reports that lane unavailable rather than pretending a printed note
 is proof. --skip-execute returns planned commands only, not a pass receipt.
+The same restriction applies to a deep plan that requests all four Python tiers:
+partitioning the suite does not make it focused or credential-isolated. Those
+lanes remain required but have no local execution command; an affected unit-only
+plan may still run locally. No required scope is silently removed.
 
 ## 快速命令
 

@@ -147,21 +147,18 @@ def test_full_proof_is_unavailable_not_a_passing_print_command(monkeypatch, tmp_
     assert all(command[0] not in {"npm", "cargo"} for command in commands)
 
 
-@pytest.mark.parametrize("marker", ["tier_unit", "domain_runtime", "tier_integration", "tier_spec", "tier_e2e"])
-def test_each_required_python_lane_failure_stops_the_receipt(monkeypatch, tmp_path, capsys, marker):
+def test_affected_python_failure_stops_the_receipt(monkeypatch, tmp_path, capsys):
     body = tmp_path / "body.md"
     body.write_text("References #3289")
     monkeypatch.setattr(
         ci_local.ci_plan, "_load_changes",
-        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="core/aletheia/execution/gateway.py")]),
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="core/aletheia/cli/control_cmd.py")]),
     )
-    commands = []
 
     def run_command(command, cwd=None):
-        commands.append(command)
         return {
             "command": command, "working_directory": cwd or ".",
-            "exit_code": 3 if marker in command else 0, "duration_seconds": 0.01,
+            "exit_code": 3 if "tier_unit" in command else 0, "duration_seconds": 0.01,
         }
 
     monkeypatch.setattr(ci_local, "_run", run_command)
@@ -169,13 +166,13 @@ def test_each_required_python_lane_failure_stops_the_receipt(monkeypatch, tmp_pa
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["result"] == "fail"
     assert receipt["checks"][-1]["status"] == "fail"
-    assert marker in receipt["checks"][-1]["command"]
-    assert marker in commands[-1]
+    assert receipt["checks"][-1]["lane"] == "python_unit"
+    assert receipt["checks"][-1]["exit_code"] == 3
     assert receipt["base_sha"] == "b" * 40
     assert receipt["head_sha"] == "a" * 40
 
 
-def test_successful_deep_receipt_accounts_for_all_required_python_lanes(monkeypatch, tmp_path, capsys):
+def test_deep_receipt_refuses_unisolated_exhaustive_proof(monkeypatch, tmp_path, capsys):
     body = tmp_path / "body.md"
     body.write_text("References #3289")
     monkeypatch.setattr(
@@ -187,9 +184,8 @@ def test_successful_deep_receipt_accounts_for_all_required_python_lanes(monkeypa
         return {"command": command, "exit_code": 0, "duration_seconds": 0.01}
 
     monkeypatch.setattr(ci_local, "_run", run_command)
-    assert ci_local.main(["--pr-body-file", str(body)]) == 0
+    assert ci_local.main(["--pr-body-file", str(body)]) == 2
     receipt = json.loads(capsys.readouterr().out)
-    assert receipt["result"] == "pass"
-    required = {lane for lane, needed in receipt["required"].items() if needed}
-    completed = {check.get("lane") for check in receipt["checks"] if check["status"] == "pass"}
-    assert required - {"trusted_ci"} <= completed
+    assert receipt["result"] == "required_but_unavailable"
+    assert receipt["checks"][-1]["lane"] == "python_unit"
+    assert "Fedora" in receipt["checks"][-1]["unavailable_reason"]
