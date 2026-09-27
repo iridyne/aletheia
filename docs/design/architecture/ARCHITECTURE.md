@@ -80,7 +80,7 @@ aletheia-trading-os/
 | `storage/repositories.py::ensure_candidate_planning_generation()` | 383 → 187 (-51%) | `_candidate_planning_existing_state` `_candidate_planning_requalification` `_candidate_planning_generation_data` |
 | `agent_shell/entry_planner.py::plan_next_candidate()` | 430 → 226 (-47%) | `_parse_candidate_opportunity` `_ensure_entry_orderbook` `_build_fresh_entry_context` `_validate_and_bind_hypothesis` `_compile_current_entry_plan` `_load_or_invoke_hypothesis` |
 | `agent_shell/commands.py::review_portfolio_state()` | 638 → 部分拆 | `_collect_fresh_review_marks` `_collect_review_scope` `_record_unavailable_review` `_normalize_review_and_select_target` `_build_review_request`（`_apply_review_effect` + `_finalize_review` 契约敏感未拆）|
-| `analytics/position_lifecycle_story/service.py::build_position_lifecycle_story()` | 包入口保留；纯文本渲染已独立到 `render.py` | `service.py` 暂保留现有读取/投影/装配；`render.py` 只消费已构建 Story。#3470 的 readers/events 责任分离仍未完成，不以包目录代替该验收 |
+| `analytics/position_lifecycle_story/service.py::build_position_lifecycle_story()` | 包入口保留；文本渲染与纯事件投影分别归 `render.py` / `events.py` | `service.py` 保留读取与装配；`events.py` 拥有事件词汇、排序、结构化投影和时间归一化，无 DB/网络依赖。#3470 的 readers/economics 责任分离仍未完成 |
 
 ### 未拆的巨型函数（audit 完成，拆分成本 > 收益）
 
