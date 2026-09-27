@@ -16,6 +16,8 @@ creating a new documentation family or changing document authority.
 
 Use the [Architecture Decision Log](decisions/DECISIONS.md) for durable choices
 that explain why the current contracts and boundaries exist.
+Use the [Audit Gates Registry](audit_gates_registry.md) to find which contract
+clause an executable `tests/audit/` gate enforces, and to register a new one.
 For repository work boundaries and handoff discipline, use the
 [AI Development Workflow](protocols/AI_DEVELOPMENT_WORKFLOW.md).
 For bug investigation and integrity audits, use the
