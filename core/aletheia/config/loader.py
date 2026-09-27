@@ -1,6 +1,7 @@
 """Config loader for the current user's Aletheia runtime home."""
 
 import hashlib
+import logging
 import os
 import sys
 import tempfile
@@ -9,6 +10,8 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+
+logger = logging.getLogger("aletheia.config.loader")
 
 import yaml
 from pydantic import ValidationError
@@ -216,7 +219,7 @@ def _audit_webhook_config_migration() -> None:
             "message": "Disabled a legacy enabled webhook with an invalid URL.",
         })
     except Exception:
-        pass  # Advisory audit write; config save succeeds regardless
+        logger.warning("config_loader: webhook migration audit event failed after config change", exc_info=True)
 
 
 
@@ -498,11 +501,11 @@ def _save_config_locked(cfg: AletheiaConfig) -> None:
             try:
                 os.close(tmp_fd)
             except OSError:
-                pass
+                logger.warning("config_loader: failed to close temp config fd during rollback; descriptor may leak", exc_info=True)
         try:
             os.unlink(tmp_path)
         except OSError:
-            pass
+            logger.warning("config_loader: failed to remove temp config file during rollback; orphaned temp file may remain", exc_info=True)
         raise
 
 
@@ -587,7 +590,7 @@ def _emit_consistency_events(cfg: AletheiaConfig) -> None:
                 dedupe_sec=300,
             )
     except Exception:  # noqa: BLE001 — advisory; must never break save
-        pass
+        logger.warning("config_loader: consistency diagnostics could not be emitted after save", exc_info=True)
 
 
 def bootstrap() -> AletheiaConfig:

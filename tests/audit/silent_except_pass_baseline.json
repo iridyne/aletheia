@@ -154,22 +154,6 @@
       "line": 80
     },
     {
-      "file": "core/aletheia/config/loader.py",
-      "line": 218
-    },
-    {
-      "file": "core/aletheia/config/loader.py",
-      "line": 500
-    },
-    {
-      "file": "core/aletheia/config/loader.py",
-      "line": 504
-    },
-    {
-      "file": "core/aletheia/config/loader.py",
-      "line": 589
-    },
-    {
       "file": "core/aletheia/config/secrets.py",
       "line": 215
     },
@@ -343,22 +327,6 @@
     {
       "file": "core/aletheia/model_provider/inference_contract.py",
       "line": 183
-    },
-    {
-      "file": "core/aletheia/net.py",
-      "line": 87
-    },
-    {
-      "file": "core/aletheia/net.py",
-      "line": 266
-    },
-    {
-      "file": "core/aletheia/net.py",
-      "line": 353
-    },
-    {
-      "file": "core/aletheia/net.py",
-      "line": 405
     },
     {
       "file": "core/aletheia/notifications.py",

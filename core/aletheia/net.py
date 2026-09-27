@@ -85,7 +85,7 @@ def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
         for h in _SECRET_HEADERS:
             resp.request.headers.pop(h, None)
     except Exception:
-        pass  # Best-effort header scrub; original response still raised
+        logger.warning("net: credential-header scrubbing failed before propagating HTTP error", exc_info=True)
     try:
         url = str(resp.url)
     except Exception:
@@ -264,7 +264,7 @@ def _no_proxy_value() -> str:
         extra = load_config().network.no_proxy or ""
         bypass += [h.strip() for h in extra.split(",") if h.strip()]
     except Exception:
-        pass  # intentional — config unreadable at early startup: loopback bypass still applies
+        logger.warning("net: network config unreadable; using loopback-only NO_PROXY bypass", exc_info=True)
     seen: set[str] = set()
     ordered: list[str] = []
     for h in bypass:
@@ -351,7 +351,7 @@ class _RetryingTransport(httpx.AsyncBaseTransport):
                     try:
                         await response.aread()
                     except Exception:
-                        pass  # Best-effort body drain; connection may not be reused
+                        logger.debug("net: transient-response body drain failed before retry", exc_info=True)
                     wait = self._initial_backoff * (2 ** attempt)
                     logger.debug(
                         "HTTP %d — retrying in %.1fs (attempt %d/%d)",
@@ -403,7 +403,7 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
                 try:
                     await response.aread()
                 except Exception:
-                    pass  # Best-effort body drain before direct retry
+                    logger.debug("net: proxy-error body drain failed before direct retry", exc_info=True)
                 finally:
                     await response.aclose()
                 return await self._direct_transport.handle_async_request(request)
