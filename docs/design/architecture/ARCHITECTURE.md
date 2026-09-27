@@ -80,7 +80,7 @@ aletheia-trading-os/
 | `storage/repositories.py::ensure_candidate_planning_generation()` | 383 → 187 (-51%) | `_candidate_planning_existing_state` `_candidate_planning_requalification` `_candidate_planning_generation_data` |
 | `agent_shell/entry_planner.py::plan_next_candidate()` | 430 → 226 (-47%) | `_parse_candidate_opportunity` `_ensure_entry_orderbook` `_build_fresh_entry_context` `_validate_and_bind_hypothesis` `_compile_current_entry_plan` `_load_or_invoke_hypothesis` |
 | `agent_shell/commands.py::review_portfolio_state()` | 638 → 部分拆 | `_collect_fresh_review_marks` `_collect_review_scope` `_record_unavailable_review` `_normalize_review_and_select_target` `_build_review_request`（`_apply_review_effect` + `_finalize_review` 契约敏感未拆）|
-| `analytics/position_lifecycle_story/service.py::build_position_lifecycle_story()` | 包入口保留；文本渲染与纯事件投影分别归 `render.py` / `events.py` | `service.py` 保留读取与装配；`events.py` 拥有事件词汇、排序、结构化投影和时间归一化，无 DB/网络依赖。#3470 的 readers/economics 责任分离仍未完成 |
+| `analytics/position_lifecycle_story/service.py::build_position_lifecycle_story()` | 包入口保留；读取、事件投影、装配、文本渲染分别归 `readers.py` / `events.py` / `service.py` / `render.py` | `readers.py` 接收现有连接，拥有精确 identity、cutoff 遮罩和历史前缀读取；不反向依赖 service/render。经济解释继续复用既有 replay，未增加第二引擎或强制拆 economics 文件。 |
 
 ### 未拆的巨型函数（audit 完成，拆分成本 > 收益）
 
