@@ -289,10 +289,9 @@ def test_scheduler_job_wrappers_have_try_except():
 )
 def test_registered_scheduler_jobs_record_swallowed_failures():
     import ast
-    from pathlib import Path
+    from tests.module_source import module_source
 
-    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    tree = ast.parse(module_source("core/aletheia/agent_runtime/scheduler.py"))
     functions = {
         node.name: node
         for node in ast.walk(tree)
