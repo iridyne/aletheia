@@ -168,6 +168,9 @@ Backup、fast-forward 到固定 SHA、切换完整静态资源并启动。120 �
 `boot_commit == current_commit == tag_sha`、产品版本、migration ledger、Gateway/scheduler/
 provider/settlement health、上述已批准的模式/target 组合及 `live_disabled`。成功会写入
 runtime provenance/audit，scheduler 会自行继续 Observer，不需要人为重开。
+既有 scheduler 日志提供 `scheduler_job_result job_id=... outcome=succeeded|failed`
+作为 SQLite 清理后的终态证据，只含任务身份与结果，不含异常载荷。它不代表交易或
+Alpha 资格；被 Learning gate 跳过的任务不会冒充 succeeded。
 
 每个失败路径写入 `${ALETHEIA_DATA_DIR}/update/auto-deploy.json` 和 audit，且不会记录凭证：
 

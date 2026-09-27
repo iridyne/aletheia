@@ -1185,10 +1185,11 @@ def test_scheduler_guard_allows_concurrent_job_bodies():
     t2.join(timeout=2)
 
 
-def test_guard_records_swallowed_job_failure_and_resets_on_success(monkeypatch):
+def test_guard_records_swallowed_job_failure_and_resets_on_success(monkeypatch, caplog):
     from aletheia.agent_runtime import scheduler
     from aletheia.agent_runtime import connectivity
 
+    caplog.set_level("INFO", logger=scheduler.logger.name)
     async def fail_check():
         raise RuntimeError("probe down")
 
@@ -1201,10 +1202,20 @@ def test_guard_records_swallowed_job_failure_and_resets_on_success(monkeypatch):
 
     scheduler._run_job_guarded("connectivity_monitor", lambda: None)
     assert scheduler._consecutive_failures["connectivity_monitor"] == 0
+    outcomes = [
+        dict(field.split("=", 1) for field in record.getMessage().split()[1:])
+        for record in caplog.records
+        if record.name == scheduler.logger.name
+        and record.getMessage().startswith("scheduler_job_result ")
+    ]
+    assert [event["outcome"] for event in outcomes if event["job_id"] == "connectivity_monitor"] == [
+        "failed", "succeeded",
+    ]
 
 
-def test_guard_records_unhandled_job_failure():
+def test_guard_records_unhandled_job_failure(caplog):
     from aletheia.agent_runtime import scheduler
+    caplog.set_level("INFO", logger=scheduler.logger.name)
 
     def fail_job():
         raise RuntimeError("boom")
@@ -1213,6 +1224,10 @@ def test_guard_records_unhandled_job_failure():
     scheduler._run_job_guarded("unguarded_job", fail_job)
 
     assert scheduler._consecutive_failures["unguarded_job"] == 1
+    assert any(
+        record.getMessage() == "scheduler_job_result job_id=unguarded_job outcome=failed"
+        for record in caplog.records
+    )
 
 
 def _patch_scheduler_result(
