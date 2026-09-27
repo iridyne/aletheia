@@ -539,10 +539,6 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 |---|---|---|
 | `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
 
-Executable NULL/future-age ownership coverage lives in
-[test_close_terminal_ambiguity.py](../../../tests/test_close_terminal_ambiguity.py):
-the original claim identity and timestamp remain intact, with no ordinary retry error.
-
 **INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
 raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`
 handler that wraps such a read MUST include that exception's `reason_code` alongside
