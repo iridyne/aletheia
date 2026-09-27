@@ -52,6 +52,9 @@ function renderLens() {
   client.setQueryData(['prediction-status'], status)
   client.setQueryData(['prediction-markets'], [market])
   client.setQueryData(['prediction-runs'], [])
+  vi.spyOn(api, 'getPredictionPreferences').mockResolvedValue({
+    categories: status.categories, observer_interval_minutes: status.observer_interval_minutes,
+  })
   vi.spyOn(api, 'getPredictionMarketDetail').mockResolvedValue({
     ...market,
     question: market.event_title,
