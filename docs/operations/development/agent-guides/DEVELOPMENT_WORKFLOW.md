@@ -199,7 +199,10 @@ deep evidence for that head remains unchanged.
   uv run pytest tests/ -q --tb=line
   ```
 
-  A Worktree alone does not provide this isolation.
+  A Worktree alone does not provide this isolation. Pytest rejects explicit
+  data roots inside the default production root or checkout before collection,
+  resolving symlinks first. Dedicated external roots such as the /var/tmp path
+  above are accepted; they need not be below Python's default temporary directory.
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch. It may create or refresh a
   held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
