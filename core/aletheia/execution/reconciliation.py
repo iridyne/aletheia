@@ -1329,6 +1329,126 @@ def _reconcile_multibroker_orders(multibroker_orders) -> dict:
     }
 
 
+def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> dict | None:
+    """Gather one mode's private views after persisted account validation."""
+    errors: list[str] = []
+    mode_orders = [
+        order for order in bitget_orders
+        if order.get("execution_mode") == execution_mode
+    ]
+    if not mode_orders:
+        return None
+    client = _UTAReconciliationProjection(execution_mode, configured[execution_mode])
+    markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
+    open_rows: dict[str, list[dict]] = {}
+    fill_rows: dict[str, list[dict]] = {}
+    failed_default_fill_markets: set[str] = set()
+
+    for market_type in markets:
+        history_start = min(
+            [
+                str(order["created_at"])
+                for order in mode_orders
+                if str(order.get("market_type") or "spot") == market_type
+                and order.get("created_at")
+            ],
+            default=None,
+        )
+        try:
+            open_rows[market_type] = run_coro_from_sync(
+                client.get_open_orders(market_type=market_type)
+            )
+        except Exception as exc:
+            open_rows[market_type] = []
+            errors.append(
+                f"{execution_mode}/{market_type}: open-order query unavailable"
+            )
+            logger.warning(
+                "reconcile: open-order query failed for %s/%s (%s)",
+                execution_mode,
+                market_type,
+                type(exc).__name__,
+            )
+        try:
+            fill_rows[market_type] = _response_rows(
+                run_coro_from_sync(client.get_fills(
+                    market_type=market_type, start_at=history_start
+                ))
+            )
+        except Exception as exc:
+            fill_rows[market_type] = []
+            failed_default_fill_markets.add(market_type)
+            logger.warning(
+                "reconcile: default private fills failed for %s/%s (%s)",
+                execution_mode,
+                market_type,
+                type(exc).__name__,
+            )
+    return {
+        "mode_orders": mode_orders,
+        "client": client,
+        "open_rows": open_rows,
+        "fill_rows": fill_rows,
+        "failed_default_fill_markets": failed_default_fill_markets,
+        "errors": errors,
+    }
+
+
+def _recover_exchange_order_id(
+    order: dict, client: _UTAReconciliationProjection, open_rows: dict[str, list[dict]],
+) -> tuple[str | None, bool, bool, bool]:
+    """Recover and persist a missing venue ID, then derive history flags."""
+    market_type = str(order.get("market_type") or "spot")
+    # A submission timeout can lose only the response, not the stable
+    # clientOid. Recover the venue id from an open order before looking
+    # at fills; private fill matching can recover it as well.
+    if not order.get("exchange_order_id") and order.get("client_order_id"):
+        remote_ids = {
+            str(row.get("orderId") or row.get("order_id"))
+            for row in open_rows.get(market_type, [])
+            if str(row.get("clientOid") or row.get("clientOrderId") or "")
+            == str(order["client_order_id"])
+            and (row.get("orderId") or row.get("order_id"))
+        }
+        if len(remote_ids) == 1:
+            recovered_id = next(iter(remote_ids))
+            update_order_metadata(order["id"], exchange_order_id=recovered_id)
+            order["exchange_order_id"] = recovered_id
+        elif len(remote_ids) > 1:
+            return None, True, False, False
+        elif market_type == "usdt_futures":
+            # Order may have already filled and left the open-order list.
+            # Fall back to a direct detail lookup by clientOid (#1779).
+            try:
+                from aletheia.data.symbols import to_bitget as _to_bitget
+                detail = run_coro_from_sync(
+                    client.get_order_detail_by_client_oid(
+                        str(order["client_order_id"]),
+                        _to_bitget(str(order["symbol"])),
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "reconcile: clientOid detail lookup failed for order %s (%s)",
+                    order["id"],
+                    type(exc).__name__,
+                )
+                detail = None
+            if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
+                recovered_id = str(detail.get("orderId") or "").strip()
+                if recovered_id:
+                    update_order_metadata(order["id"], exchange_order_id=recovered_id)
+                    order["exchange_order_id"] = recovered_id
+
+    is_close_order = _is_close_order(order)
+    use_exact_order_history = (
+        order.get("source") == "native"
+        and market_type == "usdt_futures"
+        and bool(order.get("exchange_order_id"))
+    )
+    return order.get("exchange_order_id"), False, is_close_order, use_exact_order_history
+
+
 def reconcile() -> dict:
     """Reconcile unresolved exchange Orders and materialize proven fills."""
     all_orders = _list_unresolved_core_orders()
@@ -1389,116 +1509,31 @@ def reconcile() -> dict:
     materialized_fills += gap_result["materialized_fills"]
 
     for execution_mode, account_mode in _BITGET_ACCOUNT_MODES.items():
-        mode_orders = [
-            order for order in bitget_orders
-            if order.get("execution_mode") == execution_mode
-        ]
-        if not mode_orders:
+        views = _prepare_bitget_private_views(execution_mode, bitget_orders, configured)
+        if views is None:
             continue
-        client = _UTAReconciliationProjection(execution_mode, configured[execution_mode])
-        markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
-        open_rows: dict[str, list[dict]] = {}
-        fill_rows: dict[str, list[dict]] = {}
-        failed_default_fill_markets: set[str] = set()
+        mode_orders = views["mode_orders"]
+        client = views["client"]
+        open_rows = views["open_rows"]
+        fill_rows = views["fill_rows"]
+        failed_default_fill_markets = views["failed_default_fill_markets"]
+        errors.extend(views["errors"])
         symbol_fill_rows: dict[tuple[str, str], list[dict] | None] = {}
-
-        for market_type in markets:
-            history_start = min(
-                [
-                    str(order["created_at"])
-                    for order in mode_orders
-                    if str(order.get("market_type") or "spot") == market_type
-                    and order.get("created_at")
-                ],
-                default=None,
-            )
-            try:
-                open_rows[market_type] = run_coro_from_sync(
-                    client.get_open_orders(market_type=market_type)
-                )
-            except Exception as exc:
-                open_rows[market_type] = []
-                errors.append(
-                    f"{execution_mode}/{market_type}: open-order query unavailable"
-                )
-                logger.warning(
-                    "reconcile: open-order query failed for %s/%s (%s)",
-                    execution_mode,
-                    market_type,
-                    type(exc).__name__,
-                )
-            try:
-                fill_rows[market_type] = _response_rows(
-                    run_coro_from_sync(client.get_fills(
-                        market_type=market_type, start_at=history_start
-                    ))
-                )
-            except Exception as exc:
-                fill_rows[market_type] = []
-                failed_default_fill_markets.add(market_type)
-                logger.warning(
-                    "reconcile: default private fills failed for %s/%s (%s)",
-                    execution_mode,
-                    market_type,
-                    type(exc).__name__,
-                )
 
         for order in mode_orders:
             market_type = str(order.get("market_type") or "spot")
 
-            # A submission timeout can lose only the response, not the stable
-            # clientOid. Recover the venue id from an open order before looking
-            # at fills; private fill matching can recover it as well.
-            if not order.get("exchange_order_id") and order.get("client_order_id"):
-                remote_ids = {
-                    str(row.get("orderId") or row.get("order_id"))
-                    for row in open_rows.get(market_type, [])
-                    if str(row.get("clientOid") or row.get("clientOrderId") or "")
-                    == str(order["client_order_id"])
-                    and (row.get("orderId") or row.get("order_id"))
-                }
-                if len(remote_ids) == 1:
-                    recovered_id = next(iter(remote_ids))
-                    update_order_metadata(order["id"], exchange_order_id=recovered_id)
-                    order["exchange_order_id"] = recovered_id
-                elif len(remote_ids) > 1:
-                    inconclusive += 1
-                    _write_reconcile_event(
-                        order,
-                        state=str(order.get("status") or "unresolved"),
-                        reason="client_order_identity_ambiguous",
-                    )
-                    continue
-                elif market_type == "usdt_futures":
-                    # Order may have already filled and left the open-order list.
-                    # Fall back to a direct detail lookup by clientOid (#1779).
-                    try:
-                        from aletheia.data.symbols import to_bitget as _to_bitget
-                        detail = run_coro_from_sync(
-                            client.get_order_detail_by_client_oid(
-                                str(order["client_order_id"]),
-                                _to_bitget(str(order["symbol"])),
-                            )
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "reconcile: clientOid detail lookup failed for order %s (%s)",
-                            order["id"],
-                            type(exc).__name__,
-                        )
-                        detail = None
-                    if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
-                        recovered_id = str(detail.get("orderId") or "").strip()
-                        if recovered_id:
-                            update_order_metadata(order["id"], exchange_order_id=recovered_id)
-                            order["exchange_order_id"] = recovered_id
-
-            is_close_order = _is_close_order(order)
-            use_exact_order_history = (
-                order.get("source") == "native"
-                and market_type == "usdt_futures"
-                and bool(order.get("exchange_order_id"))
+            _, ambiguous, is_close_order, use_exact_order_history = (
+                _recover_exchange_order_id(order, client, open_rows)
             )
+            if ambiguous:
+                inconclusive += 1
+                _write_reconcile_event(
+                    order,
+                    state=str(order.get("status") or "unresolved"),
+                    reason="client_order_identity_ambiguous",
+                )
+                continue
             if use_exact_order_history:
                 try:
                     rows = _response_rows(
