@@ -21,6 +21,10 @@ This is the main implementation authority after governance and product scope. Re
 
 ## Fast Routing
 
+Use [System Map](architecture/SYSTEM_MAP.md) for task → owner → source → focused tests.
+The former Opportunity → Ranker / PaperTrader entry path is historical only;
+remaining read models and stored source labels do not make it an active producer.
+
 | If changing... | Read first |
 |---|---|
 | Long-lived architecture direction or previous design choice | `decisions/` then affected `contracts/` |
@@ -29,7 +33,7 @@ This is the main implementation authority after governance and product scope. Re
 | Live unlock or permission surfaces | `contracts/live_unlock_contract.md` |
 | API route behavior | `api/api_reference.md` |
 | SQLite tables or persistence semantics | `data/data_model.md` and `contracts/persistence_recovery_contract.md` |
-| Opportunity → Ranker → Operator → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, then `contracts/filter_evidence_contract.md` and `api/api_reference.md` |
+| Candidate → Planning Generation → Entry Planner / Compiler → Entry Plan → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, `contracts/entry-plan-contract.md`, then `contracts/filter_evidence_contract.md` |
 | Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then any accepted learning proposal under `proposals/` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |

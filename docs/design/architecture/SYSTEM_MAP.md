@@ -1,10 +1,33 @@
 # System Map — 全模块概念地图
 
-> 一页俯瞰系统所有活动部件、数据流向、管道状态。
-> 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code/design: 2026-09-13 (canonical Candidate entry / UTA convergence)
+> 系统职责与调用关系导航；表中的历史实现备注不等于当前运行状态。
+> Current six-route source check: 2026-09-27; this is not a full runtime audit.
 
 本图是导航，不授予运行或交易权限；当前支持范围以 [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md) 和 [Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) 为准，任务与 Agent 行为以 [Agent Contracts](../contracts/agent_contracts.md) 为准。管道连通不代表已部署或经济资格已验证。
+
+## Task → owner → source → tests
+
+先沿一条真实调用链定位，再读取该责任的契约；不要为普通修改遍读全仓。
+下表是源码导航，不是运行健康或交易能力证明。测试命令使用隔离数据根。
+
+| 问题 | 首读 owner / 符号 | 一个直接调用者 | focused tests | 必要契约 |
+|---|---|---|---|---|
+| Candidate 有事实却未准入 | [candidate_selection_utility.py](../../../core/aletheia/universe/candidate_selection_utility.py)：build_candidate_selection_utility / select_admitted_candidates | [candidate_selection_shadow.py](../../../core/aletheia/universe/candidate_selection_shadow.py)：build_candidate_selection_shadow_bundle | [test_candidate_selection_utility.py](../../../tests/test_candidate_selection_utility.py) | [Candidate Selection Utility](../contracts/candidate_selection_utility_contract.md)；无样本、实测拒绝与损坏不可混同 |
+| Planner 未运行或没有新 Plan | [entry_planner.py](../../../core/aletheia/agent_shell/entry_planner.py)：run_entry_planner_batch / plan_next_candidate | [agent_runtime/pi_daemon.py](../../../core/aletheia/agent_runtime/pi_daemon.py)；scheduler 的 pi_trading_decision 也调用同一批处理入口 | [test_entry_planner.py](../../../tests/test_entry_planner.py)、[test_scheduler_timeouts.py](../../../tests/test_scheduler_timeouts.py) | [Entry Plan](../contracts/entry-plan-contract.md)、[Decision Lifecycle](../contracts/decision_lifecycle_contract.md) |
+| Risk 日损检查或禁用状态不符 | [risk/engine.py](../../../core/aletheia/risk/engine.py)：evaluate_proposal | [execution/gateway.py](../../../core/aletheia/execution/gateway.py)：_execute_proposal | [test_daily_loss_breaker.py](../../../tests/test_daily_loss_breaker.py) | [Risk Engine](../contracts/risk_engine_contract.md)；禁用检查不是把未知日损当零 |
+| ACK / Fill / Position / Close 不一致 | [exchange_materialization.py](../../../core/aletheia/execution/exchange_materialization.py)：materialize_observed_close_chain；[reconciliation.py](../../../core/aletheia/execution/reconciliation.py) | [portfolio/outcome_closure.py](../../../core/aletheia/portfolio/outcome_closure.py) 调用 close-chain materializer | [test_reconciliation.py](../../../tests/test_reconciliation.py)、[spec_pipeline_exchange_materialization.py](../../../tests/specs/spec_pipeline_exchange_materialization.py) | [Execution](../contracts/execution_contract.md)；已关闭暴露不等于成本完整 Outcome |
+| Position 故事或诊断展示不符 | [position_lifecycle_story.py](../../../core/aletheia/analytics/position_lifecycle_story.py)：build_position_lifecycle_story / render_position_lifecycle_story | [cli/inspect_cmd.py](../../../core/aletheia/cli/inspect_cmd.py)；Opportunity Story 也消费该公共入口 | [test_position_lifecycle_story.py](../../../tests/test_position_lifecycle_story.py) | [Profit Loop Observability](../contracts/profit_loop_observability_contract.md)；Story 是只读解释，不产生交易或 Alpha 权限 |
+| 公开衍生品 / order-flow 事实 | [derivatives_facts.py](../../../core/aletheia/data/derivatives_facts.py)；[positioning_evidence.py](../../../extensions/data/positioning_evidence.py)：read_positioning_evidence | [cli/data_cmd.py](../../../core/aletheia/cli/data_cmd.py) 消费 positioning reader；source collector 归 Extensions | [test_positioning_evidence.py](../../../tests/test_positioning_evidence.py)、[test_derivatives_facts_contract.py](../../../tests/test_derivatives_facts_contract.py) | [Derivatives Economic Semantics](../contracts/derivatives_economic_semantics.md)；公共事实不同于私有账户 UTA |
+
+当前入口主线：Candidate → Planning Generation → Entry Planner / Compiler → Entry Plan
+→ Gateway / Risk → Order / Fill / Position → verified Close / cost-complete Outcome。
+Ranker/PaperTrader 入场主线及 Market Observer 已退役；历史 signal_source、归因查询和
+历史数据读取仍可保留，不能据此重新注册生产者。
+
+职责同名不等于重复：gateway/ 负责进程托管，execution/gateway.py 负责交易执行入口；
+Core data/analytics 定义当前事实与完整性语义，Extensions 中同名域承载可选采集或研究。
+合并前须证明责任相同；不按目录名强行合并。
+
 
 ---
 
@@ -22,31 +45,32 @@
 
 | Job ID | 频率 | 写入表 | 下游消费者 | 管道 |
 |--------|------|--------|-----------|------|
-| `market_data` | 5min | market_snapshots | price_feed, market_observer, universe_refresh, risk_engine(data freshness) | ✅ |
+| market_data | 5min | market_snapshots | price_feed, universe_refresh, risk_engine(data freshness) | 源码调用路径；运行状态另查 |
 | `price_feed` | 30s | (内存缓存 watched_prices；输入保留 venue+spot/perp) | position_manager(mark-to-market), portfolio_snapshot | ✅ |
-| `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots | market_observer + universe/service | ⚠️ 主所采集按 InstrumentId 路由；只做实时 orderbook/Funding/OI |
-| `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
+| data_collectors | 2min | orderbook_snapshots, funding_rates, oi_snapshots | universe/service | 主所采集按 InstrumentId 路由；只做实时 orderbook/Funding/OI |
+| data_collector_context | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | universe/service | 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `position_path_observer` | 5min | append-only `position_path_observations`（完整入场后的 expected 5m buckets；精确 instrument + provider `is_closed` 证明，冻结 OHLCV + uPnL/cost/ExitPlan snapshot；缺失原因显式保留）+ durable `position_path_observation_deferred_buckets` | `aletheia inspect position-path`、`aletheia inspect stop-loss-path`、`aletheia control status`；事后区分 accounting mismatch、cost flip、profit giveback、never-favorable candidate，证据不全保持 unknown | ✅ 纯观测；每轮从最早未 materialize bucket 恢复，每 Position 最多执行两个 bounded catch-up pass，按 exact instrument 分组、有界并发、单请求 timeout；重试耗尽落 unavailable；不信任无 closed proof 的缓存；不改 Position、ExitPlan、Risk、Execution、Learning 或 Live |
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped Candidates/Planning Generations，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes；每55分钟至多另写一批前瞻 `universe_twin_shadow_batches/records`，并只为 assigned-policy selected 候选登记 4h outcome | Candidate Selection Utility、Entry Planner exact-candidate context、filter controller、risk live-evidence、doctor、guard candidate；Twin 记录完整 scanner-run assignment/evidence、0.5 propensity 与 observed-arm cluster ITT utility，未选候选记 0；其 evaluator 不写 Learning verdict | ✅ step-v1 仍是唯一权威；Twin 写入失败不回滚 snapshot/Candidate，且不能影响 Candidate/Risk/Execution/Learning；availability/lineage/NI/anytime-valid 仍为 blocker |
 | `outcome_settler` | 10min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
-| `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
+| cleanup | cron 03:17 | 分析/遥测行保留窗口由 config/schema.py 和 scheduler 清理入口共同定义；开放实验保留保护 | SQLite 稳定性 + data_pruned audit | 不触碰交易因果表，不把不可证明的清理结果当作已完成 |
 | `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
 | `news_fetch` | 15min(可配) | `news_items(status=new)` | news_analyze | ✅ RSS I/O 与 LLM 分离 |
-| `news_analyze` | 5min | 更新 `news_items` sentiment/relevance/status | Market Observer + Research Worker | ✅ 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
-| owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted `perp_structure_snapshots` + source/batch hash + coverage/universe audit; no holder rows or identities; seeds `perp_structure_shadow_outcomes` | Market Observer/System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | 🟡 no automatic endpoint/scheduler; retrospective imports fail evaluation; cost-aware unavailable; decision influence disabled |
+| news_analyze | 5min | 更新 news_items sentiment/relevance/status | Research Worker / 当前上下文消费者 | 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
+| owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted perp_structure_snapshots + source/batch hash + coverage/universe audit; no holder rows or identities; seeds perp_structure_shadow_outcomes | System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | optional observation; no automatic endpoint/scheduler; cost-aware unavailable; decision influence disabled |
 | `okx_demo_symbols` | 4h | `execution.venue_capabilities` 内存 capability 缓存 | Gateway 精确 market 的 symbol availability 检查 | ✅ 保留 sandbox 产品事实刷新；不是独立 broker 或当前交易准入 |
 
 ---
 
 ## 二、Agent 决策层（Agents Executor）
 
+Market Observer 不再注册为调度任务；历史归因与读取不代表活动生产者。
+
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
-| `market_observer` | 10min | 已通过 deterministic emitter 的 open Opportunity + exact-instrument context | namespaced `metadata.observer_assessment` advisory enrichment | 无阻塞下游；Candidate publication 由其声明的 Universe/Serenity owner 负责 | ✅ exact snapshot/member/instrument + emitter pass fact；不新建 Opportunity |
 | `pi_trading_decision` | ~15min + committed Candidate wake | 当前 Candidate Planning Generation、冻结 source/context、精确 market windows、typed capability/profile facts | Planner hypothesis → deterministic Compiler → immutable Entry Plan，或 typed blocked/unavailable/no-plan outcome | fast_trigger_watch / Entry Workbench → Proposal → Risk/Gateway | ✅ 事件唤醒与 heartbeat 共用 `run_entry_planner_batch()`；持久 claim/retry/CAS 防止重复模型和计划 |
 | `position_manager` | 30s | open positions + exact-instrument marks + exit rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
