@@ -1047,6 +1047,253 @@ def _build_portfolio_snapshot_recommendation(
     return None
 
 
+def _build_command_center_recommendation(
+    cfg,
+    command_center_summary: dict,
+) -> dict | None:
+    due_command_center_behavior_changes = command_center_summary[
+        "needs_command_center_behavior_proposals"
+    ]
+    if not cfg.runtime.paused and due_command_center_behavior_changes:
+        first_candidate = due_command_center_behavior_changes[0]
+        return _make_task_recommendation(
+            id_=f"command-center-behavior:{first_candidate['target_command']}",
+            kind="command_center_behavior_change_proposal_due",
+            severity="medium",
+            summary=first_candidate["summary"],
+            task_type="create_repair_proposal",
+            metadata={
+                "target_command": first_candidate["target_command"],
+                "rejection_count": first_candidate["rejection_count"],
+                "requested_behavior": first_candidate["requested_behavior"],
+                "sample_responses": first_candidate["sample_responses"],
+                "sample_inputs": first_candidate["sample_inputs"],
+                "session_ids": first_candidate["session_ids"],
+                "command_ids": first_candidate["command_ids"],
+                "proposal_command": "propose_command_center_behavior_change",
+            },
+        )
+    return None
+
+
+def _build_extension_enablement_recommendation(cfg) -> dict | None:
+    passed_extensions = list_extensions(status="sandbox_passed", limit=20)
+    if not cfg.runtime.paused and passed_extensions:
+        ready_extensions = []
+        for extension in passed_extensions:
+            if extension.get("proposal_artifact_id"):
+                continue
+            latest_run = next(
+                iter(list_extension_runs(extension_id=str(extension["id"]), limit=1)),
+                None,
+            )
+            if latest_run is None or str(latest_run.get("status") or "") != "passed":
+                continue
+            ready_extensions.append((extension, latest_run))
+
+        if ready_extensions:
+            extension, latest_run = ready_extensions[0]
+            slash_command = str(extension.get("slash_command") or extension["id"])
+            return _make_task_recommendation(
+                id_=f"extension-enable:{extension['id']}",
+                kind="extension_enablement_proposal_due",
+                severity="medium",
+                summary=(
+                    f"Extension {slash_command} passed sandbox validation and is ready "
+                    "for a human-reviewed enablement proposal."
+                ),
+                task_type="create_repair_proposal",
+                metadata={
+                    "extension_id": extension["id"],
+                    "extension_name": extension.get("extension_name"),
+                    "slash_command": extension.get("slash_command"),
+                    "target_command": extension.get("target_command"),
+                    "latest_sandbox_run_id": latest_run.get("id"),
+                    "latest_sandbox_status": latest_run.get("status"),
+                    "latest_sandbox_summary": latest_run.get("summary"),
+                    "proposal_command": "propose_extension_enablement",
+                },
+            )
+    return None
+
+
+def _build_daily_review_recommendation(
+    cfg,
+    recent_agent_runs: list[dict],
+) -> dict | None:
+    target_date = datetime.now(timezone.utc).date().isoformat()
+    start_of_target_date = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    recent_daily_reviews = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at >= ?",
+        params=("daily_review", start_of_target_date),
+        limit=10,
+    )
+    recent_activity_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    if (
+        not cfg.runtime.paused
+        and not recent_daily_reviews
+        and recent_activity_run_count > 0
+    ):
+        return _make_task_recommendation(
+            id_=f"daily-review-refresh:{target_date}",
+            kind="daily_review_refresh_due",
+            severity="medium",
+            summary=f"No daily review has been written for {target_date} UTC. Refresh the non-critical operator summary report.",
+            task_type="create_daily_review",
+            metadata={
+                "task_type": "create_daily_review",
+                "target_date": target_date,
+                "recent_activity_run_count": recent_activity_run_count,
+                "title": f"Operator Daily Review {target_date}",
+            },
+        )
+    return None
+
+
+def _build_agent_performance_recommendation(
+    cfg,
+    recent_agent_runs: list[dict],
+    failed_run_statuses: set[str],
+    recent_artifacts: list[dict],
+) -> dict | None:
+    recent_activity_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    recent_failed_run_count = sum(
+        1
+        for run in recent_agent_runs
+        if str(run.get("status") or "") in failed_run_statuses
+        and (
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
+             or datetime.min.replace(tzinfo=timezone.utc))
+            > datetime.now(timezone.utc) - timedelta(hours=12)
+        )
+    )
+    if (
+        not cfg.runtime.paused
+        and (recent_failed_run_count > 0 or recent_activity_run_count >= 5)
+        and not _has_fresh_report_artifact(
+            recent_artifacts,
+            artifact_type="review_report",
+            report_type="agent_performance",
+            within_minutes=360,
+        )
+    ):
+        return _make_task_recommendation(
+            id_="agent-performance-report-refresh",
+            kind="agent_performance_report_refresh_due",
+            severity="medium",
+            summary=(
+                "Recent agent activity warrants a fresh agent-performance report for operator review."
+            ),
+            task_type="create_review_report",
+            metadata={
+                "task_type": "create_review_report",
+                "report_type": "agent_performance",
+                "title": "Agent Performance Report",
+                "recent_activity_run_count": recent_activity_run_count,
+                "failed_run_count": recent_failed_run_count,
+                "refresh_window_minutes": 360,
+            },
+        )
+    return None
+
+
+def _build_task_backlog_recommendations(
+    failed_tasks: list[dict],
+    running_tasks: list[dict],
+    queued_tasks: list[dict],
+) -> list[dict]:
+    recommendations: list[dict] = []
+    if failed_tasks:
+        recommendations.append(
+            {
+                "id": "failed-tasks",
+                "kind": "failed_tasks_present",
+                "severity": "high",
+                "summary": f"{len(failed_tasks)} failed operator task(s) require review.",
+                "task_ids": [task["id"] for task in failed_tasks[:5]],
+            }
+        )
+
+    stuck_tasks = [task for task in running_tasks if _is_stuck_task(task)]
+    if stuck_tasks:
+        recommendations.append(
+            {
+                "id": "stuck-tasks",
+                "kind": "stuck_tasks_present",
+                "severity": "high",
+                "summary": (
+                    "1 running operator task appears stuck and should be reviewed before trusting shell progress."
+                    if len(stuck_tasks) == 1
+                    else f"{len(stuck_tasks)} running operator tasks appear stuck and should be reviewed before trusting shell progress."
+                ),
+                "task_ids": [task["id"] for task in stuck_tasks[:5]],
+            }
+        )
+
+    if queued_tasks:
+        recommendations.append(
+            {
+                "id": "queued-tasks",
+                "kind": "queued_tasks_present",
+                "severity": "medium",
+                "summary": (
+                    "1 queued operator task is waiting in backlog review."
+                    if len(queued_tasks) == 1
+                    else f"{len(queued_tasks)} queued operator tasks are waiting in backlog review."
+                ),
+                "task_ids": [task["id"] for task in queued_tasks[:5]],
+            }
+        )
+
+        queue_review = _queue_review_policy(queued_tasks)
+        if queue_review:
+            recommendations.append(
+                {
+                    "id": "queue-review-needed",
+                    "kind": "queue_review_needed",
+                    "severity": queue_review["severity"],
+                    "summary": (
+                        "Queued operator backlog needs queue review "
+                        f"({queue_review['review_stage']}): {' and '.join(queue_review['reasons'])}."
+                    ),
+                    "task_ids": [task["id"] for task in queued_tasks[:5]],
+                    "queued_count": len(queued_tasks),
+                    "oldest_age_minutes": queue_review["oldest_age_minutes"],
+                    "review_stage": queue_review["review_stage"],
+                    "suggested_review_cadence_sec": queue_review[
+                        "suggested_review_cadence_sec"
+                    ],
+                    "high_priority_queued_count": queue_review[
+                        "high_priority_queued_count"
+                    ],
+                    "oldest_high_priority_age_minutes": queue_review[
+                        "oldest_high_priority_age_minutes"
+                    ],
+                }
+            )
+
+    return recommendations
+
+
 def build_recommendations(limit: int = 10) -> list[dict]:
     from aletheia.agent_runtime.health import compute_health
 
@@ -1210,74 +1457,13 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             )
         )
 
-    if failed_tasks:
-        recommendations.append(
-            {
-                "id": "failed-tasks",
-                "kind": "failed_tasks_present",
-                "severity": "high",
-                "summary": f"{len(failed_tasks)} failed operator task(s) require review.",
-                "task_ids": [task["id"] for task in failed_tasks[:5]],
-            }
+    recommendations.extend(
+        _build_task_backlog_recommendations(
+            failed_tasks,
+            running_tasks,
+            queued_tasks,
         )
-
-    stuck_tasks = [task for task in running_tasks if _is_stuck_task(task)]
-    if stuck_tasks:
-        recommendations.append(
-            {
-                "id": "stuck-tasks",
-                "kind": "stuck_tasks_present",
-                "severity": "high",
-                "summary": (
-                    "1 running operator task appears stuck and should be reviewed before trusting shell progress."
-                    if len(stuck_tasks) == 1
-                    else f"{len(stuck_tasks)} running operator tasks appear stuck and should be reviewed before trusting shell progress."
-                ),
-                "task_ids": [task["id"] for task in stuck_tasks[:5]],
-            }
-        )
-
-    if queued_tasks:
-        recommendations.append(
-            {
-                "id": "queued-tasks",
-                "kind": "queued_tasks_present",
-                "severity": "medium",
-                "summary": (
-                    "1 queued operator task is waiting in backlog review."
-                    if len(queued_tasks) == 1
-                    else f"{len(queued_tasks)} queued operator tasks are waiting in backlog review."
-                ),
-                "task_ids": [task["id"] for task in queued_tasks[:5]],
-            }
-        )
-
-        queue_review = _queue_review_policy(queued_tasks)
-        if queue_review:
-            recommendations.append(
-                {
-                    "id": "queue-review-needed",
-                    "kind": "queue_review_needed",
-                    "severity": queue_review["severity"],
-                    "summary": (
-                        "Queued operator backlog needs queue review "
-                        f"({queue_review['review_stage']}): {' and '.join(queue_review['reasons'])}."
-                    ),
-                    "task_ids": [task["id"] for task in queued_tasks[:5]],
-                    "queued_count": len(queued_tasks),
-                    "oldest_age_minutes": queue_review["oldest_age_minutes"],
-                    "review_stage": queue_review["review_stage"],
-                    "suggested_review_cadence_sec": queue_review[
-                        "suggested_review_cadence_sec"
-                    ],
-                    "high_priority_queued_count": queue_review[
-                        "high_priority_queued_count"
-                    ],
-                    "oldest_high_priority_age_minutes": queue_review[
-                        "oldest_high_priority_age_minutes"
-                    ],
-                }
-            )
+    )
 
     rejected_commands = [
         event for event in recent_events if event["event_type"] == "command_rejected"
@@ -1564,93 +1750,18 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             )
         )
 
-    recent_activity_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if (
-            (parse_utc(run.get("ended_at") or run.get("started_at"))
-             or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
+    result = _build_agent_performance_recommendation(
+        cfg,
+        recent_agent_runs,
+        failed_run_statuses,
+        recent_artifacts,
     )
-    recent_failed_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if str(run.get("status") or "") in failed_run_statuses
-        and (
-            (parse_utc(run.get("ended_at") or run.get("started_at"))
-             or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
-    )
-    if (
-        not cfg.runtime.paused
-        and (recent_failed_run_count > 0 or recent_activity_run_count >= 5)
-        and not _has_fresh_report_artifact(
-            recent_artifacts,
-            artifact_type="review_report",
-            report_type="agent_performance",
-            within_minutes=360,
-        )
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_="agent-performance-report-refresh",
-                kind="agent_performance_report_refresh_due",
-                severity="medium",
-                summary=(
-                    "Recent agent activity warrants a fresh agent-performance report for operator review."
-                ),
-                task_type="create_review_report",
-                metadata={
-                    "task_type": "create_review_report",
-                    "report_type": "agent_performance",
-                    "title": "Agent Performance Report",
-                    "recent_activity_run_count": recent_activity_run_count,
-                    "failed_run_count": recent_failed_run_count,
-                    "refresh_window_minutes": 360,
-                },
-            )
-        )
+    if result:
+        recommendations.append(result)
 
-    target_date = datetime.now(timezone.utc).date().isoformat()
-    start_of_target_date = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).isoformat()
-    recent_daily_reviews = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at >= ?",
-        params=("daily_review", start_of_target_date),
-        limit=10,
-    )
-    recent_activity_run_count = sum(
-        1
-        for run in recent_agent_runs
-        if (
-            (parse_utc(run.get("ended_at") or run.get("started_at")) or datetime.min.replace(tzinfo=timezone.utc))
-            > datetime.now(timezone.utc) - timedelta(hours=12)
-        )
-    )
-    if (
-        not cfg.runtime.paused
-        and not recent_daily_reviews
-        and recent_activity_run_count > 0
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_=f"daily-review-refresh:{target_date}",
-                kind="daily_review_refresh_due",
-                severity="medium",
-                summary=f"No daily review has been written for {target_date} UTC. Refresh the non-critical operator summary report.",
-                task_type="create_daily_review",
-                metadata={
-                    "task_type": "create_daily_review",
-                    "target_date": target_date,
-                    "recent_activity_run_count": recent_activity_run_count,
-                    "title": f"Operator Daily Review {target_date}",
-                },
-            )
-        )
+    result = _build_daily_review_recommendation(cfg, recent_agent_runs)
+    if result:
+        recommendations.append(result)
 
     risk_summary = build_risk_summary(cfg=cfg, recent_artifacts=recent_artifacts)
     if (
@@ -1765,70 +1876,13 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         cfg=cfg,
         recent_artifacts=recent_artifacts,
     )
-    due_command_center_behavior_changes = command_center_summary[
-        "needs_command_center_behavior_proposals"
-    ]
-    if not cfg.runtime.paused and due_command_center_behavior_changes:
-        first_candidate = due_command_center_behavior_changes[0]
-        recommendations.append(
-            _make_task_recommendation(
-                id_=f"command-center-behavior:{first_candidate['target_command']}",
-                kind="command_center_behavior_change_proposal_due",
-                severity="medium",
-                summary=first_candidate["summary"],
-                task_type="create_repair_proposal",
-                metadata={
-                    "target_command": first_candidate["target_command"],
-                    "rejection_count": first_candidate["rejection_count"],
-                    "requested_behavior": first_candidate["requested_behavior"],
-                    "sample_responses": first_candidate["sample_responses"],
-                    "sample_inputs": first_candidate["sample_inputs"],
-                    "session_ids": first_candidate["session_ids"],
-                    "command_ids": first_candidate["command_ids"],
-                    "proposal_command": "propose_command_center_behavior_change",
-                },
-            )
-        )
+    result = _build_command_center_recommendation(cfg, command_center_summary)
+    if result:
+        recommendations.append(result)
 
-    passed_extensions = list_extensions(status="sandbox_passed", limit=20)
-    if not cfg.runtime.paused and passed_extensions:
-        ready_extensions = []
-        for extension in passed_extensions:
-            if extension.get("proposal_artifact_id"):
-                continue
-            latest_run = next(
-                iter(list_extension_runs(extension_id=str(extension["id"]), limit=1)),
-                None,
-            )
-            if latest_run is None or str(latest_run.get("status") or "") != "passed":
-                continue
-            ready_extensions.append((extension, latest_run))
-
-        if ready_extensions:
-            extension, latest_run = ready_extensions[0]
-            slash_command = str(extension.get("slash_command") or extension["id"])
-            recommendations.append(
-                _make_task_recommendation(
-                    id_=f"extension-enable:{extension['id']}",
-                    kind="extension_enablement_proposal_due",
-                    severity="medium",
-                    summary=(
-                        f"Extension {slash_command} passed sandbox validation and is ready "
-                        "for a human-reviewed enablement proposal."
-                    ),
-                    task_type="create_repair_proposal",
-                    metadata={
-                        "extension_id": extension["id"],
-                        "extension_name": extension.get("extension_name"),
-                        "slash_command": extension.get("slash_command"),
-                        "target_command": extension.get("target_command"),
-                        "latest_sandbox_run_id": latest_run.get("id"),
-                        "latest_sandbox_status": latest_run.get("status"),
-                        "latest_sandbox_summary": latest_run.get("summary"),
-                        "proposal_command": "propose_extension_enablement",
-                    },
-                )
-            )
+    result = _build_extension_enablement_recommendation(cfg)
+    if result:
+        recommendations.append(result)
 
     archived_ids = _archived_recommendation_ids(cfg.operator.main_session_id)
     if archived_ids:
