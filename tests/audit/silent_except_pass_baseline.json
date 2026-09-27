@@ -526,35 +526,8 @@
     },
     {
       "file": "core/aletheia/server/app.py",
-      "line": 347
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 362
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 385
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 420
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 754
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 759
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 803
-    },
-    {
-      "file": "core/aletheia/server/app.py",
-      "line": 812
+      "line": 385,
+      "reason": "expected asyncio.CancelledError swallow after task.cancel(); asyncio semantics, not error handling"
     },
     {
       "file": "core/aletheia/server/routes/analytics.py",
