@@ -470,3 +470,47 @@ def test_materialization_missing_transition_failure_shape_is_pinned():
         "both sites must catch audit-sink failure separately (not roll back "
         "the transition, per execution_contract.md §7)"
     )
+
+
+def test_order_lookup_start_uses_order_creation_with_skew():
+    """#3564: a clientOid history read needs a window start, or the venue profile
+    answers with a structural PARTIAL and the order never converges."""
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.execution.reconciliation import _ORDER_LOOKUP_SKEW, _order_lookup_start
+
+    created = "2026-09-27T12:00:00+00:00"
+    assert _order_lookup_start({"created_at": created}) == (
+        datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc) - _ORDER_LOOKUP_SKEW
+    )
+    # Naive timestamps are read as UTC rather than silently dropped.
+    naive = _order_lookup_start({"created_at": "2026-09-27T12:00:00"})
+    assert naive == datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc) - _ORDER_LOOKUP_SKEW
+    # No usable timestamp: return None so the adapter reports its OWN structural
+    # PARTIAL instead of this code inventing a window.
+    assert _order_lookup_start({}) is None
+    assert _order_lookup_start({"created_at": "not-a-timestamp"}) is None
+
+
+async def test_client_oid_detail_lookup_passes_a_window_start(monkeypatch):
+    """#3564: the call site must thread the order's own creation into the scope."""
+    from aletheia.execution import reconciliation as recon
+
+    captured = {}
+
+    async def fake_query_uta(execution_mode, method, query, **kwargs):
+        captured["query"] = query
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr(recon, "query_uta", fake_query_uta)
+    projection = recon._UTAReconciliationProjection("bitget_demo", expected_account=ACCOUNT)
+    with pytest.raises(RuntimeError):
+        await projection.get_order_detail_by_client_oid(
+            "client-oid-1", "UNI/USDT", start_at=recon._order_lookup_start(
+                {"created_at": "2026-09-27T12:00:00+00:00"}
+            )
+        )
+    assert captured["query"].scope.start_at is not None, (
+        "without a window start the venue returns private_order_history_start_required "
+        "forever (#3564)"
+    )

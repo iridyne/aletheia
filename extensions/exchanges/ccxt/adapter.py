@@ -587,8 +587,13 @@ class CCXTUTAAdapter:
         except UTAError as exc:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
-        except (Exception, TimeoutError):
-            logger.debug("ccxt_adapter: exact order read failed; report marked unavailable", exc_info=True)
+        except (Exception, TimeoutError) as exc:
+            logger.warning(
+                "ccxt_adapter: exact order read failed (%s: %s); report marked unavailable",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
         return OrderQueryReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -693,8 +698,13 @@ class CCXTUTAAdapter:
         except UTAError as exc:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
-        except (Exception, TimeoutError):
-            logger.debug("ccxt_adapter: fill read failed; report marked unavailable", exc_info=True)
+        except (Exception, TimeoutError) as exc:
+            logger.warning(
+                "ccxt_adapter: fill read failed (%s: %s); report marked unavailable",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
         return FillListReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -825,8 +835,13 @@ class CCXTUTAAdapter:
         except UTAError as exc:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
-        except (Exception, TimeoutError, ValueError):
-            logger.debug("ccxt_adapter: funding ledger read failed; report marked unavailable", exc_info=True)
+        except (Exception, TimeoutError, ValueError) as exc:
+            logger.warning(
+                "ccxt_adapter: funding ledger read failed (%s: %s); report marked unavailable",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
         return FundingLedgerReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -1005,8 +1020,13 @@ class CCXTUTAAdapter:
         except UTAError as exc:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
-        except (Exception, TimeoutError):
-            logger.debug("ccxt_adapter: account-authority probe failed; report marked unavailable", exc_info=True)
+        except (Exception, TimeoutError) as exc:
+            logger.warning(
+                "ccxt_adapter: account-authority probe failed (%s: %s); report marked unavailable",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
         return AccountAuthorityProbeReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,

@@ -10,7 +10,7 @@ bookkeeping when the exchange provides direct evidence.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -47,6 +47,31 @@ from aletheia.uta.models import (
 )
 
 logger = logging.getLogger("aletheia.reconciliation")
+
+# Margin applied to an order's own creation time when building the window for a
+# clientOid history read, so venue/process clock skew cannot push the window past
+# the order.
+_ORDER_LOOKUP_SKEW = timedelta(hours=1)
+
+
+def _order_lookup_start(order: dict) -> datetime | None:
+    """Window start for a clientOid order-history read.
+
+    Derived from the order's own ``created_at``. ``None`` when the row carries no
+    usable timestamp, in which case the adapter returns its structural PARTIAL
+    rather than this code inventing a window.
+    """
+    created = order.get("created_at")
+    if not created:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed - _ORDER_LOOKUP_SKEW
+
 
 # Each execution mode selects its own account explicitly; using the current
 # config mode could reconcile a live Order against a demo/testnet account after
@@ -930,13 +955,13 @@ class _UTAReconciliationProjection:
         return report.found
 
     async def get_order_detail_by_client_oid(
-        self, client_order_id: str, symbol: str
+        self, client_order_id: str, symbol: str, *, start_at=None
     ) -> dict | None:
         report = await query_uta(
             self.execution_mode,
             "get_order",
             OrderQuery(
-                scope=scope_from_local(symbol, "usdt_futures"),
+                scope=scope_from_local(symbol, "usdt_futures", start_at=start_at),
                 client_order_id=client_order_id,
             ),
             expected_account=self.expected_account,
@@ -1480,12 +1505,19 @@ def _recover_exchange_order_id(
         elif market_type == "usdt_futures":
             # Order may have already filled and left the open-order list.
             # Fall back to a direct detail lookup by clientOid (#1779).
+            #
+            # `start_at` is REQUIRED here: the venue profile declines an
+            # account-wide history read with no window and returns a structural
+            # PARTIAL (`private_order_history_start_required`, ccxt adapter:486),
+            # which made this lookup return IncompleteReadError forever and left
+            # the order machine-owned with no convergence path (#3564).
             try:
                 from aletheia.data.symbols import to_bitget as _to_bitget
                 detail = run_coro_from_sync(
                     client.get_order_detail_by_client_oid(
                         str(order["client_order_id"]),
                         _to_bitget(str(order["symbol"])),
+                        start_at=_order_lookup_start(order),
                     )
                 )
             except Exception as exc:

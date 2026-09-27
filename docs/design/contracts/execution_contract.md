@@ -549,13 +549,17 @@ call sites from the module AST rather than from a maintained list, and which fai
 the set of discovered sites is empty — a guard that silently matches nothing is not
 a guard.
 
-> **Documented limitation**: `get_order_detail_by_client_oid`
-> (`core/aletheia/execution/reconciliation.py`, method `get_order_detail_by_client_oid`)
-> issues a scope without `start_at`; for a venue profile with no client-order lookup
-> parameter this read is structurally `PARTIAL`
-> (`private_order_history_start_required`). Such claims reach the terminal bound for
-> that reason alone. Accepted; tracked separately. After `INV-EX-1` this reason is
-> visible in `errors.log` rather than hidden behind `RuntimeError`.
+> **Limited limitation (narrowed 2026-09-27, #3564)**: `get_order_detail_by_client_oid`
+> (`core/aletheia/execution/reconciliation.py`) previously issued a scope with no
+> `start_at`, so for a venue profile with no client-order lookup parameter the read was
+> *always* structurally `PARTIAL` (`private_order_history_start_required`) and such
+> claims could only ever reach the terminal bound. The call site now supplies a window
+> derived from the order's own `created_at` (with a one-hour skew margin,
+> `_ORDER_LOOKUP_START`), so the read completes for any order inside the venue's
+> private history retention. What remains is a real venue limit, not a caller bug: an
+> order **older than** `private_history_retention_days` still answers `PARTIAL`, and
+> such claims still reach the terminal bound for that reason. After `INV-EX-1` both
+> reasons are visible in `errors.log` rather than hidden behind `RuntimeError`.
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 
