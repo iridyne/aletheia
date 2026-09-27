@@ -103,6 +103,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
   [test_performance_storage_batches.py](../../../tests/test_performance_storage_batches.py)：
   断言实际落库值，并让后续 SQL 写入失败，验证前序写入全部回滚；不验证 facade 转发或 mock 调用。
 - 平台分支测试显式声明目标平台；development updater 的测试不能依赖运行主机恰好不是 Linux。
+- 前端开关用渲染后的可访问名称、保存提示和 draft 状态迁移验证；必填 persistence 参数由 TypeScript 检查，不用 TSX 源码数量或目录/文案快照代替行为证明。
 
 ---
 
