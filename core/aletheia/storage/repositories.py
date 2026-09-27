@@ -11202,3 +11202,103 @@ def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
         (max(0, int(limit)),),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def plan_market_ohlcv_tiering(
+    *,
+    exchange: str,
+    symbol: str,
+    market_type: str,
+    timeframe: str,
+    hot_bars: int = 2_048,
+    cold_chunk_bars: int = 4_096,
+):
+    """Build a format-neutral hot/cold plan from one exact stored series.
+
+    This is read-only.  No rows are removed until a future configured cold
+    backend returns durable, read-back-verified receipts.
+    """
+    from aletheia.storage.market_ohlcv_tiering import (
+        OHLCVSeriesIdentity,
+        OHLCVTieringPolicy,
+        OHLCVTierManager,
+    )
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT ts,open,high,low,close,volume,provider FROM market_ohlcv "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? ORDER BY ts",
+        (exchange.lower(), symbol, market_type, timeframe),
+    ).fetchall()
+    manager = OHLCVTierManager(OHLCVTieringPolicy(hot_bars=hot_bars, cold_chunk_bars=cold_chunk_bars))
+    return manager.plan(
+        OHLCVSeriesIdentity(exchange.lower(), symbol, market_type, timeframe),
+        rows,
+    )
+
+def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:
+    """Return the newest perp structure row for a symbol."""
+    if source is not None:
+        rows = _select_all(
+            "perp_structure_snapshots",
+            where="symbol = ? AND source = ?",
+            params=(symbol, source),
+            order="as_of_time DESC, observed_at DESC",
+            limit=1,
+        )
+    else:
+        rows = _select_all(
+            "perp_structure_snapshots",
+            where="symbol = ?",
+            params=(symbol,),
+            order="as_of_time DESC, observed_at DESC",
+            limit=1,
+        )
+    return rows[0] if rows else None
+
+def latest_options_structure(symbol: str) -> dict | None:
+    rows = _select_all(
+        "options_market_structure_snapshots",
+        where="symbol = ?",
+        params=(symbol,),
+        order="observed_at DESC",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def batch_news(
+    symbols: list[str],
+    since_iso: str,
+    limit_per_symbol: int = 3,
+) -> dict[str, list[dict]]:
+    """Return exact, analyzed, relevant news grouped by requested symbol.
+
+    Historical ``symbols_mentioned`` values are hints only. Every row is
+    revalidated against article text so old substring false positives cannot
+    re-enter Observer context.
+    """
+    if not symbols:
+        return {}
+    from aletheia.data.news_entities import news_matches_symbol
+
+    db = get_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows = db.execute(
+        "SELECT id, title, source, summary, content, published_at, symbols_mentioned, "
+        "relevance_score, analyzed_at FROM news_items "
+        "WHERE status = 'analyzed' AND relevance_score >= 0.6 "
+        "AND datetime(published_at) > datetime(?) "
+        "AND datetime(published_at) <= datetime(?) "
+        "ORDER BY published_at DESC LIMIT 500",
+        (since_iso, now_iso),
+    ).fetchall()
+    result: dict[str, list] = {s: [] for s in symbols}
+    for row in rows:
+        item = dict(row)
+        for sym in symbols:
+            if len(result[sym]) >= limit_per_symbol:
+                continue
+            if news_matches_symbol(sym, item.get("title"), item.get("summary"), item.get("content")):
+                result[sym].append(item)
+    return result

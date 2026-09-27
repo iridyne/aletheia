@@ -60,7 +60,7 @@ def test_batch_news_revalidates_historical_matches_and_requires_analyzed_relevan
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
-    from tests.fixtures.repo_test_helpers import batch_news
+    from aletheia.storage.repositories import batch_news
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

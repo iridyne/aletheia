@@ -1,4 +1,4 @@
-from tests.fixtures.repo_test_helpers import plan_market_ohlcv_tiering
+from aletheia.storage.repositories import plan_market_ohlcv_tiering
 
 import pytest
 import sqlite3

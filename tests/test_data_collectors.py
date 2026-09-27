@@ -5,7 +5,7 @@ All tests are offline. We mock ccxt/httpx and use temporary repository fixtures.
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import latest_perp_structure
+from aletheia.storage.repositories import latest_perp_structure
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch

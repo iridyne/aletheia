@@ -1,6 +1,6 @@
 """Frozen public-chain fixtures: research semantics, acquisition and GEX isolation."""
 
-from tests.fixtures.repo_test_helpers import latest_options_structure
+from aletheia.storage.repositories import latest_options_structure
 
 import asyncio
 from contextlib import asynccontextmanager
