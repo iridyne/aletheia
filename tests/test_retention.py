@@ -90,6 +90,35 @@ def _run_cleanup_with_test_config(monkeypatch):
     scheduler._run_cleanup()
 
 
+def test_scheduler_cleanup_failure_keeps_shared_health_and_releases_db(monkeypatch):
+    from unittest.mock import Mock
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.infra import events
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(scheduler, "_consecutive_failures", {})
+    monkeypatch.setattr(scheduler, "_learning_job_failed", None)
+    emitted = Mock()
+    monkeypatch.setattr(events, "emit_infra_event", emitted)
+
+    def fail_prune(_days):
+        get_db().execute("BEGIN")
+        raise RuntimeError("retention unavailable")
+
+    monkeypatch.setattr(repo, "prune_run_steps", fail_prune)
+    for count in range(1, 4):
+        connection = get_db()
+        scheduler._guarded("cleanup", scheduler._run_cleanup)()
+        assert scheduler._consecutive_failures["cleanup"] == count
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+    assert any(call.kwargs["code"] == "job_consecutive_failure:cleanup" for call in emitted.call_args_list)
+    assert scheduler._guarded("following_job", lambda: "completed")() == "completed"
+
+
 def test_cleanup_catchup_due_uses_last_successful_audit(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
