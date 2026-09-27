@@ -81,6 +81,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - DB 测试用真实 SQLite in-memory，不 mock
+- 前端开关用渲染后的可访问名称、保存提示和 draft 状态迁移验证；必填 persistence 参数由 TypeScript 检查，不用 TSX 源码数量或目录/文案快照代替行为证明。
 
 ---
 
