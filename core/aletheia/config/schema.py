@@ -1414,7 +1414,15 @@ class RetentionConfig(BaseModel):
     # Filter family. `clean_window_cutoff` guard (Phase 2 decision A) still applies:
     # candidate_outcomes older than the retention window are kept whenever they are
     # still needed by an open experiment (min(now-days, min_open_experiment_started_at)).
-    filter_candidate_outcomes_days: int = 30
+    #
+    # Ordering invariant: `filter_candidate_outcomes` is the join anchor for the
+    # count-cohorts (filter_evidence_contract § outcome_candidate_key), so it must be
+    # retained at least as long as every table joined against it. It was 30 here while
+    # `filter_decisions` was 45, which made a decision outlive its own outcome by 15
+    # days: every alpha cohort over a window >= 30d silently lost its anchor, and
+    # shadow_trades (90d) vs outcomes (30d) were strictly disjoint. Enforced by
+    # tests/audit/test_alpha_cohort_reachability.py.
+    filter_candidate_outcomes_days: int = 45
     filter_decisions_days: int = 45
     filter_decision_batches_days: int = 30
     filter_shadow_experiments_days: int = 90

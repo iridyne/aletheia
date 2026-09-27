@@ -470,7 +470,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   Allocation MUST occur inside the same `sqlite.transaction(immediate=True)` writer lock that
   mutates `positions.pending_close_*`; a read-then-compute outside that lock would race with
   concurrent close-claim allocation on the same position. A structural AST guard test
-  (`tests/audit/close_client_oid_transaction_guard.py`) enforces this containment.
+  (`tests/audit/test_close_client_oid_transaction_guard.py`) enforces this containment.
 
 #### 10.2.4 Terminal bound on close-side submission ambiguity
 
