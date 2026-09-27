@@ -8,6 +8,8 @@ whole-file gate would fail on every edit.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import xml.etree.ElementTree as ET
 
 import scripts.dev_check as dev_check
@@ -157,3 +159,31 @@ def test_missing_cached_files_do_not_modify_failure_evidence(tmp_path, monkeypat
     cache.write_text(json.dumps(failed))
     assert dev_check.previous_failed_test_files() == []
     assert json.loads(cache.read_text()) == failed
+
+
+
+def test_empty_cached_file_does_not_hide_a_focused_failure(tmp_path, monkeypatch, capfd):
+    monkeypatch.setattr(dev_check, "REPO_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_unrelated.py").write_text("raise RuntimeError('unrelated module collected')\n")
+    for args in (
+        ["init"], ["add", "tests/test_unrelated.py"],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-m", "baseline"],
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    (tests / "test_removed.py").write_text("# The formerly failing test was removed.\n")
+    (tests / "test_focused.py").write_text(
+        "def test_focused():\n    observed = 1\n    assert observed == 2, 'focused_failure_visible'\n"
+    )
+    cache = tmp_path / ".pytest_cache/v/cache/lastfailed"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"tests/test_removed.py::test_old": True}))
+
+    assert dev_check.main(["--no-types"]) == dev_check.EXIT_FINDINGS
+    assert "focused_failure_visible" in capfd.readouterr().out
