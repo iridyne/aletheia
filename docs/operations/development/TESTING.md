@@ -113,6 +113,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 - 平台分支测试显式声明目标平台；development updater 的测试不能依赖运行主机恰好不是 Linux。
 - 前端开关用渲染后的可访问名称、保存提示和 draft 状态迁移验证；必填 persistence 参数由 TypeScript 检查，不用 TSX 源码数量或目录/文案快照代替行为证明。
 - 渲染测试补齐实际会调用的外部 API 测试响应；不能依赖未配置 localhost 的连接失败维持通过，也不能屏蔽日志来冒充隔离。
+- HTTP 来源回归见 [test_http_mutation_origin.py](../../../tests/test_http_mutation_origin.py) 和 [test_operator_service_auth.py](../../../tests/test_operator_service_auth.py)：Node 原生 fetch 的单独 `Sec-Fetch-Mode: cors` 不代表浏览器来源；保留 Origin/Referer/跨站元数据拒绝以及独立服务凭据和路由白名单校验。
 
 ---
 

@@ -47,7 +47,7 @@ def test_service_token_authenticates_internal_heartbeat_under_owner_auth(
     client = TestClient(app_module.app)
     response = client.post(
         "/api/operator/internal/heartbeat",
-        headers={"X-Aletheia-Operator-Service": "service-token"},
+        headers={"X-Aletheia-Operator-Service": "service-token", "Sec-Fetch-Mode": "cors"},
         json={
             "status": "online",
             "mode": "Observing",
@@ -77,7 +77,7 @@ def test_service_token_cannot_authorize_owner_facing_mutation(monkeypatch):
     client = TestClient(app_module.app)
     response = client.post(
         "/api/gateway/restart",
-        headers={"X-Aletheia-Operator-Service": "service-token"},
+        headers={"X-Aletheia-Operator-Service": "service-token", "Sec-Fetch-Mode": "cors"},
     )
 
     assert response.status_code == 401
@@ -99,6 +99,7 @@ def test_external_request_without_owner_or_service_identity_still_fails(monkeypa
     client = TestClient(app_module.app)
     response = client.post(
         "/api/operator/internal/heartbeat",
+        headers={"Sec-Fetch-Mode": "cors"},
         json={
             "status": "online",
             "mode": "Observing",

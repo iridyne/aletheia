@@ -998,8 +998,12 @@ async def _tunnel_auth_guard(request, call_next):
                     origins[0] in same_origins or origins[0] in _loopback_origins
                 )
             else:
+                # Native fetch sends mode=cors without browser-origin metadata.
                 allowed = request.headers.get("sec-fetch-site") == "same-origin" or not any(
-                    name.startswith("sec-fetch-") or name == "referer" for name in request.headers
+                    name == "referer" or (
+                        name.startswith("sec-fetch-") and (name != "sec-fetch-mode" or value != "cors")
+                    )
+                    for name, value in request.headers.items()
                 )
             if not allowed:
                 return JSONResponse({"detail": "Untrusted browser origin"}, status_code=403)
