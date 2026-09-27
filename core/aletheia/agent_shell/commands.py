@@ -1792,42 +1792,112 @@ def _record_unavailable_review(cfg: dict, scope: dict, model_error) -> dict:
     }
 
 
-async def review_portfolio_state(params: dict) -> dict:
-    """System Operator reviews open positions and may hold, adjust, or close one."""
-    import json as _json
-
-    from aletheia.agents.helpers import llm_structured
+def _normalize_review_and_select_target(
+    review: dict, scope: dict, open_positions: list[dict], review_marks: dict,
+) -> dict:
+    """Normalize the review and select an exact target with fresh-mark guards."""
     from aletheia.uta.manager import UTA_EXECUTION_MODES
 
-    scope = _collect_review_scope(params)
-    params = scope["params"]
-    wake_batches = scope["wake_batches"]
+    schema = scope["schema"]
     wake_position_ids = scope["wake_position_ids"]
-    wake_fingerprint = scope["wake_fingerprint"]
-    all_open_positions = scope["all_open_positions"]
-    total_unrealized_pnl = scope["total_unrealized_pnl"]
-    unrealized_pnl_available = scope["unrealized_pnl_available"]
-    portfolio_context = scope["portfolio_context"]
-    open_positions = scope["open_positions"]
     horizon_due_position_ids = scope["horizon_due_position_ids"]
     horizon_due_review = scope["horizon_due_review"]
     allow_horizon_hold = scope["allow_horizon_hold"]
-    risk = scope["risk"]
 
-    if not open_positions:
-        return {
-            "action": "none",
-            "reason": (
-                "wake_positions_not_open" if wake_position_ids else "no_open_positions"
-            ),
-            # A stale wake whose exact Position is already closed is terminal;
-            # retrying it can neither review nor safely mutate that Position.
-            "review_completed": bool(wake_position_ids),
-        }
+    raw_action = str(review.get("action") or "hold")
+    supported_action = raw_action in set(schema["properties"]["action"]["enum"])
+    action = raw_action if supported_action else "hold"
+    reasoning = str(review.get("reasoning") or "")[:300]
+    if not supported_action:
+        reasoning = (
+            f"{reasoning} [unsupported_action:{raw_action}; normalized to hold]"
+        ).strip()
+    result = {
+        "action": action,
+        "reasoning": reasoning,
+        "target_symbol": review.get("target_symbol"),
+    }
+    if horizon_due_review and raw_action == "hold" and not allow_horizon_hold:
+        result["horizon_review_error"] = (
+            "explicit_extension_or_close_required"
+        )
 
-    review_now, review_marks, review_mark_evidence = _collect_fresh_review_marks(
-        open_positions
+    sym = review.get("target_symbol") or ""
+    mkt = review.get("target_market_type")
+    direction = review.get("target_direction")
+    target_id = review.get("target_position_id")
+    candidates = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
+    if wake_position_ids:
+        wake_ids = set(wake_position_ids)
+        candidates = [p for p in candidates if p["id"] in wake_ids]
+    mutating_action = action in {"adjust_position", "close_one"}
+    if mutating_action and not target_id:
+        matching = []
+    elif target_id:
+        matching = [p for p in candidates if p["id"] == target_id]
+    else:
+        matching = [p for p in candidates if p["symbol"] == sym]
+        if mkt:
+            matching = [p for p in matching if p.get("market_type") == mkt]
+        if direction:
+            matching = [p for p in matching if p["direction"] == direction]
+
+    if mutating_action and not matching:
+        result[f"{action}_error"] = (
+            "target_position_id_required" if not target_id else "no_target_position"
+        )
+
+    target = matching[0] if matching else (
+        open_positions[0] if len(open_positions) == 1 else None
     )
+    target_mark_available = bool(
+        target and review_marks.get(str(target.get("id") or "")) is not None
+    )
+    time_authorized_horizon_close = bool(
+        action == "close_one"
+        and target
+        and str(target.get("id") or "") in horizon_due_position_ids
+    )
+    if action == "adjust_position" and matching and not target_mark_available:
+        result["adjust_position_error"] = "fresh_review_mark_unavailable"
+    if (
+        action == "close_one"
+        and matching
+        and not target_mark_available
+        and not time_authorized_horizon_close
+    ):
+        result["close_one_error"] = "fresh_review_mark_unavailable"
+
+    return {
+        "supported_action": supported_action,
+        "action": action,
+        "reasoning": reasoning,
+        "result": result,
+        "matching": matching,
+        "target": target,
+        "mutating_action": mutating_action,
+    }
+
+
+def _build_review_request(
+    scope: dict, marks: dict, risk_context: dict,
+) -> tuple[dict, str, str]:
+    """Build the review schema and prompts from the collected scope and marks."""
+    import json as _json
+
+    open_positions = scope["open_positions"]
+    all_open_positions = scope["all_open_positions"]
+    total_unrealized_pnl = scope["total_unrealized_pnl"]
+    unrealized_pnl_available = scope["unrealized_pnl_available"]
+    wake_batches = scope["wake_batches"]
+    horizon_due_review = scope["horizon_due_review"]
+    allow_horizon_hold = scope["allow_horizon_hold"]
+    review_now = scope["review_now"]
+    review_marks = marks
+    risk = risk_context
 
     schema = {
         "type": "object",
@@ -1970,6 +2040,46 @@ act on a position outside the supplied wake evidence.
 
 Return JSON: {_json.dumps(schema)}"""
 
+    return schema, system, user
+
+
+async def review_portfolio_state(params: dict) -> dict:
+    """System Operator reviews open positions and may hold, adjust, or close one."""
+    import json as _json
+
+    from aletheia.agents.helpers import llm_structured
+
+    scope = _collect_review_scope(params)
+    params = scope["params"]
+    wake_batches = scope["wake_batches"]
+    wake_position_ids = scope["wake_position_ids"]
+    wake_fingerprint = scope["wake_fingerprint"]
+    portfolio_context = scope["portfolio_context"]
+    open_positions = scope["open_positions"]
+    horizon_due_position_ids = scope["horizon_due_position_ids"]
+    horizon_due_review = scope["horizon_due_review"]
+    allow_horizon_hold = scope["allow_horizon_hold"]
+    risk = scope["risk"]
+
+    if not open_positions:
+        return {
+            "action": "none",
+            "reason": (
+                "wake_positions_not_open" if wake_position_ids else "no_open_positions"
+            ),
+            # A stale wake whose exact Position is already closed is terminal;
+            # retrying it can neither review nor safely mutate that Position.
+            "review_completed": bool(wake_position_ids),
+        }
+
+    review_now, review_marks, review_mark_evidence = _collect_fresh_review_marks(
+        open_positions
+    )
+
+    schema, system, user = _build_review_request(
+        {**scope, "review_now": review_now}, review_marks, risk
+    )
+
     class _Schema:
         @staticmethod
         def model_json_schema() -> dict:
@@ -1990,72 +2100,16 @@ Return JSON: {_json.dumps(schema)}"""
             params, {**scope, "review_mark_evidence": review_mark_evidence}, err
         )
 
-    raw_action = str(review.get("action") or "hold")
-    supported_action = raw_action in set(schema["properties"]["action"]["enum"])
-    action = raw_action if supported_action else "hold"
-    reasoning = str(review.get("reasoning") or "")[:300]
-    if not supported_action:
-        reasoning = (
-            f"{reasoning} [unsupported_action:{raw_action}; normalized to hold]"
-        ).strip()
-    result = {
-        "action": action,
-        "reasoning": reasoning,
-        "target_symbol": review.get("target_symbol"),
-    }
-    if horizon_due_review and raw_action == "hold" and not allow_horizon_hold:
-        result["horizon_review_error"] = (
-            "explicit_extension_or_close_required"
-        )
-
-    sym = review.get("target_symbol") or ""
-    mkt = review.get("target_market_type")
-    direction = review.get("target_direction")
-    target_id = review.get("target_position_id")
-    candidates = [
-        row for row in list_all_open_positions()
-        if row.get("execution_mode") in UTA_EXECUTION_MODES
-    ]
-    if wake_position_ids:
-        wake_ids = set(wake_position_ids)
-        candidates = [p for p in candidates if p["id"] in wake_ids]
-    mutating_action = action in {"adjust_position", "close_one"}
-    if mutating_action and not target_id:
-        matching = []
-    elif target_id:
-        matching = [p for p in candidates if p["id"] == target_id]
-    else:
-        matching = [p for p in candidates if p["symbol"] == sym]
-        if mkt:
-            matching = [p for p in matching if p.get("market_type") == mkt]
-        if direction:
-            matching = [p for p in matching if p["direction"] == direction]
-
-    if mutating_action and not matching:
-        result[f"{action}_error"] = (
-            "target_position_id_required" if not target_id else "no_target_position"
-        )
-
-    target = matching[0] if matching else (
-        open_positions[0] if len(open_positions) == 1 else None
+    selection = _normalize_review_and_select_target(
+        review, {**scope, "schema": schema}, open_positions, review_marks
     )
-    target_mark_available = bool(
-        target and review_marks.get(str(target.get("id") or "")) is not None
-    )
-    time_authorized_horizon_close = bool(
-        action == "close_one"
-        and target
-        and str(target.get("id") or "") in horizon_due_position_ids
-    )
-    if action == "adjust_position" and matching and not target_mark_available:
-        result["adjust_position_error"] = "fresh_review_mark_unavailable"
-    if (
-        action == "close_one"
-        and matching
-        and not target_mark_available
-        and not time_authorized_horizon_close
-    ):
-        result["close_one_error"] = "fresh_review_mark_unavailable"
+    supported_action = selection["supported_action"]
+    action = selection["action"]
+    reasoning = selection["reasoning"]
+    result = selection["result"]
+    matching = selection["matching"]
+    target = selection["target"]
+    mutating_action = selection["mutating_action"]
 
     def _effect(*, pending: bool = False) -> dict:
         if pending:
