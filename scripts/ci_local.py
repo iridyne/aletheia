@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     local_checks = []
     for check in report["local_checks"]:
-        if check["command"] == ["git", "diff", "--check"]:
+        if check.get("command") == ["git", "diff", "--check"]:
             check = {
                 **check,
                 "command": ["git", "diff", "--check", f"{report['base_sha']}...{report['head_sha']}", "--"],
@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         "head_sha": report["head_sha"],
         "mode": report["mode"],
         "surfaces": report["surfaces"],
+        "required": report["required"],
         "checks": [],
         "result": "pass",
     }
@@ -93,8 +94,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(receipt, indent=2, sort_keys=True))
         return 0
     for check in checks:
+        if check.get("unavailable_reason"):
+            receipt["checks"].append({**check, "status": "required_but_unavailable"})
+            receipt["result"] = "required_but_unavailable"
+            receipt["failure_reason"] = check["unavailable_reason"]
+            print(json.dumps(receipt, indent=2, sort_keys=True))
+            return 2
         outcome = _run(check["command"], check.get("working_directory"))
-        receipt["checks"].append({"name": check["name"], **outcome})
+        receipt["checks"].append({
+            "name": check["name"], "lane": check.get("lane"),
+            "status": "pass" if outcome["exit_code"] == 0 else "fail", **outcome,
+        })
         if outcome["exit_code"] != 0:
             receipt["result"] = "fail"
             receipt["failure_reason"] = f"{check['name']} failed"
