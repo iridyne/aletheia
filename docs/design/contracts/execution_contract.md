@@ -103,6 +103,17 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
 - Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
   随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
   remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
+- **Cancel 收敛(2026-09-27, #3507)**:cancel 一旦被 fence(`error_reason` 以
+  `entry_cancel_pending:` 开头),只重读 venue 是不够的——若首次 cancel 从未落地
+  (被拒、丢失于凭据/配置 generation 变更、或 venue 未处理),订单会永久停在 `submitted`。
+  reconciling 路径因此在 exact venue 证据显示订单**仍在工作**时幂等重发 cancel(沿用同一
+  `client_order_id`,重发不会产生第二笔 cancel);只有当 venue 用当前凭据返回**同一张** Order
+  (venue/client order id + instrument 匹配)之后,才允许把 credential-generation drift 的持久
+  身份 re-anchor(审计 `uta_account_reanchored`);硬账户不匹配或未绑定 identity 一律 fail closed,
+  不 relabel、不提交。重发按退避调度(`orders.entry_cancel_attempts` /
+  `orders.entry_cancel_retry_after`,additive schema v90),窗口内 Gateway 直接返回
+  `cancel_pending` 而不接触 venue;第 6 次尝试写一条 `entry_cancel_stalled` 审计事件。Order 与
+  Entry Plan 仍留在 durable reconciliation 状态,不得静默放弃或推断 fill。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 

@@ -633,3 +633,64 @@ def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, mon
     assert all(row["approved"] for row in decisions)
     assert repo.get_order_for_entry_plan(plan.plan_id)["status"] == "submitted"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S14",
+        "execution_contract",
+        "§3.0a Entry Plan Order Policy (cancel convergence)",
+        "L2a",
+        "A cancel the venue has not honoured is re-attempted idempotently: one Order never sees two distinct cancels.",
+        status="implemented",
+    )
+)
+def test_entry_cancel_reattempt_reuses_the_client_order_identity(monkeypatch):
+    """#3507: the reconciling re-attempt repeats the same Order identity."""
+    from types import SimpleNamespace
+
+    from aletheia.execution import coordinator, gateway, reconciliation
+    from aletheia.uta import manager
+    from aletheia.uta.models import OrderLifecycle, ReadCompleteness
+    from tests.test_entry_plan_execution import _cancel_ack, _persist_ordered_plan
+    from tests.uta.test_execution_coordinator import _identity
+
+    # Unit-level order geometry: the durable AI-entry authority gate is exercised
+    # against the real store in tests/test_entry_activation.py.
+    monkeypatch.setattr(
+        "aletheia.execution.entry_plan_execution._require_ai_entry_authority",
+        lambda _plan: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_activation.require_entry_trigger_activation",
+        lambda *args, **kwargs: None,
+    )
+
+    plan, order = _persist_ordered_plan()
+    cancels: list = []
+    monkeypatch.setattr(
+        coordinator,
+        "cancel_order",
+        lambda command: cancels.append(command) or _cancel_ack(command),
+    )
+
+    async def exact_fills(self, **_kwargs):
+        return []
+
+    async def still_working(*_args, **_kwargs):
+        return SimpleNamespace(
+            identity=_identity("bitget_demo"),
+            completeness=ReadCompleteness.COMPLETE,
+            found=SimpleNamespace(state=OrderLifecycle.OPEN, filled_quantity=0.0),
+        )
+
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_order_fills", exact_fills)
+    monkeypatch.setattr(manager, "query_uta", still_working)
+
+    gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")
+
+    assert len(cancels) == 2, "the still-working Order is re-attempted"
+    identities = {(command.target_venue_order_id, command.target_client_order_id) for command in cancels}
+    assert identities == {(order.exchange_order_id, order.client_order_id)}, (
+        "the re-attempt must keep the same venue/client order identity, so the venue cannot see two cancels"
+    )
