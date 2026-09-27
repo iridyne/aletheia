@@ -10,7 +10,7 @@ pytestmark = pytest.mark.fast
 
 def test_execution_reexport_and_shared_helpers():
     for first in ("repositories", "repositories_execution"):
-        subprocess.run(
+        result = subprocess.run(
             [
                 sys.executable,
                 "-c",
@@ -41,7 +41,7 @@ def test_execution_reexport_and_shared_helpers():
                 "    transaction.return_value.__enter__.assert_called_once_with()\n"
                 "    transaction.return_value.__exit__.assert_called_once_with(None, None, None)\n",
             ],
-            check=True,
             capture_output=True,
             text=True,
         )
+        assert result.returncode == 0, result.stderr

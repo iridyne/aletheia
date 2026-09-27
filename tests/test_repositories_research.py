@@ -10,7 +10,7 @@ pytestmark = pytest.mark.fast
 
 def test_research_reexport_and_shared_helpers():
     for first in ("repositories", "repositories_research"):
-        subprocess.run(
+        result = subprocess.run(
             [
                 sys.executable,
                 "-c",
@@ -23,7 +23,7 @@ def test_research_reexport_and_shared_helpers():
                 "    assert research.get_agent_run('run') == {'id': 'run'}\n"
                 "    select.assert_called_once_with('agent_runs', 'run')\n",
             ],
-            check=True,
             capture_output=True,
             text=True,
         )
+        assert result.returncode == 0, result.stderr

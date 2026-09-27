@@ -10,7 +10,7 @@ pytestmark = pytest.mark.fast
 
 def test_universe_reexport_and_shared_helpers():
     for first in ("repositories", "repositories_universe"):
-        subprocess.run(
+        result = subprocess.run(
             [
                 sys.executable,
                 "-c",
@@ -23,7 +23,7 @@ def test_universe_reexport_and_shared_helpers():
                 "    assert universe.get_universe_asset('asset') == {'id': 'asset'}\n"
                 "    select.assert_called_once_with('universe_registry', 'asset')\n",
             ],
-            check=True,
             capture_output=True,
             text=True,
         )
+        assert result.returncode == 0, result.stderr

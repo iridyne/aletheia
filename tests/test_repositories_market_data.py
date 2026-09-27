@@ -10,7 +10,7 @@ pytestmark = pytest.mark.fast
 
 def test_market_data_reexport_and_shared_helpers():
     for first in ("repositories", "repositories_market_data"):
-        subprocess.run(
+        result = subprocess.run(
             [
                 sys.executable,
                 "-c",
@@ -35,7 +35,7 @@ def test_market_data_reexport_and_shared_helpers():
                 "    transaction.return_value.__exit__.assert_called_once_with(None, None, None)\n"
                 "    insert.assert_called_once_with({'id': 'book'})\n",
             ],
-            check=True,
             capture_output=True,
             text=True,
         )
+        assert result.returncode == 0, result.stderr
