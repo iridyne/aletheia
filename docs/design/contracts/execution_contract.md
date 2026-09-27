@@ -547,7 +547,10 @@ opaque type name. Structurally guarded by
 `tests/audit/test_reconciliation_incomplete_read_logging.py`, which discovers the
 call sites from the module AST rather than from a maintained list, and which fails if
 the set of discovered sites is empty — a guard that silently matches nothing is not
-a guard.
+a guard. Private adapter diagnostics retain a safe exception category and typed
+report reason; raw transport exception messages and tracebacks must not enter
+logs because they can contain private request or response data.
+`tests/uta/test_ccxt_adapter.py` exercises this boundary with synthetic failures.
 
 > **Limited limitation (narrowed 2026-09-27, #3564)**: `get_order_detail_by_client_oid`
 > (`core/aletheia/execution/reconciliation.py`) previously issued a scope with no
