@@ -753,7 +753,7 @@ def update_runtime_config(req: RuntimeConfigUpdate):
             else:
                 pause_scheduler()
         except Exception:
-            pass
+            logger.warning("settings: scheduler pause/resume failed after a runtime-config change", exc_info=True)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "runtime_config_changed",
                  "entity_type": "runtime_config", "before": old,

@@ -293,7 +293,7 @@ def _diagnostic_logs(*, tail_lines: int) -> dict:
             tails["frontdoor-errors.log"] = tail_file_redacted(log_dir / "frontdoor-errors.log", tail_lines)
             tails["operator-shell-errors.log"] = tail_file_redacted(log_dir / "operator-shell-errors.log", tail_lines)
         except Exception:
-            pass
+            logger.debug("doctor: extra error-log tails unavailable", exc_info=True)
         return {
             "policy": {
                 "text_logs_rotate_at_mb": 50,
@@ -3748,7 +3748,7 @@ def _probe_serenity_pipeline(report: Report) -> None:
             report.add("data.serenity_pipeline", "info", "Serenity research pipeline disabled in settings")
             return
     except Exception:
-        pass
+        logger.warning("doctor: serenity settings load failed; the pipeline probe continues", exc_info=True)
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()

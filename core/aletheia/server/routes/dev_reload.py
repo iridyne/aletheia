@@ -6,11 +6,15 @@ GET  /api/dev/reload/events  — SSE stream (frontend-built / backend-ready)
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger("aletheia.server.routes.dev_reload")
+
 
 router = APIRouter(prefix="/api/dev/reload", tags=["dev-reload"])
 
@@ -53,7 +57,7 @@ async def reload_events():
                         data = json.dumps({"type": "frontend-built", "mtime": mtime})
                         yield f"id: {_event_id}\nevent: frontend-built\ndata: {data}\n\n"
             except (OSError, IOError):
-                pass
+                logger.debug("dev_reload: frontend manifest stat failed inside the SSE generator", exc_info=True)
 
     return StreamingResponse(
         _generate(),

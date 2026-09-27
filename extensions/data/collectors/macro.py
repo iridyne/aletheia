@@ -74,7 +74,7 @@ class MacroCollector:
             from aletheia.config.loader import load_config
             fng_enabled = load_config().market_data.enable_fear_greed
         except Exception:
-            pass
+            logger.debug("macro: fear/greed feature flag load failed; defaulting to disabled", exc_info=True)
 
         # CoinGecko, FRED, and FNG are fully independent — run concurrently.
         cg_coro = _fetch_coingecko()

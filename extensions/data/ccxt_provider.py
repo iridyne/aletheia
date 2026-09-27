@@ -801,15 +801,19 @@ class CCXTProvider:
                     continue
                 try:
                     await _aio.wait_for(client.close(), timeout=5.0)
-                except (Exception, _aio.CancelledError):  # noqa: BLE001
+                except _aio.CancelledError:
                     pass
+                except Exception:
+                    logger.debug("ccxt_provider: client close timed out or failed during teardown", exc_info=True)
                 closed.add(id(client))
                 setattr(self, attr, None)
         for session in self._sessions:
             try:
                 await _aio.wait_for(session.close(), timeout=5.0)
-            except (Exception, _aio.CancelledError):  # noqa: BLE001
+            except _aio.CancelledError:
                 pass
+            except Exception:
+                logger.debug("ccxt_provider: session close timed out or failed during teardown", exc_info=True)
         self._sessions = []
 
 

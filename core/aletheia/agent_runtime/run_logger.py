@@ -83,7 +83,7 @@ def start_run(agent_name: str, trigger_type: str, permission_mode: str, model_pr
         # Measurement initialization must never block an AgentRun. The missing
         # economics facts will make the later audit invalid rather than altering
         # runtime behavior.
-        pass
+        logger.debug("run_logger: runtime tracing initialisation failed; run continues without economics facts", exc_info=True)
     return _create_run(
         agent_name,
         trigger_type,
@@ -132,7 +132,7 @@ def end_run(
 
         flush_run_telemetry(run.id)
     except Exception:
-        pass
+        logger.debug("run_logger: run telemetry flush failed; aggregated cost and tool facts may be incomplete", exc_info=True)
     tools_called = _aggregate_tools_called(run.id)
     cost_summary = _aggregate_cost(run.id)
     ended_at = datetime.now(timezone.utc).isoformat()

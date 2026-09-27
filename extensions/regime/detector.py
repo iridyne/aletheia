@@ -349,7 +349,7 @@ def get_current_regime() -> MarketRegime:
             )
             return _published_regime
     except Exception:
-        pass
+        logger.warning("regime: published regime read failed; returning the neutral default regime", exc_info=True)
     return MarketRegime()
 
 

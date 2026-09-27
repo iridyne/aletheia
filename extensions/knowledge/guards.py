@@ -179,7 +179,7 @@ def _effective_learned_expires_at(meta: dict) -> str:
             created_dt = datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
             return (created_dt + timedelta(days=LEARNED_GUARD_TTL_DAYS)).isoformat()
         except (ValueError, TypeError):
-            pass
+            logger.debug("knowledge_guards: learned created_at unparseable; TTL falls back to the migration deadline", exc_info=True)
     return LEARNED_GUARD_MIGRATION_DEADLINE_ISO
 
 
@@ -428,7 +428,7 @@ def evaluate_guards(
             if guard_cfg and not guard_cfg.enabled:
                 return GuardEvaluation()
         except Exception:
-            pass
+            logger.debug("knowledge_guards: guard settings load failed; guards are loaded regardless", exc_info=True)
         guards = load_trading_guards(scope=scope, status="active")
 
     hits: list[GuardHit] = []

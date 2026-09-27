@@ -1,6 +1,9 @@
+import logging
 """Read-only optional Learning safety evidence for Core consumers."""
 
 from collections.abc import Callable
+
+logger = logging.getLogger("aletheia.trust.learning_safety")
 
 
 # These scheduled jobs create, review, apply, promote, or automatically roll out
@@ -56,5 +59,5 @@ def learning_refreeze_reason() -> str | None:
             if reason is None or (isinstance(reason, str) and reason):
                 return reason
         except Exception:
-            pass
+            logger.warning("trust_learning_safety: refreeze-reason lookup failed; reporting learning_integrity_state_unavailable", exc_info=True)
     return "learning_integrity_state_unavailable"

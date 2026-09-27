@@ -340,7 +340,7 @@ def _write_launchd_plist() -> Path:
             try:
                 os.unlink(tmp)
             except OSError:
-                pass
+                logger.debug("autostart: temp plist cleanup after write failure failed; stray temp file may remain", exc_info=True)
 
 
 def _launchctl(args: list[str]):
@@ -922,7 +922,7 @@ def _disable_macos(source: str) -> dict:
     try:
         _bootout_legacy_macos(source=source)
     except (PermissionError, Exception):
-        pass  # disable still succeeds; doctor probe will surface lingering legacy jobs
+        logger.debug("autostart: legacy launchd label bootout failed; doctor probe will surface any lingering job", exc_info=True)
 
     write_audit({
         "actor": "human", "source": source, "event_type": "autostart_disabled",
@@ -962,7 +962,7 @@ def enable(source: str = "api") -> dict:
             try:
                 os.unlink(tmp)
             except OSError:
-                pass
+                logger.debug("autostart: temp task XML cleanup failed; stray temp file may remain", exc_info=True)
 
     if proc.returncode == 0:
         prime = _prime_task()

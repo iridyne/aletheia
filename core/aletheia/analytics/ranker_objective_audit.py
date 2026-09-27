@@ -7,6 +7,7 @@ loads policy configuration, settles outcomes, or mutates runtime state.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sqlite3
 from collections import Counter, defaultdict
@@ -20,6 +21,9 @@ from aletheia.analytics.outcome_semantics import (
     candidate_outcome_temporal_reason,
 )
 from aletheia.storage.table_utils import table_exists as _table_exists
+
+logger = logging.getLogger("aletheia.analytics.ranker_objective_audit")
+
 
 _HORIZONS = ("15m", "1h", "4h", "24h")
 _ENTRY_ALIGNMENT_MAX_SEC = 60
@@ -82,7 +86,7 @@ def _query_only(db, report: dict):
             try:
                 db.execute(f"PRAGMA query_only={previous}")
             except sqlite3.DatabaseError:
-                pass  # Best-effort PRAGMA restore; failure doesn't corrupt data
+                logger.debug("ranker_objective_audit: PRAGMA query_only restore failed; best-effort, does not corrupt data", exc_info=True)
 
 
 def _populate_report(

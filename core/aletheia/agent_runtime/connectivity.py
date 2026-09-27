@@ -65,8 +65,10 @@ async def stop_exchange_auto_resume_task() -> None:
             await task
         else:
             await asyncio.wrap_future(task)
-    except (asyncio.CancelledError, asyncio.InvalidStateError):
+    except asyncio.CancelledError:
         pass
+    except asyncio.InvalidStateError:
+        logger.debug("agent_runtime_connectivity: cross-thread resume future ended in invalid state during shutdown", exc_info=True)
     except Exception as exc:
         logger.debug("exchange_auto_resume: task ended during shutdown: %s", exc)
 

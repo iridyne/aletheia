@@ -350,6 +350,6 @@ async def ws_realtime(
         try:
             await ws.close()
         except Exception:
-            pass
+            logger.debug("ws: websocket close after an error failed", exc_info=True)
     finally:
         await _hub.remove(ws)

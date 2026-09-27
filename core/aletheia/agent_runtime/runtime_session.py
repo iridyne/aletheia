@@ -281,7 +281,7 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
         try:
             _process_binding_path().unlink(missing_ok=True)
         except OSError:
-            pass
+            logger.debug("runtime_session: process-binding unlink after a binding failure also failed", exc_info=True)
         logger.warning("runtime session process binding failed (external provenance unavailable): %s", e)
     logger.info(
         "runtime session started: %s (runtime_id=%s, commit=%s, mode=%s, durable=%s)",

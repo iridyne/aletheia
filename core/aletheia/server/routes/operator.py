@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -50,6 +51,9 @@ from aletheia.agent_shell.operator_store import (
     create_task,
 )
 from aletheia.config.loader import load_config, save_config
+
+logger = logging.getLogger("aletheia.server.routes.operator")
+
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
@@ -1565,7 +1569,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 try:
                     params = json.loads(parts[1].strip())
                 except (json.JSONDecodeError, ValueError):
-                    pass
+                    logger.debug("operator: TOOL_CALL parameters unparsable; the command runs without parameters", exc_info=True)
 
             if cmd_name not in allowed:
                 messages.append({"role": "assistant", "content": content})

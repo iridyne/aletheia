@@ -134,7 +134,7 @@ def _hold_cycle_lock(*, source_commit: str | None = None, write_signature: bool 
         try:
             os.close(fd)
         except OSError:  # pragma: no cover
-            pass
+            logger.debug("observation_lab: closing the cycle-lock fd failed", exc_info=True)
 
 
 @contextlib.contextmanager

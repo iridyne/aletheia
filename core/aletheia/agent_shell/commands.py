@@ -379,7 +379,7 @@ def _format_operator_snapshot(heartbeat: dict | None, *, paused: bool) -> dict:
             if (datetime.now(timezone.utc) - seen).total_seconds() > stale_after and operator["status"] == "online":
                 operator["status"] = "stale"
         except Exception:
-            pass
+            logger.debug("agent_shell: operator heartbeat staleness check failed; status left unchanged", exc_info=True)
     return operator
 
 

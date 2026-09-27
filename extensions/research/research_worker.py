@@ -269,7 +269,7 @@ def _get_equity_context_block() -> str:
                 lines.append("\nFundamentals (latest):")
                 lines.extend(fundamentals_lines)
         except ImportError:
-            pass
+            logger.debug("research_worker: yfinance fundamentals import unavailable; equity context block omits fundamentals section", exc_info=True)
 
         return "\n".join(lines)
     except Exception:
@@ -567,7 +567,7 @@ def enqueue_research_run(run_id: str) -> None:
             try:
                 _mark_failed(run_id, _classify_error(e), detail, None, allow_queued=True)
             except Exception:
-                pass
+                logger.warning("research_worker: failed to mark a crashed research run as failed; run status may remain stuck", exc_info=True)
 
     t = threading.Thread(target=_execute, name=f"research-run-{run_id}", daemon=True)
     t.start()
@@ -1023,7 +1023,7 @@ def _parse_json_array(text: str | None, label: str) -> list[dict]:
             return result[label]
         return []
     except json.JSONDecodeError:
-        pass
+        logger.debug("research_worker: primary JSON-array parse failed; attempting truncation repair", exc_info=True)
 
     # Truncation repair: find last complete object in array and close it
     repaired = _repair_truncated_json_array(text)
@@ -1050,7 +1050,7 @@ def _repair_truncated_json_array(text: str) -> list[dict] | None:
         if isinstance(result, list) and all(isinstance(x, dict) for x in result):
             return result
     except json.JSONDecodeError:
-        pass
+        logger.debug("research_worker: truncated-array repair candidate failed to parse; trying regex-based repair", exc_info=True)
     # More aggressive: find last "},\n" or "}\n" pattern
     import re
     for m in re.finditer(r'\}\s*,?\s*$', text[:last_close + 1], re.MULTILINE):

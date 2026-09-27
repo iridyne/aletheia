@@ -16,6 +16,7 @@ from aletheia.async_utils import apply_windows_selector_policy
 
 apply_windows_selector_policy()
 
+import logging
 import os
 import time
 import mimetypes
@@ -33,6 +34,9 @@ from aletheia import __version__
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
 from aletheia.infra.events import emit_infra_event, list_infra_events
 from aletheia.operator_service_identity import OWNER_AUTH_HEADER
+
+logger = logging.getLogger("aletheia.gateway.frontdoor")
+
 
 _boot_time = time.time()
 _last_backend_ready_at: str | None = None
@@ -568,7 +572,7 @@ def create_app(
                 try:
                     await websocket.close(code=int(upstream.close_code or 1000))
                 except Exception:
-                    pass
+                    logger.debug("frontdoor: websocket close after proxy session ended failed", exc_info=True)
         except Exception as exc:  # noqa: BLE001 - handshake must fail closed
             emit_infra_event(
                 severity="warning",
@@ -587,7 +591,7 @@ def create_app(
             try:
                 await websocket.close(code=1013)
             except Exception:
-                pass
+                logger.debug("frontdoor: websocket close after proxy failure failed", exc_info=True)
 
     if effective_static_dir.exists() and (effective_static_dir / "index.html").exists():
 

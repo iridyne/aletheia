@@ -128,7 +128,7 @@ class FallbackChainProvider:
                     entity_id=str(symbol),
                 )
             except Exception:  # noqa: BLE001
-                pass
+                logger.warning("data_chain: operator notification for price-source fallback failed to deliver", exc_info=True)
 
         return result
 
@@ -209,4 +209,4 @@ class FallbackChainProvider:
             try:
                 await provider.close()
             except Exception:  # noqa: BLE001
-                pass
+                logger.debug("data_chain: one provider failed to close during shutdown; continuing to close remaining providers", exc_info=True)

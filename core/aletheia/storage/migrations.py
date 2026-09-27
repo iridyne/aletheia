@@ -3115,7 +3115,7 @@ def _ensure_knowledge_fts_outcome_column(db) -> None:
         if "outcome" not in cols:
             db.execute("DROP TABLE IF EXISTS knowledge_fts")
     except Exception:
-        pass
+        logger.warning("migrations: knowledge_fts outcome-column check failed; the next step recreates the index", exc_info=True)
     # _ensure_knowledge_fts will recreate with outcome column
 
 
@@ -7811,7 +7811,7 @@ def retire_runtime_continuity_tables(
                             if candidates and candidates[0].is_file():
                                 backup_path = candidates[0]
                     except Exception:
-                        pass
+                        logger.warning("migrations: verified-backup lookup failed; retirement is blocked with a generic error", exc_info=True)
             if backup_path is None:
                 raise MigrationStateError("runtime_retirement_requires_verified_backup")
             tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="aletheia-runtime-retirement-"))
@@ -9193,7 +9193,7 @@ def _apply_pytest_migrations(*, retire_legacy_experiment_schema: bool = False) -
                 retire_legacy_experiment_tables(db)
             return True
         except sqlite3.OperationalError:
-            pass  # destination busy — fall through to normal DDL
+            logger.debug("migrations: blueprint backup skipped because the destination is busy; falling through to DDL", exc_info=True)
 
     _run_all_ddl(db)
     _ensure_migration_ledger(db)

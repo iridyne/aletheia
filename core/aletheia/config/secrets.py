@@ -1,5 +1,6 @@
 """Encrypted file authority with per-reference OS keyring fallback. Never logs secrets."""
 
+import logging
 import os
 import stat as _stat
 import threading
@@ -17,6 +18,9 @@ except ImportError:  # pragma: no cover - POSIX
     _msvcrt = None
 
 from aletheia.config.loader import get_data_dir, is_preview_mode
+
+logger = logging.getLogger("aletheia.config.secrets")
+
 
 # ─── Cross-process secret write lock ─────────────────────────────────────────
 # secrets.enc is shared by multiple Aletheia processes. An in-process
@@ -234,7 +238,7 @@ def set_secret(key: str, value: str) -> None:
         try:
             kr.set_password(_SERVICE_NAME, key, value)
         except Exception:
-            pass
+            logger.debug("secrets: OS keyring mirror write failed; encrypted file remains the reliable source of truth", exc_info=True)
 
 
 def get_secret(key: str, *, strict: bool = False) -> str | None:

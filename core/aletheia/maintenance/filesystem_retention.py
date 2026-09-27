@@ -98,7 +98,7 @@ def prune_diagnostics_dir(days: int = 14, data_dir: Path | None = None) -> int:
                 path.rmdir()
             except OSError:
                 # Non-empty or permission — skip silently.
-                pass
+                logger.debug("filesystem_retention: diagnostics subdirectory rmdir failed; directory left in place", exc_info=True)
 
     return deleted
 
@@ -193,7 +193,7 @@ def prune_knowledge_subdirs(
                 try:
                     path.rmdir()
                 except OSError:
-                    pass
+                    logger.debug("filesystem_retention: knowledge subdirectory rmdir failed; directory left in place", exc_info=True)
     return deleted
 
 

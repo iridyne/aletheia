@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
 from aletheia.config.loader import load_config
+
+logger = logging.getLogger("aletheia.agent_runtime.resume_gate")
 
 
 def summarize_resume_gate(result: dict[str, Any]) -> str:
@@ -97,7 +100,7 @@ def _audit_resume_blocked(*, actor: str, source: str, cause: str, result: dict[s
             }
         )
     except Exception:
-        pass
+        logger.warning("resume_gate: resume-blocked audit event write failed", exc_info=True)
 
 
 async def resume_if_llm_available(
@@ -294,7 +297,7 @@ async def resume_if_llm_available(
 
         record_llm_success()
     except Exception:
-        pass
+        logger.debug("resume_gate: record_llm_success failed after a successful resume probe", exc_info=True)
     release = _persist_resumed(
         actor=actor,
         source=source,

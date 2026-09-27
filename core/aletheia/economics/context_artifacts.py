@@ -169,7 +169,7 @@ def summarize_context_artifacts(*, days: int = 7, run_id: str | None = None) -> 
         try:
             bucket["rendered_chars"] += int(record["rendered_chars"])
         except (KeyError, TypeError, ValueError):
-            pass  # rendered_chars field may be absent; other fields still aggregated
+            logger.debug("context_artifacts: rendered_chars aggregation failed for one record; other fields still summarized", exc_info=True)
         status = record["freshness_status"]
         freshness[status] = freshness.get(status, 0) + 1
     return {"schema_version": _SCHEMA_VERSION, "artifacts": len(records), "by_kind": by_kind, "freshness": freshness}

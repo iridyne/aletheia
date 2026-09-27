@@ -369,7 +369,7 @@ def _extract_json_object(text: str):
         try:
             return json.loads(text)
         except (json.JSONDecodeError, TypeError):
-            pass  # JSON parse failed; return raw text
+            logger.debug("agents_helpers: direct JSON parse failed; trying fenced and brace-matching extraction", exc_info=True)
 
     # Strategy 2: strip markdown code fences
     fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
@@ -377,7 +377,7 @@ def _extract_json_object(text: str):
         try:
             return json.loads(fence_match.group(1).strip())
         except (json.JSONDecodeError, TypeError):
-            pass  # Fenced JSON parse failed; return raw text
+            logger.debug("agents_helpers: fenced JSON parse failed; trying brace-matching extraction", exc_info=True)
 
     # Strategy 3: brace-matching extraction — find the first '{' and match
     # its closing '}' accounting for nesting and string literals.

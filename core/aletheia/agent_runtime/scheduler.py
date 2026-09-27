@@ -4191,7 +4191,7 @@ async def _shielded_wait_for(coro, timeout: float):
             try:
                 t.exception()
             except Exception:
-                pass
+                logger.debug("scheduler: detached task raised; its exception was already retrieved for the record", exc_info=True)
 
     task.add_done_callback(_consume_done)
     try:

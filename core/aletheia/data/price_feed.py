@@ -601,7 +601,7 @@ def _check_event_triggers(
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
                 notify_pi_daemon(source=f"event_trigger:{symbol}")
             except Exception:
-                pass
+                logger.warning("price_feed: event trigger could not wake the pi daemon", exc_info=True)
 
     except Exception as e:
         logger.debug("_check_event_triggers: %s", e)
@@ -613,7 +613,7 @@ def _notify(message: str) -> None:
         from aletheia.notifications import notify_operator
         notify_operator("Price Feed", message)
     except Exception:
-        pass
+        logger.debug("price_feed: best-effort operator notification failed", exc_info=True)
 
 
 def cache_stats() -> dict:

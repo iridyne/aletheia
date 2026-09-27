@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 from importlib.metadata import version
+import logging
 import re
 from typing import Any
 
@@ -50,6 +51,8 @@ from aletheia.uta.models import (
     VerifiedExitState,
 )
 from extensions.exchanges.ccxt.profile import CCXTProfile
+
+logger = logging.getLogger("aletheia.exchanges.ccxt.adapter")
 
 
 class CCXTUTAAdapter:
@@ -585,7 +588,7 @@ class CCXTUTAAdapter:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
         except (Exception, TimeoutError):
-            pass
+            logger.debug("ccxt_adapter: exact order read failed; report marked unavailable", exc_info=True)
         return OrderQueryReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -691,7 +694,7 @@ class CCXTUTAAdapter:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
         except (Exception, TimeoutError):
-            pass
+            logger.debug("ccxt_adapter: fill read failed; report marked unavailable", exc_info=True)
         return FillListReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -823,7 +826,7 @@ class CCXTUTAAdapter:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
         except (Exception, TimeoutError, ValueError):
-            pass
+            logger.debug("ccxt_adapter: funding ledger read failed; report marked unavailable", exc_info=True)
         return FundingLedgerReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,
@@ -1003,7 +1006,7 @@ class CCXTUTAAdapter:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
         except (Exception, TimeoutError):
-            pass
+            logger.debug("ccxt_adapter: account-authority probe failed; report marked unavailable", exc_info=True)
         return AccountAuthorityProbeReport(
             identity=self.identity,
             completeness=ReadCompleteness.UNAVAILABLE,

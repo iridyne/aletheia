@@ -1,6 +1,7 @@
 """CLI entrypoint for Aletheia Trading OS."""
 
 import atexit
+import logging
 import sys
 import typer
 from pathlib import Path
@@ -42,6 +43,9 @@ from aletheia.cli.evidence_cmd import evidence_app
 from aletheia.cli.control_cmd import control_app
 from aletheia.cli.observe_cmd import observe_app
 from aletheia.cli.learning_cmd import learning_app
+
+logger = logging.getLogger("aletheia.main")
+
 
 app = typer.Typer(
     name="aletheia",
@@ -495,7 +499,7 @@ def _post_command_hint() -> None:
     try:
         _do_post_command_hint()
     except Exception:
-        pass
+        logger.debug("main: post-command hint failed", exc_info=True)
 
 
 def _do_post_command_hint() -> None:

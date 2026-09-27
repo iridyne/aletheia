@@ -69,7 +69,7 @@ def record_error(
         from aletheia.files.jsonl import write_error
         write_error(record)
     except Exception:
-        pass
+        logger.warning("infra_errors: failed to persist error record to errors.jsonl; error was still emitted to the text log", exc_info=True)
 
     # Mirror to text log (human-visible)
     log = getattr(logger, level, logger.error)

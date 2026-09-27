@@ -297,7 +297,7 @@ def notify_operator(
             if getattr(cfg.health, "alert_via_windows_toast", True):
                 send_windows_toast(clean_title, clean_message)
         except Exception:
-            pass  # Best-effort OS notification; failure must not affect runtime
+            logger.debug("notifications: Windows toast delivery failed on the best-effort path", exc_info=True)
 
     if telegram:
         _send_telegram_alert(f"{clean_title}: {clean_message}", level=level)

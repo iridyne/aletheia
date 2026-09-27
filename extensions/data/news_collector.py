@@ -60,7 +60,7 @@ def _parse_time(entry: dict, *, now: datetime | None = None) -> str:
                 if dt <= current:
                     return dt.isoformat()
             except (TypeError, ValueError):
-                pass
+                logger.debug("news_collector: published/updated timestamp parse failed; entry time left as unknown", exc_info=True)
     return ""
 
 

@@ -43,7 +43,7 @@ def check_config_consistency(cfg: "AletheiaConfig") -> list[ConfigInconsistency]
             if finding:
                 results.append(finding)
         except Exception:  # noqa: BLE001 — single check failure never sinks the rest
-            pass
+            logger.warning("config_consistency: a consistency check raised; its finding is missing from the report", exc_info=True)
     return results
 
 
@@ -257,5 +257,5 @@ def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency 
                 fix_hint=f"Raise max_position_margin_usdt above {margin_entry:.0f}",
             )
     except Exception:
-        pass
+        logger.warning("config_consistency: risk-cap sizing check raised; no finding reported for this config", exc_info=True)
     return None

@@ -861,7 +861,7 @@ async def _fetch_single_feature(
                         interval_acquired_at=observation.get("interval_acquired_at"),
                     )
         except Exception:
-            pass  # Keep only a freshness-qualified DB value as fallback.
+            logger.debug("universe_features: perp funding-rate fetch failed; keeping only the freshness-qualified DB value", exc_info=True)
 
         try:
             if open_interest_reader is not None:
@@ -878,7 +878,7 @@ async def _fetch_single_feature(
                 ):
                     open_interest = fact.get("value")
         except Exception:
-            pass  # Keep only a freshness-qualified DB value as fallback.
+            logger.debug("universe_features: perp open-interest fetch failed; keeping only the freshness-qualified DB value", exc_info=True)
 
         # Taker buy/sell ratio. Only the event family uses it, and event only
         # fires on a sharp 1h move — so fetch it lazily for movers to keep the
@@ -888,7 +888,7 @@ async def _fetch_single_feature(
                 if taker_reader is not None:
                     taker_buy_ratio = await taker_reader(symbol)
             except Exception:
-                pass  # Keep only a freshness-qualified DB value as fallback.
+                logger.debug("universe_features: taker buy/sell ratio fetch failed; keeping only the freshness-qualified DB value", exc_info=True)
 
 
     if spread is None and ob_row:

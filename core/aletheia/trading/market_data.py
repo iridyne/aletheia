@@ -68,8 +68,10 @@ def _consume_detached_task(task: asyncio.Future) -> None:
     """Consume a deadline-detached task result so late failures are not leaked."""
     try:
         task.exception()
-    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+    except asyncio.CancelledError:
         pass
+    except Exception:
+        logger.debug("market_data: detached task raised an exception after its deadline; result already discarded", exc_info=True)
 
 
 async def _wait_without_cancel_drain(awaitable, *, timeout: float):
@@ -217,7 +219,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                 iid = InstrumentId.from_parts(venue, sym, mt)
                 seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
             except ValueError:
-                pass
+                logger.warning("market_data: instrument id construction failed for an open position; position left untracked for price updates", exc_info=True)
     except Exception:
         logger.warning("market_data: instrument scan outer block failed (partial result)", exc_info=True)
     n_open = len(seen)
@@ -256,7 +258,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                 iid = InstrumentId.from_parts(exchange, sym, mt)
                 seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
             except ValueError:
-                pass
+                logger.warning("market_data: instrument id construction failed for a universe candidate; symbol left out of the watch set", exc_info=True)
     except Exception:
         logger.warning("market_data: candidate instruments scan failed (partial result)", exc_info=True)
 

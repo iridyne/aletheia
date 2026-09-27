@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ from aletheia.portfolio.disappearance_confirmation import logical_account_finger
 from aletheia.uta.contract import NativeProtectionReader
 from aletheia.uta.models import OrderQuery, OrderQueryReport, ReadCompleteness, UTAAccountIdentity
 from aletheia.uta.registry import UTARegistry
+
+logger = logging.getLogger("aletheia.uta.manager")
 
 
 DEFAULT_UNIFIED_EXECUTION_MODES = (
@@ -173,7 +176,7 @@ async def query_uta(
         try:
             await adapter.close()
         except Exception:
-            pass
+            logger.warning("uta_manager: adapter close after an exact order query failed", exc_info=True)
 
 
 
@@ -186,7 +189,7 @@ async def _query_uta(adapter):
         try:
             await adapter.close()
         except Exception:
-            pass
+            logger.warning("uta_manager: adapter close after an account and position read failed", exc_info=True)
 
 
 def _identity_payload(identity: UTAAccountIdentity) -> dict:

@@ -10,6 +10,7 @@ gateway's service lifetime.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import plistlib
@@ -28,6 +29,9 @@ from aletheia.gateway.windows_identity import (
     current_windows_user_ids as _current_user_ids,
 )
 from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime
+
+logger = logging.getLogger("aletheia.gateway.managed_service")
+
 
 MACOS_LABEL = "com.aletheia.trading-os.gateway.session"
 SYSTEMD_UNIT = "aletheia-gateway-session.service"
@@ -368,7 +372,7 @@ def _windows_python() -> str:
                     if candidate.exists():
                         return str(candidate)
         except OSError:
-            pass
+            logger.debug("managed_service: pyvenv.cfg parse failed while locating the Windows venv interpreter; falling back to default pythonw path", exc_info=True)
     candidate = exe.with_name("pythonw.exe")
     return str(candidate if candidate.exists() else exe)
 

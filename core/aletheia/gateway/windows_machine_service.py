@@ -370,7 +370,7 @@ def _apply_install(payload: dict) -> dict:
         try:
             _run([str(installed_wrapper), "uninstall"], timeout=30)
         except Exception:
-            pass
+            logger.warning("windows_machine_service: rollback uninstall after failed install also failed; service may remain partially installed", exc_info=True)
         installed_wrapper.unlink(missing_ok=True)
         installed_config.unlink(missing_ok=True)
         return _result(ok=False, reason="partial_install", detail=str(exc)[:200])

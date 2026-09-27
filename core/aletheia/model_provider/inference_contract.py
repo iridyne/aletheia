@@ -172,7 +172,7 @@ def capture_environment(*, scope: str = "agent") -> dict[str, Any]:
         ):
             environment[key] = _bounded(attribution.get(key))
     except Exception:
-        pass
+        logger.debug("inference_contract: agent-run economic-attribution capture failed; environment fields left absent", exc_info=True)
     try:
         from aletheia.agent_runtime.runtime_session import current_provenance
 
@@ -181,7 +181,7 @@ def capture_environment(*, scope: str = "agent") -> dict[str, Any]:
             provenance.get("runtime_session_id")
         )
     except Exception:
-        pass
+        logger.debug("inference_contract: runtime-session provenance capture failed; runtime_session_id left absent", exc_info=True)
     return {key: value for key, value in environment.items() if value is not None}
 
 

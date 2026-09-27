@@ -1,6 +1,7 @@
 """Agent orchestrator — runs agents with permission enforcement."""
 
 import asyncio
+import logging
 import traceback
 
 from aletheia.agent_runtime.run_logger import (
@@ -12,6 +13,8 @@ from aletheia.agent_runtime.run_logger import (
 from aletheia.storage.models import AgentArtifactRef, AgentRun
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
+
+logger = logging.getLogger("aletheia.agent_runtime.orchestrator")
 
 
 async def run_agent(
@@ -133,7 +136,7 @@ async def run_agent(
 
         _release_run_counter(run.id)
     except Exception:
-        pass
+        logger.debug("agent_orchestrator: per-run step-counter release failed after run completion; counter entry may leak", exc_info=True)
     return {
         "run_id": run.id,
         "status": status,

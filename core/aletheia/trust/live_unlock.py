@@ -117,7 +117,7 @@ async def _private_account_probe(identity: dict[str, Any], cfg=None):
         try:
             await adapter.close()
         except Exception:
-            pass
+            logger.warning("live_unlock: adapter close after the account-authority probe failed", exc_info=True)
     if (
         report.identity != adapter.identity
         or report.completeness is not ReadCompleteness.COMPLETE

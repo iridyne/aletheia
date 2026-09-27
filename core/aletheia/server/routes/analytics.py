@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import logging
 import math
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, JsonValue
 
+logger = logging.getLogger("aletheia.server.routes.analytics")
 
 
 class ExecutionModeIdentity(BaseModel):
@@ -522,7 +524,7 @@ def _decision_attribution(
             if isinstance(parsed, dict):
                 manifest = parsed
         except (TypeError, ValueError):
-            pass
+            logger.debug("analytics: decision evidence-manifest JSON parse failed; policy attribution falls back to epoch time window", exc_info=True)
     policy_epoch_id = manifest.get("skip_policy_epoch_id")
     if policy_epoch_id:
         policy_epoch_id = str(policy_epoch_id)
@@ -656,7 +658,7 @@ def get_equity_curve(
         config = load_config()
         mode = config.app.equity_curve_mode
     except Exception:
-        pass
+        logger.warning("analytics: equity_curve_mode config read failed; using full_cumulative default", exc_info=True)
 
     # In full_cumulative mode the running total must include trades BEFORE the
     # visible window, so we never filter the accumulation by `days` — we compute
@@ -741,7 +743,7 @@ def get_equity_curve(
                 if uta_upnl is not None:
                     total_upnl = round(float(uta_upnl), 4)
         except Exception:
-            pass
+            logger.debug("analytics: unified exchange uPnL fetch failed; equity curve keeps the DB-computed unrealized PnL", exc_info=True)
 
     # The live point is a mark-to-market read, not a close event.  Keeping it
     # out of both curves prevents open PnL from looking like either a recorded
@@ -2161,7 +2163,7 @@ def get_operator_decisions(
             try:
                 it["symbol"] = to_canonical(sym)
             except Exception:
-                pass
+                logger.debug("analytics: symbol canonicalization failed for one decision row; raw symbol left unchanged", exc_info=True)
 
     return {
         "window_hours": hours_i,

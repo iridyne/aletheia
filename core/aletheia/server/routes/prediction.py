@@ -5,11 +5,15 @@ All data is read-only except the manual refresh trigger.
 """
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 
 from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage import repositories as repo
+
+logger = logging.getLogger("aletheia.server.routes.prediction")
+
 
 router = APIRouter(prefix="/api/prediction", tags=["prediction"])
 
@@ -173,7 +177,7 @@ async def get_prediction_market_history(market_id: str, interval: str = "1h"):
                 if history is not None:
                     return {"source": "polymarket_api", "points": history}
             except Exception:
-                pass
+                logger.debug("prediction: Polymarket probability-history fetch failed; returning empty local point set", exc_info=True)
         return {"source": "local", "points": []}
     return {
         "source": "local",

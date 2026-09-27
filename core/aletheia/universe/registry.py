@@ -226,7 +226,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             from aletheia.data.venue_listing_cache import invalidate_venue_listing
             invalidate_venue_listing(venue)
         except Exception:  # noqa: BLE001 — cache invalidation is best-effort
-            pass
+            logger.debug("universe: venue listing cache invalidation failed; next price feed cycle may reuse a stale cache", exc_info=True)
 
         logger.info("Registry sync: %d active assets from %s", count, venue)
     finally:

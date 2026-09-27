@@ -34,7 +34,7 @@ def _disk_commit() -> str:
         if is_repo():
             return _git_sha() or ""
     except Exception:
-        pass
+        logger.debug("control_cmd: git-based disk commit lookup failed; falling back to packaged release manifest", exc_info=True)
     try:
         from aletheia.update.packaged import current_selection, _paths, _read_json
         sel = current_selection()
@@ -44,7 +44,7 @@ def _disk_commit() -> str:
             sha = mf.get("git_sha")
             return sha if isinstance(sha, str) and sha else ""
     except Exception:
-        pass
+        logger.debug("control_cmd: packaged release manifest commit lookup failed; disk commit left empty", exc_info=True)
     return ""
 
 
@@ -57,7 +57,7 @@ def _deployed_commit() -> str:
         if sha:
             return sha
     except Exception:
-        pass
+        logger.debug("control_cmd: in-process boot commit unavailable; falling back to external gateway session lookup", exc_info=True)
     try:
         from aletheia.agent_runtime.runtime_session import (
             current_external_gateway_session,

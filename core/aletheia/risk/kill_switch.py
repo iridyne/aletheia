@@ -11,11 +11,15 @@ any LLM-callable tool — only human/system actors through this module.
 
 from __future__ import annotations
 
+import logging
+
 from typing import List, Optional, Tuple
 
 from aletheia.config.loader import load_config, mutate_config
 from aletheia.config.schema import BRAKE_OWNERS_BY_SCOPE, PauseOwnerLease
 from aletheia.files.jsonl import write_audit
+
+logger = logging.getLogger("aletheia.risk.kill_switch")
 
 
 _SCOPES = {"global", "demo", "live"}
@@ -85,7 +89,7 @@ def activate(
             except Exception:
                 # The durable brake remains authoritative even if the in-process
                 # scheduler is unavailable during startup or shutdown.
-                pass
+                logger.warning("kill_switch: scheduler pause failed during activation; the durable brake remains authoritative", exc_info=True)
     return write_audit({
         "actor": actor,
         "source": source,

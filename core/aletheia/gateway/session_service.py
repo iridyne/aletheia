@@ -63,7 +63,7 @@ def _audit(event_type: str, message: str, *, source: str) -> None:
             "message": message,
         })
     except Exception:
-        pass
+        logger.warning("session_service: gateway-service audit write failed", exc_info=True)
 
 
 def _xml_escape(value: str) -> str:
@@ -215,7 +215,7 @@ def _create_windows(*, enabled: bool) -> dict:
                 try:
                     os.unlink(temp_path)
                 except OSError:
-                    pass
+                    logger.debug("session_service: temp task-XML cleanup failed", exc_info=True)
         if proc.returncode == 0:
             selected = logon_type
             return _result(
@@ -437,7 +437,7 @@ def _status_macos() -> dict:
     try:
         loaded = _managed._launchctl(["print", _macos_target()]).returncode == 0
     except Exception:
-        pass
+        logger.debug("session_service: launchctl print failed; loaded reported false", exc_info=True)
     return _result(
         backend="launchd", installed=True, enabled=enabled_path.exists(), running=is_running(),
         owned=valid, config_valid=valid, recovery_scope="login",

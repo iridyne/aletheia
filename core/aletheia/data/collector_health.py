@@ -180,7 +180,7 @@ def record_collector_status(
                 or "unknown"
             )
         except Exception:
-            pass
+            logger.debug("collector_health: connectivity state lookup failed; alert severity defaults to non-dependent", exc_info=True)
         dependent = connectivity_state in {"unavailable", "recovering"}
         emit_infra_event(
             severity="info" if dependent else "warning",

@@ -5,10 +5,15 @@ Endpoints for gateway state, reconciliation, events, backups, exports, lessons, 
 
 from __future__ import annotations
 
+import logging
+
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+
+logger = logging.getLogger("aletheia.server.routes.persistence")
+
 
 router = APIRouter(prefix="/api/persistence", tags=["persistence"])
 
@@ -211,7 +216,7 @@ def get_position(position_id: str):
                 merged = {**parsed, **data}
                 return merged
         except Exception:
-            pass
+            logger.debug("persistence: position raw_json parse failed; returning unmerged columns only", exc_info=True)
     return data
 
 

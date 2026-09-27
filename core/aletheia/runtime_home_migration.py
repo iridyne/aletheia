@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import os
 import platform
 import shutil
@@ -14,6 +15,9 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger("aletheia.runtime_home_migration")
+
 
 MIGRATION_MARKER = ".runtime-home-migration.json"
 _PRIMARY_STATE = ("app.db", "config.yaml", "secrets.enc", ".secret.key")
@@ -323,7 +327,7 @@ def apply_migration(source: Path, target: Path) -> MigrationPlan:
                 if path.exists():
                     os.chmod(path, 0o600)
         except OSError:
-            pass
+            logger.warning("runtime_home_migration: chmod hardening of migrated secrets/config files failed; permissions may be looser than intended", exc_info=True)
         _write_marker(plan.target, plan)
     except Exception:
         for destination in reversed(moved):

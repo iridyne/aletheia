@@ -1,10 +1,13 @@
 """Command audit — record every shell command execution."""
 
 import json
+import logging
 import uuid
 
 from aletheia.agent_shell.file_artifacts import append_session_log
 from aletheia.storage.sqlite import get_db
+
+logger = logging.getLogger("aletheia.agent_shell.audit")
 
 
 def record_command(session_id: str, command: str, parameters: dict,
@@ -51,4 +54,4 @@ def record_command(session_id: str, command: str, parameters: dict,
             "duration_ms": stored_duration_ms,
         })
     except Exception:
-        pass
+        logger.warning("agent_shell: audit JSONL write for command record failed; command audit trail incomplete", exc_info=True)

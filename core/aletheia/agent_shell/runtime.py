@@ -344,7 +344,7 @@ class AgentShellRuntime:
                 close_session(session_id, intent="error", command=None,
                               response=response, permitted=True, start_time=start_time)
             except Exception:
-                pass
+                logger.warning("agent_shell: session close audit write failed while handling a prior error; session record incomplete", exc_info=True)
             return CommandResponse(
                 intent="error", risk_level="read", response=response, session_id=session_id,
             )
@@ -368,7 +368,7 @@ class AgentShellRuntime:
             if content and not error:
                 return content
         except Exception:
-            pass
+            logger.debug("agent_shell: general-query LLM completion failed; falling back to static system-context summary", exc_info=True)
 
         return (
             f"Based on current data: {summary}\n\n"

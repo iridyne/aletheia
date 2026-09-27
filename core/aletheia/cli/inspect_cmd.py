@@ -5,12 +5,16 @@ modify config, or trigger side effects. Designed for Agent / developer use.
 """
 
 import json
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import typer
+
+logger = logging.getLogger("aletheia.cli.inspect_cmd")
+
 
 inspect_app = typer.Typer(no_args_is_help=True)
 
@@ -459,7 +463,7 @@ def risk(
         try:
             violations = json.loads(violations)
         except Exception:
-            pass  # Display graceful degradation; raw string used as fallback
+            logger.debug("inspect_cmd: risk violations JSON parse failed; displaying raw string", exc_info=True)
         entry = {
             "id": r.get("id"),
             "proposal_id": r.get("proposal_id"),
@@ -566,7 +570,7 @@ def universe(
             try:
                 entry["risk_flags"] = json.loads(rf)
             except Exception:
-                pass  # Display graceful degradation; raw string used as fallback
+                logger.debug("inspect_cmd: universe risk_flags JSON parse failed; displaying raw string", exc_info=True)
         result.append(entry)
     _output(result, json_output)
 
@@ -1311,7 +1315,7 @@ def regime(
             try:
                 signals = json.loads(signals)
             except Exception:
-                pass  # Display graceful degradation; raw string used as fallback
+                logger.debug("inspect_cmd: regime signals JSON parse failed; displaying raw string", exc_info=True)
         result.append({
             "state": r.get("state"),
             "confidence": r.get("confidence"),
@@ -1629,7 +1633,7 @@ def agent_runs(
                 e = datetime.fromisoformat(completed.replace("Z", "+00:00"))
                 duration_s = round((e - s).total_seconds(), 1)
             except Exception:
-                pass  # Display graceful degradation; raw string used as fallback
+                logger.debug("inspect_cmd: agent run duration calculation failed; duration left unset", exc_info=True)
         display.append({
             "id": r.get("id", "")[:8],
             "agent": r.get("agent_name"),

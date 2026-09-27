@@ -369,7 +369,7 @@ class TelegramBot:
                 ),
             })
         except Exception:
-            pass
+            logger.warning("telegram: escalation error record write failed after 5 consecutive poll failures", exc_info=True)
         try:
             from aletheia.notifications import send_windows_toast
 
@@ -378,7 +378,7 @@ class TelegramBot:
                 f"Polling failed 5x: {type(exc).__name__}",
             )
         except Exception:
-            pass
+            logger.debug("telegram: Windows toast for the poll-failure escalation failed", exc_info=True)
 
     def _escalate_update_failure(self, update: dict[str, Any], exc: Exception) -> bool:
         """Durably quarantine a repeatedly failing update without claiming disconnect."""
@@ -402,7 +402,7 @@ class TelegramBot:
                 f"Update failed 5x: {type(exc).__name__}",
             )
         except Exception:
-            pass
+            logger.debug("telegram: Windows toast for the quarantined update failed", exc_info=True)
         return True
 
     async def _fetch_updates(self, client) -> list[dict[str, Any]]:
@@ -449,4 +449,4 @@ class TelegramBot:
                         "message": f"Telegram reply delivery failed: {type(exc).__name__}",
                     })
                 except Exception:
-                    pass
+                    logger.warning("telegram: reply-delivery error record write failed", exc_info=True)

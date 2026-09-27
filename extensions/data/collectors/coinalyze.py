@@ -150,7 +150,7 @@ def _load_api_key() -> str | None:
         if key:
             return key
     except Exception:
-        pass
+        logger.debug("coinalyze: API key lookup from the secrets store failed; falling back to the environment variable", exc_info=True)
     return os.environ.get("COINALYZE_API_KEY") or None
 
 
@@ -280,7 +280,7 @@ async def _fetch_open_interest(
                             if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
                                 oi_change_1h_pct = delta
                 except Exception:
-                    pass
+                    logger.debug("coinalyze: open interest delta enrichment failed; oi_change_1h_pct left unset", exc_info=True)
 
                 if coverage is not None:
                     coverage["accepted"].append(canonical)

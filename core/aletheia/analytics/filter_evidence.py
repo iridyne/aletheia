@@ -397,7 +397,7 @@ def record_filter_decision_batch(
         except Exception:
             # Evidence capture is fail-open: already documented: an unavailable cadence lookup must
             # not suppress the current immutable observation.
-            pass
+            logger.debug("filter_evidence: cadence lookup failed; evidence capture stays fail-open", exc_info=True)
     facts = [_sanitize_snapshot(item) for item in candidate_facts]
     dedup_key = hashlib.sha256(
         f"{run_id}|{candidate_kind}|{filter_name}|{stage}|{filter_version}".encode("utf-8")

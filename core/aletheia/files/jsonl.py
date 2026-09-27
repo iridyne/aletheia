@@ -82,7 +82,7 @@ def _append_jsonl_line(path: Path, line: str) -> None:
     try:
         _rotate_jsonl_if_needed(path)
     except OSError:
-        pass  # rotation is best-effort; never block a write
+        logger.debug("jsonl: rotation before append failed; the write continues", exc_info=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
 

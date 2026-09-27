@@ -10,7 +10,11 @@ Only imported on Windows; POSIX callers never reach this module.
 
 import ctypes
 import ctypes.wintypes as wt
+import logging
 from ctypes import byref, sizeof, POINTER, Structure, c_void_p, c_ulong
+
+logger = logging.getLogger("aletheia.gateway._win32_proc")
+
 
 # --- Win32 constants ---
 
@@ -283,4 +287,4 @@ def kill_process_tree_win32(pid: int) -> None:
                 finally:
                     _kernel32.CloseHandle(handle)
         except Exception:
-            pass
+            logger.warning("gateway: failed to terminate a child process while killing the process tree; it may remain running and hold its port", exc_info=True)

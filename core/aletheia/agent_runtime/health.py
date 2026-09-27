@@ -526,7 +526,7 @@ def _code_drift_already_tried() -> bool:
             if 0 <= age <= 3600:
                 return True
     except Exception:
-        pass
+        logger.warning("health: code-drift remediation history read failed; treated as never remediated", exc_info=True)
     return False
 
 

@@ -199,7 +199,7 @@ def _fetch_live_price(ticker: str) -> float | None:
         if price and float(price) > 0:
             return float(price)
     except Exception:
-        pass
+        logger.debug("equity_observer: live price fetch failed; caller falls back to prior close", exc_info=True)
     return None
 
 

@@ -1,9 +1,13 @@
+import logging
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
 from aletheia.data.symbols import (
     InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP,
     stock_token_exchange, is_stock_token,
 )
+
+logger = logging.getLogger("aletheia.trading.instruments")
+
 
 # Market types
 MARKET_USDT_FUTURES = "usdt_futures"
@@ -50,7 +54,7 @@ def stock_tokens_from_config(cfg) -> list[InstrumentId]:
             # skipped (bad config, unknown exchange). Any other exception —
             # AttributeError from a bad InstrumentId implementation, TypeError
             # from a wrong argument — is a programming defect we want to see.
-            pass
+            logger.warning("trading_instruments: stock token failed InstrumentId construction; token skipped from collection", exc_info=True)
     return result
 
 
@@ -70,7 +74,7 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
             try:
                 result.append(InstrumentId.parse(s))
             except ValueError:
-                pass  # parse failure → skip this instrument
+                logger.warning("trading_instruments: observed-instrument spec failed to parse; instrument skipped from collection", exc_info=True)
         return result
     # Legacy path: symbols + exchange from config.
     # Dedup: when both spot and usdt_futures are enabled, emit ONE instrument per

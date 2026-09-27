@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import getpass
+import logging
 import os
 import re
 import subprocess
+
+logger = logging.getLogger("aletheia.gateway.windows_identity")
 
 
 def current_windows_user() -> str:
@@ -43,5 +46,5 @@ def current_windows_user_ids() -> set[str]:
             if match:
                 identities.add(match.group().decode("ascii").casefold())
     except OSError:
-        pass
+        logger.debug("windows_identity: user-SID probe failed; no identity added", exc_info=True)
     return identities

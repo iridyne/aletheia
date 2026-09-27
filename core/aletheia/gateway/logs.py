@@ -9,11 +9,15 @@ tail_all_logs() reads the useful operational logs with redaction for interactive
 diagnostics.
 """
 
+import logging
 import os
 import re
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
+
+logger = logging.getLogger("aletheia.gateway.logs")
+
 
 # Round 2 diagnostic default: keep detailed local logs, split by size.
 _MAX_LOG_BYTES = 50 * 1024 * 1024  # 50 MiB
@@ -83,7 +87,7 @@ def _prune_generations(path: Path, keep_generations: int) -> None:
         try:
             old.unlink()
         except OSError:
-            pass
+            logger.debug("gateway_logs: rotated log generation unlink failed; file kept", exc_info=True)
 
 
 def rotate_if_needed(

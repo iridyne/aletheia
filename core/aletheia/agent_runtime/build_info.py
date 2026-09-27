@@ -18,6 +18,11 @@ so live edits on an editable install are not flagged. The real failure mode is
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("aletheia.agent_runtime.build_info")
+
+
 _boot_commit: str | None = None
 
 
@@ -36,7 +41,7 @@ def record_boot_commit() -> None:
 
             commit = _current_release_git_sha(current_selection()) or ""
         except Exception:
-            pass
+            logger.debug("build_info: packaged release SHA lookup failed; boot commit left unset", exc_info=True)
     _boot_commit = commit or None  # "" -> None (build identity unavailable)
 
 

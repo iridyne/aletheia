@@ -602,7 +602,7 @@ def register_observation_spec(
             default_outcome_contract = path.outcome_contract_version
             default_metric = path.metric_version
         except KeyError:
-            pass
+            _log.warning("observation_lab: learning-path lookup failed for path_id; falling back to default outcome contract and metric", exc_info=True)
     contract_args = {
         "observation_id": observation_id,
         "generation": generation,

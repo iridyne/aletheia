@@ -4,6 +4,9 @@ Functions here are exchange-agnostic — they must work for any venue.
 """
 
 import json
+import logging
+
+logger = logging.getLogger("aletheia.execution.broker_utils")
 
 
 def entry_acknowledgement_state(status: object) -> tuple[str, str | None]:
@@ -84,7 +87,7 @@ def clean_error_message(raw: str) -> str:
                 return f"{prefix}: {msg}"
 
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-            pass  # Best-effort error message extraction; keep raw on failure
+            logger.debug("broker_utils: structured error message extraction failed; raw exchange text kept", exc_info=True)
 
     # CCXT "does not have market symbol X" → friendlier wording
     if "does not have market symbol" in raw:

@@ -8,8 +8,11 @@ Gateway startup or violate the additive-migration contract.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
+
+logger = logging.getLogger("aletheia.storage.market_ohlcv_layout")
 
 
 MARKET_OHLCV_COLUMNS = (
@@ -102,7 +105,7 @@ def market_ohlcv_storage_profile(db: sqlite3.Connection) -> dict:
         ]
     except sqlite3.Error:
         # dbstat is diagnostic-only and may be omitted by a custom SQLite build.
-        pass
+        logger.debug("market_ohlcv_layout: dbstat unavailable; profile reported without page stats", exc_info=True)
     return {
         "available": True,
         "without_rowid": market_ohlcv_is_without_rowid(db),

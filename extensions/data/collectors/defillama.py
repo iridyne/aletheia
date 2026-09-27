@@ -258,7 +258,7 @@ async def _fetch_dex_volume(observed_at: str):
         if change_1d is not None:
             change_24h_pct = round(float(change_1d), 4)
     except (ValueError, TypeError):
-        pass
+        logger.debug("defillama: 24h dex volume change is not numeric; field left unset", exc_info=True)
 
     raw_summary = {
         "total_24h_usd": round(total_24h, 0),

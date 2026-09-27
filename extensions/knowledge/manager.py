@@ -339,7 +339,7 @@ def _unindex(item_id: str) -> None:
         from aletheia.storage.knowledge_index import remove_from_index
         remove_from_index(item_id)
     except Exception:
-        pass
+        logger.debug("knowledge: FTS unindex failed; the archived item may stay recallable", exc_info=True)
 
 
 def archive_item(item_id: str) -> None:

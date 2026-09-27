@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 import math
 from statistics import mean, median
 from typing import Iterable
+
+logger = logging.getLogger("aletheia.analytics.sizing_counterfactual")
 
 
 POLICY_VERSION = "sizing-counterfactual/v2"
@@ -149,7 +152,7 @@ def _trade(row: dict) -> dict | None:
             if math.isfinite(candidate_distance) and candidate_distance > 0:
                 stop_distance = candidate_distance
     except (TypeError, ValueError, OverflowError):
-        pass  # Safe arithmetic fallback; NaN/inf/bad-type → stop_distance stays None
+        logger.debug("sizing_counterfactual: stop-distance arithmetic failed on malformed row data; stop_distance left None", exc_info=True)
     conviction = row.get("conviction")
     try:
         conviction = int(conviction) if conviction is not None else None

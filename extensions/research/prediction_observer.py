@@ -204,7 +204,7 @@ def _generate_heuristic_claims(
                     }
                 )
         except (ValueError, TypeError):
-            pass
+            logger.debug("prediction_observer: heuristic claim arithmetic failed; no claim appended", exc_info=True)
 
 
 def _build_market_metadata(market, *, markets_scanned: int = 0) -> str:

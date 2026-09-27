@@ -48,7 +48,7 @@ def console_encoding() -> str | None:
             if code_page:
                 return f"cp{int(code_page)}"
     except Exception:
-        pass
+        logger.debug("console_text: Windows console/OEM code page probe failed; falling back to mbcs", exc_info=True)
     return "mbcs"
 
 

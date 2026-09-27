@@ -38,8 +38,10 @@ def _consume_detached_task(task: asyncio.Task) -> None:
     """Retrieve a timed-out task's terminal state once cleanup finishes."""
     try:
         task.exception()
-    except (asyncio.CancelledError, Exception):
+    except asyncio.CancelledError:
         pass
+    except Exception:
+        logger.debug("backfill: detached task raised after the run budget; result discarded", exc_info=True)
 
 
 async def _wait_without_cancel_drain(awaitable, *, timeout: float):

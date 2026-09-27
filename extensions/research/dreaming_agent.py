@@ -608,7 +608,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             ]
             post_mortem_ctx = "\n\nRecent post-mortems:\n" + "\n".join(pm_lines)
     except Exception:
-        pass
+        logger.debug("dreaming_agent: recent post-mortem enrichment fetch failed; prompt context left empty", exc_info=True)
 
     trading_block = ""
     try:

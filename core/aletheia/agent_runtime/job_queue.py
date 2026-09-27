@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import asyncio
+import logging
 import queue
 import threading
 import time
@@ -13,6 +14,8 @@ from typing import Any
 from aletheia.agent_runtime.run_logger import AgentRunAlreadyActive, end_run, queue_run
 from aletheia.config.loader import load_config
 from aletheia.storage.models import AgentRun
+
+logger = logging.getLogger("aletheia.agent_runtime.job_queue")
 
 
 class AgentJobQueueFull(RuntimeError):
@@ -155,7 +158,7 @@ class AgentJobManager:
                         errors=["manual agent worker failed before lifecycle completion"],
                     )
                 except Exception:
-                    pass
+                    logger.warning("job_queue: failed to persist failed-run status after worker crash; run left without recorded errors", exc_info=True)
             finally:
                 rollback_if_in_transaction()
                 close_db()

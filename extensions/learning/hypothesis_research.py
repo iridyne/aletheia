@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -27,6 +28,9 @@ from extensions.learning.t0_context import (
 )
 from extensions.learning.t0_coverage import get_t0_coverage_contract
 from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
+
+logger = logging.getLogger("aletheia.learning.hypothesis_research")
+
 
 _MISSING_CONTEXT_DIMENSIONS = {
     "regime": ("regime",),
@@ -767,7 +771,7 @@ def _bounded(value: Any, depth: int = 0) -> Any:
             try:
                 return _bounded(json.loads(text), depth + 1)
             except (TypeError, ValueError, json.JSONDecodeError):
-                pass  # Bounded JSON parse helper; non-JSON text returns as-is
+                logger.debug("hypothesis_research: bounded JSON parse failed; returning original text", exc_info=True)
         return text[:1_000]
     if isinstance(value, (int, float, bool)) or value is None:
         return value

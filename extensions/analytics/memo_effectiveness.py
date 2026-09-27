@@ -137,7 +137,7 @@ def evaluate_prior_memo(
                         if manifest["trading_memo_id"] != memo_id:
                             continue  # trade saw a different memo
                 except (json.JSONDecodeError, TypeError):
-                    pass  # no memo filtering if manifest unparseable
+                    logger.debug("memo_effectiveness: learning manifest unparseable; memo filtering skipped for the row", exc_info=True)
             rows.append(row)
 
         verdict = {

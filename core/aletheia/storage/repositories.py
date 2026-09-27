@@ -5926,7 +5926,7 @@ def prune_system_actions(days: int = 7) -> int:
             # Retention MUST NOT crash if the audit write fails — the point of
             # the audit hook is best-effort observability, not the retention
             # decision itself.
-            pass
+            logger.warning("storage: audit event write for pruned system_action rows failed; audit trail incomplete", exc_info=True)
     return deleted
 
 

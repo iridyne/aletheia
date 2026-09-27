@@ -14,6 +14,7 @@ consequences:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import sqlite3
 import threading
@@ -23,6 +24,9 @@ from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
 from extensions.observation_lab.canonical_schema import CANONICAL_SCHEMA_SQL
+
+logger = logging.getLogger("aletheia.observation_lab.db")
+
 
 _local = threading.local()
 _readonly_local = threading.local()
@@ -360,7 +364,7 @@ def get_lab_db() -> sqlite3.Connection:
         try:
             cached_conn.close()
         except sqlite3.Error:
-            pass
+            logger.warning("observation_lab: closing stale cached lab.db connection failed; opening a fresh connection anyway", exc_info=True)
     with lab_writer_lock():
         conn = sqlite3.connect(
             str(target),
@@ -616,7 +620,7 @@ def close_lab_db() -> None:
         try:
             conn.close()
         except sqlite3.Error:
-            pass
+            logger.warning("observation_lab: lab.db connection close failed during teardown", exc_info=True)
         _local.conn = None
         _local.path = None
 

@@ -2538,7 +2538,7 @@ def get_serenity_status():
         if not getattr(_load_cfg().serenity, "enabled", True) and engine_status != "running":
             engine_status = "disabled"
     except Exception:
-        pass
+        logger.debug("serenity status: settings read failed; engine status kept as reported", exc_info=True)
 
     from aletheia.agent_runtime.scheduler import require_research_enqueue
 
@@ -2957,7 +2957,7 @@ def promote_serenity_theme(theme_id: str):
 
         notify_pi_daemon(source="serenity_promote")
     except Exception:
-        pass
+        logger.warning("serenity: the promoted theme could not wake the pi daemon", exc_info=True)
 
     return {
         "theme_id": theme_id,

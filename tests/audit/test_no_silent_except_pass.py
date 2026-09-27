@@ -21,9 +21,13 @@
 - 代码里有但 baseline 里没有的 → **翻红**（新引入的违规）
 - 两边完全一致 → 通过
 
-## 当前 baseline（2026-09-26）
+## 当前 baseline（2026-09-27）
 
-313 处。这是**耻辱榜**，不是许可证。目标是每个 PR 清一坨，让这个数字趋向 0。
+41 处，全部带 reason：14 处 signal.signal() 主线程契约 / CancelledError 控制流 /
+幂等清理等**真的不该 log** 的控制流，其余是已判定的 best-effort 清理路径。
+
+2026-09-27 清理：164 → 41，123 处改为 warning/debug 日志。这是**耻辱榜**，
+不是许可证。目标是让这个数字趋向 0。
 
 Refs:
 - docs/research/audits/COMPETITIVE_ANALYSIS_R20_2026-09-24.md §G1
