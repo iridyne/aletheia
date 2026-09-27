@@ -594,9 +594,8 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         )
 
     old = None
-    changed = False
     def mutator(cfg):
-        nonlocal old, changed
+        nonlocal old
         old = cfg.exchange.model_dump(mode="json")
         cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
         if req.paper_execution_mode is not None:
@@ -614,7 +613,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
                         generations[execution_mode] = generations.get(execution_mode, 0) + 1
                 cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
-        changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
     _mutate_config_with_candidate_publication_permit(mutator)
