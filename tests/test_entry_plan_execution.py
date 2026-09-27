@@ -1919,3 +1919,15 @@ def test_gateway_cancel_fails_closed_on_a_hard_identity_mismatch(monkeypatch):
     assert len(cancels) == 1, "only the first, unanswered attempt was submitted"
     untouched_row = repo.get_order(order.id)
     assert untouched_row is not None and untouched_row["status"] == "submitted"
+
+
+def test_gateway_cancel_backoff_does_not_hide_a_local_fill(monkeypatch):
+    """A parked retry window must never outrank a locally materialized Fill."""
+    plan, order = _persist_ordered_plan()
+    repo.insert_fill(Fill(order_id=order.id, fill_price=100, fill_quantity=float(order.quantity), fee_source="reconciled"))
+    repo.transition_order(order.id, status="submitted", error_reason="entry_cancel_pending:passive_window_elapsed")
+    repo.update_order_metadata(order.id, entry_cancel_retry_after="2099-01-01T00:00:00+00:00")
+
+    from aletheia.execution import gateway
+
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "filled"

@@ -89,6 +89,10 @@ def run_coro_from_sync(coro, *, timeout: float | None = None):
     Callers with no running loop keep executing on their own thread; callers with
     one are driven by a per-thread bridge loop thread. Leftover tasks from a
     completed call are cancelled before the next call starts.
+
+    A coroutine already running on the bridge loop must not call this function —
+    the same loop cannot be driven from its own thread. No current caller does
+    (bridged coroutines await, they never re-enter the bridge).
     """
     try:
         running = asyncio.get_running_loop()

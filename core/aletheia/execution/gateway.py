@@ -603,12 +603,6 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         defer_retry(count)
         return pending()
 
-    if reconciling_cancel and not _entry_cancel_retry_due(order.get("entry_cancel_retry_after")):
-        # Inside the backoff window: the cancel is already fenced and the venue
-        # state has not been re-proven, so re-reading it would only rebuild an
-        # adapter and re-earn the rate limit that starved it (#3507).
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
-
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") not in EXTERNAL_EXECUTION_MODES:
@@ -616,6 +610,13 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
     if fully_filled(order):
         return {"status": "filled", "entry_plan_id": plan_id}
+
+    if reconciling_cancel and not _entry_cancel_retry_due(order.get("entry_cancel_retry_after")):
+        # Inside the backoff window: the cancel is already fenced and the venue
+        # state has not been re-proven, so re-reading it would only rebuild an
+        # adapter and re-earn the rate limit that starved it (#3507). Local
+        # terminal facts above still win, so a backoff never hides a Fill.
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
 
     try:
         identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
