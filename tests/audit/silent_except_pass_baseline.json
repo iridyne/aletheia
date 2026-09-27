@@ -1,8 +1,8 @@
 {
-  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27: 164 -> 41; 123 sites now log and each remaining site carries the reason it stays silent.",
+  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27: 164 -> 42; 122 sites now log and each remaining site carries the reason it stays silent.",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 41,
+  "count": 42,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -163,6 +163,11 @@
       "file": "core/aletheia/server/routes/ws.py",
       "line": 346,
       "reason": "WebSocketDisconnect is a client disconnect, not a failure"
+    },
+    {
+      "file": "core/aletheia/storage/migrations.py",
+      "line": 3117,
+      "reason": "bytes before MIGRATION_LEDGER_START are checksum-frozen: any edit here (even a log line) changes the legacy baseline checksum and breaks the migration ledger guard"
     },
     {
       "file": "core/aletheia/storage/sqlite.py",

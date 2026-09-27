@@ -23,10 +23,10 @@
 
 ## 当前 baseline（2026-09-27）
 
-41 处，全部带 reason：14 处 signal.signal() 主线程契约 / CancelledError 控制流 /
+42 处，全部带 reason：14 处 signal.signal() 主线程契约 / CancelledError 控制流 /
 幂等清理等**真的不该 log** 的控制流，其余是已判定的 best-effort 清理路径。
 
-2026-09-27 清理：164 → 41，123 处改为 warning/debug 日志。这是**耻辱榜**，
+2026-09-27 清理：164 → 42，122 处改为 warning/debug 日志。这是**耻辱榜**，
 不是许可证。目标是让这个数字趋向 0。
 
 Refs:

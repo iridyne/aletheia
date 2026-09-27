@@ -3115,7 +3115,7 @@ def _ensure_knowledge_fts_outcome_column(db) -> None:
         if "outcome" not in cols:
             db.execute("DROP TABLE IF EXISTS knowledge_fts")
     except Exception:
-        logger.warning("migrations: knowledge_fts outcome-column check failed; the next step recreates the index", exc_info=True)
+        pass
     # _ensure_knowledge_fts will recreate with outcome column
 
 
