@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from aletheia.diagnostics import doctor as dx
+from aletheia.diagnostics.probes import environment
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -36,7 +37,7 @@ def test_proxy_diagnostics_do_not_disclose_credentials(monkeypatch):
 
     secret = "synthetic-proxy-secret"
     monkeypatch.setattr(urllib.request, "build_opener", lambda *args: MagicMock())
-    monkeypatch.setattr(dx, "_egress_ip", lambda opener: None)
+    monkeypatch.setattr(environment, "_egress_ip", lambda opener: None)
     for protocol in ("http", "socks5"):
         monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
             network=SimpleNamespace(proxy_url=f"{protocol}://user:{secret}@localhost:8080",
@@ -194,7 +195,7 @@ def test_report_severity_partitions():
 def test_process_probe_prefers_current_runtime_identity(monkeypatch):
     monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "dev-preview-8791")
     monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", "8791")
-    monkeypatch.setattr(dx, "_probe_frontdoor_process", lambda *_args: None)
+    monkeypatch.setattr(environment, "_probe_frontdoor_process", lambda *_args: None)
 
     report = dx.Report()
     dx._probe_process(report)
@@ -207,7 +208,7 @@ def test_process_probe_prefers_current_runtime_identity(monkeypatch):
 
 
 def test_process_probe_keeps_two_runtime_contexts_independent(monkeypatch):
-    monkeypatch.setattr(dx, "_probe_frontdoor_process", lambda *_args: None)
+    monkeypatch.setattr(environment, "_probe_frontdoor_process", lambda *_args: None)
 
     details = []
     for runtime_id, port in (
@@ -2317,3 +2318,19 @@ def test_reconciled_ratio_high_without_active_thrash_is_info(tmp_path, monkeypat
     c = next(c for c in r.checks if c.name == "loop.reconciled_ratio")
     assert c.severity == "info"
     assert "no active churn" in c.detail
+
+
+def test_webui_static_probe_resolves_dashboard_assets(tmp_path, monkeypatch):
+    module_path = tmp_path / "aletheia" / "diagnostics" / "probes" / "environment.py"
+    monkeypatch.setattr(environment, "__file__", str(module_path))
+    static_dir = tmp_path / "aletheia" / "dashboard_static"
+    (static_dir / "assets").mkdir(parents=True)
+    (static_dir / "index.html").write_text("x" * 100)
+    (static_dir / "assets" / "app.js").write_text("// test bundle")
+
+    report = dx.Report()
+    dx._probe_webui_static(report)
+
+    assert [(check.name, check.severity, check.detail) for check in report.checks] == [
+        ("webui.static", "ok", "100 bytes index, 1 JS bundles")
+    ]
