@@ -417,7 +417,10 @@ def main(argv: list[str] | None = None) -> int:
         previous_failures = previous_failed_test_files()
         if previous_failures:
             print(f"  previous red  retrying failures in {len(previous_failures)} cached file(s) ...")
-            if run_pytest(["--lf", "--last-failed-no-failures=none", *previous_failures]) != 0:
+            previous_rc = run_pytest(["--lf", "--last-failed-no-failures=none", *previous_failures])
+            if previous_rc == 5:  # pytest.ExitCode.NO_TESTS_COLLECTED
+                print("  previous red  skipped (no tests selected in cached files)")
+            elif previous_rc != 0:
                 failures.append("previous failures still red — fix those first")
                 print("  previous red  FAIL")
             else:
