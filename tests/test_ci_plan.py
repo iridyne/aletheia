@@ -287,3 +287,13 @@ def test_core_coverage_rename_keeps_coverage_gate_and_original_receipt_paths():
     assert report["required"]["coverage"] is True
     assert report["changed_files"][0]["path"] == new
     assert report["changed_files"][0]["previous_path"] == old
+
+
+def test_deep_plan_cannot_reconstitute_full_python_suite_locally():
+    report = _plan(["core/aletheia/risk/engine.py"])
+    lanes = ("python_unit", "runtime", "integration", "specifications", "e2e")
+    checks = {check.get("lane"): check for check in report["local_checks"]}
+    for lane in lanes:
+        assert report["required"][lane] is True
+        assert "unavailable_reason" in checks[lane]
+        assert "command" not in checks[lane]

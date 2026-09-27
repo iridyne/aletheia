@@ -13,6 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 import aletheia.analytics.position_lifecycle_story as lifecycle
+from aletheia.analytics.position_lifecycle_story import service as lifecycle_service
 from aletheia.cli.inspect_cmd import inspect_app
 
 
@@ -270,7 +271,7 @@ def _fact() -> dict:
 
 def test_archived_story_is_deterministic_read_only_and_reports_multiple_mechanisms(monkeypatch):
     db = _db()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
     before = db.total_changes
     first = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -307,7 +308,7 @@ def test_archived_story_is_deterministic_read_only_and_reports_multiple_mechanis
 
 def test_story_as_of_prefix_does_not_expose_eventual_close(monkeypatch):
     db = _db()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
     story = lifecycle.build_position_lifecycle_story("position-1", as_of_at=_CUTOFF, db=db)
 
     assert story["as_of_at"] == "2026-08-13T00:02:30+00:00"
@@ -348,7 +349,7 @@ def test_story_preserves_adverse_peak_source_type(monkeypatch):
     for row in fact["stages"]["holding"]["ohlcv"]["rows"]:
         row[2] = 100.0
         row[3] = 100.0
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -369,7 +370,7 @@ def test_story_masks_future_close_fill_but_keeps_known_exit_intent(monkeypatch):
         ("2026-08-13T00:02:00+00:00",),
     )
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at=_CUTOFF, db=db
@@ -389,7 +390,7 @@ def test_story_open_prefix_never_claims_settled_excursion_or_horizon(monkeypatch
         "UPDATE positions SET status='open', closed_at=NULL, realized_pnl=NULL, "
         "exit_fill_verified=0, exit_price_source='unavailable' WHERE id='position-1'"
     )
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at=_CUTOFF, db=db
@@ -431,7 +432,7 @@ def test_story_uses_only_visible_broker_funding_settlement(monkeypatch):
         ),
     )
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     before_settlement = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:05:30+00:00", db=db
@@ -468,7 +469,7 @@ def test_story_preserves_fill_multiplicity_instead_of_verifying_one_fill(monkeyp
     fact = _fact()
     fact["economics"]["gross_pnl"] = -3.5
     fact["economics"]["net_pnl"] = -3.7
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -493,7 +494,7 @@ def test_story_rejects_fill_quantity_mismatch(monkeypatch):
     db = _db()
     db.execute("UPDATE fills SET fill_quantity=0.5 WHERE id='close-fill'")
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -511,7 +512,7 @@ def test_story_blocks_path_metrics_when_fill_aggregation_is_invalid(monkeypatch)
     db = _db()
     db.execute("UPDATE fills SET fill_price=NULL WHERE id='close-fill'")
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -532,7 +533,7 @@ def test_story_rejects_false_risk_approval_and_preserves_exit_reason(monkeypatch
     db = _db()
     db.execute("UPDATE risk_decisions SET approved='0' WHERE id='risk-1'")
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -549,7 +550,7 @@ def test_story_preserves_same_bar_ambiguity(monkeypatch):
     fact = _fact()
     fact["stages"]["holding"]["trade_path"]["path_evidence_status"] = "ambiguous"
     fact["stages"]["holding"]["trade_path"]["path_evidence_reason"] = "intrabar_and_stop_barrier_order_unavailable"
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
     mfe = next(event for event in story["timeline"] if event["event_type"] == "maximum_favorable_excursion")
@@ -594,7 +595,7 @@ def test_position_story_cli_supports_json_and_human(monkeypatch):
 def test_story_uses_completed_bar_timestamps_and_excludes_post_close_records(monkeypatch):
     db = _db()
     fact = _fact()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
     db.execute(
         "INSERT INTO pi_decisions VALUES (?,?,?,?,?,?)",
         (
@@ -644,7 +645,7 @@ def test_story_reports_cost_flip_and_incomplete_costs_without_double_counting(mo
     fact = _fact()
     fact["economics"]["gross_pnl"] = 0.1
     fact["economics"]["net_pnl"] = -0.1
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -669,7 +670,7 @@ def test_story_distinguishes_never_favorable_and_missing_hypothesis(monkeypatch)
     for row in fact["stages"]["holding"]["ohlcv"]["rows"]:
         row[2] = min(row[2], 100.1)
         row[3] = min(row[3], 100.0)
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
     bad_entry = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
     )
@@ -680,9 +681,7 @@ def test_story_distinguishes_never_favorable_and_missing_hypothesis(monkeypatch)
     )
     no_hypothesis = _fact()
     no_hypothesis["stages"]["decision"]["proposal"]["attribution_snapshot"] = {}
-    monkeypatch.setattr(
-        lifecycle, "build_position_replay", lambda *args, **kwargs: no_hypothesis
-    )
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: no_hypothesis)
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
     )
@@ -716,7 +715,7 @@ def test_story_preserves_protection_trigger_identity_and_collision_policy(monkey
         ),
     )
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
     )
@@ -730,7 +729,7 @@ def test_story_reports_missing_path_and_missing_management_linkage(monkeypatch):
     db.execute("DELETE FROM pi_decisions WHERE id='review-1'")
     fact = _fact()
     fact["stages"]["holding"]["ohlcv"]["rows"].pop()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -748,7 +747,7 @@ def test_structured_events_keep_ambiguous_decision_ids(monkeypatch):
         ("decision-2", "proposal-1", "trade", "2026-08-12T23:59:45+00:00", "trade", "{}"),
     )
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -760,7 +759,7 @@ def test_structured_events_keep_ambiguous_decision_ids(monkeypatch):
 
 def test_structured_events_are_the_only_machine_facing_story_projection(monkeypatch):
     db = _db()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    monkeypatch.setattr(lifecycle_service, "build_position_replay", lambda *args, **kwargs: _fact())
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
