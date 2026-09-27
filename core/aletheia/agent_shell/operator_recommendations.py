@@ -935,6 +935,118 @@ def _make_task_recommendation(
     }
 
 
+def _missing_review_strategy_ids(
+    recent_post_trade_reviews: list[dict],
+    recent_closed_positions: list[dict],
+) -> list[str]:
+    # Position-level coverage: a strategy is covered only if the eligible
+    # Position's exact ID appears in an active review's tags (#269).
+    reviewed_position_ids: set[str] = set()
+    for item in recent_post_trade_reviews:
+        try:
+            tags = json.loads(item.get("tags") or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        reviewed_position_ids.update(
+            str(tag).split(":", 1)[1]
+            for tag in tags
+            if str(tag).startswith("position:")
+        )
+    return sorted(
+        {
+            str(position.get("strategy_id"))
+            for position in recent_closed_positions
+            if position.get("strategy_id")
+            and str(position.get("id")) not in reviewed_position_ids
+        }
+    )
+
+
+def _group_agent_runs(
+    recent_agent_runs: list[dict],
+    failed_run_statuses: set[str],
+) -> tuple[dict[str, list[dict]], dict[str, list[dict]], dict[str, list[dict]]]:
+    recent_runs_by_agent: dict[str, list[dict]] = {}
+    failed_runs_by_agent: dict[str, list[dict]] = {}
+    for run in recent_agent_runs:
+        agent_name = str(run.get("agent_name") or "").strip()
+        if agent_name:
+            recent_runs_by_agent.setdefault(agent_name, []).append(run)
+        if run.get("status") not in failed_run_statuses:
+            continue
+        started_at = parse_utc(run.get("started_at"))
+        if started_at is None or started_at <= datetime.now(timezone.utc) - timedelta(hours=24):
+            continue
+        if not agent_name:
+            continue
+        failed_runs_by_agent.setdefault(agent_name, []).append(run)
+
+    manual_runs_by_agent: dict[str, list[dict]] = {}
+    for run in recent_agent_runs:
+        if str(run.get("trigger_type") or "") != "manual":
+            continue
+        agent_name = str(run.get("agent_name") or "").strip()
+        if not agent_name:
+            continue
+        manual_runs_by_agent.setdefault(agent_name, []).append(run)
+
+    return recent_runs_by_agent, failed_runs_by_agent, manual_runs_by_agent
+
+
+def _build_portfolio_snapshot_recommendation(
+    cfg,
+    open_positions: list[dict],
+    latest_portfolio_snapshot: dict | None,
+) -> dict | None:
+    portfolio_snapshot_age_minutes = (
+        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
+        if latest_portfolio_snapshot is not None
+        else None
+    )
+    if (
+        not cfg.runtime.paused
+        and open_positions
+        and (
+            latest_portfolio_snapshot is None
+            or (
+                portfolio_snapshot_age_minutes is not None
+                and portfolio_snapshot_age_minutes >= 15
+            )
+        )
+    ):
+        return _make_task_recommendation(
+            id_="portfolio-snapshot-refresh-due",
+            kind="portfolio_snapshot_refresh_due",
+            severity="medium",
+            summary=(
+                "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
+                if latest_portfolio_snapshot is None
+                else (
+                    "Open positions exist and the latest portfolio snapshot is about "
+                    f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
+                )
+            ),
+            task_type="run_portfolio_snapshot",
+            metadata={
+                "task_type": "run_portfolio_snapshot",
+                "open_positions_count": len(open_positions),
+                "last_snapshot_id": (
+                    latest_portfolio_snapshot.get("id")
+                    if latest_portfolio_snapshot
+                    else None
+                ),
+                "stale_minutes": (
+                    int(portfolio_snapshot_age_minutes)
+                    if portfolio_snapshot_age_minutes is not None
+                    else None
+                ),
+            },
+        )
+    return None
+
+
 def build_recommendations(limit: int = 10) -> list[dict]:
     from aletheia.agent_runtime.health import compute_health
 
@@ -1235,28 +1347,9 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         params=("post_trade_reviewer", cutoff_15m),
         limit=5,
     )
-    # Position-level coverage: a strategy is covered only if the eligible
-    # Position's exact ID appears in an active review's tags (#269).
-    reviewed_position_ids: set[str] = set()
-    for item in recent_post_trade_reviews:
-        try:
-            tags = json.loads(item.get("tags") or "[]")
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(tags, list):
-            continue
-        reviewed_position_ids.update(
-            str(tag).split(":", 1)[1]
-            for tag in tags
-            if str(tag).startswith("position:")
-        )
-    missing_review_strategy_ids = sorted(
-        {
-            str(position.get("strategy_id"))
-            for position in recent_closed_positions
-            if position.get("strategy_id")
-            and str(position.get("id")) not in reviewed_position_ids
-        }
+    missing_review_strategy_ids = _missing_review_strategy_ids(
+        recent_post_trade_reviews,
+        recent_closed_positions,
     )
     if not cfg.runtime.paused and missing_review_strategy_ids and not recent_reviewer_runs:
         recommendations.append(
@@ -1317,68 +1410,20 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     )
     open_positions = repo.list_positions(status="open", limit=200)
     latest_portfolio_snapshot = repo.get_latest_portfolio_snapshot()
-    portfolio_snapshot_age_minutes = (
-        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
-        if latest_portfolio_snapshot is not None
-        else None
+    result = _build_portfolio_snapshot_recommendation(
+        cfg,
+        open_positions,
+        latest_portfolio_snapshot,
     )
-    if (
-        not cfg.runtime.paused
-        and open_positions
-        and (
-            latest_portfolio_snapshot is None
-            or (
-                portfolio_snapshot_age_minutes is not None
-                and portfolio_snapshot_age_minutes >= 15
-            )
-        )
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_="portfolio-snapshot-refresh-due",
-                kind="portfolio_snapshot_refresh_due",
-                severity="medium",
-                summary=(
-                    "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
-                    if latest_portfolio_snapshot is None
-                    else (
-                        "Open positions exist and the latest portfolio snapshot is about "
-                        f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
-                    )
-                ),
-                task_type="run_portfolio_snapshot",
-                metadata={
-                    "task_type": "run_portfolio_snapshot",
-                    "open_positions_count": len(open_positions),
-                    "last_snapshot_id": (
-                        latest_portfolio_snapshot.get("id")
-                        if latest_portfolio_snapshot
-                        else None
-                    ),
-                    "stale_minutes": (
-                        int(portfolio_snapshot_age_minutes)
-                        if portfolio_snapshot_age_minutes is not None
-                        else None
-                    ),
-                },
-            )
-        )
+    if result:
+        recommendations.append(result)
 
     failed_run_statuses = {"failed", "error", "completed_with_errors"}
-    recent_runs_by_agent: dict[str, list[dict]] = {}
-    failed_runs_by_agent: dict[str, list[dict]] = {}
-    for run in recent_agent_runs:
-        agent_name = str(run.get("agent_name") or "").strip()
-        if agent_name:
-            recent_runs_by_agent.setdefault(agent_name, []).append(run)
-        if run.get("status") not in failed_run_statuses:
-            continue
-        started_at = parse_utc(run.get("started_at"))
-        if started_at is None or started_at <= datetime.now(timezone.utc) - timedelta(hours=24):
-            continue
-        if not agent_name:
-            continue
-        failed_runs_by_agent.setdefault(agent_name, []).append(run)
+    (
+        recent_runs_by_agent,
+        failed_runs_by_agent,
+        manual_runs_by_agent,
+    ) = _group_agent_runs(recent_agent_runs, failed_run_statuses)
 
     failed_rerun_candidate = None
     for agent_name, runs in recent_runs_by_agent.items():
@@ -1484,15 +1529,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         agent_name = content.get("agent_name")
         if agent_name:
             recent_schedule_change_proposals.append(str(agent_name))
-
-    manual_runs_by_agent: dict[str, list[dict]] = {}
-    for run in recent_agent_runs:
-        if str(run.get("trigger_type") or "") != "manual":
-            continue
-        agent_name = str(run.get("agent_name") or "").strip()
-        if not agent_name:
-            continue
-        manual_runs_by_agent.setdefault(agent_name, []).append(run)
 
     repeated_manual_agent = next(
         (
