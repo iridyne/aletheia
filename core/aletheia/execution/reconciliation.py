@@ -980,40 +980,19 @@ async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
     )
 
 
-def reconcile() -> dict:
-    """Reconcile unresolved exchange Orders and materialize proven fills."""
-    all_orders = _list_unresolved_core_orders()
-    filled_gap_orders = _list_bitget_demo_filled_entry_gaps()
-    pending_close_cleared_ids = _clear_verified_closed_pending()
-
-    bitget_orders = [
-        o for o in all_orders
-        if o.get("execution_mode") in _BITGET_ACCOUNT_MODES
-        and o.get("status") in _OPEN_LOCAL_STATES
-        and (o.get("exchange_order_id") or o.get("client_order_id"))
-    ]
-    multibroker_orders = [
-        o for o in all_orders
-        if o.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
-        and o.get("status") in _OPEN_LOCAL_STATES
-        and (o.get("exchange_order_id") or o.get("client_order_id"))
-    ]
+def _validate_reconcile_identities(
+    candidate_orders, filled_gap_orders, configured_identities,
+) -> tuple[list, list, list[str], int, int]:
+    """Exclude orders whose persisted account cannot authorize private reads."""
     errors: list[str] = []
-    filled = 0
     inconclusive = 0
-    partially_filled = 0
-    materialized_fills = 0
-    filled_gap_recovered = 0
     filled_gap_inconclusive = 0
-    checked = len(bitget_orders) + len(multibroker_orders) + len(filled_gap_orders)
-    filled_gap_checked = len(filled_gap_orders)
-    configured = {identity.execution_mode: identity for identity in build_uta_registry().configured_identities()}
-    for orders in (bitget_orders, multibroker_orders, filled_gap_orders):
+    for orders in (candidate_orders, filled_gap_orders):
         verified = []
         for order in orders:
             try:
                 identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
-                if identity != configured.get(order["execution_mode"]):
+                if identity != configured_identities.get(order["execution_mode"]):
                     raise ValueError("uta_account_identity_mismatch")
             except ValueError:
                 inconclusive += 1
@@ -1024,6 +1003,163 @@ def reconcile() -> dict:
                 continue
             verified.append(order)
         orders[:] = verified
+    return candidate_orders, filled_gap_orders, errors, inconclusive, filled_gap_inconclusive
+
+
+def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
+    """Recover historical Bitget demo gaps from exact private fill evidence."""
+    errors: list[str] = []
+    inconclusive = 0
+    filled_gap_inconclusive = 0
+    filled_gap_recovered = 0
+    filled = 0
+    materialized_fills = 0
+    # Historical terminal Orders are never added to the ordinary open-order
+    # scan.  They get a dedicated, exact orderId-only path after local authority
+    # and exposure preflights have passed.
+    filled_gap_client = None
+    for order in filled_gap_orders:
+        market_type = str(order.get("market_type") or "")
+        try:
+            repo.validate_native_order_authority(order)
+        except ValueError:
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_authority_missing",
+            )
+            continue
+        if _has_compatible_open_position(order):
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_compatible_open_position",
+            )
+            continue
+        if market_type != "usdt_futures":
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_exact_history_unsupported",
+            )
+            continue
+        try:
+            if filled_gap_client is None:
+                filled_gap_client = _UTAReconciliationProjection("bitget_demo", configured["bitget_demo"])
+            rows = _response_rows(
+                run_coro_from_sync(
+                    filled_gap_client.get_order_fills(
+                        order_id=str(order["exchange_order_id"]),
+                        symbol=to_bitget(str(order["symbol"])),
+                        market_type=market_type,
+                        start_at=order.get("created_at"),
+                    )
+                )
+            )
+        except Exception as exc:
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            errors.append("bitget_demo: historical exact fill history unavailable")
+            logger.warning(
+                "reconcile: historical exact fills failed for order %s (%s)",
+                order["id"],
+                type(exc).__name__,
+            )
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_exact_history_unavailable",
+            )
+            continue
+        try:
+            evidence_complete = _complete_exact_gap_evidence(order, rows)
+        except MaterializationIntegrityError:
+            evidence_complete = False
+        if not evidence_complete:
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_private_evidence_incomplete",
+            )
+            continue
+        try:
+            result = materialize_bitget_entry(
+                order["id"],
+                rows,
+                historical_gap_recovery=True,
+            )
+        except (MaterializationIntegrityError, ValueError) as exc:
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            errors.append("bitget_demo: historical local materialization rejected")
+            logger.warning(
+                "reconcile: historical materialization rejected for order %s (%s)",
+                order["id"],
+                type(exc).__name__,
+            )
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_materialization_rejected",
+            )
+            continue
+        except Exception as exc:
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            errors.append("bitget_demo: historical local materialization failed")
+            logger.warning(
+                "reconcile: historical materialization failed for order %s (%s)",
+                order["id"],
+                type(exc).__name__,
+            )
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_materialization_failed",
+            )
+            continue
+        if result.state != "filled":
+            filled_gap_inconclusive += 1
+            inconclusive += 1
+            _write_filled_gap_event(
+                order,
+                recovered=False,
+                reason="filled_gap_complete_chain_not_proven",
+            )
+            continue
+        filled_gap_recovered += 1
+        filled += 1
+        materialized_fills += result.new_fill_count
+        _write_filled_gap_event(
+            order,
+            recovered=True,
+            reason="filled_gap_private_evidence_materialized",
+        )
+    return {
+        "errors": errors,
+        "inconclusive": inconclusive,
+        "filled_gap_inconclusive": filled_gap_inconclusive,
+        "filled_gap_recovered": filled_gap_recovered,
+        "filled": filled,
+        "materialized_fills": materialized_fills,
+    }
+
+
+def _reconcile_multibroker_orders(multibroker_orders) -> dict:
+    """Materialize account-matched OKX and Binance entry and close evidence."""
+    errors: list[str] = []
+    inconclusive = 0
+    filled = 0
+    partially_filled = 0
+    materialized_fills = 0
     # OKX and Binance expose actual per-fill economics through broker-owned
     # account-explicit private history readers. Native entry and close Orders
     # share the atomic materializer after normalization.
@@ -1184,135 +1320,73 @@ def reconcile() -> dict:
                 state=str(order.get("status") or "unresolved"),
                 reason="complete_exchange_fill_not_proven",
             )
-    # Historical terminal Orders are never added to the ordinary open-order
-    # scan.  They get a dedicated, exact orderId-only path after local authority
-    # and exposure preflights have passed.
-    filled_gap_client = None
-    for order in filled_gap_orders:
-        market_type = str(order.get("market_type") or "")
-        try:
-            repo.validate_native_order_authority(order)
-        except ValueError:
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_authority_missing",
-            )
-            continue
-        if _has_compatible_open_position(order):
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_compatible_open_position",
-            )
-            continue
-        if market_type != "usdt_futures":
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_exact_history_unsupported",
-            )
-            continue
-        try:
-            if filled_gap_client is None:
-                filled_gap_client = _UTAReconciliationProjection("bitget_demo", configured["bitget_demo"])
-            rows = _response_rows(
-                run_coro_from_sync(
-                    filled_gap_client.get_order_fills(
-                        order_id=str(order["exchange_order_id"]),
-                        symbol=to_bitget(str(order["symbol"])),
-                        market_type=market_type,
-                        start_at=order.get("created_at"),
-                    )
-                )
-            )
-        except Exception as exc:
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            errors.append("bitget_demo: historical exact fill history unavailable")
-            logger.warning(
-                "reconcile: historical exact fills failed for order %s (%s)",
-                order["id"],
-                type(exc).__name__,
-            )
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_exact_history_unavailable",
-            )
-            continue
-        try:
-            evidence_complete = _complete_exact_gap_evidence(order, rows)
-        except MaterializationIntegrityError:
-            evidence_complete = False
-        if not evidence_complete:
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_private_evidence_incomplete",
-            )
-            continue
-        try:
-            result = materialize_bitget_entry(
-                order["id"],
-                rows,
-                historical_gap_recovery=True,
-            )
-        except (MaterializationIntegrityError, ValueError) as exc:
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            errors.append("bitget_demo: historical local materialization rejected")
-            logger.warning(
-                "reconcile: historical materialization rejected for order %s (%s)",
-                order["id"],
-                type(exc).__name__,
-            )
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_materialization_rejected",
-            )
-            continue
-        except Exception as exc:
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            errors.append("bitget_demo: historical local materialization failed")
-            logger.warning(
-                "reconcile: historical materialization failed for order %s (%s)",
-                order["id"],
-                type(exc).__name__,
-            )
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_materialization_failed",
-            )
-            continue
-        if result.state != "filled":
-            filled_gap_inconclusive += 1
-            inconclusive += 1
-            _write_filled_gap_event(
-                order,
-                recovered=False,
-                reason="filled_gap_complete_chain_not_proven",
-            )
-            continue
-        filled_gap_recovered += 1
-        filled += 1
-        materialized_fills += result.new_fill_count
-        _write_filled_gap_event(
-            order,
-            recovered=True,
-            reason="filled_gap_private_evidence_materialized",
-        )
+    return {
+        "errors": errors,
+        "inconclusive": inconclusive,
+        "filled": filled,
+        "partially_filled": partially_filled,
+        "materialized_fills": materialized_fills,
+    }
+
+
+def reconcile() -> dict:
+    """Reconcile unresolved exchange Orders and materialize proven fills."""
+    all_orders = _list_unresolved_core_orders()
+    filled_gap_orders = _list_bitget_demo_filled_entry_gaps()
+    pending_close_cleared_ids = _clear_verified_closed_pending()
+
+    bitget_orders = [
+        o for o in all_orders
+        if o.get("execution_mode") in _BITGET_ACCOUNT_MODES
+        and o.get("status") in _OPEN_LOCAL_STATES
+        and (o.get("exchange_order_id") or o.get("client_order_id"))
+    ]
+    multibroker_orders = [
+        o for o in all_orders
+        if o.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
+        and o.get("status") in _OPEN_LOCAL_STATES
+        and (o.get("exchange_order_id") or o.get("client_order_id"))
+    ]
+    errors: list[str] = []
+    filled = 0
+    inconclusive = 0
+    partially_filled = 0
+    materialized_fills = 0
+    filled_gap_recovered = 0
+    filled_gap_inconclusive = 0
+    checked = len(bitget_orders) + len(multibroker_orders) + len(filled_gap_orders)
+    filled_gap_checked = len(filled_gap_orders)
+    configured = {identity.execution_mode: identity for identity in build_uta_registry().configured_identities()}
+    (
+        candidate_orders, filled_gap_orders, identity_errors,
+        identity_inconclusive, identity_gap_inconclusive,
+    ) = _validate_reconcile_identities(
+        bitget_orders + multibroker_orders, filled_gap_orders, configured,
+    )
+    errors.extend(identity_errors)
+    inconclusive += identity_inconclusive
+    filled_gap_inconclusive += identity_gap_inconclusive
+    bitget_orders = [
+        order for order in candidate_orders
+        if order.get("execution_mode") in _BITGET_ACCOUNT_MODES
+    ]
+    multibroker_orders = [
+        order for order in candidate_orders
+        if order.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
+    ]
+    multibroker_result = _reconcile_multibroker_orders(multibroker_orders)
+    errors.extend(multibroker_result["errors"])
+    inconclusive += multibroker_result["inconclusive"]
+    filled += multibroker_result["filled"]
+    partially_filled += multibroker_result["partially_filled"]
+    materialized_fills += multibroker_result["materialized_fills"]
+    gap_result = _recover_filled_gap_orders(filled_gap_orders, configured)
+    errors.extend(gap_result["errors"])
+    inconclusive += gap_result["inconclusive"]
+    filled_gap_inconclusive += gap_result["filled_gap_inconclusive"]
+    filled_gap_recovered += gap_result["filled_gap_recovered"]
+    filled += gap_result["filled"]
+    materialized_fills += gap_result["materialized_fills"]
 
     for execution_mode, account_mode in _BITGET_ACCOUNT_MODES.items():
         mode_orders = [
