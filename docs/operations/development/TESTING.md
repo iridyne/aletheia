@@ -81,6 +81,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - DB 测试用真实 SQLite in-memory，不 mock
+- HTTP 来源回归见 [test_http_mutation_origin.py](../../../tests/test_http_mutation_origin.py) 和 [test_operator_service_auth.py](../../../tests/test_operator_service_auth.py)：Node 原生 fetch 的单独 `Sec-Fetch-Mode: cors` 不代表浏览器来源；保留 Origin/Referer/跨站元数据拒绝以及独立服务凭据和路由白名单校验。
 
 ---
 
