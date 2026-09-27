@@ -315,7 +315,7 @@ def _normalized_node_path(item) -> str:
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# A test module whose own top-level imports reach one of these cannot be a pure
+# A test module whose own imports reach one of these cannot be a pure
 # unit test: it needs a database, a route surface, a scheduler, an exchange
 # adapter or a real subprocess to mean anything. Kept as a prefix list rather
 # than a name-token list so it follows what the module actually does.
@@ -347,12 +347,11 @@ _BOUNDARY_MODULE_PREFIXES = (
 
 @lru_cache(maxsize=None)
 def _boundary_imports(relative_path: str, mtime_ns: int, size: int) -> tuple[str, ...]:
-    """Top-level boundary imports of one test module.
+    """Boundary imports at any scope in one test module.
 
     Cached on ``(path, mtime_ns, size)`` so the AST pass costs one parse per file
-    per session. A module-level import is what decides the tier; an import inside
-    a function body is not, because it does not change what the module needs to
-    be collected.
+    per session. Delaying an import until a test or fixture runs does not make
+    its database, process, or external-service dependency a unit boundary.
     """
     import ast
 
@@ -361,7 +360,7 @@ def _boundary_imports(relative_path: str, mtime_ns: int, size: int) -> tuple[str
     except (OSError, SyntaxError, UnicodeDecodeError):
         return ()
     found: set[str] = set()
-    for node in tree.body:
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.startswith(_BOUNDARY_MODULE_PREFIXES):
