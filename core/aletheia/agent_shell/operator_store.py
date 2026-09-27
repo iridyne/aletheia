@@ -12,7 +12,7 @@ from aletheia.agent_shell.file_artifacts import (
     write_task_note,
 )
 from aletheia.storage.sqlite import get_db
-from aletheia.storage.json_utils import canonical_json_safe as _canonical_json
+from aletheia.utils.json_utils import canonical_json_safe as _canonical_json
 
 # Task types that are inherently non-idempotent (each call is a distinct request)
 # and MUST bypass the create_task dedup guardrail.

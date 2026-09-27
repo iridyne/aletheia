@@ -50,7 +50,7 @@ def test_time_utils_return_valid_values() -> None:
 
 def test_json_utils_produce_sorted_stable_output() -> None:
     """canonical_json variants are sorted and compact."""
-    from aletheia.storage.json_utils import canonical_json, canonical_json_safe, canonical_json_strict
+    from aletheia.utils.json_utils import canonical_json, canonical_json_safe, canonical_json_strict
 
     data = {"z": 1, "a": 2, "m": 3}
     result = canonical_json(data)

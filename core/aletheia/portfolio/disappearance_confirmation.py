@@ -23,7 +23,7 @@ from aletheia.storage.models import (
     PositionDisappearanceCandidate,
     PositionDisappearanceObservation,
 )
-from aletheia.storage.json_utils import canonical_json_safe as _canonical_json
+from aletheia.utils.json_utils import canonical_json_safe as _canonical_json
 from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 

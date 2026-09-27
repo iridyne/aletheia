@@ -17,7 +17,7 @@ from aletheia.storage.models import (
 from aletheia.universe.relative_rank_shadow import RelativeRankBatch
 from aletheia.universe.twin_persistence import TwinExperimentContext
 from aletheia.universe.twin_scoring import TwinShadowInput
-from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
+from aletheia.utils.json_utils import canonical_json_strict as _canonical_json
 
 
 RELATIVE_RANK_CAPTURE_INTERVAL_SEC = 55 * 60

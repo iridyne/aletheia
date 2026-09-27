@@ -12,7 +12,7 @@ from typing import Literal, Sequence
 
 from aletheia.data.providers import Candle, MarketDataProvider, timeframe_ms
 from aletheia.data.symbols import InstrumentId
-from aletheia.storage.json_utils import canonical_json as _canonical_json
+from aletheia.utils.json_utils import canonical_json as _canonical_json
 
 
 CONTRACT_VERSION = "market-structure-provider/v1"

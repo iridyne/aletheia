@@ -16,7 +16,7 @@ import sqlite3
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.storage.models import AuditEvent, ReconciliationIntegrityIncident
 from aletheia.storage import repositories as repo
-from aletheia.storage.json_utils import canonical_json as _canonical_json
+from aletheia.utils.json_utils import canonical_json as _canonical_json
 
 
 INCIDENT_TYPE = "close_reopen_churn"

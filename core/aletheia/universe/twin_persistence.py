@@ -38,7 +38,7 @@ from aletheia.universe.twin_scoring import (
     build_twin_shadow_batch,
     candidate_key,
 )
-from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
+from aletheia.utils.json_utils import canonical_json_strict as _canonical_json
 
 
 TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v2"

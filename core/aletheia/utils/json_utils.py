@@ -7,7 +7,7 @@ so callers pick the semantics they actually need.
 
 Usage::
 
-    from aletheia.storage.json_utils import (
+    from aletheia.utils.json_utils import (
         canonical_json,        # no extra flags  (most uses)
         canonical_json_safe,   # default=str     (for mixed-type values)
         canonical_json_strict, # allow_nan=False  (for cryptographic hashes)

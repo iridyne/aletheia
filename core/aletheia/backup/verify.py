@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from aletheia.storage.hashing import sha256_file
-from aletheia.storage.json_utils import canonical_json_strict as _canonical_json
+from aletheia.utils.json_utils import canonical_json_strict as _canonical_json
 
 _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 # Files exempt from the "unlisted payload" check — the exporter writes manifest.yaml
