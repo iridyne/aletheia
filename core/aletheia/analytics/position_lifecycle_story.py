@@ -1754,6 +1754,54 @@ def _excursion_events(
     return timeline
 
 
+def _hypothesis_horizon_events(
+    hypothesis: Mapping[str, Any] | None,
+    bars: Sequence[Sequence[Any]],
+    result: Mapping[str, Any],
+    *,
+    entry_at: datetime | None,
+    lifecycle_cutoff: datetime,
+    proposal: Mapping[str, Any] | None,
+    position_id: str,
+) -> dict[str, Any]:
+    timeline: list[dict[str, Any]] = []
+    hypothesis_lifecycle, hypothesis_events = _hypothesis_lifecycle(hypothesis, bars)
+    timeline.extend(hypothesis_events)
+
+    expected_hours = _finite(result["opening"].get("expected_holding_horizon_hours"))
+    horizon_at = (
+        entry_at + timedelta(hours=expected_hours)
+        if entry_at is not None and expected_hours is not None and expected_hours > 0
+        else None
+    )
+    if horizon_at is not None and horizon_at <= lifecycle_cutoff:
+        timeline.append(
+            _event(
+                "expected_horizon_reached",
+                occurred_at=horizon_at,
+                evidence_status="available",
+                source_entity_type="position_hypothesis",
+                source_entity_id=str((proposal or {}).get("id") or position_id),
+                facts={"expected_horizon_hours": expected_hours},
+            )
+        )
+    else:
+        timeline.append(
+            _event(
+                "expected_horizon_reached",
+                unavailable_reason="expected_horizon_not_reached" if horizon_at else "expected_horizon_not_recorded",
+            )
+        )
+
+    return {
+        "hypothesis_lifecycle": hypothesis_lifecycle,
+        "hypothesis_events": hypothesis_events,
+        "expected_hours": expected_hours,
+        "horizon_at": horizon_at,
+        "timeline": timeline,
+    }
+
+
 def _observed_mechanisms(
     economics: Mapping[str, Any],
     metrics: Mapping[str, Any],
@@ -2050,33 +2098,20 @@ def build_position_lifecycle_story(
         path_reason=path_reason,
     ))
 
-    hypothesis_lifecycle, hypothesis_events = _hypothesis_lifecycle(hypothesis, bars)
-    timeline.extend(hypothesis_events)
-
-    expected_hours = _finite(result["opening"].get("expected_holding_horizon_hours"))
-    horizon_at = (
-        entry_at + timedelta(hours=expected_hours)
-        if entry_at is not None and expected_hours is not None and expected_hours > 0
-        else None
+    hypothesis_horizon = _hypothesis_horizon_events(
+        hypothesis,
+        bars,
+        result,
+        entry_at=entry_at,
+        lifecycle_cutoff=lifecycle_cutoff,
+        proposal=proposal,
+        position_id=position_id,
     )
-    if horizon_at is not None and horizon_at <= lifecycle_cutoff:
-        timeline.append(
-            _event(
-                "expected_horizon_reached",
-                occurred_at=horizon_at,
-                evidence_status="available",
-                source_entity_type="position_hypothesis",
-                source_entity_id=str((proposal or {}).get("id") or position_id),
-                facts={"expected_horizon_hours": expected_hours},
-            )
-        )
-    else:
-        timeline.append(
-            _event(
-                "expected_horizon_reached",
-                unavailable_reason="expected_horizon_not_reached" if horizon_at else "expected_horizon_not_recorded",
-            )
-        )
+    hypothesis_lifecycle = hypothesis_horizon["hypothesis_lifecycle"]
+    hypothesis_events = hypothesis_horizon["hypothesis_events"]
+    expected_hours = hypothesis_horizon["expected_hours"]
+    horizon_at = hypothesis_horizon["horizon_at"]
+    timeline.extend(hypothesis_horizon["timeline"])
 
     reviews = _exact_reviews(source, position_id, lifecycle_cutoff)
     for review in reviews:
