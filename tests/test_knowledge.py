@@ -122,7 +122,7 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
 
     from extensions.research import post_trade_reviewer
     from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
+    from tests.fixtures.repo_test_helpers import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 

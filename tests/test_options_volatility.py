@@ -1,5 +1,7 @@
 """Frozen public-chain fixtures: research semantics, acquisition and GEX isolation."""
 
+from tests.fixtures.repo_test_helpers import latest_options_structure
+
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -176,7 +178,7 @@ def test_scheduler_persists_and_cli_reads(monkeypatch):
     result = CliRunner().invoke(data_app, ["options-volatility", "--symbol", "BTC", "--cutoff", NOW.isoformat()])
     assert result.exit_code == 0, result.output
     assert '"atm_iv_30d": 65.0' in result.output
-    assert repo.latest_options_structure("BTC") is None
+    assert latest_options_structure("BTC") is None
 
 
 def test_additive_migration_preserves_existing_table():
@@ -199,7 +201,7 @@ def test_cutoff_storage_and_legacy_isolation():
     run_migrations()
     snap = derive_options_volatility("BTC", chain(), NOW.isoformat())
     repo.insert_options_volatility_snapshot(snap.model_dump())
-    assert repo.latest_options_structure("BTC") is None
+    assert latest_options_structure("BTC") is None
     assert not repo.options_volatility_at("BTC", (NOW-timedelta(seconds=1)).isoformat())["available"]
     exported = repo.options_volatility_at("BTC", NOW.isoformat())
     assert exported["atm_iv_30d"] == 65

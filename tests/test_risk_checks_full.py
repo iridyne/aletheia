@@ -5,6 +5,8 @@ account_mode_match, strategy_lifecycle_state (live), max_leverage (futures),
 max_single_trade_risk (live, stop-based), and bounded external Demo trades.
 """
 
+from tests.fixtures.repo_test_helpers import insert_forward_outcome
+
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -384,7 +386,7 @@ def test_live_family_gate_requires_complete_edge_evidence(
     now = datetime.now(timezone.utc).isoformat()
     # 30 winning settled outcomes for (momentum, long) in the 7d clean window.
     for i in range(30):
-        repo.insert_forward_outcome(UniverseForwardOutcome(
+        insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
             venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
@@ -525,7 +527,7 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     before = evaluate_proposal(_proposal())
     assert "family_not_live_eligible:momentum:samples=29<30" in before.violations
 
-    repo.insert_forward_outcome(_outcome(29, COST_MODEL_VERSION))
+    insert_forward_outcome(_outcome(29, COST_MODEL_VERSION))
     after = evaluate_proposal(_proposal())
     assert not any(
         "family_not_live_eligible" in violation for violation in after.violations

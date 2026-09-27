@@ -422,7 +422,7 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     from aletheia.agent_shell.operator_store import create_artifact
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy, update_strategy
+    from tests.fixtures.repo_test_helpers import insert_strategy, update_strategy
 
     from aletheia.storage.models import PiDecision
     review_strategy = StrategyRecord(name="Review Candidate", description="needs operator review", state="draft")
@@ -430,7 +430,7 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=review_strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         update_strategy(review_strategy.id, state=target)
-    repo.update_strategy(
+    update_strategy(
         review_strategy.id,
         under_review=1,
         review_notes="needs evaluation",
@@ -482,7 +482,7 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
 @pytest.mark.anyio
 async def test_operator_recommendations_include_prompt_change_proposal_due_for_repeated_agent_failures(client):
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     insert_agent_run(
         AgentRun(
@@ -510,7 +510,7 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 @pytest.mark.parametrize("agent_name, expected", [("portfolio_snapshot", True), ("paper_trader", False)])
 async def test_operator_recommendations_include_schedule_change_proposal_due_for_repeated_manual_runs(client, agent_name, expected):
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     insert_agent_run(
         AgentRun(
@@ -614,7 +614,7 @@ async def test_operator_recommendations_include_failed_agent_rerun_due_for_unrec
     from datetime import datetime, timedelta, timezone
 
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     fresh_started_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     failed_started_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
@@ -653,7 +653,7 @@ async def test_operator_recommendations_include_daily_review_refresh_due_when_to
     from datetime import datetime, timedelta, timezone
 
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     fresh_started_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     insert_agent_run(
@@ -771,7 +771,7 @@ async def test_operator_recommendations_include_agent_performance_report_refresh
     from datetime import datetime, timedelta, timezone
 
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     failed_started_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     insert_agent_run(

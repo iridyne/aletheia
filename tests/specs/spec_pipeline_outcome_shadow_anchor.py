@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -98,7 +100,7 @@ def test_partial_shadow_retry_reuses_first_price_and_close_time(
 
     first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
 
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
     first_rows = {
         row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)
     }
@@ -132,7 +134,7 @@ def test_partial_shadow_retry_reuses_first_price_and_close_time(
         now="2100-01-01T00:00:00+00:00",
     )
 
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
     final_rows = {
         row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)
     }

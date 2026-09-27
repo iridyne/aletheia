@@ -8,6 +8,8 @@ Execution lineage is covered by spec_pipeline_exchange_materialization.
  #4 news ingestion is banned scope — not built.)
 """
 
+from tests.fixtures.repo_test_helpers import insert_agent_run, insert_run_step
+
 import sqlite3
 
 import pytest
@@ -54,10 +56,10 @@ def test_list_run_steps_ordered(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
-    repo.insert_agent_run(run)
+    insert_agent_run(run)
     # Insert in execution order; caller-supplied step_number is ignored on read.
-    repo.insert_run_step(run.id, 1, "first", input_data="i1", output_data="o1")
-    repo.insert_run_step(run.id, 2, "second", input_data="i2", output_data="o2")
+    insert_run_step(run.id, 1, "first", input_data="i1", output_data="o1")
+    insert_run_step(run.id, 2, "second", input_data="i2", output_data="o2")
     steps = repo.list_run_steps(run.id)
     assert [s["step_number"] for s in steps] == [1, 2]
     assert steps[0]["action"] == "first"
@@ -75,8 +77,8 @@ async def test_steps_endpoint_returns_ordered(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
-    repo.insert_agent_run(run)
-    repo.insert_run_step(run.id, 1, "observe", output_data="snapshot read")
+    insert_agent_run(run)
+    insert_run_step(run.id, 1, "observe", output_data="snapshot read")
 
     from httpx import AsyncClient, ASGITransport
     from aletheia.server.app import app

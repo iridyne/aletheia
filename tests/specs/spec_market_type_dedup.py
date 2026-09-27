@@ -18,6 +18,8 @@ Reuses ``data_layer_contract`` — no new trust boundary. Behavioral claims are
 offlined (don't need LLM).
 """
 
+from tests.fixtures.repo_test_helpers import find_opportunity_by_symbol_snapshot
+
 import inspect
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -88,7 +90,7 @@ def test_legacy_path_respects_spot_preference():
               "collide. market=None preserves prior behavior."),
 )
 def test_repo_accepts_market_kwarg():
-    from aletheia.storage.repositories import find_open_opportunity_by_symbol_snapshot
+    from tests.fixtures.repo_test_helpers import find_open_opportunity_by_symbol_snapshot
 
     sig = inspect.signature(find_open_opportunity_by_symbol_snapshot)
     params = sig.parameters
@@ -135,7 +137,7 @@ def test_lifecycle_lookup_reuses_reviewed_opportunity(tmp_path, monkeypatch):
     )
     repositories.insert_opportunity(duplicate)
 
-    found = repositories.find_opportunity_by_symbol_snapshot(
+    found = find_opportunity_by_symbol_snapshot(
         original.symbol,
         original.universe_snapshot_id,
         market=original.market,

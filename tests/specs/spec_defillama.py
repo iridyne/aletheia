@@ -119,15 +119,15 @@ def test_onchain_snapshots_table_in_schema():
 @spec_claim(
     SpecClaim(
         "DFL-S05", _CONTRACT, "§defillama repo helpers", "L2a",
-        "repositories.py exports insert_onchain_snapshot and latest_onchain_snapshots",
+        "repository surfaces expose insert_onchain_snapshot and latest_onchain_snapshots",
     ),
 )
 def test_defillama_repo_helpers_exist():
     from aletheia.storage import repositories as repo
-    for name in ("insert_onchain_snapshot", "latest_onchain_snapshots"):
-        assert callable(getattr(repo, name, None)), (
-            f"repositories.py must export callable {name}()"
-        )
+    from tests.fixtures.repo_test_helpers import insert_onchain_snapshot
+
+    assert callable(insert_onchain_snapshot)
+    assert callable(getattr(repo, "latest_onchain_snapshots", None))
 
 
 # ---------------------------------------------------------------------------

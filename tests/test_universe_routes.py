@@ -1,5 +1,7 @@
 """Tests for universe API routes."""
 
+from tests.fixtures.repo_test_helpers import insert_universe_asset, insert_universe_policy
+
 import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -261,7 +263,7 @@ def test_current_candidate_repository_left_joins_optional_planning_facts():
         execution_eligible=False,
         risk_flags='["fast_market_data_venue_unavailable"]',
     )
-    repo.insert_universe_asset(asset)
+    insert_universe_asset(asset)
     repo._insert("universe_snapshots", snapshot.model_dump())
     repo._insert("universe_members", candidate.model_dump())
 
@@ -350,7 +352,7 @@ def test_candidate_reads_hide_retired_scores_without_rewriting_history(client):
 
     asset = UniverseAsset(id="asset", venue="bitget", market_type="perp", symbol="BTC/USDT")
     snapshot = UniverseSnapshot(id="snapshot", expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_asset(asset)
+    insert_universe_asset(asset)
     repo._insert("universe_snapshots", snapshot.model_dump())
     for rank, policy in enumerate(("candidate_selection_utility_v1", "legacy_total_score_v1"), 1):
         repo._insert("universe_members", UniverseMember(
@@ -466,7 +468,7 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
 
     monkeypatch.setattr(universe, "datetime", FrozenClock)
     candidate = _candidate()
-    repo.insert_universe_asset(UniverseAsset(
+    insert_universe_asset(UniverseAsset(
         id=candidate.asset_id, venue="bitget", market_type="perp", symbol=candidate.symbol,
     ))
     repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(asset_id=candidate.asset_id))
@@ -508,7 +510,7 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
         assert dumped == original, path
 
     policy = UniversePolicy(active=True)
-    repo.insert_universe_policy(policy)
+    insert_universe_policy(policy)
     stored = client.get("/api/universe/policy").json()
     assert TypeAdapter(universe.UniverseStoredPolicy).validate_python(stored, strict=True) == stored
     cfg.universe.enabled = False

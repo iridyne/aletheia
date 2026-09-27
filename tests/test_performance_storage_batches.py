@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_agent_run
+
 from datetime import datetime, timezone
 import asyncio
 from types import SimpleNamespace
@@ -102,7 +104,7 @@ def test_collector_tick_uses_one_transaction(tmp_path, monkeypatch):
 def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     run = AgentRun(agent_name="research_agent", trigger_type="manual")
-    repo.insert_agent_run(run)
+    insert_agent_run(run)
     db = get_db()
     trace = _transaction_trace(db)
 

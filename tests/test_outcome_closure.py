@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
 from tests.position_fixture import force_update_position
@@ -101,7 +103,7 @@ def _assert_complete_closed_position_fixture(
     assert closed_at <= datetime.now(timezone.utc)
     assert close_filled_at == closed_at
 
-    jobs = repo.list_outcome_hook_jobs(position_id=position_id)
+    jobs = list_outcome_hook_jobs(position_id=position_id)
     if expected_outcome_eligible:
         assert jobs
     else:
@@ -623,7 +625,7 @@ def test_administrative_close_converges_state_without_economic_side_effects(monk
     assert stored["current_price"] == 105.0
 
     assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
     from aletheia.portfolio.pnl import today_eligible_strategy_pnl
     assert today_eligible_strategy_pnl() == 0.0
     assert any(
@@ -713,7 +715,7 @@ def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monke
     assert repo.get_position(position.id)["status"] == "open"
     assert repo.get_db().execute("SELECT COUNT(*) FROM orders").fetchone()[0] == before_orders
     assert repo.get_db().execute("SELECT COUNT(*) FROM fills").fetchone()[0] == before_fills
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @pytest.mark.parametrize("field", ("fill_price", "fill_quantity", "fee"))
@@ -741,7 +743,7 @@ def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
     ).fetchone()[0] == 0
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 def _seed_late_exit_fee(*, funding_complete=True, strategy_close=True, missing_component="amount"):
@@ -864,7 +866,7 @@ def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch, strat
     assert pending["exit_fee"] == pytest.approx(0.2)
     assert pending["realized_pnl"] is None and pending["funding_cost"] is None
     assert pending["outcome_exclusion_reason"] == ("incomplete_funding_economics" if strategy_close else "administrative_close")
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
     second = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
     assert second["settled"] == 1 and second["broker_io_attempted"] == 1, second
     assert calls == ["fills", "funding"]
@@ -889,7 +891,7 @@ def test_late_fee_audit_failure_rolls_back_fee_and_final_economics(monkeypatch):
         materialize_exchange_close_costs(before, fee_report=report)
     assert repo.get_position(position.id) == before
     assert [dict(row) for row in repo.get_db().execute("SELECT * FROM position_close_events").fetchall()] == events
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @pytest.mark.parametrize("field,value", (
@@ -931,7 +933,7 @@ def test_verified_external_funding_expiry_preserves_actual_audit_reason(monkeypa
     assert settlement.funding_recovery_state_counts() == {"retry_pending": 0, "terminal": 1}
     audit = next(row for row in repo.list_audit_events(limit=100) if row["event_type"] == "exchange_position_funding_history_expired")
     assert json.loads(audit["before_state"])["outcome_exclusion_reason"] == "administrative_close"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
@@ -997,7 +999,7 @@ def test_late_fee_rejects_conflicting_or_incomplete_observation(field, value):
     with pytest.raises(ValueError):
         materialize_exchange_close_costs(before, fee_report=report)
     assert repo.get_position(position.id) == before
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @pytest.mark.parametrize("fault", ("account", "scope", "partial", "time", "duplicate", "known_fee"))
@@ -1026,7 +1028,7 @@ def test_late_fee_preserves_account_scope_and_original_known_cost(fault):
     with pytest.raises(ValueError):
         materialize_exchange_close_costs(before, fee_report=report)
     assert repo.get_position(position.id) == before
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 def test_verified_exit_normalization_has_no_second_close_writer():
@@ -1089,7 +1091,7 @@ def test_verified_close_rejects_invalid_persisted_entry_fee(bad_fee):
         "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
         (position.id,),
     ).fetchone()[0] == 0
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 def test_verified_external_close_converges_with_unknown_entry_fee():
@@ -1212,7 +1214,7 @@ def test_verified_external_close_preserves_unknown_costs_and_execution(fee, curr
     assert fills[0]["fee_currency"] == currency
     assert fills[0]["fee_source"] == ("unavailable" if fee is None else "reconciled")
     assert "exit_fee" in position_realized_pnl_view(stored)["known_economics_missing_components"]
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
     assert close_position_from_verified_exit(position.id, evidence)["already_closed"] is True
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),

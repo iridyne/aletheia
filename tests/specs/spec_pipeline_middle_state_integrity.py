@@ -5,6 +5,8 @@ Every behavioral test uses a temporary SQLite database and no exchange network.
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import insert_opportunity_once_by_snapshot, list_open_trade_opportunities, transition_open_opportunity_to_queued, update_open_opportunity
+
 import json
 import sqlite3
 import threading
@@ -892,7 +894,7 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
     for row in rows:
         repo.insert_opportunity(row)
 
-    assert {row["id"] for row in repo.list_open_trade_opportunities(limit=20)} == {
+    assert {row["id"] for row in list_open_trade_opportunities(limit=20)} == {
         "crypto-open",
         "equity-open",
         "divergence-later",
@@ -939,7 +941,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
                 source_agent="market_observer",
             )
             barrier.wait(timeout=5)
-            owner, created = repo.insert_opportunity_once_by_snapshot(candidate)
+            owner, created = insert_opportunity_once_by_snapshot(candidate)
             with result_lock:
                 results.append((str(owner["id"]), created))
         except BaseException as exc:  # pragma: no cover - asserted below
@@ -962,8 +964,8 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     assert len({owner for owner, _created in results}) == 1
     assert [row["id"] for row in rows] == [results[0][0]]
     owner_id = results[0][0]
-    assert repo.transition_open_opportunity_to_queued(owner_id) is True
-    assert repo.update_open_opportunity(
+    assert transition_open_opportunity_to_queued(owner_id) is True
+    assert update_open_opportunity(
         owner_id,
         thesis="late observer output must not rewrite a queued owner",
         direction_bias="short",

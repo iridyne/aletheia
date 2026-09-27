@@ -167,7 +167,7 @@ def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
     """A strategy promoted to paper_running should bump activation ratio above 0."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy, update_strategy
+    from tests.fixtures.repo_test_helpers import insert_strategy, update_strategy
     from aletheia.storage.models import PiDecision
     from aletheia.storage.repositories import insert_pi_decision
     s = StrategyRecord(name="Active", state="draft", parameters='{"k": "v"}')

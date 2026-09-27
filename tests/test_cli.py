@@ -747,7 +747,7 @@ def test_strategy_parameters_write_path_requires_json_object(cli_db):
     from pydantic import ValidationError
 
     from aletheia.storage.models import StrategyParametersInvalid, StrategyRecord
-    from aletheia.storage.repositories import insert_strategy, update_strategy
+    from tests.fixtures.repo_test_helpers import insert_strategy, update_strategy
 
     with pytest.raises(ValidationError):
         StrategyRecord(name="Malformed", parameters="{broken")
@@ -866,7 +866,7 @@ def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     import json as json_mod
 
     from aletheia.storage.models import AgentRun
-    from aletheia.storage.repositories import insert_agent_run
+    from tests.fixtures.repo_test_helpers import insert_agent_run
 
     insert_agent_run(
         AgentRun(

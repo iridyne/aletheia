@@ -4,6 +4,8 @@ SQLite WAL, per-thread connections, additive-only migrations,
 causal chain tables never pruned.
 """
 
+from tests.fixtures.repo_test_helpers import latest_pi_decision, list_pi_decisions
+
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -600,14 +602,14 @@ def test_pi_decisions_tie_broken_by_rowid(tmp_path, monkeypatch):
     repo.insert_pi_decision(pending)
     repo.insert_pi_decision(final)
 
-    rows = repo.list_pi_decisions(limit=5)
+    rows = list_pi_decisions(limit=5)
     assert rows[0]["id"] == "final-tie-test", (
         f"final (higher rowid) must sort first; got {rows[0]['id']!r}. "
         "rowid DESC tie-breaker missing from list_pi_decisions ORDER BY."
     )
     assert rows[1]["id"] == "pending-tie-test"
 
-    latest = repo.latest_pi_decision("BTC/USDT", max_age_minutes=60 * 24 * 365)
+    latest = latest_pi_decision("BTC/USDT", max_age_minutes=60 * 24 * 365)
     assert latest is not None
     assert latest["id"] == "final-tie-test", (
         f"latest_pi_decision must return final row; got {latest['id']!r}. "

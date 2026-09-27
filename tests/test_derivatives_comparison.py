@@ -1,4 +1,6 @@
 """Public-source replay, single-writer ownership and legacy-consumer isolation."""
+from tests.fixtures.repo_test_helpers import batch_funding_rates, batch_open_interest
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
@@ -83,7 +85,7 @@ def test_public_replay_preserves_ownership_partial_failure_and_price_identity(mo
     assert len(repo._select_all('funding_rate_snapshots')) == 2
     assert len(repo._select_all('perp_price_snapshots')) == 3
     assert repo.latest_funding_rate('BTC/USDT') is None
-    assert repo.batch_funding_rates(['BTC/USDT'], 'okx') == {}
+    assert batch_funding_rates(['BTC/USDT'], 'okx') == {}
     canonical = read_derivatives_facts('BTC/USDT', venue='okx', now=now)
     assert canonical[0]['value'] == payloads['okx']['fetch_funding_rate']['fundingRate']
     assert canonical[0]['interval_seconds'] == 28800
@@ -110,8 +112,8 @@ def test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch
         writer(comparison_row(newer))
     assert repo.latest_funding_rate('BTC/USDT')['funding_rate'] == .001
     assert repo.latest_open_interest('BTC/USDT','okx')['open_interest_usd'] == 1000000
-    assert repo.batch_funding_rates(['BTC/USDT'],'okx')['BTC/USDT']['funding_rate'] == .001
-    assert repo.batch_open_interest(['BTC/USDT'],'okx')['BTC/USDT']['open_interest_usd'] == 1000000
+    assert batch_funding_rates(['BTC/USDT'],'okx')['BTC/USDT']['funding_rate'] == .001
+    assert batch_open_interest(['BTC/USDT'],'okx')['BTC/USDT']['open_interest_usd'] == 1000000
     assert repo.open_interest_near('BTC/USDT','okx', reference_at=now+timedelta(hours=1,seconds=1))['open_interest_usd'] == 1000000
     telemetry = get_market_microstructure('BTC/USDT', exchange='okx', market_type='perp')
     assert telemetry['funding_rate'] == .001 and telemetry['open_interest_usd'] == 1000000

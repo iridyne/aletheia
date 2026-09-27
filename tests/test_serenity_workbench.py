@@ -1,5 +1,9 @@
 """Tests for the Serenity Research Workbench: runs, events, profiles, worker."""
 
+from tests.fixtures.repo_test_helpers import insert_serenity_claims_bulk
+
+from tests.fixtures.repo_test_helpers import finish_serenity_research_run, get_serenity_claim, insert_serenity_theme_claim
+
 import json
 import pytest
 from unittest.mock import patch, AsyncMock
@@ -792,7 +796,7 @@ def test_insert_and_get_claim(db):
     )
     repo.insert_serenity_claim(claim)
 
-    fetched = repo.get_serenity_claim(claim.id)
+    fetched = get_serenity_claim(claim.id)
     assert fetched is not None
     assert fetched["claim_text"] == "BTC mining hashrate at all-time high"
     assert fetched["confidence"] == 0.85
@@ -833,7 +837,7 @@ def test_bulk_insert_claims(db):
 
     from aletheia.storage.models import SerenityClaim
     claims = [SerenityClaim(run_id=run.id, claim_text=f"Bulk claim {i}") for i in range(10)]
-    repo.insert_serenity_claims_bulk(claims)
+    insert_serenity_claims_bulk(claims)
 
     all_claims = repo.list_serenity_claims(run_id=run.id)
     assert len(all_claims) == 10
@@ -854,8 +858,8 @@ def test_theme_claim_linking(db):
     repo.insert_serenity_claim(c1)
     repo.insert_serenity_claim(c2)
 
-    repo.insert_serenity_theme_claim(theme.id, c1.id, 0.9)
-    repo.insert_serenity_theme_claim(theme.id, c2.id, 0.7)
+    insert_serenity_theme_claim(theme.id, c1.id, 0.9)
+    insert_serenity_theme_claim(theme.id, c2.id, 0.7)
 
     linked = repo.list_serenity_claims_for_theme(theme.id)
     assert len(linked) == 2
@@ -871,7 +875,7 @@ def test_bulk_theme_claim_linking(db):
 
     from aletheia.storage.models import SerenityClaim
     claims = [SerenityClaim(run_id=run.id, claim_text=f"C{i}") for i in range(5)]
-    repo.insert_serenity_claims_bulk(claims)
+    insert_serenity_claims_bulk(claims)
 
     links = [(theme.id, c.id, 0.8) for c in claims]
     repo.insert_serenity_theme_claims_bulk(links)
@@ -1048,7 +1052,7 @@ async def test_cancel_running_run(client, monkeypatch):
     assert requested["status"] == "cancel_requested"
     assert requested["finished_at"] is None
     assert repo.get_active_serenity_research_run()["id"] == run.id
-    assert repo.finish_serenity_research_run(
+    assert finish_serenity_research_run(
         run.id,
         "completed",
         finished_at="2026-06-13T00:02:00Z",
@@ -1163,7 +1167,7 @@ async def test_get_theme_claims_endpoint(client):
     from aletheia.storage.models import SerenityClaim
     c = SerenityClaim(run_id=run.id, claim_text="Linked claim")
     repo.insert_serenity_claim(c)
-    repo.insert_serenity_theme_claim(theme.id, c.id, 0.95)
+    insert_serenity_theme_claim(theme.id, c.id, 0.95)
 
     resp = await client.get(f"/api/serenity/themes/{theme.id}/claims")
     assert resp.status_code == 200
@@ -1186,7 +1190,7 @@ async def test_theme_detail_endpoint(client):
     from aletheia.storage.models import SerenityClaim
     c = SerenityClaim(run_id=run.id, claim_text="Detail claim")
     repo.insert_serenity_claim(c)
-    repo.insert_serenity_theme_claim(theme.id, c.id, 0.8)
+    insert_serenity_theme_claim(theme.id, c.id, 0.8)
 
     resp = await client.get(f"/api/serenity/themes/{theme.id}/detail")
     assert resp.status_code == 200

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
 from tests.position_fixture import force_update_position
@@ -157,7 +159,7 @@ def test_verified_close_without_causal_identity_is_not_feedback_eligible(
     assert result["outcome_eligible"] is False
     assert stored["outcome_exclusion_reason"] == "missing_attribution"
     assert eligible_strategy_outcomes() == []
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @spec_claim(
@@ -322,7 +324,7 @@ def test_mismatched_entry_order_identity_blocks_outcome_hooks(tmp_path, monkeypa
     stored = repo._select_one("positions", position.id)
     assert result["outcome_eligible"] is False
     assert stored["outcome_exclusion_reason"] == "missing_attribution"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @spec_claim(
@@ -465,7 +467,7 @@ def test_concurrent_verified_close_claims_position_once(tmp_path, monkeypatch):
 
     assert sorted(result["already_closed"] for result in results) == [False, True]
     assert hook_calls == [position.id]
-    assert len(repo.list_outcome_hook_jobs(position_id=position.id)) == 1
+    assert len(list_outcome_hook_jobs(position_id=position.id)) == 1
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
     ).fetchone()[0] == 1
@@ -518,7 +520,7 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
         reason="take_profit",
     )
 
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert closed["closed"] is True
     assert repo._select_one("positions", position.id)["status"] == "closed"
     assert failed_job["status"] == "failed"
@@ -530,7 +532,7 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
         now="2100-01-01T00:00:00+00:00",
     )
 
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert replayed["completed"] == 1
     assert completed_job["status"] == "completed"
     assert completed_job["attempts"] == 2
@@ -573,7 +575,7 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
 
     replayed = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
 
-    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [job] = list_outcome_hook_jobs(position_id=position.id)
     assert replayed["skipped"] == 1
     assert job["status"] == "skipped"
     assert job["last_error"] == "not_marked_eligible"
@@ -634,7 +636,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     assert stored["status"] == "closed"
     assert stored["outcome_eligible"] == 0
     assert stored["outcome_exclusion_reason"] == "attribution_read_failed"
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert failed_job["status"] == "failed"
 
     direct_assessment = assess_position_closure({
@@ -660,7 +662,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     )
 
     recovered = repo._select_one("positions", position.id)
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert replayed["completed"] == 1
     assert completed_job["status"] == "completed"
     assert recovered["outcome_eligible"] == 1
@@ -716,7 +718,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
 
     first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
 
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert first["failed"] == 1
     assert first["skipped"] == 0
     assert failed_job["status"] == "failed"
@@ -729,7 +731,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
         now="2100-01-01T00:00:00+00:00",
     )
 
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
     assert replayed["completed"] == 1
     assert completed_job["status"] == "completed"
     assert hook_calls == [position.id]
@@ -761,7 +763,7 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
         now="2100-01-01T00:00:00+00:00",
     )
 
-    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [job] = list_outcome_hook_jobs(position_id=position.id)
     assert first["skipped"] == 1
     assert first["failed"] == 0
     assert second["claimed"] == 0
@@ -825,7 +827,7 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
         first_result = first.result(timeout=10)
         second_result = second.result(timeout=10)
 
-    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [job] = list_outcome_hook_jobs(position_id=position.id)
     assert sorted([first_result["claimed"], second_result["claimed"]]) == [0, 1]
     assert calls == [position.id]
     assert job["status"] == "completed"
@@ -917,11 +919,11 @@ def test_serenity_replay_after_completion_gap_is_durably_idempotent(
         opportunity_id=serenity.id,
         limit=10,
     )
-    serenity_jobs = repo.list_outcome_hook_jobs(
+    serenity_jobs = list_outcome_hook_jobs(
         position_id=position.id,
         hook_type=outcome_hooks.SERENITY_POST_MORTEM_HOOK,
     )
-    assert len(repo.list_outcome_hook_jobs(position_id=position.id)) == 2
+    assert len(list_outcome_hook_jobs(position_id=position.id)) == 2
     assert post_mortem["position_id"] == position.id
     assert serenity_jobs[0]["status"] == "processing"
 
@@ -937,7 +939,7 @@ def test_serenity_replay_after_completion_gap_is_durably_idempotent(
         opportunity_id=serenity.id,
         limit=10,
     )
-    [completed_job] = repo.list_outcome_hook_jobs(
+    [completed_job] = list_outcome_hook_jobs(
         position_id=position.id,
         hook_type=outcome_hooks.SERENITY_POST_MORTEM_HOOK,
     )
@@ -1035,7 +1037,7 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
     )
     first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
 
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
     first_rows = {row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)}
     assert first["failed"] == 1
     assert failed_job["status"] == "failed"
@@ -1052,7 +1054,7 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
         now="2100-01-01T00:00:00+00:00",
     )
 
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
     final_rows = {row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)}
     assert replayed["completed"] == 1
     assert completed_job["status"] == "completed"
@@ -1153,7 +1155,7 @@ def test_exchange_close_rejects_local_simulation_funding_provenance(
     assert stored["funding_cost"] is None
     assert stored["funding_source"] == "unavailable"
     assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
     assert eligible_strategy_outcomes() == []
     assert build_trade_attribution_rows(limit=10) == []
     assert build_factor_feedback(limit=10, min_trades=1) == []

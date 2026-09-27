@@ -1,5 +1,7 @@
 """Optional Lab must never grant writes/deletion by disappearing."""
 
+from tests.fixtures.repo_test_helpers import insert_filter_shadow_evaluation, insert_filter_shadow_experiment, update_filter_shadow_experiment
+
 from contextlib import contextmanager
 
 import pytest
@@ -21,9 +23,9 @@ def test_absence_denies_authority_and_retention():
         repo._canonical_lab_authority,
         lambda: repo._observation_retention_floor("outcomes"),
         lambda: repo._active_observation_claim_refs("outcomes"),
-        lambda: repo.insert_filter_shadow_experiment({}),
-        lambda: repo.update_filter_shadow_experiment("absent", status="active"),
-        lambda: repo.insert_filter_shadow_evaluation({}),
+        lambda: insert_filter_shadow_experiment({}),
+        lambda: update_filter_shadow_experiment("absent", status="active"),
+        lambda: insert_filter_shadow_evaluation({}),
     ):
         with pytest.raises(repo.ExperimentStateReadError):
             operation()

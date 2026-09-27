@@ -1,3 +1,5 @@
+from tests.fixtures.repo_test_helpers import insert_agent_run
+
 import asyncio
 import builtins
 import json
@@ -366,8 +368,8 @@ def test_stale_agent_cleanup_parses_iso_timestamps():
         agent_name="fresh-agent",
         started_at=(now - timedelta(minutes=1)).isoformat(),
     )
-    repo.insert_agent_run(old_run)
-    repo.insert_agent_run(fresh_run)
+    insert_agent_run(old_run)
+    insert_agent_run(fresh_run)
 
     scheduler._cleanup_stale_agent_runs()
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from tests.position_fixture import force_update_position
 
 import asyncio
@@ -758,7 +760,7 @@ def test_delayed_funding_revalidates_candidates_inside_writer_transaction(
         "SELECT realized_pnl FROM position_close_events WHERE position_id=?",
         (target.id,),
     ).fetchone()[0] is None
-    assert repo.list_outcome_hook_jobs(position_id=target.id) == []
+    assert list_outcome_hook_jobs(position_id=target.id) == []
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM audit_events "
         "WHERE event_type='exchange_position_funding_settled' AND entity_id=?",
@@ -988,7 +990,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         "SELECT COUNT(*) FROM position_close_events WHERE position_id=?",
         (target.id,),
     ).fetchone()[0] == 0
-    assert repo.list_outcome_hook_jobs(position_id=target.id) == []
+    assert list_outcome_hook_jobs(position_id=target.id) == []
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM audit_events "
         "WHERE entity_id=? AND event_type='position_closed'", (target.id,),

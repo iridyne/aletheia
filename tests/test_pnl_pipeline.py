@@ -9,6 +9,8 @@ Covers:
 - P2-2: auto-deposit uses available_usdt not equity_usdt
 """
 
+from tests.fixtures.repo_test_helpers import list_capital_events
+
 import json
 from datetime import datetime, timezone, timedelta
 
@@ -1046,7 +1048,7 @@ class TestAutoDeposit:
 
         sync_all_exchanges()
 
-        events = repo.list_capital_events()
+        events = list_capital_events()
         assert len(events) == 1
         assert events[0]["amount_usdt"] == 10000.0
         assert events[0]["equity_at_event"] == 10500.0
@@ -1089,7 +1091,7 @@ class TestAutoDeposit:
 
         sync_all_exchanges()
 
-        events = repo.list_capital_events()
+        events = list_capital_events()
         assert len(events) == 1
         assert events[0]["amount_usdt"] == 5000.0
 
@@ -1131,7 +1133,7 @@ class TestAutoDeposit:
         sync_all_exchanges()
         sync_all_exchanges()
 
-        events = repo.list_capital_events()
+        events = list_capital_events()
         assert len(events) == 1
 
 

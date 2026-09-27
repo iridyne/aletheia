@@ -4,6 +4,8 @@ Health is computed from REAL backend data. Alerts fire only on transition into a
 unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 """
 
+from tests.fixtures.repo_test_helpers import insert_agent_run
+
 import sqlite3
 
 from tests.position_fixture import force_update_position
@@ -277,7 +279,7 @@ def setup_env(tmp_path, monkeypatch):
 
 
 def _add_run(status):
-    repo.insert_agent_run(AgentRun(agent_name="market_observer", permission_mode="Observe", status=status))
+    insert_agent_run(AgentRun(agent_name="market_observer", permission_mode="Observe", status=status))
 
 
 async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):

@@ -5,6 +5,8 @@ risk_decisions, orders, fills, positions, knowledge_items). Only high-volume
 telemetry is pruned. JSONL rotates at a size cap without losing content.
 """
 
+from tests.fixtures.repo_test_helpers import prune_universe_members
+
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
@@ -261,7 +263,7 @@ def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path
     conn.commit()
 
     assert repo.prune_universe_forward_outcomes(days=30) == 0
-    assert repo.prune_universe_members(days=30) == 0
+    assert prune_universe_members(days=30) == 0
     assert repo.prune_universe_snapshots(days=30) == 0
     assert conn.execute(
         "SELECT 1 FROM universe_forward_outcomes WHERE id='fallback'"
@@ -345,7 +347,7 @@ def test_explicit_experiment_floor_protects_real_rows_without_reread(tmp_path, m
 
     assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=floor) == 0
     assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=floor) == 0
-    assert repo.prune_universe_members(30, min_experiment_started_at=floor) == 0
+    assert prune_universe_members(30, min_experiment_started_at=floor) == 0
     assert repo.prune_universe_snapshots(30, min_experiment_started_at=floor) == 0
     assert conn.execute("SELECT 1 FROM filter_candidate_outcomes").fetchone() is not None
     assert conn.execute("SELECT 1 FROM universe_forward_outcomes").fetchone() is not None

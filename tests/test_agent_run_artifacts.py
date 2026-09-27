@@ -41,11 +41,8 @@ def test_end_run_persists_typed_output_artifacts_without_rewriting_outputs_creat
 def test_pi_artifacts_rebind_to_final_decisions_before_or_after_run_end():
     from aletheia.agent_runtime.run_logger import end_run, start_run
     from aletheia.storage.models import AgentArtifactRef, AgentRunArtifact, PiDecision
-    from aletheia.storage.repositories import (
-        insert_agent_run_artifacts,
-        insert_pi_decision,
-        rebind_agent_run_pi_decision_artifacts,
-    )
+    from aletheia.storage.repositories import insert_agent_run_artifacts, insert_pi_decision
+    from tests.fixtures.repo_test_helpers import rebind_agent_run_pi_decision_artifacts
     from aletheia.storage.sqlite import get_db
 
     pending = PiDecision(

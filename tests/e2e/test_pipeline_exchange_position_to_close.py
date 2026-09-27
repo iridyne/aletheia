@@ -14,6 +14,8 @@ Routing under test — `bitget_demo`:
       → coordinator.close_position()       # claims, submits, materializes
 """
 
+from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -525,7 +527,7 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
     assert fill["fee"] == (float(fee) if fee is not None else None)
     assert fill["fee_currency"] == fee_coin
     assert fill["fee_source"] == ("reconciled" if fee is not None else "unavailable")
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert list_outcome_hook_jobs(position_id=position.id) == []
     repeated = materialize_bitget_close(claim_id, [row])
     assert repeated.new_fill_count == 0
     assert len(repo.list_fills(order_id=claim_id)) == 1
