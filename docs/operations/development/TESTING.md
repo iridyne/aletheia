@@ -81,6 +81,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - DB 测试用真实 SQLite in-memory，不 mock
+- 平台分支测试显式声明目标平台；development updater 的测试不能依赖运行主机恰好不是 Linux。
 
 ---
 
