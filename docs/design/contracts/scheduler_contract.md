@@ -84,7 +84,7 @@ _EXECUTOR_WORKERS = {
 | 12 | `paper_trader` | 371 | interval | minutes=3 | agents | 300 | 60 |
 | 13 | `pi_trading_decision` | 376 | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
 | 14 | `price_feed` | 381 | interval | seconds=30 | fast_io | 45 | 15 |
-| 15 | `position_manager` | 385 | interval | minutes=5 | io | — | 60 |
+| 15 | `position_manager` | 385 | interval | seconds=30 | io | — | 60 |
 | 15a | `position_path_observer` | 389 | interval | minutes=5 | io | 90 | 120 |
 | 16 | `position_reconcile` | 393 | interval | minutes=5 | io | — | 60 |
 | 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | 45 | 30 |
@@ -228,6 +228,10 @@ def _record_job_failure(job_id, error):  # scheduler.py:67
 
 当某 job 连续失败 ≥3 次，调用 `emit_infra_event`（`core/aletheia/infra/events.py`），事件去重窗口 300s。`_record_job_success()` 将计数器归零。每次 `_run_job_guarded()` 开始时会把本轮 `failure_recorded` 置为假；生产函数若捕获异常或看到错误返回值，必须调用 `_record_job_failure()` 将它置真。包装层只有在本轮没有失败记录时才清零计数，因此“异常已吞掉”“部分工作已完成”都不能再被外层伪装成成功。
 
+**INV-SCH-11 (durable stable escalation).** A job result key reporting an already-escalated, durably-recorded, human-owned condition MUST NOT increment `_consecutive_failures` and MUST NOT be treated as job-health degradation. A job MUST determine "already escalated" by reconstructing it from durable storage on every pass. The return value of a conditional-insert helper is dedup status, **not** delivery acknowledgement, and MUST NOT be the sole evidence. If the durable record can neither be written nor confirmed, the finding MUST be reported under `errors` (fail-closed). Suppressing the alert MUST NOT suppress the condition: the condition MUST remain observable through the durable audit record, an outstanding infra event reconstructed on every pass, and the job result payload. Non-empty `errors` MUST still fail the job regardless of `escalated`.
+
+**Contract Delta classification.** This is **D1**: the meaning of `errors == []` changes from "the job observed no reportable condition" to "the job observed no *fresh unrecorded* reportable condition". It is not a strengthening of existing wording.
+
 System Operator 使用两个互不覆盖的健康身份：
 
 - `pi_trading_decision` 表示真正的交易机会评估。daemon 的 300 秒超时或异常分别登记 `daemon_evaluation_timeout` / `daemon_evaluation_failed`，返回内部重试标记，并在 cooldown 后重新置位事件；只有一次真实评估完成才清零该计数。
@@ -287,8 +291,7 @@ outstanding 容量都固定为 16，不再为每次调用创建 executor
 - execution `reconcile()` 与 position `run_reconcile()` 返回的 `errors` 非空时，分别登记
   `reconciliation_reported_errors` / `position_reconcile_reported_errors`。Position 任务同时把 agent run 写成
   `completed_with_errors`，已完成的 adoption/settlement 事实不回滚，但调度健康不得显示绿色。
-- protective `position_manager.evaluate_open_positions()` 会逐仓继续处理并返回汇总；只要 `errors` 非空，scheduler
-  以 `position_manager_reported_errors` 登记失败，同时保留同轮已完成的其它平仓。无持仓或 `errors=[]` 才是健康成功。
+- The `position_manager` job is considered failed when its result contains a non-empty `errors` list. `errors` carries only findings that are **fresh** on this pass: a finding whose durable escalation record this pass created, or whose durable record could not be confirmed. A finding whose escalation is confirmed durable in the audit table is returned under `escalated` instead. `escalated` never increments a failure counter and never resets one. Exclusivity is enforced per **finding** (`code` + `position_id`), not per position: one position may legitimately contribute one `escalated` finding and one `errors` finding in the same pass.
 - `tpsl_fill_check` 对每个计划和账户隔离错误并继续核验其它计划，返回 `materialized`、`failed_count`、`errors`
   汇总。调用线程看到任一失败后以 `tpsl_private_reconciliation_failed` 登记红灯；下轮全部成功才可清零，已完成的
   私有成交材料化不会因另一计划失败而回滚。

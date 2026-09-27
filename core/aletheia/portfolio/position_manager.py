@@ -11,6 +11,7 @@ import logging
 import math
 import sqlite3
 from datetime import datetime, timezone
+from enum import Enum
 
 from aletheia.config.exchanges import (
     DEMO_EXECUTION_MODES,
@@ -32,6 +33,7 @@ from aletheia.execution.close_convergence import (
 from aletheia.storage.repositories import (
     list_all_open_positions,
 )
+from aletheia.storage.sqlite import get_db
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
 from aletheia.portfolio.pnl import build_exit_reasoning, close_position
 logger = logging.getLogger("aletheia.position_manager")
@@ -48,37 +50,134 @@ def _pending_close_age_hours(requested_at: str | None) -> float | None:
     return age_hours
 
 
-def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
-    """Durably surface each stale close claim once without releasing or retrying it."""
+class _EscalationOutcome(str, Enum):
+    """Durable-record outcome of one stale pending-close escalation attempt."""
+
+    FRESH = "fresh"                      # we wrote the audit row this call
+    ALREADY_DURABLE = "already_durable"  # insert was a dedup no-op; re-read confirmed the row
+    UNKNOWN = "unknown"                  # write raised, or no-op could not be confirmed
+
+
+def _pending_close_claim_identity(position: dict) -> str:
+    """Return the durable identity of the exchange close claim on this position."""
+    order_id = position.get("pending_close_order_id")
+    if order_id:
+        return f"order:{order_id}"
+    return (
+        "unidentified:"
+        f"{position.get('pending_close_requested_at') or 'missing'}:"
+        f"{position.get('pending_close_status') or 'missing'}"
+    )
+
+
+def _pending_close_escalated_at(position_id: str) -> str | None:
+    """Return the timestamp of the durable escalation row for one position."""
+    row = get_db().execute(
+        "SELECT timestamp FROM audit_events "
+        "WHERE event_type='pending_close_reconciliation_required' "
+        "AND entity_type='position' AND entity_id=? "
+        "ORDER BY timestamp DESC LIMIT 1",
+        (position_id,),
+    ).fetchone()
+    return row["timestamp"] if row else None
+
+
+def _already_escalated_position_ids() -> set[str]:
+    """Reconstruct durable stable-escalation state from the audit table.
+
+    Returns the set of position IDs for which a pending-close-reconciliation
+    audit row already exists. Used to route findings to `escalated` vs `errors`
+    without depending on the return of insert_audit_event_once (which is dedup
+    status, NOT delivery acknowledgement).
+    """
+    rows = get_db().execute(
+        "SELECT entity_id FROM audit_events "
+        "WHERE event_type='pending_close_reconciliation_required' "
+        "AND entity_type='position'"
+    ).fetchall()
+    return {r["entity_id"] for r in rows if r["entity_id"]}
+
+
+def _escalate_stale_pending_close(
+    position: dict, age_hours: float
+) -> _EscalationOutcome:
+    """Durably surface each stale close claim once without releasing or retrying it.
+
+    The conditional-insert boolean is dedup status, NOT delivery acknowledgement:
+    a ``False`` return only means "already durable" after a re-read confirms the
+    row exists. A write that raises, or a no-op that cannot be confirmed, is
+    ``UNKNOWN`` and fails closed at the caller.
+    """
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
 
     order_id = position.get("pending_close_order_id")
-    claim_identity = (
-        f"order:{order_id}"
-        if order_id
-        else (
-            "unidentified:"
-            f"{position.get('pending_close_requested_at') or 'missing'}:"
-            f"{position.get('pending_close_status') or 'missing'}"
-        )
-    )
+    claim_identity = _pending_close_claim_identity(position)
     incident_digest = hashlib.sha256(
         f"{position['id']}\0{claim_identity}".encode()
     ).hexdigest()
-    repo.insert_audit_event_once(AuditEvent(
-        id=f"pending-close-reconciliation-{incident_digest}",
-        actor="system",
-        source="position_manager",
-        event_type="pending_close_reconciliation_required",
-        entity_type="position",
-        entity_id=position["id"],
-        message=(
-            f"Pending close {order_id} has remained "
-            f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
-            "retain the claim and reconcile before any further close action."
-        ),
-    ))
+    audit_id = f"pending-close-reconciliation-{incident_digest}"
+    try:
+        inserted = repo.insert_audit_event_once(AuditEvent(
+            id=audit_id,
+            actor="system",
+            source="position_manager",
+            event_type="pending_close_reconciliation_required",
+            entity_type="position",
+            entity_id=position["id"],
+            message=(
+                f"Pending close {order_id} has remained "
+                f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
+                "retain the claim and reconcile before any further close action."
+            ),
+        ))
+    except Exception:
+        logger.warning(
+            "pending close escalation write failed for %s", position["id"],
+            exc_info=True,
+        )
+        return _EscalationOutcome.UNKNOWN
+    if inserted:
+        return _EscalationOutcome.FRESH
+    if get_db().execute(
+        "SELECT 1 FROM audit_events WHERE id = ?", (audit_id,)
+    ).fetchone() is not None:
+        return _EscalationOutcome.ALREADY_DURABLE
+    return _EscalationOutcome.UNKNOWN
+
+
+def _route_pending_close_finding(
+    position: dict,
+    *,
+    outcome: _EscalationOutcome,
+    already_escalated_ids: set[str],
+    errors: list[dict],
+    escalated: list[dict],
+) -> None:
+    """Route one stale pending-close finding to `escalated` or `errors`.
+
+    A finding is `escalated` only when the durable record is confirmed present
+    both by this call's re-read and by the pass-start bulk read. Every other
+    outcome — fresh, unconfirmed, or the defensive contradiction where the two
+    reads disagree — fails closed to `errors`. Exclusivity is per finding
+    (`code` + `position_id`): other findings for the same position are routed on
+    their own merit.
+    """
+    payload = {
+        "position_id": position["id"],
+        "symbol": position.get("symbol"),
+        "market_type": position.get("market_type"),
+        "code": "pending_close_reconciliation_required",
+    }
+    if (
+        outcome == _EscalationOutcome.ALREADY_DURABLE
+        and position["id"] in already_escalated_ids
+    ):
+        payload["escalated_at"] = _pending_close_escalated_at(position["id"])
+        payload["claim_identity"] = _pending_close_claim_identity(position)
+        escalated.append(payload)
+    else:
+        errors.append(payload)
 
 
 def close_position_routed(
@@ -978,6 +1077,7 @@ def evaluate_open_positions() -> dict:
     market_exits = 0
     failed_close_count = 0
     errors: list[dict] = []
+    escalated: list[dict] = []
     observations: list[dict] = []
     market_signal_wakes = 0
     catastrophic_exits = 0
@@ -1044,6 +1144,11 @@ def evaluate_open_positions() -> dict:
         except Exception as e:
             logger.warning("market_signal_index build failed: %s", e)
 
+    # Reconstruct durable escalation state once per pass from the audit table.
+    # insert_audit_event_once reports dedup status, not delivery, so the report
+    # routing must not depend on its return alone. See INV-SCH-11.
+    already_escalated_ids = _already_escalated_position_ids()
+
     for p in all_open:
         if p.get("execution_mode") not in _DEMO_MODES:
             continue
@@ -1052,13 +1157,14 @@ def evaluate_open_positions() -> dict:
         if pending_close:
             age_hours = _pending_close_age_hours(p.get("pending_close_requested_at"))
             if age_hours is not None and age_hours >= _PENDING_CLOSE_STALE_HOURS:
-                _escalate_stale_pending_close(p, age_hours)
-                errors.append({
-                    "position_id": p["id"],
-                    "symbol": p.get("symbol"),
-                    "market_type": p.get("market_type"),
-                    "code": "pending_close_reconciliation_required",
-                })
+                outcome = _escalate_stale_pending_close(p, age_hours)
+                _route_pending_close_finding(
+                    p,
+                    outcome=outcome,
+                    already_escalated_ids=already_escalated_ids,
+                    errors=errors,
+                    escalated=escalated,
+                )
                 logger.warning(
                     "pending close requires reconciliation for %s: order=%s status=%s age=%.1fh",
                     p["id"], p.get("pending_close_order_id"),
@@ -1239,6 +1345,7 @@ def evaluate_open_positions() -> dict:
         "market_exits": market_exits,
         "failed_close_count": failed_close_count,
         "errors": errors,
+        "escalated": escalated,
         "observations": observations,
         "market_signal_wakes": market_signal_wakes,
         "catastrophic_exits": catastrophic_exits,
