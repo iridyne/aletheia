@@ -1569,12 +1569,64 @@ def _horizon_hold_roll_hours(position: dict) -> float | None:
     return rolled
 
 
-async def review_portfolio_state(params: dict) -> dict:
-    """System Operator reviews open positions and may hold, adjust, or close one."""
+def _collect_fresh_review_marks(
+    open_positions: list[dict],
+) -> tuple[datetime, dict[str, dict | None], list[dict]]:
+    """Collect fresh protective marks and their review evidence."""
+    from aletheia.data.price_feed import (
+        get_fresh_mark_for_protective_close,
+        protective_price_venue,
+    )
+
+    review_marks: dict[str, dict | None] = {}
+    review_mark_evidence: list[dict] = []
+    review_now = datetime.now(timezone.utc)
+    for position in open_positions:
+        position_id = str(position.get("id") or "")
+        venue = protective_price_venue(position.get('execution_mode'))
+        mark = (
+            get_fresh_mark_for_protective_close(
+                str(position.get("symbol") or ""),
+                str(position.get("market_type") or ""),
+                venue=venue,
+            )
+            if venue
+            else None
+        )
+        review_marks[position_id] = mark
+        evidence = {
+            "position_id": position_id,
+            "status": "unavailable",
+            "requested_venue": venue,
+            "requested_symbol": str(position.get("symbol") or ""),
+            "requested_market_type": str(position.get("market_type") or ""),
+        }
+        if mark is not None:
+            evidence = {
+                "position_id": position_id,
+                "status": "available",
+                **{
+                    key: mark[key]
+                    for key in (
+                        "price",
+                        "observed_at",
+                        "age_seconds",
+                        "source",
+                        "venue",
+                        "symbol",
+                        "market_type",
+                    )
+                },
+            }
+        review_mark_evidence.append(evidence)
+    return review_now, review_marks, review_mark_evidence
+
+
+def _collect_review_scope(params: dict) -> dict:
+    """Collect wake scope, global portfolio facts, and horizon constraints."""
     import json as _json
 
     from aletheia.agent_shell.context import build_app_context
-    from aletheia.agents.helpers import llm_structured
     from aletheia.uta.manager import UTA_EXECUTION_MODES
 
     params = params or {}
@@ -1669,6 +1721,98 @@ async def review_portfolio_state(params: dict) -> dict:
     )
     portfolio_context["review_scope_positions"] = len(open_positions)
     risk = ctx.get("risk", {})
+    return {
+        "params": params,
+        "wake_batches": wake_batches,
+        "wake_position_ids": wake_position_ids,
+        "wake_fingerprint": wake_fingerprint,
+        "all_open_positions": all_open_positions,
+        "total_unrealized_pnl": total_unrealized_pnl,
+        "unrealized_pnl_available": unrealized_pnl_available,
+        "portfolio_context": portfolio_context,
+        "open_positions": open_positions,
+        "horizon_due_position_ids": horizon_due_position_ids,
+        "horizon_due_review": horizon_due_review,
+        "allow_horizon_hold": allow_horizon_hold,
+        "risk": risk,
+    }
+
+
+def _record_unavailable_review(cfg: dict, scope: dict, model_error) -> dict:
+    """Persist an unavailable model review and return its terminal result."""
+    import json as _json
+
+    params = cfg
+    err = model_error
+    open_positions = scope["open_positions"]
+    wake_fingerprint = scope["wake_fingerprint"]
+    wake_batches = scope["wake_batches"]
+    portfolio_context = scope["portfolio_context"]
+    review_mark_evidence = scope["review_mark_evidence"]
+
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    target = open_positions[0] if len(open_positions) == 1 else None
+    review_error_code = str(err or "empty_review").split(":", 1)[0][:80]
+    unavailable = PiDecision(
+        symbol=target.get("symbol") if target else None,
+        direction=target.get("direction") if target else None,
+        market_type=target.get("market_type") if target else None,
+        action="review_unavailable",
+        conviction=0,
+        reasoning="Operator position review unavailable",
+        proposal_status="failed",
+        proposal_reason="operator_review_unavailable",
+        evidence_manifest_json=_json.dumps({
+            "position_review": {
+                "trigger": (
+                    params.get("trigger")
+                    or params.get("_trigger")
+                    or "manual"
+                ),
+                "wake_fingerprint": wake_fingerprint,
+                "wake_batches": wake_batches,
+                "target_position_id": target.get("id") if target else None,
+                "portfolio_context": portfolio_context,
+                "review_marks": review_mark_evidence,
+                "error_code": review_error_code,
+                "effect": {"status": "unavailable"},
+            }
+        }, sort_keys=True, separators=(",", ":"), default=str),
+    )
+    insert_pi_decision(unavailable)
+    return {
+        "action": "review_unavailable",
+        "reason": "operator_review_unavailable",
+        "review_completed": False,
+        "review_error_code": review_error_code,
+        "position_review_decision_id": unavailable.id,
+        "wake_fingerprint": wake_fingerprint,
+    }
+
+
+async def review_portfolio_state(params: dict) -> dict:
+    """System Operator reviews open positions and may hold, adjust, or close one."""
+    import json as _json
+
+    from aletheia.agents.helpers import llm_structured
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
+    scope = _collect_review_scope(params)
+    params = scope["params"]
+    wake_batches = scope["wake_batches"]
+    wake_position_ids = scope["wake_position_ids"]
+    wake_fingerprint = scope["wake_fingerprint"]
+    all_open_positions = scope["all_open_positions"]
+    total_unrealized_pnl = scope["total_unrealized_pnl"]
+    unrealized_pnl_available = scope["unrealized_pnl_available"]
+    portfolio_context = scope["portfolio_context"]
+    open_positions = scope["open_positions"]
+    horizon_due_position_ids = scope["horizon_due_position_ids"]
+    horizon_due_review = scope["horizon_due_review"]
+    allow_horizon_hold = scope["allow_horizon_hold"]
+    risk = scope["risk"]
 
     if not open_positions:
         return {
@@ -1681,52 +1825,9 @@ async def review_portfolio_state(params: dict) -> dict:
             "review_completed": bool(wake_position_ids),
         }
 
-    from aletheia.data.price_feed import (
-        get_fresh_mark_for_protective_close,
-        protective_price_venue,
+    review_now, review_marks, review_mark_evidence = _collect_fresh_review_marks(
+        open_positions
     )
-
-    review_marks: dict[str, dict | None] = {}
-    review_mark_evidence: list[dict] = []
-    review_now = datetime.now(timezone.utc)
-    for position in open_positions:
-        position_id = str(position.get("id") or "")
-        venue = protective_price_venue(position.get('execution_mode'))
-        mark = (
-            get_fresh_mark_for_protective_close(
-                str(position.get("symbol") or ""),
-                str(position.get("market_type") or ""),
-                venue=venue,
-            )
-            if venue
-            else None
-        )
-        review_marks[position_id] = mark
-        evidence = {
-            "position_id": position_id,
-            "status": "unavailable",
-            "requested_venue": venue,
-            "requested_symbol": str(position.get("symbol") or ""),
-            "requested_market_type": str(position.get("market_type") or ""),
-        }
-        if mark is not None:
-            evidence = {
-                "position_id": position_id,
-                "status": "available",
-                **{
-                    key: mark[key]
-                    for key in (
-                        "price",
-                        "observed_at",
-                        "age_seconds",
-                        "source",
-                        "venue",
-                        "symbol",
-                        "market_type",
-                    )
-                },
-            }
-        review_mark_evidence.append(evidence)
 
     schema = {
         "type": "object",
@@ -1885,46 +1986,9 @@ Return JSON: {_json.dumps(schema)}"""
         reasoning_effort="none",
     )
     if err or review is None:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-
-        target = open_positions[0] if len(open_positions) == 1 else None
-        review_error_code = str(err or "empty_review").split(":", 1)[0][:80]
-        unavailable = PiDecision(
-            symbol=target.get("symbol") if target else None,
-            direction=target.get("direction") if target else None,
-            market_type=target.get("market_type") if target else None,
-            action="review_unavailable",
-            conviction=0,
-            reasoning="Operator position review unavailable",
-            proposal_status="failed",
-            proposal_reason="operator_review_unavailable",
-            evidence_manifest_json=_json.dumps({
-                "position_review": {
-                    "trigger": (
-                        params.get("trigger")
-                        or params.get("_trigger")
-                        or "manual"
-                    ),
-                    "wake_fingerprint": wake_fingerprint,
-                    "wake_batches": wake_batches,
-                    "target_position_id": target.get("id") if target else None,
-                    "portfolio_context": portfolio_context,
-                    "review_marks": review_mark_evidence,
-                    "error_code": review_error_code,
-                    "effect": {"status": "unavailable"},
-                }
-            }, sort_keys=True, separators=(",", ":"), default=str),
+        return _record_unavailable_review(
+            params, {**scope, "review_mark_evidence": review_mark_evidence}, err
         )
-        insert_pi_decision(unavailable)
-        return {
-            "action": "review_unavailable",
-            "reason": "operator_review_unavailable",
-            "review_completed": False,
-            "review_error_code": review_error_code,
-            "position_review_decision_id": unavailable.id,
-            "wake_fingerprint": wake_fingerprint,
-        }
 
     raw_action = str(review.get("action") or "hold")
     supported_action = raw_action in set(schema["properties"]["action"]["enum"])
