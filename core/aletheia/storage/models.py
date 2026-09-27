@@ -551,6 +551,11 @@ class Order(_Provenanced):
     execution_mode: str
     # Exact non-secret UTA identity captured before external submission; never backfilled from current config.
     uta_account_identity_json: str | None = None
+    # Entry Plan cancel convergence bookkeeping: how many venue cancel submissions
+    # have been made, and the earliest time the next one may run. NULL means no
+    # retry is scheduled.
+    entry_cancel_attempts: int | None = None
+    entry_cancel_retry_after: str | None = None
     exchange_order_id: str | None = None
     # Stable exchange-side idempotency/recovery key.  This is persisted before
     # submission so a timeout that loses the venue order id can still be

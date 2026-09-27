@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v89"
+SCHEMA_VERSION = "aletheia-sqlite-v90"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7741,6 +7741,17 @@ def _apply_uta_order_identity_v73(db: sqlite3.Connection) -> None:
     db.execute("ALTER TABLE orders ADD COLUMN uta_account_identity_json TEXT")
 
 
+def _apply_entry_cancel_retry_v90(db: sqlite3.Connection) -> None:
+    """Additive bookkeeping for an Entry Plan cancel that has not converged yet.
+
+    `entry_cancel_attempts` counts the venue cancel submissions already made;
+    `entry_cancel_retry_after` gates the next one. Nothing is backfilled: an
+    Order that never needed a retry keeps NULL (no retry scheduled) and 0.
+    """
+    db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_attempts INTEGER")
+    db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_retry_after TEXT")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -8897,6 +8908,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"cost_covering_edge_backfill_v89:formula_backfill").hexdigest(),
         schema_version="aletheia-sqlite-v89",
         apply=_apply_cost_covering_edge_backfill_v89,
+    ),
+    MigrationStep(
+        migration_id="20260927_0089_entry_cancel_retry_v90",
+        checksum=hashlib.sha256(b"entry_cancel_retry_v90:orders.entry_cancel_attempts_and_retry_after:nullable_no_backfill").hexdigest(),
+        schema_version="aletheia-sqlite-v90",
+        apply=_apply_entry_cancel_retry_v90,
     ),
 )
 

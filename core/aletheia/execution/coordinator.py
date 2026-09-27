@@ -169,6 +169,37 @@ def _reanchor_order_identity(
     )
 
 
+def fence_identity_after_order_proof(
+    order_row: dict,
+    current: UTAAccountIdentity,
+) -> UTAAccountIdentity:
+    """Return the account identity to fence a command with, after venue proof.
+
+    `current` is the identity of the adapter that just returned this exact Order
+    from the venue (same venue order id or client order id, same instrument), so
+    the same physical account holds it. A credential-generation-only difference
+    is then an audited re-anchor; anything else — an unbound identity, a hard
+    mismatch, or a caller that did not read the venue — fails closed with
+    ``uta_account_identity_mismatch`` and no relabel.
+    """
+    raw = order_row.get("uta_account_identity_json") or ""
+    if not raw:
+        raise ValueError("uta_account_identity_unavailable")
+    persisted = UTAAccountIdentity.model_validate_json(raw)
+    if persisted == current:
+        return current
+    if not _identity_generation_drift(persisted, current):
+        raise ValueError("uta_account_identity_mismatch")
+    _reanchor_order_identity(
+        order_id=order_row["id"],
+        persisted=persisted,
+        current=current,
+        position_id=None,
+        venue_position_id=None,
+    )
+    return current
+
+
 async def _reanchor_generation_drift_rows(execution_mode: str, adapter, rows) -> bool:
     """Re-bind drifted Order/Position identities after exact venue proof.
 
@@ -241,6 +272,28 @@ async def _command(execution_mode: str, method: str, command):
             # Best-effort close in a finally; see `_close_adapter` for the
             # rationale for logging rather than silently swallowing.
             logger.warning("Adapter close failed after %s", method, exc_info=True)
+
+
+def record_entry_cancel_state(
+    order_id: str,
+    *,
+    attempts: int | None = None,
+    retry_after: str | None = None,
+) -> None:
+    """Persist Entry Plan cancel convergence bookkeeping on the Order row.
+
+    The Gateway decides the re-attempt schedule; the Order owner writes Order
+    metadata (tests/test_order_writer_boundary.py). Nothing here touches the
+    lifecycle fields — status/error_reason stay with transition_order().
+    """
+    if attempts is None and retry_after is None:
+        raise ValueError("entry_cancel_state_requires_a_field")
+    fields: dict[str, object] = {}
+    if attempts is not None:
+        fields["entry_cancel_attempts"] = attempts
+    if retry_after is not None:
+        fields["entry_cancel_retry_after"] = retry_after
+    update_order_metadata(order_id, **fields)
 
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:

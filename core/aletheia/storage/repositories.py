@@ -2424,6 +2424,9 @@ _ORDER_METADATA_FIELDS = frozenset({
     # These describe what is being sent, never where the Order is in its
     # lifecycle — status/error_reason/filled_at stay with transition_order().
     "uta_account_identity_json",
+    # Entry Plan cancel convergence bookkeeping (see gateway.cancel_entry_plan_order).
+    "entry_cancel_attempts",
+    "entry_cancel_retry_after",
     "order_type",
     "price",
 })

@@ -14,6 +14,7 @@ from aletheia.config.exchanges import (
     LIVE_EXECUTION_MODE_SET,
     execution_mode_venue,
 )
+from aletheia.utils.dt import parse_utc
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.errors import is_transient_dependency_error
@@ -514,12 +515,38 @@ def execute_existing_proposal(
             )
 
 
+# Re-attempt schedule for cancelling an Entry Plan Order the venue still holds.
+# A deterministic failure must not become a permanent polling storm that also
+# re-earns venue rate limits (#3507); the last value is the parked slow lane.
+_ENTRY_CANCEL_RETRY_DELAYS_SEC = (30, 60, 120, 300, 900, 3600)
+
+
+def _next_entry_cancel_retry_after(attempts: int) -> str:
+    """ISO timestamp of the earliest allowed next cancel attempt."""
+    index = min(max(attempts, 1) - 1, len(_ENTRY_CANCEL_RETRY_DELAYS_SEC) - 1)
+    return (datetime.now(timezone.utc) + timedelta(seconds=_ENTRY_CANCEL_RETRY_DELAYS_SEC[index])).isoformat()
+
+
+def _entry_cancel_retry_due(retry_after: str | None) -> bool:
+    """Whether the parked retry window elapsed; an unset/unparseable stamp is due."""
+    parsed = parse_utc(retry_after)
+    return parsed is None or parsed <= datetime.now(timezone.utc)
+
+
 def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     """Cancel through Gateway; a concurrently materialized Fill always wins."""
 
-    from aletheia.execution.coordinator import cancel_order
+    from aletheia.execution.coordinator import (
+        cancel_order,
+        fence_identity_after_order_proof,
+        record_entry_cancel_state,
+    )
     from aletheia.uta.compat import instrument_from_local
-    from aletheia.uta.models import CancelOrderCommand, CommandEvidence, UTAAccountIdentity
+    from aletheia.uta.models import (
+        CancelOrderCommand,
+        CommandEvidence,
+        UTAAccountIdentity,
+    )
     from uuid import uuid4
     from aletheia.storage import repositories as repo
 
@@ -556,6 +583,32 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     if reconciling_cancel:
         reason = order["error_reason"].partition(":")[2]
 
+    def cancel_command(account: UTAAccountIdentity) -> CancelOrderCommand:
+        return CancelOrderCommand(
+            command_id=str(uuid4()), expected_account=account,
+            instrument=instrument_from_local(order["symbol"], order["market_type"]),
+            purpose="entry", proposal_id=order["proposal_id"],
+            target_venue_order_id=order["exchange_order_id"],
+            target_client_order_id=order.get("client_order_id"), reason=reason,
+        )
+
+    def defer_retry(count: int = 0) -> None:
+        """Schedule the next venue attempt; a deterministic failure must not poll."""
+        record_entry_cancel_state(
+            order["id"],
+            retry_after=_next_entry_cancel_retry_after(count or int(order.get("entry_cancel_attempts") or 0)),
+        )
+
+    def pending_with_defer(count: int = 0):
+        defer_retry(count)
+        return pending()
+
+    if reconciling_cancel and not _entry_cancel_retry_due(order.get("entry_cancel_retry_after")):
+        # Inside the backoff window: the cancel is already fenced and the venue
+        # state has not been re-proven, so re-reading it would only rebuild an
+        # adapter and re-earn the rate limit that starved it (#3507).
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") not in EXTERNAL_EXECUTION_MODES:
@@ -582,13 +635,11 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                     repo.transition_order(order["id"], status=current["status"], error_reason=f"entry_cancel_pending:{reason}",
                                           filled_at=current.get("filled_at"))
         if not reconciling_cancel:
-            result = cancel_order(CancelOrderCommand(
-                command_id=str(uuid4()), expected_account=identity,
-                instrument=instrument_from_local(order["symbol"], order["market_type"]),
-                purpose="entry", proposal_id=order["proposal_id"],
-                target_venue_order_id=order["exchange_order_id"],
-                target_client_order_id=order.get("client_order_id"), reason=reason,
-            ))
+            result = cancel_order(cancel_command(identity))
+            record_entry_cancel_state(
+                order["id"],
+                attempts=int(order.get("entry_cancel_attempts") or 0) + 1,
+            )
             if result.evidence is not CommandEvidence.ACKNOWLEDGED:
                 return pending()
     except Exception:
@@ -600,7 +651,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             plan_id,
             exc_info=True,
         )
-        return pending()
+        return pending_with_defer()
 
     fresh_after_ack = repo.get_order(order["id"])
     if fresh_after_ack and (
@@ -617,6 +668,9 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         from aletheia.uta.models import OrderLifecycle, OrderQuery, ReadCompleteness
 
         async def exact_cancel_evidence():
+            # Read under the current credentials, then fence on the response: the
+            # venue returning this exact Order (matched by venue/client order id
+            # and instrument inside query_uta) is the account-continuity proof.
             report = await query_uta(
                 str(order["execution_mode"]),
                 "get_order",
@@ -629,9 +683,9 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                     client_order_id=str(order.get("client_order_id") or "") or None,
                     venue_order_id=str(order.get("exchange_order_id") or "") or None,
                 ),
-                expected_account=identity,
+                expected_account=None,
             )
-            rows = await _UTAReconciliationProjection(str(order["execution_mode"]), identity).get_order_fills(
+            rows = await _UTAReconciliationProjection(str(order["execution_mode"]), report.identity).get_order_fills(
                 order_id=str(order.get("exchange_order_id") or "") or None,
                 client_order_id=str(order.get("client_order_id") or "") or None,
                 symbol=str(order["symbol"]),
@@ -642,30 +696,68 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
         report, rows = run_coro_from_sync(exact_cancel_evidence())
         if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
-            return pending()
+            return pending_with_defer()
         if rows:
             materialize_bitget_entry(order["id"], rows)
         exact_state = report.found.state
         exact_filled = float(report.found.filled_quantity)
         local_filled = filled_quantity(repo.get_order(order["id"]))
         if abs(exact_filled - local_filled) > max(1e-12, float(order["quantity"]) * 1e-9):
-            return pending()
+            return pending_with_defer()
         if exact_state not in {
             OrderLifecycle.CANCELED,
             OrderLifecycle.EXPIRED,
             OrderLifecycle.REJECTED,
             OrderLifecycle.FILLED,
         }:
+            # The venue still holds this Order, so the earlier cancel never landed
+            # (rejected, lost to a credential/config generation change, or never
+            # processed). A cancel is idempotent by client_order_id, so re-attempt
+            # it once per backoff window instead of polling it forever (#3507).
+            fenced = fence_identity_after_order_proof(order, report.identity)
+            resubmitted = cancel_order(cancel_command(fenced))
+            next_attempts = int((repo.get_order(order["id"]) or order).get("entry_cancel_attempts") or 0) + 1
+            record_entry_cancel_state(
+                order["id"],
+                attempts=next_attempts,
+                retry_after=_next_entry_cancel_retry_after(next_attempts),
+            )
+            if next_attempts == len(_ENTRY_CANCEL_RETRY_DELAYS_SEC):
+                # One operator-visible stall record. The Order and Plan stay in the
+                # durable reconciliation state; nothing is silently abandoned.
+                _write_post_commit_audit(
+                    {
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "entry_cancel_stalled",
+                        "entity_type": "order",
+                        "entity_id": order["id"],
+                        "entry_plan_id": plan_id,
+                        "venue_order_id": order.get("exchange_order_id"),
+                        "attempts": next_attempts,
+                        "venue_state": exact_state.value,
+                        "evidence": resubmitted.evidence.value,
+                    },
+                    proposal_id=str(order.get("proposal_id") or ""),
+                    persisted_status=str(order["status"]),
+                )
+            logger.warning(
+                "Entry Plan %s: venue Order %s is still %s after %d cancel attempt(s)",
+                plan_id,
+                order.get("exchange_order_id"),
+                exact_state.value,
+                next_attempts,
+            )
             return pending()
         if exact_state is OrderLifecycle.FILLED and not fully_filled(repo.get_order(order["id"])):
-            return pending()
+            return pending_with_defer()
     except Exception:
         logger.warning(
             "Exact post-cancel evidence unavailable for Entry Plan %s",
             plan_id,
             exc_info=True,
         )
-        return pending()
+        return pending_with_defer()
 
     with repo.transaction(immediate=True):
         fresh_order = repo.get_order(order["id"])

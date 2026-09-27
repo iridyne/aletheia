@@ -2016,3 +2016,22 @@ def test_cost_covering_edge_backfill_v89_is_idempotent_across_tables():
         ).fetchone()[0]
         assert value == pytest.approx(0.25)
     connection.close()
+
+
+def test_entry_cancel_retry_v90_adds_nullable_columns_without_backfill():
+    """Entry Plan cancel bookkeeping is additive: existing Orders keep NULL/0."""
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE orders (id TEXT PRIMARY KEY, status TEXT, error_reason TEXT)")
+    connection.execute("INSERT INTO orders VALUES ('order-1', 'submitted', 'entry_cancel_pending:window')")
+
+    migrations._apply_entry_cancel_retry_v90(connection)
+
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(orders)")}
+    assert {"entry_cancel_attempts", "entry_cancel_retry_after"} <= columns
+    row = connection.execute(
+        "SELECT entry_cancel_attempts, entry_cancel_retry_after, status, error_reason FROM orders WHERE id='order-1'"
+    ).fetchone()
+    assert row == (None, None, "submitted", "entry_cancel_pending:window")
+    connection.close()

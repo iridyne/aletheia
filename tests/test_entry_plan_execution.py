@@ -8,6 +8,7 @@ import pytest
 
 from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
 from aletheia.execution.entry_plan_execution import _require_ai_entry_authority as _actual_ai_entry_authority
+from tests.uta.test_execution_coordinator import _identity
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     Fill,
@@ -1411,6 +1412,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
 
     async def exact_order(*_args, **_kwargs):
         return SimpleNamespace(
+            identity=_identity("bitget_demo"),
             completeness=ReadCompleteness.COMPLETE,
             found=SimpleNamespace(
                 state=OrderLifecycle.CANCELED,
@@ -1459,6 +1461,7 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
 
     async def incomplete_order(*_args, **_kwargs):
         return SimpleNamespace(
+            identity=_identity("bitget_demo"),
             completeness=ReadCompleteness.UNAVAILABLE,
             found=None,
         )
@@ -1485,6 +1488,7 @@ def test_gateway_cancel_waits_when_order_quantity_leads_fill_history(monkeypatch
 
     async def terminal_order(*_args, **_kwargs):
         return SimpleNamespace(
+            identity=_identity("bitget_demo"),
             completeness=ReadCompleteness.COMPLETE,
             found=SimpleNamespace(
                 state=OrderLifecycle.CANCELED,
@@ -1770,3 +1774,148 @@ def test_first_passive_eligibility_survives_flips_without_inventing_history(hist
     assert repo.record_entry_plan_monitoring(plan.plan_id, {"state": "warming"})
     value = json.loads(repo.get_entry_plan(plan.plan_id)["monitoring_evidence_json"])["passive_entry"]
     assert value["first_eligible_at"] == expected
+
+
+# --- Entry Plan cancel convergence (#3507) -------------------------------------
+#
+# A cancel that never lands used to leave the Order in `submitted` forever while
+# the watcher re-read the venue every ~30s, rebuilding an adapter each time and
+# re-earning the venue rate limit. The reconciling path now re-attempts the
+# idempotent cancel when the venue still holds the Order, inside a backoff window,
+# and re-anchors a credential-generation drift only after that venue proof.
+
+
+def _venue_report(state, *, filled=0.0, identity=None):
+    from aletheia.uta.models import ReadCompleteness
+
+    return SimpleNamespace(
+        identity=identity or _identity("bitget_demo"),
+        completeness=ReadCompleteness.COMPLETE,
+        found=SimpleNamespace(state=state, filled_quantity=filled),
+    )
+
+
+def _install_cancel_path(monkeypatch, *, report, cancels, queries):
+    from aletheia.execution import coordinator, gateway, reconciliation
+    from aletheia.uta import manager
+
+    monkeypatch.setattr(coordinator, "cancel_order", lambda command: cancels.append(command) or _cancel_ack(command))
+
+    async def exact_fills(self, **_kwargs):
+        return []
+
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_order_fills", exact_fills)
+
+    async def exact_order(*_args, **_kwargs):
+        queries.append(1)
+        return report() if callable(report) else report
+
+    monkeypatch.setattr(manager, "query_uta", exact_order)
+    return gateway
+
+
+def _expire_cancel_retry_window(order_id: str) -> None:
+    repo.update_order_metadata(order_id, entry_cancel_retry_after="2026-01-01T00:00:00+00:00")
+
+
+def test_gateway_cancel_reattempts_idempotent_cancel_until_venue_confirms(monkeypatch):
+    """The venue still holding the Order must not strand the Plan in `pending`."""
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, order = _persist_ordered_plan()
+    cancels, queries = [], []
+    state = {"value": OrderLifecycle.OPEN}
+    gateway = _install_cancel_path(
+        monkeypatch, report=lambda: _venue_report(state["value"]), cancels=cancels, queries=queries
+    )
+
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+    assert len(cancels) == 2, "the first attempt and the still-working re-attempt both submit"
+    pending_row = repo.get_order(order.id)
+    assert pending_row is not None
+    assert pending_row["entry_cancel_attempts"] == 2
+    assert pending_row["entry_cancel_retry_after"] is not None
+    assert pending_row["status"] == "submitted"
+
+    _expire_cancel_retry_window(order.id)
+    state["value"] = OrderLifecycle.CANCELED
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancelled"
+    cancelled_row = repo.get_order(order.id)
+    assert cancelled_row is not None and cancelled_row["status"] == "cancelled"
+    assert len(cancels) == 2, "a venue-confirmed cancel is not submitted again"
+
+
+def test_gateway_cancel_retry_window_skips_the_venue_read(monkeypatch):
+    """Inside the backoff window the Watcher must not rebuild an adapter."""
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, _order = _persist_ordered_plan()
+    cancels, queries = [], []
+    gateway = _install_cancel_path(
+        monkeypatch,
+        report=lambda: _venue_report(OrderLifecycle.OPEN),
+        cancels=cancels,
+        queries=queries,
+    )
+
+    gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")
+    reads_after_first = len(queries)
+
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+    assert len(queries) == reads_after_first, "no venue read happens inside the backoff window"
+    assert len(cancels) == 2
+
+
+def test_gateway_cancel_reanchors_generation_drift_only_after_exact_order_proof(monkeypatch):
+    """A rotated credential generation must not block the cancel forever."""
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, order = _persist_ordered_plan()
+    persisted = _identity("bitget_demo")
+    repo.update_order_metadata(order.id, uta_account_identity_json=persisted.model_dump_json())
+    drifted = persisted.model_copy(update={"credential_generation": persisted.credential_generation + 1})
+
+    cancels, queries = [], []
+    gateway = _install_cancel_path(
+        monkeypatch,
+        report=lambda: _venue_report(OrderLifecycle.OPEN, identity=drifted),
+        cancels=cancels,
+        queries=queries,
+    )
+
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+
+    reanchors = [event for event in repo.list_audit_events(limit=50, event_type="uta_account_reanchored")]
+    assert len(reanchors) == 1
+    assert reanchors[0]["entity_id"] == order.id
+    assert cancels[-1].expected_account == drifted, "the re-attempt is fenced with the current generation"
+    reanchored_row = repo.get_order(order.id)
+    assert reanchored_row is not None
+    assert json.loads(reanchored_row["uta_account_identity_json"])["credential_generation"] == (
+        drifted.credential_generation
+    )
+
+
+def test_gateway_cancel_fails_closed_on_a_hard_identity_mismatch(monkeypatch):
+    """A different account is never re-anchored, and no cancel is re-attempted."""
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, order = _persist_ordered_plan()
+    persisted = _identity("bitget_demo")
+    repo.update_order_metadata(order.id, uta_account_identity_json=persisted.model_dump_json())
+    other = persisted.model_copy(update={"account_id": "bitget_demo-other"})
+
+    cancels, queries = [], []
+    gateway = _install_cancel_path(
+        monkeypatch,
+        report=lambda: _venue_report(OrderLifecycle.OPEN, identity=other),
+        cancels=cancels,
+        queries=queries,
+    )
+
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "cancel_pending"
+
+    assert repo.list_audit_events(limit=50, event_type="uta_account_reanchored") == []
+    assert len(cancels) == 1, "only the first, unanswered attempt was submitted"
+    untouched_row = repo.get_order(order.id)
+    assert untouched_row is not None and untouched_row["status"] == "submitted"
