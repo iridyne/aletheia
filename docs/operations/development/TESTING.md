@@ -95,6 +95,8 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 禁止 mock：模块间接口 / 数据库层 / 内部函数调用链
 ```
 
+伪造子进程时同时隔离创建和终止；不得把虚拟 PID 交给真实 OS。
+
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - DB 测试用真实隔离 SQLite，不 mock。批量持久化示例见
   [test_performance_storage_batches.py](../../../tests/test_performance_storage_batches.py)：

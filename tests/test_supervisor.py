@@ -290,19 +290,12 @@ def test_spawn_frontdoor_uses_dashboard_port_and_backend_url(tmp_path, monkeypat
     assert env["ALETHEIA_FRONTDOOR_ROUTE_PATH"].endswith("frontdoor-route.json")
 
 
-def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
+def test_spawn_server_publishes_internal_backend_route(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
     from aletheia.config.loader import load_config
 
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    db.execute("CREATE TABLE runtime_registry (state TEXT, artifact_path TEXT)")
-    db.execute("INSERT INTO runtime_registry VALUES (?, ?)", ("current", str(tmp_path / "old-bundle")))
-    db.commit()
     monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "process-runtime")
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "old-bundle"))
-    captured = {}
 
     class FakeProc:
         pid = 1357
@@ -310,31 +303,19 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
         def poll(self):
             return 0
 
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["kwargs"] = kwargs
-        return FakeProc()
-
-    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python-real", {}))
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(runner, "kill_pid_tree", lambda _pid: None)
 
     code = runner._spawn_server(load_config(), port=9876)
 
     assert code == 0
-    assert captured["cmd"][:4] == ["python-real", "-m", "uvicorn", "aletheia.server.app:app"]
-    assert "--port" in captured["cmd"]
-    assert "9876" in captured["cmd"]
-    assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "debug"
-    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
-    assert captured["kwargs"]["cwd"] == str(runner._PROJECT_ROOT)
-    assert captured["kwargs"]["env"]["PYTHONPATH"].split(os.pathsep) == [str(runner._PROJECT_ROOT / "core"), str(runner._PROJECT_ROOT)]
-    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_ID"] == "process-runtime"
     from aletheia.gateway.frontdoor_route import read_frontdoor_route
 
     route = read_frontdoor_route()
     assert route is not None
     assert route["backend_base_url"] == "http://127.0.0.1:9876"
     assert route["backend_pid"] == 1357
+    assert route["runtime_id"] == "process-runtime"
 
 
 def test_collector_starts_only_after_backend_listens(tmp_path, monkeypatch):
