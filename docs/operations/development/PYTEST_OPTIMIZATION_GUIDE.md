@@ -295,6 +295,17 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 | `tier_e2e` | 端到端 pipeline 和 `_e2e` 文件 |
 | `tier_spec` | `tests/specs/spec_*.py` 与 spec conformance matrix |
 
+**`tier_unit` 的准入规则（2026-09-27 修订）**：只有「模块自身的**顶层 import**
+不跨真实边界」的测试才算 unit。名单是 `tests/conftest.py::_BOUNDARY_MODULE_PREFIXES`
+—— `sqlite3` / `subprocess` / `httpx` / `fastapi` / `aletheia.storage|server|gateway|
+agent_runtime|execution|portfolio|uta|...`。文件名不再参与该判定（它只负责
+e2e / spec 两类）；判定用 AST 缓存，每文件一次。
+
+修订原因：旧规则是「文件名里没有 19 个 integration token 就算 unit」，于是 8562 个
+用例、平均 40ms/test（真 unit 是 2.2ms/test）全被算成 unit，最快的反馈层要跑 5m47s。
+现在 `tier_unit` 3765 个、`tier_integration` 6370 个，名单由内容决定而不是由名字决定。
+测量与分类过程见 `docs/research/audits/tier_unit_reclassification_2026-09-27.md`。
+
 领域 marker 也会自动添加：`domain_operator` / `domain_universe` /
 `domain_serenity` / `domain_risk` / `domain_execution` / `domain_market_data` /
 `domain_learning` / `domain_frontend` / `domain_runtime` / `domain_storage` /

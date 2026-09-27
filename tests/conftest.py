@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -310,6 +311,81 @@ def _normalized_node_path(item) -> str:
     return normalized[tests_idx:] if tests_idx >= 0 else normalized
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# A test module whose own top-level imports reach one of these cannot be a pure
+# unit test: it needs a database, a route surface, a scheduler, an exchange
+# adapter or a real subprocess to mean anything. Kept as a prefix list rather
+# than a name-token list so it follows what the module actually does.
+_BOUNDARY_MODULE_PREFIXES = (
+    "sqlite3",
+    "subprocess",
+    "httpx",
+    "requests",
+    "fastapi",
+    "starlette",
+    "apscheduler",
+    "aletheia.storage",
+    "aletheia.server",
+    "aletheia.gateway",
+    "aletheia.main",
+    "aletheia.cli",
+    "aletheia.agent_runtime",
+    "aletheia.execution",
+    "aletheia.portfolio",
+    "aletheia.uta",
+    "aletheia.observation_lab",
+    "aletheia.trading",
+    "aletheia.utils",
+    "extensions.exchanges",
+    "extensions.observation_lab",
+    "tests.fixtures",
+)
+
+
+@lru_cache(maxsize=None)
+def _boundary_imports(relative_path: str, mtime_ns: int, size: int) -> tuple[str, ...]:
+    """Top-level boundary imports of one test module.
+
+    Cached on ``(path, mtime_ns, size)`` so the AST pass costs one parse per file
+    per session. A module-level import is what decides the tier; an import inside
+    a function body is not, because it does not change what the module needs to
+    be collected.
+    """
+    import ast
+
+    try:
+        tree = ast.parse((_REPO_ROOT / relative_path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ()
+    found: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith(_BOUNDARY_MODULE_PREFIXES):
+                    found.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "__future__":
+                continue
+            if module.startswith(_BOUNDARY_MODULE_PREFIXES):
+                found.add(module)
+            elif module == "aletheia":
+                for alias in node.names:
+                    if f"aletheia.{alias.name}".startswith(_BOUNDARY_MODULE_PREFIXES):
+                        found.add(f"aletheia.{alias.name}")
+    return tuple(sorted(found))
+
+
+def _module_crosses_boundary(path: str) -> bool:
+    file_path = _REPO_ROOT / path
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return False
+    return bool(_boundary_imports(path, stat.st_mtime_ns, stat.st_size))
+
+
 def _classify_test_tier(path: str) -> str:
     name = path.rsplit("/", 1)[-1]
     if "tests/e2e/" in path or name.endswith("_e2e.py") or "_e2e" in name:
@@ -317,6 +393,8 @@ def _classify_test_tier(path: str) -> str:
     if "tests/specs/" in path or name.startswith("spec_") or name == "test_spec_conformance.py":
         return "tier_spec"
     if any(token in name for token in _INTEGRATION_TOKENS):
+        return "tier_integration"
+    if _module_crosses_boundary(path):
         return "tier_integration"
     return "tier_unit"
 
