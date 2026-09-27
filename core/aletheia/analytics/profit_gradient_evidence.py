@@ -7,6 +7,8 @@ behaviour authority.  Sources that do not expose an explicit paired/control
 contract remain unavailable instead of being turned into a guessed delta.
 """
 
+# ruff: noqa: F405
+
 from __future__ import annotations
 
 from collections import Counter
@@ -35,12 +37,12 @@ from aletheia.analytics.profit_gradient import (
     RECONCILIATION_CONTRACT_VERSION,
     RECONCILIATION_TOLERANCE_QUOTE,
 )
+from aletheia.analytics.profit_gradient_evidence_utils import *  # noqa: F403
 from aletheia.analytics.profit_loop_counterfactual import (
     COUNTERFACTUAL_CONTRACT_VERSION,
     profit_loop_registry_hash,
 )
-from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
-from aletheia.storage.hashing import sha256_json
+from aletheia.config.secrets import SECRET_KEY_FRAGMENTS
 from aletheia.storage.sqlite import readonly_db
 from aletheia.storage.table_utils import table_exists as _table_exists
 
@@ -54,7 +56,6 @@ _COMPILER_PRODUCER = {
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
 _GRADIENT_COMPARISON_METHOD = "paired_same_unit"
-_GRADIENT_OUTCOME_CONTRACT_VERSION = "v1"
 _GRADIENT_STATISTICAL_UNIT_VERSION = PROFIT_LOOP_FACT_CONTRACT_VERSION
 
 
@@ -167,82 +168,6 @@ _WATERFALL_ORDER = (
 )
 
 
-def _parse_utc(value: Any, *, field: str = "cutoff_at") -> datetime:
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        try:
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ValueError(f"{field} must be an ISO-8601 timestamp with timezone") from exc
-    if parsed.tzinfo is None:
-        raise ValueError(f"{field} must include a timezone")
-    return parsed.astimezone(timezone.utc)
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat()
-
-
-def _finite(value: Any, *, positive: bool = False, nonnegative: bool = False) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not math.isfinite(number):
-        return None
-    if positive and number <= 0:
-        return None
-    if nonnegative and number < 0:
-        return None
-    return number
-
-
-def _time(value: Any) -> datetime | None:
-    try:
-        return _parse_utc(value, field="timestamp") if value not in (None, "") else None
-    except ValueError:
-        return None
-
-
-def _redact(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            str(key): "[redacted]"
-            if is_secret_key(key)
-            else _redact(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact(item) for item in value]
-    return value
-
-
-def _json_value(value: Any) -> Any:
-    """Make source values safe for deterministic, NaN-free hashing."""
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    if isinstance(value, set):
-        return sorted(_json_value(item) for item in value)
-    if isinstance(value, float):
-        if math.isfinite(value):
-            return value
-        return {"__nonfinite__": repr(value)}
-    if isinstance(value, datetime):
-        return _iso(value)
-    return value
-
-
-def _hash(value: Any) -> str:
-    normalized = _json_value(value)
-    if not isinstance(normalized, (dict, list)):
-        normalized = {"value": normalized}
-    return sha256_json(normalized)
-
-
-
 def _columns(db: Any, table: str) -> set[str]:
     if not _table_exists(db, table):
         return set()
@@ -263,10 +188,6 @@ def _columns(db: Any, table: str) -> set[str]:
 
 def _rows(db: Any, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
     return [dict(row) for row in db.execute(sql, tuple(params)).fetchall()]
-
-
-def _unavailable(reason: str, **extra: Any) -> dict[str, Any]:
-    return {"status": "unavailable", "reason": reason, **extra}
 
 
 def _rollback_snapshot(db: Any) -> None:
