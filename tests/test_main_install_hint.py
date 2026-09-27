@@ -28,7 +28,6 @@ def _fake_uv_run(bin_dir: Path):
 # _do_post_command_hint unit tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.tier_unit
 def test_hint_skipped_if_marker_exists(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     marker.touch()
@@ -42,7 +41,6 @@ def test_hint_skipped_if_marker_exists(monkeypatch, tmp_path):
     assert not install_calls
 
 
-@pytest.mark.tier_unit
 def test_hint_skipped_if_ran_install(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     monkeypatch.setattr(main_mod, "_install_asked_path", lambda: marker)
@@ -53,7 +51,6 @@ def test_hint_skipped_if_ran_install(monkeypatch, tmp_path):
     assert marker.exists()
 
 
-@pytest.mark.tier_unit
 def test_hint_skipped_in_non_interactive(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     monkeypatch.setattr(main_mod, "_install_asked_path", lambda: marker)
@@ -69,7 +66,6 @@ def test_hint_skipped_in_non_interactive(monkeypatch, tmp_path):
     assert not marker.exists()
 
 
-@pytest.mark.tier_unit
 def test_hint_yes_runs_installer(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     monkeypatch.setattr(main_mod, "_install_asked_path", lambda: marker)
@@ -94,7 +90,6 @@ def test_hint_yes_runs_installer(monkeypatch, tmp_path):
     assert marker.exists()
 
 
-@pytest.mark.tier_unit
 def test_hint_no_writes_marker_skips_installer(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     monkeypatch.setattr(main_mod, "_install_asked_path", lambda: marker)
@@ -114,7 +109,6 @@ def test_hint_no_writes_marker_skips_installer(monkeypatch, tmp_path):
     assert marker.exists()
 
 
-@pytest.mark.tier_unit
 def test_hint_enter_treated_as_yes(monkeypatch, tmp_path):
     marker = tmp_path / ".aletheia_install_asked"
     monkeypatch.setattr(main_mod, "_install_asked_path", lambda: marker)
@@ -133,7 +127,6 @@ def test_hint_enter_treated_as_yes(monkeypatch, tmp_path):
     assert install_calls
 
 
-@pytest.mark.tier_unit
 def test_hint_eof_on_stdin_does_not_crash(monkeypatch, tmp_path):
     """If stdin hits EOF (e.g. piped empty stream with TTY spoofed), hint must not crash."""
     marker = tmp_path / ".aletheia_install_asked"
@@ -163,7 +156,6 @@ def test_hint_eof_on_stdin_does_not_crash(monkeypatch, tmp_path):
 # aletheia install subcommand accessible from main app
 # ---------------------------------------------------------------------------
 
-@pytest.mark.tier_unit
 def test_install_subcommand_in_main_app_help(monkeypatch, tmp_path):
     result = runner.invoke(main_mod.app, ["install", "--help"])
     assert result.exit_code == 0
@@ -173,7 +165,6 @@ def test_install_subcommand_in_main_app_help(monkeypatch, tmp_path):
     assert "--no-update-shell" in clean
 
 
-@pytest.mark.tier_unit
 def test_install_subcommand_runs_via_main_app(monkeypatch, tmp_path):
     bin_dir = tmp_path / "bin"
     monkeypatch.setattr(install_cli.subprocess, "run", _fake_uv_run(bin_dir))
