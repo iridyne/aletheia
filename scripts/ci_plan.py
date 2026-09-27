@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "ci_plan.v1"
-POLICY_VERSION = "2026-08-29.2"
+POLICY_VERSION = "2026-09-27.1"
 MODES = ("docs_only", "quick", "affected", "deep", "full")
 MODE_RANK = {mode: index for index, mode in enumerate(MODES)}
 LANES = (
@@ -553,7 +553,7 @@ def plan(
         "surfaces": sorted(surfaces),
         "unknown_paths": sorted(unknown_paths),
         "required": required,
-        "local_checks": _local_checks(required, mode),
+        "local_checks": _local_checks(required),
         "review": {
             # Codex remains optional feedback; an asynchronous comment is not CI.
             "codex_required": False,
@@ -563,50 +563,80 @@ def plan(
     }
 
 
-def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
+def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
     checks = [
-        {
-            "name": "clean tracked worktree",
-            "command": ["git", "diff", "--quiet", "HEAD", "--"],
-        },
+        {"name": "clean tracked worktree", "command": ["git", "diff", "--quiet", "HEAD", "--"]},
         {"name": "git diff whitespace", "command": ["git", "diff", "--check"]},
         {"name": "documentation governance", "command": ["uv", "run", "python", "scripts/check_docs.py"]},
     ]
     if required.get("quick"):
         checks.append({
-            "name": "ci workflow contracts",
+            "name": "ci workflow contracts", "lane": "quick",
             "command": [
-                "uv", "run", "pytest",
-                "tests/test_ci_plan.py",
-                "tests/test_ci_local.py",
-                "tests/specs/spec_codex_shepherd.py",
-                "tests/test_ci_yield.py",
-                "-q",
-                "--tb=short",
+                "uv", "run", "pytest", "tests/test_ci_plan.py", "tests/test_ci_local.py",
+                "tests/specs/spec_codex_shepherd.py", "tests/test_ci_yield.py", "-q", "--tb=short",
             ],
+        })
+    if required.get("full_ci"):
+        checks.append({
+            "name": "isolated full Python proof", "lane": "full_ci",
+            "unavailable_reason": (
+                "Full-suite proof requires a credential-isolated Fedora CI identity/container; "
+                "this local executor cannot establish that isolation."
+            ),
         })
     if required.get("frontend"):
         checks.extend([
-            {"name": "frontend settings types", "command": ["npm", "run", "check:settings-types"], "working_directory": "frontend"},
-            {"name": "frontend api types", "command": ["npm", "run", "check:api-types"], "working_directory": "frontend"},
-            {"name": "frontend tests", "command": ["npm", "test"], "working_directory": "frontend"},
-            {"name": "frontend build", "command": ["npm", "run", "build"], "working_directory": "frontend"},
+            {"name": "frontend settings types", "lane": "frontend", "command": ["npm", "run", "check:settings-types"], "working_directory": "frontend"},
+            {"name": "frontend api types", "lane": "frontend", "command": ["npm", "run", "check:api-types"], "working_directory": "frontend"},
+            {"name": "frontend tests", "lane": "frontend", "command": ["npm", "test"], "working_directory": "frontend"},
+            {"name": "frontend build", "lane": "frontend", "command": ["npm", "run", "build"], "working_directory": "frontend"},
         ])
     if required.get("operator"):
-        checks.append({"name": "operator tests", "command": ["npm", "test"], "working_directory": "operator-shell"})
+        checks.append({"name": "operator tests", "lane": "operator", "command": ["npm", "test"], "working_directory": "operator-shell"})
     if required.get("native"):
         checks.append({
-            "name": "native tests",
+            "name": "native tests", "lane": "native",
             "command": ["cargo", "test", "--locked", "--all-targets"],
             "working_directory": "native/aletheia-host",
         })
-    if required.get("python_unit") and mode == "affected":
-        checks.append({
-            "name": "python unit tier",
-            "command": ["uv", "run", "pytest", "tests/", "-m", "tier_unit", "-n", "auto", "-q", "--tb=short", "--timeout=120"],
-        })
-    if required.get("full_ci"):
-        checks.append({"name": "full mode note", "command": ["python", "-c", "print('full CI authority is GitHub/Fedora bootstrap-gated')"]})
+    exhaustive_python = all(
+        required.get(lane) for lane in ("python_unit", "integration", "specifications", "e2e")
+    )
+    for lane, marker in (
+        ("python_unit", "tier_unit"), ("runtime", "domain_runtime"),
+        ("integration", "tier_integration"), ("specifications", "tier_spec"), ("e2e", "tier_e2e"),
+    ):
+        if required.get(lane):
+            check: dict[str, Any] = {"name": f"python {lane} proof", "lane": lane}
+            if exhaustive_python:
+                check["unavailable_reason"] = (
+                    "Combined Python tiers are the full suite, not focused local proof; "
+                    "run them in the credential-isolated Fedora executor."
+                )
+            else:
+                check["command"] = ["uv", "run", "pytest", "tests/", "-m", marker, "-q", "--tb=short", "--timeout=120"]
+            checks.append(check)
+    if required.get("coverage"):
+        checks.extend([
+            {
+                "name": "trust-boundary coverage", "lane": "coverage",
+                "command": [
+                    "uv", "run", "pytest", *[path for path in COVERAGE_PATHS if path.startswith("tests/")],
+                    "--cov", "--cov-report=term-missing:skip-covered", "-q", "--timeout=120",
+                ],
+            },
+            {"name": "coverage floor self-check", "lane": "coverage", "command": ["uv", "run", "python", "scripts/coverage_floors.py", "--selftest"]},
+            {"name": "coverage floors", "lane": "coverage", "command": ["uv", "run", "python", "scripts/coverage_floors.py"]},
+        ])
+    represented = {check.get("lane") for check in checks}
+    # trusted_ci is the aggregate verdict, not a separately executable proof lane.
+    for lane, needed in required.items():
+        if needed and lane != "trusted_ci" and lane not in represented:
+            checks.append({
+                "name": f"unavailable {lane} proof", "lane": lane,
+                "unavailable_reason": "No local executor is registered for this required proof lane.",
+            })
     return checks
 
 

@@ -692,6 +692,7 @@ def _run_job_guarded(job_id: str, fn):
             logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
     _JOB_RUN_STATE.job_id = job_id
     _JOB_RUN_STATE.failure_recorded = False
+    outcome = None
     try:
         if _learning_job_gate is None:
             # Learning is an optional evidence consumer. Its absence must not
@@ -724,8 +725,12 @@ def _run_job_guarded(job_id: str, fn):
                 )
             else:
                 record_learning_job_success(job_id)
+            outcome = "succeeded"
+        else:
+            outcome = "failed"
         return result
     except Exception as e:
+        outcome = "failed"
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
         _record_job_failure(job_id, str(e), type(e).__name__)
     finally:
@@ -734,10 +739,9 @@ def _run_job_guarded(job_id: str, fn):
                 logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
             close_db()
         for attr in ("job_id", "failure_recorded", "learning_attempt_id"):
-            try:
-                delattr(_JOB_RUN_STATE, attr)
-            except AttributeError:
-                logger.warning('scheduler: job-state cleanup attribute already absent')
+            _JOB_RUN_STATE.__dict__.pop(attr, None)
+        if outcome is not None:
+            logger.info("scheduler_job_result job_id=%s outcome=%s", job_id, outcome)
 
 
 def _guarded(job_id: str, fn):

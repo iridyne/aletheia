@@ -551,11 +551,12 @@ def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypa
     assert "workflow route mismatch" in error.value.detail
 
 
-def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, monkeypatch):
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_candidate_preflight_cleans_external_data_on_success_and_failure(tmp_path, monkeypatch, returncode):
     from types import SimpleNamespace
 
     from aletheia.update import git_ops
-    from ops.update import auto, git_ops as git_mutations
+    from ops.update import auto
 
     root = tmp_path / "candidates"
     monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
@@ -565,23 +566,26 @@ def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, m
         "RestoreService",
         lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
     )
-    monkeypatch.setattr(auto, "_uv", lambda: pytest.fail("preflight must not resolve uv"))
+    observed_data = []
 
-    calls = []
-    monkeypatch.setattr(
-        auto,
-        "_run",
-        lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0, stdout="", stderr=""),
-    )
+    def run(command, **kwargs):
+        data = Path(kwargs["env"]["ALETHEIA_DATA_DIR"])
+        assert data.is_dir()
+        assert not data.is_relative_to(Path(kwargs["cwd"]))
+        assert not data.is_relative_to(root)
+        observed_data.append(data)
+        return SimpleNamespace(returncode=returncode, stdout="", stderr="synthetic smoke failure")
 
-    worktree = auto._candidate_preflight("target_commit", tmp_path / "backup.tar")
-    assert worktree.is_dir()
-    assert len(calls) == 1
-    command, kwargs = calls[0]
-    assert command[0] == auto.sys.executable
-    assert command[1] == "-c"
-    assert kwargs["cwd"] == worktree
-    assert kwargs["env"]["PYTHONPATH"].split(auto.os.pathsep)[:2] == [str(worktree / "core"), str(worktree)]
+    monkeypatch.setattr(auto, "_run", run)
+    if returncode:
+        with pytest.raises(auto.AutoUpdateError) as error:
+            auto._candidate_preflight("target_commit", tmp_path / "backup.tar")
+        assert error.value.reason == "candidate_preflight_failed"
+    else:
+        worktree = auto._candidate_preflight("target_commit", tmp_path / "backup.tar")
+        assert worktree.is_dir()
+        auto._remove_candidate(worktree)
+    assert not observed_data[0].exists()
 
 
 @pytest.mark.parametrize(("missing", "linked"), [(None, False), ("core", False), ("ops", False), (None, True)])
@@ -616,7 +620,10 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
     monkeypatch.setattr(auto, "_paths", lambda: {"root": tmp_path / "candidates"})
-    monkeypatch.setattr(auto.tempfile, "mkdtemp", lambda **kw: str(candidate))
+    monkeypatch.setattr(auto, "tempfile", SimpleNamespace(
+        mkdtemp=lambda **kw: str(candidate),
+        TemporaryDirectory=auto.tempfile.TemporaryDirectory,
+    ))
     monkeypatch.setattr(git_ops, "_git", lambda *a: SimpleNamespace(returncode=0, stdout="", stderr=""))
     monkeypatch.setattr(auto, "RestoreService", lambda: SimpleNamespace(restore=lambda *a: SimpleNamespace(success=True, errors=[])))
     monkeypatch.setattr(auto, "_safe_env", lambda: {**os.environ, "PYTHONPATH": str(active)})

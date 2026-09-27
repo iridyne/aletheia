@@ -159,11 +159,18 @@ fast-forward 的 `master`。已观测 Tag 被移动、checkout ahead/diverged、
 GitHub API。
 
 候选会先以临时 worktree 在 WAL-safe Backup 的恢复副本上执行 migration/SQLite validation；
+数据副本位于 checkout 和稳定运行目录之外的独立系统临时目录，预检成功或失败后均清理。
+Smoke 的 pytest 数据根门禁保持 fail-closed，不为候选 worktree 增加例外。
+Post-pull Smoke 保留 import gate 的目标上下文，但 pytest 子进程另用自动清理的临时
+数据根，不继承实际 Runtime 或候选恢复副本的 `ALETHEIA_DATA_DIR`。
 旧 Gateway 继续服务期间完成依赖同步与前端 staging build。通过后才停止 Gateway、创建最终
 Backup、fast-forward 到固定 SHA、切换完整静态资源并启动。120 秒内必须证明
 `boot_commit == current_commit == tag_sha`、产品版本、migration ledger、Gateway/scheduler/
 provider/settlement health、上述已批准的模式/target 组合及 `live_disabled`。成功会写入
 runtime provenance/audit，scheduler 会自行继续 Observer，不需要人为重开。
+既有 scheduler 日志提供 `scheduler_job_result job_id=... outcome=succeeded|failed`
+作为 SQLite 清理后的终态证据，只含任务身份与结果，不含异常载荷。它不代表交易或
+Alpha 资格；被 Learning gate 跳过的任务不会冒充 succeeded。
 
 每个失败路径写入 `${ALETHEIA_DATA_DIR}/update/auto-deploy.json` 和 audit，且不会记录凭证：
 

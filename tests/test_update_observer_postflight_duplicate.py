@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-pytestmark = pytest.mark.tier_unit
-
 
 def _snapshot(*, disk_sha: str, gateway_sha: str, main_cycle_registered: bool) -> dict:
     return {
