@@ -171,16 +171,6 @@ def _strict_canonical_protection_symbol(value: object) -> str:
     return canonical
 
 
-def _utc_timestamp_ms(value: str, field: str) -> int:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError) as exc:
-        raise PositionProtectionConflict(f"{field} must be an ISO timestamp") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-        raise PositionProtectionConflict(f"{field} must be UTC")
-    return int(parsed.timestamp() * 1000)
-
-
 def _finite_protection_number(
     value: object,
     field: str,
@@ -261,8 +251,6 @@ def hash_position_protection_bar(
         allow_nan=False,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 
 
 def _record_retention_batch(table: str, deleted: int, duration_ms: float) -> None:
@@ -368,7 +356,6 @@ def _update(table: str, id_val: str, data: dict):
         f"UPDATE {table} SET {sets} WHERE id = ?",
         [*data.values(), id_val],
     )
-
 
 
 def _update_pending(table: str, id_val: str, data: dict) -> bool:
@@ -651,8 +638,6 @@ def claim_agent_run(run: AgentRun) -> str | None:
     return None
 
 
-
-
 def insert_agent_run_artifacts(artifacts: list[AgentRunArtifact]) -> None:
     """Persist current-run artifact references without rewriting legacy outputs."""
     if not artifacts:
@@ -706,8 +691,6 @@ def _durable_agent_artifact_id(artifact_type: str, artifact_id: str) -> str:
         .fetchall()
     )
     return str(rows[0][0]) if len(rows) == 1 else artifact_id
-
-
 
 
 def begin_agent_run(
@@ -945,8 +928,6 @@ _OPEN_TRADE_RETRY_SQL = f"""
 """
 
 
-
-
 def find_divergence_opportunity_by_source_version(
     source_version: str,
 ) -> dict | None:
@@ -976,22 +957,8 @@ def get_opportunity(oid: str) -> dict | None:
     return _select_one("opportunities", oid)
 
 
-
-
-
-
-
-
-
-
 def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list[dict]:
     return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
-
-
-
-
-
-
 
 
 def insert_divergence_opportunity_once(
@@ -1033,10 +1000,6 @@ def insert_pi_decision(decision) -> None:
 def update_pi_decision(decision_id: str, **kwargs) -> None:
     """Update the durable pre-submission claim after its proposal attempt settles."""
     _update("pi_decisions", decision_id, kwargs)
-
-
-
-
 
 
 def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
@@ -1162,8 +1125,6 @@ def insert_capital_event(event) -> None:
     if not math.isfinite(event.amount_usdt):
         raise ValueError(f"capital event amount_usdt must be finite, got {event.amount_usdt!r}")
     _insert("capital_events", _to_payload_dict(event))
-
-
 
 
 def list_capital_events_page(
@@ -2139,7 +2100,6 @@ _ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
 }
 
 
-
 class OrderTransitionConflict(RuntimeError):
     pass
 
@@ -2657,8 +2617,6 @@ def release_position_close_claim(position_id: str, *, order_id: str) -> None:
         raise PositionClaimConflict(f"position_close_release_conflict:{position_id}")
 
 
-
-
 def list_positions_for_path_observation_recovery() -> list[dict]:
     """Return external open/closed Positions whose expected path may need recovery."""
 
@@ -2846,10 +2804,6 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
 
 
 # --- Strategy Records ---
-
-
-
-
 
 
 def get_strategy(sid: str) -> dict | None:
@@ -3088,7 +3042,6 @@ def update_serenity_theme(theme_id: str, **kwargs) -> None:
     _update("serenity_themes", theme_id, kwargs)
 
 
-
 def insert_serenity_evidence(e: SerenityEvidence) -> list[str]:
     from aletheia.trading.serenity_evidence import (
         assess_opportunity_tier,
@@ -3308,8 +3261,6 @@ def enqueue_outcome_hook_job(
     if row is None:
         raise RuntimeError("Outcome hook job insert did not persist")
     return dict(row)
-
-
 
 
 def claim_outcome_hook_job(
@@ -3554,8 +3505,6 @@ def acknowledge_serenity_research_run_cancel(run_id: str, *, now: str) -> bool:
     return cursor.rowcount == 1
 
 
-
-
 def finish_serenity_research_run_with_event(run_id: str, status: str, event, **kwargs) -> bool:
     """Commit a terminal run transition and its terminal event atomically."""
     if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
@@ -3693,10 +3642,6 @@ def insert_serenity_claim(c) -> None:
     _insert("serenity_claims", data)
 
 
-
-
-
-
 def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
     where_parts = []
     params: list = []
@@ -3711,8 +3656,6 @@ def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None 
 
 
 # --- Serenity Theme-Claims Link ---
-
-
 
 
 def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
@@ -3999,8 +3942,6 @@ def _step_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-
-
 def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     if run_id:
         try:
@@ -4017,8 +3958,6 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     except Exception:
         logger.warning("repositories: flush_all_agent_telemetry failed", exc_info=True)
     return _select_all("agent_tool_calls", limit=limit)
-
-
 
 
 def insert_agent_telemetry_batch(events: list[dict]) -> int:
@@ -5156,8 +5095,6 @@ def get_ohlcv_candles(
     return [dict(r) for r in reversed(rows)]
 
 
-
-
 # --- Universe Generator ---
 
 from aletheia.storage.models import (
@@ -5173,8 +5110,6 @@ from aletheia.storage.models import (
     UniverseTwinShadowEvidence,
 )
 logger = logging.getLogger("aletheia.storage.repositories")
-
-
 
 
 def upsert_universe_asset(asset: UniverseAsset) -> None:
@@ -5322,8 +5257,6 @@ def _universe_twin_shadow_capture_due_from_latest(
     if latest.tzinfo is None:
         latest = latest.replace(tzinfo=timezone.utc)
     return candidate - latest >= timedelta(seconds=max(0, min_interval_sec))
-
-
 
 
 def _validate_universe_twin_prospective_bundle(
@@ -5666,8 +5599,6 @@ def _assert_twin_outcomes_match(
             raise ValueError("universe_twin_shadow_outcome_identity_conflict")
 
 
-
-
 def list_universe_twin_shadow_records(scanner_run_id: str) -> list[dict]:
     rows = (
         get_db()
@@ -5678,10 +5609,6 @@ def list_universe_twin_shadow_records(scanner_run_id: str) -> list[dict]:
         .fetchall()
     )
     return [dict(row) for row in rows]
-
-
-
-
 
 
 def publish_candidate_snapshot(snap: UniverseSnapshot, members: list[UniverseMember]) -> int:
@@ -7617,8 +7544,6 @@ def list_entry_plans(status: str | None = None, limit: int = 100) -> list[dict]:
     return [dict(row) for row in get_db().execute(query, params).fetchall()]
 
 
-
-
 def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     """Candidate attention plus exact active-Plan handoffs for Workbench filters."""
 
@@ -8003,8 +7928,6 @@ def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
     )
 
 
-
-
 def get_active_universe_policy(market_type: str = "crypto") -> dict | None:
     db = get_db()
     row = db.execute(
@@ -8288,8 +8211,6 @@ def _settle_outcome_with_exact_venue(
             return won
 
 
-
-
 def insert_forward_outcomes_batch(outcomes: list) -> None:
     if not outcomes:
         return
@@ -8511,8 +8432,6 @@ def _benchmark_payload(value) -> dict:
     if isinstance(value, Mapping):
         return dict(value)
     raise TypeError(f"Unsupported benchmark payload type: {type(value)!r}")
-
-
 
 
 def get_universe_discovery_benchmark(window_id: str | None = None) -> dict | None:
@@ -9117,8 +9036,6 @@ def insert_controller_recommendation(rec: dict) -> None:
     _insert("controller_recommendations", rec)
 
 
-
-
 def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 100) -> list[dict]:
     if _canonical_lab_authority():
         return []
@@ -9131,10 +9048,6 @@ def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 10
             limit=limit,
         )
     return _select_all("filter_shadow_experiments", order="started_at DESC", limit=limit)
-
-
-
-
 
 
 # Observation Lab v1 (Issue #1072): ``filter_shadow_frozen_units`` lives in the
@@ -9847,14 +9760,6 @@ def fail_perp_structure_shadow_outcome(
         return _update_pending("perp_structure_shadow_outcomes", outcome_id, updates)
 
 
-
-
-
-
-
-
-
-
 def insert_macro_snapshot(data: dict) -> None:
     from aletheia.storage.models import new_id
 
@@ -10060,8 +9965,6 @@ def insert_options_structure_snapshot(data: dict) -> None:
     _insert("options_market_structure_snapshots", data)
 
 
-
-
 def prune_options_structure_snapshots(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return _delete_by_rowid_batches("options_market_structure_snapshots", "observed_at < ?", (cutoff,))
@@ -10080,8 +9983,6 @@ def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 # Round 2 — Step 5: DefiLlama on-chain snapshots
 # ---------------------------------------------------------------------------
-
-
 
 
 def insert_onchain_snapshot_batch(rows: list[dict]) -> int:
@@ -10532,8 +10433,6 @@ def prune_backtest_runs(days: int = 60) -> int:
     return len(run_ids)
 
 
-
-
 def prune_filter_shadow_experiments(days: int = 90) -> int:
     """Prune completed filter_shadow_experiments older than ``days`` + cascade evaluations.
 
@@ -10568,8 +10467,6 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
             exp_ids,
         )
     return len(exp_ids)
-
-
 
 
 def prune_universe_snapshots(
