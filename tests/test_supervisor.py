@@ -290,51 +290,46 @@ def test_spawn_frontdoor_uses_dashboard_port_and_backend_url(tmp_path, monkeypat
     assert env["ALETHEIA_FRONTDOOR_ROUTE_PATH"].endswith("frontdoor-route.json")
 
 
-def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
+def test_spawn_server_publishes_internal_backend_route(tmp_path, monkeypatch, unused_tcp_port):
+    import json
+    import sys
+
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
     from aletheia.config.loader import load_config
-
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    db.execute("CREATE TABLE runtime_registry (state TEXT, artifact_path TEXT)")
-    db.execute("INSERT INTO runtime_registry VALUES (?, ?)", ("current", str(tmp_path / "old-bundle")))
-    db.commit()
-    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "process-runtime")
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "old-bundle"))
-    captured = {}
-
-    class FakeProc:
-        pid = 1357
-
-        def poll(self):
-            return 0
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["kwargs"] = kwargs
-        return FakeProc()
-
-    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python-real", {}))
-
-    code = runner._spawn_server(load_config(), port=9876)
-
-    assert code == 0
-    assert captured["cmd"][:4] == ["python-real", "-m", "uvicorn", "aletheia.server.app:app"]
-    assert "--port" in captured["cmd"]
-    assert "9876" in captured["cmd"]
-    assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "debug"
-    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
-    assert captured["kwargs"]["cwd"] == str(runner._PROJECT_ROOT)
-    assert captured["kwargs"]["env"]["PYTHONPATH"].split(os.pathsep) == [str(runner._PROJECT_ROOT / "core"), str(runner._PROJECT_ROOT)]
-    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_ID"] == "process-runtime"
     from aletheia.gateway.frontdoor_route import read_frontdoor_route
 
+    child_root = tmp_path / "child"
+    child_root.mkdir()
+    receipt = child_root / "observed.json"
+    (child_root / "uvicorn.py").write_text(
+        "import json, os, socket, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv\n"
+        "with socket.socket() as bound:\n"
+        "    bound.bind((args[args.index('--host') + 1], int(args[args.index('--port') + 1])))\n"
+        f"    Path({str(receipt)!r}).write_text(json.dumps({{\n"
+        "        'port': bound.getsockname()[1], 'pid': os.getpid(),\n"
+        "        'runtime_id': os.environ['ALETHEIA_RUNTIME_ID'],\n"
+        "    }))\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "linux":
+        (child_root / "pyproject.toml").write_text("# isolated child-process probe\n")
+        (child_root / ".venv").symlink_to(sys.prefix, target_is_directory=True)
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", child_root)
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "process-runtime")
+    # The short-lived probe binds a socket, writes its receipt and exits; no Gateway starts.
+    monkeypatch.setattr(runner, "kill_pid_tree", lambda _pid: None)
+
+    assert runner._spawn_server(load_config(), port=unused_tcp_port) == 0
+    observed = json.loads(receipt.read_text())
     route = read_frontdoor_route()
     assert route is not None
-    assert route["backend_base_url"] == "http://127.0.0.1:9876"
-    assert route["backend_pid"] == 1357
+    assert route["backend_base_url"] == f"http://127.0.0.1:{observed['port']}"
+    assert observed["port"] == unused_tcp_port
+    assert route["backend_pid"] == observed["pid"]
+    assert route["runtime_id"] == observed["runtime_id"] == "process-runtime"
 
 
 def test_collector_starts_only_after_backend_listens(tmp_path, monkeypatch):

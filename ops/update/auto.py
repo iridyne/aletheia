@@ -438,43 +438,44 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
     if added.returncode:
         shutil.rmtree(worktree, ignore_errors=True)
         raise AutoUpdateError("candidate_worktree_failed", added.stderr[-500:])
-    data_copy = worktree / ".auto-preflight-data"
     try:
-        restored = RestoreService().restore(backup, data_copy)
-        if not restored.success:
-            raise AutoUpdateError("preflight_restore_failed", "; ".join(restored.errors))
-        env = _safe_env()
-        env["ALETHEIA_DATA_DIR"] = str(data_copy)
-        env["ALETHEIA_BACKUP_PATH"] = str(backup.resolve())
-        source_roots = [str(worktree / "core"), str(worktree)]
-        env["PYTHONPATH"] = os.pathsep.join((*source_roots, env.get("PYTHONPATH", ""))).rstrip(os.pathsep)
-        check = (
-            "import sys\nfrom pathlib import Path\n"
-            f"sys.path[:0] = {source_roots!r}\n"
-            f"if not Path({str(worktree / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('candidate_core_source_mismatch')\n"
-            f"if not Path({str(worktree / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('candidate_ops_source_mismatch')\n"
-            "import aletheia, ops\n"
-            f"if Path(aletheia.__file__).resolve() != Path({str(worktree / 'core/aletheia/__init__.py')!r}): raise RuntimeError('candidate_core_source_mismatch')\n"
-            f"if Path(ops.__file__).resolve() != Path({str(worktree / 'ops/__init__.py')!r}): raise RuntimeError('candidate_ops_source_mismatch')\n"
-            "def _require(value, detail):\n"
-            "    if value is not True:\n"
-            "        raise RuntimeError(detail)\n"
-            "from aletheia.storage.migrations import apply_migrations, migration_status\n"
-            "status=migration_status()\n"
-            "if status.get('current') is not True:\n"
-            "    apply_migrations()\n"
-            "from ops.update.packaged import validate_current_data\n"
-            "validated=validate_current_data()\n"
-            "_require(validated.get('ok'), f'data_validation={validated!r}')\n"
-            "from ops.update.smoke import run_smoke_check\n"
-            "smoke=run_smoke_check()\n"
-            "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
-        )
-        # ponytail: reuse active venv Python with PYTHONPATH instead of spawning uv to build a fresh venv
-        result = _run([sys.executable, "-c", check], cwd=worktree, env=env, timeout=120)
-        if result.returncode:
-            raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
-        return worktree
+        with tempfile.TemporaryDirectory(prefix="aletheia-auto-preflight-") as temporary_data_root:
+            data_copy = Path(temporary_data_root)
+            restored = RestoreService().restore(backup, data_copy)
+            if not restored.success:
+                raise AutoUpdateError("preflight_restore_failed", "; ".join(restored.errors))
+            env = _safe_env()
+            env["ALETHEIA_DATA_DIR"] = str(data_copy)
+            env["ALETHEIA_BACKUP_PATH"] = str(backup.resolve())
+            source_roots = [str(worktree / "core"), str(worktree)]
+            env["PYTHONPATH"] = os.pathsep.join((*source_roots, env.get("PYTHONPATH", ""))).rstrip(os.pathsep)
+            check = (
+                "import sys\nfrom pathlib import Path\n"
+                f"sys.path[:0] = {source_roots!r}\n"
+                f"if not Path({str(worktree / 'core/aletheia/__init__.py')!r}).is_file(): raise RuntimeError('candidate_core_source_mismatch')\n"
+                f"if not Path({str(worktree / 'ops/__init__.py')!r}).is_file(): raise RuntimeError('candidate_ops_source_mismatch')\n"
+                "import aletheia, ops\n"
+                f"if Path(aletheia.__file__).resolve() != Path({str(worktree / 'core/aletheia/__init__.py')!r}): raise RuntimeError('candidate_core_source_mismatch')\n"
+                f"if Path(ops.__file__).resolve() != Path({str(worktree / 'ops/__init__.py')!r}): raise RuntimeError('candidate_ops_source_mismatch')\n"
+                "def _require(value, detail):\n"
+                "    if value is not True:\n"
+                "        raise RuntimeError(detail)\n"
+                "from aletheia.storage.migrations import apply_migrations, migration_status\n"
+                "status=migration_status()\n"
+                "if status.get('current') is not True:\n"
+                "    apply_migrations()\n"
+                "from ops.update.packaged import validate_current_data\n"
+                "validated=validate_current_data()\n"
+                "_require(validated.get('ok'), f'data_validation={validated!r}')\n"
+                "from ops.update.smoke import run_smoke_check\n"
+                "smoke=run_smoke_check()\n"
+                "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
+            )
+            # ponytail: reuse active venv Python with PYTHONPATH instead of spawning uv to build a fresh venv
+            result = _run([sys.executable, "-c", check], cwd=worktree, env=env, timeout=120)
+            if result.returncode:
+                raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
+            return worktree
     except Exception:
         git_facts._git("worktree", "remove", "--force", str(worktree))  # noqa: SLF001
         shutil.rmtree(worktree, ignore_errors=True)

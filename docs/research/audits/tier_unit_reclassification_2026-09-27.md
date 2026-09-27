@@ -148,7 +148,7 @@ A/B, same conditions, four files (`planning_writer_boundary`,
 −5.9 s (−19 %) on those four files, and the saving repeats for every additional
 `assert_writer_boundary` caller.
 
-## 7. Open decision (needs the owner)
+## 7. Decision at the time of the initial audit (historical)
 
 Reclassifying 271 of 537 modules moves ~5500 tests out of `-m fast`, which is
 the documented every-bug-fix-loop gate. That is a change to what the mandatory
@@ -165,3 +165,70 @@ local gate covers, not just a timing fix. Three options:
 
 Nothing in this report has been applied to `tests/conftest.py`; option (1) and
 (2) both need the owner's acceptance before the default gate changes.
+
+## 8. Follow-up measurement — 2026-09-28
+
+At this baseline, filename rules preceded the content classifier
+top-level-import check. The current campaign (#3438) authorizes content-based
+classification; §9 records its later correction. These are historical receipts.
+
+At [77e143885b17c5db7a60428fd67a324edba3401e](https://github.com/iridyne/aletheia/commit/77e143885b17c5db7a60428fd67a324edba3401e),
+a serial `uv run pytest tests -q -m tier_unit --timeout=90
+--durations=30` run produced **3789 passed, 1 skipped, 7807 deselected**,
+12 warnings, pytest 102.80 s, wall **107.64 s**. This does not meet 60 s.
+This was the measured head of [PR #3586](https://github.com/iridyne/aletheia/pull/3586),
+not an ancestor of this performance PR. Fetch `refs/pull/3586/head` from origin
+to obtain that commit; do not substitute a different source SHA for the receipt.
+
+An unchanged four-file selection (`test_planning_writer_boundary.py`,
+`test_proposal_writer_boundary.py`, `test_order_writer_boundary.py`,
+`test_architecture_fitness.py`) was measured before/after avoiding enclosing-owner
+lookups for AST node kinds that have no writer/SQL checks in the final scan.
+No assertion, marker, case, or scan directory changed.
+
+| Selection | Before | After |
+|---|---:|---:|
+| Collected/passed | 429/429 | 429/429 |
+| Pytest seconds | 23.98 | 19.30 |
+| Wall seconds | 27.32 | 22.65 |
+
+This is a same-selection **4.67 s** reduction, not a reclassification gain and
+not the required three-run unit-tier acceptance. Existing non-owner/alias/SQL
+negative cases remain in the selection. Further unit-tier work is still needed.
+
+## 9. Late-import admission and three-run acceptance — 2026-09-28
+
+The next measurement used integration candidate `90d282aae` plus this admission
+change. The classifier now visits all AST import nodes, including function/class
+and fixture bodies, with the same boundary-prefix list and filename precedence.
+The two delayed-import regressions failed before the change and passed after it.
+
+A real collection census found 47 cases with both unit and integration tags in
+the CLI install, install-hint and SDD-shadow tests, plus one filename-classified
+postflight case with the same conflict. Their obsolete manual unit tags were
+removed; test bodies and assertions were retained. The new collected-item guard
+failed on the CLI bypass before removal. It lives in the existing
+`tests/test_pytest_tiering.py`, not a second admission registry or whitelist.
+
+The full census is **11619 cases**, versus 11616 before this change: the only
+additions are two delayed-import regressions and the collected-item guard.
+All 1840 import-boundary candidates remain collected in integration. In total,
+**1841 existing cases leave the unit selection**: 1793 late-import cases and
+48 obsolete manual-tag bypasses. No case was deleted or newly skipped.
+Final exclusive tiers: unit **1959**, integration **8226**, spec **1327**, e2e **107**.
+This conservative module-level classification also moves pure cases inside mixed
+modules; it is not a claim that each moved case itself performs I/O.
+
+Three serial runs used `uv run pytest tests -q -m tier_unit --timeout=90` with
+JUnit output for counts; wall time includes command startup and report writing.
+
+| Run | Passed | Skipped | Deselected | Pytest seconds | Wall seconds | Exit |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 1958 | 1 | 9660 | 45.06 | 49.52 | 0 |
+| 2 | 1958 | 1 | 9660 | 45.36 | 49.85 | 0 |
+| 3 | 1958 | 1 | 9660 | 45.64 | 50.12 | 0 |
+
+The retained skip is `test_windows_dogfood.py::test_require_windows_passes_on_windows`
+(`Windows-only`). These runs meet the local unit-tier time criterion, not full
+project/runtime acceptance. The reduction from 107.64 s includes reclassification;
+only the separate 429-case result in §8 establishes same-selection execution speedup.

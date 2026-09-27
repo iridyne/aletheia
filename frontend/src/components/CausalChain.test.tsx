@@ -289,7 +289,7 @@ describe('CausalChain read states', () => {
   it('keeps a Position anchor while its linked Order read is unavailable', async () => {
     const position = positionFor(order)
     const client = createClient()
-    client.setQueryData(['proposals'], [proposalFor(order)])
+    vi.spyOn(api, 'getProposal').mockResolvedValue(proposalFor(order))
     client.setQueryData(['positions'], [position])
     vi.spyOn(api, 'getTrades').mockRejectedValue(new Error('read failed'))
     vi.spyOn(api, 'getProposalRiskDecision').mockResolvedValue({
@@ -302,6 +302,8 @@ describe('CausalChain read states', () => {
     const node = mountChain({ kind: 'position', position }, client)
     await flushQueries()
 
+    expect(stageNode(node, 'Proposal').textContent).toContain('BTC/USDT')
+    expect(stageNode(node, 'Proposal').textContent).not.toContain('Data unavailable')
     expect(stageNode(node, 'Order').textContent).toContain('order-1')
     expect(stageNode(node, 'Order').textContent).toContain('Data unavailable')
     expect(stageNode(node, 'Fill').textContent).toContain('Data unavailable')

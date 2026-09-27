@@ -52,6 +52,8 @@ from aletheia.uta.models import (
 )
 from extensions.exchanges.ccxt.profile import CCXTProfile
 
+# Private transport exceptions may embed request/response data; log categories,
+# never raw exception text or tracebacks. Typed report reasons remain unchanged.
 logger = logging.getLogger("aletheia.exchanges.ccxt.adapter")
 
 
@@ -589,10 +591,8 @@ class CCXTUTAAdapter:
                 raise
         except (Exception, TimeoutError) as exc:
             logger.warning(
-                "ccxt_adapter: exact order read failed (%s: %s); report marked unavailable",
+                "ccxt_adapter: exact order read failed (%s); report marked unavailable",
                 type(exc).__name__,
-                exc,
-                exc_info=True,
             )
         return OrderQueryReport(
             identity=self.identity,
@@ -700,10 +700,8 @@ class CCXTUTAAdapter:
                 raise
         except (Exception, TimeoutError) as exc:
             logger.warning(
-                "ccxt_adapter: fill read failed (%s: %s); report marked unavailable",
+                "ccxt_adapter: fill read failed (%s); report marked unavailable",
                 type(exc).__name__,
-                exc,
-                exc_info=True,
             )
         return FillListReport(
             identity=self.identity,
@@ -837,10 +835,8 @@ class CCXTUTAAdapter:
                 raise
         except (Exception, TimeoutError, ValueError) as exc:
             logger.warning(
-                "ccxt_adapter: funding ledger read failed (%s: %s); report marked unavailable",
+                "ccxt_adapter: funding ledger read failed (%s); report marked unavailable",
                 type(exc).__name__,
-                exc,
-                exc_info=True,
             )
         return FundingLedgerReport(
             identity=self.identity,
@@ -1022,10 +1018,8 @@ class CCXTUTAAdapter:
                 raise
         except (Exception, TimeoutError) as exc:
             logger.warning(
-                "ccxt_adapter: account-authority probe failed (%s: %s); report marked unavailable",
+                "ccxt_adapter: account-authority probe failed (%s); report marked unavailable",
                 type(exc).__name__,
-                exc,
-                exc_info=True,
             )
         return AccountAuthorityProbeReport(
             identity=self.identity,

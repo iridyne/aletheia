@@ -92,6 +92,8 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                     assert not aliases.intersection(owners), (path, reference.lineno, "named writer alias", aliases)
                     assert not aliases.intersection(_GENERIC_WRITERS), (path, reference.lineno, "generic writer alias")
             for node in ast.walk(tree):
+                if not isinstance(node, (ast.Attribute, ast.ImportFrom, ast.Call, ast.Constant, ast.BinOp, ast.JoinedStr)):
+                    continue
                 child = node
                 parent = parents.get(node)
                 while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
