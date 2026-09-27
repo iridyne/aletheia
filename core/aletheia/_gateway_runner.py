@@ -285,7 +285,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                 try:
                     kill_pid_tree(proc.pid)  # defensive: ensure no orphan subtree
                 except (AttributeError, OSError):
-                    pass
+                    logger.debug("stray backend process cleanup failed", exc_info=True)
                 return code
 
             if frontdoor_holder is not None and frontdoor_holder[0] is not None:
@@ -311,7 +311,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                     try:
                         kill_pid_tree(cp.pid)
                     except Exception:
-                        pass
+                        logger.debug("collector kill_pid_tree before respawn failed", exc_info=True)
                     collector_holder[0] = _spawn_collector_process(cfg)
 
             now = time.monotonic()
@@ -504,7 +504,7 @@ def _record_signal_shutdown(signum: int) -> None:
         })
         write_error({"source": "gateway_supervisor", "message": msg})
     except Exception:
-        pass
+        logger.warning("gateway shutdown audit write failed", exc_info=True)
 
 
 def run_supervised(spawn_fn=None) -> dict:
@@ -633,7 +633,7 @@ def run_supervised(spawn_fn=None) -> dict:
                 try:
                     kill_pid_tree(proc.pid)
                 except Exception:
-                    pass
+                    logger.debug("backend kill_pid_tree at shutdown failed", exc_info=True)
             else:
                 _stop_vite_watch(proc)
         # Tear down the collector unconditionally.  Frontdoor gets special
@@ -646,14 +646,14 @@ def run_supervised(spawn_fn=None) -> dict:
             try:
                 kill_pid_tree(proc.pid)
             except Exception:
-                pass
+                logger.debug("collector kill at shutdown failed", exc_info=True)
         if not gave_up_flag[0]:
             proc = frontdoor_holder[0]
             if proc is not None:
                 try:
                     kill_pid_tree(proc.pid)
                 except Exception:
-                    pass
+                    logger.debug("frontdoor kill at shutdown failed", exc_info=True)
         operator_monitor.stop()
         # Remove our own pid file so status/stop don't act on a stale live pid.
         # Guard on ownership so a supervisor that already lost the pidfile to a
@@ -663,7 +663,7 @@ def run_supervised(spawn_fn=None) -> dict:
             if read_pid() == os.getpid():
                 clear_pid()
         except Exception:
-            pass
+            logger.debug("pidfile clear at shutdown failed", exc_info=True)
         # T6: clear the ready beacon so a stale file never misleads the next start.
         _clear_ready_beacon()
         if shutdown_signal["num"] is not None:
@@ -824,7 +824,7 @@ def _emit_sd_notify() -> None:
             notifier.connect(address)
             notifier.sendall(b"READY=1")
     except (OSError, ValueError):
-        pass
+        logger.debug("sd_notify READY=1 failed (systemd notify optional)", exc_info=True)
 
 
 def _schedule_supervisor_recovery() -> None:

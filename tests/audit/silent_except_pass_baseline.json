@@ -1,60 +1,33 @@
 {
-  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27 after import consolidation (line numbers shifted).",
+  "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27: -8 sites in _gateway_runner.py (logged best-effort).",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
   "count": 220,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 287
+      "line": 462,
+      "reason": "SIG_IGN under signal handler; signal.signal() raises in worker threads by design — swallow so shutdown flow continues"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 313
+      "line": 470,
+      "reason": "signal.signal() raises when supervisor invoked off the main thread; leave default disposition (comment above documents this)"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 462
+      "line": 481,
+      "reason": "best-effort restore of prior signal handlers on exit; comment above documents intent"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 470
+      "line": 624,
+      "reason": "SIG_IGN inside shutdown handler; same signal.signal() thread contract as line 462"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 481
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 506
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 624
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 635
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 648
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 655
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 665
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 798
-    },
-    {
-      "file": "core/aletheia/_gateway_runner.py",
-      "line": 826
+      "line": 798,
+      "reason": "best-effort ready-beacon unlink; docstring: 'Best-effort; never raises' — used on shutdown to keep next-start clean"
     },
     {
       "file": "core/aletheia/agent_runtime/auto_resume.py",
