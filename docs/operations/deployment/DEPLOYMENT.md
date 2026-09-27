@@ -159,6 +159,8 @@ fast-forward 的 `master`。已观测 Tag 被移动、checkout ahead/diverged、
 GitHub API。
 
 候选会先以临时 worktree 在 WAL-safe Backup 的恢复副本上执行 migration/SQLite validation；
+数据副本位于 checkout 和稳定运行目录之外的独立系统临时目录，预检成功或失败后均清理。
+Smoke 的 pytest 数据根门禁保持 fail-closed，不为候选 worktree 增加例外。
 旧 Gateway 继续服务期间完成依赖同步与前端 staging build。通过后才停止 Gateway、创建最终
 Backup、fast-forward 到固定 SHA、切换完整静态资源并启动。120 秒内必须证明
 `boot_commit == current_commit == tag_sha`、产品版本、migration ledger、Gateway/scheduler/
