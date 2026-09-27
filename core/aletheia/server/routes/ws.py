@@ -147,14 +147,29 @@ def _run_fingerprints(queries: dict[str, str]) -> dict[str, str]:
 
 def _get_latest_infra_ts() -> str:
     """
-    Returns the created_at of the most recent warning/critical infra event.
-    Reads from the in-memory deque — no DB, no executor needed in principle,
+    Composite infra fingerprint for the alert tier.
+
+    Returns ``"<latest warning/critical ts>|<outstanding count>|<resolution seq>"``.
+    The latest warning/critical timestamp alone cannot see an info-severity
+    resolution (e.g. ``exchange_connectivity_resumed``), which would otherwise
+    leave clients showing a stale resolved incident; and a critical that has been
+    evicted from the bounded deque is invisible in the raw list, so the curated
+    outstanding count and the monotonic resolution counter are folded in too.
+
+    Reads from the in-memory buffers — no DB, no executor needed in principle,
     but we call it via run_in_executor anyway because emit_infra_event holds
     a threading.Lock that we don't want to starve the event loop with.
     """
-    from aletheia.infra.events import list_infra_events
+    from aletheia.infra.events import (
+        list_infra_events,
+        list_outstanding_infra_events,
+        resolution_seq,
+    )
+
     events = list_infra_events(min_severity="warning", limit=1)
-    return events[0]["created_at"] if events else ""
+    latest_warn_or_critical_ts = events[0]["created_at"] if events else ""
+    outstanding_count = len(list_outstanding_infra_events())
+    return f"{latest_warn_or_critical_ts}|{outstanding_count}|{resolution_seq()}"
 
 
 class _RealtimeHub:

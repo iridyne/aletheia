@@ -246,6 +246,7 @@ def _record_external_probe_result(
                 action="No restart is required; wait for the next scheduled data refresh.",
                 entity_id="external_network",
                 dedupe_sec=300,
+                resolves="external_connectivity_unavailable",
             )
     else:
         if previous_reachable is not False:
@@ -695,6 +696,7 @@ async def _resume_from_network(
         code="exchange_connectivity_resumed",
         message=f"Exchange {exchange} reachable again — trading resumed",
         entity_id=exchange,
+        resolves="exchange_unreachable_paused",
     )
     write_audit(
         {

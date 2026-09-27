@@ -1,5 +1,6 @@
 import { fetchJson } from './client'
 import type { components } from './generated/api'
+import type { InfraEvent } from '../types'
 
 export type BootstrapAvailability = 'available' | 'unavailable'
 
@@ -19,6 +20,7 @@ export interface ShellBootstrap {
   operator?: { status?: string; mode?: string; permission_mode?: string; model_provider?: string | null; last_seen_at?: string | null; stale?: boolean; heartbeat_age_sec?: number; current_intent?: string | null; trading_daemon?: { evaluating?: boolean; state?: string; last_error_summary?: string | null } }
   connectivity?: { state: 'reachable' | 'unavailable' | 'recovering' | 'unknown'; reason: string }
   health?: { status?: string; issues?: string[]; availability?: string; reason?: string | null }
+  outstanding_infra_events?: InfraEvent[]
   runtime?: { version?: string; boot_commit?: string | null; current_commit?: string | null; mode?: string; update?: Record<string, unknown> }
   ticker?: Record<string, Record<string, unknown>>
 }

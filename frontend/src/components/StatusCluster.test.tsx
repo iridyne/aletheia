@@ -108,3 +108,64 @@ describe('StatusCluster permission scope presentation', () => {
     expect(SRC).not.toContain('!paused && !!data?.scheduler?.enabled')
   })
 })
+
+describe('StatusCluster outstanding infra events', () => {
+  const realtime = { state: 'connected', malformedFrameCount: 0, unknownCategoryCount: 0, lastFrameAt: null }
+
+  function render(data: Record<string, unknown>) {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    act(() => root.render(
+      <QueryClientProvider client={client}>
+        <StatusCluster data={data as any} realtime={realtime as any} />
+      </QueryClientProvider>,
+    ))
+    return {
+      host,
+      cleanup: () => {
+        act(() => root.unmount())
+        host.remove()
+      },
+    }
+  }
+
+  it('test_missing_outstanding_key_renders_unavailable_not_green', () => {
+    const { host, cleanup } = render({
+      gateway: { running: true, paused: false },
+      permission: { mode: 'Observe' },
+      health: { issues: [] },
+    })
+    expect(host.textContent).toContain('Outstanding events unavailable')
+    cleanup()
+  })
+
+  it('test_empty_outstanding_array_renders_empty_state', () => {
+    const { host, cleanup } = render({
+      gateway: { running: true, paused: false },
+      permission: { mode: 'Observe' },
+      health: { issues: [] },
+      outstanding_infra_events: [],
+    })
+    expect(host.textContent).not.toContain('Outstanding events unavailable')
+    expect(host.querySelectorAll('.sp-event-code').length).toBe(0)
+    cleanup()
+  })
+
+  it('test_critical_manual_close_event_sorts_first', () => {
+    const { host, cleanup } = render({
+      gateway: { running: true, paused: false },
+      permission: { mode: 'Observe' },
+      health: { issues: [] },
+      outstanding_infra_events: [
+        { created_at: '2026-01-01T00:00:00Z', severity: 'warning', source: 'position_manager', code: 'position_manager_stable_escalation', message: 'stable escalation' },
+        { created_at: '2026-01-01T00:00:01Z', severity: 'critical', source: 'position_manager', code: 'manual_close_reconciliation_required', message: 'manual close needed' },
+        { created_at: '2026-01-01T00:00:02Z', severity: 'info', source: 'connectivity_monitor', code: 'external_connectivity_restored', message: 'restored' },
+      ],
+    })
+    const codes = Array.from(host.querySelectorAll('.sp-event-code')).map(node => node.textContent)
+    expect(codes[0]).toBe('manual_close_reconciliation_required')
+    cleanup()
+  })
+})

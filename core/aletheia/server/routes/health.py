@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
-from aletheia.infra.events import list_infra_events
+from aletheia.infra.events import list_infra_events, list_outstanding_infra_events
 from aletheia.server.startup_policy import startup_policy_snapshot
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -98,12 +98,27 @@ def _cached_head_commit(ttl_sec: float = 60.0) -> str | None:
     return commit
 
 
+def _health_projection(cached: dict) -> dict:
+    """Fresh, shallow-copied projection of a cached health snapshot."""
+    return {
+        "healthy": bool(cached.get("healthy")),
+        "status": cached.get("status", "healthy" if cached.get("healthy") else "degraded"),
+        "issues": list(cached.get("issues") or []),
+        "outstanding_infra_events": [dict(e) for e in (cached.get("outstanding_infra_events") or [])],
+    }
+
+
 def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
     """Short TTL cache for dashboard polling.
 
     The health rollup touches SQLite and several in-process monitors. Keeping a
     5s cache preserves honest status while preventing concurrent UI polls from
     repeating the same blocking work.
+
+    ``/api/health`` and ``/api/status`` both read this same cache (do not add a
+    second one). The rollup carries the curated ``outstanding_infra_events``
+    projection; the raw, unbounded-history authority remains
+    ``list_infra_events`` behind ``/api/infra/events``, unchanged.
     """
     global _health_cache
     from aletheia.agent_runtime import health as health_mod
@@ -115,21 +130,18 @@ def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
         if _health_cache is not None:
             ts, cached_fn_id, cached = _health_cache
             if cached_fn_id == fn_id and now - ts < ttl_sec:
-                return {
-                    "healthy": bool(cached.get("healthy")),
-                    "status": cached.get("status", "healthy" if cached.get("healthy") else "degraded"),
-                    "issues": list(cached.get("issues") or []),
-                }
+                return _health_projection(cached)
 
     h = fn()
     snapshot = {
         "healthy": bool(h.get("healthy")),
         "status": h.get("status", "healthy" if h.get("healthy") else "degraded"),
         "issues": list(h.get("issues") or []),
+        "outstanding_infra_events": list_outstanding_infra_events(limit=50),
     }
     with _health_cache_lock:
         _health_cache = (now, fn_id, snapshot)
-    return {"healthy": snapshot["healthy"], "status": snapshot["status"], "issues": list(snapshot["issues"])}
+    return _health_projection(snapshot)
 
 
 @router.get("/health")
@@ -172,6 +184,7 @@ def health():
         "status": h["status"],
         "issues": h["issues"],
         "version": __version__,
+        "outstanding_infra_events": h.get("outstanding_infra_events", []),
         **pause_projection,
     }
 
@@ -444,6 +457,7 @@ def status():
         "health_status": h.get("status", "healthy" if h["healthy"] else "degraded"),
         "health_issues": h["issues"],
         "infra_events": list_infra_events(limit=5, min_severity="warning"),
+        "outstanding_infra_events": h.get("outstanding_infra_events", []),
         "llm_model_health": _llm_model_health_snapshot(),
         "boot_commit": boot_commit,
         "current_commit": head_commit,

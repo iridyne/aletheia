@@ -17,8 +17,10 @@ function eventTone(event: InfraEvent): 'yellow' | 'red' {
 
 function eventPriority(event: InfraEvent, connectivityState: string): number {
   if (event.code === 'external_connectivity_unavailable') return connectivityState === 'unavailable' ? 0 : 5
+  if (event.code === 'manual_close_reconciliation_required') return 1
   if (event.severity === 'critical') return 1
   if (event.code === 'external_connectivity_restored') return 2
+  if (event.code === 'position_manager_stable_escalation') return 3
   if (event.severity === 'warning') return 3
   return 4
 }
@@ -78,7 +80,6 @@ export default function StatusCluster({
   const killSwitchQuery = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, ...detailOptions })
   const runsQuery = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, ...detailOptions })
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: api.getHealth, ...detailOptions })
-  const infraEventsQuery = useQuery({ queryKey: ['infra-events'], queryFn: api.getInfraEvents, ...detailOptions })
   const riskQuery = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, ...detailOptions })
 
   const status = statusQuery.data
@@ -101,7 +102,13 @@ export default function StatusCluster({
   const healthIssues = (healthQuery.data?.issues ?? data?.health?.issues ?? []).filter(issue => !issue.startsWith('code_updated_pending_restart:'))
   const driftIssue = (healthQuery.data?.issues ?? data?.health?.issues ?? []).find(issue => issue.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue.replace('code_updated_pending_restart:', '')
-  const recentInfraEvents = [...(infraEventsQuery.data?.events ?? status?.infra_events ?? [])]
+  // Outstanding (unresolved) infra events come from the curated projection on the
+  // shell bootstrap / status payload. A missing key means an older backend was
+  // rolled back; in that case we refuse to substitute the raw, non-suppressing
+  // infra_events list (which would re-surface already-resolved incidents).
+  const outstandingInfraSource = data?.outstanding_infra_events ?? status?.outstanding_infra_events
+  const outstandingInfraAvailable = Array.isArray(outstandingInfraSource)
+  const recentInfraEvents = (Array.isArray(outstandingInfraSource) ? [...outstandingInfraSource] : [])
     .sort((a, b) => eventPriority(a, connectivityState) - eventPriority(b, connectivityState) || Date.parse(b.created_at) - Date.parse(a.created_at))
     .slice(0, 5)
   const heartbeatText = heartbeatAge(operator, data?.operator)
@@ -354,7 +361,7 @@ export default function StatusCluster({
             {operator?.last_error && <div className="sp-row"><span className="sp-issue-icon sp-issue-red">⚠</span><span className="sp-issue-label">{operator.last_error}</span></div>}
           </div>
 
-          {(healthIssues.length > 0 || recentInfraEvents.length > 0) && (
+          {(healthIssues.length > 0 || recentInfraEvents.length > 0 || !outstandingInfraAvailable) && (
             <div className="sp-section">
               <div className="sp-section-label">Health & Events</div>
               {healthIssues.length > 0 && (
@@ -372,6 +379,9 @@ export default function StatusCluster({
                     )
                   })}
                 </div>
+              )}
+              {!outstandingInfraAvailable && (
+                <div className="sp-row"><span className="sp-label sp-label-muted">Outstanding events unavailable</span></div>
               )}
               {recentInfraEvents.length > 0 && (
                 <div className="sp-events">
