@@ -592,6 +592,14 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             if result.evidence is not CommandEvidence.ACKNOWLEDGED:
                 return pending()
     except Exception:
+        # A catch-all that returns `pending()` re-enters reconciliation on the next
+        # watcher cycle. Without this log the real cause (identity mismatch, venue
+        # rejection, network) was indistinguishable from "still converging" (#3507).
+        logger.warning(
+            "Entry Plan %s cancel attempt did not reach the venue; reconciliation continues",
+            plan_id,
+            exc_info=True,
+        )
         return pending()
 
     fresh_after_ack = repo.get_order(order["id"])
@@ -602,7 +610,8 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
     try:
         from aletheia.execution.exchange_materialization import materialize_bitget_entry
-        from aletheia.execution.reconciliation import _UTAReconciliationProjection, _run_coro
+        from aletheia.async_utils import run_coro_from_sync
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection
         from aletheia.uta.compat import scope_from_local
         from aletheia.uta.manager import query_uta
         from aletheia.uta.models import OrderLifecycle, OrderQuery, ReadCompleteness
@@ -631,7 +640,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             )
             return report, rows
 
-        report, rows = _run_coro(exact_cancel_evidence())
+        report, rows = run_coro_from_sync(exact_cancel_evidence())
         if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
             return pending()
         if rows:

@@ -338,6 +338,11 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
             try:
                 parsed_upnl = float(upnl)
             except (TypeError, ValueError):
+                logger.debug(
+                    "pnl: exchange uPnL row has a non-numeric unrealized_pnl (%r); row excluded from the venue index",
+                    upnl,
+                    exc_info=True,
+                )
                 continue
             if not math.isfinite(parsed_upnl):
                 continue
@@ -677,6 +682,12 @@ def _close_event_matches_position(event: dict, position: dict) -> bool:
             ):
                 return False
         except (KeyError, TypeError, ValueError):
+            logger.warning(
+                "pnl: close event %s/%s cannot be compared with the Position; treated as non-matching",
+                event_field,
+                position_field,
+                exc_info=True,
+            )
             return False
     return int(event.get("is_partial") or 0) == 0
 
@@ -872,6 +883,11 @@ def close_position(
         try:
             evidence_quantity = float(verified_exit_evidence.get("fill_quantity"))
         except (TypeError, ValueError):
+            logger.warning(
+                "pnl: verified exit evidence has no numeric fill_quantity (%r); quantity identity uses 0.0",
+                verified_exit_evidence.get("fill_quantity"),
+                exc_info=True,
+            )
             evidence_quantity = 0.0
         tolerance = max(1e-12, float(row["quantity"]) * 1e-9)
         if (
@@ -1098,7 +1114,7 @@ def close_position(
             error_log=False,
         )
     except Exception:
-        logger.warning("pnl: outcome write_audit failed", exc_info=True)
+        logger.warning("pnl: operator close notification failed", exc_info=True)
     if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
         _run_outcome_hooks({**row, **update_fields}, realized, reason)
     return {
@@ -1151,6 +1167,11 @@ def _closed_today(execution_mode: str | None = None) -> list[dict]:
         try:
             closed_date = datetime.fromisoformat(closed_at).date().isoformat()
         except (ValueError, TypeError):
+            logger.debug(
+                "pnl: closed_at %r is not a parseable timestamp; position excluded from today's close list",
+                closed_at,
+                exc_info=True,
+            )
             continue
         if closed_date != today:
             continue
