@@ -100,6 +100,8 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 ```
 
 伪造子进程时同时隔离创建和终止；不得把虚拟 PID 交给真实 OS。
+启动一致性可由临时子进程实际绑定端口并回传自身 PID/runtime ID 验证，
+而不是只比较父进程中的模拟参数；该探针不启动 Aletheia Gateway。
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - 离线交易测试同时隔离私有下单和公共 listing I/O；保留真实能力刷新、Gateway 校验与记账断言。
