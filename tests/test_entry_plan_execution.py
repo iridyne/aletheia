@@ -6,6 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
+# Import the Gateway module up front: it binds repository functions at import time, so
+# a test that string-patches `aletheia.execution.gateway.*` would otherwise trigger the
+# first import of that module while a repository fake is installed, and the fake would
+# leak into every later test in the session.
+from aletheia.execution import gateway as _gateway_module
 from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
 from aletheia.execution.entry_plan_execution import _require_ai_entry_authority as _actual_ai_entry_authority
 from tests.uta.test_execution_coordinator import _identity
