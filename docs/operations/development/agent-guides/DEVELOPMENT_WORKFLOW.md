@@ -86,10 +86,13 @@ It runs, in order and only against what this change touched: `git diff --check`;
 `ruff check` with `B,ASYNC,RUF` enabled **reported on changed lines only**; the
 test skip/xfail census, data-guarded silent-pass audit and assertion presence
 (`scripts/check_test_hygiene.py`, #3471, `check_docs.vacuous_test_failures`); the
-cached previous-failure set, run by
-node id so a stale cache cannot escalate into a whole-suite run;
-focused tests that name or import a changed module; then `basedpyright` in
-`basic` mode, error-level, changed lines only.
+cached previous-failure set, selected by pytest within explicit existing cached
+test files. The gate does not parse test definitions or rewrite failure evidence;
+stale selectors may retry their file but cannot widen collection to the whole suite.
+If cached files collect no tests (pytest exit 5), that phase is reported skipped,
+not passed, and focused checks still run; all other failures remain blocking.
+Next come focused tests that name or import a changed module, then `basedpyright`
+in `basic` mode, error-level, changed lines only.
 
 Why changed lines only: the repository carries roughly a thousand pre-existing
 `B/ASYNC/RUF` findings and 1152 files `ruff format` would rewrite, so a
