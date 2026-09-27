@@ -81,6 +81,7 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
 - DB 测试用真实 SQLite in-memory，不 mock
+- 终止歧义的行为回归入口是 [test_close_terminal_ambiguity.py](../../../tests/test_close_terminal_ambiguity.py)；D0 修复引用既有 [Execution Contract](../../design/contracts/execution_contract.md)，不向 Contract 写入本轮测试证据。
 
 ---
 
