@@ -266,11 +266,11 @@ def _configure_test_data_dir(config) -> None:
     is the mechanism behind the standing "do not run two suites concurrently"
     rule: two test processes owning one production directory.
 
-    So when the variable is unset, root the session to a fresh temporary
-    directory and say so. An explicitly set value is respected, but pointing it at
-    the production directory is called out rather than obeyed silently.
+    When unset, create a fresh temporary root. Reject explicit roots inside the
+    production directory or checkout before collecting any tests. Other dedicated
+    external roots (including /var/tmp on Fedora) remain valid.
     """
-    from aletheia.runtime_paths import default_runtime_home
+    from aletheia.runtime_paths import default_runtime_home, runtime_home
 
     configured = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
     production = default_runtime_home().resolve()
@@ -283,10 +283,12 @@ def _configure_test_data_dir(config) -> None:
             f"so no test process can write {production}."
         )
         return
-    if Path(configured).resolve() == production:
-        print(
-            f"\n[conftest] WARNING: ALETHEIA_DATA_DIR is the production data directory "
-            f"({production}); this run can modify real runtime state."
+    resolved = runtime_home()
+    checkout = Path(__file__).resolve().parents[1]
+    if resolved.is_relative_to(production) or resolved.is_relative_to(checkout):
+        raise pytest.UsageError(
+            f"ALETHEIA_DATA_DIR={resolved} is inside the production runtime or checkout; "
+            "use a dedicated external test directory."
         )
 
 
