@@ -100,7 +100,9 @@ Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文�
 ```
 
 - **禁止** mock 一切只 assert_called 的测试（只验证数据结果，不验证调用次数）
-- DB 测试用真实 SQLite in-memory，不 mock
+- DB 测试用真实隔离 SQLite，不 mock。批量持久化示例见
+  [test_performance_storage_batches.py](../../../tests/test_performance_storage_batches.py)：
+  断言实际落库值，并让后续 SQL 写入失败，验证前序写入全部回滚；不验证 facade 转发或 mock 调用。
 - 私有读取失败日志的回归见 [test_ccxt_adapter.py](../../../tests/uta/test_ccxt_adapter.py)：使用合成载荷验证安全诊断与原有 unavailable/reason 结果，不读取真实凭据；业务目标引用既有安全与执行契约。
 
 ---
