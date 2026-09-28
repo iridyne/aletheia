@@ -291,6 +291,15 @@ watcher 的 `_capture_facts` 读到 `row=None` 后失败。测试让多个 offlo
   `tests/audit/` 仍由 changed-file audit 步骤执行，不能用标记争议删除检查。
 - 重分类与同集合加速必须分开报告；测试/生产代码比例、门禁文件数量不证明工程质量或盈利。
 
+
+批次收尾快照（2026-09-28 本地，集成候选 `ca2d506c2` = master 合并 #3608/#3609/#3611/#3614/#3615/#3616）：
+
+- 本地 `tier_unit` 三次串行：各 **1950 passed / 1 skipped**，墙钟 **56.37 / 55.53 / 56.35 秒**（≤60 秒达标）。
+- `tests/test_data_retention.py` 在本机同时于 `origin/master` 与集成候选上报 **同样 12 项失败**
+  （含 `ExperimentStateReadError: Observation reader unavailable`）；这是 master 既有红灯，
+  不是本批引入，仍需由隔离 Fedora 全量判定是否环境专属后再定性。
+- 隔离 Fedora 全量以该候选的独立沙箱为准；**在拿到退出码前不得声称全绿**。
+
 冻结证明示例（不能改标为较新源码的结果）：
 
 | 源码 | 实际证明与限制 |
