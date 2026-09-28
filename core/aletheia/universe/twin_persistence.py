@@ -15,7 +15,7 @@ import hashlib
 import json
 import math
 from types import SimpleNamespace
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.storage.models import (
@@ -650,31 +650,6 @@ def build_twin_shadow_bundle(
     return TwinShadowBundle(batch, tuple(evidence), tuple(outcomes))
 
 
-def _dedupe_for_replay(values: list[dict], app_config: Any) -> list[dict]:
-    preferred = getattr(app_config.exchange, "preferred_market_type", "auto")
-    enabled = app_config.exchange.enabled_markets
-    spot_enabled = enabled.get("spot", True)
-    perp_enabled = enabled.get("usdt_futures", False)
-    preferred_market = "spot" if preferred == "spot" else "perp"
-
-    def market_rank(item: dict) -> int:
-        if spot_enabled and perp_enabled:
-            return 0 if item.get("market_type", "spot") == preferred_market else 1
-        return 0
-
-    selected: dict[str, dict] = {}
-    for item in values:
-        symbol = str(item["symbol"])
-        current = selected.get(symbol)
-        if current is None or (
-            market_rank(item), -float(item.get("total_score", 0.0))
-        ) < (
-            market_rank(current), -float(current.get("total_score", 0.0))
-        ):
-            selected[symbol] = item
-    return sorted(selected.values(), key=lambda item: item["total_score"], reverse=True)
-
-
 def _experiment_context_from_batch(
     batch: Mapping[str, object],
 ) -> TwinExperimentContext | None:
@@ -744,6 +719,7 @@ def replay_twin_shadow_bundle(
         )
     policy = ContinuousScoringPolicy(**json.loads(str(batch["policy_json"])))
     replayed = build_twin_shadow_batch(inputs, scanner_run_id=scanner_run_id, base_policy=policy)
+    from aletheia.universe.service import _dedupe_by_symbol_preferred_market
     by_key = {str(row["candidate_key"]): row for row in ordered_rows}
     fine = [item.feature for item in inputs if bool(by_key[candidate_key(scanner_run_id, item.feature)]["fine_filter_passed"])]
     allocated = [item.feature for item in inputs if bool(by_key[candidate_key(scanner_run_id, item.feature)]["authority_selected"])]
@@ -766,7 +742,7 @@ def replay_twin_shadow_bundle(
         family_tolerances=context["family_tolerances"],
         regime_state=context["regime_state"],
         allocator_random_state=decode_random_state(str(batch["allocator_random_state_json"])),
-        dedupe=_dedupe_for_replay,
+        dedupe=_dedupe_by_symbol_preferred_market,
     )
 
     mismatches: list[str] = []
