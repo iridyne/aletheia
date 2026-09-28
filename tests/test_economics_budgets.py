@@ -302,7 +302,6 @@ def test_legacy_infinite_cap_is_visible_and_blocks_without_invalid_json(monkeypa
     from types import SimpleNamespace
 
     import aletheia.agent_runtime.run_context as context
-    from aletheia.model_provider.base import ModelRequest
     from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
 
     now = _now_iso()
@@ -330,13 +329,11 @@ def test_legacy_infinite_cap_is_visible_and_blocks_without_invalid_json(monkeypa
     ]
     json.dumps({"budgets": budgets, "observations": observations}, allow_nan=False)
 
-    request = ModelRequest(messages=[{"role": "user", "content": "test"}])
-    setattr(request, "_aletheia_would_block_observations", observations)
     monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": "research_worker"})
     with pytest.raises(BudgetExceededError):
         _enforce_budget_if_configured(
             SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
-            request,
+            observations,
         )
 
 
