@@ -458,6 +458,50 @@ Fedora 全量的 71%，它也同时是本地最贵的一层。要提速就压这
 operator 建议或部署验证，于是"每 6 小时失败一次"连续存在了数天而无人处理。是否把漂移接进
 建议面或部署验证属产品决策（D1），本轮只修复运行态并记录事实。
 
+## 1l. 本地 `tier_integration` 墙钟：本地并不总是更快
+
+同一 marker、同一天的两侧数据：
+
+| 环境 | 墙钟 | passed | skipped |
+|---|---:|---:|---:|
+| 本机 macOS（串行，`--timeout=300`） | **1233.8 s（20:33）** | 8243 | 8 |
+| Fedora 隔离沙箱（同一 marker） | **495.5 s（8:15）** | 8240 | 8 |
+
+即：`tier_unit` / `tier_spec` 上本地约为 Fedora 的 0.55–0.69 倍，但 `tier_integration`
+反过来——**本地比 Fedora 慢 2.5 倍**。"本地一定更快"不是可依赖的假设。
+
+本机这 20 分钟里有 **900 s（73%）来自 5 个测试**，每个恰好约 180.0 s：
+
+```
+180.15s call tests/test_serenity_workbench.py::test_research_worker_success[asyncio]
+180.05s call tests/test_serenity_workbench.py::test_pipeline_full_stages[asyncio]
+180.04s call tests/test_serenity_workbench.py::test_research_worker_generic_failure[asyncio]
+180.04s call tests/test_serenity_workbench.py::test_research_worker_fails_run_on_required_theme_persistence_error[asyncio]
+180.04s call tests/test_serenity_workbench.py::test_research_worker_rate_limit[asyncio]
+```
+
+对照事实（同样本机、同样代码）：
+
+- 只跑该文件：**18.1 s 全绿**，这 5 个测试分别 2.5–5.3 s。
+- 只跑其中一个（`test_research_worker_rate_limit`）：**19.4 s**。
+
+所以 180 s 只在**整个 marker 一起跑**时出现 —— 这是**跨文件干扰**，不是单测本身的成本。
+
+**INFERENCE（未被证明，需要一次二分才能定名）**：180 s 正好等于 LLM 结构化调用共享的总墙钟预算
+（见 agent 契约里 `llm_structured` 的 180 s 总预算）。`fast_tier` fixture 只替换了
+`model_provider.router.get_provider_for_tier`；若前面某个测试留下可解析的 provider/配置缓存，
+这些用例就会走**真实**推理尝试：Fedora 沙箱的网络命名空间让连接立即失败
+（probe 实测 `external_tcp_error: 101`），而本机经由代理的连接是**黑洞**（既不拒绝也不响应），
+于是每个用例都耗满 180 s 预算后才降级——用例仍然"通过"，因为它断言的是降级路径。
+
+要定名必须做二分：按 `--durations` 给出的顺序，把 `tests/` 里排在 `test_serenity_workbench.py`
+之前的文件分组，逐步缩小到泄漏缓存的那个文件。本轮不猜、不改生产代码，只记录事实与复现方式：
+
+```sh
+uv run pytest tests -m tier_integration -q --timeout=300        # 本地：20+ 分钟，5 个 180s
+uv run pytest tests/test_serenity_workbench.py -q               # 本地：18 秒
+```
+
 ## 1k. 运行态修复（续）与尚未决的产品问题
 
 ### 已修复，附运行时证据
