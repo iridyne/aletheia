@@ -156,8 +156,11 @@
 - 我不动手，只做 orchestrator 角色
 
 **Phase 1（复核，1-2 hour）**：
-- B4（Learning 20 gap 存活性）+ B5（Admission GAP-3/4/5）+ C1（段 6 top-5 扫描）
-- 全部 audit-only 交给 luna，产出报告后我 review
+- B4（Learning 20 gap 存活性）→ brief 见 [`18a_brief_learning_20gap_revalidation.md`](18a_brief_learning_20gap_revalidation.md)
+- B5（Admission GAP-3/4/5）→ brief 见 [`18b_brief_admission_gap345_revalidation.md`](18b_brief_admission_gap345_revalidation.md)
+- C1（段 6 top-5 扫描）→ brief 见 [`18c_brief_segment6_top5_scan.md`](18c_brief_segment6_top5_scan.md)
+- B3（`_run_coro` 复现）→ brief 见 [`18d_brief_run_coro_repro.md`](18d_brief_run_coro_repro.md)
+- 全部 audit-only 交给 luna / deepseek，产出报告后 owner review
 - 复核完再决定要不要一次性 `gh issue create` 一批
 
 **Phase 2（owner D1 决策后）**：
