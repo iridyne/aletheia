@@ -297,3 +297,39 @@ def test_attribution_labels_legacy_decision_context_not_recorded():
         "decision_learning_manifest",
     ):
         assert row[field] == "not recorded"
+
+
+def test_holding_duration_uses_the_shared_owner_and_rejects_reversed_intervals():
+    """Guards the convergence: reversed or unmeasurable intervals must be None.
+
+    Regression: this module re-derived the duration with four strptime patterns
+    and returned a negative float, which factor_feedback averaged into
+    `_avg_holding_hours` as if it were a real holding time.
+    """
+    from aletheia.analytics.exit_driver_comparison import _hold_hours
+    from aletheia.analytics.holding_time import holding_hours
+    from aletheia.analytics.trade_attribution import _compute_holding_hours
+
+    reversed_pair = ("2026-09-01T05:00:00Z", "2026-09-01T01:00:00Z")
+    assert holding_hours(*reversed_pair) is None
+    assert _compute_holding_hours(*reversed_pair) is None
+    assert _hold_hours({"opened_at": reversed_pair[0], "closed_at": reversed_pair[1]}) is None
+
+    # Space-separated timestamps were measurable for the other two implementations
+    # but dropped by the local strptime patterns; the shared owner reads them.
+    spaced = ("2026-09-01 00:00:00", "2026-09-01 04:00:00")
+    assert _compute_holding_hours(*spaced) == 4.0
+    assert _hold_hours({"opened_at": spaced[0], "closed_at": spaced[1]}) == 4.0
+
+    # Presentation stays with this surface (two decimals) while the value is shared.
+    assert _compute_holding_hours("2026-09-01T00:00:00Z", "2026-09-01T00:07:07Z") == 0.12
+
+
+def test_factor_feedback_average_ignores_unmeasurable_holding_rows():
+    from aletheia.analytics.factor_feedback import _avg_holding_hours
+
+    assert _avg_holding_hours([{"holding_hours": 2.0}, {"holding_hours": None}]) == 2.0
+    assert _avg_holding_hours([{"holding_hours": None}]) is None
+    # The helper filters absent values only; it is the producers' job (asserted
+    # above) never to emit a negative duration in the first place.
+    assert _avg_holding_hours([{"holding_hours": -4.0}]) == -4.0
