@@ -10,8 +10,17 @@ import asyncio
 import sqlite3
 import threading
 
+import psutil
 import pytest
 from typer.testing import CliRunner
+
+# psutil resolves its platform module at import time from `sys.platform`. The
+# autouse fixture below fakes the platform to "darwin" for every test in this
+# file (these exercise the on-demand update path as a development checkout), so a
+# later lazy `import psutil` inside the code under test would look for the macOS
+# build and fail on Linux. Importing it here, first, pins the real build.
+# Reference: the failure was `ImportError: cannot import name '_psutil_osx' from
+# partially initialized module 'psutil'` in test_apply_no_auto_restart.
 
 
 @pytest.fixture(autouse=True)
@@ -1159,6 +1168,12 @@ def test_restart_gateway_rejects_unrecovered_start_error(monkeypatch):
     assert result["reason"] == "gateway_restart_failed"
 
 
+def _probe_config():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(app=SimpleNamespace(dashboard_port=8787))
+
+
 def test_gateway_restart_error_probe_has_bounded_deadline(monkeypatch):
     from ops.update import applier
 
@@ -1171,6 +1186,13 @@ def test_gateway_restart_error_probe_has_bounded_deadline(monkeypatch):
     monkeypatch.setattr(applier.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(applier.time, "sleep", lambda value: now.__setitem__(0, now[0] + value))
     monkeypatch.setattr(applier.urllib.request, "build_opener", lambda *_args: FailingOpener())
+    # The probe resolves config and the front door before it starts the deadline
+    # loop; if either raises it returns False without consulting the clock, which
+    # is how this test used to fail as `0.0 == 1.0` depending on ambient state.
+    monkeypatch.setattr(applier, "load_config", lambda: _probe_config())
+    monkeypatch.setattr(
+        "aletheia.gateway.network.local_frontdoor_host", lambda: "127.0.0.1"
+    )
 
     assert applier._gateway_ready_after_restart_error(timeout_sec=1.0) is False
     assert now[0] == pytest.approx(1.0)
