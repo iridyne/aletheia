@@ -1103,6 +1103,7 @@ export class OperatorLoop {
     // execution, so enqueueing is the delegation's outcome here. Reading the
     // run's terminal state is a later, separate observation.
     let result: Awaited<ReturnType<BackendGatewayClient['startAgentRun']>>
+    let alreadyQueued = false
     try {
       result = await this.backendClient.startAgentRun(activeTask.assignedTo)
     } catch (error) {
@@ -1116,26 +1117,36 @@ export class OperatorLoop {
         })
         throw error
       }
-      result = { job_id: '', run_id: '', status: 'queued' }
+      // The 409 payload names the run that is already queued; never invent one.
+      const queuedRunId = error.detail?.run_id
+      result = {
+        job_id: typeof queuedRunId === 'string' ? queuedRunId : '',
+        run_id: typeof queuedRunId === 'string' ? queuedRunId : '',
+        status: 'queued',
+      }
+      alreadyQueued = true
     }
 
     const outputData = {
       agent_name: activeTask.assignedTo,
-      job_id: result.job_id,
-      run_id: result.run_id,
+      job_id: result.job_id || null,
+      run_id: result.run_id || null,
       run_status: result.status,
     }
+    const summary = alreadyQueued
+      ? `${delegation.queuedSummary} (already queued)`
+      : delegation.queuedSummary
 
     await this.taskRuntime.completeActiveTask({
       ...outputData,
-      summary: delegation.queuedSummary,
+      summary,
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: delegation.sessionKind,
       title: delegation.title,
       parent_session_id: parentSessionId,
-      summary: delegation.queuedSummary,
+      summary,
     })
     await this.backendClient.createMessage({
       session_id: sessionId,
@@ -1143,7 +1154,7 @@ export class OperatorLoop {
       message_type: 'result',
       related_event_id: null,
       content: {
-        text: delegation.queuedSummary,
+        text: summary,
         ...outputData,
       },
     })

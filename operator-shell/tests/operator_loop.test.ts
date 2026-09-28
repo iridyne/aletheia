@@ -5208,9 +5208,14 @@ test('operator loop treats an already-queued agent run as the delegation outcome
     recent_dreaming_runs: [],
     recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
   })
-  // Documented outcome of POST /api/agent-runs/start: 409 agent_already_queued.
+  // Documented outcome of POST /api/agent-runs/start: 409 agent_already_queued,
+  // whose payload names the run that is already queued (data.py start_agent_run).
   backend.startAgentRun = async () => {
-    throw new GatewayRequestError(409, 'gateway_request_failed:409:POST /api/agent-runs/start:agent_already_queued')
+    throw new GatewayRequestError(
+      409,
+      'gateway_request_failed:409:POST /api/agent-runs/start:agent_already_queued',
+      { error: 'agent_already_queued', agent_name: 'dreaming_agent', run_id: 'run-inflight' },
+    )
   }
 
   const loop = new OperatorLoop(
@@ -5238,6 +5243,10 @@ test('operator loop treats an already-queued agent run as the delegation outcome
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
+  // The already-queued run is named by the backend; the task must carry that
+  // identity rather than an invented empty one.
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_id, 'run-inflight')
+  assert.match(String(calls.updatedTasks[0].payload.output_data.summary), /already queued/)
 })
 
 test('operator loop fails the delegation task when the agent-run start request fails', async () => {

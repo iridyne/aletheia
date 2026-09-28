@@ -31,7 +31,7 @@ import type {
   ReviewSummary,
   StrategySummary,
 } from './schemas.js'
-import { gatewayRequestFailureMessage } from './gateway_errors.js'
+import { gatewayRequestFailure } from './gateway_errors.js'
 import { applyOperatorServiceHeader } from './service_auth.js'
 
 /**
@@ -43,6 +43,10 @@ export class GatewayRequestError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Parsed response body when it was JSON, so callers can act on documented
+     *  error payloads (e.g. `409 agent_already_queued` names the in-flight run)
+     *  without re-parsing the message text. */
+    readonly detail: Record<string, unknown> | null = null,
   ) {
     super(message)
     this.name = 'GatewayRequestError'
@@ -61,10 +65,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     // Keep the synthetic service credential out of diagnostic/error payloads.
-    throw new GatewayRequestError(
-      response.status,
-      await gatewayRequestFailureMessage(url, init, response),
-    )
+    const failure = await gatewayRequestFailure(url, init, response)
+    throw new GatewayRequestError(response.status, failure.message, failure.detail)
   }
   return response.json() as Promise<T>
 }
