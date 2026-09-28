@@ -247,15 +247,20 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.real_db
 @pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
 @pytest.mark.parametrize("scenario", ["cold_start", "restored", "reconnect"])
-async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monkeypatch, tactic, scenario):
+async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monkeypatch, tactic, scenario, api_only_runtime):
     """Restart must retain subscriptions even when a valid proof needs no engine."""
+    # Concurrent watcher/execution threads need production-like per-thread connections.
+    # A shared in-memory handle can return another thread's row or no row at all.
     import asyncio
     from types import SimpleNamespace
     from aletheia.agent_runtime import fast_trigger_watch as watch
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
+    repo._insert("universe_registry", {"id": "asset-btc", "venue": "bitget",
+        "market_type": "perp", "symbol": "BTC/USDT"})
 
     plan, ready, now, _ = _persist_observed_plan(monkeypatch, tactic)
     # This test owns reconnect/restoration, not elapsed-time expiry (covered above).
