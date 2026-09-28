@@ -4,17 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
-import random
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
 
-from aletheia.config.schema import UniverseConfig
-from aletheia.universe.allocator import allocate_universe
 from aletheia.universe.continuous_scoring import (
     ContinuousScoringPolicy,
     score_all_continuous_families,
 )
-from aletheia.universe.filters import apply_fine_tradability_filters
 from aletheia.universe.twin_scoring import TwinShadowInput
 
 
@@ -325,64 +320,6 @@ def build_relative_rank_batch(
     )
 
 
-def replay_relative_rank_allocation(
-    batch: RelativeRankBatch,
-    inputs: Sequence[TwinShadowInput],
-    *,
-    universe_config: UniverseConfig,
-    app_config: Any,
-    family_tolerances: Mapping[str, float] | None,
-    regime_state: str | None,
-    allocator_random_state: object,
-    dedupe: Callable[[list[dict], Any], list[dict]],
-) -> RelativeRankBatch:
-    """Replay the existing allocator on copied relative-rank candidates."""
-
-    if not batch.available:
-        return batch
-    by_key = {record.candidate_key: record for record in batch.records}
-    candidates: list[dict] = []
-    for item in inputs:
-        key = _candidate_key(batch.scanner_run_id, item.feature)
-        record = by_key.get(key)
-        if record is None or record.relative_score is None:
-            continue
-        candidates.append(
-            {
-                **dict(item.feature),
-                **dict(item.authority_scanner_result),
-                "scanner_family": record.family,
-                "scanner_direction": record.direction,
-                "total_score": record.relative_score,
-                "_relative_rank_candidate_key": key,
-            }
-        )
-    fine_filtered = apply_fine_tradability_filters(
-        candidates,
-        universe_config,
-        family_tolerances=dict(family_tolerances or {}),
-        scanner_run_id=None,
-    )
-    unique = dedupe(fine_filtered, app_config)
-    replay_rng = random.Random()
-    replay_rng.setstate(allocator_random_state)
-    selected = allocate_universe(
-        unique,
-        universe_config,
-        regime_state=regime_state,
-        explore_sampler=replay_rng.sample,
-        decorate_selected=False,
-        log_result=False,
-    )
-    selected_keys = {str(item.get("_relative_rank_candidate_key")) for item in selected}
-    return replace(
-        batch,
-        records=tuple(
-            replace(record, relative_selected=record.candidate_key in selected_keys) for record in batch.records
-        ),
-    )
-
-
 def annotate_relative_authority_selection(
     batch: RelativeRankBatch,
     authority_selected: Sequence[Mapping[str, object]],
@@ -411,5 +348,4 @@ __all__ = [
     "RelativeRankRecord",
     "annotate_relative_authority_selection",
     "build_relative_rank_batch",
-    "replay_relative_rank_allocation",
 ]
