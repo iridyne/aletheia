@@ -114,19 +114,6 @@ def test_cli_entrypoint_binds_before_dispatch(monkeypatch):
     assert manager._credential_presence_reader is composition.read_credential_presence
 
 
-def test_existing_packaged_dispatch_uses_same_cli_binding(monkeypatch):
-    import sys
-    from tests.test_packaged_runtime_contract import _entrypoint_module
-
-    entrypoint = _entrypoint_module()
-    monkeypatch.setattr(entrypoint, "_install_process_adapter", lambda: None)
-    monkeypatch.setattr(sys, "argv", ["aletheia", "version"])
-    with pytest.raises(SystemExit) as result:
-        entrypoint.main()
-    assert result.value.code == 0
-    assert manager._registry_factory is composition.build_uta_registry
-
-
 @pytest.mark.asyncio
 async def test_server_binds_before_background_startup(monkeypatch):
     import importlib

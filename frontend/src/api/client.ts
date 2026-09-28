@@ -60,7 +60,7 @@ export type SoftwareUpdateStatus = {
 } | {
 	ok: boolean;
 	reason?: string;
-    mode?: "development" | "packaged";
+    mode?: "development";
 	has_update?: boolean;
 	behind_count?: number;
 	current_commit?: string;
@@ -1872,16 +1872,6 @@ export const api = {
 		fetchJson<SoftwareUpdateStatus>("/update/status"),
 	checkForUpdate: () =>
 		post<SoftwareUpdateStatus>("/update/check"),
-	applyUpdate: () =>
-		post<{
-			applied: boolean;
-			reason?: string;
-			old_commit?: string;
-			new_commit?: string;
-			deps_reinstalled?: boolean;
-			restart_required?: boolean;
-			message?: string;
-		}>("/update/apply"),
 
 	// Data
 	getAgentRuns: () => fetchJson<any[]>("/agent-runs"),

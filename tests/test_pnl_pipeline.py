@@ -124,7 +124,8 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
 
     assert marked["bitget_demo"]["unrealized_pnl"] == 7.0
     assert marked["okx_demo"]["unrealized_pnl"] == -3.0
-    assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
+    assert marked["binance_testnet"]["unrealized_pnl"] is None
+    assert marked["binance_testnet"]["unrealized_pnl_source"] == "ambiguous"
 
 
 def test_archived_position_is_not_marked_or_persisted(db, monkeypatch):
@@ -160,10 +161,11 @@ def test_archived_position_is_not_marked_or_persisted(db, monkeypatch):
     )
 )
 @pytest.mark.parametrize("remote_market_type", [None, "unknown", "usdt_futures"])
-def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
+def test_exchange_upnl_market_type_mismatch_falls_back_to_unavailable(
     db, monkeypatch, remote_market_type,
 ):
-    """Unproven market identity must not overwrite a local spot Position."""
+    """Unproven market identity must not overwrite a local spot Position.
+    Without an exact exchange match, unrealized_pnl is None (not a local estimate)."""
     from aletheia.portfolio import exchange_sync, pnl
 
     repo.insert_position(Position(
@@ -189,10 +191,11 @@ def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
 
     [marked] = pnl.mark_positions_to_market(persist=True)
 
-    assert marked["unrealized_pnl"] == 10.0
+    assert marked["unrealized_pnl"] is None
+    assert marked["unrealized_pnl_source"] == "unavailable"
     stored = repo._select_one("positions", "upnl-okx-spot")
     assert stored is not None
-    assert stored["unrealized_pnl"] == 10.0
+    assert stored["unrealized_pnl"] is None
 
 
 @spec_claim(
@@ -247,16 +250,16 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
         row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
     }
 
-    assert marked["upnl-bitget-leg-a"]["unrealized_pnl"] == 10.0
-    assert marked["upnl-bitget-leg-b"]["unrealized_pnl"] == -20.0
+    assert marked["upnl-bitget-leg-a"]["unrealized_pnl"] is None
+    assert marked["upnl-bitget-leg-b"]["unrealized_pnl"] is None
     assert marked["upnl-bitget-leg-a"]["unrealized_pnl_source"] == "ambiguous"
     assert marked["upnl-bitget-leg-b"]["unrealized_pnl_source"] == "ambiguous"
     stored_a = repo._select_one("positions", "upnl-bitget-leg-a")
     stored_b = repo._select_one("positions", "upnl-bitget-leg-b")
     assert stored_a is not None
     assert stored_b is not None
-    assert stored_a["unrealized_pnl"] == 10.0
-    assert stored_b["unrealized_pnl"] == -20.0
+    assert stored_a["unrealized_pnl"] is None
+    assert stored_b["unrealized_pnl"] is None
 
 
 @spec_claim(
@@ -301,11 +304,38 @@ def test_exchange_upnl_account_fingerprint_mismatch_falls_back_and_is_labeled(
 
     [marked] = pnl.mark_positions_to_market(persist=True)
 
-    assert marked["unrealized_pnl"] == 10.0
+    assert marked["unrealized_pnl"] is None
     assert marked["unrealized_pnl_source"] == "unavailable"
     stored = repo._select_one("positions", "upnl-account-mismatch")
     assert stored is not None
-    assert stored["unrealized_pnl"] == 10.0
+    assert stored["unrealized_pnl"] is None
+    assert stored["unrealized_pnl_source"] == "unavailable"
+
+
+def test_exchange_upnl_empty_cache_labels_unavailable(db, monkeypatch):
+    """When the exchange cache returns no data, unrealized_pnl is None and
+    source is 'unavailable'. No local estimate is computed — AstralQuant policy:
+    show exact exchange value or nothing."""
+    from aletheia.portfolio import pnl
+
+    repo.insert_position(Position(
+        id="upnl-empty-cache",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
+    monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] is None
+    assert marked["unrealized_pnl_source"] == "unavailable"
+    stored = repo._select_one("positions", "upnl-empty-cache")
+    assert stored is not None
     assert stored["unrealized_pnl_source"] == "unavailable"
 
 
@@ -417,9 +447,9 @@ def test_duplicate_local_broker_position_identity_falls_back(
         row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
     }
 
-    assert marked["upnl-duplicate-a"]["unrealized_pnl"] == 10.0
+    assert marked["upnl-duplicate-a"]["unrealized_pnl"] is None
     assert marked["upnl-duplicate-a"]["unrealized_pnl_source"] == "ambiguous"
-    assert marked["upnl-duplicate-b"]["unrealized_pnl"] == -10.0
+    assert marked["upnl-duplicate-b"]["unrealized_pnl"] is None
     assert marked["upnl-duplicate-b"]["unrealized_pnl_source"] == "ambiguous"
 
 
@@ -493,17 +523,18 @@ async def test_positions_api_exposes_unrealized_pnl_source(client):
         "pipeline_position_manager",
         "§1 exchange uPnL cache health",
         "L2c",
-        "Exchange uPnL may be assigned and persisted only from a fresh unified "
-        "cache; stale or unclassified cache data must fall back to the local "
-        "mark estimate.",
+        "Stale exchange cache data is still accepted for uPnL (exchange values "
+        "include funding fees and mark-price basis that a local estimate cannot "
+        "reproduce). Only generation_mismatch and unconfigured states are hard "
+        "rejections. No local estimate is ever computed.",
         status="implemented",
     )
 )
 @pytest.mark.parametrize("age_seconds", [None, 601.0])
-def test_stale_exchange_upnl_is_not_applied_or_persisted(
+def test_stale_exchange_upnl_is_applied_as_exchange_exact(
     db, monkeypatch, age_seconds,
 ):
-    """A preserved old venue value must not masquerade as the current mark."""
+    """Stale cache data is better than no data — exchange value is used."""
     from aletheia.portfolio import exchange_sync, pnl
 
     repo.insert_position(Position(
@@ -529,10 +560,11 @@ def test_stale_exchange_upnl_is_not_applied_or_persisted(
 
     [marked] = pnl.mark_positions_to_market(persist=True)
 
-    assert marked["unrealized_pnl"] == 10.0
+    assert marked["unrealized_pnl"] == 777.0
+    assert marked["unrealized_pnl_source"] == "exchange_exact"
     stored = repo._select_one("positions", "upnl-stale-okx")
     assert stored is not None
-    assert stored["unrealized_pnl"] == 10.0
+    assert stored["unrealized_pnl"] == 777.0
 
 
 # ---------- Issue #1174: exact instrument identity for mark-to-market ----------
@@ -577,8 +609,8 @@ class TestMarkExactInstrumentIdentity:
 
         assert marked["spot-pos"]["current_price"] == 65_000.0
         assert marked["perp-pos"]["current_price"] == 64_500.0
-        assert marked["spot-pos"]["unrealized_pnl"] == pytest.approx(1_000.0)
-        assert marked["perp-pos"]["unrealized_pnl"] == pytest.approx(500.0)
+        assert marked["spot-pos"]["unrealized_pnl"] is None
+        assert marked["perp-pos"]["unrealized_pnl"] is None
 
         stored_spot = repo._select_one("positions", "spot-pos")
         stored_perp = repo._select_one("positions", "perp-pos")
@@ -818,10 +850,11 @@ class TestSnapshotConsistency:
         snap = compute_and_store_snapshot(execution_mode="bitget_demo")
 
         stored = repo._select_one("positions", "snapshot-single-mark")
+        assert stored is not None
         assert len(calls) == 1
         assert stored["current_price"] == 110.0
-        assert stored["unrealized_pnl"] == 10.0
-        assert snap.unrealized_pnl == 10.0
+        assert stored["unrealized_pnl"] is None
+        assert snap.unrealized_pnl == 0.0
 
         prices = iter([120.0])
         monkeypatch.setattr(

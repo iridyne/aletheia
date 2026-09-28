@@ -1,1 +1,1 @@
-"""Core source and packaged-runtime identity; operations live in ops.update."""
+"""Core source identity and git facts; operations live in ops.update."""

@@ -46,8 +46,11 @@ fi
 
 log "4/5  Installing the pre-commit cheap gate (scripts/hooks/pre-commit)."
 if [[ -f "$REPO_ROOT/.git/hooks/pre-commit" ]] && ! cmp -s "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"; then
-  warn "An existing .git/hooks/pre-commit differs and was NOT overwritten. Inspect it, then copy manually:"
-  warn "  cp scripts/hooks/pre-commit .git/hooks/pre-commit"
+  warn "An existing .git/hooks/pre-commit differs and was NOT overwritten."
+  warn "  .git/hooks is SHARED by every worktree of this repository, so copying this"
+  warn "  worktree's copy can downgrade the hook for all of them (an older checkout"
+  warn "  carries an older hook). Inspect the difference and copy from the MAIN"
+  warn "  checkout instead: cp <main>/scripts/hooks/pre-commit .git/hooks/pre-commit"
 else
   cp "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"
   chmod +x "$REPO_ROOT/.git/hooks/pre-commit"

@@ -1,3 +1,10 @@
+> Retired 2026-09-28 with the packaged Runtime lane (`native/`, `packaging/`,
+> `scripts/release/` and the packaged update path were removed). This page
+> describes that removed signed-bundle/tray install path and is historical
+> context only: it is not current code, configuration, execution authority or
+> release process. [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)
+> states what is actually admitted at runtime.
+
 # Packaged Runtime Operations
 
 Aletheia's installed product is browser-first. The browser at
@@ -7,7 +14,7 @@ menu-bar/system-tray host and stable CLI dispatcher.
 ## Agent entry point
 
 For the shortest safe path from an exact `master` SHA to an installed macOS dogfood
-Runtime, read the [packaged Runtime dogfood playbook](packaged-runtime-dogfood-playbook.md).
+Runtime, read the [packaged Runtime dogfood playbook](packaged_runtime_dogfood_playbook.md).
 It separates a one-machine private session from the signed owner publication channel and
 states the required acceptance evidence. This document remains the detailed authority for
 the payload, trust root, update transaction, and recovery semantics.
@@ -117,7 +124,7 @@ The icon distinguishes starting, healthy, updating, degraded, and stopped states
 has no embedded WebView and does not duplicate Dashboard settings or trading controls.
 
 For detailed power-profile analysis and optimization options on macOS (especially for the
-“tray as remote control” direction), see [Packaged Runtime Power Optimization](packaged-runtime-power-optimization-report.md).
+“tray as remote control” direction), see [Packaged Runtime Power Optimization](packaged_runtime_power_optimization.md).
 
 ## Signed update transaction
 

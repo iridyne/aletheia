@@ -464,7 +464,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
                 "status=migration_status()\n"
                 "if status.get('current') is not True:\n"
                 "    apply_migrations()\n"
-                "from ops.update.packaged import validate_current_data\n"
+                "from ops.update.smoke import validate_current_data\n"
                 "validated=validate_current_data()\n"
                 "_require(validated.get('ok'), f'data_validation={validated!r}')\n"
                 "from ops.update.smoke import run_smoke_check\n"

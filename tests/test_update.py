@@ -64,7 +64,6 @@ def test_update_verbose_prints_phase_and_total_timings(monkeypatch):
     from aletheia.cli import update_cmd
     from ops.update import continuity
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -629,7 +628,6 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(monkeypatch):
             "continuity": {"comparison": {"main_health_status": "healthy"}},
         }
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(continuity, "apply_update_with_continuity", apply)
 
     result = CliRunner().invoke(update_cmd.update_app, [])
@@ -645,7 +643,6 @@ def test_cli_update_same_source_commit_reports_noop(monkeypatch):
     from ops.update import continuity
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -672,7 +669,6 @@ def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
     from ops.update import continuity
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -701,7 +697,6 @@ def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatc
     from ops.update import continuity
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -729,7 +724,6 @@ def test_cli_update_unproven_continuity_exits_nonzero(monkeypatch):
     from ops.update import continuity
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -761,7 +755,6 @@ def test_cli_update_no_restart_pending_restart_is_not_verified(monkeypatch):
     from ops.update import continuity
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
@@ -785,49 +778,6 @@ def test_cli_update_no_restart_pending_restart_is_not_verified(monkeypatch):
     assert result.exit_code == 0
     assert "Observer continuity is PENDING RESTART" in result.output
     assert "Observer continuity verified" not in result.output
-
-
-def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
-    from aletheia.cli import update_cmd
-    from ops.update import packaged_commands
-    from typer.testing import CliRunner
-
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
-    monkeypatch.setattr(
-        packaged_commands,
-        "stage_update_blocking",
-        lambda: {
-            "accepted": True,
-            "state": {
-                "status": "ready",
-                "phase": "ready_to_switch",
-                "target_release": "0.7.0",
-            },
-        },
-    )
-
-    result = CliRunner().invoke(update_cmd.update_app, [])
-
-    assert result.exit_code == 0
-    assert "Release 0.7.0 is verified and migration-preflighted." in result.output
-
-
-def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
-    from aletheia.cli import update_cmd
-    from ops.update import packaged_commands
-    from typer.testing import CliRunner
-
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
-    monkeypatch.setattr(
-        packaged_commands,
-        "stage_update_blocking",
-        lambda: pytest.fail("packaged update must not start with --no-restart"),
-    )
-
-    result = CliRunner().invoke(update_cmd.update_app, ["--no-restart"])
-
-    assert result.exit_code == 1
-    assert "`--no-restart` is only available for source checkouts" in result.output
 
 
 def test_top_level_update_help_has_no_apply_subcommand():
