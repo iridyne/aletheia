@@ -7,7 +7,7 @@ menu-bar/system-tray host and stable CLI dispatcher.
 ## Agent entry point
 
 For the shortest safe path from an exact `master` SHA to an installed macOS dogfood
-Runtime, read the [packaged Runtime dogfood playbook](deployment/packaged-runtime-dogfood-playbook.md).
+Runtime, read the [packaged Runtime dogfood playbook](packaged-runtime-dogfood-playbook.md).
 It separates a one-machine private session from the signed owner publication channel and
 states the required acceptance evidence. This document remains the detailed authority for
 the payload, trust root, update transaction, and recovery semantics.

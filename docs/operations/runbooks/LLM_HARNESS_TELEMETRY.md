@@ -47,7 +47,9 @@ A missing field is unavailable, not zero. Cache counters are provider-specific
 breakdowns and are not inferred from prompt text or timing.
 
 The same read-only data is available at `GET /api/economics/tokens` and in the
-Dashboard Settings → Economics panel.
+Dashboard Settings → Economics panel. What each recorded field means, and why a
+measurement write cannot implicitly commit trading state, is defined by
+[Runtime Cost Accounting](../../design/subsystems/RUNTIME_COST_ACCOUNTING.md).
 
 ## Token integrity observations
 

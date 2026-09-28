@@ -32,12 +32,12 @@
 
 对应证据：
 
-1. 托盘周期轮询：[native/aletheia-host/src/bin/aletheia-tray.rs:343](../../native/aletheia-host/src/bin/aletheia-tray.rs#L343)、[native/aletheia-host/src/bin/aletheia-tray.rs:399](../../native/aletheia-host/src/bin/aletheia-tray.rs#L399)
-2. 观察函数细节：[native/aletheia-host/src/bin/aletheia-tray.rs:67](../../native/aletheia-host/src/bin/aletheia-tray.rs#L67)
-3. 网关监督 1 秒端口检查：[aletheia/_gateway_runner.py:38](../../core/aletheia/_gateway_runner.py#L38)、[aletheia/_gateway_runner.py:284](../../core/aletheia/_gateway_runner.py#L284)
-4. 前端状态栏查询：[frontend/src/App.tsx:123](../../frontend/src/App.tsx#L123)
-5. SSE 事件长连空转：历史实验路由 `aletheia/server/routes/runtime.py:214`（已退役）、[aletheia/server/routes/operator.py:969](../../core/aletheia/server/routes/operator.py#L969)
-6. C 层落地证据（当时新增）：[frontend/src/App.tsx:117](../../frontend/src/App.tsx#L117)、历史实验路由 `aletheia/server/routes/runtime.py:213`（已退役）、[aletheia/server/routes/operator.py:960](../../core/aletheia/server/routes/operator.py#L960)
+1. 托盘周期轮询：[native/aletheia-host/src/bin/aletheia-tray.rs:343](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L343)、[native/aletheia-host/src/bin/aletheia-tray.rs:399](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L399)
+2. 观察函数细节：[native/aletheia-host/src/bin/aletheia-tray.rs:67](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L67)
+3. 网关监督 1 秒端口检查：[aletheia/_gateway_runner.py:38](../../../core/aletheia/_gateway_runner.py#L38)、[aletheia/_gateway_runner.py:284](../../../core/aletheia/_gateway_runner.py#L284)
+4. 前端状态栏查询：[frontend/src/App.tsx:123](../../../frontend/src/App.tsx#L123)
+5. SSE 事件长连空转：历史实验路由 `aletheia/server/routes/runtime.py:214`（已退役）、[aletheia/server/routes/operator.py:969](../../../core/aletheia/server/routes/operator.py#L969)
+6. C 层落地证据（当时新增）：[frontend/src/App.tsx:117](../../../frontend/src/App.tsx#L117)、历史实验路由 `aletheia/server/routes/runtime.py:213`（已退役）、[aletheia/server/routes/operator.py:960](../../../core/aletheia/server/routes/operator.py#L960)
 
 ## 2. macOS 设计对标后可落地方向
 
@@ -162,5 +162,5 @@
 ## 8. 文档落地说明
 
 1. 主分析文档：本文件。
-2. 托盘行为权责说明：`docs/operations/PACKAGED_RUNTIME.md`。
+2. 托盘行为权责说明：`docs/operations/deployment/PACKAGED_RUNTIME.md`。
 3. 相关执行设计边界：`docs/archive/legacy/plans/packaged_tray_cli_runtime.md`，其中约束了托盘只做进程/生命周期控制，不做交易语义。

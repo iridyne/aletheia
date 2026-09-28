@@ -372,7 +372,9 @@ def test_plan_preserves_browser_only_ui_and_plain_cli():
         / "plans"
         / "packaged_tray_cli_runtime.md"
     ).read_text(encoding="utf-8")
-    operations = (ROOT / "docs" / "operations" / "PACKAGED_RUNTIME.md").read_text(encoding="utf-8")
+    operations = (
+        ROOT / "docs" / "operations" / "deployment" / "PACKAGED_RUNTIME.md"
+    ).read_text(encoding="utf-8")
 
     assert "the only product UI is the dashboard" in plan
     assert "must not require a system Python, `uv`, Node.js" in plan

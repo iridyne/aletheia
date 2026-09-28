@@ -1,7 +1,7 @@
 # Runtime Cost Accounting
 
 Runtime model and tool costs remain independent of trading qualification.
-The former Paper Internal economic viability calculations are [archived](../design/history/local_simulated_viability.md).
+The former Paper Internal economic viability calculations are [archived](../history/local_simulated_viability.md).
 
 ## Runtime facts
 

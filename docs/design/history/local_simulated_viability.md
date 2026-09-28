@@ -8,7 +8,7 @@ remain readable via `audit viability-list`, `audit viability-show` and
 No old verdict qualifies an external exchange account.
 
 The following is the historical V1 definition, not current implementation authority.
-Current runtime cost accounting is documented [separately](../../references/RUNTIME_COST_ACCOUNTING.md).
+Current runtime cost accounting is documented [separately](../subsystems/RUNTIME_COST_ACCOUNTING.md).
 
 # Economic Viability Audit V1
 

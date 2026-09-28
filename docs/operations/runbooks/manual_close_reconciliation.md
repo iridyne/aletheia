@@ -1,7 +1,7 @@
 # Manual Close Reconciliation Runbook
 
 Operator procedure for the human-owned `manual_reconciliation_pending` close
-state, per [execution_contract §10.2.4](../design/contracts/execution_contract.md).
+state, per [execution_contract §10.2.4](../../design/contracts/execution_contract.md).
 Nothing here is automatic: a human investigates the venue and authorizes exactly
 one transition at a time.
 
@@ -124,6 +124,6 @@ was.
 
 ## Reference
 
-- [execution_contract §10.2.4](../design/contracts/execution_contract.md)
-- [`scripts/manual_close_diagnostic.py`](../../scripts/manual_close_diagnostic.py)
-- [`scripts/manual_close_resolver.py`](../../scripts/manual_close_resolver.py)
+- [execution_contract §10.2.4](../../design/contracts/execution_contract.md)
+- [`scripts/manual_close_diagnostic.py`](../../../scripts/manual_close_diagnostic.py)
+- [`scripts/manual_close_resolver.py`](../../../scripts/manual_close_resolver.py)

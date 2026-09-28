@@ -63,6 +63,8 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
 
 Linux source 的人工 `aletheia update` 拉取配置的 `origin/<update.branch>` HEAD；timer
 单独使用 `auto.run` 的稳定 Tag 事务。两条路径都保留 settlement/Observer 门禁及失败恢复。
+Observer continuity 快照、preflight/postflight 证明缺口与失败恢复语义见
+[Observer-aware source update continuity](UPDATE_OBSERVER_CONTINUITY.md)。
 HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
 也不以 master 的 ahead/behind 数量宣称已部署。
 

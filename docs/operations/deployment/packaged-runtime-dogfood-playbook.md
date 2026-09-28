@@ -3,7 +3,7 @@
 Use this runbook when an exact `master` commit must become a macOS Runtime Instance
 without disturbing the user's existing Aletheia state. It is written for an operator or
 later agent that needs to find the release path quickly. Read
-[Packaged Runtime Operations](../PACKAGED_RUNTIME.md) for the complete implementation
+[Packaged Runtime Operations](PACKAGED_RUNTIME.md) for the complete implementation
 and trust-model detail.
 
 ## First principle and boundary
