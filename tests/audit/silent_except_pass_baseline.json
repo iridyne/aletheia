@@ -81,7 +81,7 @@
     },
     {
       "file": "core/aletheia/agents/helpers.py",
-      "line": 532,
+      "line": 544,
       "reason": "oneOf/anyOf variant mismatch is the expected outcome inside the combinator check"
     },
     {
