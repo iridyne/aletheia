@@ -12,8 +12,8 @@
 
 | 项 | 值 | 位置 |
 |----|----|----|
-| 主入口 | `evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult` | `core/aletheia/risk/engine.py:67` |
-| 并发保护 | 全局线程锁 `_eval_lock`,防 kill-switch TOCTOU | `engine.py:30, 70-71` |
+| 主入口 | `evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult` | `core/aletheia/risk/engine.py:790` |
+| 并发保护 | 全局线程锁 `_eval_lock`,防 kill-switch TOCTOU | `engine.py:85` |
 
 **契约**:所有 proposal 必须且仅能通过 `evaluate_proposal` 取得放行;同一时刻只有一个 proposal 在评估(序列化)。
 
@@ -140,7 +140,7 @@ class RiskCheckResult:
     decision_id: str | None          # 持久化的 RiskDecision.id
 ```
 
-**契约**:每次评估**必须**持久化一条 `RiskDecision`(`engine.py:267-277`),无论批准或拒绝——这是因果链 `proposal→risk_decision→order` 的一环([trust §1.1](../../governance/policies/trust_and_change_control.md))。
+**契约**:每次评估**必须**持久化一条 `RiskDecision`(`engine.py:1638-1700`),无论批准或拒绝——这是因果链 `proposal→risk_decision→order` 的一环([trust §1.1](../../governance/policies/trust_and_change_control.md))。
 
 authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome seed 是同一事务中的必需证据；任一 evidence 写入失败必须回滚该 `RiskDecision` 及后续预留，Gateway 不得收到批准结果。preflight 仍是 advisory，不创建该最终 evidence。
 
@@ -160,7 +160,7 @@ authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome s
 |------|------|------|
 | 触发 | 手动 `activate(reason, actor)` 或日损突破自动触发(#8) | `kill_switch.py:21`, `engine.py:159` |
 | 持久化 | `runtime.kill_switch_active=True` → `save_config` 落盘(重启不丢) | `kill_switch.py:25` |
-| 恢复 | 仅 `deactivate(actor="human")`,**actor 硬编码 human,agent 无路径** | `kill_switch.py:39` |
+| 恢复 | 仅 `deactivate(actor="human")`,**actor 默认 "human"，无已注册的 agent 可调用路径** | `kill_switch.py:116` |
 | 审计 | 激活/恢复均写 JSONL | `kill_switch.py:27,45` |
 
 **不变式**:kill switch 是 §2 第 0 关,激活后任何 proposal 必被拒;恢复是不可被 agent 触达的人工操作。历史事故教训：daily-loss kill switch 的 UTC 日期边界不可按本地日期推断。

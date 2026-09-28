@@ -11,8 +11,8 @@
 
 | 项 | 值 | 位置 |
 |----|----|----|
-| 入口 | `submit_proposal(...) -> dict` | `core/aletheia/execution/gateway.py:16` |
-| 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:52` |
+| 入口 | `submit_proposal(...) -> dict` | `core/aletheia/execution/gateway.py:161` |
+| 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:271` |
 
 **开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 
