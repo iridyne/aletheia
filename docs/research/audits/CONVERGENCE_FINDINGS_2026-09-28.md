@@ -141,10 +141,19 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 
 同时补了两条永久回归（过期→一致；新鲜→不产生该建议）。169 项 operator/heartbeat 测试通过。
 
-**方法教训：**把生产改动 stash 后跑新测试只会得到 ImportError，那只证明新符号不存在，
-**不能作为“修复前失败”的证据**。真正有效的前后证据是上面这张表：用只依赖既有 API 的
-一次性脚本，在旧代码上直接观察到两个读面结论不一致。行为修复应尽量留这种可复现的对照，
-而不是只留符号缺失。
+**方法教训（两条，都很贵）：**
+
+1. 把生产改动 stash 后跑新测试只会得到 ImportError，那只证明新符号不存在，
+   **不能作为“修复前失败”的证据**。有效替代：`git checkout <commit>^ -- <file>` 只回退被测
+   调用点，保留 owner，然后断言真实行为。本次用这个方法确认回归守卫在“只回退
+   `build_recommendations` 调用点”时以 `operator-stale` 缺失而失败（而不是因 import 失败）。
+   回归测试应尽量只用既有 API，避免把“符号存在”当成通过条件。
+2. `git stash push <已提交文件>` 不会 stash 任何东西，`pop` 会直接报 “No stash entries found”，
+   而在此之前的那次测试跑的是**修复后的代码**——很容易被误读成“已证明修复前失败”。
+   回退已提交文件请用 `git checkout <rev> -- <path>`（读完记得 `git checkout` 回 Restore）。
+
+**共享判定的副作用：**该 verdict 现在被三个读面共用，因此必须**先复制再标注**；
+否则 `get_latest_heartbeat()` 返回的行会被就地修改，一个调用者的结论会泄漏给下一个。
 
 **相邻但未改：**`analytics/opportunity_flow.py::_opportunity_by_id` 与 `get_opportunity`
 的 SQL 相同，但该模块约 15 个读取点统一用 `_table_exists` 降级、并在缺 schema 时返回
