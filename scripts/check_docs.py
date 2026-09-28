@@ -202,14 +202,10 @@ TOP_LEVEL_DIRS = {
 # Zero known violations as of 2026-09-26 (R20 harvest): all seven historical
 # entries were resolved — pointer fixes for moved files, retirement notes for
 # deleted tests/agents, and successor executable claims for converged specs.
-BASELINE_MISSING_CONTRACT_PATHS: set[str] = {
-    # Deleted with the Market Observer retirement (#2933). The inventory entry
-    # (DC-01) still names it as discovery evidence, and whether that capability
-    # still has a producer is an owner decision, not a docs edit: see
-    # docs/design/proposals/retire_market_observer.md. Remove this entry together
-    # with the DC-01 decision.
-    "extensions/research/market_observer.py",
-}
+# Zero known violations as of 2026-09-28: the inventory's one stale citation
+# (DC-01 naming the retired Observer module) was resolved by stating the
+# capability's current truth instead of citing deleted evidence.
+BASELINE_MISSING_CONTRACT_PATHS: set[str] = set()
 
 
 CODE_PATH_DOCS: tuple[str, ...] = (
