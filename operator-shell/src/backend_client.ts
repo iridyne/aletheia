@@ -34,6 +34,21 @@ import type {
 import { gatewayRequestFailureMessage } from './gateway_errors.js'
 import { applyOperatorServiceHeader } from './service_auth.js'
 
+/**
+ * Non-2xx gateway response. Carries the status so callers can act on documented
+ * outcomes (for example `409` from `/api/agent-runs/start`, which means the run
+ * is already queued) instead of matching on the message text.
+ */
+export class GatewayRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'GatewayRequestError'
+  }
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has('Content-Type')) {
@@ -46,7 +61,10 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     // Keep the synthetic service credential out of diagnostic/error payloads.
-    throw new Error(await gatewayRequestFailureMessage(url, init, response))
+    throw new GatewayRequestError(
+      response.status,
+      await gatewayRequestFailureMessage(url, init, response),
+    )
   }
   return response.json() as Promise<T>
 }

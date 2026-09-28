@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { EventRouter } from '../src/event_router.js'
-import { BackendClient } from '../src/backend_client.js'
+import { BackendClient, GatewayRequestError } from '../src/backend_client.js'
 import { OperatorLoop } from '../src/operator_loop.js'
 import { RecommendationEngine } from '../src/recommendation_engine.js'
 import { RepairEngine } from '../src/repair_engine.js'
@@ -406,13 +406,16 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
         created: true,
       }
     },
+    // `POST /api/agent-runs/start` answers 202 with a durable queued run: the
+    // queue worker owns execution, so no outputs or errors are returned here.
     async startAgentRun(agentName) {
       calls.startedAgents.push(agentName)
       return {
+        job_id: `job-${calls.startedAgents.length}`,
         run_id: `run-${calls.startedAgents.length}`,
-        status: 'completed',
-        outputs: ['dreaming_log:abc123'],
-        errors: [],
+        status: 'queued',
+        trigger_type: 'operator_service',
+        queue: { depth: calls.startedAgents.length },
       }
     },
   }
@@ -5191,6 +5194,95 @@ test('operator loop delegates dreaming tasks to dreaming_agent and closes the ta
   assert.equal(calls.heartbeats[0].mode, 'Dreaming')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
+})
+
+test('operator loop treats an already-queued agent run as the delegation outcome, not a failure', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [],
+    recent_strategy_hypotheses: [],
+    deprecated_memories: [],
+    recent_dreaming_logs: [],
+    recent_dreaming_runs: [],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
+  })
+  // Documented outcome of POST /api/agent-runs/start: 409 agent_already_queued.
+  backend.startAgentRun = async () => {
+    throw new GatewayRequestError(409, 'gateway_request_failed:409:POST /api/agent-runs/start:agent_already_queued')
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
+})
+
+test('operator loop fails the delegation task when the agent-run start request fails', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [],
+    recent_strategy_hypotheses: [],
+    deprecated_memories: [],
+    recent_dreaming_logs: [],
+    recent_dreaming_runs: [],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
+  })
+  backend.startAgentRun = async () => {
+    throw new GatewayRequestError(503, 'gateway_request_failed:503:POST /api/agent-runs/start:agent_job_queue_full')
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.runOnce()
+
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'failed')
+  assert.match(String(calls.updatedTasks[0].payload.output_data.agent_name), /dreaming_agent/)
+  assert.ok(
+    !calls.createdEvents.some(event => event.event_type === 'dreaming_completed'),
+    'a failed start must not report the delegation as completed',
+  )
 })
 
 test('operator loop delegates review tasks to post_trade_reviewer and closes the task', async () => {
@@ -5240,6 +5332,7 @@ test('operator loop delegates review tasks to post_trade_reviewer and closes the
   assert.ok(eventTypes.includes('review_completed'))
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
 })
 
 test('operator loop delegates risk critique tasks to risk_critic and closes the task', async () => {
@@ -5292,6 +5385,7 @@ test('operator loop delegates risk critique tasks to risk_critic and closes the 
   assert.equal(calls.heartbeats[0].mode, 'Reviewing')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
 })
 
 test('operator loop delegates portfolio snapshot refresh tasks to portfolio_agent and closes the task', async () => {
@@ -5340,6 +5434,7 @@ test('operator loop delegates portfolio snapshot refresh tasks to portfolio_agen
   assert.equal(calls.heartbeats[0].mode, 'Reviewing')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
 })
 
 test('operator loop materializes and executes low-risk repair decisions through typed operator commands', async () => {
