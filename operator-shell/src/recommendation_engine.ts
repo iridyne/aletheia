@@ -119,7 +119,6 @@ export class RecommendationEngine {
   private currentScheduleFor(agentName: string): string | null {
     const schedules: Record<string, string> = {
       market_data: 'every 5 minutes',
-      market_observer: 'every 15 minutes',
       paper_trader: 'every 15 minutes',
       position_manager: 'every 5 minutes',
       exchange_sync: 'every 5 minutes',
@@ -481,42 +480,6 @@ export class RecommendationEngine {
           },
         })
       }
-    }
-
-    const marketObserverRuns = (recentAgentRuns || []).filter(
-      run => run.agent_name === 'market_observer',
-    )
-    const latestMarketObserverRun = marketObserverRuns
-      .slice()
-      .sort(
-        (left, right) =>
-          Date.parse(right.ended_at || right.started_at) - Date.parse(left.ended_at || left.started_at),
-      )[0]
-    const marketObserverAgeMinutes = latestMarketObserverRun
-      ? this.runAgeMinutes(latestMarketObserverRun)
-      : null
-    const marketScanRefreshDue =
-      !snapshot.status.paused &&
-      (latestMarketObserverRun == null ||
-        (marketObserverAgeMinutes !== null && marketObserverAgeMinutes >= 45))
-    if (marketScanRefreshDue) {
-      recommendations.push({
-        id: 'market-scan-refresh-due',
-        kind: 'market_scan_refresh_due',
-        severity: 'medium',
-        summary:
-          latestMarketObserverRun == null
-            ? 'Market observer has no recent activity. Refresh market scan to repopulate opportunities.'
-            : `Latest market observer activity is about ${Math.floor(marketObserverAgeMinutes || 0)} minutes old. Refresh market scan to repopulate opportunities.`,
-        taskType: 'run_market_scan',
-        metadata: {
-          task_type: 'run_market_scan',
-          last_run_id: latestMarketObserverRun?.id || null,
-          last_run_status: latestMarketObserverRun?.status || null,
-          stale_minutes:
-            marketObserverAgeMinutes === null ? null : Math.floor(marketObserverAgeMinutes),
-        },
-      })
     }
 
     const latestPortfolioSnapshot = (portfolioHistory || [])
@@ -1063,7 +1026,7 @@ export class RecommendationEngine {
             .map(row => typeof row.id === 'string' ? row.id : null)
             .filter((id): id is string => id !== null)
             .sort(),
-          goal: 'Analyze recent risk rejections to identify patterns in low-quality opportunities. Determine if market_observer parameters need adjustment.',
+          goal: 'Analyze recent risk rejections to identify patterns in low-quality opportunities and the filters that admitted them.',
         },
       })
     }

@@ -119,7 +119,6 @@ export class OperatorLoop {
 
   private isTradingTaskType(taskType: string | undefined): boolean {
     return (
-      taskType === 'run_market_scan' ||
       taskType === 'rerun_failed_agent_task' ||
       taskType === 'set_symbol_observe_only'
     )
@@ -512,7 +511,6 @@ export class OperatorLoop {
       return 'AllowEditing'
     }
     if (
-      taskType === 'run_market_scan' ||
       taskType === 'rerun_failed_agent_task' ||
       taskType === 'set_symbol_observe_only'
     ) {
@@ -574,17 +572,6 @@ export class OperatorLoop {
       .filter(item => item.kind !== 'daily_review_refresh_due')
       .slice(0, 3)
       .map(item => `- [${item.severity}] ${item.summary}`)
-    const latestMarketObserverRun = params.recentAgentRuns
-      .filter(run => run.agent_name === 'market_observer')
-      .slice()
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.ended_at || left.started_at)
-        const rightTime = Date.parse(right.ended_at || right.started_at)
-        return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime)
-      })[0]
-    const marketObserverLine = latestMarketObserverRun
-      ? `- Latest market observer run: ${latestMarketObserverRun.status} at ${latestMarketObserverRun.ended_at || latestMarketObserverRun.started_at}`
-      : '- Latest market observer run: none recorded'
     const healthIssues =
       params.snapshot.health.issues.length > 0
         ? params.snapshot.health.issues.map(issue => `- ${issue}`)
@@ -600,7 +587,6 @@ export class OperatorLoop {
       ...healthIssues,
       '',
       '## Market And Agent Activity',
-      marketObserverLine,
       `- Recent agent runs (12h): ${params.recentAgentRuns.filter(run => {
         const ageMinutes = runAgeMinutes(run)
         return ageMinutes !== null && ageMinutes <= 12 * 60
@@ -787,13 +773,6 @@ export class OperatorLoop {
     const relevantIssues = params.snapshot.health.issues.filter(issue =>
       issue.startsWith('market_data_stale:'),
     )
-    const marketObserverRuns = params.recentAgentRuns
-      .filter(run => run.agent_name === 'market_observer')
-      .sort(
-        (left, right) =>
-          Date.parse(right.ended_at || right.started_at) - Date.parse(left.ended_at || left.started_at),
-      )
-    const latestMarketObserverRun = marketObserverRuns[0] || null
 
     return [
       `# Data Source Health Diagnostic Report ${new Date().toISOString().slice(0, 10)}`,
@@ -802,11 +781,6 @@ export class OperatorLoop {
       ...(relevantIssues.length > 0
         ? relevantIssues.map(issue => `- ${issue}`)
         : ['- no data-source health issues recorded']),
-      '',
-      '## Market Observer Coverage',
-      latestMarketObserverRun
-        ? `- Latest market_observer run: ${latestMarketObserverRun.status} @ ${latestMarketObserverRun.ended_at || latestMarketObserverRun.started_at}`
-        : '- Latest market_observer run: none recorded',
     ].join('\n')
   }
 
@@ -1204,8 +1178,7 @@ export class OperatorLoop {
     const activeTask = this.taskRuntime.getActiveTask()
     if (
       !activeTask ||
-      (activeTask.taskType !== 'run_market_scan' &&
-        activeTask.taskType !== 'rerun_failed_agent_task' &&
+      (activeTask.taskType !== 'rerun_failed_agent_task' &&
         activeTask.taskType !== 'set_symbol_observe_only')
     ) {
       return false
@@ -1465,197 +1438,7 @@ export class OperatorLoop {
       return true
     }
 
-    const sessionId = `market-scan-${activeTask.taskId}`
-    const parentSessionId = this.currentRunParentSessionId()
-    await this.backendClient.createSession({
-      id: sessionId,
-      user_input: 'Refresh market scan because recent market observer activity is stale.',
-      kind: 'command_session',
-      parent_session_id: parentSessionId,
-      title: 'Market Scan Refresh',
-    })
-    this.sessionRuntime.rememberBranch({
-      id: sessionId,
-      kind: 'command_session',
-      title: 'Market Scan Refresh',
-      parent_session_id: parentSessionId,
-      summary: null,
-    })
-    await this.attachSessionContext(sessionId)
-    await this.backendClient.createMessage({
-      session_id: sessionId,
-      role: 'assistant',
-      message_type: 'command',
-      related_event_id: null,
-      content: {
-        text: 'Refreshing market scan because recent market observer activity is stale.',
-        task_id: activeTask.taskId,
-      },
-    })
-
-    const execution = await this.backendClient.executeOperatorCommand('run_market_scan', {
-      session_id: sessionId,
-      user_input: 'Refresh market scan because recent market observer activity is stale.',
-      parameters: {},
-    })
-
-    await this.backendClient.createMessage({
-      session_id: sessionId,
-      role: 'assistant',
-      message_type: 'response',
-      related_event_id: null,
-      content: {
-        text: execution.response,
-        command: 'run_market_scan',
-        permitted: execution.permitted,
-        result: execution.result,
-      },
-    })
-
-    if (!execution.permitted) {
-      await this.backendClient.createEvent({
-        event_type: 'market_scan_refresh_failed',
-        severity: 'high',
-        source: 'operator_loop',
-        session_id: sessionId,
-        task_id: activeTask.taskId,
-        related_entity_type: 'command',
-        related_entity_id: 'run_market_scan',
-        payload: {
-          response: execution.response,
-          result: execution.result,
-        },
-      })
-      await this.taskRuntime.failActiveTask(execution.response, {
-        command: 'run_market_scan',
-      })
-      return true
-    }
-
-    const run =
-      execution.result &&
-      typeof execution.result === 'object' &&
-      !Array.isArray(execution.result) &&
-      typeof execution.result.run === 'object' &&
-      execution.result.run !== null
-        ? (execution.result.run as Record<string, unknown>)
-        : null
-
-    // Authoritative post-action verification: command acceptance alone does not
-    // prove the Market Observer condition was resolved — only a fresh read can.
-    let freshAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
-    try {
-      freshAgentRuns = await this.backendClient.getAgentRuns()
-    } catch {
-      await this.backendClient.createEvent({
-        event_type: 'market_scan_refresh_failed',
-        severity: 'high',
-        source: 'operator_loop',
-        session_id: sessionId,
-        task_id: activeTask.taskId,
-        related_entity_type: 'command',
-        related_entity_id: 'run_market_scan',
-        payload: {
-          response: execution.response,
-          result: execution.result,
-          verification: 'unavailable',
-        },
-      })
-      await this.taskRuntime.failActiveTask(
-        'Market scan command was accepted but authoritative Market Observer state could not be read for verification.',
-        { command: 'run_market_scan', verification: 'unavailable' },
-      )
-      this.sessionRuntime.rememberBranch({
-        id: sessionId,
-        kind: 'command_session',
-        title: 'Market Scan Refresh',
-        parent_session_id: parentSessionId,
-        summary: execution.response,
-      })
-      return true
-    }
-
-    const freshObserverRun = freshAgentRuns
-      .filter(agentRun => agentRun.agent_name === 'market_observer')
-      .sort(
-        (a, b) =>
-          Date.parse(b.ended_at || b.started_at) -
-          Date.parse(a.ended_at || a.started_at),
-      )[0]
-    const freshAgeMs =
-      freshObserverRun !== undefined
-        ? Date.now() - Date.parse(freshObserverRun.ended_at || freshObserverRun.started_at)
-        : null
-    const verificationResolved =
-      freshObserverRun !== undefined &&
-      freshAgeMs !== null &&
-      !Number.isNaN(freshAgeMs) &&
-      freshAgeMs < 45 * 60_000
-
-    if (!verificationResolved) {
-      await this.backendClient.createEvent({
-        event_type: 'market_scan_refresh_failed',
-        severity: 'medium',
-        source: 'operator_loop',
-        session_id: sessionId,
-        task_id: activeTask.taskId,
-        related_entity_type: 'command',
-        related_entity_id: 'run_market_scan',
-        payload: {
-          response: execution.response,
-          result: execution.result,
-          verification: 'unresolved',
-          fresh_run_id: freshObserverRun?.id || null,
-          fresh_age_minutes:
-            freshAgeMs !== null && !Number.isNaN(freshAgeMs)
-              ? Math.floor(freshAgeMs / 60_000)
-              : null,
-        },
-      })
-      await this.taskRuntime.failActiveTask(
-        'Market scan command was accepted but Market Observer state remains stale after verification.',
-        { command: 'run_market_scan', verification: 'unresolved' },
-      )
-      this.sessionRuntime.rememberBranch({
-        id: sessionId,
-        kind: 'command_session',
-        title: 'Market Scan Refresh',
-        parent_session_id: parentSessionId,
-        summary: execution.response,
-      })
-      return true
-    }
-
-    await this.backendClient.createEvent({
-      event_type: 'market_scan_refreshed',
-      severity: 'info',
-      source: 'operator_loop',
-      session_id: sessionId,
-      task_id: activeTask.taskId,
-      related_entity_type: 'command',
-      related_entity_id: 'run_market_scan',
-      payload: {
-        response: execution.response,
-        result: execution.result,
-        verification: 'resolved',
-        verified_run_id: freshObserverRun.id,
-      },
-    })
-    await this.taskRuntime.completeActiveTask({
-      summary: execution.response,
-      run_id: typeof run?.run_id === 'string' ? run.run_id : null,
-      run_status: typeof run?.status === 'string' ? run.status : null,
-      verification: 'resolved',
-      verified_run_id: freshObserverRun.id,
-    })
-    this.sessionRuntime.rememberBranch({
-      id: sessionId,
-      kind: 'command_session',
-      title: 'Market Scan Refresh',
-      parent_session_id: parentSessionId,
-      summary: execution.response,
-    })
-    return true
+    return false
   }
 
   private async maybeRefreshReportTask(params: {
