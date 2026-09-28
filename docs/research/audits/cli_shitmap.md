@@ -33,9 +33,11 @@ proof of defects. Both installed entry points were exercised for the changed pat
 - After repair: `uv run --no-sync aletheia network test` and
   `uv run --no-sync ato network test` against a temporary configuration and
   bound non-listening localhost socket both returned exit 1 and `Reachable: no`.
-- `uv run --no-sync python scripts/dev_check.py`: PASS; focused
+- `uv run python scripts/ci/dev_check.py --base origin/master`: PASS; focused
   `tests/test_network_cli.py`: 7 passed. The regression exercises the real probe
-  rather than substituting its failure result.
+  rather than substituting its failure result. The audit ran the same gate at the
+  path current on its own base (`scripts/dev_check.py`); the scripts regroup
+  moved it to `scripts/ci/`, and the command above is the one re-run on this head.
 - Runtime/data isolation: temporary data root; no shared Gateway, live account,
   credentials, deployment or qualification state was changed.
 
