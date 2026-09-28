@@ -624,7 +624,7 @@ def batch_funding_rates(symbols: list[str], exchange: str) -> dict[str, dict]:
         (*symbols, exchange),
     ).fetchall()
     from aletheia.data.derivatives_facts import project_runtime_snapshot
-    return {row['symbol']: row for r in rows if (row := project_runtime_snapshot(dict(r), 'funding')) is not None}
+    return {str(row['symbol']): row for r in rows if (row := project_runtime_snapshot(dict(r), 'funding')) is not None}
 
 def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
     """Return the newest exact-exchange OI row for each requested symbol."""
@@ -649,7 +649,7 @@ def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
         .fetchall()
     )
     from aletheia.data.derivatives_facts import project_runtime_snapshot
-    return {row['symbol']: row for r in rows if (row := project_runtime_snapshot(dict(r), 'open_interest')) is not None}
+    return {str(row['symbol']): row for r in rows if (row := project_runtime_snapshot(dict(r), 'open_interest')) is not None}
 
 
 def insert_onchain_snapshot(data: dict) -> None:

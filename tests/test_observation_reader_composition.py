@@ -1,6 +1,6 @@
 """Optional Lab must never grant writes/deletion by disappearing."""
 
-from tests.fixtures.repo_test_helpers import insert_filter_shadow_evaluation, insert_filter_shadow_experiment, update_filter_shadow_experiment
+from tests.helpers.repo_test_helpers import insert_filter_shadow_evaluation, insert_filter_shadow_experiment, update_filter_shadow_experiment
 
 from contextlib import contextmanager
 

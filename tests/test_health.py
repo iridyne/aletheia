@@ -4,7 +4,7 @@ Health is computed from REAL backend data. Alerts fire only on transition into a
 unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 """
 
-from tests.fixtures.repo_test_helpers import insert_agent_run
+from tests.helpers.repo_test_helpers import insert_agent_run
 
 import sqlite3
 

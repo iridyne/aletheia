@@ -5,7 +5,7 @@ account_mode_match, strategy_lifecycle_state (live), max_leverage (futures),
 max_single_trade_risk (live, stop-based), and bounded external Demo trades.
 """
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import sqlite3
 from datetime import datetime, timedelta, timezone

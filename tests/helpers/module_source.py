@@ -1,6 +1,6 @@
 """Source of a module *including* the modules it re-exports from.
 
-Seam modules ([`ARCHITECTURE.md#module-seams`](../docs/design/architecture/ARCHITECTURE.md))
+Seam modules ([`ARCHITECTURE.md#module-seams`](../../docs/design/architecture/ARCHITECTURE.md))
 split a facade's source across sibling files that the facade re-exports with
 ``from <package>.<leaf> import *``. A spec that asserts "the source of
 ``<module>`` contains X" then silently stops checking the moment X moves into a

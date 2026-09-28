@@ -4,7 +4,7 @@ The shared ancestry/closure/read-cohort and consumer code is never mocked.
 Account/fill/funding transport qualification remains owned by its existing suites.
 """
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
 import json
 from tests.helpers.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback

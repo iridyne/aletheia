@@ -9,7 +9,7 @@ Covers:
 - P2-2: auto-deposit uses available_usdt not equity_usdt
 """
 
-from tests.fixtures.repo_test_helpers import list_capital_events
+from tests.helpers.repo_test_helpers import list_capital_events
 
 import json
 from datetime import datetime, timezone, timedelta

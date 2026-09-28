@@ -1,6 +1,6 @@
 """Optional research feedback cannot own Core closure or delivery state."""
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
 from pathlib import Path
 import subprocess

@@ -27,10 +27,10 @@ for the marker table, the slow-test loop, and the xdist boundaries.
 |---|---|
 | `specs/` | Executable contract claims (`spec_*.py`, its own `python_files` pattern) collected as `tier_spec` and matched against the conformance matrix |
 | `audit/` | Structural gates run as their own changed-file step, regardless of tier; a gate must not force `tier_unit` against the classifier |
-| `helpers/` | Shared test infrastructure — fixtures, seeds, seams, fakes — imported as `tests.helpers.<module>`. Not collected: no module here is named `test_*` |
+| `helpers/` | Shared test code — fixtures, seeds, repository builders, seams, fakes — imported as `tests.helpers.<module>`. Not collected: no module here is named `test_*` |
 | `e2e/` | End-to-end pipeline over the real request path |
 | `uta/`, `filter_eval/`, `simulation/` | Subsystem suites with their own layout and fixtures |
-| `fixtures/` | Data fixtures (JSON/SQLite goldens) and repository fixture builders |
+| `fixtures/` | Data fixtures only: JSON/SQLite goldens with frozen provenance. Shared Python helpers go in `helpers/`, never here |
 
 ## Find the test for a task
 

@@ -1,5 +1,5 @@
 """Public-source replay, single-writer ownership and legacy-consumer isolation."""
-from tests.fixtures.repo_test_helpers import batch_funding_rates, batch_open_interest
+from tests.helpers.repo_test_helpers import batch_funding_rates, batch_open_interest
 
 import asyncio
 from datetime import datetime, timedelta, timezone

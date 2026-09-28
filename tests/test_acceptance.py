@@ -4,7 +4,7 @@ The old implementation-guide checklist is archived; these tests cover current
 storage, read models, review coverage, permissions and runtime interfaces.
 """
 
-from tests.fixtures.repo_test_helpers import insert_strategy
+from tests.helpers.repo_test_helpers import insert_strategy
 
 import json
 import asyncio

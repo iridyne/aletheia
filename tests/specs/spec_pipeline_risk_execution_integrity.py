@@ -6,7 +6,7 @@ exchange network.
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
 from tests.helpers.position_fixture import force_update_position
 

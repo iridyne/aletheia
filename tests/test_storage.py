@@ -1,6 +1,6 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
-from tests.fixtures.repo_test_helpers import insert_agent_run
+from tests.helpers.repo_test_helpers import insert_agent_run
 
 import json
 import sqlite3

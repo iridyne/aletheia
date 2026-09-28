@@ -5,7 +5,7 @@ risk_decisions, orders, fills, positions, knowledge_items). Only high-volume
 telemetry is pruned. JSONL rotates at a size cap without losing content.
 """
 
-from tests.fixtures.repo_test_helpers import prune_universe_members
+from tests.helpers.repo_test_helpers import prune_universe_members
 
 import sqlite3
 from datetime import datetime, timezone, timedelta

@@ -14,7 +14,7 @@ Routing under test — `bitget_demo`:
       → coordinator.close_position()       # claims, submits, materializes
 """
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
 from datetime import datetime, timedelta, timezone
 

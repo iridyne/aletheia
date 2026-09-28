@@ -49,7 +49,7 @@ breakdowns and are not inferred from prompt text or timing.
 The same read-only data is available at `GET /api/economics/tokens` and in the
 Dashboard Settings → Economics panel. What each recorded field means, and why a
 measurement write cannot implicitly commit trading state, is defined by
-[Runtime Cost Accounting](../../design/subsystems/RUNTIME_COST_ACCOUNTING.md).
+[Runtime Cost Accounting](../../design/data/RUNTIME_COST_ACCOUNTING.md).
 
 ## Token integrity observations
 

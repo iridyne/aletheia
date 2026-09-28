@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import update_opportunity
+from tests.helpers.repo_test_helpers import update_opportunity
 
 from tests.helpers.position_fixture import force_update_position
 

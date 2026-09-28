@@ -1,6 +1,6 @@
 """Tests for universe API routes."""
 
-from tests.fixtures.repo_test_helpers import insert_universe_asset, insert_universe_policy
+from tests.helpers.repo_test_helpers import insert_universe_asset, insert_universe_policy
 
 import json
 from datetime import datetime, timezone, timedelta

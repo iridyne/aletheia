@@ -5,7 +5,7 @@ private-fill reconciliation, and exchange_order_id, plus gateway routing for a
 fully-approved live proposal while live-disabled remains blocked.
 """
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import sqlite3
 
