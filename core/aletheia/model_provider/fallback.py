@@ -561,6 +561,9 @@ metadata={
         attempted.append(md)
         cand_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
         candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else clone_provider_with_model(cand_provider, md)
+        if pn != resolved_provider_name or md != str(getattr(provider, "model", "") or ""):
+            observations = _observe_would_block(cfg, request, candidate, pn)
+            _enforce_budget_if_configured(cfg, observations)
         try:
             response = await brokered_complete(
                 pn,
