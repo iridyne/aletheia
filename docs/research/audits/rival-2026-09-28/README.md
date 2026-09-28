@@ -5,6 +5,8 @@
 > **所有竞品仓库在本次分析前已 fetch + ff-only 到最新**（OpenAlice 补 1946 commit、Vibe-Trading 1278、tickflow-stock-panel 948、R20 55、nofx 7）
 > 数字全部本机实测，命令口径记录在各分域文档
 
+> **后续全局复核（2026-09-28 22:45 +0800）**：上方基线与下文竞品结论属于原始快照。当前项目收敛方向、已合并事实、在途修复与历史误判更正，见 [全项目收敛与最小盈利循环](project_convergence_direction.md)。#2899 已关闭；“按族度量完全不可用”与混合模拟/外部成交样本的盈利推断不能继续沿用。
+
 ## 本报告的分域文档
 
 | # | 文档 | 回答什么 |
@@ -19,6 +21,7 @@
 | 08 | [前后端剥离](08_frontend_backend_split.md) | 前端重写前哪些后端修复可先做 |
 | **16** | **[alpha 机制对比（主线）](16_alpha_mechanism_comparison.md)** | **我们 vs R20 的 alpha 机制异同、可借鉴项** |
 | — | [证据附录](99_evidence_index.md) | 六仓原始证据清单索引 + 本次未验证项 |
+| — | [全项目收敛与最小盈利循环](project_convergence_direction.md) | 当前提交/PR 证据、历史判断更正、三条下一步工作线及完成尺度 |
 | — | [专项分析状态与剩余范围](analysis_status.md) | 覆盖深度、已确认根因、待审模块和历史 brief 状态 |
 | — | [首批修复 issue 正文快照](issue_bodies/README.md) | 八项独立可领取的 GitHub issue：背景、修复边界、验收与合并要求 |
 | — | [Core analytics/economics 分析与修复方案](core_analytics_economics_review_plan.md) | 完整窗口汇总、schema 初始化、scorecard 证据与健康契约 |

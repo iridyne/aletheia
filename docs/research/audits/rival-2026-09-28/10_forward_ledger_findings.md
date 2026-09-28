@@ -1,5 +1,7 @@
 # 10 · 前瞻账本直读：真实失血点在信号，不在执行
 
+> **解释边界补充（2026-09-28 后续复核）**：本报告的回溯数据可用于提出假设，不构成当前 Bitget Demo 已无/已有 alpha 的最终证明。混合 paper_internal 的成交统计不得用于当前 Demo 的胜率或收益上界；按族/horizon 的平均值也不自动获得停用族或改变准入的权限，仍须核对独立单元、版本与前瞻证据。当前整体方向见 [全项目收敛与最小盈利循环](project_convergence_direction.md)。
+
 > 日期：2026-09-28
 > 数据源：**Fedora 只读 SQLite 直读** `ssh fedora` → `~/.aletheia/app.db`（3.0 GB），`file:...?mode=ro` URI
 > 工具：`~/aletheia/.venv/bin/python`（Fedora 上无 `sqlite3` CLI）

@@ -1,5 +1,7 @@
 # 06 · 执行链缺口研究报告
 
+> **历史结论更正提示（2026-09-28 后续复核）**：本文保留原始小样本研究。后续 [#3621 更正](https://github.com/iridyne/aletheia/issues/3621#issuecomment-5864551306) 证明扩展的 446 笔中 94% 是归档 paper_internal，不能代表当前 Demo；“去掉止损亏损即可盈利”已撤回。实际 Fill 已含滑点，新增诊断滑点不得重复从净 PnL 扣除。原生 TPSL 已有配置/capability gate，不能仅凭空挂单 ID 判为完全未实现。本文的损耗外推、优先级及自动启用建议不得直接执行；当前判断见 [全项目收敛与最小盈利循环](project_convergence_direction.md)。
+
 > 研究日期：2026-09-28
 > 运行态基线：Fedora gateway `http://10.2.2.66:8787`（只读 GET），`execution_mode = bitget_demo`
 > 代码基线：`master@6525cee5a`（worktree 实测 HEAD `5426e5222`）

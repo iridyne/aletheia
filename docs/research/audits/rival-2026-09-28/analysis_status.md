@@ -1,6 +1,8 @@
 # 专项分析状态与剩余范围
 
-更新：2026-09-28。本轮源码基线 `0318e5efc6bca6ac5be3393c68fcd90cc5195d70`。本页替代“已 review / 从未 review”二分法：结构扫描、调用链审查、行为验证、方案、实现分别记录。用户已要求主 Agent 独立 review，产出完整修复方案；没有外派安排，没有创建新 issue，也没有实施修复。
+初次快照：2026-09-28，源码基线 `0318e5efc6bca6ac5be3393c68fcd90cc5195d70`。本页替代“已 review / 从未 review”二分法：结构扫描、调用链审查、行为验证、方案、实现分别记录。该轮由主 Agent 独立 review，当时未创建 issue 或实施修复。
+
+**后续推进补充（同日 22:45 +0800）**：Owner 后续要求编写可由新 Agent 领取并修复到合并的 issue body，已新增三条、完善五条，见 [发布快照](issue_bodies/README.md)。截至本次 GitHub 核对，其中六项已有开放 PR，详见 [全局判断](project_convergence_direction.md)；开放不等于已合并。本会话未派发 Agent，也未实施业务修复。后续状态以 GitHub 为准。
 
 ## 已落地分析
 
@@ -28,7 +30,7 @@
 | CLI 完整方案 | 现有报告已有局部修法，但格式和实施闭环尚未统一 | 按实际根因补充改动边界、实施顺序和完整验收；复用原证据 |
 | 已审过模块的部分覆盖 | universe/trading/execution/agent_shell/agent_runtime/portfolio/storage 等此前多为局部 review | 需要时明确文件/路径粒度补盲，不能把旧局部审查称为模块全部完成 |
 
-下一轮建议先完成 CLI 方案整理，再扫 agents/files/maintenance/backup 与小模块；Learning 和 Admission 旧 gap 分别核验，不与普通清理混成一次政策变更。Risk 不纳入改动范围。
+上表保留尚未分析范围。**下一步优先级已由后续全局复核更新**：先推进已知高影响修复、运行持续性与当前主线经济证据；暂缓扩大目录扫描。Learning / Admission 旧 gap 按需要单独核验，不与普通清理混成政策变更；Risk 不纳入本轮改动范围。依据见 [全局判断与证据](project_convergence_direction.md)。
 
 ## 历史文档的使用边界
 
