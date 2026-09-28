@@ -169,6 +169,71 @@ def validated_funding_economics(
     return None, "unavailable"
 
 
+def cost_complete_expected_pnl(row: dict) -> tuple[float | None, str]:
+    """Compute the cost-complete expected PnL for one Position row.
+
+    Single owner of the arithmetic shared by closure assessment and portfolio
+    accounting: direction-aware gross minus entry/exit fee and validated funding.
+    Returns ``(expected, "")`` or ``(None, reason)``. Callers keep their own
+    gates: closure eligibility, market-type restriction and reconciliation of a
+    persisted value are decisions *about* this number, not part of computing it.
+    """
+    entry = _to_float(row.get("entry_price"))
+    exit_price = _to_float(
+        row.get("current_price")
+        if row.get("current_price") is not None
+        else row.get("exit_price")
+    )
+    quantity = _to_float(row.get("quantity"))
+    entry_fee = _to_float(row.get("entry_fee"))
+    exit_fee = _to_float(row.get("exit_fee"))
+    if (
+        entry is None
+        or exit_price is None
+        or quantity is None
+        or entry_fee is None
+        or exit_fee is None
+        or entry <= 0
+        or exit_price <= 0
+        or quantity <= 0
+        or entry_fee < 0
+        or exit_fee < 0
+    ):
+        return None, "incomplete_realized_economics"
+
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=_normalize(row.get("market_type")),
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is None:
+        return None, "incomplete_funding_economics"
+
+    direction = _normalize(row.get("direction"))
+    if direction in {"long", "buy"}:
+        gross = (exit_price - entry) * quantity
+    elif direction in {"short", "sell"}:
+        gross = (entry - exit_price) * quantity
+    else:
+        return None, "incomplete_realized_economics"
+    expected = gross - entry_fee - exit_fee - funding_cost
+    if not math.isfinite(expected):
+        return None, "incomplete_realized_economics"
+    return expected, ""
+
+
+def reconciles_persisted_pnl(row: dict, expected: float) -> float | None:
+    """Return the persisted realized PnL when it matches ``expected``; else None."""
+    pnl = _to_float(row.get("realized_pnl"))
+    entry = _to_float(row.get("entry_price"))
+    quantity = _to_float(row.get("quantity"))
+    if pnl is None or entry is None or quantity is None:
+        return None
+    tolerance = max(1e-8, abs(expected) * 1e-8, entry * quantity * 1e-10)
+    return pnl if abs(pnl - expected) <= tolerance else None
+
+
 def outcome_write_eligibility(
     row: dict[str, Any], *, exit_fill_verified: bool
 ) -> tuple[bool, str]:
@@ -391,63 +456,24 @@ def assess_position_closure(
     if not key:
         return _assessment_from_closure(closure, reason="missing_outcome_identity")
     pnl = _to_float(row.get("realized_pnl"))
+    if pnl is None:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+    if _normalize(row.get("market_type")) not in {"spot", "usdt_futures"}:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+    expected_pnl, economics_reason = cost_complete_expected_pnl(row)
+    if expected_pnl is None:
+        return _assessment_from_closure(closure, reason=economics_reason)
+    if reconciles_persisted_pnl(row, expected_pnl) is None:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+    # Proven positive by cost_complete_expected_pnl above; re-read for the ratio.
     entry = _to_float(row.get("entry_price"))
-    exit_price = _to_float(
-        row.get("current_price")
-        if row.get("current_price") is not None
-        else row.get("exit_price")
-    )
     quantity = _to_float(row.get("quantity"))
-    entry_fee = _to_float(row.get("entry_fee"))
-    exit_fee = _to_float(row.get("exit_fee"))
-    if (
-        pnl is None
-        or entry is None
-        or exit_price is None
-        or quantity is None
-        or entry_fee is None
-        or exit_fee is None
-        or entry <= 0
-        or exit_price <= 0
-        or quantity <= 0
-        or entry_fee < 0
-        or exit_fee < 0
-    ):
-        return _assessment_from_closure(
-            closure, reason="incomplete_realized_economics"
-        )
-
-    market_type = _normalize(row.get("market_type"))
-    if market_type not in {"spot", "usdt_futures"}:
-        return _assessment_from_closure(
-            closure, reason="incomplete_realized_economics"
-        )
-    funding_cost, _funding_source = validated_funding_economics(
-        market_type=market_type,
-        execution_mode=row.get("execution_mode"),
-        funding_cost=row.get("funding_cost"),
-        funding_source=row.get("funding_source"),
-    )
-    if funding_cost is None:
-        return _assessment_from_closure(
-            closure, reason="incomplete_funding_economics"
-        )
-
-    direction = _normalize(row.get("direction"))
-    if direction in {"long", "buy"}:
-        gross = (exit_price - entry) * quantity
-    elif direction in {"short", "sell"}:
-        gross = (entry - exit_price) * quantity
-    else:
-        return _assessment_from_closure(
-            closure, reason="incomplete_realized_economics"
-        )
-    expected_pnl = gross - entry_fee - exit_fee - funding_cost
-    tolerance = max(1e-8, abs(expected_pnl) * 1e-8, entry * quantity * 1e-10)
-    if abs(pnl - expected_pnl) > tolerance:
-        return _assessment_from_closure(
-            closure, reason="incomplete_realized_economics"
-        )
 
     has_attribution_ids = all(
         str(row.get(field) or "").strip()

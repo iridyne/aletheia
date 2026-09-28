@@ -1197,58 +1197,23 @@ def _finite_number(value) -> float | None:
 
 def calculated_realized_pnl(row: dict) -> float | None:
     """One cost-complete calculation for initial close, recovery and verification."""
-    entry = _finite_number(row.get("entry_price"))
-    exit_price = _finite_number(
-        row.get("current_price") if row.get("current_price") is not None else row.get("exit_price")
-    )
-    quantity = _finite_number(row.get("quantity"))
-    entry_fee = _finite_number(row.get("entry_fee"))
-    exit_fee = _finite_number(row.get("exit_fee"))
-    if (
-        entry is None
-        or exit_price is None
-        or quantity is None
-        or entry_fee is None
-        or exit_fee is None
-        or entry <= 0
-        or exit_price <= 0
-        or quantity <= 0
-        or entry_fee < 0
-        or exit_fee < 0
-    ):
-        return None
+    from aletheia.analytics.outcome_integrity import cost_complete_expected_pnl
 
-    market_type = str(row.get("market_type") or "").lower()
-    funding_cost, _funding_source = validated_funding_economics(
-        market_type=market_type,
-        execution_mode=row.get("execution_mode"),
-        funding_cost=row.get("funding_cost"),
-        funding_source=row.get("funding_source"),
-    )
-    if funding_cost is None:
-        return None
-
-    direction = str(row.get("direction") or "").lower()
-    if direction in {"long", "buy"}:
-        gross = (exit_price - entry) * quantity
-    elif direction in {"short", "sell"}:
-        gross = (entry - exit_price) * quantity
-    else:
-        return None
-    expected = gross - entry_fee - exit_fee - funding_cost
-    return expected if math.isfinite(expected) else None
+    expected, _reason = cost_complete_expected_pnl(row)
+    return expected
 
 
 def _realized_economics_value(row: dict) -> float | None:
     """Verify persisted PnL against complete inputs, not just a non-NULL number."""
-    pnl = _finite_number(row.get("realized_pnl"))
-    expected = calculated_realized_pnl(row)
-    if pnl is None or expected is None:
+    from aletheia.analytics.outcome_integrity import (
+        cost_complete_expected_pnl,
+        reconciles_persisted_pnl,
+    )
+
+    expected, _reason = cost_complete_expected_pnl(row)
+    if expected is None:
         return None
-    entry = float(row["entry_price"])
-    quantity = float(row["quantity"])
-    tolerance = max(1e-8, abs(expected) * 1e-8, entry * quantity * 1e-10)
-    return pnl if abs(pnl - expected) <= tolerance else None
+    return reconciles_persisted_pnl(row, expected)
 
 
 def _complete_realized_total(rows: list[dict]) -> tuple[float, int]:
