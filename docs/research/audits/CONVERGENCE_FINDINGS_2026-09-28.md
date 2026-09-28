@@ -582,6 +582,48 @@ repo 扫描调用）：
 于是 spec/e2e 这一层的结论是：**没有既合法又显著的收益**；墙钟的大头在
 `tier_integration`（Fedora 495.5 s、本地 1233.8 s，见 §1l）。
 
+## 1o. 运维面真相修复的运行时证据 + 并行证明的边界
+
+### 已生效（部署 `0e4a2e1f` 后的实测）
+
+| 修复 | 部署前 | 部署后 |
+|---|---|---|
+| 失败任务年龄界（Python 对齐 TS 的 30 分钟） | `failed-tasks`（high，"10 failed operator task(s) require review"）常亮 | 该条**消失** |
+| 未知命令独立信号 | 只是对 `run_market_scan` 提"改进命令行为"的建议 | 出现 `unknown-command:run_market_scan`（点명**已退役命令**本身） |
+| Observation Worker 漂移/停摆信号 | 无（部署输出还说 continuity verified） | 出现 `observation-worker-checkout-drift`（worker 停在 `f6a19f13`，运行时已到 `0e4a2e1f`） |
+| 合法命令被拒的行为建议 | 保留 | 保留（`command-center-behavior:set_symbol_observe_only` 仍在） |
+
+一次性历史清理（`scripts/retire_fixed_operator_failures.py`，默认 dry-run、可复跑）：
+
+```
+retire candidates before 2026-09-28T07:00:00Z: 609
+  run_market_scan: 537   run_portfolio_snapshot: 44   run_dreaming: 20   run_risk_critique: 8
+retired 609 row(s)
+```
+
+清理后 `agent_shell_tasks`：`cancelled` 618（原 9 + 609）、`completed` 169、**`failed` 3**。
+剩下 3 条全是 `pi_reasoning_session` 的 `max_turns_reached`（PI 回合上限，与本轮四类缺陷无关，脚本按设计未触碰），且已超出建议的 30 分钟窗口。
+
+### 并行证明的边界（实测，两条都被证伪/确认）
+
+- **整份 `tests/` 不能并行**：`-n 4` 下 27 个失败，分布在
+  `tests/uta/test_import_boundaries.py`(7)、`tests/test_regime_boundary.py`(5)、
+  `tests/test_public_pricing_composition.py`(5)、`tests/test_risk_lesson_boundary.py`(2)、
+  `tests/test_settings_concurrency.py`(2)、`tests/test_secrets_crossprocess.py`(2)、
+  `tests/test_update.py`(1)、`tests/test_repositories_research.py`(1) 等。
+  这些是**导入仿真**（模拟可选依赖缺失、屏蔽模块）与**跨进程/子进程**用例，需要每个进程有干净的导入状态；
+  同时它们与仓库扫描类用例（writer-boundary）互相干扰，说明有测试在共享树/导入状态上留下副作用。
+  另：整份并行反而**更慢**（1006.6s vs 串行 646.1s），因为失败重试与等待。
+- **"两遍"折中同样不成立**：pass1（并行，排除上述 10 个文件）**11241 passed / 193.0s 全绿**；
+  pass2（把这 10 个文件串行跑）仍有 **2 个失败** —— `test_update.py::test_gateway_restart_error_probe_has_bounded_deadline`
+  （时序断言 `0.0 == 1.0 ± 1.0e-06`）与 `test_update.py::test_apply_no_auto_restart`
+  （`ImportError: cannot import name '_psutil_osx' from partially initialized module 'psutil'`）。
+  即失败**与 xdist 无关**，是这批文件彼此之间的既有交互。
+- 因此规则维持**串行完整证明**（`DEVELOPMENT_WORKFLOW.md` 已如此写）；并行只用于已实测干净的 marker 子集
+  （`tier_integration` 502.8→178.0s、本地 `tier_spec` 51.3→26.5s）。
+- 后续若要拿回两遍方案的时间收益（193+83=276s vs 646s），前置条件是把那 2 个交互失败查清并修掉；
+  复现：`pytest tests/uta/test_import_boundaries.py tests/test_regime_boundary.py tests/test_public_pricing_composition.py tests/test_risk_lesson_boundary.py tests/test_settings_concurrency.py tests/test_secrets_crossprocess.py tests/test_update.py tests/test_repositories_research.py tests/test_planning_writer_boundary.py tests/test_order_writer_boundary.py -q`
+
 ## 8. 如何复用，而不是从头再查
 
 1. 先读对应现行 Contract，再确认相关源码 owner 是否变化；未变化的边界复用本记录，
