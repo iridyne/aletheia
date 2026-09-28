@@ -202,13 +202,30 @@ TOP_LEVEL_DIRS = {
 # Zero known violations as of 2026-09-26 (R20 harvest): all seven historical
 # entries were resolved — pointer fixes for moved files, retirement notes for
 # deleted tests/agents, and successor executable claims for converged specs.
-BASELINE_MISSING_CONTRACT_PATHS: set[str] = {}
+BASELINE_MISSING_CONTRACT_PATHS: set[str] = {
+    # Deleted with the Market Observer retirement (#2933). The inventory entry
+    # (DC-01) still names it as discovery evidence, and whether that capability
+    # still has a producer is an owner decision, not a docs edit: see
+    # docs/design/proposals/retire_market_observer.md. Remove this entry together
+    # with the DC-01 decision.
+    "extensions/research/market_observer.py",
+}
+
+
+CODE_PATH_DOCS: tuple[str, ...] = (
+    "docs/design/contracts",
+    "docs/product/capability-integrity/CAPABILITY_INVENTORY.md",
+)
 
 
 def contract_code_path_failures() -> list[str]:
-    """Contract docs must reference real repo file paths in backticked `.py` spans.
+    """Authority docs must reference real repo file paths in backticked `.py` spans.
 
-    Scopes to `docs/design/contracts/*.md`. Finds backticked inline spans that
+    Scopes to `docs/design/contracts/*.md` and to `CAPABILITY_INVENTORY.md`, the
+    product-promise authority: a promise whose discovery evidence points at a
+    module that no longer exists is a promise resting on nothing, and it is the
+    kind of drift no reader notices (the 2026-09-28 audit found the inventory
+    still citing mechanisms deleted in #2945 and #2933). Finds backticked inline spans that
     look like a repo-relative `.py` path: they must contain a `/`, end in `.py`,
     contain no spaces/backticks, and their first segment must be a real top-level
     repo directory (e.g. ``core/…``, ``tests/…``, ``scripts/…``) so the reference
@@ -228,9 +245,22 @@ def contract_code_path_failures() -> list[str]:
     """
     failures: list[str] = []
     pattern = re.compile(r"`([^`\s]+?/[^`\s]*\.py)`")
-    for relative in sorted(Path("docs/design/contracts").glob("*.md")):
-        if relative.name == "README.md":
-            continue
+    relative_docs: list[Path] = []
+    for scope in CODE_PATH_DOCS:
+        # Resolve against ROOT, not the process CWD: this gate must behave the
+        # same however it is invoked.
+        scope_path = ROOT / scope
+        if scope_path.is_dir():
+            relative_docs.extend(
+                sorted(
+                    p.relative_to(ROOT)
+                    for p in scope_path.glob("*.md")
+                    if p.name != "README.md"
+                )
+            )
+        elif scope_path.is_file():
+            relative_docs.append(Path(scope))
+    for relative in relative_docs:
         text = (ROOT / relative).read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
             for path in pattern.findall(line):

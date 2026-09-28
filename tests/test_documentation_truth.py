@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import scripts.check_docs as check_docs
 from scripts.check_docs import (
     contract_code_path_failures,
     semantic_truth_failures,
@@ -218,3 +219,28 @@ def test_claim_anchor_gate_is_green_on_the_current_tree() -> None:
     from scripts.check_docs import spec_claim_anchor_failures
 
     assert spec_claim_anchor_failures() == []
+
+
+def test_capability_inventory_citations_are_checked(monkeypatch, tmp_path) -> None:
+    """The product-promise authority is inside the code-path gate's scope."""
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "present.py").write_text("", encoding="utf-8")
+    inventory = tmp_path / "CAPABILITY_INVENTORY.md"
+    inventory.write_text(
+        "`core/present.py` is the live evidence\n"
+        "`core/gone.py` was deleted with its mechanism\n"
+        "`learning/registry.py` is package-relative shorthand\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+    monkeypatch.setattr(check_docs, "TOP_LEVEL_DIRS", {"core"})
+    monkeypatch.setattr(check_docs, "CODE_PATH_DOCS", ("CAPABILITY_INVENTORY.md",))
+
+    failures = check_docs.contract_code_path_failures()
+
+    assert failures == ["CAPABILITY_INVENTORY.md:2: missing contract code path: core/gone.py"]
+
+
+def test_authority_doc_code_paths_are_green_on_the_current_tree() -> None:
+    """Every cited path in contracts/ and the capability inventory resolves."""
+    assert contract_code_path_failures() == []
