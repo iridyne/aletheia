@@ -458,6 +458,29 @@ Fedora 全量的 71%，它也同时是本地最贵的一层。要提速就压这
 operator 建议或部署验证，于是"每 6 小时失败一次"连续存在了数天而无人处理。是否把漂移接进
 建议面或部署验证属产品决策（D1），本轮只修复运行态并记录事实。
 
+## 1k. 运行态修复（续）与尚未决的产品问题
+
+### 已修复，附运行时证据
+
+| 表面 | 症状 | 根因 | 修复与验证 |
+|---|---|---|---|
+| TS operator shell 专家委派 | `run_portfolio_snapshot` 失败 44 次、`run_risk_critique` 8 次，错误是 `Cannot read properties of undefined (reading '0')`；`run_dreaming` 20 次 409 | 后端 `POST /api/agent-runs/start` 的契约是 **202 + `job_id`（排队）**（`agent_contracts.md`、`api_reference.md`），shell 却按"同步返回已完成 run"读 `result.errors[0]` | 按排队契约收敛（[#3647](https://github.com/iridyne/aletheia/pull/3647)）：入队即委派结果，任务以 `run_status: queued` 完成；`409 agent_already_queued` 视为同一结果。对照证据：被判失败的同一秒，`agent_runs.f2f9ba24bf9e`（portfolio_agent）实际 `completed`；失败任务让建议持续到期，于是每分钟重复委派一次 |
+| `post_trade_reviewer` 复盘 | 最近 3 天 35 次运行里 32 次 `completed_with_errors`，全部 `llm_unavailable: empty_response`；建议面报"应改 prompt/playbook" | 路由到的是思考模型（qwen35），其响应可能只有 reasoning 块；失败调用**恰好用满 600 token 预算**（min=max=600），而成功调用平均 251/max 295 token。同类复盘调用 `agent_shell.portfolio_review` 用 2048 token 一直正常 | 预算 600 → 2048（[#3648](https://github.com/iridyne/aletheia/pull/3648)）；同时让 `llm_complete` 的空响应分支记录 `finish_reason`/`output_tokens`/`output_limit`（结构化路径早已记录，信封也早已允许），否则"供应商宕机"和"预算耗尽"在记录里无法区分 |
+
+### 需要 Owner 决定（本轮只记录，不擅自改产品行为）
+
+1. **空响应是否应该触发模型回退**：`complete_with_fallback` 只对传输类瞬时错误回退；空内容是终态。上述复盘因此静默丢证据。是否把"空/截断响应"纳入回退，属契约变更（D1）。
+2. **`failed_tasks_present` 的时效**：建议只取最新 10 条 failed 任务，但这些任务不会自动消解（本轮修复前的历史失败仍在），于是 high 级建议会长期挂着。要不要给失败任务一个显式确认/收敛路径，或在建议里按 error 签名聚合，属产品决策。
+3. **对已不存在命令的行为变更建议**：`command_center_behavior_change_proposal_due` 由历史命令拒绝推导（如 `run_market_scan` 被拒 155 次）。命令已退役，建议仍在。是否要求候选命令必须存在于注册表，属产品决策。
+4. **Observation Worker 漂移可见性**：worker 落后 master **848** 个提交、每 6 小时 fail-closed 拒绝运行数天，只有建议性的 `aletheia observe drift` 能发现。是否把漂移接入 operator 建议或部署验证，属产品决策。
+5. **能力清单仍有已删除机制的引用**：`CAPABILITY_INVENTORY.md` 引用的路径里有 12 个无法解析（含 DC-01 的 `aletheia/universe/signal_emitter.py`、`extensions/research/market_observer.py`——两者都已在 #2945/#2933 删除）。DC-01 的"确定性 Opportunity 准入"是否仍是产品承诺，必须由 Owner 裁量；本轮不改写清单结论。
+
+### 已核实为"无需处理"的近似项
+
+- `agent_shell/reflection.py` 里 `signal_source` 默认 `market_observer`、`storage`/`server` 里 `COALESCE(p.signal_source, 'market_observer')`：这是**历史持久化行**的读取默认值，不是活机制的生产者；数据层保留历史是允许的。
+- `diagnostics/probes/trading.py` 里的 `market_observer` 只出现在解释"该路径已退役、机会表按设计不再前进"的注释与既有 SQL 默认值中。
+- 旧 Orca worktree（`.orca-worktrees/aletheia/{data_fetch,rival_analysis}`）里仍有 `market_scan_refresh_due` 的旧副本；它们不是 master，属本地工作副本，不参与交付。
+
 ## 8. 如何复用，而不是从头再查
 
 1. 先读对应现行 Contract，再确认相关源码 owner 是否变化；未变化的边界复用本记录，
