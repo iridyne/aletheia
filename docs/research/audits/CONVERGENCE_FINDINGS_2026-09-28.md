@@ -212,10 +212,17 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 **EXIT=0，11611 passed / 15 skipped / 5 xfailed，0 failure，10 分 23 秒**。
 本地同一候选三次串行 `tier_unit` 各 1950 passed / 1 skipped，墙钟 56.37 / 55.37 / 56.35 秒。
 
-**`tests/test_data_retention.py` 结论**：该文件在本机（macOS）稳定 12 项失败、
-在 `origin/master` 上同样 12 项，**在同一次 Fedora 全量为绿**。因此是**本地环境差异，不是 master 回归**；
-不为此改生产代码、不放宽断言。根因表象：`_canonical_lab_authority()` 在本地缺 Observation reader 时
-fail-closed，prune 返回 0，而测试断言具体删除条数。
+**`tests/test_data_retention.py` 结论（按 junit 逐例核对，不是从“0 failure”推断）**：
+该文件在 Fedora 那轮探针结果里共 **37 个 case，只有 2 个非通过且都是 `skipped`**
+（`test_prune_alpha_control_observations`、`test_prune_serenity_evidence_and_run_events`——
+这两个在本机同样被跳过），其余全部通过。本机（macOS）该文件稳定 **12 项失败**，
+在 `origin/master` 上同样 12 项，两者都是那 2 个 skip 之外的用例。
+因此：**这 12 项是本地环境差异，不是 master 回归**；不为此改生产代码、不放宽断言。
+根因表象：`_canonical_lab_authority()` 在本地缺 Observation reader 时 fail-closed，
+prune 返回 0，而测试断言具体删除条数。
+
+（教训：用“失败数=0 且跳过数很多”推断某文件通过并不可靠——本文件自身就有 pytest.skip 逃逸口，
+所以必须按 case 逐一核对 junit 的 `failure/error/skipped` 标签。）
 
 **未解释但已隔离的现象**：第一次全量在 94% 处出现一个 `F` 之后**停止写日志 12 分钟**（进程仍存活），
 即挂死；杀掉并用 `--timeout=180 --timeout-method=thread` 重跑后通过。挂死原因未定位。
