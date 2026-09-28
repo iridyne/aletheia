@@ -115,7 +115,14 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                 canonical_function = parent is not None and canonical.get(function) is parent and child in parent.body
                 canonical_storage_writer = path == repository and canonical_function and function in raw_owners
 
-                def check_writer(name):
+                def check_writer(
+                    name,
+                    *,
+                    canonical_function=canonical_function,
+                    function=function,
+                    path=path,
+                    node=node,
+                ):
                     if name not in owners:
                         return
                     permitted = {root / "core/aletheia" / owner for owner in owners[name]}

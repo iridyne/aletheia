@@ -47,7 +47,7 @@ def test_approved_spot_proposal_keeps_local_stop_without_venue_entry_presets(
 ):
     from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from tests.uta.test_execution_coordinator import _setup_db
 
     _setup_db(tmp_path, monkeypatch)

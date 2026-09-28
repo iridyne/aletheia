@@ -145,7 +145,7 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
 # #6 HTTP model provider layer (OpenAI/Anthropic)
 @pytest.mark.anyio
 async def test_ac06_model_providers(client, monkeypatch):
-    from tests.model_http import mock_model_probe
+    from tests.helpers.model_http import mock_model_probe
 
     mock_model_probe(monkeypatch)
     c, _ = client

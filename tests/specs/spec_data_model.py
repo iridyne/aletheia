@@ -8,7 +8,7 @@ from tests.fixtures.repo_test_helpers import latest_pi_decision, list_pi_decisio
 
 import pytest
 
-from tests.module_source import module_source
+from tests.helpers.module_source import module_source
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 

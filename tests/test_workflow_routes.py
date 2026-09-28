@@ -165,7 +165,7 @@ async def test_reject_executed_proposal_returns_409(client):
 @pytest.mark.anyio
 async def test_reject_submitted_exchange_proposal_preserves_live_order_state(client):
     """A dashboard reject must not lie about an already-submitted venue order."""
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id="submitted-proposal",
@@ -208,7 +208,7 @@ async def test_reject_submitted_exchange_proposal_preserves_live_order_state(cli
 @pytest.mark.anyio
 async def test_order_risk_decision_uses_exact_authoritative_fk(client):
     """Causal Chain must not replace an Order's consumed authority with newer preflight."""
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id="risk-chain-proposal",

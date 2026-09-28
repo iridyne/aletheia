@@ -8,7 +8,7 @@ from tests.fixtures.repo_test_helpers import insert_agent_run
 
 import sqlite3
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 
 def test_candidate_progress_observe_only_and_missing_profiles_are_not_stalls(tmp_path, monkeypatch):

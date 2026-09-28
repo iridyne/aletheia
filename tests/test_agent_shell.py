@@ -13,7 +13,7 @@ from aletheia.agent_shell.permissions import check_permission, allowed_commands
 from aletheia.agent_shell.intent import _classify_keyword, CommandIntent
 from aletheia.agent_shell.context import build_app_context, context_summary_text, sections_for_profile
 from aletheia.agent_shell.synthesis import _format_fallback
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 
 

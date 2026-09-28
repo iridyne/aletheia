@@ -138,7 +138,7 @@ def _seed_test_live_identity(cfg, monkeypatch):
     cfg.exchange.name = "bitget"
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = "bitget"
-    from tests.live_identity import bind_live_identity
+    from tests.helpers.live_identity import bind_live_identity
 
     bind_live_identity(monkeypatch, lambda ref: f"test-secret:{ref}")
     identity = trust.resolve_live_execution_identity(cfg)

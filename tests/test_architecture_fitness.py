@@ -15,7 +15,7 @@ SRC = PROJECT_ROOT / "core/aletheia"
 
 
 def test_writer_scan_visits_current_core_and_rejects_relative_star(tmp_path):
-    from tests.authority_writer_checks import assert_writer_boundary
+    from tests.helpers.authority_writer_checks import assert_writer_boundary
 
     assert SRC.is_dir()
     assert list(SRC.rglob("*.py")), "Core authority scan must not be empty"
@@ -46,7 +46,7 @@ def _get_imports(path: Path) -> set[str]:
 
 
 def _assert_risk_writer_boundary(root: Path):
-    from tests.authority_writer_checks import assert_writer_boundary
+    from tests.helpers.authority_writer_checks import assert_writer_boundary
 
     scanned = assert_writer_boundary(
         root, table="risk_decisions",
@@ -172,7 +172,7 @@ def test_scheduler_does_not_own_order_or_close_claim_writes():
 
 def _assert_fill_writer_boundary(project_root):
     """Keep observed-close and native Fill writes under the same Core owner."""
-    from tests.authority_writer_checks import assert_writer_boundary
+    from tests.helpers.authority_writer_checks import assert_writer_boundary
 
     return assert_writer_boundary(
         project_root, table="fills",
@@ -230,7 +230,7 @@ def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
 
 
 def _assert_candidate_writer_boundary(root):
-    from tests.authority_writer_checks import assert_writer_boundary
+    from tests.helpers.authority_writer_checks import assert_writer_boundary
 
     repository = root / "core/aletheia/storage/repositories.py"
     literal_writes = {

@@ -7,7 +7,7 @@ Account/fill/funding transport qualification remains owned by its existing suite
 from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
 
 import json
-from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+from tests.helpers.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 import pytest
 
 from aletheia.storage import repositories as repo
@@ -50,7 +50,7 @@ def universe_position(monkeypatch, request):
 def _close(monkeypatch, position):
     from aletheia.execution.coordinator import close_position
     from tests.e2e.test_pipeline_exchange_position_to_close import _prepare_venue, _settle_pending_close
-    from tests.position_fixture import force_update_position
+    from tests.helpers.position_fixture import force_update_position
 
     # Isolate this ancestry regression from broker funding transport. Unknown
     # funding still has a negative case below; the real ledger has its own suite.
@@ -101,7 +101,7 @@ def test_broken_universe_chain_is_excluded_by_writer_and_snapshot(
     from aletheia.analytics.outcome_integrity import (
         attribution_chain_complete, outcome_write_eligibility, raw_account_events,
     )
-    from tests.position_fixture import force_update_position
+    from tests.helpers.position_fixture import force_update_position
 
     plan, position = universe_position
     closed = _close(monkeypatch, position)
@@ -141,7 +141,7 @@ def test_universe_ancestry_does_not_relax_evidence_or_promote_history(
     universe_position, monkeypatch, changes, reason,
 ):
     from aletheia.analytics.outcome_integrity import assess_reportable_outcome, raw_account_events
-    from tests.position_fixture import force_update_position
+    from tests.helpers.position_fixture import force_update_position
 
     _, position = universe_position
     closed = _close(monkeypatch, position)

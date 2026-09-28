@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tests.fixtures.repo_test_helpers import update_opportunity
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 import json
 from types import SimpleNamespace
@@ -293,7 +293,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     from extensions.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import PiDecision, ShadowTrade
-    from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
+    from tests.helpers.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     case_ids = []

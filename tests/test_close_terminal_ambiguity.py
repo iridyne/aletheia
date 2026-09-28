@@ -17,7 +17,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import AuditEvent, Order, Position
 from aletheia.storage import repositories as repo
-from tests.fill_reports import DEFAULT_IDENTITY, reports
+from tests.helpers.fill_reports import DEFAULT_IDENTITY, reports
 
 PENDING_CLOSE_CODE = "pending_close_reconciliation_required"
 MANUAL_CLOSE_CODE = "manual_close_reconciliation_required"
@@ -423,7 +423,7 @@ def test_reconciler_skips_manual_pending_positions(tmp_path, monkeypatch):
 
 
 def _seed_terminal_close_fixture(*, quantity=1.0, symbol="XRP/USDT"):
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id="prop-terminal",

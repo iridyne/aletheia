@@ -243,7 +243,7 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     from aletheia.execution import coordinator
     from tests.uta.test_execution_coordinator import _Adapter
     from aletheia.storage import repositories as repo
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     seed_order_authority(
         proposal_id="prop-ex-b03",

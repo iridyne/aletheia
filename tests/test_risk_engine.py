@@ -54,7 +54,7 @@ def test_existing_account_configuration_exemptions(
 ):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     cfg = load_config()
     cfg.exchange.name = "bitget"
@@ -118,7 +118,7 @@ def test_unknown_account_binding_never_grants_self_contained_exemption(mode):
 
 def test_risk_approves_valid_demo_proposal(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
         monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
     )
@@ -180,7 +180,7 @@ def test_risk_rejects_invalid_exit_intent_before_side_effects(
     violation,
 ):
     setup_test_env(tmp_path, monkeypatch)
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -249,7 +249,7 @@ def test_gateway_rejects_invalid_exit_intent_before_persisting(
 def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -299,7 +299,7 @@ def test_authoritative_risk_identity_uses_evaluated_policy_snapshot(
     import aletheia.config.loader as loader
     import aletheia.risk.engine as eng
     from aletheia.risk.policy import resolve_risk_policy
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -366,7 +366,7 @@ def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatc
     import aletheia.risk.policy as policy_module
     from aletheia.config.loader import load_config
     from aletheia.risk.policy import ResolvedRiskPolicy
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -418,7 +418,7 @@ def test_authoritative_filter_evidence_failure_blocks_execution(
     setup_test_env(tmp_path, monkeypatch)
     import aletheia.analytics.filter_evidence as filter_evidence
     import aletheia.execution.gateway as gateway
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -471,7 +471,7 @@ def test_authoritative_risk_and_filter_evidence_commit_together(
 ):
     setup_test_env(tmp_path, monkeypatch)
     import aletheia.analytics.filter_evidence as filter_evidence
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     trade = approvable_risk_trade(
         monkeypatch,
@@ -540,7 +540,7 @@ def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
     cfg.risk.symbol_list = ["DOGE/USDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
         monkeypatch, symbol="XRP/USDT", market_type="spot", direction="long", price=1.0,
     )

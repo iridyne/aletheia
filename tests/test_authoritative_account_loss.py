@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 import asyncio
 from datetime import datetime, timedelta, timezone

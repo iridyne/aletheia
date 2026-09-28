@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from tests.async_test_utils import closing_coro_runner
+from tests.helpers.async_test_utils import closing_coro_runner
 
 
 @pytest.fixture(autouse=True)

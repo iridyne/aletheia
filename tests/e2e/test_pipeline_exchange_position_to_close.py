@@ -22,7 +22,7 @@ import pytest
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 _MODE = "bitget_demo"
 
 
