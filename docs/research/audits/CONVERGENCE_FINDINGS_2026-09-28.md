@@ -170,6 +170,37 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 `get_opportunity` → `_select_one` 没有守卫，会抛 `sqlite3.OperationalError`。
 只换其中一处还会让模块一半用 `db`、一半用 `get_db()`，因此记录为**不改**。
 
+## 1e. Portfolio：成本完整 PnL 算术收敛，以及“等价性证明”本身怎么作假
+
+`outcome_integrity.assess_position_closure` 的 economics 段与 `pnl.calculated_realized_pnl` /
+`_realized_economics_value` 曾各自实现同一段算术（方向相关 gross − entry/exit fee − 已验证 funding，
+容差 `max(1e-8, |expected|*1e-8, entry*quantity*1e-10)`）。收敛为共享 owner
+`outcome_integrity.cost_complete_expected_pnl` + `reconciles_persisted_pnl`；closure 评估保留自己的门
+（持久值必须存在、`market_type in {spot, usdt_futures}`、eligibility 与 reason 映射）。
+
+**要保留的差异（不是重复）：**`exit_fill_verified=false` 的 legacy close 在 closure 上应判
+`unverified_exit_fill`（不合格），而数值本身仍可对账——eligibility 与算术是两个问题。
+`position_path_observations._stop_loss_decomposition` 也不是同一问题（止损归因分解，另有
+`price_verified` 门）。
+
+**方法论教训（最贵的一条）：**第一版等价性矩阵**是空的**——所有行都没带
+`close_category`/`outcome_eligible`/`verified fill`，在 `unknown_close_category` 处提前返回，
+根本没执行被改的那段代码；"旧新一致"因此毫无意义。修正版必须**自证覆盖**：
+`assess_position_closure` 至少要有一个变体达到 `eligible=True` 且 `net_return_pct` 非空，
+并且分别命中 `incomplete_realized_economics` 与 `incomplete_funding_economics`，
+否则 harness 直接断言失败。**以后任何"提取前后等价"的证明都要带这种覆盖断言。**
+
+30 个变体的差分结果：**29 个逐字节一致，恰好 1 个有意不同** —— `direction=" LONG "`：
+旧的 `pnl` 用 `.lower()`（不 strip）→ 返回 `None`；而 closure 一直用 `_normalize`（strip+lower），
+早已判 `eligible=True`。即两处此前**互相矛盾**，收敛后一致。当前写入方不会产生带空格的
+`direction`，因此无生产行受影响。
+
+**下一批候选（已由只读审计给出证据，未改代码）：**`execution/pending_close_recovery.py`
+（5 处）、`execution/reconciliation.py`（1 处两连读）、`execution/stale_order_cleanup.py`、
+`risk/engine.py` 在 `repo.transaction(immediate=True)` 内手写
+`SELECT * FROM orders|positions WHERE id=?`，而 seam 已提供 `get_order`/`get_position`（同一连接、
+同一 `_select_one`）。属于"同一问题两处实现"，但位于平仓/恢复关键路径，必须单独批次、单测覆盖后再动。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
