@@ -65,7 +65,8 @@ def test_recursive_redaction_preserves_noncredential_token_fields_and_input():
             "market_data": {"observed_stock_tokens": ["rNVDA/USDT"]}}
     original = copy.deepcopy(data)
     redacted = redact_config_dict(data)
-    assert redacted["nested"] == [{key: "***REDACTED***" for key in data["nested"][0]}]
+    assert set(redacted["nested"][0]) == set(data["nested"][0])
+    assert not any(redacted["nested"][0].values())
     assert redacted["model"] == data["model"]
     assert redacted["remote_control"] == data["remote_control"]
     assert redacted["market_data"] == data["market_data"]

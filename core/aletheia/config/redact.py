@@ -39,7 +39,7 @@ def redact_config_dict(data) -> dict:
                     or (normalized == "observedstocktokens" and isinstance(item, list)
                         and all(isinstance(symbol, str) for symbol in item))
                 )
-                result[key] = "***REDACTED***" if is_secret_key(key) and not public else scrub(item)
+                result[key] = "" if is_secret_key(key) and not public else scrub(item)
             return result
         if isinstance(value, list):
             return [scrub(item) for item in value]
