@@ -69,11 +69,10 @@ def _minimal_liveness_payload(*, ok: bool) -> dict:
 
 
 def _remote_auth_check(request: Request) -> JSONResponse | None:
-    """Return 401 if remote auth is required but caller lacks a valid token; None if allowed.
+    """Return a non-success response when owner auth is denied or unavailable.
 
-    Mirrors backend _tunnel_auth_guard: active when tunnel.enabled=True or
-    remote_control.require_token=True.  Fails open on config errors so the
-    front door remains reachable for local diagnostics when config is broken.
+    Active for tunnel.enabled or remote_control.require_token. Configuration
+    failure cannot establish permission to disclose private diagnostics.
     """
     import hmac as _hmac
     from aletheia.config.loader import load_config
@@ -81,7 +80,7 @@ def _remote_auth_check(request: Request) -> JSONResponse | None:
     try:
         cfg = load_config(persist_migrations=False)
     except Exception:
-        return None
+        return JSONResponse({"detail": "remote_auth_policy_unavailable"}, status_code=503)
     tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
     rc = getattr(cfg, "remote_control", None)
     remote_token_required = bool(getattr(rc, "enabled", False) and getattr(rc, "require_token", False))

@@ -758,3 +758,29 @@ async def test_frontdoor_doctor_requires_auth_and_forwards_token(tmp_path, monke
     assert anon.status_code == 401
     assert authed.status_code == 200
     assert captured.get("headers", {}).get("x-aletheia-token") == TOKEN
+
+
+@pytest.mark.anyio
+async def test_frontdoor_config_unavailable_denies_private_diagnostics(tmp_path, monkeypatch, caplog):
+    from aletheia.config import loader
+    from aletheia.gateway import frontdoor
+
+    def unavailable(**_kwargs):
+        raise RuntimeError("CONFIG_SECRET_SENTINEL")
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(loader, "load_config", unavailable)
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        for path in ("/_infra/status", "/_infra/doctor"):
+            response = await client.get(path, headers={"X-Aletheia-Token": "old-token"})
+            assert response.status_code == 503
+            assert response.json() == {"detail": "remote_auth_policy_unavailable"}
+        for path in ("/_infra/livez", "/_infra/readyz"):
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert set(response.json()) == {"ok", "role", "version"}
+    assert "CONFIG_SECRET_SENTINEL" not in caplog.text

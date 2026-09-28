@@ -42,6 +42,12 @@ Worktree path and the API port:
   `~/.aletheia/instances/dev-preview`;
 - Preview never reads the primary Runtime's `ALETHEIA_DATA_DIR` override.
 
+`uv run aletheia dev seed-markets --port <port>` seeds that same instance in a
+fresh Preview process, initializing its schema before fixture writes. It checks
+the effective data root before opening the database; inherited overrides for
+another checkout/port and symlink redirection are rejected. Child failures retain
+their nonzero exit status. The primary runtime and its credentials are untouched.
+
 Do not copy `app.db`, `config.yaml`, secrets, positions, or outcome state between
 the stable Runtime and a Preview. A Preview is disposable development state,
 not a qualification cohort.

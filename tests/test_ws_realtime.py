@@ -314,3 +314,75 @@ def test_ws_ticket_endpoint_requires_owner_auth_when_remote_auth_active(monkeypa
     data = resp.json()
     assert "ticket" in data
     assert "ttl_seconds" in data
+
+
+@pytest.mark.parametrize("ticket_kind", ["absent", "invalid", "expired", "valid"])
+def test_ws_config_unavailable_rejects_before_accept_or_sampling(monkeypatch, caplog, ticket_kind):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from aletheia.config import loader
+    from aletheia.server.routes import ws as ws_routes
+
+    def unavailable(**_kwargs):
+        raise RuntimeError("CONFIG_SECRET_SENTINEL")
+
+    def forbidden(_queries):
+        pytest.fail("sampling started despite unknown authorization policy")
+
+    monkeypatch.setattr(loader, "load_config", unavailable)
+    monkeypatch.setattr(ws_routes, "_ws_tickets", {})
+    hub = ws_routes._RealtimeHub()
+    monkeypatch.setattr(ws_routes, "_hub", hub)
+    monkeypatch.setattr(ws_routes, "_run_fingerprints", forbidden)
+    ticket = "invalid"
+    if ticket_kind in {"expired", "valid"}:
+        ticket = ws_routes._issue_ws_ticket()
+        if ticket_kind == "expired":
+            ws_routes._ws_tickets[ticket] = 0
+    app = FastAPI()
+    app.include_router(ws_routes.router)
+    url = "/ws" if ticket_kind == "absent" else f"/ws?ticket={ticket}"
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            with client.websocket_connect(url):
+                pytest.fail("unknown policy must reject before accept")
+    assert rejected.value.code == 1013
+    assert not hub.clients
+    assert hub.alert_task is None and hub.regular_task is None
+    assert "CONFIG_SECRET_SENTINEL" not in caplog.text
+
+
+@pytest.mark.parametrize("tunnel,remote,required", [(False, False, False), (True, False, False),
+                                                  (False, True, True), (False, True, False)])
+def test_ws_known_policy_preserves_admission_and_single_use(monkeypatch, tunnel, remote, required):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from aletheia.config import loader
+    from aletheia.server.routes import ws as ws_routes
+
+    cfg = SimpleNamespace(tunnel=SimpleNamespace(enabled=tunnel),
+                          remote_control=SimpleNamespace(enabled=remote, require_token=required))
+    monkeypatch.setattr(loader, "load_config", lambda **kw: cfg)
+    monkeypatch.setattr(ws_routes, "_hub", _NoopHub())
+    monkeypatch.setattr(ws_routes, "_run_fingerprints", _fake_fingerprints)
+    monkeypatch.setattr(ws_routes, "_ws_tickets", {})
+    app = FastAPI()
+    app.include_router(ws_routes.router)
+    client = TestClient(app)
+    if tunnel or (remote and required):
+        with pytest.raises(WebSocketDisconnect) as denied:
+            with client.websocket_connect("/ws"):
+                pytest.fail("missing ticket admitted")
+        assert denied.value.code == 4403
+        ticket = ws_routes._issue_ws_ticket()
+        with client.websocket_connect(f"/ws?ticket={ticket}") as socket:
+            assert socket.receive_json()["type"] == "update"
+        with pytest.raises(WebSocketDisconnect) as reused:
+            with client.websocket_connect(f"/ws?ticket={ticket}"):
+                pytest.fail("reused ticket admitted")
+        assert reused.value.code == 4403
+    else:
+        with client.websocket_connect("/ws") as socket:
+            assert socket.receive_json()["type"] == "update"
