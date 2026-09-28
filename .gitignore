@@ -48,6 +48,12 @@ pi-lens.json
 .codex/cache/
 .codex/tmp/
 
+# omp local/private state
+.omp/
+
+# Local AI plans and workqueues
+AI/
+
 # OS files
 .DS_Store
 Thumbs.db
