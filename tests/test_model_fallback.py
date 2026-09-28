@@ -557,3 +557,34 @@ async def test_settings_model_persists_fallback_models_without_key_echo(client, 
     provider = cfg.json()["providers"]["anthropic_compatible"]
     assert provider["model_fallback_enabled"] is True
     assert provider["fallback_models"] == ["claude-b", "claude-c"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tracing", ["0", "1"])
+async def test_fallback_provider_budget_is_checked_before_dispatch(tmp_path, monkeypatch, tracing):
+    from typing import cast
+    from aletheia.model_provider.base import ModelProvider
+    from aletheia.config.loader import save_config
+    from aletheia.economics.budgets import add_budget
+    from aletheia.economics.tracing import add_catalog_pricing_snapshot
+    from aletheia.model_provider import fallback
+
+    cfg = _setup_config(tmp_path, monkeypatch, fallback_models=["@provider_b:model-b"])
+    cfg.economics.enabled = True
+    cfg.economics.enforcement_mode = "hard_block"
+    cfg.economics.budgets_shadow_enabled = False
+    save_config(cfg)
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", tracing)
+    for provider, model in [("anthropic_compatible", "claude-primary"), ("provider_b", "model-b")]:
+        add_catalog_pricing_snapshot(provider=provider, model=model, input_usd_per_million=100,
+                                     output_usd_per_million=100, effective_from="2020-01-01T00:00:00+00:00",
+                                     source="litellm_public_median:test", version="catalog-model-family-test")
+    add_budget(scope="provider", subject="provider_b", usd_cap=.0001, window="daily")
+    primary = FakeProvider(fail_models={"claude-primary": "429 Too Many Requests"})
+    secondary = FakeProvider(model="model-b")
+    monkeypatch.setattr(fallback.provider_router, "get_provider", lambda name: secondary)
+    with pytest.raises(fallback.BudgetExceededError):
+        await fallback.complete_with_fallback(ModelRequest(messages=[{"role": "user", "content": "hello"}]),
+                                              provider_name="anthropic_compatible", provider=cast(ModelProvider, primary))
+    assert primary.calls == ["claude-primary"]
+    assert secondary.calls == []
