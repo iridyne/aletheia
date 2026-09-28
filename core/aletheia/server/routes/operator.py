@@ -1555,8 +1555,15 @@ async def operator_llm_session(payload: LlmSessionRequest):
             if len(parts) > 1:
                 try:
                     params = json.loads(parts[1].strip())
-                except (json.JSONDecodeError, ValueError):
-                    logger.debug("operator: TOOL_CALL parameters unparsable; the command runs without parameters", exc_info=True)
+                    if not isinstance(params, dict):
+                        raise ValueError("TOOL_CALL parameters must be an object")
+                except ValueError:
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({
+                        "role": "user",
+                        "content": "Error: TOOL_CALL parameters must be a valid JSON object; command not executed.",
+                    })
+                    continue
 
             if cmd_name not in allowed:
                 messages.append({"role": "assistant", "content": content})

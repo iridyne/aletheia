@@ -10,7 +10,7 @@ def _proc(returncode=0, stdout="", stderr=""):
 def test_windows_definition_is_persistent_but_disabled_and_has_no_watchdog(monkeypatch):
     from aletheia.gateway import session_service
     monkeypatch.setattr(session_service._managed, "_current_user", lambda: r"HOST\user")
-    monkeypatch.setattr(session_service, "_windows_program_and_arguments", lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"))
+    monkeypatch.setattr(session_service, "_windows_program_and_arguments", lambda: (r"C:\Aletheia\aletheia.exe", "--no-browser"))
     xml = session_service._build_windows_task_xml(enabled=False)
     assert "<LogonTrigger>" in xml
     assert "<Enabled>false</Enabled>" in xml
@@ -45,7 +45,7 @@ def test_windows_export_normalization_preserves_owned_task(monkeypatch):
     monkeypatch.setattr(
         session_service,
         "_windows_program_and_arguments",
-        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+        lambda: (r"C:\Aletheia\aletheia.exe", "--no-browser"),
     )
     exported = (
         session_service._build_windows_task_xml(enabled=False)
@@ -66,7 +66,7 @@ def test_windows_export_omitted_enabled_setting_means_enabled(monkeypatch):
     monkeypatch.setattr(
         session_service,
         "_windows_program_and_arguments",
-        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+        lambda: (r"C:\Aletheia\aletheia.exe", "--no-browser"),
     )
     exported = session_service._build_windows_task_xml(enabled=True).replace(
         "<Enabled>true</Enabled><Hidden>true</Hidden>", "<Hidden>true</Hidden>"
@@ -84,7 +84,7 @@ def test_windows_export_normalization_rejects_foreign_sid(monkeypatch):
     monkeypatch.setattr(
         session_service,
         "_windows_program_and_arguments",
-        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+        lambda: (r"C:\Aletheia\aletheia.exe", "--no-browser"),
     )
     exported = session_service._build_windows_task_xml().replace(
         r"HOST\user", "S-1-5-21-999-888-777-1001"
@@ -296,7 +296,7 @@ def test_persistent_services_accept_only_equivalent_python_aliases(monkeypatch):
 
 def test_linux_unit_uses_native_on_failure_semantics(monkeypatch):
     from aletheia.gateway import session_service
-    monkeypatch.setattr(session_service._managed, "_runner_command", lambda **kwargs: ["/opt/aletheia", "__packaged_gateway_runner", "--no-browser"])
+    monkeypatch.setattr(session_service._managed, "_runner_command", lambda **kwargs: ["/opt/aletheia", "--no-browser"])
     unit = session_service._build_systemd_unit()
     assert "Type=notify" in unit
     assert "Restart=on-failure" in unit

@@ -1,8 +1,7 @@
 """Human-triggered software update routes.
 
-Development checkouts keep the explicit Git workflow. Installed packaged runtimes use
-signed immutable releases, durable progress state, and tray-controlled activation.
-These routes are not agent-callable tools.
+A source checkout keeps the explicit Git workflow: these routes report durable local
+state and refuse to mutate source. These routes are not agent-callable tools.
 """
 
 import sys
@@ -49,12 +48,6 @@ def _same_origin_dashboard_confirmation(request: Request) -> bool:
     return any(referer.startswith(base) or origin == base.rstrip("/") for base in _LOOPBACK_UI_ORIGINS)
 
 
-def _is_packaged_update_mode() -> bool:
-    from aletheia.update.packaged import is_packaged_mode
-
-    return is_packaged_mode()
-
-
 @router.get("/status")
 def update_status():
     """Return local state only; network checks require an explicit human action."""
@@ -96,67 +89,27 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "message": "Set confirm=true to apply the update.",
         }
 
-    # A source-checkout restart must be owned by the external CLI process. A
-    # request handler lives inside the Gateway process tree that do_stop() kills,
-    # so trying to run the full restart transaction from this route is not a safe
-    # alternative entrypoint. Keep `aletheia update` as the one source mutation
-    # command; packaged installs retain their Tray-owned API staging flow.
-    if not _is_packaged_update_mode():
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "source_update_requires_cli",
-                "entity_type": "system_update",
-                "entity_id": "apply",
-                "message": "Source update was not applied via API; use `aletheia update`",
-            }
-        )
-        return {
-            "applied": False,
-            "accepted": False,
-            "mode": "source_release" if sys.platform == "linux" else "development",
-            "reason": "source_update_requires_cli",
-            "message": (
-                "Source-checkout updates must run through `aletheia update` so the "
-                "external updater process can restart Main and verify Observer continuity."
-            ),
-        }
-
+    # The restart must be owned by the external CLI process. A request handler
+    # lives inside the Gateway process tree that do_stop() kills, so running the
+    # restart transaction from this route is not a safe alternative entrypoint.
+    # `aletheia update` stays the one source mutation command.
     write_audit(
         {
             "actor": "human",
             "source": "api",
-            "event_type": "code_update_requested",
+            "event_type": "source_update_requires_cli",
             "entity_type": "system_update",
             "entity_id": "apply",
-            "message": "Human confirmed packaged software update via API",
+            "message": "Source update was not applied via API; use `aletheia update`",
         }
     )
-    result = applier.apply_update()
-    if result.get("accepted") and not result.get("applied"):
-        result.setdefault("reason", "update_started_in_background")
-    return result
-
-
-@router.post("/rollback")
-def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
-    from ops.update import applier
-    _reject_preview_update()
-    if not body.confirm and not _same_origin_dashboard_confirmation(request):
-        return {
-            "accepted": False,
-            "reason": "confirmation_required",
-            "message": "Set confirm=true to request rollback.",
-        }
-    write_audit(
-        {
-            "actor": "human",
-            "source": "api",
-            "event_type": "packaged_update_rollback_requested",
-            "entity_type": "system_update",
-            "entity_id": "rollback",
-            "message": "Human confirmed packaged update rollback via API",
-        }
-    )
-    return applier.rollback_update()
+    return {
+        "applied": False,
+        "accepted": False,
+        "mode": "source_release" if sys.platform == "linux" else "development",
+        "reason": "source_update_requires_cli",
+        "message": (
+            "Source-checkout updates must run through `aletheia update` so the "
+            "external updater process can restart Main and verify Observer continuity."
+        ),
+    }

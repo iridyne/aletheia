@@ -1,3 +1,10 @@
+> Retired 2026-09-28 with the packaged Runtime lane (`native/`, `packaging/`,
+> `scripts/release/` and the packaged update path were removed). This page
+> describes that removed signed-bundle/tray install path and is historical
+> context only: it is not current code, configuration, execution authority or
+> release process. [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)
+> states what is actually admitted at runtime.
+
 # Packaged Runtime dogfood playbook
 
 Use this runbook when an exact `master` commit must become a macOS Runtime Instance

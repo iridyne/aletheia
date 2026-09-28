@@ -114,6 +114,28 @@ async def test_live_pi_session_uses_advisory_learning_context_and_returns_its_ma
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("parameters", ["{", "[]", "null"])
+async def test_llm_session_rejects_invalid_tool_parameters(client, parameters):
+    with patch(
+        "aletheia.server.routes.operator.build_app_context", return_value={}
+    ), patch(
+        "aletheia.agents.helpers.llm_complete",
+        new=AsyncMock(side_effect=[
+            (f"TOOL_CALL: get_system_status {parameters}", None),
+            ("FINAL_ANSWER: No command was executed.", None),
+        ]),
+    ):
+        response = await client.post(
+            "/api/operator/internal/llm-session",
+            json={"goal": "Read status", "allowed_commands": ["get_system_status"]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["commands_executed"] == []
+    assert response.json()["turns_used"] == 2
+
+
+@pytest.mark.anyio
 async def test_operator_internal_heartbeat_roundtrip(client):
     resp = await client.post(
         "/api/operator/internal/heartbeat",

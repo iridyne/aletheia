@@ -11,7 +11,7 @@
 #
 # If the gate script cannot be found, this hook says so explicitly instead of
 # reporting a gate failure: a moved gate must not look like a finding in the
-# staged change. Reinstall the hook after a gate move.
+# staged change.
 
 RED='\033[0;31m'
 NC='\033[0m'
@@ -33,8 +33,13 @@ if git diff --cached -U0 | grep -qE "$SECRETS_PATTERN"; then
     fail "ERROR: Possible secret/token detected in staged changes. Review carefully. To bypass a verified false positive: git commit --no-verify"
 fi
 
-GATE=scripts/ci/dev_check.py
-[ -f "$GATE" ] || fail "ERROR: the cheap gate is not where this hook expects it (missing: $GATE). The gate moved and this hook is stale; reinstall it with: cp scripts/hooks/pre-commit .git/hooks/pre-commit  (or run scripts/dev/dev-init.sh). This is NOT a finding in your staged changes."
+# Resolve the gate instead of hardcoding it: .git/hooks is shared by every
+# worktree of this repository, and a worktree checked out at an older revision can
+# reinstall its own copy of this hook. Discovery means a moved gate does not brick
+# commits for everyone who still has an older installed hook.
+GATE=$(git ls-files --full-name -- 'scripts/**/dev_check.py' 2>/dev/null | head -n 1)
+[ -n "$GATE" ] || GATE=scripts/ci/dev_check.py
+[ -f "$GATE" ] || fail "ERROR: the cheap gate is not where this hook expects it (looked for scripts/**/dev_check.py). This is NOT a finding in your staged changes; reinstall the hook from the main checkout: cp scripts/hooks/pre-commit .git/hooks/pre-commit"
 
 uv run python "$GATE" --staged --no-tests --no-types \
     || fail "ERROR: staged changes failed the cheap gate (see above). Bypass only for a verified false positive: git commit --no-verify"

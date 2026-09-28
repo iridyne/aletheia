@@ -65,18 +65,10 @@ jobs:
           npm run check:api-types
           npm test
           npm run build
+
       - name: Test and build Operator Shell
         working-directory: operator-shell
         run: |
           npm ci
           npm test
           npm run build
-
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: stable
-
-      - name: Test native host
-        working-directory: native/aletheia-host
-        run: cargo test --locked --all-targets
