@@ -211,6 +211,19 @@ deep evidence for that head remains unchanged.
   than from aggregate counts — "0 failures" next to a large skip count does not
   prove that a specific file passed (some files carry their own skip escapes).
 
+- `Prepare and tag releases` runs only after an owner selects the explicit
+  `operational_need` input for an accumulated batch. It may create or refresh a
+  held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
+  clear that hold without a separate explicit owner request.
+  Qualification runtimes remain pinned unless an owner explicitly selects a
+  deployment. See the
+  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
+- When owner-requested external validation is pending, inspect the available checks, any event state,
+  failing log once. Continue independent work and monitor non-blockingly at
+  intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
+- The gateway is global: do not restart it casually or from competing worktrees.
+- Owner updates lead with outcome, consequence, and current state.
+
 ### Reusing a full-proof receipt instead of re-running it
 
 One isolated Fedora full run is the receipt for one tree. Before scheduling a
@@ -226,18 +239,6 @@ Merging and deploying may share one receipt: merge the verified content, deploy
 that merged head, and reserve a new full run for a genuine source change. A new
 run is still required whenever the merged head contains anything from the
 "re-run" row above.
-- `Prepare and tag releases` runs only after an owner selects the explicit
-  `operational_need` input for an accumulated batch. It may create or refresh a
-  held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
-  clear that hold without a separate explicit owner request.
-  Qualification runtimes remain pinned unless an owner explicitly selects a
-  deployment. See the
-  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
-- When owner-requested external validation is pending, inspect the available checks, any event state,
-  failing log once. Continue independent work and monitor non-blockingly at
-  intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
-- The gateway is global: do not restart it casually or from competing worktrees.
-- Owner updates lead with outcome, consequence, and current state.
 
 ## Common commands
 
