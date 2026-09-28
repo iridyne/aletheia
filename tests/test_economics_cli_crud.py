@@ -44,6 +44,9 @@ def _now() -> str:
 
 
 def _seed_viability_report(*, report_id: str, scope: str = "system") -> None:
+    from tests.helpers.historical_economics import VIABILITY_REPORTS_DDL
+
+    get_db().executescript(VIABILITY_REPORTS_DDL)
     ensure_economics_schema()
     now = _now()
     get_db().execute(

@@ -760,6 +760,9 @@ async def test_tokens_filters_by_run_id(client):
 
 
 def _seed_viability_report(db: sqlite3.Connection, *, report_id: str, scope: str = "system") -> None:
+    from tests.helpers.historical_economics import VIABILITY_REPORTS_DDL
+
+    db.executescript(VIABILITY_REPORTS_DDL)
     now = _now()
     db.execute(
         """INSERT INTO viability_reports (
