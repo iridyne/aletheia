@@ -1,5 +1,7 @@
 # 18c · Audit Brief · 段 6（analytics + economics）top-5 屎点扫描（表 C1）
 
+> **已由新分析接替（2026-09-28）**：见 [Core analytics/economics 分析与修复方案](core_analytics_economics_review_plan.md)。已完成结构扫描与重点调用链核验；不再外派或强凑每维五项，也不把该进度等同于逐行全审。下文保留为历史 brief。
+
 > 分类：**audit-only，不写代码，不建 issue**
 > 建议 Agent 档次：**codex+5.6-luna**（32k 行需要深度扫描）
 > 预算：≤3 小时

@@ -1,5 +1,7 @@
 # 18a · Audit Brief · Learning 20-gap 存活性复核（表 B4）
 
+> **待核历史 brief（2026-09-28）**：尚无本项完成报告；不再外派，不按下文 Agent 档次或 Wave 自动执行。后续由主 Agent 核对当前源码与契约，产出问题解决方案。当前状态见 [分析状态](analysis_status.md)。
+
 > 分类：**audit-only，不写代码，不建 issue**
 > 建议 Agent 档次：**codex+5.6-luna**（深度 grep 调查）
 > 预算：≤2 小时

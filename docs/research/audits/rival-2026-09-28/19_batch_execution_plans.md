@@ -1,5 +1,7 @@
 # 19 · Batch × Executable Plans（屎山修复批处理）
 
+> **历史方案，已停止按此派发（2026-09-28）**：Owner 要求由主 Agent 独立 review，并产出完整修复方案。下文的外派、立卡及 Wave 安排保留作历史背景，不是当前执行授权；具体问题必须按当前源码和 Contract 重核。当前进度见 [分析状态](analysis_status.md)。
+
 > 日期：2026-09-28
 > 前置文档：[17_shitmap_task_cards.md](17_shitmap_task_cards.md)（任务卡索引）+ 18a/18b/18c/18d（Phase 1 复核 brief）
 > **性质：可执行计划文档。每个 Batch 是一份可直接分派的 executable plan；不含代码改动。**

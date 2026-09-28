@@ -1,5 +1,7 @@
 # 18d · Audit Brief · `_run_coro` 跨 loop bug 复现（表 B3）
 
+> **待核历史 brief（2026-09-28）**：尚无本项完成报告；不再外派，不按下文 Agent 档次或 Wave 自动执行。后续由主 Agent 核对当前源码与契约，产出问题解决方案。当前状态见 [分析状态](analysis_status.md)。
+
 > 分类：**audit-only + failing-test，不修 bug**
 > 建议 Agent 档次：**codex+5.6-luna**（历史 grep + 异步复现）
 > 预算：≤2 小时
