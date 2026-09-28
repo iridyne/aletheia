@@ -81,7 +81,7 @@ def get_gateway_status():
 
 
 @router.get("/gateway/sessions")
-def list_gateway_sessions(limit: int = Query(default=10, le=50)):
+def list_gateway_sessions(limit: int = Query(default=10, ge=1, le=50)):
     """Recent gateway sessions."""
     from aletheia.storage.sqlite import get_db
 
@@ -93,7 +93,7 @@ def list_gateway_sessions(limit: int = Query(default=10, le=50)):
 
 
 @router.get("/gateway/reconciliation-reports")
-def list_reconciliation_reports(limit: int = Query(default=10, le=50)):
+def list_reconciliation_reports(limit: int = Query(default=10, ge=1, le=50)):
     """Recent reconciliation reports."""
     from aletheia.storage.sqlite import get_db
 
@@ -112,7 +112,7 @@ def list_events(
     aggregate_type: str | None = None,
     aggregate_id: str | None = None,
     event_type: str | None = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """Query the event log."""
     from aletheia.storage.event_store import get_event_store
@@ -131,7 +131,7 @@ def list_events(
 
 
 @router.get("/orders")
-def list_orders(status: str | None = None, mode: str = "paper", limit: int = Query(default=50, le=200)):
+def list_orders(status: str | None = None, mode: str = "paper", limit: int = Query(default=50, ge=1, le=200)):
     """Query persisted orders."""
     from aletheia.storage.sqlite import get_db
 
@@ -322,7 +322,7 @@ def import_bundle(req: ImportRequest):
 
 
 @router.get("/lessons")
-def list_lessons(status: str | None = None, limit: int = Query(default=50, le=200)):
+def list_lessons(status: str | None = None, limit: int = Query(default=50, ge=1, le=200)):
     """List lessons."""
     from extensions.learning.lessons import LessonStore
 
@@ -400,7 +400,7 @@ def archive_lesson(lesson_id: str):
 
 
 @router.get("/skills")
-def list_skills(scope: str | None = None, status: str | None = None, limit: int = Query(default=50, le=200)):
+def list_skills(scope: str | None = None, status: str | None = None, limit: int = Query(default=50, ge=1, le=200)):
     """List skills."""
     from extensions.learning.skills import SkillStore
 
