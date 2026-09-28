@@ -2348,7 +2348,7 @@ def _check_account_leverage_ratio(
     is_live = _is_live(proposal.execution_mode)
     max_ratio = (
         getattr(risk, "max_account_leverage_live", 1.5)
-        if is_live else getattr(risk, "max_account_leverage_demo", 3.0)
+        if is_live else getattr(risk, "max_account_leverage_demo", 10.0)
     )
     try:
         open_positions = _active_open_positions()
