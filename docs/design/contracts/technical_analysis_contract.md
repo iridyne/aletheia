@@ -94,7 +94,7 @@ Deferred rows that do not fill a complete cold chunk remain in the hot authority
 - `tests/test_market_ohlcv_tiering.py`
 - `tests/test_market_context.py`
 - `tests/test_vergex_utilization_completion.py`
-- `scripts/benchmark_technical_analysis.py`
+- `scripts/analysis/benchmark_technical_analysis.py`
 
 ## Known gaps
 

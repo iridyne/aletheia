@@ -181,6 +181,13 @@ async def query_uta(
 
 
 
+# Per-exchange wall-clock budget for connect + account + positions.  Three
+# exchanges run in parallel inside get_unified_state, so this must stay well
+# below the 60s job timeout.  25s gives each exchange a generous margin while
+# preventing one slow exchange from starving the others.
+_PER_EXCHANGE_READ_TIMEOUT_SEC = 25.0
+
+
 async def _query_uta(adapter):
     try:
         await adapter.connect()
@@ -271,18 +278,35 @@ def _uta_projection(account, positions):
 
 
 async def _read_selected_account(cfg, registry, identity):
-    try:
-        account, positions = await _query_uta(registry.create(identity.account_id))
-        account_row, position_rows = _uta_projection(account, positions)
-        errors = []
-        if (
-            account.completeness is not ReadCompleteness.COMPLETE
-            or positions.completeness is not ReadCompleteness.COMPLETE
-        ):
-            errors.append(f"{identity.execution_mode}:incomplete_read")
-        return account_row, position_rows, errors
-    except Exception:
-        return None, [], [f"{identity.execution_mode}:account_read_unavailable"]
+    """Read one exchange account with a per-exchange timeout and one retry.
+
+    A single network hiccup (transient timeout, 502) no longer fails the whole
+    unified sync.  The retry uses a fresh adapter so a stuck socket is not
+    reused.  Two attempts with a 2s gap fits comfortably inside the 60s job
+    timeout even when all three exchanges retry concurrently.
+    """
+    for attempt in range(2):
+        if attempt:
+            await asyncio.sleep(2.0)
+        try:
+            account, positions = await asyncio.wait_for(
+                _query_uta(registry.create(identity.account_id)),
+                timeout=_PER_EXCHANGE_READ_TIMEOUT_SEC,
+            )
+            account_row, position_rows = _uta_projection(account, positions)
+            errors = []
+            if (
+                account.completeness is not ReadCompleteness.COMPLETE
+                or positions.completeness is not ReadCompleteness.COMPLETE
+            ):
+                errors.append(f"{identity.execution_mode}:incomplete_read")
+            return account_row, position_rows, errors
+        except Exception as exc:
+            logger.warning(
+                "uta_manager: %s read attempt %d/2 failed (%s)",
+                identity.execution_mode, attempt + 1, type(exc).__name__,
+            )
+    return None, [], [f"{identity.execution_mode}:account_read_unavailable"]
 
 
 async def get_unified_state(

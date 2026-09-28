@@ -24,7 +24,7 @@ import json
 
 import pytest
 
-from tests.execution_authority import seed_order_authority
+from tests.helpers.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.spec_pipeline_stop_propagation import (
     _BROKERS,

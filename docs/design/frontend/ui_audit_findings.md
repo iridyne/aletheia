@@ -153,11 +153,11 @@ Aletheia 前端不是常规的报表型 Web 仪表板，而是一套**以实盘�
 
 ### 3. 全自动契约生成与 CI 校验 (`scripts/generate-api-types.mjs` & `generate-settings-types.mjs`)
 * **全量 API 契约生成 (`scripts/generate-api-types.mjs`)**：
-  调用 Python 端 `scripts/export_openapi_schema.py` 导出包含全量 351 个路由与 164 个 Pydantic Schemas 的权威 OpenAPI 文档，利用 `openapi-typescript` 自动化生成 `src/api/generated/api.d.ts`（2.1 万行）。
+  调用 Python 端 `scripts/ci/export_openapi_schema.py` 导出包含全量 351 个路由与 164 个 Pydantic Schemas 的权威 OpenAPI 文档，利用 `openapi-typescript` 自动化生成 `src/api/generated/api.d.ts`（2.1 万行）。
 * **切片与全量双通道门禁**：
   - `npm run check:api-types`：全量端点契约比对，检测路由定义、Query/Path 入参以及 ResponseModel 漂移；
   - `npm run check:settings-types`：针对高频配置修改的轻量切片比对；
-  - 接入 `scripts/ci_plan.py` 本地 Preflight 与 GitHub CI 工作流，一旦前后端契约漂移立即阻断提交。
+  - 接入 `scripts/ci/ci_plan.py` 本地 Preflight 与 GitHub CI 工作流，一旦前后端契约漂移立即阻断提交。
 * **架构经验与教训（构建隔离原则）**：
   **严禁将契约生成/检查命令绑进 `package.json` 的 `"build"` 脚本！** 生产升级命令 `aletheia update`（`applier.py` / `auto.py`）在运行时执行 `npm run build` 生成静态托管产物；若在 `"build"` 中执行 Python 生成逻辑，会导致升级过程强依赖当时处于过渡态的 Python 环境，且破坏 `tests/test_frontend_ci_build_contract.py` 的 `EXPECTED_BUILD` 门禁。因此契约守卫必须严格放在开发期 preflight 和 CI 管道中。
 * **Pydantic ResponseModel 闭环铁律**：

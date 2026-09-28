@@ -14,7 +14,7 @@ Routing under test — `bitget_demo`:
       → coordinator.close_position()       # claims, submits, materializes
 """
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
 from datetime import datetime, timedelta, timezone
 
@@ -22,7 +22,7 @@ import pytest
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 _MODE = "bitget_demo"
 
 

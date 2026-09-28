@@ -363,7 +363,7 @@ backend `uvicorn --reload` 提供后端热重载,SSE(`frontend-built` 事件)驱
 
 - 所有 dev-reload 能力门控 `ALETHEIA_DEV_RELOAD=1`(仅 dev.ps1 设)+ `live_disabled`;
   生产模式 supervisor 崩溃保护不受影响。
-- UI 迭代统一用 `scripts/dev.ps1`,**不要**在紧循环里手动 rebuild `dashboard_static/`
+- UI 迭代统一用 `scripts/dev/dev.ps1`,**不要**在紧循环里手动 rebuild `dashboard_static/`
   (已写入 `docs/operations/development/DEVELOPMENT_PREVIEW.md` 的前端迭代规则)。
 
 ### Alternatives Considered
@@ -943,8 +943,8 @@ including when the dashboard is unavailable or needs replacing.
 不新增 push/PR 触发，不新增强制通过 CI 的 merge gate，不把"等 CI 绿"作为合并前提。
 
 **Reason:** CI 维护成本（self-hosted runner 管理、flakiness、与 macOS 开发环境的分歧、
-spec 套件的版本敏感性）已长期高于其收益。local preflight（`scripts/ci_preflight.py` /
-`scripts/ci_local.py`）覆盖了编译、契约和快速回归；Fedora 全量运行在 owner 显式请求时
+spec 套件的版本敏感性）已长期高于其收益。local preflight（`scripts/ci/ci_preflight.py` /
+`scripts/ci/ci_local.py`）覆盖了编译、契约和快速回归；Fedora 全量运行在 owner 显式请求时
 才值得启动。
 
 **Guardrail:**
@@ -997,7 +997,7 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
 
 这条被取消的前置条件正是后者的极端案例，实测三点：
 1. 它只存在于 `documentation_governance.md` 的散文里和一个 PR 模板复选框里。**没有任何程序
-   检查它。** 唯一会读提案文件的代码是 `scripts/check_docs.py` 的 `proposal_metadata_failures`，
+   检查它。** 唯一会读提案文件的代码是 `scripts/ci/check_docs.py` 的 `proposal_metadata_failures`，
    而它只校验 YAML 头里有 `id:` 和一个合法的 `status:`——不校验提案是否存在、是否被引用。
 2. 它的来源不是任何一次事故。它来自 `docs/design/process/SDD_METHODOLOGY.md`（2026-06-23
    从 specdriven.ai 引入）的一句「文档为准，代码追文档」。981 行的本决策日志里零条相关记录。
@@ -1014,7 +1014,7 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
 | "不许静默吞异常" | `check_docs.silent_failure_fallback_failures` |
 | "跨文档语义要一致" | `check_docs.semantic_truth_failures` |
 
-同时把 `check_docs` 接到 `scripts/dev_check.py`（pre-commit 走的那条路）。此前它**没有任何
+同时把 `check_docs` 接到 `scripts/ci/dev_check.py`（pre-commit 走的那条路）。此前它**没有任何
 自动触发点**：不在 pre-commit，不在 `ci.yml`（只有 `workflow_dispatch`），`ci_plan.py` 只是
 列出来给人看。一个没人跑的门就是加了步骤的散文。
 
@@ -1031,7 +1031,7 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
 - D0/D1/D2 分级本身保留——它描述改动的性质（恢复事实 / 改语义 / 改结构），仍然有用。
   去掉的只是挂在 D2 上的那句"必须先有 accepted 提案"。
 - `docs/design/proposals/` 保留。已有提案不失效，仍可写新提案；它只是不再是通行证。
-- 这条决策本身不需要提案背书：`scripts/check_change_contract.py` 的 EXEMPT_PATTERNS 已经
+- 这条决策本身不需要提案背书：`scripts/ci/check_change_contract.py` 的 EXEMPT_PATTERNS 已经
   豁免 `^docs/`、`^.github/`、`^scripts/check_`、`^AGENTS.md$`，而 `AGENTS.md` 也已写明
   owner 的显式请求即构成授权。
 

@@ -36,3 +36,9 @@ Do not edit this fixture merely to make a behavior change pass. A changed
 scorer requires an explicitly reviewed new behavior version and either a new
 versioned fixture or an approved, documented baseline migration. Preserve the
 old fixture whenever old/new shadow comparison still needs it.
+
+# Code, not data
+
+This folder holds data only. Shared Python helpers — repository row builders,
+seeds, seams and fakes — live in [`tests/helpers/`](../helpers); import them as
+`tests.helpers.<module>`.

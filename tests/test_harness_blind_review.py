@@ -1,6 +1,6 @@
 import json
 
-from scripts.build_harness_blind_review import main
+from scripts.analysis.build_harness_blind_review import main
 
 
 def test_blind_packet_hides_arm_identity(tmp_path, monkeypatch):

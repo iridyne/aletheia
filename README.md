@@ -89,7 +89,7 @@ support from an adapter, a UI control, or a passing test.
 ## Development and preview
 
 Use focused tests for narrow changes and the repository CI planning entrypoint
-(`scripts/ci_plan.py`) for broader verification. Do not use a local full-suite
+(`scripts/ci/ci_plan.py`) for broader verification. Do not use a local full-suite
 `uv run pytest` as the default macOS workflow. For UI-only worktree iteration,
 read [`DEVELOPMENT_PREVIEW.md`](docs/operations/development/DEVELOPMENT_PREVIEW.md).
 The stable Gateway is `http://127.0.0.1:8787`; worktree frontend HMR is

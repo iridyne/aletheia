@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import get_universe_twin_shadow_batch
+from tests.helpers.repo_test_helpers import get_universe_twin_shadow_batch
 
 from datetime import datetime, timedelta, timezone
 

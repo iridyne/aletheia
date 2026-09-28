@@ -575,7 +575,7 @@ def test_dynamic_entry_plan_invalidation_covers_the_full_entry_zone():
 
 
 def test_realized_liquidity_comes_only_from_private_fill_evidence():
-    from tests.fill_reports import reports
+    from tests.helpers.fill_reports import reports
 
     base = {
         "orderId": "EX-1",

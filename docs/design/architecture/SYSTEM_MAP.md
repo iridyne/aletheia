@@ -1,7 +1,7 @@
 # System Map — 全模块概念地图
 
 > 系统职责与调用关系导航；表中的历史实现备注不等于当前运行状态。
-> 下方路由区的源码链接与符号由 `scripts/check_docs.py` 的 navigation 检查守；这不是全量运行审计。
+> 下方路由区的源码链接与符号由 `scripts/ci/check_docs.py` 的 navigation 检查守；这不是全量运行审计。
 > 各表「管道」列的 ✅/⚠️ 只表示源码调用路径是否连通，不表示已部署、盈利或运行健康已验证。
 
 本图是导航，不授予运行或交易权限；当前支持范围以 [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md) 和 [Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) 为准，任务与 Agent 行为以 [Agent Contracts](../contracts/agent_contracts.md) 为准。管道连通不代表已部署或经济资格已验证。

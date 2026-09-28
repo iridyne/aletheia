@@ -135,18 +135,13 @@ def install(*, backend: str = SESSION_BACKEND, elevate: bool = True, source: str
     current = status()
     if current.get("running"):
         return {**current, "ok": False, "reason": "service_running"}
-    if backend not in {SESSION_BACKEND, WINDOWS_SERVICE_BACKEND}:
+    # The Windows machine-service backend is not installable any more: it required a
+    # frozen payload. Only the session backend can be created; an existing machine
+    # install is still addressed by status/start/stop/enable/disable/uninstall.
+    if backend != SESSION_BACKEND:
         return {**current, "ok": False, "reason": "unsupported_backend"}
-    other_installed = (
-        current["machine"].get("installed") if backend == SESSION_BACKEND
-        else current["session"].get("installed")
-    )
-    if other_installed:
+    if current["machine"].get("installed"):
         return {**current, "ok": False, "reason": "backend_conflict"}
-    if backend == WINDOWS_SERVICE_BACKEND:
-        if platform.system() != "Windows":
-            return {**current, "ok": False, "reason": "unsupported_backend"}
-        return windows_machine_service.install(elevate=elevate)
     return session_service.install(source=source)
 
 

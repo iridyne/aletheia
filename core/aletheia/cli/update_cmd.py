@@ -113,18 +113,12 @@ def _tty_error(code: str, phase: str, detail: str, fix: str = "") -> None:
 update_app = typer.Typer(
     no_args_is_help=False,
     invoke_without_command=True,
-    help="Update a source checkout end to end or manage packaged releases.",
+    help="Update a source checkout end to end.",
 )
 auto_app = typer.Typer(
     no_args_is_help=True,
     help="Follow stable release tags on an explicitly opted-in Linux Paper runtime every five minutes.",
 )
-
-
-def _is_packaged() -> bool:
-    from aletheia.update.packaged import is_packaged_mode
-
-    return is_packaged_mode()
 
 
 @update_app.callback(invoke_without_command=True)
@@ -200,35 +194,6 @@ def _observer_freshness_lines(*, deployed_commit: str) -> list[str]:
 
 def _run_update(*, restart: bool, verbose: bool = False) -> None:
     from ops.update.continuity import describe_failure_code as _desc
-    if _is_packaged():
-        if not restart:
-            typer.echo(
-                "`--no-restart` is only available for source checkouts; "
-                "packaged updates require Tray activation and restart.",
-                err=True,
-            )
-            raise typer.Exit(1)
-        from ops.update.packaged_commands import stage_update_blocking
-
-        result = stage_update_blocking()
-        state = result.get("state") or {}
-        if not result.get("accepted"):
-            typer.echo(f"Update not started: {result.get('reason')}")
-            raise typer.Exit(1)
-        if state.get("status") == "up_to_date":
-            typer.echo("Already up to date.")
-            return
-        if state.get("status") == "failed":
-            typer.echo(f"Update staging failed: {state.get('error')}", err=True)
-            raise typer.Exit(1)
-        if state.get("phase") != "ready_to_switch":
-            typer.echo(f"Unexpected update state: {state.get('phase')}", err=True)
-            raise typer.Exit(1)
-        typer.echo(f"Release {state.get('target_release')} is verified and migration-preflighted.")
-        typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
-        return
-
-
     from ops.update.continuity import apply_update_with_continuity
 
     if sys.stdout.isatty():
@@ -396,7 +361,7 @@ def status(json_output: bool = typer.Option(False, "--json", help="Print machine
 
 @update_app.command()
 def check():
-    """Check whether a newer development commit or signed release is available."""
+    """Check whether a newer development commit is available."""
 
     from ops.update.applier import check_for_update
 
@@ -406,16 +371,6 @@ def check():
         if result.get("message"):
             typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
-
-    if result.get("mode") == "packaged":
-        if result.get("has_update"):
-            typer.echo(
-                f"Signed update available: {result.get('available_release')} ({result.get('size_bytes', 0)} bytes)."
-            )
-            typer.echo("Run `aletheia update` to stage and install it through Aletheia Tray.")
-        else:
-            typer.echo(f"Up to date ({result.get('current_release')}).")
-        return
 
     if result.get("mode") == "source_release":
         typer.echo(f"Release check: {result.get('reason')}")
@@ -429,29 +384,6 @@ def check():
         typer.echo("Run `aletheia update` for the complete pull, build, and restart.")
     else:
         typer.echo(f"Up to date on origin/{result['branch']} ({result['current_commit'][:8]}).")
-
-
-@update_app.command()
-def rollback(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
-    """Request rollback within the packaged update safety window."""
-
-    if not _is_packaged():
-        typer.echo("Packaged rollback is unavailable in a development checkout.", err=True)
-        raise typer.Exit(1)
-    if not yes and not typer.confirm(
-        "Restore the pre-update backup and previous release? Changes since the update will be lost."
-    ):
-        typer.echo("Aborted.")
-        raise typer.Exit(0)
-    from ops.update.applier import rollback_update
-
-    result = rollback_update()
-    if not result.get("accepted"):
-        typer.echo(f"Rollback not requested: {result.get('reason')}", err=True)
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
-        raise typer.Exit(1)
-    typer.echo("Rollback request accepted. Aletheia Tray will restore the checkpoint safely.")
 
 
 @auto_app.command("status")

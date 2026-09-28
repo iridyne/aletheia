@@ -124,7 +124,7 @@ def test_onchain_snapshots_table_in_schema():
 )
 def test_defillama_repo_helpers_exist():
     from aletheia.storage import repositories as repo
-    from tests.fixtures.repo_test_helpers import insert_onchain_snapshot
+    from tests.helpers.repo_test_helpers import insert_onchain_snapshot
 
     assert callable(insert_onchain_snapshot)
     assert callable(getattr(repo, "latest_onchain_snapshots", None))

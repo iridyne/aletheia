@@ -122,7 +122,7 @@ def test_bitget_broker_gates_approved_proposal_protection(monkeypatch, native_tp
     from aletheia.execution import coordinator
     from tests.uta.test_execution_coordinator import _Adapter, _ack
     from aletheia.uta.models import UTACapabilities, CapabilitySupport
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id=f"proposal-bitget-preset-{native_tpsl_enabled}",
@@ -176,7 +176,7 @@ def test_bitget_broker_gates_approved_proposal_protection(monkeypatch, native_tp
 def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
     from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id="proposal-bitget-mutation",

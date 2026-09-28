@@ -19,7 +19,7 @@ been completed.
 The dated Phase 5 measurements used the v0.1 header declaring the retired
 `paper_internal` scenario. That prompt and its measured results are historical;
 they do not qualify an external account or describe the current header.
-`scripts/harness_header_ablation.py` now emits a v0.2 `bitget_demo` scenario,
+`scripts/analysis/harness_header_ablation.py` now emits a v0.2 `bitget_demo` scenario,
 with Live disabled and read-only tool context. Existing result files and prompt
 hashes remain unchanged. No new model experiment was run during retirement;
 claims about v0.2 require a fresh paired run and its own recorded prompt hashes.

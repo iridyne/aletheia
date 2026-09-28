@@ -11,7 +11,7 @@ from extensions.counterfactual.propensity import (
     build_propensity_report,
 )
 from extensions.counterfactual.trades import persist_shadow_batch
-from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
+from tests.helpers.shadow_outcome_fixture import settle_pending_keyed_shadows
 
 # ---------------------------------------------------------------------------
 # Helpers

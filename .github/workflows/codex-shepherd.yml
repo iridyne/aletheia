@@ -383,7 +383,7 @@ jobs:
                 'run',
                 '--no-sync',
                 'python',
-                'scripts/ci_plan.py',
+                'scripts/ci/ci_plan.py',
                 '--event',
                 'pull_request',
                 '--base-sha',

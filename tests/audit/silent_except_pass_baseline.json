@@ -121,12 +121,12 @@
     },
     {
       "file": "core/aletheia/gateway/managed_service.py",
-      "line": 138,
+      "line": 136,
       "reason": "best-effort orphaned temp-file cleanup on the plist-write error path; original exception propagates via finally"
     },
     {
       "file": "core/aletheia/gateway/managed_service.py",
-      "line": 516,
+      "line": 512,
       "reason": "best-effort temp XML cleanup after schtasks task registration; unrelated to the create/run result already captured"
     },
     {

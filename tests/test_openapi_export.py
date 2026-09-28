@@ -13,7 +13,7 @@ def test_openapi_export_script_writes_schema(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            str(root / "scripts" / "export_openapi_schema.py"),
+            str(root / "scripts" / "ci" / "export_openapi_schema.py"),
             "--output",
             str(output),
         ],

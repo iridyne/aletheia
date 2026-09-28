@@ -538,7 +538,7 @@ async def test_exhausted_transient_fallback_emits_safe_typed_event(tmp_path, mon
 
 @pytest.mark.anyio
 async def test_settings_model_persists_fallback_models_without_key_echo(client, monkeypatch):
-    from tests.model_http import mock_model_probe
+    from tests.helpers.model_http import mock_model_probe
 
     mock_model_probe(monkeypatch)
     secret = "sk-secret-should-not-echo"

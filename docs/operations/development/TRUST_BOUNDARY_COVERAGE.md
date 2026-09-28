@@ -35,7 +35,7 @@ Branch coverage is required because the bugs we care about (a fall-through
 `elif`, an unhandled `None`, an epoch-mismatch that returns the wrong
 window) usually hide behind an untaken branch, not an unexecuted line.
 
-Per-module floors live in `scripts/coverage_floors.py`. They match today's
+Per-module floors live in `scripts/ci/coverage_floors.py`. They match today's
 measured values. A PR that pushes any module below its floor fails CI. A
 PR that raises measured coverage may (optionally, in a follow-up commit)
 ratchet its floor upward.
@@ -50,9 +50,9 @@ fails; a new file that touches these boundaries must be added to the
 The `review` job in `.github/workflows/ci.yml` runs `pytest --cov` against
 the tests that exercise the boundaries, then:
 
-1. `scripts/coverage_floors.py --selftest` (hermetic; asserts the
+1. `scripts/ci/coverage_floors.py --selftest` (hermetic; asserts the
    percentage math and regression detection).
-2. `scripts/coverage_floors.py` (compares measured coverage to `FLOORS`).
+2. `scripts/ci/coverage_floors.py` (compares measured coverage to `FLOORS`).
 
 Local reproduction — must stay in sync with the ``Trust-boundary
 coverage floors`` step in ``.github/workflows/ci.yml``. Property tests
@@ -80,7 +80,7 @@ uv run pytest \
   tests/test_policy_epoch_properties.py \
   tests/test_profit_gradient_evidence_properties.py \
   --cov --cov-report=term-missing:skip-covered -q
-uv run python scripts/coverage_floors.py
+uv run python scripts/ci/coverage_floors.py
 ```
 
 ## Frozen baseline (2025-11, post property tests)
@@ -138,7 +138,7 @@ invariants that are not violated in practice add maintenance noise.
 ## Adding or removing a boundary
 
 - **Adding.** Add the file path to `.coveragerc` `include=` and to
-  `FLOORS` in `scripts/coverage_floors.py`. Set the floor to the current
+  `FLOORS` in `scripts/ci/coverage_floors.py`. Set the floor to the current
   measured value minus 2 – 5 points. Add the test file(s) that exercise
   it to the `pytest` invocation in `.github/workflows/ci.yml` if not
   already covered by the transitive imports there.

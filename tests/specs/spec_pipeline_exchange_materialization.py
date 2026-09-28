@@ -6,9 +6,9 @@ prove that an exchange-confirmed fill becomes one durable, replay-safe chain.
 
 from __future__ import annotations
 
-from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+from tests.helpers.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 from collections import Counter
 from datetime import datetime, timezone
@@ -17,7 +17,7 @@ import sqlite3
 import threading
 
 import pytest
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

@@ -40,7 +40,7 @@ Final report:
 1. Run focused tests, then broader tests appropriate to the changed surface.
 2. Review the diff and commit only intended source/documentation changes.
 3. Prepare the PR body from [`.github/PULL_REQUEST_TEMPLATE.md`](../../../.github/PULL_REQUEST_TEMPLATE.md)
-   and run `uv run --no-sync python scripts/ci_preflight.py --pr-body-file <path>`
+   and run `uv run --no-sync python scripts/ci/ci_preflight.py --pr-body-file <path>`
    before the first PR create/update. It must pass against the intended body and
    current branch/base diff. Since 2026-09-07 remote CI is `workflow_dispatch`-only
    ([decision](../decisions/DECISIONS.md#2026-09-07-—-remote-ci-维持-manual-only-是主动决策不是遗留疏漏)),

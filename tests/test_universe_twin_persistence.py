@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import get_universe_twin_shadow_batch, universe_twin_shadow_capture_due
+from tests.helpers.repo_test_helpers import get_universe_twin_shadow_batch, universe_twin_shadow_capture_due
 
 from datetime import datetime, timedelta, timezone
 import json

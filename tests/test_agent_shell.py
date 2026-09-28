@@ -13,7 +13,7 @@ from aletheia.agent_shell.permissions import check_permission, allowed_commands
 from aletheia.agent_shell.intent import _classify_keyword, CommandIntent
 from aletheia.agent_shell.context import build_app_context, context_summary_text, sections_for_profile
 from aletheia.agent_shell.synthesis import _format_fallback
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 
 
@@ -1846,7 +1846,7 @@ async def test_runtime_handles_what_is_the_system_doing_with_operator_evidence(t
     from aletheia.agent_shell.operator_store import create_task, record_heartbeat
     from aletheia.storage.models import AgentRun, Position
     from aletheia.storage.repositories import insert_position
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
     import aletheia.config.loader as loader
 
     cfg = loader.load_config()
@@ -2399,7 +2399,7 @@ async def test_runtime_explains_what_failed_with_specific_failures(tmp_path, mon
     import aletheia.config.loader as loader
     from aletheia.agent_shell.operator_store import create_task
     from aletheia.storage.models import AgentRun
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
 
     cfg = loader.load_config()
     cfg.agent.permission_mode = "Observe"
@@ -2508,7 +2508,7 @@ async def test_rerun_failed_agent_task_uses_latest_failed_run(tmp_path, monkeypa
 
     from aletheia.agent_shell.commands import rerun_failed_agent_task
     from aletheia.storage.models import AgentRun
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
     from aletheia import agents
 
     insert_agent_run(AgentRun(agent_name="paper_trader", status="failed", errors='["timeout"]'))

@@ -292,7 +292,7 @@ def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
     from extensions.counterfactual.trades import list_deduped_shadows, persist_shadow_batch
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
-    from tests.shadow_outcome_fixture import (
+    from tests.helpers.shadow_outcome_fixture import (
         insert_canonical_outcome_for_shadow,
         settle_pending_keyed_shadows,
     )
@@ -409,7 +409,7 @@ def test_linked_projection_settles_all_time_aligned_same_key_shadows():
 
     from extensions.counterfactual.trades import persist_shadow_batch
     from aletheia.storage.sqlite import get_db
-    from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
+    from tests.helpers.shadow_outcome_fixture import settle_pending_keyed_shadows
 
     candidate = {
         "opportunity_id": "shadow-many-to-one",
@@ -487,7 +487,7 @@ def test_public_shadow_diagnostics_sanitize_unauthorized_results():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import ShadowTrade
     from aletheia.storage.sqlite import get_db
-    from tests.shadow_outcome_fixture import (
+    from tests.helpers.shadow_outcome_fixture import (
         insert_canonical_outcome_for_shadow,
         settle_pending_keyed_shadows,
     )

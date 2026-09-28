@@ -226,4 +226,4 @@ Before adding or changing documentation:
 3. link rather than duplicate;
 4. keep execution tracking in GitHub;
 5. update the nearest routing README;
-6. run `uv run python scripts/check_docs.py`.
+6. run `uv run python scripts/ci/check_docs.py`.

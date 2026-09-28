@@ -5,7 +5,7 @@ account_mode_match, strategy_lifecycle_state (live), max_leverage (futures),
 max_single_trade_risk (live, stop-based), and bounded external Demo trades.
 """
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -55,7 +55,7 @@ def _unlock_live_auto(tmp_path):
 def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     # No closed positions today → realized pnl 0 → external Demo proposal still approves.
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
         monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
     )
@@ -579,7 +579,7 @@ def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
 def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
     """A normal small external Demo trade with a sane stop is still approved."""
     setup_env(tmp_path, monkeypatch)
-    from tests.risk_trade_fixture import approvable_risk_trade
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
         monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
     )

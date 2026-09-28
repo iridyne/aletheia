@@ -112,11 +112,3 @@ def test_shared_page_header_and_table_expose_accessible_semantics():
     assert 'aria-label="Filter table rows"' in table
     assert "aria-sort={canSort ?" in table
     assert 'className="dt-sort-button"' in table
-
-
-def test_source_install_stops_packaged_update_poll_after_mode_detection():
-    src = _read("components/PackagedUpdateBanner.tsx")
-
-    assert "packagedRuntime = false" in src
-    assert "packagedRuntime !== false" in src
-    assert "activeRef.current ? 1000 : 30000" in src

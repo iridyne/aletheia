@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from tests.model_http import model_http
+from tests.helpers.model_http import model_http
 from pydantic import BaseModel
 
 from aletheia.model_provider.base import (
