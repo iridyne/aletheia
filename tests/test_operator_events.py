@@ -1324,3 +1324,146 @@ def test_untrustworthy_snapshot_timestamps_are_reported_not_silently_fresh():
     unparseable = _snapshot_verdict(None, raw="not-a-timestamp")
     assert unparseable is not None
     assert unparseable["metadata"]["stale_minutes"] is None
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_drop_failed_tasks_once_they_age_out(client):
+    """The Python window matches the shell's `isRecentFailedTask` (30 minutes).
+
+    Without the bound, failures that a deployed fix already resolved keep a
+    high-severity "N failed operator task(s) require review" lit forever — the
+    operator can act on nothing and the item never clears.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    stale_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    created = await client.post(
+        "/api/operator/internal/tasks",
+        json={
+            "task_type": "run_market_scan",
+            "status": "failed",
+            "priority": "normal",
+            "created_by": "operator_loop",
+            "assigned_to": "operator",
+            "input_data": {},
+            "error": "Unknown command: run_market_scan",
+            "completed_at": stale_at,
+        },
+    )
+    assert created.status_code == 200
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+    assert "failed_tasks_present" not in {item["kind"] for item in payload}
+
+    fresh = await client.post(
+        "/api/operator/internal/tasks",
+        json={
+            "task_type": "run_risk_critique",
+            "status": "failed",
+            "priority": "normal",
+            "created_by": "operator_loop",
+            "assigned_to": "risk_critic",
+            "input_data": {},
+            "error": "boom",
+        },
+    )
+    assert fresh.status_code == 200
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+    assert "failed_tasks_present" in {item["kind"] for item in payload}
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_name_unknown_commands_instead_of_proposing_behavior_change(client):
+    """An unknown command is a caller defect, not a Command Center design gap."""
+    from aletheia.agent_shell.audit import record_command
+    from aletheia.agent_shell.operator_store import create_session_record
+
+    create_session_record(
+        session_id="session-unknown-1",
+        user_input="Refresh market scan",
+        kind="command_session",
+        parent_session_id="operator-main",
+        title="Market Scan Refresh",
+    )
+    for _ in range(2):
+        record_command(
+            "session-unknown-1",
+            "run_market_scan",
+            {},
+            False,
+            "Unknown command: run_market_scan",
+        )
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+    kinds = {item["kind"] for item in payload}
+
+    assert "unknown_command_rejections" in kinds
+    assert "command_center_behavior_change_proposal_due" not in kinds
+    unknown = next(item for item in payload if item["kind"] == "unknown_command_rejections")
+    assert unknown["command_names"] == ["run_market_scan"]
+    assert unknown["rejection_counts"] == {"run_market_scan": 2}
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_surface_a_stalled_observation_worker(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    stale_at = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    monkeypatch.setattr(
+        "aletheia.agent_shell.operator_recommendations._observation_worker_signature",
+        lambda: {"acquired_at": stale_at, "source_commit": "a" * 40},
+    )
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+
+    stale = next(
+        item for item in payload if item["kind"] == "observation_worker_pass_stale"
+    )
+    assert stale["stale_hours"] >= 72
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_surface_worker_checkout_drift(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.operator_recommendations._observation_worker_signature",
+        lambda: {
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+            "source_commit": "7a2b08a4b31cefd6f7a7b990822f0c635f2a551d",
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.build_info.get_boot_commit",
+        lambda: "a" * 40,
+    )
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+
+    kinds = {item["kind"] for item in payload}
+    assert "observation_worker_checkout_drift" in kinds
+    assert "observation_worker_pass_stale" not in kinds
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_stay_quiet_for_a_current_worker(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.operator_recommendations._observation_worker_signature",
+        lambda: {
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+            "source_commit": "a" * 40,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.build_info.get_boot_commit",
+        lambda: "a" * 40,
+    )
+
+    payload = (await client.get("/api/operator/recommendations")).json()
+
+    kinds = {item["kind"] for item in payload}
+    assert "observation_worker_pass_stale" not in kinds
+    assert "observation_worker_checkout_drift" not in kinds

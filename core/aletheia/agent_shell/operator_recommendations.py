@@ -884,8 +884,19 @@ def build_command_center_behavior_summary(
             }
         )
 
+    from aletheia.agent_shell.registry import COMMANDS
+
+    # A rejected *unknown* command is not a behavior-design gap: there is nothing
+    # to improve on a command that does not exist. It is evidence that a caller is
+    # still driving a retired or renamed command — which is how the shell's
+    # `run_market_scan` loop reached 531 failures before anyone noticed. Route
+    # those to their own signal instead of proposing an affordance for them.
+    unknown_command_rejections: dict[str, int] = {}
     due_behavior_changes: list[dict] = []
     for command_name, rows in rejections_by_command.items():
+        if command_name not in COMMANDS:
+            unknown_command_rejections[command_name] = len(rows)
+            continue
         if len(rows) < 2 or command_name in proposed_commands:
             continue
         sample_responses = []
@@ -932,7 +943,32 @@ def build_command_center_behavior_summary(
         "recent_denied_commands": recent_denied_commands[:limit],
         "recent_command_center_behavior_proposals": recent_behavior_proposals[:limit],
         "needs_command_center_behavior_proposals": due_behavior_changes[:limit],
+        "unknown_command_rejections": unknown_command_rejections,
     }
+
+
+# Mirror of the shell's `isRecentFailedTask` (`recommendation_engine.ts`:30 min):
+# a failed operator task is presented for this long, then ages out. The Python and
+# Node surfaces must agree on the window, otherwise one of them keeps a
+# high-severity item lit on failures that are already fixed and unknowable to the
+# operator — the 2026-09-28 batch left 531 `run_market_scan` failures behind and
+# this surface reported "10 failed operator task(s) require review" forever.
+FAILED_TASK_VISIBILITY_MINUTES = 30
+
+
+def _recent_failed_tasks(
+    tasks: list[dict],
+    *,
+    threshold_minutes: int = FAILED_TASK_VISIBILITY_MINUTES,
+) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=threshold_minutes)
+    recent: list[dict] = []
+    for task in tasks:
+        terminal_at = parse_utc(task.get("completed_at") or task.get("created_at"))
+        if terminal_at is None or terminal_at <= cutoff:
+            continue
+        recent.append(task)
+    return recent
 
 
 def _make_task_recommendation(
@@ -1073,6 +1109,118 @@ def _build_portfolio_snapshot_recommendation(
             },
         )
     return None
+
+
+# Two 6-hour Worker timer periods: a pass that has not advanced in this long means
+# the timer is not completing, which is silent by design (`--quiet`).
+OBSERVATION_WORKER_STALE_AFTER_HOURS = 12
+
+
+def _observation_worker_signature() -> dict | None:
+    """The Worker's last-pass signature, or ``None`` when it cannot be read.
+
+    Written by ``extensions.observation_lab.worker_lock`` on every pass; it is the
+    only operator-visible evidence that the Worker still runs and on which commit.
+    """
+    try:
+        from extensions.observation_lab.worker_lock import _lock_path
+
+        path = _lock_path()
+        if not path.exists():
+            return None
+        values: dict[str, str] = {}
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key:
+                values[key.strip()] = value.strip()
+        return values
+    except (OSError, ImportError):
+        logger.warning("observation worker signature unavailable", exc_info=True)
+        return None
+
+
+def _build_observation_worker_recommendation(cfg) -> dict | None:
+    """Surface a stalled or drifted Observation Worker.
+
+    The Worker writes its own pass signature and nothing else reports it, so a
+    Worker whose timer stopped completing passes — or that sits on code older than
+    the running gateway — stays invisible. On 2026-09-28 every six-hourly pass had
+    been failing for days behind an 848-commit drift while the deployment output
+    still said observer continuity was verified.
+    """
+    if cfg.runtime.paused:
+        return None
+    signature = _observation_worker_signature()
+    if not signature:
+        return None
+
+    acquired_at = parse_utc(signature.get("acquired_at"))
+    if acquired_at is not None:
+        age_hours = (datetime.now(timezone.utc) - acquired_at).total_seconds() / 3600
+        if age_hours > OBSERVATION_WORKER_STALE_AFTER_HOURS:
+            return {
+                "id": "observation-worker-pass-stale",
+                "kind": "observation_worker_pass_stale",
+                "severity": "medium",
+                "summary": (
+                    "The Observation Worker has not completed a pass for about "
+                    f"{int(age_hours)} hours (timer period is 6 hours). Its capability is not running: "
+                    "check `systemctl --user status aletheia-observer.service`."
+                ),
+                "last_pass_at": signature.get("acquired_at"),
+                "stale_hours": int(age_hours),
+            }
+
+    from aletheia.agent_runtime.build_info import get_boot_commit
+
+    worker_commit = str(signature.get("source_commit") or "")
+    running_commit = str(get_boot_commit() or "")
+    if worker_commit and running_commit and worker_commit != running_commit:
+        return {
+            "id": "observation-worker-checkout-drift",
+            "kind": "observation_worker_checkout_drift",
+            "severity": "medium",
+            "summary": (
+                f"The Observation Worker's last pass ran on {worker_commit[:12]} while the runtime is on "
+                f"{running_commit[:12]}. Update that checkout (and `uv sync` it) whenever shared config or "
+                "schema changed; `aletheia observe drift` reports the same comparison."
+            ),
+            "worker_commit": worker_commit,
+            "running_commit": running_commit,
+        }
+    return None
+
+
+UNKNOWN_COMMAND_MIN_REJECTIONS = 2
+
+
+def _build_unknown_command_recommendation(cfg, command_center_summary: dict) -> dict | None:
+    """Name the retired/renamed command instead of proposing a behavior change.
+
+    The behavior-change rule below used to answer an unknown command with "add a
+    more discoverable affordance or alias around it", which is the wrong remedy and
+    leaves the caller driving a command that cannot execute unseen.
+    """
+    unknown = {
+        name: count
+        for name, count in (command_center_summary.get("unknown_command_rejections") or {}).items()
+        if count >= UNKNOWN_COMMAND_MIN_REJECTIONS
+    }
+    if cfg.runtime.paused or not unknown:
+        return None
+    command_name, count = max(sorted(unknown.items()), key=lambda item: item[1])
+    return {
+        "id": f"unknown-command:{command_name}",
+        "kind": "unknown_command_rejections",
+        "severity": "medium",
+        "summary": (
+            f"Command Center rejected unknown command `{command_name}` {count} time(s) in the last 24h. "
+            "No caller should be driving a command that is not registered — inspect the caller before "
+            "proposing any behavior change."
+        ),
+        "command_names": sorted(unknown),
+        "rejection_counts": dict(sorted(unknown.items())),
+    }
 
 
 def _build_command_center_recommendation(
@@ -1633,7 +1781,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         from aletheia.agent_shell.operator_store import apply_heartbeat_staleness
 
         heartbeat = apply_heartbeat_staleness(heartbeat)
-    failed_tasks = list_tasks(limit=10, status="failed")
+    failed_tasks = _recent_failed_tasks(list_tasks(limit=10, status="failed"))
     running_tasks = list_tasks(limit=20, status="running")
     queued_tasks = list_tasks(limit=20, status="queued")
     recent_events = list_events(limit=100)
@@ -1955,6 +2103,14 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         recent_artifacts=recent_artifacts,
     )
     result = _build_command_center_recommendation(cfg, command_center_summary)
+    if result:
+        recommendations.append(result)
+
+    result = _build_unknown_command_recommendation(cfg, command_center_summary)
+    if result:
+        recommendations.append(result)
+
+    result = _build_observation_worker_recommendation(cfg)
     if result:
         recommendations.append(result)
 
