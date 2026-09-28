@@ -187,3 +187,59 @@ def test_empty_cached_file_does_not_hide_a_focused_failure(tmp_path, monkeypatch
 
     assert dev_check.main(["--no-types"]) == dev_check.EXIT_FINDINGS
     assert "focused_failure_visible" in capfd.readouterr().out
+
+
+# --- Fedora-boundary scope contract (DEVELOPMENT_WORKFLOW.md Tier 2) ---------
+
+
+def test_docs_only_delta_needs_no_fedora_proof():
+    reasons, uncovered = dev_check.fedora_proof_scope(["docs/design/contracts/x.md"], {})
+
+    assert reasons == []
+    assert uncovered == []
+
+
+def test_typescript_shell_delta_is_out_of_scope_but_must_be_declared_uncovered():
+    reasons, uncovered = dev_check.fedora_proof_scope(["operator-shell/src/operator_loop.ts"], {})
+
+    assert reasons == []
+    assert uncovered and uncovered[0].startswith("TS shell:")
+
+
+def test_provider_and_migration_paths_require_the_fedora_proof():
+    for path in (
+        "core/aletheia/model_provider/router.py",
+        "core/aletheia/storage/migrations.py",
+        "core/aletheia/agent_runtime/scheduler.py",
+        "deploy/systemd/aletheia-observer.service",
+        "scripts/runtime/start-release.sh",
+    ):
+        reasons, _ = dev_check.fedora_proof_scope([path], {})
+
+        assert reasons, path
+
+
+def test_changed_line_using_file_locking_requires_the_fedora_proof(monkeypatch):
+    diff = (
+        "diff --git a/core/aletheia/storage/sqlite.py b/core/aletheia/storage/sqlite.py\n"
+        "--- a/core/aletheia/storage/sqlite.py\n"
+        "+++ b/core/aletheia/storage/sqlite.py\n"
+        "@@ -4,0 +5,2 @@\n"
+        "+import fcntl\n"
+        "+    fcntl.flock(handle, fcntl.LOCK_EX)\n"
+    )
+    monkeypatch.setattr(dev_check, "_git", lambda *args: diff)
+
+    reasons, _ = dev_check.fedora_proof_scope(
+        ["core/aletheia/storage/sqlite.py"],
+        {"core/aletheia/storage/sqlite.py": {5, 6}},
+    )
+
+    assert any("concurrency/subprocess" in reason for reason in reasons)
+
+
+def test_prose_mentioning_locking_tokens_is_not_a_boundary():
+    """A doc or a test that merely names fcntl/flock is not a delta in locking."""
+    reasons, _ = dev_check.fedora_proof_scope(["docs/x.md", "tests/test_y.py"], {})
+
+    assert reasons == []

@@ -184,16 +184,48 @@ deep evidence for that head remains unchanged.
   [documentation governance](../../../governance/policies/documentation_governance.md).
 - Commit only scoped files and publish through the normal PR workflow. Disable a broken
   workflow; do not archive the repository.
-- Run focused local regression tests proportional to the change. If the owner
-  explicitly requests a complete suite and the result cannot wait, use an
-  isolated Fedora CI/Test process in a
-  dedicated Worktree with a temporary data root, no secrets, and no execution
-  authority; never use the stable Runtime checkout or primary data. Windows is
-  not a validation dependency or fallback.
+- Test and proof work is tiered. Escalate a run because the delta can only fail in
+  an environment this workstation does not have — never merely because the change
+  is production code or touches many files.
 
-  Run the Fedora fallback only inside a dedicated credential-free CI identity
-  or container which cannot read the stable Runtime root, OS keyring, provider
-  credentials, or execution credentials:
+  **Tier 0 — every edit (local, seconds).** `uv run python scripts/dev_check.py`:
+  ruff on changed lines, audit gates, types, previous-red and focused tests.
+
+  **Tier 1 — before merge (local, minutes).** The affected marker subset plus the
+  suite that owns the changed surface: Python
+  `uv run pytest tests -m tier_unit -q` (~50 s locally) or the specific files;
+  `operator-shell` `npm test` (~2 s); the frontend build/config checks. The bar is
+  "this covers the delta's behaviour", not "this runs everything".
+
+  **Tier 2 — isolated Fedora full proof (~10 min).** Only when the delta touches a
+  Fedora-only boundary (checklist below). `scripts/dev_check.py` prints the verdict
+  for the current change set, so the decision is not a judgement call in the moment.
+
+  **Tier 3 — batch or release.** One full receipt per batch, reused as described
+  below. A receipt must name the surfaces it does **not** execute.
+
+#### When the Tier 2 Fedora proof is required
+
+| Fedora-only boundary | paths / signals | why it cannot be proven locally |
+|---|---|---|
+| runtime, scheduler, systemd, timer, `aletheia update` | `agent_runtime/`, `deploy/systemd/`, update and deploy paths | process supervision, timers and restart semantics do not exist on macOS |
+| migrations, schema, config read and validation | `storage/migrations.py`, `config/`, schema validators | the deployed data root carries schema and config shapes this workstation never has |
+| credentials, data root, network and provider behaviour | `model_provider/`, `extensions/model_endpoints/`, `agents/helpers.py`, secrets and data-root resolution | credential isolation and network-namespace behaviour differ |
+| concurrency, locks, WAL, cross-process, subprocess and timeout semantics | changed lines using `fcntl`, `flock`, `journal_mode`, `multiprocessing`, `os.fork`, subprocess timeouts | filesystem, locking and process semantics differ |
+| *(not a boundary)* pure functions, docs, TypeScript shell, frontend, pure logic refactors | `operator-shell/`, `frontend/`, `docs/` | the Fedora run does not execute them at all; their own suite plus the post-deploy runtime spot-check is the evidence |
+
+  The checklist is auditable, not decorative: adding or removing an entry needs a
+  stated reason, and the calibration anchors are real incidents. Two-way
+  calibration keeps it honest:
+
+  - Tier 2 found something Tier 1 could not → add that boundary class to the list.
+  - A boundary class has produced nothing across roughly ten batches → narrow it.
+  - A class of change fails on Fedora while looking green locally → put that whole
+    class back on the list immediately.
+
+  Whatever the tier, when a Fedora run does happen it stays inside a dedicated
+  credential-free CI identity or container which cannot read the stable Runtime
+  root, OS keyring, provider credentials, or execution credentials:
 
   ```sh
   export ALETHEIA_DATA_DIR="$(mktemp -d /var/tmp/aletheia-ci.XXXXXX)"
@@ -210,6 +242,19 @@ deep evidence for that head remains unchanged.
   the pytest log, and the JUnit XML. Judge failures per case from the XML rather
   than from aggregate counts — "0 failures" next to a large skip count does not
   prove that a specific file passed (some files carry their own skip escapes).
+
+  Build the candidate from a **real clone**: an isolated tree without `.git`
+  metadata fails identity- and artifact-dependent tests for reasons that have
+  nothing to do with the change under test.
+
+- Two steps around a Fedora proof are not optional and are not tiered. After a
+  full run, deploy that exact SHA; and after deploying, spot-check the runtime
+  (deployment identity, observation worker state, operator status/heartbeat).
+  Both real defects of the 2026-09-28 batch — a shell loop failing 531 times on a
+  command that no longer existed, and an Observation Worker that had been dead for
+  days behind an 848-commit drift — were found by reading runtime tables, not by
+  the full suite. The full suite is the Linux-specific regression insurance; the
+  runtime check is the discovery step.
 
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch. It may create or refresh a
@@ -246,12 +291,16 @@ execute), the Python receipt is unaffected: verify that change with its own
 suite and, where it drives a deployed process, with the runtime evidence of
 that process.
 
-One full run covers the whole `tests/` tree — it is not narrowed to "the part
-the local loop does not run". The per-marker Fedora wall times and the reason
-(the locally-covered tier is ~13% of the run, while narrowing would split the
-no-collection-gap proof across two receipts on two operating systems) are
-recorded in
-[`CONVERGENCE_FINDINGS_2026-09-28.md` § 1j](../../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md).
+A full run covers a **scoped** set, and the receipt records that scope. Every
+receipt states which surfaces it did not execute (for example "this receipt does
+not execute `operator-shell` TypeScript code"); a receipt that stays silent about
+its scope is not evidence. The same silence is how a green run can coexist with
+broken code: the full suite never runs the shell, the frontend, or the deployed
+process behaviour.
+
+Per-marker Fedora wall times, the local-versus-Fedora comparison, and the reasons
+behind the checklist are recorded in
+[`CONVERGENCE_FINDINGS_2026-09-28.md` § 1j/§ 1l](../../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md).
 
 ## Common commands
 
