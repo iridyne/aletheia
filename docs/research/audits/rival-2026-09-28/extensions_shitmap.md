@@ -1,12 +1,12 @@
 # Extensions 去屎山专项扫描
 
-本轮建议 **1 张新问题卡、1 张旧修复遗漏的跟进卡**，另复核 3 张开放卡仍成立。最值得修的是候选模型验证把无完成证据的响应记为 verified，以及 controller 把注册/整轮执行异常折叠成成功；sync 的不完整导出和同秒目录碰撞已经有卡，不重复报新。
+本轮已确认问题的解决路径见 [Server 与 Extensions 完整修复方案](server_extensions_repair_plan.md)。重点解决候选模型验证、controller 失败传播、导出完整性及并发隔离、校准 GET 副作用。本文保留冻结的扫描证据；方案给出每项具体修改与完成标准。
 
 ## 范围、基线与证据口径
 
 源码基线为 `ed9d8bc330cbdc29eb02006337e24424141fbd29`，分支 `iridite/rival_analysis`；审计开始时工作树干净。主 Agent 独立完成，未派发其他 Agent。按约定覆盖 **analytics、research、exchanges、knowledge、telegram、model_endpoints、sync、counterfactual、regime** 九组，共 **78 个 Python 文件、25,125 物理行、325 个 AST ExceptHandler、199 个宽捕获**。原提议约 35k 是旧估算，不作为本轮实测。宽捕获为裸捕获或类型表达式含 Exception/BaseException；不是缺陷数。
 
-对每个文件做结构、异常分支和函数尺度扫描，对下表根因做真实调用链复核。**这不等于 25,125 行逐行人工签署，也不代表九组扩展均已证明无缺陷。** 下游 Core、observation_lab 只为解释发现读取，不把它们计为本轮全面覆盖；extensions/data、learning、observation_lab 等不在这次约定的九组内。没有运行故障注入、测试套件或网络请求，没有读取实际凭证/运行数据库，也没有执行导出、导入、模型探测、研究任务或交易操作。只写审计文档，未改实现、建卡或改变冻结 Risk。
+对每个文件做结构、异常分支和函数尺度扫描，对下表根因做真实调用链复核。**这不等于 25,125 行逐行人工签署，也不代表九组扩展均已证明无缺陷。** 下游 Core、observation_lab 只为解释发现读取，不把它们计为本轮全面覆盖；extensions/data、learning、observation_lab 等不在这次约定的九组内。没有运行故障注入、测试套件或网络请求，没有读取实际凭证/运行数据库，也没有执行导出、导入、模型探测、研究任务或交易操作。只写审计文档，未改实现或改变冻结 Risk。
 
 本轮使用当前源码、AST 和只读 GitHub 查重（2026-09-28），仓库无 `.codegraph/`。分类沿用五类标签；D0 指恢复已有真值/失败语义、Contract Delta NONE，不是变更授权。**扩展可选不等于没有生产职责**：Research 的候选产出和 Exchanges 的适配器有实际接线，不能按目录名判死代码。
 
@@ -24,17 +24,17 @@
 
 ## 发现表
 
-路径默认相对 `extensions/`；行号绑定上述基线。下列前五项是缺陷/旧卡复核，M 项是清理候选，不能混入新缺陷数量。
+路径默认相对 `extensions/`；行号绑定上述基线。下列前五项是缺陷及历史问题复核，M 项是清理候选，不能混入新缺陷数量。
 
 | # | file:line | 屎点类型 | 语义影响 | 建议动作 | D 级 |
 |---|---|---|---|---|---|
-| E1 · P2 · 新 | `model_endpoints/credential_routes.py:226–332, 560–594` | 契约漂移 | candidate probe 只要 broker 返回就记录 success/verified；没有文本且 completion_confirmed=False 也能通过 Verify & Save，兄弟 Ping 会拒绝 | 新卡：候选探测消费已有 ModelResponse 完成证据；保留合法 reasoning-only completion | D0，复用既有验证判定 |
-| E2 · P2 · 遗漏 | `analytics/filter_controller.py:859–916` | 权威路径宽异常 / 契约漂移 | replay 注册或整个 runner 调用抛异常时只记 warning，默认计数仍为零，最终 pass_status 可为 success；CLI/调度器据此接受成功 | 跟进闭卡 [#1240](https://github.com/iridyne/aletheia/issues/1240) 的外围异常遗漏；在已有 pass result 传播失败阶段和原因 | D0 |
-| E3 · P2 · 已存在 | `analytics/routes.py:29–32`；`confidence_calibration.py:171,287–310` | 契约漂移 | GET 缓存未命中会调用持久化 report builder，读取页面可插入新的 calibration knowledge item | 复用开放卡 [#1772](https://github.com/iridyne/aletheia/issues/1772)，保持读取无写入，持久化仍归已有显式刷新职责 | D0 |
-| E4 · P1 · 已存在 | `sync/exporter.py:280–298` | 权威路径宽异常 | 必需表 execute/fetchone 失败被 continue，缺失表没有文件，最终仍能生成 checksum/manifest 和成功归档 | 复用开放卡 [#1406](https://github.com/iridyne/aletheia/issues/1406)，必需表失败阻断发布；可选表需显式标状态 | D0 |
-| E5 · P2 · 已存在 | `sync/exporter.py:93–122` | 契约漂移 | 同 mode、同秒导出共享 staging 和默认 archive 名；可覆盖产物，finally 还可能删除另一调用的 staging | 复用开放卡 [#1407](https://github.com/iridyne/aletheia/issues/1407)，一个调用一个唯一 ID，复用现有 UUID 做法 | D0 |
+| E1 · P2 · 新 | `model_endpoints/credential_routes.py:226–332, 560–594` | 契约漂移 | candidate probe 只要 broker 返回就记录 success/verified；没有文本且 completion_confirmed=False 也能通过 Verify & Save，兄弟 Ping 会拒绝 | 修复：候选探测消费已有 ModelResponse 完成证据；保留合法 reasoning-only completion | D0，复用既有验证判定 |
+| E2 · P2 · 遗漏 | `analytics/filter_controller.py:859–916` | 权威路径宽异常 / 契约漂移 | replay 注册或整个 runner 调用抛异常时只记 warning，默认计数仍为零，最终 pass_status 可为 success；CLI/调度器据此接受成功 | 关联历史问题 [#1240](https://github.com/iridyne/aletheia/issues/1240) 的外围异常遗漏；在已有 pass result 传播失败阶段和原因 | D0 |
+| E3 · P2 · 已存在 | `analytics/routes.py:29–32`；`confidence_calibration.py:171,287–310` | 契约漂移 | GET 缓存未命中会调用持久化 report builder，读取页面可插入新的 calibration knowledge item | 历史证据 [#1772](https://github.com/iridyne/aletheia/issues/1772)，保持读取无写入，持久化仍归已有显式刷新职责 | D0 |
+| E4 · P1 · 已存在 | `sync/exporter.py:280–298` | 权威路径宽异常 | 必需表 execute/fetchone 失败被 continue，缺失表没有文件，最终仍能生成 checksum/manifest 和成功归档 | 历史证据 [#1406](https://github.com/iridyne/aletheia/issues/1406)，必需表失败阻断发布；可选表需显式标状态 | D0 |
+| E5 · P2 · 已存在 | `sync/exporter.py:93–122` | 契约漂移 | 同 mode、同秒导出共享 staging 和默认 archive 名；可覆盖产物，finally 还可能删除另一调用的 staging | 历史证据 [#1407](https://github.com/iridyne/aletheia/issues/1407)，一个调用一个唯一 ID，复用现有 UUID 做法 | D0 |
 | M1 · 低 | `sync/conflicts.py:1–97` | 死代码候选 | 旧 policy conflict detector 无仓内调用/注册；当前 importer 另有研究数据主键冲突处理，不调用这套策略比较器 | 同文件后续维护时确认删除整块；不新增兼容层、不借清理开放 policy 导入 | D0，等价清理 |
-| M2 · 低 | `analytics/filter_registry.py:746–747`；`analytics/reasoning_feedback.py:310–346`；`exchanges/bitget/profile_config.py:27–29` | 死代码候选 | 三个顶层辅助函数在当前生产源码和测试中没有精确调用；存在孤立 API 表面 | 删除前复核动态注册/外部入口；随相关维护清理，不单独立卡 | D0，等价清理 |
+| M2 · 低 | `analytics/filter_registry.py:746–747`；`analytics/reasoning_feedback.py:310–346`；`exchanges/bitget/profile_config.py:27–29` | 死代码候选 | 三个顶层辅助函数在当前生产源码和测试中没有精确调用；存在孤立 API 表面 | 删除前复核动态注册/外部入口；随相关维护清理，按修复方案的清理条件处置 | D0，等价清理 |
 | M3 · 低 | `research/divergence_scanner.py:263–706`；`research/research_worker.py:637–1006` | 巨型函数 >300 行 | run_divergence_scanner 444 行，_run_pipeline_inner 370 行；数据准备、模型调用、产出持久化交织 | 只在具体根因修复触及时拆已有职责，不为长度新建框架 | D0，等价整理 |
 
 ## 关键证据与最小验收
@@ -58,14 +58,14 @@
 | analytics | 报告写入、controller 失败传播、promotion/insight 的异常出口；E2/E3；historical twin/relative-rank 读写职责分开 | 不把所有 report 缺失返回 None 当作静默缺陷，不按文件名删除历史读模型 |
 | research | agent 权限、LLM helper、候选产出、pipeline 状态、savepoint、post-trade 失败汇总；列 M3 | 不把 Serenity/research worker 当死主线，不评估研究经济效果或改阈值 |
 | exchanges | composition、CCXT 提交/读状态分类、Bitget 账务解析、credential probe 的边界 | CCXT 38 个 catch 不是 38 个错误；NOT_SENT/AMBIGUOUS/VENUE_REJECTED 及 PARTIAL/UNAVAILABLE 是必要区分；未接交易所验证 |
-| knowledge | FTS/retrieval/router、guard 失败与 authority、归档/恢复异常；候选死辅助函数需区分历史文档 | 检索返回空的旧 #1909 尚需逐消费者重新确认，不在本轮计新卡；不能删除仍被内部调用的 _build_guard_advisory |
-| telegram | health、allowlist 每消息重读、kill 二次确认、resume 委托、发送结果及去重重试、poll/update 错误隔离 | 未发现可仅凭 except 密度新立卡的根因；未实际发消息或触发控制命令 |
+| knowledge | FTS/retrieval/router、guard 失败与 authority、归档/恢复异常；候选死辅助函数需区分历史文档 | 检索返回空的旧 #1909 尚需逐消费者重新确认，本轮未计为确认缺陷；不能删除仍被内部调用的 _build_guard_advisory |
+| telegram | health、allowlist 每消息重读、kill 二次确认、resume 委托、发送结果及去重重试、poll/update 错误隔离 | 未发现可仅凭 except 密度确认的新根因；未实际发消息或触发控制命令 |
 | model_endpoints | 三种协议事实归一、probe、身份绑定、Verify & Save、broker 调用；E1 | 不把已存在 broker deadline 忽略，也不把凭证配置存在等同模型可用 |
 | sync | export、import 预检/DB 写入/文件复制、冲突识别；E4/E5/M1 | transport bundle 不等于可恢复备份；旧 #1404 的 full-backup 导入描述不能直接沿用，当前已拒绝 .db payload |
 | counterfactual | 成本不可用、mixed epoch、Lab authority、replay 截断/实验资格、propensity/estimators 与 trades 失败出口 | 不改变 OPE、收益归因、实验门槛；源码扫描不能证明样本统计有效或产生 alpha |
 | regime | collector 输入、新鲜度、持久化异常，detector 的 read-published 与 UI fallback 区分 | 显式 UI neutral fallback 不能直接当成交易授权；无 runtime 数据新鲜度结论 |
 
-`knowledge/router.build_guard_advisory` 与 `seed_guards.ensure_seed_guards` 也无当前精确生产调用，但历史操作文档引用后者、旧审计引用前者；暂保留为待核入口，未计确定死代码。Twin/Relative-Rank 生成器在当前 Contract 中保留历史 fixture 重建用途，不能只因无调度调用就删；[#2906](https://github.com/iridyne/aletheia/issues/2906) 已有清理任务且明确保护历史评估器。post_trade_reviewer 当前已把 case builder 失败加入 errors，因此没有照搬旧 #1246 的“完全静默”描述。sync importer 的 DB error 会提前返回，旧 #1405 中这部分描述也不能原封不动复用；DB commit 后文件复制的原子性仍是后续核对点，本轮未完成隔离复现，不计新增卡。
+`knowledge/router.build_guard_advisory` 与 `seed_guards.ensure_seed_guards` 也无当前精确生产调用，但历史操作文档引用后者、旧审计引用前者；暂保留为待核入口，未计确定死代码。Twin/Relative-Rank 生成器在当前 Contract 中保留历史 fixture 重建用途，不能只因无调度调用就删；[#2906](https://github.com/iridyne/aletheia/issues/2906) 已有清理任务且明确保护历史评估器。post_trade_reviewer 当前已把 case builder 失败加入 errors，因此没有照搬旧 #1246 的“完全静默”描述。sync importer 的 DB error 会提前返回，旧 #1405 中这部分描述也不能原封不动复用；DB commit 后文件复制的原子性仍是后续核对点，本轮未完成隔离复现，未计为确认缺陷。
 
 ## 全文件结构覆盖清单
 
@@ -152,9 +152,9 @@
 | `regime/collector.py` | 222 | 10 / 6 |
 | `regime/detector.py` | 360 | 2 / 1 |
 
-## 建议立卡与验证状态
+## 修复入口与验证状态
 
-建议 **E1 新卡 1 张，E2 关联 #1240 的遗漏跟进卡 1 张**；E3/E4/E5 复用已有 3 张开放卡。优先 E4 的导出完整性、E1 的验证真值，再处理 E2/E5/E3；M1–M3 随实际维护清理，不单独立卡。server 的 Ping 身份错绑与 E1 的候选响应判断是两个根因，应各自可审阅，但可以共享既有验证工具和回归样本。
+E1–E5 和 M1–M3 的处理统一纳入 [完整修复方案](server_extensions_repair_plan.md)。模型验证与 server Ping 配合验收，导出两项在同一 exporter 内连贯修复，controller/校准 GET 独立交付；清理候选按消费者证据决定删除或保留。原“建议立卡”交付方式已由方案替代，历史 issue 不构成实施前置。
 
 只读查重包含 candidate/probe/empty、verification/identity、controller/runner/exception、sync/export/import、calibration GET、knowledge retrieval 和 retired twin 等组合；阅读 #1240、#1772、#1406、#1407、#2906、#1961、#1944 的相关正文。未命中不保证全库无其他措辞重复项。所有“最小验收”都是后续修复要求，本轮未执行这些行为测试，也没有资格、经济有效性、部署或合并结论。
 
