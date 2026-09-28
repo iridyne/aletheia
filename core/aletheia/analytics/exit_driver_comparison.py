@@ -64,19 +64,10 @@ def exit_driver(reason: str | None) -> str:
 
 
 def _hold_hours(row: dict[str, Any]) -> float | None:
-    o, c = row.get("opened_at"), row.get("closed_at")
-    if not o or not c:
-        return None
-    try:
-        od = datetime.fromisoformat(str(o).replace("Z", "+00:00"))
-        cd = datetime.fromisoformat(str(c).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    if od.tzinfo is None:
-        od = od.replace(tzinfo=timezone.utc)
-    if cd.tzinfo is None:
-        cd = cd.replace(tzinfo=timezone.utc)
-    return (cd - od).total_seconds() / 3600.0
+    """Holding hours via the shared owner; unmeasurable intervals are None."""
+    from aletheia.analytics.holding_time import holding_hours
+
+    return holding_hours(row.get("opened_at"), row.get("closed_at"))
 
 
 @dataclass
