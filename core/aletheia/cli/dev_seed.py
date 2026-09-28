@@ -12,6 +12,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -122,8 +124,12 @@ def _clear(table: str) -> int:
 
 
 def _preview_data_dir(port: int) -> Path:
+    expected = preview_instance_dir(_project_root(), port)
     override = os.environ.get("ALETHEIA_PREVIEW_DATA_DIR")
-    return Path(override) if override else preview_instance_dir(_project_root(), port)
+    candidate = Path(override).expanduser() if override else expected
+    if candidate.resolve() != expected or expected.resolve() != expected:
+        raise RuntimeError("seed data directory must match this checkout and port without symlink redirection")
+    return expected
 
 
 def _seed_ohlcv(symbols: Iterable[SeedSymbol], exchange: str, bars_per_pair: int) -> int:
@@ -280,7 +286,7 @@ def _seed_opportunities(symbols: Iterable[SeedSymbol], snapshot_id: str) -> int:
 
 @dev_seed_app.callback(invoke_without_command=True)
 def seed_markets(
-    port: int = typer.Option(8791, "--port", help="Preview API port; picks the matching isolated data dir."),
+    port: int = typer.Option(8791, "--port", min=1024, max=65535, help="Preview API port; picks the matching isolated data dir."),
     symbols: str = typer.Option("medium", "--symbols", help="Which symbol preset to write (only 'medium' is supported)."),
     exchange: str = typer.Option("binance", "--exchange", help="Exchange name recorded on every row; must match the OHLCV REST default."),
     bars: int = typer.Option(300, "--bars", min=50, max=1000, help="Bars per (symbol, timeframe) tuple."),
@@ -289,15 +295,42 @@ def seed_markets(
     if symbols != "medium":
         raise typer.BadParameter("only the medium preset is defined", param_hint="--symbols")
 
+    if port in {8787, 8788}:
+        raise typer.BadParameter("port is reserved for the stable gateway", param_hint="--port")
     data_dir = _preview_data_dir(port)
-    os.environ.setdefault("ALETHEIA_PREVIEW_MODE", "1")
-    os.environ["ALETHEIA_PREVIEW_DATA_DIR"] = str(data_dir)
+    root = _project_root()
+    env = os.environ.copy()
+    env.update({
+        "ALETHEIA_PREVIEW_MODE": "1",
+        "ALETHEIA_PREVIEW_DATA_DIR": str(data_dir),
+        "ALETHEIA_RUNTIME_MODE": "shadow",
+        "ALETHEIA_RUNTIME_STATE": "shadow",
+        "ALETHEIA_RUNTIME_ID": f"dev-preview-{port}",
+        "ALETHEIA_RUNTIME_PORT": str(port),
+    })
+    if not getattr(sys, "frozen", False):
+        env["PYTHONPATH"] = os.pathsep.join((str(root / "core"), str(root)))
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; from aletheia.cli.dev_seed import _seed_preview; "
+         "_seed_preview(int(sys.argv[1]), sys.argv[2], int(sys.argv[3]))",
+         str(port), exchange, str(bars)],
+        cwd=root, env=env, check=False,
+    )
+    raise typer.Exit(result.returncode)
 
-    typer.echo(f"Seeding preview instance under {data_dir}")
 
-    from aletheia.storage.sqlite import get_db
+def _seed_preview(port: int, exchange: str, bars: int) -> None:
+    from aletheia.config.loader import get_data_dir, is_preview_mode, preview_data_dir
 
-    get_db()  # touches the DB so migrations are asserted before writing.
+    expected = _preview_data_dir(port)
+    if not is_preview_mode() or preview_data_dir() != expected or get_data_dir().resolve() != expected:
+        raise RuntimeError("seed requires the selected isolated Preview data directory")
+    typer.echo(f"Seeding preview instance under {expected}")
+    expected.mkdir(parents=True, exist_ok=True)
+    from aletheia.storage.migrations import apply_migrations
+
+    apply_migrations()
 
     universe = list(_MEDIUM_UNIVERSE)
     _clear("market_snapshots")
