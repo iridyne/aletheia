@@ -322,3 +322,42 @@ def test_fresh_heartbeat_is_not_stale_and_raises_no_recommendation(tmp_path, mon
         assert "operator-stale" not in ids, ids
     finally:
         conn.close()
+
+
+def test_stale_heartbeat_raises_recommendation_without_new_api(tmp_path, monkeypatch):
+    """Behaviour-only guard: an online-but-old heartbeat must surface operator-stale.
+
+    Deliberately imports only the pre-existing store/recommendation API, so a
+    revert of the recommendation call site fails this test for the real reason
+    (unreachable branch) rather than for a missing symbol.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.agent_shell.operator_recommendations import build_recommendations
+    from aletheia.agent_shell.operator_store import record_heartbeat
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import AletheiaConfig
+
+    conn = _init_test_db(tmp_path, monkeypatch)
+    try:
+        save_config(AletheiaConfig())
+        stale_after = load_config().operator.heartbeat_stale_after_sec
+        record_heartbeat(
+            agent_id="operator",
+            status="online",
+            mode="Reviewing",
+            permission_mode="PaperAuto",
+            is_busy=False,
+            current_task_id=None,
+            current_intent=None,
+            queue_size=0,
+            last_error=None,
+            model_provider=None,
+            session_id="operator-main",
+            last_seen_at=(datetime.now(timezone.utc) - timedelta(seconds=stale_after + 30)).isoformat(),
+        )
+        ids = {item["id"] for item in build_recommendations()}
+        assert "operator-offline" not in ids
+        assert "operator-stale" in ids, ids
+    finally:
+        conn.close()

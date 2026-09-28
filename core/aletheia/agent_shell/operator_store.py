@@ -389,6 +389,9 @@ def apply_heartbeat_staleness(heartbeat: dict | None) -> dict | None:
         return None
     from aletheia.config.loader import load_config
 
+    # Copy first: callers now share this verdict, so mutating the row returned by
+    # get_latest_heartbeat() would make one surface's verdict observable to the next.
+    heartbeat = dict(heartbeat)
     threshold = load_config().operator.heartbeat_stale_after_sec
     raw_seen = heartbeat.get("last_seen_at")
     seen_at = None
@@ -404,7 +407,6 @@ def apply_heartbeat_staleness(heartbeat: dict | None) -> dict | None:
     age = (datetime.now(timezone.utc) - seen_at).total_seconds()
     stale = age > threshold
     if stale and heartbeat.get("status") == "online":
-        heartbeat = dict(heartbeat)
         heartbeat["status"] = "stale"
     heartbeat["stale"] = stale
     heartbeat["stale_after_sec"] = threshold
