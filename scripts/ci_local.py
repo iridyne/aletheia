@@ -85,33 +85,39 @@ def main(argv: list[str] | None = None) -> int:
         "mode": report["mode"],
         "surfaces": report["surfaces"],
         "required": report["required"],
-        "checks": [],
+        "checks": [{**check, "status": "not_run"} for check in checks],
+        "environment": {"platform": sys.platform, "python": sys.version.split()[0]},
+        "not_proven": ["deployed runtime health", "external connectivity", "economic qualification"],
         "result": "pass",
     }
     if args.skip_execute:
         receipt["result"] = "planned"
-        receipt["checks"] = checks
-        print(json.dumps(receipt, indent=2, sort_keys=True))
-        return 0
-    for check in checks:
-        if check.get("unavailable_reason"):
-            receipt["checks"].append({**check, "status": "required_but_unavailable"})
-            receipt["result"] = "required_but_unavailable"
-            receipt["failure_reason"] = check["unavailable_reason"]
-            print(json.dumps(receipt, indent=2, sort_keys=True))
-            return 2
-        outcome = _run(check["command"], check.get("working_directory"))
-        receipt["checks"].append({
-            "name": check["name"], "lane": check.get("lane"),
-            "status": "pass" if outcome["exit_code"] == 0 else "fail", **outcome,
-        })
-        if outcome["exit_code"] != 0:
-            receipt["result"] = "fail"
-            receipt["failure_reason"] = f"{check['name']} failed"
-            print(json.dumps(receipt, indent=2, sort_keys=True))
-            return outcome["exit_code"] or 1
+    exit_code = 0
+    if not args.skip_execute:
+        for check in receipt["checks"]:
+            if check.get("unavailable_reason"):
+                check["status"] = "required_but_unavailable"
+                receipt["result"] = "required_but_unavailable"
+                receipt["failure_reason"] = check["unavailable_reason"]
+                exit_code = 2
+                break
+            outcome = _run(check["command"], check.get("working_directory"))
+            check.update(outcome)
+            check["status"] = "pass" if outcome["exit_code"] == 0 else "fail"
+            if outcome["exit_code"] != 0:
+                receipt["result"] = "fail"
+                receipt["failure_reason"] = f"{check['name']} failed"
+                exit_code = outcome["exit_code"] or 1
+                break
+    executed = {check.get("lane") for check in receipt["checks"] if check["status"] in {"pass", "fail"}}
+    receipt["not_executed_surfaces"] = [
+        surface for surface, lanes in {
+            "python": {"python_unit", "runtime", "integration", "specifications", "e2e", "coverage"},
+            "operator": {"operator"}, "frontend": {"frontend"}, "native": {"native"},
+        }.items() if not executed.intersection(lanes)
+    ]
     print(json.dumps(receipt, indent=2, sort_keys=True))
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

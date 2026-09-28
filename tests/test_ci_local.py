@@ -53,6 +53,9 @@ def test_local_ci_planned_mode_lists_planner_required_checks(monkeypatch, tmp_pa
     output = capsys.readouterr().out
     assert '"result": "planned"' in output
     assert '"frontend tests"' in output
+    receipt = json.loads(output)
+    assert all(check["status"] == "not_run" for check in receipt["checks"])
+    assert "frontend" in receipt["not_executed_surfaces"]
 
 
 def test_local_ci_changed_file_override_still_binds_head_identity(monkeypatch, tmp_path, capsys) -> None:
@@ -128,7 +131,7 @@ def test_full_proof_is_unavailable_not_a_passing_print_command(monkeypatch, tmp_
     body.write_text("References #3289")
     monkeypatch.setattr(
         ci_local.ci_plan, "_load_changes",
-        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci_plan.py")]),
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="pyproject.toml")]),
     )
     commands = []
 
@@ -187,5 +190,8 @@ def test_deep_receipt_refuses_unisolated_exhaustive_proof(monkeypatch, tmp_path,
     assert ci_local.main(["--pr-body-file", str(body)]) == 2
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["result"] == "required_but_unavailable"
-    assert receipt["checks"][-1]["lane"] == "python_unit"
-    assert "Fedora" in receipt["checks"][-1]["unavailable_reason"]
+    unavailable = [check for check in receipt["checks"] if check["status"] == "required_but_unavailable"]
+    assert unavailable[0]["lane"] == "python_unit"
+    assert "Fedora" in unavailable[0]["unavailable_reason"]
+    assert any(check["status"] == "not_run" for check in receipt["checks"])
+    assert set(receipt["not_executed_surfaces"]) == {"python", "operator", "frontend", "native"}
