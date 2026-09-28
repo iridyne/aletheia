@@ -117,6 +117,41 @@ seam 变体，要么改变缺 schema 行为，因此本轮保持不动并记录�
 **复验：**`uv run pytest tests/test_sizing_trace_audit.py tests/test_repositories_positions.py
 tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次 47 passed）。
 
+## 1d. Operator：同一“心跳是否过期”判定三处实现，其中一处分支永不可达
+
+**结论：这是真实行为缺陷，不只是重复代码。** 三个读面用同一行 + 同一阈值各自判断：
+
+| 位置 | 原行为 |
+|---|---|
+| `agent_shell/commands.py::_format_operator_snapshot` | 内联比较 age/threshold，只改 `status` |
+| `server/routes/operator.py::_apply_stale_status` | 再次比较，另加 `stale`/`stale_after_sec`/`heartbeat_age_sec` |
+| `agent_shell/operator_recommendations.py::build_recommendations:1619` | 读 `heartbeat.get("stale")` —— **没有任何生产者写过这个键**，分支永不可达 |
+
+即：一个 `status="online"` 但 `last_seen_at` 已超过阈值的心跳，会被 CLI/API 报成 `stale`，
+却不会产生 `operator-stale` 建议，Command Center/压缩/聊天里看不到任何 Operator 问题。
+
+**修复与验证：**唯一 owner 落在心跳行自己的模块
+`agent_shell/operator_store.py::apply_heartbeat_staleness`，三个读面统一读取。同一份种子数据
+（online 心跳、超阈值 30 秒）的实际前后对比：
+
+| | 状态读面 | 建议 id |
+|---|---|---|
+| 修复前 | `stale` | `dreaming-due`, `system-health-report-refresh` |
+| 修复后 | `stale` | `dreaming-due`, **`operator-stale`**, `system-health-report-refresh` |
+
+同时补了两条永久回归（过期→一致；新鲜→不产生该建议）。169 项 operator/heartbeat 测试通过。
+
+**方法教训：**把生产改动 stash 后跑新测试只会得到 ImportError，那只证明新符号不存在，
+**不能作为“修复前失败”的证据**。真正有效的前后证据是上面这张表：用只依赖既有 API 的
+一次性脚本，在旧代码上直接观察到两个读面结论不一致。行为修复应尽量留这种可复现的对照，
+而不是只留符号缺失。
+
+**相邻但未改：**`analytics/opportunity_flow.py::_opportunity_by_id` 与 `get_opportunity`
+的 SQL 相同，但该模块约 15 个读取点统一用 `_table_exists` 降级、并在缺 schema 时返回
+`_missing_trace`（CLI payload 里的 `schema_errors: []` 就是为此存在）。
+`get_opportunity` → `_select_one` 没有守卫，会抛 `sqlite3.OperationalError`。
+只换其中一处还会让模块一半用 `db`、一半用 `get_db()`，因此记录为**不改**。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
