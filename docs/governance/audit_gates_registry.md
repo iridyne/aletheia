@@ -37,6 +37,9 @@ These structural gates parse source without importing the scanned production
 module, opening a database or using the network. Measure their runtime rather
 than inferring speed from static analysis. Behavior and failure-path tests remain
 necessary; static matching is not a whole-program proof.
+The canonical pytest tier classifier owns selection; a gate must not force
+`tier_unit` against that classification. All guards under `tests/audit/` remain
+part of the changed-file audit step regardless of their tier.
 
 Placement-entry-point gates share
 [`tests/audit/_segment_guard.py`](../../tests/audit/_segment_guard.py). Adding a
