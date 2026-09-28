@@ -316,11 +316,11 @@ def download(
         market_type=market_type, progress_callback=_progress,
     ))
 
-    if result.error:
+    if result.error is not None:
         typer.echo(f"\nCompleted with error: {result.error}")
-    label = "Partial" if result.error else "Done"
+    label = "Partial" if result.error is not None else "Done"
     typer.echo(f"\n{label}: {result.bars_fetched} bars [{result.oldest_ts} → {result.newest_ts}]")
-    if result.error:
+    if result.error is not None:
         raise typer.Exit(1)
 
 
@@ -381,7 +381,7 @@ def backfill(
             ))
             total_bars += result.bars_fetched
             status = f"  {venue}:{sym}:{mkt}/{tf}: +{result.bars_fetched} bars"
-            if result.error:
+            if result.error is not None:
                 status += f" (error: {result.error})"
                 failed = True
             typer.echo(status)

@@ -93,7 +93,7 @@ def test_data_backfill_without_symbols_reads_all_active_members(monkeypatch):
     assert "Active members: 21; eligible instruments: 21; skipped: 0." in result.output
 
 
-@pytest.mark.parametrize("bars,error", [(0, None), (3, None), (0, "synthetic_fetch_failure"), (3, "partial_failure")])
+@pytest.mark.parametrize("bars,error", [(0, None), (3, None), (0, "synthetic_fetch_failure"), (3, "partial_failure"), (0, ""), (3, "")])
 def test_download_exit_status_preserves_partial_counts(monkeypatch, bars, error):
     from aletheia.cli.data_cmd import data_app
     from aletheia.data import history_downloader
@@ -103,15 +103,15 @@ def test_download_exit_status_preserves_partial_counts(monkeypatch, bars, error)
                                                 20 if bars else None, error)
     monkeypatch.setattr(history_downloader, "download_symbol_history", download)
     result = CliRunner().invoke(data_app, ["download", "BTC/USDT"])
-    assert result.exit_code == (1 if error else 0)
+    assert result.exit_code == (1 if error is not None else 0)
     assert f"{bars} bars" in result.output
-    if error:
-        assert error in result.output
+    if error is not None:
+        assert "Completed with error:" in result.output
         assert "Done:" not in result.output
 
 
 @pytest.mark.parametrize("default_pool", [False, True])
-@pytest.mark.parametrize("errors", [(None, None), ("first_failed", None), ("first_failed", "second_failed")])
+@pytest.mark.parametrize("errors", [(None, None), ("first_failed", None), ("first_failed", "second_failed"), ("", None)])
 def test_backfill_reports_all_siblings_then_exits_for_any_failure(monkeypatch, default_pool, errors):
     from aletheia.cli.data_cmd import data_app
     from aletheia.data import history_downloader
@@ -131,7 +131,7 @@ def test_backfill_reports_all_siblings_then_exits_for_any_failure(monkeypatch, d
     if not default_pool:
         args += ["--symbols", "BTC/USDT,ETH/USDT", "--exchange", "binance"]
     result = CliRunner().invoke(data_app, args)
-    assert result.exit_code == (1 if any(errors) else 0)
+    assert result.exit_code == (1 if any(error is not None for error in errors) else 0)
     assert called == ["BTC/USDT", "ETH/USDT"]
     assert "BTC/USDT:spot/1h: +2 bars" in result.output
     assert "ETH/USDT:spot/1h: +3 bars" in result.output
