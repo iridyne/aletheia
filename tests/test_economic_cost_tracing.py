@@ -533,3 +533,21 @@ def test_initialized_schema_probe_does_not_commit_an_active_transaction():
     assert db.in_transaction is True
     db.rollback()
     assert db.execute("SELECT value FROM settings WHERE key='economics-tx-ready'").fetchone() is None
+
+
+def test_settings_repair_does_not_backfill_when_tracing_is_disabled(monkeypatch):
+    initialize_runtime_tracing()
+    run = _insert_run()
+    db = get_db()
+    db.execute(
+        "INSERT INTO agent_tool_calls "
+        "(id,run_id,tool_name,tool_class,input_data,output_data,permitted,created_at) "
+        "VALUES ('repair-tool',?,'historical_lookup','read','{}','{}',1,'2026-07-15T00:00:00+00:00')",
+        (run.id,),
+    )
+    db.execute("DELETE FROM runtime_cost_events WHERE id='toolcost_repair-tool'")
+    db.execute("DROP TABLE economics_settings")
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", "0")
+    assert initialize_runtime_tracing() is False
+    assert db.execute("SELECT COUNT(*) FROM runtime_cost_events WHERE id='toolcost_repair-tool'").fetchone()[0] == 0
+    assert db.execute("SELECT value FROM economics_settings WHERE key='cost_tracing_enabled'").fetchone()[0] == "0"
