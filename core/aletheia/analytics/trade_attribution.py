@@ -432,29 +432,13 @@ def _parse_json_list(raw: Any) -> list:
 
 
 def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> float | None:
-    if not opened_at or not closed_at:
-        return None
-    try:
-        from datetime import datetime, timezone
-        fmt_patterns = ["%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]
-        t_open = _parse_dt(opened_at, fmt_patterns)
-        t_close = _parse_dt(closed_at, fmt_patterns)
-        if t_open and t_close:
-            delta = (t_close - t_open).total_seconds() / 3600.0
-            return round(delta, 2)
-    except Exception:
-        logger.warning("trade_attribution: delta calc failed (returning None)", exc_info=True)
-    return None
+    """Holding hours for the attribution row, rounded as this surface presents it.
 
+    The duration itself comes from the shared owner: a reversed or unmeasurable
+    interval must be None everywhere, not a negative number that downstream
+    averages would absorb.
+    """
+    from aletheia.analytics.holding_time import holding_hours
 
-def _parse_dt(s: str, patterns: list[str]):
-    from datetime import datetime, timezone
-    for p in patterns:
-        try:
-            dt = datetime.strptime(s, p)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except ValueError:
-            continue
-    return None
+    hours = holding_hours(opened_at, closed_at)
+    return None if hours is None else round(hours, 2)
