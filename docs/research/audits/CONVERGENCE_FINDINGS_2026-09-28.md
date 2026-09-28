@@ -89,6 +89,34 @@ Owner 已将其降为低优先级。**在该项完成前，不要再把“缩短
 同样地，`test_universe_routes.py` 通过 patch `UniverseService.refresh` 打桩，
 移动 `refresh` 的公开入口或改名会破坏该 seam。
 
+## 1c. Portfolio：同一问题两处实现且排序已经分歧
+
+**结论：已收敛为一个 owner（seam reader），修复的是真实分歧而非命名重复。**
+
+- `agent_shell/reflection.py` 原用 `ORDER BY opened_at DESC`（原始文本比较）。
+- `analytics/sizing_trace.py` 原用 `ORDER BY datetime(opened_at) DESC`（标准化比较）。
+
+问题相同（“该 proposal 的最新 Position”）、谓词相同，但排序表达式不同：当历史行里
+`opened_at` 格式不一致时，两者可能选中不同的行，于是同一 proposal 的 outcome 注记与
+sizing trace 会互相矛盾。统一为 `repositories_positions.py::get_latest_position_for_proposal`
+（`__all__` 已登记，facade 才真正重导出）。sizing_trace 的 `_table_exists` 守卫保留，
+因为那是该诊断“缺 schema 时降级”的自身契约，不是重复实现。
+
+**没有一起改掉的相邻实现：**`analytics/opportunity_flow.py::_opportunity_by_id`
+与 `get_opportunity` 的 SQL 相同，但它对整个模块统一采用 `_table_exists` 降级
+（`trace_opportunity_flow` 返回 `_missing_trace` 而不是抛错）。收敛它要么引入一个带守卫的
+seam 变体，要么改变缺 schema 行为，因此本轮保持不动并记录理由。
+
+**可复用教训（代价很小但容易踩）：**seam 模块有显式 `__all__`，facade 用
+`from <seam> import *` 重导出。**新增 seam 函数必须同时登记 `__all__`**，否则
+`from aletheia.storage.repositories import <name>` 直接 ImportError；而调用方若有宽泛
+`except Exception`，这个 ImportError 会被吞成“不可用”文案，静默降级而不是报错。
+本次由 sizing_trace 的测试立即暴露，才没有漏进 reflection 的语义。验证方式是真实 import，
+不是读文件。
+
+**复验：**`uv run pytest tests/test_sizing_trace_audit.py tests/test_repositories_positions.py
+tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次 47 passed）。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
