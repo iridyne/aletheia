@@ -334,7 +334,26 @@ def test_navigation_route_gate_survives_a_link_that_escapes_the_repository(
     monkeypatch.setattr(check_docs, "ROOT", root)
 
     assert check_docs.navigation_route_failures(Path("MAP.md")) == [
-        "MAP.md:2: route row names live_symbol but links no non-test source file"
+        "MAP.md:2: route row names live_symbol but links no non-test source file",
+        "MAP.md: marked region validates no route rows; restore the table "
+        "or delete the markers with a stated replacement",
+    ]
+
+
+def test_navigation_route_gate_rejects_a_region_with_no_rows(
+    monkeypatch, tmp_path
+) -> None:
+    """Markers kept while the table is emptied must not pass vacuously."""
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md: marked region validates no route rows; restore the table "
+        "or delete the markers with a stated replacement"
     ]
 
 

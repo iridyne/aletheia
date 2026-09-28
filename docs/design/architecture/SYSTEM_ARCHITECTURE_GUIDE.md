@@ -218,12 +218,5 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 
 ## 附录：定时任务一览
 
-活动调度身份、频率与运行状态以 [System Map](SYSTEM_MAP.md) 的任务表为准；本表只作阅读顺序上的简化叙述。
-
-| 组件 | 周期 | 做什么 |
-|------|------|--------|
-| Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
-| Candidate Selection / Universe refresh | 10 min + source publication | 确定性准入 → 发布 Candidate Planning Generation |
-| System Operator Entry Planner | event-driven + ~15 min heartbeat | 读取确切 Planning Generation → `ENTRY_PLAN` / `NO_PLAN` |
-| Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
-| TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |
+活动调度身份、频率与运行状态只有一份权威：[System Map](SYSTEM_MAP.md) 的任务表。
+本页不再保留第二份组件/频率表——两份周期字段会各自漂移，且静态表会被误读成运行健康证据。

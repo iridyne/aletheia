@@ -137,32 +137,35 @@ def broken_relative_links(markdown_files: list[Path]) -> list[str]:
         if not source.is_file():
             continue
         text = source.read_text(encoding="utf-8")
-        # Line numbers are reported because the fix is a one-line edit: "which
-        # line points at a target that is not there" is the whole question.
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            for raw_target in LINK_PATTERN.findall(line):
-                target = unquote(_link_target(raw_target))
-                if (
-                    not target
-                    or target.startswith(("#", "/", "//"))
-                    or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target)
-                ):
-                    continue
-                path_text = target.split("#", 1)[0].split("?", 1)[0]
-                if not path_text:
-                    continue
-                resolved = (source.parent / path_text).resolve()
-                try:
-                    resolved.relative_to(ROOT)
-                except ValueError:
-                    failures.append(
-                        f"{relative}:{lineno}: link escapes repository: {target}"
-                    )
-                    continue
-                if not resolved.exists():
-                    failures.append(
-                        f"{relative}:{lineno}: missing link target: {target}"
-                    )
+        # Match over the whole document, then derive the line: a Markdown link whose
+        # label or target wraps across lines is still a link, and several current
+        # documents write them that way. Matching per physical line would silently
+        # stop checking those. Line numbers are reported because the fix is a
+        # one-line edit: "which line points at a target that is not there".
+        for match in LINK_PATTERN.finditer(text):
+            lineno = text.count("\n", 0, match.start()) + 1
+            target = unquote(_link_target(match.group(1)))
+            if (
+                not target
+                or target.startswith(("#", "/", "//"))
+                or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target)
+            ):
+                continue
+            path_text = target.split("#", 1)[0].split("?", 1)[0]
+            if not path_text:
+                continue
+            resolved = (source.parent / path_text).resolve()
+            try:
+                resolved.relative_to(ROOT)
+            except ValueError:
+                failures.append(
+                    f"{relative}:{lineno}: link escapes repository: {target}"
+                )
+                continue
+            if not resolved.exists():
+                failures.append(
+                    f"{relative}:{lineno}: missing link target: {target}"
+                )
     return failures
 
 
@@ -252,6 +255,7 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
         )
 
     inside = False
+    validated_rows = 0
     for lineno, line in enumerate(text.splitlines(), start=1):
         if start in line:
             inside = True
@@ -279,6 +283,7 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
                 )
         if not checked:
             continue
+        validated_rows += 1
         if not tests:
             failures.append(
                 f"{markdown}:{lineno}: route row names "
@@ -293,6 +298,14 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
                 f"{markdown}:{lineno}: no linked focused test names a row symbol "
                 f"({', '.join(str(t.relative_to(ROOT)) for t in tests)})"
             )
+    if not validated_rows:
+        # Markers without rows pass every per-row rule, so the region could be
+        # emptied and the gate would stay green. Deleting the route table is a
+        # navigation change, not a way to retire the check.
+        failures.append(
+            f"{markdown}: marked region validates no route rows; restore the table "
+            f"or delete the markers with a stated replacement"
+        )
     return failures
 
 

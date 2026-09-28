@@ -26,7 +26,8 @@ inputs: "Market & Account Inputs\n市场与账户输入" {
 runtime: "Local-first Runtime / 本地运行时" {
   class: runtime
   collectors: "Collectors & feature pipelines\n采集与特征计算"
-  observer: "Serenity / equity / prediction observers\n观察事实与 Candidate source evidence"
+  serenity: "Serenity research\n经 Candidate publication 消费" { class: runtime }
+  observers: "equity / prediction observers\nobservation only · 不发布 Candidate" { class: runtime }
   candidate: "Universe / Serenity Candidate\n确定性准入 + Planning Generation"
   operator: "System Operator Entry Planner\n唯一 AI 入场决策者"
   plan: "Planner + Compiler\nimmutable Entry Plan"
@@ -56,8 +57,10 @@ control: "Human Control Plane / 人类控制面" {
 
 inputs -> runtime.collectors
 runtime.collectors -> truth: "snapshots / features"
-truth -> runtime.observer
-runtime.observer -> runtime.candidate: "source evidence"
+truth -> runtime.serenity
+runtime.serenity -> runtime.candidate: "source evidence"
+truth -> runtime.observers
+runtime.observers -> truth: "observation only"
 runtime.candidate -> runtime.operator: "exact Planning Generation"
 runtime.operator -> runtime.plan: "EntryHypothesis"
 runtime.plan -> runtime.gateway: "immutable Entry Plan / Proposal"
