@@ -218,5 +218,6 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 
 ## 附录：定时任务一览
 
-活动调度身份、频率与运行状态只有一份权威：[System Map](SYSTEM_MAP.md) 的任务表。
-本页不再保留第二份组件/频率表——两份周期字段会各自漂移，且静态表会被误读成运行健康证据。
+活动调度身份与静态导航只有一份权威：[System Map](SYSTEM_MAP.md) 的任务表；它只声明任务身份，
+不声明运行健康。当前调度与运行状态查 `uv run aletheia control status --json`（只读快照）或
+`aletheia doctor`，静态表不承载运行状态。

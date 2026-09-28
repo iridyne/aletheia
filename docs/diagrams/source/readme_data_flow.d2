@@ -34,8 +34,9 @@ market_store: "Market truth\nmarket snapshots · OHLCV · universe features\nord
 
 discovery: "Candidate discovery / 候选发现" {
   class: process
-  observe: "Universe / Serenity Candidate publication"
-  candidate: "Candidate Selection Utility"
+  universe: "Universe scanners\n成员与特征事实"
+  serenity: "Serenity Candidate publication\npublish_serenity_candidates · 不经 Universe Utility"
+  utility: "Candidate Selection Utility\n确定性准入"
   generation: "Planning Generation\nsource/context/期限冻结"
 }
 
@@ -68,9 +69,10 @@ sources.account -> ingest.collect
 ingest.collect -> ingest.canonical
 ingest.canonical -> ingest.feature
 ingest.feature -> market_store
-market_store -> discovery.observe
-discovery.observe -> discovery.candidate
-discovery.candidate -> discovery.generation
+market_store -> discovery.universe
+discovery.universe -> discovery.utility
+discovery.utility -> discovery.generation
+discovery.serenity -> discovery.generation
 discovery.generation -> decision_store
 decision_store -> operator
 learning_store -> operator: "retrieved evidence" { style.stroke-dash: 5 }
@@ -85,4 +87,4 @@ settlement.net -> settlement.attribution
 settlement.attribution -> settlement.review
 settlement.review -> settlement.measure
 settlement.measure -> learning_store
-learning_store -> discovery.candidate: "bounded selection evidence" { style.stroke-dash: 5 }
+learning_store -> discovery.utility: "bounded selection evidence" { style.stroke-dash: 5 }
