@@ -1,7 +1,7 @@
 """PR4 operator tooling: manual-close diagnostic and single-claim resolver.
 
-These are CLI tests for ``scripts/manual_close_resolver.py`` and
-``scripts/manual_close_diagnostic.py``. They exercise the resolver's ``main()``
+These are CLI tests for ``scripts/maintenance/manual_close_resolver.py`` and
+``scripts/maintenance/manual_close_diagnostic.py``. They exercise the resolver's ``main()``
 directly with an argv list and a monkeypatched ``stdin``, against a temp DB, and
 assert the execution_contract §10.2.4 safety invariants:
 
@@ -26,12 +26,12 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import AuditEvent, Order, Position
 from aletheia.storage.sqlite import reset_db
-from scripts.manual_close_diagnostic import (
+from scripts.maintenance.manual_close_diagnostic import (
     build_snapshot,
     main as diagnostic_main,
     snapshot_fingerprint,
 )
-from scripts.manual_close_resolver import main as resolver_main
+from scripts.maintenance.manual_close_resolver import main as resolver_main
 
 MANUAL = "manual_reconciliation_pending"
 PENDING_CLOSE_CODE = "pending_close_reconciliation_required"

@@ -83,12 +83,12 @@ FULL_FILES = {
     "release-please-config.json",
     "rust-toolchain",
     "rust-toolchain.toml",
-    "scripts/check_change_contract.py",
-    "scripts/ci_failure_handoff.py",
-    "scripts/ci_local.py",
-    "scripts/ci_plan.py",
-    "scripts/ci_preflight.py",
-    "scripts/ci_yield.py",
+    "scripts/ci/check_change_contract.py",
+    "scripts/ci/ci_failure_handoff.py",
+    "scripts/ci/ci_local.py",
+    "scripts/ci/ci_plan.py",
+    "scripts/ci/ci_preflight.py",
+    "scripts/ci/ci_yield.py",
     "tests/conftest.py",
     "tox.ini",
     "uv.lock",
@@ -165,7 +165,7 @@ COVERAGE_PATHS = (
     "core/aletheia/execution/reconciliation.py",
     "extensions/learning/evidence_epoch.py",
     "extensions/learning/policy_epochs.py",
-    "scripts/coverage_floors.py",
+    "scripts/ci/coverage_floors.py",
     "tests/test_profit_gradient.py",
     "tests/test_profit_gradient_properties.py",
     "tests/test_profit_gradient_evidence.py",
@@ -331,9 +331,9 @@ def _operational_script_path(path: str) -> bool:
     return (path.startswith("scripts/") and path.endswith(".py")) or path.startswith(
         ("scripts/runtime/", "scripts/dev/")
     ) or path in {
-        "scripts/dev.ps1",
-        "scripts/test_ai.ps1",
-        "scripts/watch_backend.py",
+        "scripts/dev/dev.ps1",
+        "scripts/dev/test_ai.ps1",
+        "scripts/dev/watch_backend.py",
     }
 
 
@@ -346,7 +346,6 @@ def _unknown_executable_path(path: str) -> bool:
         "frontend/",
         "native/",
         "operator-shell/",
-        "performance_report.py",
         "scripts/",
         "tests/",
     )
@@ -365,7 +364,7 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("native")
     if path.startswith(("core/aletheia/", "tests/")) or path.endswith(".py"):
         surfaces.add("python")
-    if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/export_openapi_schema.py"):
+    if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/ci/export_openapi_schema.py"):
         surfaces.add("frontend_contract")
     if path.startswith("core/aletheia/storage/"):
         surfaces.add("storage")
@@ -567,7 +566,7 @@ def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
     checks = [
         {"name": "clean tracked worktree", "command": ["git", "diff", "--quiet", "HEAD", "--"]},
         {"name": "git diff whitespace", "command": ["git", "diff", "--check"]},
-        {"name": "documentation governance", "command": ["uv", "run", "python", "scripts/check_docs.py"]},
+        {"name": "documentation governance", "command": ["uv", "run", "python", "scripts/ci/check_docs.py"]},
     ]
     if required.get("quick"):
         checks.append({
@@ -626,8 +625,8 @@ def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
                     "--cov", "--cov-report=term-missing:skip-covered", "-q", "--timeout=120",
                 ],
             },
-            {"name": "coverage floor self-check", "lane": "coverage", "command": ["uv", "run", "python", "scripts/coverage_floors.py", "--selftest"]},
-            {"name": "coverage floors", "lane": "coverage", "command": ["uv", "run", "python", "scripts/coverage_floors.py"]},
+            {"name": "coverage floor self-check", "lane": "coverage", "command": ["uv", "run", "python", "scripts/ci/coverage_floors.py", "--selftest"]},
+            {"name": "coverage floors", "lane": "coverage", "command": ["uv", "run", "python", "scripts/ci/coverage_floors.py"]},
         ])
     represented = {check.get("lane") for check in checks}
     # trusted_ci is the aggregate verdict, not a separately executable proof lane.
@@ -696,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
             changed_files_complete=args.changed_files_complete == "true",
             trusted_labels=args.trusted_label,
         )
-    except Exception as exc:  # noqa: BLE001 - fail closed with a full plan.
+    except Exception as exc:  # fail closed with a full plan.
         report = plan(
             event=args.event,
             base_sha=args.base_sha or "",

@@ -1,6 +1,6 @@
 """LEGACY-ONLY Round 1 MVP gate reproduction script.
 
-运行: uv run python scripts/mvp_gate_check.py
+运行: uv run python scripts/ci/mvp_gate_check.py
 
 This script preserves the terminated June 2026 okx_demo checklist. It is not a
 current admission gate and cannot qualify the current external-account Runtime Scope.
@@ -25,7 +25,7 @@ def _db():
 
 
 def check_domain_1() -> list[tuple[str, bool, str]]:
-    """决策引擎（System Operator）"""
+    """决策引擎(System Operator)"""
     results = []
     conn = _db()
     cur = conn.cursor()
@@ -286,7 +286,7 @@ def check_domain_6() -> list[tuple[str, bool, str]]:
     )
     results.append(
         (
-            "6.2 冻结规则（历史项，已退役）",
+            "6.2 冻结规则(历史项,已退役)",
             False,
             "not reproducible from live files; archived evidence "
             f"{'found' if archived_evidence else 'missing'} in {archived}",

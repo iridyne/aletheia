@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the local checks selected by scripts/ci_plan.py."""
+"""Run the local checks selected by scripts/ci/ci_plan.py."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import ci_plan  # noqa: E402
+import ci_plan
 
 SCHEMA_VERSION = "local_ci.v1"
 
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-execute", action="store_true")
     args = parser.parse_args(argv)
 
-    base_sha, head_sha, changes = ci_plan._load_changes(argparse.Namespace(  # noqa: SLF001
+    base_sha, head_sha, changes = ci_plan._load_changes(argparse.Namespace(
         base_sha=None,
         head_sha=None,
         base_ref=args.base_ref,
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         "run",
         "--no-sync",
         "python",
-        "scripts/ci_preflight.py",
+        "scripts/ci/ci_preflight.py",
         "--pr-body-file",
         args.pr_body_file,
         "--changed-files",

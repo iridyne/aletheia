@@ -17,7 +17,7 @@ asserted. This gate fails when a test suite can be green without either:
 Deliberate non-rules: assertion-free smoke tests, asserts inside loops, and
 explicit ``if/else`` disclosure branches are legitimate and are not flagged.
 
-Usage: uv run python scripts/check_test_hygiene.py [paths ...]
+Usage: uv run python scripts/ci/check_test_hygiene.py [paths ...]
 Exit codes: 0 clean, 1 findings.
 """
 
@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import TypeGuard
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_PATHS = ("tests",)
 
 # Conditions whose truth decides whether a test's assertions ever execute.

@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.harness_header_ablation import _facts
+from scripts.analysis.harness_header_ablation import _facts
 
 
 def main() -> None:

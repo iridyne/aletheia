@@ -1,13 +1,13 @@
 """One-shot patch: add score_penalty/enforcement/block_candidate to existing active guards.
 
 All 8 guards were auto-generated with no penalty fields (断口G). Run once:
-  uv run python scripts/patch_active_guard_penalties.py
+  uv run python scripts/maintenance/patch_active_guard_penalties.py
 """
 import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path
-root = Path(__file__).parent.parent
+root = Path(__file__).parent.parent.parent
 sys.path[:0] = [str(root / "core"), str(root)]
 
 from aletheia.config.loader import get_data_dir

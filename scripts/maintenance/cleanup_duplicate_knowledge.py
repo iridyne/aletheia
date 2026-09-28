@@ -1,7 +1,7 @@
 """One-time cleanup: deduplicate historical knowledge files and DB rows.
 
 Usage:
-    uv run python scripts/cleanup_duplicate_knowledge.py [--dry-run] [--backfill] [--delete-orphans]
+    uv run python scripts/maintenance/cleanup_duplicate_knowledge.py [--dry-run] [--backfill] [--delete-orphans]
 
 Modes:
   (default)         Dedup DB rows + backfill content_hash (safe, no file deletion)
@@ -25,7 +25,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 # Add project root to path
-root = Path(__file__).resolve().parent.parent
+root = Path(__file__).resolve().parent.parent.parent
 sys.path[:0] = [str(root / "core"), str(root)]
 
 from aletheia.storage.sqlite import get_db
@@ -130,7 +130,7 @@ def main():
 
     archived_count = 0
     files_removed = 0
-    for item_type, content_hash, cnt in dupes:
+    for item_type, content_hash, _cnt in dupes:
         group = db.execute(
             "SELECT id, file_path, created_at FROM knowledge_items "
             "WHERE item_type = ? AND content_hash = ? AND status = 'active' "

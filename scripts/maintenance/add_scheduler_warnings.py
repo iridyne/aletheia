@@ -1,7 +1,7 @@
 """One-shot codemod: replace silent except-pass blocks with logger.warning.
 
 Run from the repository root:
-    uv run python scripts/add_scheduler_warnings.py
+    uv run python scripts/maintenance/add_scheduler_warnings.py
 
 Targets line numbers in core/aletheia/agent_runtime/scheduler.py. Each target
 line must currently be a bare ``pass``; the script fails loudly otherwise, so

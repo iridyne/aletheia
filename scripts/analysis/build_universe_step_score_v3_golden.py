@@ -1,6 +1,6 @@
 """Re-run the v2 golden fixture inputs through the v3 scorer to produce universe_step_score_v3.json.
 
-Usage: uv run python scripts/build_universe_step_score_v3_golden.py
+Usage: uv run python scripts/analysis/build_universe_step_score_v3_golden.py
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ _SCANNERS = {
     "short_bias": score_short_bias,
 }
 
-_V2_PATH = Path(__file__).parent.parent / "tests/fixtures/universe_step_score_v2.json"
-_V3_PATH = Path(__file__).parent.parent / "tests/fixtures/universe_step_score_v3.json"
+_V2_PATH = Path(__file__).parent.parent.parent / "tests/fixtures/universe_step_score_v2.json"
+_V3_PATH = Path(__file__).parent.parent.parent / "tests/fixtures/universe_step_score_v3.json"
 
 
 def _run_scanner(component: str, feat: dict, cfg: UniverseConfig) -> object:

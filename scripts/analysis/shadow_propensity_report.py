@@ -1,10 +1,10 @@
 """CLI wrapper for build_propensity_report().
 
 Usage:
-    uv run python scripts/shadow_propensity_report.py
-    uv run python scripts/shadow_propensity_report.py --days 30
-    uv run python scripts/shadow_propensity_report.py --family short_bias --json
-    uv run python scripts/shadow_propensity_report.py --policy-epoch <id>
+    uv run python scripts/analysis/shadow_propensity_report.py
+    uv run python scripts/analysis/shadow_propensity_report.py --days 30
+    uv run python scripts/analysis/shadow_propensity_report.py --family short_bias --json
+    uv run python scripts/analysis/shadow_propensity_report.py --policy-epoch <id>
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def main() -> None:
             print(f"    ⚠  {w}")
 
     print(f"\n  features: {report['feature_names']}")
-    coef_pairs = list(zip(report["feature_names"], report["coefficients"][:-1]))
+    coef_pairs = list(zip(report["feature_names"], report["coefficients"][:-1], strict=True))
     bias = report["coefficients"][-1] if report["coefficients"] else None
     print("  coefficients:")
     for fname, coef in coef_pairs:

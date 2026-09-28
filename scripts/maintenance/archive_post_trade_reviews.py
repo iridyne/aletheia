@@ -6,7 +6,7 @@ no longer reads them (switched to trade_case_study), but they may pollute other
 knowledge searches.
 
 Usage:
-    uv run python scripts/archive_post_trade_reviews.py [--dry-run] [--before YYYY-MM-DD]
+    uv run python scripts/maintenance/archive_post_trade_reviews.py [--dry-run] [--before YYYY-MM-DD]
 
 Flags:
     --dry-run   Print counts only; make no DB changes.

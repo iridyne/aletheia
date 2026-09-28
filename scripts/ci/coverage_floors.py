@@ -14,8 +14,8 @@ in the terminal ``Cover`` column.
 
 Usage::
 
-    uv run python scripts/coverage_floors.py            # uses .coverage
-    uv run python scripts/coverage_floors.py <data-file>
+    uv run python scripts/ci/coverage_floors.py            # uses .coverage
+    uv run python scripts/ci/coverage_floors.py <data-file>
 
 Exits non-zero on any regression or missing module.
 """

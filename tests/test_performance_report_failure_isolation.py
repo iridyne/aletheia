@@ -38,7 +38,7 @@ def _patch_common(monkeypatch, outcomes=None):
 )
 def test_report_isolates_trade_section_failures(monkeypatch, failing, error_key, healthy):
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     _patch_common(monkeypatch)
     calls = []
@@ -95,7 +95,7 @@ def test_report_isolates_outcome_transform_failures(monkeypatch, target, error_k
     import aletheia.analytics.streaks as streaks
     import aletheia.analytics.temporal as temporal
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     outcome_reads = 0
 
@@ -159,7 +159,7 @@ def test_report_isolates_outcome_transform_failures(monkeypatch, target, error_k
 
 def test_report_failure_manifest_matches_human_and_json_shape(monkeypatch):
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     _patch_common(monkeypatch)
     monkeypatch.setattr(
@@ -194,7 +194,7 @@ def test_report_failure_manifest_matches_human_and_json_shape(monkeypatch):
 
 def test_report_no_eligible_outcomes_remains_complete_note(monkeypatch):
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     _patch_common(monkeypatch, outcomes=[])
     monkeypatch.setattr(trade_stats, "compute_rolling_trade_stats", lambda **_: {})

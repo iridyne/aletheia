@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_PROPOSAL_STATUSES = {
     "draft",
     "accepted",
@@ -1280,7 +1280,7 @@ def spec_claim_anchor_failures() -> list[str]:
     if BASELINE_UNRESOLVED_CLAIM_SECTIONS or BASELINE_PROPOSAL_ANCHORED_CONTRACTS:
         if date.today() > CLAIM_ANCHOR_BASELINE_EXPIRY:
             failures.append(
-                f"scripts/check_docs.py: claim-anchor baselines expired on "
+                f"scripts/ci/check_docs.py: claim-anchor baselines expired on "
                 f"{CLAIM_ANCHOR_BASELINE_EXPIRY.isoformat()} and are not empty; "
                 f"clear them or move the date deliberately"
             )
@@ -1294,7 +1294,7 @@ def spec_claim_anchor_failures() -> list[str]:
             failures.append(
                 f"{relative}:{lineno}: claim {claim_id} names unregistered contract "
                 f"{contract!r}; add it to CONTRACT_DOC_ALIASES or "
-                f"UNANCHORED_CONTRACT_NAMESPACES in scripts/check_docs.py"
+                f"UNANCHORED_CONTRACT_NAMESPACES in scripts/ci/check_docs.py"
             )
             continue
         if path.startswith("docs/design/proposals/"):
@@ -1377,10 +1377,10 @@ def semantic_truth_failures() -> list[str]:
         if required not in text:
             failures.append(f"{relative}: missing semantic truth marker: {required}")
 
-    legacy_script = (ROOT / "scripts/mvp_gate_check.py").read_text(encoding="utf-8")
+    legacy_script = (ROOT / "scripts/ci/mvp_gate_check.py").read_text(encoding="utf-8")
     if "LEGACY-ONLY" not in legacy_script:
         failures.append(
-            "scripts/mvp_gate_check.py: historical Round 1 gate is not marked LEGACY-ONLY"
+            "scripts/ci/mvp_gate_check.py: historical Round 1 gate is not marked LEGACY-ONLY"
         )
 
     stale_phrases = {

@@ -1,4 +1,4 @@
-"""Contract for scripts/retire_fixed_operator_failures.py.
+"""Contract for scripts/maintenance/retire_fixed_operator_failures.py.
 
 The script exists because failed operator-task rows outlive the defect that
 produced them: they keep the failed-task surface noisy and cannot be resolved by
@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.agent_shell.operator_store import create_task, get_task, update_task
-from scripts import retire_fixed_operator_failures as retire
+from scripts.maintenance import retire_fixed_operator_failures as retire
 
 
 def _failed_task(task_type: str, *, created_at: str | None = None, error: str = "boom") -> str:
@@ -63,7 +63,7 @@ def test_apply_cancels_with_a_recorded_reason_and_is_idempotent(capsys):
     assert task is not None
     assert task["status"] == "cancelled"
     payload = task["output_data"]
-    assert payload["retired_reason"].startswith("retired by scripts/retire_fixed_operator_failures.py")
+    assert payload["retired_reason"].startswith("retired by scripts/maintenance/retire_fixed_operator_failures.py")
     assert payload["prior_error"] == "Cannot read properties of undefined (reading '0')"
     capsys.readouterr()
 

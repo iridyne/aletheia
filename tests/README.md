@@ -35,7 +35,7 @@ for the marker table, the slow-test loop, and the xdist boundaries.
 ## Find the test for a task
 
 `docs/design/architecture/SYSTEM_MAP.md` maps task → owner → focused tests, and
-`scripts/check_docs.py` verifies each route row still links source that owns the
+`scripts/ci/check_docs.py` verifies each route row still links source that owns the
 named symbols. Start there; do not maintain a second list.
 
 ## Agent Rule

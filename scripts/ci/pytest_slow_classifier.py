@@ -2,7 +2,7 @@
 
 Usage:
     uv run pytest tests/ --tb=no --durations=20 -q 2>&1 |
-      uv run python scripts/pytest_slow_classifier.py --threshold 1.0
+      uv run python scripts/ci/pytest_slow_classifier.py --threshold 1.0
 
 The classifier is intentionally phase-based:
 

@@ -70,7 +70,7 @@ Response body 字段定义在 **代码的 Pydantic model** 里，不在 api_refe
 Export the current FastAPI schema without running or mutating a Runtime:
 
 ```bash
-uv run python scripts/export_openapi_schema.py --output docs/_generated/openapi.json
+uv run python scripts/ci/export_openapi_schema.py --output docs/_generated/openapi.json
 ```
 
 The deterministic JSON can feed frontend type-generation tooling. Generated

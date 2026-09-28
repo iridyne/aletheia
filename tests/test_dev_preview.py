@@ -66,7 +66,7 @@ def test_preview_data_dir_requires_the_worktree_preview_root(monkeypatch, tmp_pa
 @pytest.mark.parametrize("extensions_present", [False, True])
 def test_opt_in_watcher_tracks_present_source_roots_without_starting_runtime(monkeypatch, tmp_path, extensions_present):
     import watchfiles
-    from scripts import watch_backend
+    from scripts.dev import watch_backend
 
     (tmp_path / "aletheia").mkdir()
     if extensions_present:

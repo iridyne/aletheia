@@ -36,7 +36,7 @@ Permitted resolutions (no auto-close, no synthesized fills):
   the operator to settle separately.
 
 Usage:
-  uv run python scripts/manual_close_resolver.py \\
+  uv run python scripts/maintenance/manual_close_resolver.py \\
       --position-id ID --acknowledge <sha256> --mode <mode> --reason "<reason>" \\
       [--db PATH] [--fill-id ID --fill-quantity Q --fill-price P]
 """
@@ -58,7 +58,7 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill
 
 try:
-    from scripts.manual_close_diagnostic import (
+    from scripts.maintenance.manual_close_diagnostic import (
         default_db_path,
         build_snapshot,
         snapshot_fingerprint,

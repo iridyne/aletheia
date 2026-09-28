@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-import scripts.ci_failure_handoff as handoff
+import scripts.ci.ci_failure_handoff as handoff
 
 
 @pytest.mark.parametrize(

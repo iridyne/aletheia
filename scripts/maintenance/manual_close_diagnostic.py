@@ -17,7 +17,7 @@ against an unchanged database produce the same fingerprint.
 This script never writes: it opens the database with ``mode=ro``.
 
 Usage:
-  uv run python scripts/manual_close_diagnostic.py [--db PATH] [--position-id ID] [--json]
+  uv run python scripts/maintenance/manual_close_diagnostic.py [--db PATH] [--position-id ID] [--json]
 """
 
 from __future__ import annotations

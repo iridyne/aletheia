@@ -15,8 +15,8 @@ and the forward catch-up can never diverge.
 DATA op — set ALETHEIA_DATA_DIR explicitly when targeting a non-default runtime home;
 NOT a worktree's empty data dir:
 
-    uv run python scripts/backfill_shadow_trades.py --dry-run   # inspect first
-    uv run python scripts/backfill_shadow_trades.py             # then write
+    uv run python scripts/maintenance/backfill_shadow_trades.py --dry-run   # inspect first
+    uv run python scripts/maintenance/backfill_shadow_trades.py             # then write
 
 Symbols that left the universe have no OHLCV to resolve against; those rows are
 counted as skipped_no_ohlcv and left unresolved (an honest, bounded residue).
@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 # Allow running as a plain script from the repo root.
-root = Path(__file__).resolve().parent.parent
+root = Path(__file__).resolve().parent.parent.parent
 sys.path[:0] = [str(root / "core"), str(root)]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

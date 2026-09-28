@@ -96,7 +96,7 @@ def test_report_wiring_emits_attribution(monkeypatch):
         _mk("ETH", "s2", "sl", -2.0),
     ]
     import aletheia.analytics.outcome_integrity as oi
-    import performance_report
+    from scripts.analysis import performance_report
 
     monkeypatch.setattr(oi, "eligible_strategy_outcomes", lambda **kw: outs)
     rep = performance_report._collect(execution_mode="bitget_demo")

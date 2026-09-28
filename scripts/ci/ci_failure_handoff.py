@@ -29,7 +29,7 @@ Ambiguous failures must stay ``unknown`` — never automatically downgraded.
 
 Usage:
 
-    python scripts/ci_failure_handoff.py \
+    python scripts/ci/ci_failure_handoff.py \
         --pr-number 42 --head-sha <sha> --run-id 123 --attempt 1 \
         --failing-job "Python unit" --failing-step "Run unit regression tier" \
         [--excerpt "connect to example.com failed"] [--category preflight_metadata] \

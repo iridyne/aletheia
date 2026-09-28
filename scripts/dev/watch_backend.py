@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ALETHEIA_DIR = PROJECT_ROOT / "core" / "aletheia"
 GATEWAY_URL = "http://127.0.0.1:8787"
 

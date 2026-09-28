@@ -1,4 +1,4 @@
-"""Tests for scripts/check_change_contract.py — PR Change Contract enforcement."""
+"""Tests for scripts/ci/check_change_contract.py — PR Change Contract enforcement."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import scripts.check_change_contract as checker
-from scripts.check_change_contract import check_pr_description
+import scripts.ci.check_change_contract as checker
+from scripts.ci.check_change_contract import check_pr_description
 
 # Valid minimal PR description with D0
 VALID_D0_PR = """

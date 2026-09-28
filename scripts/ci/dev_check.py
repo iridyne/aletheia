@@ -19,14 +19,14 @@ Why no ``ruff format --check``: 1152 files would be reformatted today, so a
 whole-file format check fails on any file someone edits. Adopt it only together
 with a repository-wide formatting migration.
 
-This is not a CI replacement: ``scripts/ci_preflight.py`` and
-``scripts/ci_local.py`` own the PR-level gate. This is the 5-30s loop.
+This is not a CI replacement: ``scripts/ci/ci_preflight.py`` and
+``scripts/ci/ci_local.py`` own the PR-level gate. This is the 5-30s loop.
 
 Usage:
-  uv run python scripts/dev_check.py               # working tree vs HEAD
-  uv run python scripts/dev_check.py --staged      # staged only
-  uv run python scripts/dev_check.py --base origin/master
-  uv run python scripts/dev_check.py --no-tests --no-types
+  uv run python scripts/ci/dev_check.py               # working tree vs HEAD
+  uv run python scripts/ci/dev_check.py --staged      # staged only
+  uv run python scripts/ci/dev_check.py --base origin/master
+  uv run python scripts/ci/dev_check.py --no-tests --no-types
 
 Exit codes: 0 clean, 1 findings, 2 usage/tool failure.
 """
@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_docs
 import check_test_hygiene
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Extended rules are reported for changed lines only; see module docstring.
 EXTEND_SELECT = "B,ASYNC,RUF"
@@ -202,12 +202,12 @@ def step_hygiene(files: list[str]) -> list[str]:
     return findings
 
 
-# ``scripts/check_docs.py`` had no automatic trigger at all: not this hook path,
-# not ci.yml (``workflow_dispatch``-only), and ``scripts/ci_plan.py`` only lists
+# ``scripts/ci/check_docs.py`` had no automatic trigger at all: not this hook path,
+# not ci.yml (``workflow_dispatch``-only), and ``scripts/ci/ci_plan.py`` only lists
 # it for a human to run. Gates nothing runs are prose with extra steps. It is
 # repository-wide and costs ~5s, so it runs only when the change touches what it
 # actually reads — a doc, an executable spec, or the gate itself.
-DOCS_GATE_TRIGGERS = ("docs/", "tests/specs/", "AGENTS.md", "README.md", "scripts/check_docs.py")
+DOCS_GATE_TRIGGERS = ("docs/", "tests/specs/", "AGENTS.md", "README.md", "scripts/ci/check_docs.py")
 
 
 def step_docs_governance(files: list[str]) -> list[str]:

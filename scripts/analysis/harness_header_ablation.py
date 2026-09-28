@@ -111,6 +111,17 @@ async def _one(provider_name: str, caller: str, index: int, with_header: bool) -
     }
 
 
+def _write_payload(output: Path, provider: str, samples: int, rows: list[dict[str, Any]]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(
+            {"provider": provider, "model": "claude-haiku-4-5", "samples_per_caller_per_arm": samples, "rows": rows},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 async def run(provider: str, samples: int, concurrency: int, output: Path) -> None:
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -120,8 +131,7 @@ async def run(provider: str, samples: int, concurrency: int, output: Path) -> No
 
     tasks = [bounded(caller, index, header) for caller in CALLERS for index in range(samples) for header in (False, True)]
     rows = await asyncio.gather(*tasks)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps({"provider": provider, "model": "claude-haiku-4-5", "samples_per_caller_per_arm": samples, "rows": rows}, indent=2), encoding="utf-8")
+    await asyncio.to_thread(_write_payload, output, provider, samples, rows)
 
 
 def main() -> None:

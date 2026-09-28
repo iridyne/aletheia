@@ -5,7 +5,7 @@ import pytest
 
 def test_days_is_forwarded_and_reported(monkeypatch, capsys):
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as report
+    from scripts.analysis import performance_report as report
 
     monkeypatch.delenv("REPORT_DAYS", raising=False)
     monkeypatch.setenv("REPORT_EXECUTION_MODE", "bitget_demo")
@@ -35,7 +35,7 @@ def test_days_is_forwarded_and_reported(monkeypatch, capsys):
 
 def test_legacy_hours_fallback_is_converted_and_marked(monkeypatch):
     import aletheia.analytics.trade_stats as trade_stats
-    import performance_report as report
+    from scripts.analysis import performance_report as report
 
     monkeypatch.delenv("REPORT_DAYS", raising=False)
     monkeypatch.setenv("SNAPSHOT_WINDOW_HOURS", "36")
@@ -62,7 +62,7 @@ def test_legacy_hours_fallback_is_converted_and_marked(monkeypatch):
 
 
 def test_execution_mode_is_trimmed_before_resolution(monkeypatch):
-    import performance_report as report
+    from scripts.analysis import performance_report as report
 
     monkeypatch.delenv("REPORT_EXECUTION_MODE", raising=False)
     monkeypatch.setattr(
@@ -80,7 +80,7 @@ def test_execution_mode_is_trimmed_before_resolution(monkeypatch):
     [["--days", "0"], ["--days", "-1"], ["--days", "not-a-number"], ["--unknown"]],
 )
 def test_invalid_report_arguments_fail_visibly(argv):
-    import performance_report as report
+    from scripts.analysis import performance_report as report
 
     with pytest.raises(SystemExit) as exc_info:
         report.main(argv)

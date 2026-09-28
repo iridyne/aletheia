@@ -31,7 +31,7 @@ VALID_SDD_DEPTHS = ["D0", "D1", "D2"]
 EXEMPT_PATTERNS = [
     re.compile(r"^\.github/"),
     re.compile(r"^docs/"),
-    re.compile(r"^scripts/check_"),
+    re.compile(r"^scripts/ci/check_"),
     re.compile(r"^tests/test_ci_"),
     re.compile(r"^tests/test_architecture_fitness\.py$"),
     re.compile(r"^README\.md$"),
@@ -149,7 +149,7 @@ def structured_check_pr(
 
     Returns a list of ``{"code": ..., "message": ...}`` failure objects. Empty
     list means pass. This is the single source of Change-Contract semantics;
-    the local :mod:`scripts.ci_preflight` consumes it so local metadata enforcement
+    the local :mod:`scripts.ci.ci_preflight` consumes it so local metadata enforcement
     and any PR-check entrypoint use the same rules.
     """
     failures: list[dict[str, str]] = []

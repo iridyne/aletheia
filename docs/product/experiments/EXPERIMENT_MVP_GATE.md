@@ -2,7 +2,7 @@
 
 > **Status:** retired historical compatibility pointer.
 
-The June 2026 Round 1 readiness gate and `scripts/mvp_gate_check.py` described an
+The June 2026 Round 1 readiness gate and `scripts/ci/mvp_gate_check.py` described an
 `okx_demo` experiment, required a legacy tag/freeze marker, and predated the
 former local-exchange scope as well as the current external-account scope.
 Round 1 was terminated on 2026-06-27. Those checks do not authorize or qualify a

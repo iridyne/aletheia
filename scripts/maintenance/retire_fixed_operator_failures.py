@@ -11,8 +11,8 @@ before a cutoff, moved to `cancelled` with the reason recorded in `output_data`.
 Nothing is deleted and the prior error string is preserved.
 
 Usage:
-    uv run python scripts/retire_fixed_operator_failures.py --before 2026-09-28T06:00:00Z
-    uv run python scripts/retire_fixed_operator_failures.py --before ... --apply
+    uv run python scripts/maintenance/retire_fixed_operator_failures.py --before 2026-09-28T06:00:00Z
+    uv run python scripts/maintenance/retire_fixed_operator_failures.py --before ... --apply
 
 Dry-run is the default; `--apply` performs the update. Idempotent: once a row is
 cancelled it no longer matches.
@@ -33,7 +33,7 @@ DEFAULT_TASK_TYPES = (
 )
 
 RETIRED_REASON = (
-    "retired by scripts/retire_fixed_operator_failures.py: the failure cause is fixed and "
+    "retired by scripts/maintenance/retire_fixed_operator_failures.py: the failure cause is fixed and "
     "deployed (#3641 retired-command loop, #3647 delegation contract, #3648 review budget)"
 )
 

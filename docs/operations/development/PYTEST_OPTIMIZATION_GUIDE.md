@@ -332,7 +332,7 @@ uv run pytest --ff -q
 
 # 慢任务挖掘 + 二分类
 uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
-  uv run python scripts/pytest_slow_classifier.py --threshold 1.0
+  uv run python scripts/ci/pytest_slow_classifier.py --threshold 1.0
 ```
 
 慢测试二分类脚本只按 pytest phase 做可解释分类：
@@ -367,6 +367,6 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 | 市场数据不能直接用 Bitget execution client | `tests/specs/spec_data_layer.py` |
 | 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_equity_observer.py` |
 | SQLite 并发三根柱子不能破 | `tests/specs/spec_data_model.py`、`tests/test_storage.py` |
-| AI 默认只跑快反馈 + 上次失败 | `tests/test_pytest_tiering.py`、`scripts/test_ai.ps1` |
+| AI 默认只跑快反馈 + 上次失败 | `tests/test_pytest_tiering.py`、`scripts/dev/test_ai.ps1` |
 
 新增文档规则时，同步补一条测试或在这里登记已有测试；否则这条规则会在下一次重构中失效。

@@ -11,9 +11,9 @@ database is unavailable the script degrades gracefully and reports which
 sections could not be computed.
 
 Usage:
-    python3 performance_report.py              # human-readable report
-    python3 performance_report.py --json        # machine-readable JSON
-    python3 performance_report.py --days 30     # 30-day rolling window
+    uv run python scripts/analysis/performance_report.py              # human-readable report
+    uv run python scripts/analysis/performance_report.py --json        # machine-readable JSON
+    uv run python scripts/analysis/performance_report.py --days 30     # 30-day rolling window
 """
 from __future__ import annotations
 

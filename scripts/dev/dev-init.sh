@@ -51,7 +51,7 @@ if [[ -f "$REPO_ROOT/.git/hooks/pre-commit" ]] && ! cmp -s "$REPO_ROOT/scripts/h
 else
   cp "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"
   chmod +x "$REPO_ROOT/.git/hooks/pre-commit"
-  log "     Installed. Full changed-file gate: uv run python scripts/dev_check.py"
+  log "     Installed. Full changed-file gate: uv run python scripts/ci/dev_check.py"
 fi
 
 log "5/5  Current gateway state:"

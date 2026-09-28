@@ -7,13 +7,13 @@ configuration; no LLM / exchange calls.
 
 Usage
 -----
-    uv run python scripts/shadow_threshold_calibration.py
-    uv run python scripts/shadow_threshold_calibration.py --days 14
-    uv run python scripts/shadow_threshold_calibration.py --symbol SOXL/USDT --symbol CHZ/USDT
-    uv run python scripts/shadow_threshold_calibration.py --policy-epoch <id>
-    uv run python scripts/shadow_threshold_calibration.py --family momentum
-    uv run python scripts/shadow_threshold_calibration.py --family short_bias --days 30
-    uv run python scripts/shadow_threshold_calibration.py --json
+    uv run python scripts/analysis/shadow_threshold_calibration.py
+    uv run python scripts/analysis/shadow_threshold_calibration.py --days 14
+    uv run python scripts/analysis/shadow_threshold_calibration.py --symbol SOXL/USDT --symbol CHZ/USDT
+    uv run python scripts/analysis/shadow_threshold_calibration.py --policy-epoch <id>
+    uv run python scripts/analysis/shadow_threshold_calibration.py --family momentum
+    uv run python scripts/analysis/shadow_threshold_calibration.py --family short_bias --days 30
+    uv run python scripts/analysis/shadow_threshold_calibration.py --json
 """
 from __future__ import annotations
 

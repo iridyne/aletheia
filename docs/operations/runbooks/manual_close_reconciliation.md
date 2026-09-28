@@ -42,13 +42,13 @@ manual-close audit trail — followed by a deterministic SHA-256 fingerprint ove
 exactly that JSON evidence.
 
 ```bash
-uv run python scripts/manual_close_diagnostic.py --db "${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/app.db"
+uv run python scripts/maintenance/manual_close_diagnostic.py --db "${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/app.db"
 ```
 
 For one claim (and to obtain the fingerprint the resolver needs):
 
 ```bash
-uv run python scripts/manual_close_diagnostic.py \
+uv run python scripts/maintenance/manual_close_diagnostic.py \
     --db "${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/app.db" \
     --position-id <position_id>
 ```
@@ -87,7 +87,7 @@ confirmation (`RESOLVE <position_id> AS <mode>`). There is no `--force`, no
 `--yes`, and no batch mode.
 
 ```bash
-uv run python scripts/manual_close_resolver.py \
+uv run python scripts/maintenance/manual_close_resolver.py \
     --db "${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/app.db" \
     --position-id <position_id> \
     --acknowledge <sha256_from_step_1> \
@@ -125,5 +125,5 @@ was.
 ## Reference
 
 - [execution_contract §10.2.4](../../design/contracts/execution_contract.md)
-- [`scripts/manual_close_diagnostic.py`](../../../scripts/manual_close_diagnostic.py)
-- [`scripts/manual_close_resolver.py`](../../../scripts/manual_close_resolver.py)
+- [`scripts/maintenance/manual_close_diagnostic.py`](../../../scripts/maintenance/manual_close_diagnostic.py)
+- [`scripts/maintenance/manual_close_resolver.py`](../../../scripts/maintenance/manual_close_resolver.py)

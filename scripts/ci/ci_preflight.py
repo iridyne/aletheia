@@ -3,7 +3,7 @@
 
 Run this from a feature branch before the first CI-triggering PR creation or
 update. It reuses the exact Change Contract parser/semantics from
-``scripts/check_change_contract.py`` (single source of truth), resolves the
+``scripts/ci/check_change_contract.py`` (single source of truth), resolves the
 actual branch/base diff so the docs/governance exemption is evaluated against
 the real changed-file set, and emits a bounded structured report for AI
 automation.
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_change_contract import (  # noqa: E402
+from check_change_contract import (
     structured_check_pr,
 )
 

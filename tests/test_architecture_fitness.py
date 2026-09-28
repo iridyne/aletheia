@@ -775,7 +775,7 @@ def test_kill_switch_module_has_required_interface():
 # Trust-boundary coverage registry
 #
 # See docs/operations/development/TRUST_BOUNDARY_COVERAGE.md and
-# scripts/coverage_floors.py. If a new module is created on one of the
+# scripts/ci/coverage_floors.py. If a new module is created on one of the
 # canonical trust-boundary paths (Profit Gradient, epoch/cutoff, artifact
 # compiler, replay, cost reconciliation) it MUST be registered in
 # .coveragerc's include= list, otherwise a PR could grow silently
@@ -844,7 +844,7 @@ def test_trust_boundary_files_are_registered_in_coveragerc():
         "TRUST-BOUNDARY REGISTRATION MISSING:\n  "
         + "\n  ".join(unregistered)
         + "\n\nAdd each path to .coveragerc's include= block and set a floor "
-        "in scripts/coverage_floors.py. See "
+        "in scripts/ci/coverage_floors.py. See "
         "docs/operations/development/TRUST_BOUNDARY_COVERAGE.md."
     )
 
@@ -871,7 +871,7 @@ def test_coverage_floors_match_coveragerc_registry():
         if line.strip()
     }
 
-    sys.path.insert(0, str(repo_root / "scripts"))
+    sys.path.insert(0, str(repo_root / "scripts" / "ci"))
     try:
         import coverage_floors  # type: ignore[import-not-found]
     finally:

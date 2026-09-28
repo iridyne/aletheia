@@ -357,7 +357,7 @@ def _start_vite_build_watch() -> subprocess.Popen | None:
 
     DISABLED: Vite watch creates a race with app.py's static file mount — uvicorn
     loads before Vite finishes its first build, so dashboard_static/ is incomplete
-    and the mount fails. For dev iteration use scripts/dev.ps1 instead (runs Vite
+    and the mount fails. For dev iteration use scripts/dev/dev.ps1 instead (runs Vite
     watch + backend watcher separately). Background Gateway startup relies on a
     pre-built dashboard_static/ (committed or built via `npm run build`).
     """
