@@ -68,6 +68,27 @@ tests/test_universe_relative_rank_shadow.py tests/test_candidate_selection_utili
 tests/specs/spec_market_type_dedup.py -q`（本次 76 passed）。
 若重放与权威分配结果出现 mismatch，先比较上述两个函数的语义，而不是重新引入本地副本。
 
+## 1b. 已知受阻的结构切片（不要重复尝试）
+
+`UniverseService.refresh()` 的候选成员组装循环（约 `service.py:975-1080`：构造
+`UniverseMember` 与 `inserted_members`）本身是纯组装，看起来适合独立成 owner，但
+**当前被源码文本断言阻塞**：
+
+- `tests/specs/spec_universe_pipeline.py:590-593` 用
+  `inspect.getsource(service.UniverseService.refresh)` 断言三段字面量
+  （`regime_tag = current_regime.state if current_regime else None`、`regime_tag=regime_tag`、
+  `"regime_tag": regime_tag`），这三段都在该循环内。
+- `tests/specs/spec_entry_plan_contract.py:21-24` 同样按 `refresh()` 源码断言
+  `_ensure_planning_generations` 的唯一 owner。
+
+因此把该循环移出 `refresh()` 会先弄红 spec，而不是改行为。解除方式属于
+[#3561](https://github.com/iridyne/aletheia/issues/3561)（把源码文本断言改成行为断言），
+Owner 已将其降为低优先级。**在该项完成前，不要再把“缩短 refresh()”当作零风险重构**；
+也不要在同一批次里既改行为又改断言。
+
+同样地，`test_universe_routes.py` 通过 patch `UniverseService.refresh` 打桩，
+移动 `refresh` 的公开入口或改名会破坏该 seam。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
