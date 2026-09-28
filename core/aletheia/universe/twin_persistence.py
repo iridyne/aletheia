@@ -15,7 +15,7 @@ import hashlib
 import json
 import math
 from types import SimpleNamespace
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.storage.models import (
