@@ -17,7 +17,6 @@ title: "Agent Decision Loop / Agent 决策闭环" {
 
 producers: "Candidate and evidence producers / 候选与证据生产者" {
   universe: "Universe scanners\n确定性特征与 Candidate Selection Utility" { class: signal }
-  observer: "Market Observer\nLLM advisory enrichment" { class: signal }
   research: "Serenity / equity / prediction observers\n研究与跨市场观察" { class: signal }
 }
 
@@ -51,7 +50,6 @@ terminal: "Planning outcomes / 规划出口" {
 safety: "Risk Engine + Execution Gateway\nAI 决策不能绕过硬性风控" { class: safety }
 
 producers.universe -> opportunity
-producers.observer -> opportunity: "advisory only"
 producers.research -> opportunity: "observation only"
 opportunity -> candidate.gates
 candidate.gates -> candidate.context

@@ -54,7 +54,7 @@ npm run check:settings-types   # drift check vs backend settings model
 `npm run build` writes into `core/aletheia/dashboard_static/` (the directory the
 backend serves), so a UI change is live after a build plus a browser refresh — do
 not start a dev server for that. Regenerate types with `npm run generate:api-types`
-after changing backend route models; `export_openapi_schema.py` produces the schema.
+after changing backend route models; `scripts/export_openapi_schema.py` produces the schema.
 
 Runtime inspection:
 
@@ -75,12 +75,15 @@ vendors live in `extensions/`; core receives them as injected factories.
 and registers it into `aletheia.uta.registry`. Core code should never import a
 specific exchange module.
 
-Request/execution path, and where each stage lives:
+Request/execution path, and where each stage lives. Task → owner → source →
+focused-test navigation lives in
+[`docs/design/architecture/SYSTEM_MAP.md`](docs/design/architecture/SYSTEM_MAP.md);
+this table only maps a stage to its directory.
 
 | Stage | Location |
 | --- | --- |
 | CLI entry (`aletheia` / `ato`) | `core/aletheia/main.py` → `core/aletheia/cli/*` (one module per command group) |
-| HTTP app + routes | `core/aletheia/server/app.py`, `server/routes/` (~23 route modules) |
+| HTTP app + routes | `core/aletheia/server/app.py`, `server/routes/` (one module per route group) |
 | Process/service lifecycle, supervisor, frontdoor | `core/aletheia/gateway/` |
 | Candidate discovery / scoring | `core/aletheia/universe/`, `extensions/data/collectors/volume_scanner.py`, `extensions/regime` |
 | Entry strategy authority (plans, triggers, sizing, TA) | `core/aletheia/trading/` |
@@ -90,7 +93,8 @@ Request/execution path, and where each stage lives:
 | Unified trading account abstraction | `core/aletheia/uta/` |
 | Positions, accounting, outcomes | `core/aletheia/portfolio/`, `analytics/`, `economics/` |
 | Persistence (SQLite, migrations, repositories) | `core/aletheia/storage/` |
-| Learning / counterfactual / research | `extensions/learning`, `extensions/counterfactual`, `extensions/serenity`, `extensions/research` |
+| Learning / counterfactual / research | `extensions/learning`, `extensions/counterfactual`, `extensions/research` |
+| Serenity research + Candidate publication | `core/aletheia/trading/serenity_scoring.py`, `serenity_publication.py`, `serenity_evidence.py` (there is no `extensions/serenity`) |
 | Frontend dashboard | `frontend/src` → built into `core/aletheia/dashboard_static/` |
 
 Runtime state is per-user and outside the repo: `~/.aletheia` by default,
@@ -113,7 +117,10 @@ a regression — read the contract, not the call sites:
 - `docs/governance/decisions/DECISIONS.md` — decision record.
 - `docs/design/history/` — retired mechanisms (deleted from code, kept as history).
 
-This repo is indexed by CodeGraph (`.codegraph/` exists): prefer
-`codegraph explore "<symbols or question>"` over a grep/read sweep when locating
-or understanding code, but verify against the file before editing — the index can
-lag.
+Some machines have a CodeGraph index (`.codegraph/`), but this file cannot
+promise that any given checkout has one, or that its index matches the current
+HEAD. Use it only after probing: `codegraph explore "<symbols or question>"` if
+the command and index are present and the index is not obviously behind. If it
+is missing or stale, fall back to `git grep` / language-server lookups — do not
+build a CodeGraph index as a prerequisite for ordinary work. Either way, read
+the file before editing: the index can lag.

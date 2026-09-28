@@ -16,10 +16,12 @@
 | 角色 | 组件 | 职责 | 自治权 |
 |------|------|------|--------|
 | 入场决策者 | **System Operator** | 对确切 Planning Generation 输出 `ENTRY_PLAN` / `NO_PLAN` | 唯一受支持的入场策略决策主体 |
-| 市场观察 | Market Observer | 对 emitter-admitted Opportunity 做可选 LLM advisory enrichment | 只写 namespaced assessment，不下单 |
 | 候选准入 | Candidate Selection Utility / Universe service | 确定性选择 execution-eligible Candidate，并发布 Planning Generation | 不调用 LLM，不提交 Proposal |
-| 运行评估 | Python Operator assessment | 有界配置建议、通知和仍存在的委派 | 不是交易策略主体 |
 | 保护性持仓管理 | Position Manager | 止损、止盈、追踪和受控平仓 | 只缩减既有授权持仓 |
+
+Market Observer 与 Python Operator assessment 已退役（#3463 / #3134）：不再注册调度任务、
+不再有 fallback writer，只保留历史 assessment 的只读检视。旧记录或旧表名不构成恢复生产的许可；
+活动调度身份以 [System Map](SYSTEM_MAP.md) 为准。
 
 **核心原则**：System Operator 是唯一受支持的入场策略决策主体；Risk Engine
 和 Execution Gateway 仍是独立硬边界，任何组件都不能绕过它们。
@@ -68,9 +70,10 @@ Universe / accepted Serenity Candidate publication
   → Proposal → Risk → Execution Gateway → Coordinator / UTA
 ```
 
-Market Observer、equity/prediction observer 与 Serenity research 只提供有来源的观察或
-Candidate source evidence；它们不创建 Proposal。`Opportunity`、`signal_pending` 与旧
-Ranker/Funnel 记录仍可供历史分析读取，但不再是当前入场队列或 System Operator claim。
+equity/prediction observer 与 Serenity research 只提供有来源的观察或 Candidate source
+evidence；它们不创建 Proposal。Market Observer 已退役（#3463），`Opportunity`、
+`signal_pending` 与旧 Ranker/Funnel 记录仍可供历史分析读取，但不再是当前入场队列或
+System Operator claim。
 旧的 `paper_running RuleSet → 自动触发` 路径已经删除；表名、旧记录或历史图中仍出现
 这些状态，不构成当前产品能力。
 
@@ -205,7 +208,7 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 | 原则 | 实现 |
 |------|------|
 | **System Operator 是入场决策者** | 当前 Candidate 只产生 `ENTRY_PLAN` / `NO_PLAN`；Risk 与 Execution 仍是独立硬边界 |
-| **其他组件只产出候选事实** | Observer/Universe/Serenity 写带来源事实；Candidate Selection 发布 Planning Generation；都不提交 Proposal |
+| **其他组件只产出候选事实** | equity/prediction observer、Universe、Serenity 写带来源事实；Candidate Selection 发布 Planning Generation；都不提交 Proposal |
 | **保护层自治但不扩权** | Position Manager 只能缩减既有授权持仓，仍保留因果链和审计 |
 | **反馈先测量后影响** | verified outcome、归因与正式 exposure 先落账；unsupported hook 保持静态 fallback |
 | **策略生命周期不冒充能力** | 旧 RuleSet 升阶/退役链已删除；未来恢复必须重新证明完整链路 |
@@ -215,10 +218,11 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 
 ## 附录：定时任务一览
 
+活动调度身份、频率与运行状态以 [System Map](SYSTEM_MAP.md) 的任务表为准；本表只作阅读顺序上的简化叙述。
+
 | 组件 | 周期 | 做什么 |
 |------|------|--------|
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
-| Market Observer | 10 min | 对 emitter-admitted Opportunity 做可选 LLM enrichment |
 | Candidate Selection / Universe refresh | 10 min + source publication | 确定性准入 → 发布 Candidate Planning Generation |
 | System Operator Entry Planner | event-driven + ~15 min heartbeat | 读取确切 Planning Generation → `ENTRY_PLAN` / `NO_PLAN` |
 | Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |

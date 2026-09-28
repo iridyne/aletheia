@@ -83,6 +83,12 @@ architecture overviews route readers but do not override these authorities.
 Do not duplicate the manifest or convert a target, Issue status, test count, or
 historical observation into proof of current capability.
 
+Finding the code a task owns is a separate question, and it has exactly one code
+map: [`docs/design/architecture/SYSTEM_MAP.md`](docs/design/architecture/SYSTEM_MAP.md)
+(task → owner → source → focused tests, checked by
+`scripts/check_docs.py`). Other documents link to it rather than keeping a second
+copy of the directory tree, the task routing, or the scheduled-task list.
+
 ### Convergence over compatibility (standing goal)
 
 One capability keeps exactly one live implementation. Backward compatibility is

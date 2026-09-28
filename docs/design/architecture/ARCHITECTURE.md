@@ -25,35 +25,14 @@
 
 ---
 
-## Directory Structure
+## Where modules live
 
-```
-aletheia-trading-os/
-├── aletheia/               # 后端 Python 包（核心）
-│   ├── agents/             # 观察、候选整理、Operator 决策和复盘 worker
-│   ├── risk/               # ⚠️ 信任边界：风控引擎（勿随意改）
-│   ├── execution/          # ⚠️ 信任边界：执行网关（勿随意改）
-│   ├── uta/                # 私有外部账户合同、通用适配器与窄 venue profiles
-│   ├── data/               # 数据提供者、symbol 转换、CCXT provider
-│   ├── config/             # 配置 schema（改此处必须同步前端 Settings 页）
-│   ├── storage/            # SQLite 连接池、repositories
-│   ├── learning/           # 学习闭环
-│   ├── server/             # FastAPI 路由（routes/）
-│   ├── agent_runtime/      # Scheduler、任务 guard、pause/resume 与 runtime 生命周期
-│   ├── dashboard_static/   # 前端构建产物（gitignored，需手动 build）
-│   └── exchanges/          # 交易所适配器；当前支持边界见 Active Runtime Scope
-│       └── bitget/auth.py  # ⚠️ 信任边界：凭证签名（勿随意改）
-├── frontend/               # React/Vite 前端源码
-│   └── src/
-│       └── lib/format.ts   # fmtSymbol()：唯一合法 symbol 显示入口
-├── tests/                  # 回归测试与可执行规格
-│   └── specs/spec_*.py     # SDD executable claims
-├── scripts/                # 运维、验证与文档治理脚本
-├── data/                   # checkout 本地数据（gitignored；不得代表 Fedora 运行状态）
-├── docs/                   # 文档（见 docs/README.md 四层金字塔）
-├── AGENTS.md               # ← AI agent 仓库规则路由
-└── aletheia/config/secrets.py # ⚠️ 信任边界（勿随意改）
-```
+模块与调用链导航只有一个入口：[System Map](SYSTEM_MAP.md)（任务 → owner → 源码 → focused tests），
+stage → location 另见 [`CLAUDE.md`](../../../CLAUDE.md#architecture)。本页不再维护第二份目录树副本：
+旧树把 core 写成仓库根下的 `aletheia/`、把 venue adapter 挂在 core 下，都与
+`core/` + `extensions/` 的现状相反。信任边界清单见文末「禁止修改区域」。
+
+Symbol 显示唯一合法入口：`frontend/src/lib/format.ts` 的 `fmtSymbol()`；其他位置不得自行拼接 symbol 文本。
 
 ---
 
@@ -80,7 +59,6 @@ aletheia-trading-os/
 | `storage/repositories.py::ensure_candidate_planning_generation()` | 383 → 187 (-51%) | `_candidate_planning_existing_state` `_candidate_planning_requalification` `_candidate_planning_generation_data` |
 | `agent_shell/entry_planner.py::plan_next_candidate()` | 430 → 226 (-47%) | `_parse_candidate_opportunity` `_ensure_entry_orderbook` `_build_fresh_entry_context` `_validate_and_bind_hypothesis` `_compile_current_entry_plan` `_load_or_invoke_hypothesis` |
 | `agent_shell/commands.py::review_portfolio_state()` | 638 → 部分拆 | `_collect_fresh_review_marks` `_collect_review_scope` `_record_unavailable_review` `_normalize_review_and_select_target` `_build_review_request`（`_apply_review_effect` + `_finalize_review` 契约敏感未拆）|
-| `analytics/position_lifecycle_story/service.py::build_position_lifecycle_story()` | 包入口保留；读取、事件投影、装配、文本渲染分别归 `readers.py` / `events.py` / `service.py` / `render.py` | `readers.py` 接收现有连接，拥有精确 identity、cutoff 遮罩和历史前缀读取；不反向依赖 service/render。经济解释继续复用既有 replay，未增加第二引擎或强制拆 economics 文件。 |
 
 ### 未拆的巨型函数（audit 完成，拆分成本 > 收益）
 
