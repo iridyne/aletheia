@@ -49,6 +49,25 @@ uv run pytest \
 Generation 身份或 producer scope，重读上述 owner 并重跑对应失败回滚用例。
 单纯看到 facade/seam、多函数或较大文件，不足以推翻这个结论。
 
+## 1a. 已删除的重复实现：twin replay 去重
+
+**结论：`twin_persistence.py::_dedupe_for_replay` 是
+`service.py::_dedupe_by_symbol_preferred_market` 的私有复制，已删除并通过既有 seam 复用主线实现。**
+
+两者的 preferred/enabled_markets 读取、`market_rank`、`(rank, -total_score)` 比较与最终按
+`total_score` 降序排序一致；注入接缝早已存在（`twin_allocation.py::replay_twin_shadow_allocations`
+与 `relative_rank_shadow` 接受 `dedupe=` 参数），且既有测试本就传入主线函数，
+只有生产重放路径使用克隆。删除后 `grep -rn "_dedupe_for_replay"` 在本仓库无剩余引用。
+
+**不要一起改掉的相邻实现：**`candidate_selection_shadow.py` 的市场择优使用的是 Utility
+`decision_rank`，回答的是另一个问题（经济效用排序，而非市场偏好 + 历史分数），不构成重复。
+判断两个实现是否同一能力必须读函数体，不能按名字或“都叫 dedupe”合并。
+
+**复验：**`uv run pytest tests/test_universe_twin_persistence.py tests/test_universe_twin_experiment.py
+tests/test_universe_relative_rank_shadow.py tests/test_candidate_selection_utility.py
+tests/specs/spec_market_type_dedup.py -q`（本次 76 passed）。
+若重放与权威分配结果出现 mismatch，先比较上述两个函数的语义，而不是重新引入本地副本。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
