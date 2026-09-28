@@ -220,8 +220,10 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
 @spec_claim(
     SpecClaim(
         "AC-S14", "agent_contracts", "§1 OS service lifecycle", "L2c",
-        "Gateway service installation, enablement, and runtime are independent; "
-        "machine installation never collects an administrator password.",
+        "Gateway service installation, enablement, and runtime are independent; every "
+        "elevated transaction refuses to collect an administrator password. The machine-"
+        "service install whose WinSW account config this claim used as structural "
+        "evidence was removed with the packaged Runtime lane.",
         status="implemented",
     ),
 )
@@ -229,11 +231,11 @@ def test_gateway_service_lifecycle_contract_is_structurally_safe():
     from aletheia.gateway import service_control, windows_machine_service
     source = inspect.getsource(service_control) + inspect.getsource(windows_machine_service)
     assert "elevation_required" in source
-    assert "LocalService" in source
     assert "password =" not in source.lower()
-    assert "LocalSystem" not in windows_machine_service._build_winsw_xml(
-        executable=Path("C:/Program Files/Aletheia/aletheia.exe")
-    )
+    # Elevation is a validated request file handed to an elevated relaunch; no code
+    # path accepts credentials. Both halves must survive any refactor of the pair.
+    assert "_write_request" in inspect.getsource(windows_machine_service)
+    assert "apply_elevated_request" in inspect.getsource(windows_machine_service)
     from aletheia.agent_runtime import permissions
     forbidden = {"service_install", "service_uninstall", "gateway_enable", "gateway_disable"}
     assert forbidden.isdisjoint(permissions.TOOL_REGISTRY)

@@ -89,6 +89,7 @@ async def download_symbol_history(
 
     def _record_page(candles: list) -> None:
         nonlocal total_fetched, first_ts, last_ts
+        candles = [candle for candle in candles if candle.is_closed]
         if not candles:
             return
         upsert_ohlcv_candles(
