@@ -28,7 +28,6 @@ from aletheia.gateway.windows_identity import (
     current_windows_user as _current_user,
     current_windows_user_ids as _current_user_ids,
 )
-from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime
 
 logger = logging.getLogger("aletheia.gateway.managed_service")
 
@@ -72,11 +71,10 @@ def _macos_target() -> str:
 def _runner_command(*, no_browser: bool) -> list[str]:
     script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
     real_python, _ = _resolve_real_python()
-    return gateway_runner_command(
-        script=script,
-        real_python=real_python,
-        no_browser=no_browser,
-    )
+    command = [real_python, str(script)]
+    if no_browser:
+        command.append("--no-browser")
+    return command
 
 
 def _xml_escape(text: str) -> str:
@@ -379,8 +377,6 @@ def _windows_python() -> str:
 
 def _windows_program_and_arguments(*, no_browser: bool) -> tuple[str, str]:
     command = _runner_command(no_browser=no_browser)
-    if is_frozen_runtime():
-        return command[0], subprocess.list2cmdline(command[1:])
     exe = Path(sys.executable)
     path_type = PureWindowsPath if "\\" in str(exe) or (len(str(exe)) > 1 and str(exe)[1] == ":") else Path
     venv_dir = path_type(str(exe)).parent.parent

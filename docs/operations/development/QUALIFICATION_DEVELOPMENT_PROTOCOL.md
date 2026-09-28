@@ -188,7 +188,7 @@ runtime 自动改走签名发布与 Tray 激活链路。`update --no-restart` �
   doctor/provenance 复核。一次新 build 的观察窗口从首次 eligible exposure 起算，不能把
   重启时间或旧 cohort 当作新证据；
 - source 更新临时替换 dashboard static assets；只有 Gateway readiness 成功后才清理旧静态
-  备份。不得把 source-checkout 临时物或 packaged-runtime rollback backup 混为一谈。
+  备份。不得把 source-checkout 的临时物当成备份或恢复证据。
 
 ## 7. 高速开发流程
 
