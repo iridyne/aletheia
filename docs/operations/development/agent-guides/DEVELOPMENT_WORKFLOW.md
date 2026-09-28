@@ -205,6 +205,27 @@ deep evidence for that head remains unchanged.
   data roots inside the default production root or checkout before collection,
   resolving symlinks first. Dedicated external roots such as the /var/tmp path
   above are accepted; they need not be below Python's default temporary directory.
+
+  Keep the run's evidence in the candidate directory: the startup probe output,
+  the pytest log, and the JUnit XML. Judge failures per case from the XML rather
+  than from aggregate counts — "0 failures" next to a large skip count does not
+  prove that a specific file passed (some files carry their own skip escapes).
+
+### Reusing a full-proof receipt instead of re-running it
+
+One isolated Fedora full run is the receipt for one tree. Before scheduling a
+second run for a later head, classify the delta against the receipt's tree:
+
+| Delta since the receipt | What to do |
+|---|---|
+| Documentation, comments, docstrings, or test-only changes | **Reuse** the receipt for the production change and verify the delta with focused tests (a test-only commit does not invalidate a production receipt). State this explicitly in the PR/commit, naming the receipt's candidate and the extra commit. |
+| Production code, schema/migrations, Risk, execution, Gateway, trading authority, config defaults, or schedulers | **Re-run** the isolated full proof on the new head. |
+| Merge commits whose content equals the receipt's tree | **Reuse**, and say the receipt covers the content rather than the merge-commit SHA. |
+
+Merging and deploying may share one receipt: merge the verified content, deploy
+that merged head, and reserve a new full run for a genuine source change. A new
+run is still required whenever the merged head contains anything from the
+"re-run" row above.
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch. It may create or refresh a
   held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
