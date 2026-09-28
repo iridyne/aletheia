@@ -198,8 +198,27 @@ deep evidence for that head remains unchanged.
   ```sh
   export ALETHEIA_DATA_DIR="$(mktemp -d /var/tmp/aletheia-ci.XXXXXX)"
   trap 'rm -rf "$ALETHEIA_DATA_DIR"' EXIT
-  uv run pytest tests/ -q --tb=line
+  uv run pytest tests/ -q --tb=line -n 4
   ```
+
+  Marker subsets are validated in parallel: `tests/conftest.py::_configure_xdist_runtime_dir`
+  gives every worker its own runtime directory, and the same-selection A/B on the
+  sandbox measured `tier_integration` at **502.8 s serial vs 178.0 s with `-n 4`**
+  (191.6 s on a repeat; local `tier_spec` 51.3 s vs 26.5 s). The only counting
+  difference is `tests/test_xdist_runtime_isolation.py`, which declares itself
+  "only meaningful when pytest-xdist starts a worker" — skip serial, run parallel
+  is its designed behaviour, not flakiness (8243 + 8 and 8244 + 7 both total 8251).
+
+  The **full `tests/` tree is not yet cleared for `-n 4`**: one run of the whole
+  suite in parallel produced five failures that a serial run of the same tree does
+  not produce, and they are not yet identified (`candidate-0d41760f5`). Until they
+  are explained and fixed, the full proof runs serially and a parallel subset run
+  says so in its receipt.
+
+  Do not split a proof into per-marker invocations when one selection is wanted:
+  each invocation pays the full collection again (four markers cost 692.9 s
+  against 646.1 s for one full run). Use one expression instead, e.g.
+  `-m "tier_integration or tier_spec or tier_e2e"`.
 
   A Worktree alone does not provide this isolation. Pytest rejects explicit
   data roots inside the default production root or checkout before collection,

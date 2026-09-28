@@ -8,6 +8,18 @@ import re
 
 
 @lru_cache(maxsize=None)
+def _parents_cached(path: str, mtime_ns: int, size: int) -> dict[ast.AST, ast.AST]:
+    """Child -> parent map, built once per (path, mtime, size).
+
+    Derived purely from the parsed tree, so it shares the parse cache's stamp
+    instead of being rebuilt by every ``assert_writer_boundary`` call (the
+    writer-boundary modules call it once per owned table).
+    """
+    tree = _parse_cached(path, mtime_ns, size)
+    return {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+
+@lru_cache(maxsize=None)
 def _parse_cached(path: str, mtime_ns: int, size: int) -> ast.Module:
     """Parse a source file once per (path, mtime, size).
 
@@ -61,7 +73,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
             scanned += 1
             stat = path.stat()
             tree = _parse_cached(str(path), stat.st_mtime_ns, stat.st_size)
-            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+            parents = _parents_cached(str(path), stat.st_mtime_ns, stat.st_size)
             canonical = {}
             allowed_literals = {
                 function: statements
