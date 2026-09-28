@@ -32,16 +32,6 @@ def record_boot_commit() -> None:
     from aletheia.update.git_ops import current_commit
 
     commit = current_commit()
-    if not commit:
-        try:
-            from aletheia.update.packaged import (
-                _current_release_git_sha,
-                current_selection,
-            )
-
-            commit = _current_release_git_sha(current_selection()) or ""
-        except Exception:
-            logger.debug("build_info: packaged release SHA lookup failed; boot commit left unset", exc_info=True)
     _boot_commit = commit or None  # "" -> None (build identity unavailable)
 
 
