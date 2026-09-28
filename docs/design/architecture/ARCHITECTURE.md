@@ -28,7 +28,7 @@
 ## Where modules live
 
 模块与调用链导航只有一个入口：[System Map](SYSTEM_MAP.md)（任务 → owner → 源码 → focused tests），
-stage → location 另见 [`CLAUDE.md`](../../../CLAUDE.md#architecture)。本页不再维护第二份目录树副本：
+stage → location 另见 [`AGENTS.md`](../../../AGENTS.md#where-the-stages-live)。本页不再维护第二份目录树副本：
 旧树把 core 写成仓库根下的 `aletheia/`、把 venue adapter 挂在 core 下，都与
 `core/` + `extensions/` 的现状相反。信任边界清单见文末「禁止修改区域」。
 
