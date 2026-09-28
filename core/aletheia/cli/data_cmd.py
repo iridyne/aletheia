@@ -318,7 +318,10 @@ def download(
 
     if result.error:
         typer.echo(f"\nCompleted with error: {result.error}")
-    typer.echo(f"\nDone: {result.bars_fetched} bars [{result.oldest_ts} → {result.newest_ts}]")
+    label = "Partial" if result.error else "Done"
+    typer.echo(f"\n{label}: {result.bars_fetched} bars [{result.oldest_ts} → {result.newest_ts}]")
+    if result.error:
+        raise typer.Exit(1)
 
 
 @data_app.command("backfill")
@@ -370,6 +373,7 @@ def backfill(
         )
 
     total_bars = 0
+    failed = False
     for venue, sym, mkt in instruments:
         for tf in tf_list:
             result = asyncio.run(download_symbol_history(
@@ -379,9 +383,12 @@ def backfill(
             status = f"  {venue}:{sym}:{mkt}/{tf}: +{result.bars_fetched} bars"
             if result.error:
                 status += f" (error: {result.error})"
+                failed = True
             typer.echo(status)
 
     typer.echo(f"\nTotal: +{total_bars} bars")
+    if failed:
+        raise typer.Exit(1)
 
 
 @data_app.command("coverage")

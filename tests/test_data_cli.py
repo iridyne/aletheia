@@ -1,5 +1,7 @@
 """User-facing progress contracts for explicit data maintenance commands."""
 
+import pytest
+
 from typer.testing import CliRunner
 
 
@@ -89,3 +91,52 @@ def test_data_backfill_without_symbols_reads_all_active_members(monkeypatch):
     }
     assert "Backfilling 21 instruments" in result.output
     assert "Active members: 21; eligible instruments: 21; skipped: 0." in result.output
+
+
+@pytest.mark.parametrize("bars,error", [(0, None), (3, None), (0, "synthetic_fetch_failure"), (3, "partial_failure")])
+def test_download_exit_status_preserves_partial_counts(monkeypatch, bars, error):
+    from aletheia.cli.data_cmd import data_app
+    from aletheia.data import history_downloader
+
+    async def download(symbol, timeframe, **kwargs):
+        return history_downloader.DownloadResult(symbol, timeframe, bars, 10 if bars else None,
+                                                20 if bars else None, error)
+    monkeypatch.setattr(history_downloader, "download_symbol_history", download)
+    result = CliRunner().invoke(data_app, ["download", "BTC/USDT"])
+    assert result.exit_code == (1 if error else 0)
+    assert f"{bars} bars" in result.output
+    if error:
+        assert error in result.output
+        assert "Done:" not in result.output
+
+
+@pytest.mark.parametrize("default_pool", [False, True])
+@pytest.mark.parametrize("errors", [(None, None), ("first_failed", None), ("first_failed", "second_failed")])
+def test_backfill_reports_all_siblings_then_exits_for_any_failure(monkeypatch, default_pool, errors):
+    from aletheia.cli.data_cmd import data_app
+    from aletheia.data import history_downloader
+    from aletheia.storage import repositories as repo
+
+    called = []
+    async def download(symbol, timeframe, **kwargs):
+        index = len(called)
+        called.append(symbol)
+        return history_downloader.DownloadResult(symbol, timeframe, index + 2, 10, 20, errors[index])
+    monkeypatch.setattr(history_downloader, "download_symbol_history", download)
+    monkeypatch.setattr(repo, "get_active_universe_members", lambda **kw: [
+        {"asset_id": symbol, "symbol": symbol, "market_type": "spot"} for symbol in ("BTC/USDT", "ETH/USDT")
+    ])
+    monkeypatch.setattr(repo, "get_universe_asset", lambda asset_id: {"venue": "binance", "market_type": "spot"})
+    args = ["backfill", "--timeframes", "1h"]
+    if not default_pool:
+        args += ["--symbols", "BTC/USDT,ETH/USDT", "--exchange", "binance"]
+    result = CliRunner().invoke(data_app, args)
+    assert result.exit_code == (1 if any(errors) else 0)
+    assert called == ["BTC/USDT", "ETH/USDT"]
+    assert "BTC/USDT:spot/1h: +2 bars" in result.output
+    assert "ETH/USDT:spot/1h: +3 bars" in result.output
+    assert "Total: +5 bars" in result.output
+    for error in errors:
+        if error:
+            assert error in result.output
+    assert "Done:" not in result.output
