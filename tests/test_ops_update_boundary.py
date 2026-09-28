@@ -33,8 +33,7 @@ class WithoutOps(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, WithoutOps())
 for name in (
-    "aletheia.update", "aletheia.update.packaged", "aletheia.package_integrity",
-    "aletheia.update.git_ops", "aletheia.cli.update_cmd",
+    "aletheia.update", "aletheia.update.git_ops", "aletheia.cli.update_cmd",
     "aletheia.server.routes.update", "aletheia.server.routes.ui",
 ):
     importlib.import_module(name)
@@ -44,9 +43,8 @@ if sys.argv[1] == "cli":
 else:
     importlib.import_module("aletheia.server.app")
 assert not any(name == "ops" or name.startswith("ops.") for name in sys.modules)
-from aletheia.update import git_ops, packaged
+from aletheia.update import git_ops
 assert not hasattr(git_ops, "pull")
-assert not hasattr(packaged, "request_update")
 '''
     env = {**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path), "ALETHEIA_RUNTIME_MODE": "test"}
     result = subprocess.run(
@@ -54,19 +52,3 @@ assert not hasattr(packaged, "request_update")
         env=env, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_packaged_integrity_uses_single_core_error_and_actual_ops_owner(tmp_path):
-    from aletheia import package_integrity
-    from aletheia.update import packaged as identity
-    from ops.update import packaged, packaged_commands
-
-    assert packaged.PackagedUpdateError is identity.PackagedUpdateError
-    with pytest.raises(identity.PackagedUpdateError):
-        package_integrity.validate_release_dir(tmp_path, expected_release_id="test", expected_sha="test")
-    assert packaged_commands.PackagedUpdateError is identity.PackagedUpdateError
-    original = packaged._verified_feed
-    feed = {"release_id": "test"}
-    with packaged_commands._pin_verified_feed(feed):
-        assert packaged._verified_feed() is feed
-    assert packaged._verified_feed is original

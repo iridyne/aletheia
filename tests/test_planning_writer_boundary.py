@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.authority_writer_checks import assert_writer_boundary
+from tests.helpers.authority_writer_checks import assert_writer_boundary
 
 
 _OWNERS = {

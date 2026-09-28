@@ -1,4 +1,4 @@
-"""Tests for scripts/dev_check.py — the changed-line filtering contract.
+"""Tests for scripts/ci/dev_check.py — the changed-line filtering contract.
 
 The gate's value depends on reporting only diagnostics that land on changed
 lines: the repository carries ~1k pre-existing B/ASYNC/RUF findings, so a
@@ -12,7 +12,7 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 
-import scripts.dev_check as dev_check
+import scripts.ci.dev_check as dev_check
 
 DIFF = """\
 diff --git a/core/aletheia/analytics/candidate_facts.py b/core/aletheia/analytics/candidate_facts.py
@@ -93,13 +93,13 @@ def test_dotted_module_maps_source_paths_to_import_names():
     assert dev_check.dotted_module("core/aletheia/analytics/candidate_facts.py") == (
         "aletheia.analytics.candidate_facts"
     )
-    assert dev_check.dotted_module("scripts/ci_plan.py") == "scripts.ci_plan"
+    assert dev_check.dotted_module("scripts/ci/ci_plan.py") == "scripts.ci.ci_plan"
     assert dev_check.dotted_module("README.md") is None
 
 
 def test_focused_tests_finds_tests_naming_a_changed_module():
     """A changed module must pull in the tests that name or import it."""
-    focused = dev_check.focused_tests(["scripts/ci_plan.py"])
+    focused = dev_check.focused_tests(["scripts/ci/ci_plan.py"])
 
     assert "tests/test_ci_plan.py" in focused
 

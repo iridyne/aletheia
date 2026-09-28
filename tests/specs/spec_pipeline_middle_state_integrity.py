@@ -5,7 +5,7 @@ Every behavioral test uses a temporary SQLite database and no exchange network.
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_opportunity_once_by_snapshot, list_open_trade_opportunities, transition_open_opportunity_to_queued, update_open_opportunity
+from tests.helpers.repo_test_helpers import insert_opportunity_once_by_snapshot, list_open_trade_opportunities, transition_open_opportunity_to_queued, update_open_opportunity
 
 import json
 import sqlite3

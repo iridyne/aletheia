@@ -18,7 +18,7 @@ Reuses ``data_layer_contract`` — no new trust boundary. Behavioral claims are
 offlined (don't need LLM).
 """
 
-from tests.fixtures.repo_test_helpers import find_opportunity_by_symbol_snapshot
+from tests.helpers.repo_test_helpers import find_opportunity_by_symbol_snapshot
 
 import inspect
 
@@ -90,7 +90,7 @@ def test_legacy_path_respects_spot_preference():
               "collide. market=None preserves prior behavior."),
 )
 def test_repo_accepts_market_kwarg():
-    from tests.fixtures.repo_test_helpers import find_open_opportunity_by_symbol_snapshot
+    from tests.helpers.repo_test_helpers import find_open_opportunity_by_symbol_snapshot
 
     sig = inspect.signature(find_open_opportunity_by_symbol_snapshot)
     params = sig.parameters

@@ -11,7 +11,7 @@ from httpx import AsyncClient, ASGITransport
 from aletheia.server.app import app
 from aletheia.model_provider.router import clear_cache
 from aletheia.config.schema import AletheiaConfig
-from tests.model_http import mock_model_probe
+from tests.helpers.model_http import mock_model_probe
 
 
 def _seed_model(**fields):

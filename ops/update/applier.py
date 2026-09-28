@@ -1,9 +1,9 @@
-"""Self-upgrade orchestration for development and installed runtimes.
+"""Self-upgrade orchestration for the source checkout.
 
-A development checkout keeps the existing explicit ``git pull`` workflow. A frozen,
-installed payload must never modify source or invoke ``uv``; it stages a signed immutable
-runtime in the background and hands the short activation/rollback transaction to the
-stable tray host.
+The explicit ``git pull`` workflow: eligibility, dependency sync, frontend build, smoke
+check, restart and rollback. The installed-payload path this module used to branch into
+(signed immutable runtime staged in the background, activated by the tray host) was
+removed with the packaged Runtime lane.
 """
 
 import logging
@@ -29,23 +29,11 @@ _DEPENDENCY_SYNC_TIMEOUT_SEC = 300
 _NPM_COMMAND_TIMEOUT_SEC = 300
 
 
-def _packaged_module():
-    from ops.update import packaged_commands
-
-    return packaged_commands
-
-
-def _is_packaged() -> bool:
-    return _packaged_module().is_packaged_mode()
-
-
 def _safe_env() -> dict:
     return safe_env()
 
 
 def update_progress() -> dict:
-    if _is_packaged():
-        return _packaged_module().read_update_state()
     if sys.platform == "linux":
         from ops.update import auto
 
@@ -64,9 +52,6 @@ def update_progress() -> dict:
 
 def check_for_update() -> dict:
     """Fetch and report whether an update is available. Read-only except metadata."""
-    if _is_packaged():
-        return _packaged_module().check_for_update()
-
     if sys.platform == "linux":
         from ops.update import auto
 
@@ -641,30 +626,7 @@ def rollback_applied_update(result: dict) -> dict:
 
 
 def apply_update(*, restart: bool = False, progress=None, preactivation_backup: str = "") -> dict:
-    """Apply an update according to the current execution mode."""
-    if _is_packaged():
-        try:
-            result = _packaged_module().request_update()
-        except Exception as exc:
-            return {
-                "accepted": False,
-                "applied": False,
-                "mode": "packaged",
-                "reason": getattr(exc, "reason", "packaged_update_request_failed"),
-                "message": str(exc),
-            }
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "packaged_update_requested",
-                "entity_type": "system_update",
-                "entity_id": str(result.get("operation_id") or "unknown"),
-                "message": result.get("message") or "Packaged update requested",
-            }
-        )
-        return {"mode": "packaged", **result}
-
+    """Apply an update to the source checkout."""
     # This object is PRE-PULL ONLY. It is used for eligibility and branch
     # selection, then deliberately never written after source switches.
     cfg = load_config()
@@ -1045,22 +1007,3 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
         "message": message,
         **_metadata_fields(metadata),
     }
-
-
-def rollback_update() -> dict:
-    if not _is_packaged():
-        return {
-            "accepted": False,
-            "reason": "rollback_only_available_in_packaged_mode",
-            "mode": "development",
-        }
-    try:
-        result = _packaged_module().request_rollback()
-    except Exception as exc:
-        return {
-            "accepted": False,
-            "reason": getattr(exc, "reason", "packaged_rollback_request_failed"),
-            "message": str(exc),
-            "mode": "packaged",
-        }
-    return {"mode": "packaged", **result}

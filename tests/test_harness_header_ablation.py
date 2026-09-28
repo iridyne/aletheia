@@ -1,4 +1,4 @@
-from scripts.harness_header_ablation import CALLERS, HEADER, _compliant, _facts
+from scripts.analysis.harness_header_ablation import CALLERS, HEADER, _compliant, _facts
 
 
 def test_corpus_has_the_preregistered_callers():

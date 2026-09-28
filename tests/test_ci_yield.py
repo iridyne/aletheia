@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-import scripts.ci_yield as ci_yield
+import scripts.ci.ci_yield as ci_yield
 
 
 def _pr() -> dict[str, Any]:
@@ -28,7 +28,7 @@ def _pr() -> dict[str, Any]:
         "closingIssuesReferences": [],
         "files": [
             {"path": ".github/workflows/ci.yml"},
-            {"path": "scripts/ci_yield.py"},
+            {"path": "scripts/ci/ci_yield.py"},
         ],
     }
 

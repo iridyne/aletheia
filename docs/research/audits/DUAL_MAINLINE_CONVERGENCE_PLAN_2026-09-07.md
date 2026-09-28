@@ -324,8 +324,8 @@ Applying rule 1 and 2 to the audit branch's own additions, the following are **w
 before it lands (about −60 lines of scaffolding):
 
 - `.github/workflows/ci.yml` (+38) — new steps on a disabled workflow
-- `scripts/coverage_floors.py` (+4 floors) and `.coveragerc` (+4 files) — coverage ratchet
-- `scripts/ci_plan.py` (+11) — CI path plumbing
+- `scripts/ci/coverage_floors.py` (+4 floors) and `.coveragerc` (+4 files) — coverage ratchet
+- `scripts/ci/ci_plan.py` (+11) — CI path plumbing
 - `tests/test_production_parity.py::test_parity_sources_cannot_use_inmemory_or_seed_objects_under_proof`
   — a meta-test asserting that the other tests do not use an in-memory DB; over-defensive
 

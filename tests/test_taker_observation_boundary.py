@@ -76,7 +76,7 @@ async def test_core_owns_taker_trigger_and_optional_failure(monkeypatch, market,
             raise TimeoutError("optional taker unavailable")
         return 2.5
 
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     monkeypatch.setattr(features.repo, "get_latest_feature_snapshot", lambda *args: None)
     exchange = Exchange()
     result = await features._fetch_single_feature(

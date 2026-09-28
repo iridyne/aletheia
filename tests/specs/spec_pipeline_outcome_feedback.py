@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
-from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+from tests.helpers.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 import sqlite3
 from datetime import datetime, timezone

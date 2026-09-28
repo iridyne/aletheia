@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-import scripts.check_docs as check_docs
-from scripts.check_docs import (
+import scripts.ci.check_docs as check_docs
+from scripts.ci.check_docs import (
     contract_code_path_failures,
     semantic_truth_failures,
     silent_failure_fallback_failures,
@@ -147,7 +147,7 @@ def test_silent_failure_fallback_flags_broad_zero_and_ignores_none() -> None:
 
 def test_skip_without_reason_is_reported_and_strict_xfail_is_not() -> None:
     """The fifth gate: reason-less skips fail; strict xfail with reason passes."""
-    from scripts.check_docs import skip_xfail_and_data_guard_failures
+    from scripts.ci.check_docs import skip_xfail_and_data_guard_failures
 
     probe = Path("tests") / "_skip_xfail_probe.py"
     try:
@@ -175,7 +175,7 @@ def test_skip_without_reason_is_reported_and_strict_xfail_is_not() -> None:
 
 def test_claim_section_matcher_accepts_both_heading_numberings() -> None:
     """``## 2 Foo`` and ``## §1 file location`` are both live in the contracts."""
-    from scripts.check_docs import _claim_section_present
+    from scripts.ci.check_docs import _claim_section_present
 
     document = "# Title\n## 2. Provider lifecycle\n## §1 文件位置\n### Cache\n"
     assert _claim_section_present("§2 provider lifecycle", document)
@@ -188,7 +188,7 @@ def test_claim_section_matcher_accepts_both_heading_numberings() -> None:
 
 def test_claim_anchor_gate_rejects_unregistered_and_proposal_only_contracts() -> None:
     """The sixth gate: an executable claim may not invent its own authority."""
-    from scripts.check_docs import spec_claim_anchor_failures
+    from scripts.ci.check_docs import spec_claim_anchor_failures
 
     probe = Path("tests/specs") / "spec__anchor_probe.py"
     try:
@@ -216,7 +216,7 @@ def test_claim_anchor_gate_rejects_unregistered_and_proposal_only_contracts() ->
 
 
 def test_claim_anchor_gate_is_green_on_the_current_tree() -> None:
-    from scripts.check_docs import spec_claim_anchor_failures
+    from scripts.ci.check_docs import spec_claim_anchor_failures
 
     assert spec_claim_anchor_failures() == []
 

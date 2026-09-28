@@ -1,6 +1,6 @@
 """Tests for agent runtime: permissions, tool registry, orchestrator."""
 
-from tests.fixtures.repo_test_helpers import insert_agent_run
+from tests.helpers.repo_test_helpers import insert_agent_run
 
 import json
 import pytest

@@ -110,7 +110,7 @@ def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(m
 def test_demo_credential_diagnostic_requires_complete_scoped_account(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.diagnostics.config_consistency import _check_demo_credentials
-    from tests.live_identity import bind_live_identity
+    from tests.helpers.live_identity import bind_live_identity
 
     cfg = AletheiaConfig()
     cfg.exchange.mode = "demo"

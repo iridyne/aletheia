@@ -493,7 +493,7 @@ def test_positive_shadow_without_costs_is_not_missed_alpha():
 def test_keyed_shadow_results_require_canonical_projection_but_pending_exposure_remains_visible():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
     from aletheia.storage.sqlite import get_db
-    from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
+    from tests.helpers.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
 
     db = get_db()
     _insert_opp(db, 45)

@@ -250,7 +250,7 @@ def _probe_content_shadow_trades(report: Report) -> None:
     DIFFERENT remedies, so a bare count would send the operator to the wrong tool:
 
     * key IS NULL — pre-b9ad957 orphans whose parent position carries no
-      opportunity_id. `resolve_stale_shadows` (and `scripts/backfill_shadow_trades.py`
+      opportunity_id. `resolve_stale_shadows` (and `scripts/maintenance/backfill_shadow_trades.py`
       on top of it) resolve these by their own historical horizon.
     * key IS NOT NULL — resolved only by `settle_linked_shadow_outcomes()`, which
       fires when the linked 24h `filter_candidate_outcomes` row settles. Both
@@ -291,7 +291,7 @@ def _probe_content_shadow_trades(report: Report) -> None:
                 "linked 24h filter_candidate_outcomes row settles — check "
                 "data.filter_evidence stale_overdue; the backfill script excludes them")
     else:
-        hint = ("run scripts/backfill_shadow_trades.py for the orphaned backlog; the "
+        hint = ("run scripts/maintenance/backfill_shadow_trades.py for the orphaned backlog; the "
                 "shadow_resolver job catches up new ones (resolve_stale_shadows)")
     split = f"{orphaned} orphaned, {linked} awaiting 24h filter-outcome settlement"
     if stale_pct > 0.25:

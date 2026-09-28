@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import ci_plan
-from scripts.ci_plan import PathChange, plan
+from scripts.ci import ci_plan
+from scripts.ci.ci_plan import PathChange, plan
 
 
 BASE = "b" * 40
@@ -88,16 +88,11 @@ def test_frontend_operator_native_do_not_pull_unrelated_stacks() -> None:
     assert frontend["mode"] == "affected"
     assert frontend["required"]["frontend"] is True
     assert frontend["required"]["python_unit"] is False
-    assert frontend["required"]["native"] is False
     assert ["npm", "run", "build"] in [check["command"] for check in frontend["local_checks"]]
 
     operator = _plan(["operator-shell/src/main.ts"])
     assert operator["required"]["operator"] is True
     assert operator["required"]["frontend"] is False
-
-    native = _plan(["native/aletheia-host/src/main.rs"])
-    assert native["required"]["native"] is True
-    assert native["required"]["python_unit"] is False
 
 
 def test_shared_contract_propagates_to_dependents() -> None:
@@ -144,8 +139,8 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
 
 
 def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:
-    left = _plan(["scripts/ci_plan.py"])
-    right = _plan(["scripts/ci_plan.py"])
+    left = _plan(["scripts/ci/ci_plan.py"])
+    right = _plan(["scripts/ci/ci_plan.py"])
     assert left["mode"] == "full"
     assert left["plan_fingerprint"] == right["plan_fingerprint"]
 
@@ -188,7 +183,7 @@ def test_ci_git_diff_and_auto_merge_file_list_share_fingerprint(
         BASE,
         HEAD,
         "\n".join([
-            "M\tscripts/ci_plan.py",
+            "M\tscripts/ci/ci_plan.py",
             "A\ttests/new_ci_contract.py",
             "D\tdocs/references/old-ci.md",
             "R100\tdocs/references/before.md\tdocs/references/after.md",
@@ -199,7 +194,7 @@ def test_ci_git_diff_and_auto_merge_file_list_share_fingerprint(
 
     github_files = tmp_path / "github-files.json"
     github_files.write_text(json.dumps([
-        {"filename": "scripts/ci_plan.py", "status": "modified"},
+        {"filename": "scripts/ci/ci_plan.py", "status": "modified"},
         {"filename": "tests/new_ci_contract.py", "status": "added"},
         {"filename": "docs/references/old-ci.md", "status": "removed"},
         {
@@ -230,7 +225,7 @@ def test_operational_scripts_are_full_ci() -> None:
         "scripts/runtime/install-release.sh",
         "scripts/runtime/start-release.ps1",
         "scripts/dev/dev-init.sh",
-        "scripts/watch_backend.py",
+        "scripts/dev/watch_backend.py",
     ):
         report = _plan([path])
         assert report["mode"] == "full"
@@ -254,7 +249,7 @@ def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
         assert report["mode"] == "deep"
         assert report["required"]["coverage"] is True
 
-    coverage_script = _plan(["scripts/coverage_floors.py"])
+    coverage_script = _plan(["scripts/ci/coverage_floors.py"])
     assert coverage_script["mode"] == "full"
     assert coverage_script["required"]["coverage"] is True
 

@@ -374,7 +374,7 @@ Implementation advances only through these gates:
 
 Each implementation Issue defines its focused executable proof. macOS does not
 run the broad pytest suite. Before publishing a CI-triggering head,
-`scripts/ci_plan.py` selects the required lane and `scripts/ci_local.py` runs it.
+`scripts/ci/ci_plan.py` selects the required lane and `scripts/ci/ci_local.py` runs it.
 Runtime qualification occurs only on the owner-selected Fedora Paper runtime
 after deploying the exact merged commit.
 

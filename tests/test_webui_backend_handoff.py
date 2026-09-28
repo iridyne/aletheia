@@ -8,7 +8,7 @@ Execution lineage is covered by spec_pipeline_exchange_materialization.
  #4 news ingestion is banned scope — not built.)
 """
 
-from tests.fixtures.repo_test_helpers import insert_agent_run, insert_run_step
+from tests.helpers.repo_test_helpers import insert_agent_run, insert_run_step
 
 import sqlite3
 

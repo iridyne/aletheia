@@ -1,4 +1,4 @@
-from tests.fixtures.repo_test_helpers import insert_agent_run
+from tests.helpers.repo_test_helpers import insert_agent_run
 
 import asyncio
 import builtins

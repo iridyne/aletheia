@@ -8,7 +8,7 @@ import tests.conftest as pytest_conftest
 
 
 def _load_slow_classifier():
-    path = Path("scripts/pytest_slow_classifier.py")
+    path = Path("scripts/ci/pytest_slow_classifier.py")
     spec = importlib.util.spec_from_file_location("pytest_slow_classifier", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -92,7 +92,7 @@ def test_pytest_cacheprovider_enabled_for_last_failed_workflow():
 
 
 def test_ai_default_test_script_runs_last_failed_then_fast():
-    script = Path("scripts/test_ai.ps1").read_text(encoding="utf-8")
+    script = Path("scripts/dev/test_ai.ps1").read_text(encoding="utf-8")
 
     assert "--lf" in script
     assert "--last-failed-no-failures=none" in script
@@ -117,7 +117,7 @@ def test_core_project_rules_are_mapped_to_executable_tests():
         "tests/specs/spec_data_layer.py",
         "tests/specs/spec_data_model.py",
         "tests/test_pytest_tiering.py",
-        "scripts/test_ai.ps1",
+        "scripts/dev/test_ai.ps1",
     ]:
         assert expected in guide
 

@@ -28,23 +28,13 @@ _PROFIT_LOOP_PATH_ID = "profit_loop_observability"
 
 
 def _disk_commit() -> str:
-    """Return on-disk source/release SHA; empty on error."""
+    """Return the on-disk source SHA; empty on error."""
     try:
         from aletheia.update.git_ops import current_commit as _git_sha, is_repo
         if is_repo():
             return _git_sha() or ""
     except Exception:
-        logger.debug("control_cmd: git-based disk commit lookup failed; falling back to packaged release manifest", exc_info=True)
-    try:
-        from aletheia.update.packaged import current_selection, _paths, _read_json
-        sel = current_selection()
-        current = sel.get("current")
-        if isinstance(current, str) and current:
-            mf = _read_json(_paths()["releases"] / current / "release-manifest.json", required=False)
-            sha = mf.get("git_sha")
-            return sha if isinstance(sha, str) and sha else ""
-    except Exception:
-        logger.debug("control_cmd: packaged release manifest commit lookup failed; disk commit left empty", exc_info=True)
+        logger.debug("control_cmd: git-based disk commit lookup failed", exc_info=True)
     return ""
 
 

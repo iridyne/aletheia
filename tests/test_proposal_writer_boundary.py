@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _assert_proposal_writer_boundary(root):
-    from tests.authority_writer_checks import assert_writer_boundary
+    from tests.helpers.authority_writer_checks import assert_writer_boundary
 
     return assert_writer_boundary(
         root, table="trade_proposals",

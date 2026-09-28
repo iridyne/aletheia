@@ -1,8 +1,8 @@
 """Tests for the Serenity Research Workbench: runs, events, profiles, worker."""
 
-from tests.fixtures.repo_test_helpers import insert_serenity_claims_bulk
+from tests.helpers.repo_test_helpers import insert_serenity_claims_bulk
 
-from tests.fixtures.repo_test_helpers import finish_serenity_research_run, get_serenity_claim, insert_serenity_theme_claim
+from tests.helpers.repo_test_helpers import finish_serenity_research_run, get_serenity_claim, insert_serenity_theme_claim
 
 import json
 import pytest

@@ -40,7 +40,7 @@ def test_readme_bootstraps_dashboard_before_starting_gateway():
 
 def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():
     """Worktree UI development is isolated from the stable gateway on :8787."""
-    script = Path("scripts/dev.ps1").read_text(encoding="utf-8")
+    script = Path("scripts/dev/dev.ps1").read_text(encoding="utf-8")
     assert "http://127.0.0.1:5173" in script
     assert "npm run dev" in script
     assert "gateway start" not in script
@@ -52,7 +52,7 @@ def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():
 
 def test_windows_dev_launcher_supports_bounded_parallel_preview_ports():
     """Windows Worktrees may choose local ports without controlling stable Runtime ports."""
-    script = Path("scripts/dev.ps1").read_text(encoding="utf-8")
+    script = Path("scripts/dev/dev.ps1").read_text(encoding="utf-8")
     assert "[int]$UiPort = 5173" in script
     assert "[int]$ApiPort = 0" in script
     assert 'http://127.0.0.1:$ApiPort' in script

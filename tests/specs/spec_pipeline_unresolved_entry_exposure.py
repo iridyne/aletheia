@@ -6,7 +6,7 @@ exchange and never read or write the operator's runtime database.
 
 from __future__ import annotations
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 import sqlite3
 
@@ -95,7 +95,7 @@ def _seed_entry_order(
     position_quantity: float | None = None,
     leverage: int | None = None,
 ):
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
 
@@ -790,7 +790,7 @@ def test_tampered_unresolved_entry_authority_fails_closed(
     elif tamper == "order_price":
         db.execute("UPDATE orders SET price=1 WHERE id=?", (order.id,))
     elif tamper == "cross_proposal_risk_decision":
-        from tests.execution_authority import seed_order_authority
+        from tests.helpers.execution_authority import seed_order_authority
 
         _, unrelated = seed_order_authority(
             proposal_id=f"proposal-unrelated-{tamper}",
@@ -977,7 +977,7 @@ def test_partial_averaging_leg_uses_all_position_entry_fills(
     )
     assert position is not None
 
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.risk import engine
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order
@@ -1127,7 +1127,7 @@ def test_unresolved_close_order_does_not_add_entry_exposure(tmp_path, monkeypatc
     _setup_db(tmp_path, monkeypatch)
     _risk_config(monkeypatch)
 
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 

@@ -102,7 +102,7 @@ def _setup_db(tmp_path, monkeypatch):
 
 
 def _seed_authority(execution_mode: str, *, suffix: str):
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     return seed_order_authority(
         proposal_id=f"proposal-mbr-{suffix}",

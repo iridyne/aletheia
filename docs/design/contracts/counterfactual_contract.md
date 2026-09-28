@@ -53,7 +53,7 @@
 - `counterfactual.filter_experiments.capture_frozen_units_for(experiment)` — legacy authority 下由 `analytics.filter_controller` 冻结兼容表单元；Lab authority 下同一入口投影到 canonical Lab 适配器，规则见 [observation_lab_contract.md](observation_lab_contract.md)。
 - `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 按 authority 路由到 legacy 快照或 Lab-owned Evaluation。
 - `counterfactual.filter_experiments.build_filter_shadow_experiment_report(limit)` — CLI / API 只读消费对应 authority 的投影。
-- `counterfactual.calibration.build_calibration(days, symbols, policy_epoch_id)` — 由 `scripts/shadow_threshold_calibration.py` 与内部报告 API 调用。
+- `counterfactual.calibration.build_calibration(days, symbols, policy_epoch_id)` — 由 `scripts/analysis/shadow_threshold_calibration.py` 与内部报告 API 调用。
 - `counterfactual.trades.list_deduped_shadows(days, symbols, policy_epoch_id, columns)` — 所有跨候选聚合的 shadow 消费必须走这里，去重按 `outcome_candidate_key`。
 
 ## 3. Durable state and consumers

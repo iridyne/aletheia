@@ -4,7 +4,7 @@ import asyncio
 import threading
 import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
-from tests.model_http import model_http
+from tests.helpers.model_http import model_http
 
 from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
 from extensions.model_endpoints.openai_compatible import (

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import aletheia.portfolio.position_manager as pm
 from aletheia.agent_runtime.wake_events import HORIZON_DUE
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 
 def _cfg(mult=3.0, max_hold_hours=72.0, max_hold_days=90, stop=2.0, tp=4.0):

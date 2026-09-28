@@ -38,7 +38,7 @@ For D0, the canonical Contract / SpecClaim rows are normally not applicable.
       - [ ] Observed: _Fedora cycle / order id / Outcome — the actual observation._
       - [ ] Not applicable because: _why this change cannot produce runtime evidence._
       - [ ] Blocked on: _exactly what is missing, and who can unblock it — file or link the Issue._
-- [ ] `uv run python scripts/check_docs.py` passes.
+- [ ] `uv run python scripts/ci/check_docs.py` passes.
 
 ## Non-goals / out-of-scope
 

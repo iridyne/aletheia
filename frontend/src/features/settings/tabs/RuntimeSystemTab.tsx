@@ -354,14 +354,12 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const confirm = useConfirm()
   const updateCfg = settings?.update || {}
   const [branch, setBranch] = useState('master')
   const [enabled, setEnabled] = useState(true)
   const [cfgMsg, setCfgMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const { data, isLoading } = useQuery({ queryKey: ['update-status'], queryFn: api.getUpdateStatus })
-  const [applyMsg, setApplyMsg] = useState('')
 
   const check = useMutation({
     mutationFn: api.checkForUpdate,
@@ -386,16 +384,6 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     },
   })
 
-  const apply = useMutation({
-    mutationFn: api.applyUpdate,
-    onSuccess: (r) => {
-      setApplyMsg(r.applied
-        ? `Updated to ${r.new_commit?.slice(0, 8)} (deps reinstalled: ${r.deps_reinstalled}).`
-        : `Not applied: ${r.reason}`)
-      qc.invalidateQueries({ queryKey: ['update-status'] })
-    },
-  })
-
   const sourceRelease = data?.mode === "source_release"
   let badge = <span className="badge badge-yellow">not available</span>
   if (isLoading || check.isPending) badge = <span className="badge">checking…</span>
@@ -403,10 +391,9 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   else if (data?.reason === 'update_check_required') badge = <span className="badge">not checked</span>
   else if (data?.ok && data.has_update) badge = <span className="badge badge-yellow">{data.behind_count} behind</span>
   else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
-  const updateMode = data?.mode
-  const applySupported = data?.ok && data.has_update && updateMode === 'packaged'
-  const applyRequiresCli = sourceRelease || (data?.ok && data.has_update && updateMode === "development")
-  const applyUnavailable = data?.ok && data.has_update && !applySupported && !applyRequiresCli
+  // The only way to update is the CLI: the API route refuses to mutate source, and
+  // the packaged staging flow it used to hand off to was removed.
+  const applyRequiresCli = sourceRelease || Boolean(data?.ok && data.has_update)
 
   return (
     <div className="card mb-0">
@@ -424,24 +411,12 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           </span>
         )}
         <button className="secondary" onClick={() => check.mutate()} disabled={check.isPending}>Re-check</button>
-        {applySupported && (
-          <button
-            onClick={async () => { if (await confirm({ title: 'Apply packaged update?', description: 'The packaged runtime owns restart and verification.', confirmLabel: 'Apply update', variant: 'warning' })) apply.mutate() }}
-            disabled={apply.isPending}
-          >Apply update</button>
-        )}
       </div>
       {applyRequiresCli && (
         <p className="hint mb-3">
           Run <code>aletheia update</code> from the controlling terminal. Linux source releases use the same deployment lock, hold, restart, and verification transaction as the timer.
         </p>
       )}
-      {applyUnavailable && (
-        <p className="hint mb-3">
-          Update apply action unavailable because this runtime did not report a supported update mode.
-        </p>
-      )}
-      {applyMsg && <p className="hint mb-3">{applyMsg}</p>}
 
       {!sourceRelease && <>
       <div className="flex items-center gap-2 mb-3">

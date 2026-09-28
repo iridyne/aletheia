@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.execution_authority import seed_order_authority
+from tests.helpers.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 

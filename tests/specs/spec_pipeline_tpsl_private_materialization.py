@@ -12,7 +12,7 @@ import pytest
 from aletheia.uta.compat import utc
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.uta_private_history import _identity
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -47,7 +47,7 @@ def _seed_position(
     plan_ids: dict,
     opened_at: str = "2026-07-13T00:00:00+00:00",
 ):
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
 

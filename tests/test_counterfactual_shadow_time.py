@@ -41,7 +41,7 @@ def _set_created_at(shadow_id: str, created_at: str) -> None:
 def _settle_shadow(shadow_id: str) -> None:
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
-    from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
+    from tests.helpers.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
 
     db = get_db()
     key = db.execute(
