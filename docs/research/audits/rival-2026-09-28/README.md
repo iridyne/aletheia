@@ -14,7 +14,12 @@
 | 03 | [可维护度](03_maintainability.md) | 测试分层、门禁强度、CI 实际跑什么、lint/type、依赖与迁移 |
 | 04 | [alpha 来源](04_alpha_source.md) | 信号从哪来、参数怎么定、回测与实盘是否同源、能否证伪 |
 | 05 | [可靠性与交付](05_reliability_delivery.md) | 部署形态、release 节奏、失败语义、凭证、kill switch、运行证据 |
+| 06 | [执行链缺口](06_execution_chain_gap.md) | demo 亏损里执行损耗 vs 方向判断的拆分 |
+| 07 | [前端性能](07_frontend_performance.md) | K 线加载/UI 响应慢在哪 |
+| 08 | [前后端剥离](08_frontend_backend_split.md) | 前端重写前哪些后端修复可先做 |
+| **16** | **[alpha 机制对比（主线）](16_alpha_mechanism_comparison.md)** | **我们 vs R20 的 alpha 机制异同、可借鉴项** |
 | — | [证据附录](99_evidence_index.md) | 六仓原始证据清单索引 + 本次未验证项 |
+| — | 09–15（技术分支，含已暂停项） | detector 排查、regime 门测试等子问题，详见各文档开头的性质说明 |
 
 ## 参与对标的六个仓库
 
