@@ -250,6 +250,33 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 **流程未变之前**：默认 Fedora 步骤仍是整个 `tests/`；只在拿到耗时表之后才收窄，并需用"同一次真实全量"
 回归对照证明没有漏跑。
 
+## 1i. 逐域结论表（2026-09-28 批次收敛情况）
+
+本表记录本周期内**每个已核对领域**的状态：已收敛 / 无需改造（附理由）/ 仅缺外部证据。
+它不表示全仓审计结束，也不把"未审查"当作"无需改造"。
+
+| 领域 | 结论 | 依据（本文件 / PR） |
+|---|---|---|
+| Candidate 发布 → Planning | **无需改造**：单一写者、原子发布、证据分离已就位 | §1（9 项回滚用例实测） |
+| Universe replay 去重 | **已收敛**：删除逐行克隆与零调用重放，仅剩一个实现 | §1a（#3614） |
+| Position 故事读取边界 | **已收敛**：readers/events/service/render 四责分离（上一批 #3604） | #3604 |
+| Portfolio / 结算算术 | **已收敛**：cost-complete PnL 算术单一 owner；已知经济与资格判定明确不合并 | §1e（#3623） |
+| Portfolio 读取（同 proposal 最新持仓） | **已收敛**：排序分歧（文本 vs `datetime()`）合并为 seam reader | #3615 |
+| Storage 单行 id 查询 | **已收敛**：8 处事务内手写查询改走 `get_order`/`get_position` | #3630 |
+| Runtime 心跳新鲜度 | **已收敛**：判定 owner 唯一，三个读面共用；进程存活 ≠ 自身成功 | §1d（#3616） |
+| Runtime snapshot 新鲜度 | **已收敛（边界+信任谓词）**；naive/未来时间戳策略差异显式记录 | §1g（#3633） |
+| Analytics 持有期时长 | **已收敛**：三处实现合一；反向区间由负值改为不可用 | #3635（§本文件 1j 待补表） |
+| Analytics/API 漏斗与历史计数 | **无需改造**：`assets_passed` 等为历史口径，当前准入读 `selection_reason_counts` | §2 |
+| Core/Extensions 可选边界 | **已收敛（一处孤儿）**：删除零调用的 leverage-policy epoch；未发现"core 硬依赖可选扩展" | #3636 |
+| diagnostics 只读 | **无需改造**：`_table_exists` 降级是该模块的声明契约，不是重复 | §1d 相邻说明 |
+| Operator shell 心跳生产端 | **仅缺证据**：`operator-shell/src/heartbeat.ts` 无覆盖测试（codegraph 标记），是 #3602 类故障的源头侧 | 待排批次 |
+| 结算自然样本 / 人工证据 | **受外部阻塞**：#3135 需自然平仓样本；KORU/UNI/DOT 人工确认不由 Agent 代做 | §5 |
+| R20 站点 | **受外部阻塞**：站点不可达；源码审计已完成 | COMPETITIVE_ANALYSIS_R20_2026-09-24 |
+
+**仍未审查**：`execution/gateway._execute_proposal`（516 行）、`risk/engine._evaluate_proposal_locked`（595 行）、
+`agent_shell/commands.review_portfolio_state`（638 行）等巨型入口——它们在本周期内只做了**局部**收敛，
+未被整体判为"无需改造"。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
