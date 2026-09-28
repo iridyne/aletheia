@@ -1,4 +1,11 @@
-"""OS-level autostart + supervisor watchdog for Windows and macOS.
+"""ARCHIVED (platform-specific, unmaintained) — OS-level autostart + supervisor watchdog for Windows and macOS.
+
+Retained, not deleted, but nothing in the Linux/Fedora runtime reaches it: every
+call site is guarded by ``platform.system() == "Darwin"`` and only performs legacy
+launchd cleanup (see ``service_control._cleanup_legacy_macos`` and the recovery
+branches in ``lifecycle``). Treat its behaviour as unverified by the current
+runtime — its own tests still cover it, but no production path exercises it.
+See docs/design/history/platform_specific_gateway_services.md.
 
 The gateway already detaches a background process and a supervisor respawns the
 inner server on crash — but nothing restarts the supervisor itself after a

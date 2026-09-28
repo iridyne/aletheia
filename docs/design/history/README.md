@@ -65,3 +65,5 @@ reactivating a historical document in place.
 - [Former packaged Runtime power optimization](packaged_runtime_power_optimization.md): macOS tray power analysis for the removed native host.
 
 - [Former modular-monolith release bundle](modular_monolith_release_bundle.md): removed immutable release-bundle build/signing/rollback contract.
+
+- [Archived platform-specific Gateway service backends](platform_specific_gateway_services.md): retained-but-unmaintained macOS/Windows service modules, with the boundary that keeps the Linux systemd service live.
