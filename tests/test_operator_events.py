@@ -1291,17 +1291,18 @@ def _snapshot_verdict(age_seconds: float | None, *, paused: bool = False, raw: s
 def test_snapshot_refresh_verdict_matches_the_sizing_guard_boundary(monkeypatch):
     """The recommendation and risk/engine must agree on the same freshness bound."""
     from aletheia.agent_runtime import scheduler
-    from aletheia.agent_shell import operator_recommendations as rec
 
     assert _snapshot_verdict(60) is None
     assert _snapshot_verdict(scheduler.PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS - 1) is None
     assert _snapshot_verdict(scheduler.PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS + 1) is not None
     assert _snapshot_verdict(None) is not None
 
-    # The bound is read from the shared owner, not a private literal.
+    # The verdict must follow the shared owner, not a private literal: the same
+    # age flips across a patched bound, so a hardcoded 15 minutes would fail here.
     monkeypatch.setattr(scheduler, "PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS", 1, raising=False)
     assert _snapshot_verdict(5) is not None
-    assert rec is not None
+    monkeypatch.setattr(scheduler, "PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS", 900, raising=False)
+    assert _snapshot_verdict(5) is None
 
 
 def test_untrustworthy_snapshot_timestamps_are_reported_not_silently_fresh():
