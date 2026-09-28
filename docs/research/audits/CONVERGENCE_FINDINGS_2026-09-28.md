@@ -1,0 +1,196 @@
+# 项目收敛分析结论 — 2026-09-28
+
+## 使用范围与证据身份
+
+本文件是日期化的 **Evidence / Archive**，用于避免后续 Agent 重复调查已查明的边界，
+不是现行 Contract、任务看板或实时健康证明。优先级、审批及交付状态以
+[#3438](https://github.com/iridyne/aletheia/issues/3438) 和关联 Issue/PR 为准。
+
+- 源码核对基线：本地集成提交 `8d604eecf1dd0bee0eb4e4d245be509424ca41f6`。
+  可发布追溯点包括 `5426e5222e5d4a761caefc1c3d89c42877baba24`、
+  [PR #3608](https://github.com/iridyne/aletheia/pull/3608) 的
+  `88c0234c3326279808f1f54c240a3ec5306f03e4` 和
+  [PR #3609](https://github.com/iridyne/aletheia/pull/3609) 的
+  `e10af70eaf0b75e9f26dc54593eea3b9615ab269`。不得把本地集成 SHA 当成已部署版本。
+- Fedora 运行观察基线：`a8dc0613956bb3a5a35aaf8e43dddb09ec488cc6`，
+  Bitget Demo、schema 90。以下运行数值均有明确观察时段，不表示阅读本文时仍然如此。
+- 子 Agent 提供的下游发布分析已由主 Agent 读取关键实现并运行回滚用例复核。
+  本记录不把尚未复核的上游拆分建议写成结论。
+- 不记录凭据、完整配置、模型原始载荷或整段调试日志。临时日志路径只是辅助定位，
+  不能代替本文的结论、复现入口和关联 Issue。
+
+## 1. Candidate 发布到 Planning：保留现有原子边界
+
+**结论：在本次核对的交接范围内，没有证明存在重复状态所有者；不新增协调层，
+不为了缩短 `refresh()` 把发布事务拆开。** 多个写入函数承担不同职责，不等于多个主线。
+
+| 实现 | 已确认的责任 / 不可丢失的边界 |
+|---|---|
+| `universe/service.py::_atomic_universe_publication` | 无外层事务时获取 writer；已有事务时用 SAVEPOINT。失败必须回滚整个发布单元。 |
+| `storage/repositories.py::publish_candidate_snapshot` | 写 snapshot 与 members；拒绝 member 指向其他 snapshot。不是 Planning 状态机。 |
+| `ensure_candidate_planning_generation` | Generation 的创建、重资格与 CAS 生命周期；Universe 与 Serenity 是不同获准生产入口。 |
+| `prepare_candidate_requalification` | 在发布 writer 事务外冻结证据；实现明确拒绝在事务内调用。不能把这项准备工作顺手搬进事务。 |
+| `reconcile_candidate_attention` | 按行的原始 producer 身份限定 sweep，不能只相信调用方传入的 scope。 |
+| `expire_opportunities_from_superseded_snapshots` | 旧 analytical generation 的级联过期及相关证据同样属于原子发布。 |
+| `agent_shell/entry_planner.py` | 消费已发布的 Generation，拥有自己的 claim/defer/complete 责任；不是第二个 snapshot 发布者。 |
+
+主 Agent 实际运行以下选择，**9 项通过**：
+
+```bash
+uv run pytest \
+  tests/test_candidate_opportunity_persistence.py::test_candidate_snapshot_publication_rolls_back_partial_members \
+  tests/test_candidate_opportunity_persistence.py::test_serenity_publication_rolls_back_all_rows_on_failure \
+  tests/test_opportunity_funnel_integrity.py::test_superseded_cascade_rolls_back_status_when_evidence_fails \
+  tests/specs/spec_universe_pipeline.py::test_target_publication_failure_preserves_previous_authority \
+  -q --tb=short
+```
+
+**复用边界：**这不是整个 Storage 域的“已完成”结论。若修改发布顺序、事务位置、
+Generation 身份或 producer scope，重读上述 owner 并重跑对应失败回滚用例。
+单纯看到 facade/seam、多函数或较大文件，不足以推翻这个结论。
+
+## 2. 旧扫描计数与历史漏斗不能代表当前准入
+
+**结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
+
+- [Candidate Selection Utility Contract](../../design/contracts/candidate_selection_utility_contract.md)
+  明确保留 `filtered` / `assets_passed` 的历史过滤含义，不把它们作为当前 admission count。
+- 2026-09-28T01:36–01:47Z 的完成扫描中，原始 `assets_passed` 为 0，
+  同行 `candidate_path.selection_reason_counts` 却包含 `admitted: 7`。
+  不以这个旧列的零值发起删除历史数据、放宽筛选或新增准入逻辑。
+- 同期 `opportunity audit --view overview` 的 funnel 声明
+  `scope=historical_signal_pipeline`；其 `opportunities_created=0` 不能证明
+  Candidate → Planning → Execution 停摆。
+- 当前口径应读取 `aletheia inspect entry-status --json`、实际 Generation/Plan，
+  以及扫描 `metrics.candidate_path`；仍需区分 admitted、selected、Planning 与执行。
+
+**不改决定：**本轮不删历史数据库列，不恢复 Ranker/Market Observer 来填旧漏斗。
+若日后证明某个当前 API/UI 消费者错误使用旧列，应修正那个消费者，而不是改历史含义。
+
+## 3. 运行快照：主链有新产出，但持仓路径证据存在缺口
+
+2026-09-28T01:41–01:57Z 的只读核对记录：
+
+- Gateway 运行，running/disk/recorded SHA 为上述 Fedora 基线；无 kill switch 或 pause blocker。
+- 当前 Entry 报告没有待规划 attention；存在新的 Planning 结果。
+- `7b1a0ec12e5d`（LTC/USDT、Bitget Demo）在 2026-09-28T01:09:25.146Z 开仓，
+  证明该部署之后仍有实际 Candidate/Entry/执行产出，不能称整条链已停止。
+- 新的编译拒绝包括 `stop_distance_below_vol_target` 和
+  `INVALIDATION_ANCHOR_WRONG_SIDE`。观察到拒绝不等于证明阈值错误，不能为了成交而放松它们。
+- 同一 LTC Position 的 `position_path_observations` 查询当时为 0 行。
+  observer 控制读模型另显示 27 个 deferred buckets、历史 coverage 不完整。
+  这是已观察到的证据缺口，**根因及严重程度尚未证明**；历史相关调查见
+  [#984](https://github.com/iridyne/aletheia/issues/984)。不据此强制 backfill 或改写历史。
+
+复核使用项目只读 CLI，先发现 schema，再做精确身份查询。对 `entry-status --json`
+应先投影 summary 与必要字段；完整 Plan/历史输入 JSON 很大，重复全文输出没有调查收益。
+
+## 4. Operator 心跳：必须区分进程存活与自身成功
+
+**已验证根因：**Node 原生 `fetch` 带单独的 `Sec-Fetch-Mode: cors`，旧 HTTP guard
+将其误判为不可信浏览器来源，返回 403。监督器不断刷新 `last_seen_at`，并不意味着
+Operator 自身 `last_success_at` 正常。见 [#3602](https://github.com/iridyne/aletheia/issues/3602)
+及 [PR #3603](https://github.com/iridyne/aletheia/pull/3603)。
+
+修复保留 hostile Origin/Referer/跨站 metadata 拒绝、服务认证与路由白名单。
+真实 Node → ASGI → 隔离 SQLite 验证得到：心跳 200 并落库、恶意 Origin 403、
+服务凭据访问 owner 路由 401、无身份心跳 401。没有伪造 same-origin 或扩大权限。
+
+Fedora 基线上的冻结观察窗为 **2026-09-27T21:57:31.167841Z 至 22:27:36.264718Z**：
+
+| 证据 | 观察结果 |
+|---|---|
+| 自身心跳与运行身份 | 121 次采样均通过，121 个不同成功时间戳，最大年龄 14.472 秒（检查阈值 45 秒） |
+| `universe_refresh` | 窗口内 3 次 succeeded，0 次 failed |
+| `reconciliation` | 窗口内 15 次 succeeded，0 次 failed |
+| `price_feed` | 窗口内 60 次 succeeded，0 次 failed |
+
+日志按已保存起始 offset 和 Asia/Shanghai 时间戳限定到该窗口，不能把窗口后的成功混入。
+辅助原始收据位于 Fedora `/var/tmp/aletheia-a8dc06139-window/job-receipt.json`。
+该结果不是新的源码版本、实时运行状态或经济资格证明。
+
+## 5. 结算：多个步骤不等于多套最终写者
+
+本次独立审计及主 Agent 复核确认：`portfolio/pnl.py::_commit_close_economics` 是
+初始关闭和延迟成本补齐共享的完整关闭经济写入边界；调用者保留各自的证据校验和事务。
+已知经济分量的只读展示，不等于最终 `realized_pnl` 或 Outcome eligibility。
+
+`portfolio/account_loss.py::_partial_close_realized_today` 确实消费 partial-close ledger：
+部分减仓时 Position 仍开放，不能删除全部 close events 并只读最终 Position PnL。
+未知 funding/fee 不得补零，已有最终金额不能覆盖。见
+[Execution Contract §11.4/§11.6](../../design/contracts/execution_contract.md) 和
+[#3135](https://github.com/iridyne/aletheia/issues/3135)。
+
+主 Agent 运行 closure、funding economics、read model、writer ownership、Outcome feedback
+共 **306 项通过**。这支持现有代码边界，不代替自然平仓的实机经济验收。
+本次部署后查询尚无新关闭样本；人工成交/拒单/平仓证据仍需由人类提供，不能代为结案。
+
+## 6. 测试诊断：先区分 fixture、资源观测与生产根因
+
+### 并发 SQLite fixture
+
+[#3607](https://github.com/iridyne/aletheia/issues/3607) 的原全量失败日志不是单纯提交迟到：
+watcher 的 `_capture_facts` 读到 `row=None` 后失败。测试让多个 offload 线程共享一个
+`check_same_thread=False` 内存 connection，生产则使用每线程文件连接。
+本次受控实验在共享连接下观察到错误/缺失行及 InterfaceError，而每线程文件连接对照没有这些错误。
+这不应被泛化为“SQLite 都不线程安全”，更不构成给生产加 missing-row fallback 的理由。
+
+[PR #3609](https://github.com/iridyne/aletheia/pull/3609) 使用已有 `real_db` 与
+`api_only_runtime` fixture；文件库暴露缺失外键种子后补齐真实 registry asset，未关闭外键。
+六种 cold/restored/reconnect × tactic 情况保留原断言和超时；24 项 activation、
+93 项 activation/fast-trigger 组合通过。最终集成完整证明另计。
+
+### Connection ResourceWarning
+
+[#3598](https://github.com/iridyne/aletheia/issues/3598) 的 44 条警告通过
+`-X tracemalloc=3` 定位到 evidence/replay 测试的分配点，不是警告出现的 GC 位置。
+在分配后注册 pytest finalizer 后，同一 53 项测试在 ResourceWarning/unraisable warning
+视为错误时通过；原 435 项 coverage 集合通过、11 个 floor 未改。没有生产代码修复或警告屏蔽。
+
+### 子进程导入超时
+
+[#3610](https://github.com/iridyne/aletheia/issues/3610) 记录了隔离全量中的四个 20 秒导入超时。
+对相同 child scripts 加诊断 watchdog、保留原断言和 20 秒期限后，25 个模块用例通过，
+13 个 child probe 用时 0.141–1.512 秒，没有 watchdog 堆栈。
+**这没有证明原失败是 flaky，也没有证明资源压力就是根因。** 不据此改生产或放宽期限；
+若复现，应捕获当时子进程堆栈和资源证据，而不是只重复跑到绿。
+
+## 7. 门禁和基准的可复用限制
+
+- [#3561](https://github.com/iridyne/aletheia/issues/3561) 的旧“十个新文件”要求已由 Owner
+  同意按现行契约收敛。storage-only SQL 禁令、退役 simulator 扫描、不存在的 reason 枚举要求
+  不适用；不要为满足旧计数复活它们。有效门禁范围见
+  [Audit Gates Registry](../../governance/audit_gates_registry.md)。
+- 已复现的三个静态检查陷阱：合法的 `write_audit(event={...})` 也要检查；写者不止
+  `insert_/update_/transition_` 前缀；跨模块同名函数不能靠字典最后一次覆盖决定 owner。
+  已有 authority checker 是按表的 writer 校验，不是通用 public-mutator 分类器。
+- 静态检查只证明声明的识别范围，不代替实际回滚、只读、失败传播等行为测试。
+  不为每个新调用形状建设通用调用图框架。
+- canonical pytest classifier 决定 tier；手工 `tier_unit` 标签不能绕过准入。
+  `tests/audit/` 仍由 changed-file audit 步骤执行，不能用标记争议删除检查。
+- 重分类与同集合加速必须分开报告；测试/生产代码比例、门禁文件数量不证明工程质量或盈利。
+
+冻结证明示例（不能改标为较新源码的结果）：
+
+| 源码 | 实际证明与限制 |
+|---|---|
+| `22bfaab0a`、`475cef7ed` | 各自隔离 Fedora 完整测试 11,623 项、0 failure/error、20 skip/xfail。 |
+| `5426e5222` | 完整测试 11,623 项有 1 个 #3607 失败，不能称全绿。 |
+| `58190c3f3` | 完整测试 11,625 项有 5 个失败：手工 tier 覆盖及四个导入超时；不能只引用较早的绿结果。 |
+| `6525cee5a` | 三次串行 unit 各 1947 passed、1 skipped；墙钟 55.87 / 54.42 / 53.76 秒。不是完整套件加速比例，也不覆盖后加的回归用例。 |
+
+## 8. 如何复用，而不是从头再查
+
+1. 先读对应现行 Contract，再确认相关源码 owner 是否变化；未变化的边界复用本记录，
+   不重新扫全仓。源码或假设变化时，仅重验受影响路径。
+2. 保留“没有证明重复 / 不改”的结果。不要为了继续去屎山化，把必要的事务步骤当成重复主线。
+3. 对运行结论重新取当前精确身份和窗口；不把本文件的日期化样本当成今天的状态。
+4. 新证据若推翻结论，引用原结论并记录新的 SHA、条件和反例；不要覆盖历史证据假装一直正确。
+5. Issue/PR 负责动态任务状态；本目录负责长期有用的分析、否定结论、失败模式与复现入口。
+   不存放聊天流水、完整 payload、重复 TODO 或未经复核的子 Agent 裁决。
+
+其他已归档分析：
+[前一日结构批次](DESHITIFY_BATCH_2026-09-27.md)、
+[unit 分类与性能测量](tier_unit_reclassification_2026-09-27.md)、
+[R20 对照分析](COMPETITIVE_ANALYSIS_R20_2026-09-24.md)。这些同样是各自时点的证据，
+不是当前能力或竞品收益优越性的证明。
