@@ -55,8 +55,9 @@ def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
         return {"matched": matched, "reclassified": 0, "remaining_high": matched,
                 "reindexed": None, "dry_run": dry_run}
 
-    # SQLite concurrency invariant (CLAUDE.md): capture in_transaction BEFORE the write,
-    # commit only if we opened the tx — sqlite3 auto-opens one on UPDATE.
+    # SQLite concurrency invariant (docs/operations/development/agent-guides/STATE_AND_DATA.md):
+    # capture in_transaction BEFORE the write, commit only if we opened the tx —
+    # sqlite3 auto-opens one on UPDATE.
     was_in_tx = db.in_transaction
     db.execute(
         "UPDATE knowledge_items SET confidence=? WHERE item_type=? AND confidence=?",

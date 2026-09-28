@@ -5,12 +5,13 @@
 
 | Folder | Use |
 |---|---|
-| `source/` | Mermaid and D2 source files |
-| `rendered/` | PNG/SVG renders used by README and docs |
+| `source/` | D2 source files for the current diagrams |
+| `rendered/` | SVG renders used by README and docs |
 
 ## Agent Rule
 
-When changing a diagram, keep source and rendered file aligned if the rendered asset is used by documentation.
+When changing a diagram, keep source and rendered file aligned if the rendered asset is used by documentation. Only the five `readme_*.d2` sources below are current; the
+former Mermaid family lives in [`design/history/diagrams/`](../design/history/diagrams/README.md).
 
 ## Architecture diagrams (D2)
 

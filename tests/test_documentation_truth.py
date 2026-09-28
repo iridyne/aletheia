@@ -275,8 +275,8 @@ def test_navigation_route_gate_flags_renamed_symbol_and_unlinked_row(
     monkeypatch.setattr(check_docs, "ROOT", tmp_path)
 
     assert check_docs.navigation_route_failures(Path("MAP.md")) == [
-        "MAP.md:2: navigation symbol `renamed_symbol` is not in the linked "
-        "source (core/owner.py)",
+        "MAP.md:2: navigation symbol `renamed_symbol` is not used as code in the "
+        "linked source (core/owner.py)",
         "MAP.md:3: route row names only_symbol but links no non-test source file",
     ]
 
@@ -309,7 +309,7 @@ def test_navigation_route_gate_requires_a_focused_test_for_each_row(
     monkeypatch.setattr(check_docs, "ROOT", tmp_path)
 
     assert check_docs.navigation_route_failures(Path("MAP.md")) == [
-        "MAP.md:2: no linked focused test names a row symbol (tests/test_other.py)",
+        "MAP.md:2: no linked focused test uses a row symbol (tests/test_other.py)",
         "MAP.md:3: route row names live_symbol but links no focused test file",
     ]
 
@@ -355,6 +355,69 @@ def test_navigation_route_gate_rejects_a_region_with_no_rows(
         "MAP.md: marked region validates no route rows; restore the table "
         "or delete the markers with a stated replacement"
     ]
+
+
+def test_navigation_route_gate_ignores_a_name_that_survives_only_in_prose(
+    monkeypatch, tmp_path
+) -> None:
+    """A rename that leaves the old name in a comment/docstring must still fail.
+
+    A whole-word text search would accept the row below, because the owner file
+    still mentions the retired name -- the exact way a drift gate goes blind.
+    """
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "owner.py").write_text(
+        '"""Module docstring mentioning retired_symbol."""\n'
+        "# retired_symbol used to live here\n"
+        "def live_symbol():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_owner.py").write_text(
+        "def test_live_symbol():\n    assert live_symbol()\n", encoding="utf-8"
+    )
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [owner.py](core/owner.py): `retired_symbol` |"
+        " [test_owner.py](tests/test_owner.py) |\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md:2: navigation symbol `retired_symbol` is not used as code in the "
+        "linked source (core/owner.py)",
+        "MAP.md:2: no linked focused test uses a row symbol (tests/test_owner.py)",
+    ]
+
+
+def test_navigation_route_gate_accepts_a_string_carried_symbol(
+    monkeypatch, tmp_path
+) -> None:
+    """Job ids and typed reason codes are strings, not identifiers."""
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "owner.py").write_text(
+        'JOB = "pi_trading_decision"\n'
+        "def register():\n"
+        "    return JOB\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_owner.py").write_text(
+        'def test_job():\n    assert "pi_trading_decision"\n', encoding="utf-8"
+    )
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [owner.py](core/owner.py): `pi_trading_decision` |"
+        " [test_owner.py](tests/test_owner.py) |\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == []
 
 
 def test_navigation_route_gate_requires_its_region_markers(monkeypatch, tmp_path) -> None:

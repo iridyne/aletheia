@@ -203,6 +203,51 @@ def _navigation_linked_py(line: str, source: Path) -> tuple[list[Path], list[Pat
     return sorted(set(owners)), sorted(set(tests))
 
 
+def _code_symbols(path: Path) -> set[str] | None:
+    """Tokens a Python file uses *as code*, not as prose.
+
+    Comments are never parsed and docstrings are skipped, so a name that only
+    survives in prose no longer satisfies a route row -- which is the failure a
+    rename leaves behind. String constants are included because this repo carries
+    job ids and typed reason codes as strings. Returns ``None`` when the file does
+    not parse, so the caller reports that instead of reading it as empty.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return None
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    symbols: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Name):
+            symbols.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            symbols.add(node.attr)
+        elif isinstance(node, ast.arg):
+            symbols.add(node.arg)
+        elif isinstance(node, ast.alias):
+            symbols.add(node.asname or node.name.rsplit(".", 1)[-1])
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        ):
+            symbols.add(node.value)
+    return symbols
+
+
 def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
     """The marked route table must point at sources that still own the symbols.
 
@@ -215,28 +260,27 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
     commits had superseded).
 
     Three mechanical rules for the region between the ``navigation-check`` markers:
-      1. every backticked bare identifier in a route row must appear, as a whole
-         word, in a non-test ``.py`` file that the same row links as its owner
-         source -- so a renamed or deleted symbol fails on the row's own line;
+      1. every backticked bare identifier in a route row must be a token the row's
+         linked non-test source uses *as code* -- defined, referenced, or carried
+         as a string constant (job ids and typed reason codes are strings here).
+         Comments never parsed and docstrings skipped, so a rename that leaves the
+         old name quoted in prose fails on the row's own line;
       2. a row that names identifiers but links no owner source fails, so the
          rule cannot be satisfied by accident;
-      3. a row must link a focused test file, and at least one of them must name
-         one of the row's symbols -- otherwise the "go run this test" instruction
+      3. a row must link a focused test file, and at least one of them must use one
+         of the row's symbols -- otherwise the "go run this test" instruction
          sends the reader to a module that never exercises the thing they are
          chasing (the 2026-09-28 probe found the ACK/Fill/Close row citing a spec
          that exercises neighbouring materializers only).
 
     Non-goals (deliberately not validated here): dotted references
-    (``service.build_position_lifecycle_story``), prose outside the region,
-    whether the named test is the *only* relevant one, whether a contract
-    citation still holds, and whether a test passes. Presence is a whole-word
-    text search, not a symbol table: a comment or docstring that still mentions a
-    renamed name satisfies it, so a rename that leaves the old name quoted
-    somewhere in the file can pass unseen. Link *existence* is already
-    ``broken_relative_links``' job, so a missing target is not reported twice.
-    Tokens that are genuinely not source symbols (job ids, directory names)
-    belong in ``NAVIGATION_NON_SYMBOL_TOKENS`` with a reason; nothing is skipped
-    silently.
+    (``service.build_position_lifecycle_story``), prose outside the region, whether
+    the named test is the *only* relevant one, whether a contract citation still
+    holds, whether a test passes, and whether the named symbol is the shortest path
+    to the behaviour. Link *existence* is already ``broken_relative_links``' job,
+    so a missing target is not reported twice. Tokens that are genuinely not source
+    symbols (job ids, directory names) belong in ``NAVIGATION_NON_SYMBOL_TOKENS``
+    with a reason; nothing is skipped silently.
     """
     failures: list[str] = []
     path = ROOT / markdown
@@ -246,13 +290,20 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
     text = path.read_text(encoding="utf-8")
     if start not in text or end not in text:
         return [f"{markdown}: missing {start} / {end} region markers"]
-    sources: dict[Path, str] = {}
+    symbols: dict[Path, set[str] | None] = {}
 
-    def source_text(files: list[Path]) -> str:
-        return "".join(
-            sources.setdefault(owner, owner.read_text(encoding="utf-8"))
-            for owner in files
-        )
+    def symbols_in(files: list[Path], lineno: int, label: str) -> set[str]:
+        found: set[str] = set()
+        for file in files:
+            parsed = symbols.setdefault(file, _code_symbols(file))
+            if parsed is None:
+                failures.append(
+                    f"{markdown}:{lineno}: cannot parse {label} "
+                    f"{file.relative_to(ROOT)}"
+                )
+                continue
+            found |= parsed
+        return found
 
     inside = False
     validated_rows = 0
@@ -274,11 +325,12 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
                 f"{', '.join(sorted(checked))} but links no non-test source file"
             )
             continue
+        owner_symbols = symbols_in(owners, lineno, "linked source")
         for token in checked:
-            if not re.search(rf"\b{re.escape(token)}\b", source_text(owners)):
+            if token not in owner_symbols:
                 failures.append(
-                    f"{markdown}:{lineno}: navigation symbol `{token}` is not "
-                    f"in the linked source "
+                    f"{markdown}:{lineno}: navigation symbol `{token}` is not used "
+                    f"as code in the linked source "
                     f"({', '.join(str(o.relative_to(ROOT)) for o in owners)})"
                 )
         if not checked:
@@ -290,12 +342,10 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
                 f"{', '.join(sorted(checked))} but links no focused test file"
             )
             continue
-        test_text = source_text(tests)
-        if not any(
-            re.search(rf"\b{re.escape(token)}\b", test_text) for token in checked
-        ):
+        test_symbols = symbols_in(tests, lineno, "focused test")
+        if not any(token in test_symbols for token in checked):
             failures.append(
-                f"{markdown}:{lineno}: no linked focused test names a row symbol "
+                f"{markdown}:{lineno}: no linked focused test uses a row symbol "
                 f"({', '.join(str(t.relative_to(ROOT)) for t in tests)})"
             )
     if not validated_rows:

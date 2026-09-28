@@ -355,7 +355,7 @@ backend `uvicorn --reload` 提供后端热重载,SSE(`frontend-built` 事件)驱
 ### Reasoning
 
 - dev 形态 ≡ 生产形态:同一个 gateway 服务 API + 静态,消除 proxy/StaticFiles 行为分叉。
-- 单端点 = 单一可信地址,符合项目 "localhost 单控制面" 的定位(CLAUDE.md frontend 段)。
+- 单端点 = 单一可信地址,符合项目 "localhost 单控制面" 的定位(`docs/operations/development/DEVELOPMENT_PREVIEW.md`)。
 - Starlette StaticFiles 每请求 `os.stat()`,无目录缓存,故前端 rebuild 无需重启 worker——
   SSE 事件单独触发浏览器刷新即可(`cbbab00` 据此移除了多余的 worker restart)。
 
@@ -364,7 +364,7 @@ backend `uvicorn --reload` 提供后端热重载,SSE(`frontend-built` 事件)驱
 - 所有 dev-reload 能力门控 `ALETHEIA_DEV_RELOAD=1`(仅 dev.ps1 设)+ `live_disabled`;
   生产模式 supervisor 崩溃保护不受影响。
 - UI 迭代统一用 `scripts/dev.ps1`,**不要**在紧循环里手动 rebuild `dashboard_static/`
-  (已写入 CLAUDE.md frontend 规则)。
+  (已写入 `docs/operations/development/DEVELOPMENT_PREVIEW.md` 的前端迭代规则)。
 
 ### Alternatives Considered
 
