@@ -106,7 +106,7 @@ def test_download_exit_status_preserves_partial_counts(monkeypatch, bars, error)
     assert result.exit_code == (1 if error is not None else 0)
     assert f"{bars} bars" in result.output
     if error is not None:
-        assert "Completed with error:" in result.output
+        assert f"Completed with error: {error}" in result.output
         assert "Done:" not in result.output
 
 
