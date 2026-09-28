@@ -206,6 +206,15 @@ def _related_rows(
         opportunity = _row(db, "serenity_opportunities", position.get("opportunity_id"))
     if opportunity is not None and not _visible(opportunity, cutoff, "created_at"):
         opportunity = None
+    # Universe branch: resolve universe_member when opportunity_id is NULL
+    universe_member: dict[str, Any] | None = None
+    if opportunity is None and not position.get("opportunity_id"):
+        ep_id = (proposal or {}).get("entry_plan_id")
+        if ep_id:
+            from aletheia.analytics.candidate_lifecycle import for_entry_plan
+            lineage = for_entry_plan(str(ep_id), cutoff, db)
+            if lineage.source_kind == "universe":
+                universe_member = lineage.universe_member
     pi_decisions = [
         row
         for row in _rows(
@@ -265,6 +274,7 @@ def _related_rows(
         "proposal": proposal,
         "entry_order": entry_order,
         "opportunity": opportunity,
+        "universe_member": universe_member,
         "pi_decisions": pi_decisions,
         "risk": risk,
         "entry_fills": entry_fills,

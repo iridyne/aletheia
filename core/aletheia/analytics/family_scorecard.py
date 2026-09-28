@@ -61,6 +61,9 @@ def compute_family_scorecard_with_epoch(
     db = get_db()
     families: dict[str, dict] = {}
 
+    from datetime import datetime, timezone
+    from aletheia.analytics.candidate_lifecycle import for_proposal
+
     # Metadata joins do not decide eligibility; the central read model does.
     rows = []
     for position in outcome_integrity.eligible_strategy_outcomes(
@@ -79,6 +82,12 @@ def compute_family_scorecard_with_epoch(
                 ).fetchone()
                 if opportunity and opportunity["scanner_family"]:
                     scanner_family = opportunity["scanner_family"]
+            elif proposal and not proposal["opportunity_id"]:
+                # Universe branch: resolve scanner_family via lineage reader
+                cutoff = datetime.now(timezone.utc)
+                lineage = for_proposal(str(proposal_id), cutoff, db)
+                if lineage.universe_member and lineage.universe_member.get("scanner_family"):
+                    scanner_family = lineage.universe_member["scanner_family"]
         rows.append({**position, "scanner_family": scanner_family})
 
     for r in rows:

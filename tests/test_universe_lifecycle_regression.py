@@ -37,6 +37,7 @@ def _build_universe_lifecycle_chain(
     candidate_family: str = "mean_reversion",
     scanner_family: str = "mean_reversion",
     position_id: str = "uni-position-1",
+    position_market_type: str = "perp",
 ) -> dict[str, Any]:
     """Insert a complete Universe-origin trade chain and return key IDs.
 
@@ -163,7 +164,7 @@ def _build_universe_lifecycle_chain(
     position = Position(
         id=position_id,
         symbol=plan.symbol,
-        market_type=plan.market_type,
+        market_type=position_market_type,  # may differ from plan.market_type for spot tests
         direction=plan.direction,
         quantity=1.0,
         entry_price=100.0,
@@ -201,7 +202,7 @@ def _build_universe_lifecycle_chain(
         id=f"uni-order-close-{position_id}",
         uta_account_identity_json=_identity("bitget_demo").model_dump_json(),
         symbol=plan.symbol,
-        market_type=plan.market_type,
+        market_type=position_market_type,
         direction="short",
         order_type="market",
         quantity=1.0,
@@ -277,20 +278,14 @@ def test_universe_lifecycle_chain_satisfies_attribution_chain_complete(
 # become green passing assertions for the corrected behaviour.
 # ---------------------------------------------------------------------------
 
-def test_position_replay_universe_discovery_currently_unavailable(
+def test_position_replay_universe_discovery_available_after_fix(
     tmp_path, monkeypatch,
 ):
-    """REGRESSION — position_replay currently marks discovery=unavailable for Universe positions.
+    """Batch C fix: position_replay resolves discovery for Universe positions via lineage_reader.
 
-    Root cause: lines 582-588 of position_replay.py join exclusively via
-    Position.opportunity_id.  For Universe rows (opportunity_id=NULL) the
-    opportunity/member/asset resolution always returns None, which causes:
-      - stages.discovery.availability = 'unavailable'
-      - pi_decision_not_recorded in causal_errors (via proposal_not_found path)
-
-    After Batch C (shared lineage_reader migration) this test should assert:
-      - stages.discovery.availability = 'available'
-      - no pi_decision_not_recorded in causal_errors
+    After the Batch C migration:
+      - stages.discovery.availability = 'available' (universe_member resolved)
+      - pi_decision_not_recorded is NOT in causal_link.errors (PI decision not required for Universe)
       - stages.discovery.universe_member is not None
     """
     from tests.test_sqlite_writer import _setup_db
@@ -302,33 +297,30 @@ def test_position_replay_universe_discovery_currently_unavailable(
     replay = build_position_replay(ids["position_id"])
 
     discovery = replay.get("stages", {}).get("discovery", {})
-    # causal errors live in replay["causal_link"]["errors"], not top-level
     causal_errors = replay.get("causal_link", {}).get("errors", [])
 
-    # Current broken behaviour — document it:
-    assert discovery.get("availability") == "unavailable", (
-        "REGRESSION GUARD: Universe position_replay discovery should be 'unavailable' "
-        "until Batch C migrates position_replay to use the shared lineage_reader. "
-        "If this fails, position_replay was fixed without the shared reader — "
-        "verify the fix uses the shared lineage_reader and update this assertion."
+    assert discovery.get("availability") == "available", (
+        "Universe position_replay discovery must be 'available' after Batch C — "
+        "lineage_reader resolves universe_member when opportunity_id is NULL."
     )
-    assert "pi_decision_not_recorded" in causal_errors, (
-        "REGRESSION GUARD: pi_decision_not_recorded must appear in causal_link.errors "
-        "until the Universe branch is handled correctly."
+    assert "pi_decision_not_recorded" not in causal_errors, (
+        "pi_decision_not_recorded must NOT appear for Universe positions — "
+        "Universe branch does not require a PI decision."
+    )
+    assert discovery.get("universe_member") is not None, (
+        "universe_member must be resolved via lineage_reader for Universe positions."
     )
 
 
-def test_position_lifecycle_story_universe_opportunity_currently_none(
+def test_position_lifecycle_story_universe_member_resolved_after_fix(
     tmp_path, monkeypatch,
 ):
-    """REGRESSION — position_lifecycle_story _related_rows returns opportunity=None for Universe.
+    """Batch C fix: _related_rows resolves universe_member for Universe positions.
 
-    Root cause: readers.py lines 204-208 join via Position.opportunity_id only.
-    For Universe rows this is always None, so the story has no source identity.
-
-    After Batch C this test should assert opportunity is None (still, as it
-    correctly is for Universe) but source_kind='universe' is populated from
-    the shared lineage reader instead.
+    After the Batch C migration:
+      - opportunity remains None (no opportunity row exists — correct for Universe)
+      - universe_member key is present in the result
+      - universe_member["id"] == the candidate_id from the fixture
     """
     from tests.test_sqlite_writer import _setup_db
     from aletheia.analytics.position_lifecycle_story.readers import _related_rows
@@ -345,60 +337,59 @@ def test_position_lifecycle_story_universe_opportunity_currently_none(
     cutoff = datetime.now(timezone.utc)
     related = _related_rows(db, position_row, cutoff=cutoff)
 
-    # Current state: opportunity is None (no opportunity table row exists — correct)
+    # Universe positions have no opportunity row — this is correct.
     assert related.get("opportunity") is None, (
         "Universe positions have no opportunity row — this should remain None."
     )
-    # Current state: no universe_member or candidate resolution
-    # After Batch C: a 'universe_member' or 'source_lineage' key should appear
-    assert "universe_member" not in related, (
-        "REGRESSION GUARD: universe_member not yet in _related_rows. "
-        "After Batch C this should be present."
+    # Batch C fix: universe_member is resolved via lineage_reader
+    assert "universe_member" in related, (
+        "universe_member must be present in _related_rows after Batch C."
+    )
+    assert related["universe_member"] is not None, (
+        "universe_member must not be None for a valid Universe chain."
+    )
+    assert str(related["universe_member"]["id"]) == str(ids["candidate_id"]), (
+        "universe_member.id must match the fixture candidate_id."
     )
 
 
-def test_family_scorecard_universe_family_currently_unknown(
+def test_family_scorecard_universe_family_resolved_after_fix(
     tmp_path, monkeypatch,
 ):
-    """REGRESSION — family_scorecard cannot resolve scanner_family for Universe positions.
+    """Batch C fix: family_scorecard resolves scanner_family for Universe positions.
 
-    Root cause has two layers:
-    1. family_scorecard.py lines 71-81 resolve family ONLY via
-       proposal.opportunity_id → opportunities.scanner_family.
-       For Universe rows opportunity_id is NULL → scanner_family='unknown'.
-    2. _persist_waiting_plan produces market_type='perp', which assess_position_closure
-       excludes from eligible_strategy_outcomes (only 'spot'/'usdt_futures' accepted).
-       So the position never appears in the scorecard at all.
+    Uses a spot-market_type override so the position passes assess_position_closure
+    (perp fails the market_type check; spot succeeds).  The entry plan remains perp
+    from _persist_waiting_plan but _ATTRIBUTION_SQL does not check market_type.
 
-    Current observable state: compute_family_scorecard returns [] (empty) for this
-    fixture because the perp position is ineligible — it doesn't even reach the
-    broken Universe resolver.
-
-    After Batch C this test should assert scanner_family='mean_reversion' using a
-    spot/usdt_futures fixture that reaches the resolver and resolves the family
-    via lineage_reader → universe_member.scanner_family.
+    After the Batch C migration:
+      - compute_family_scorecard returns a non-empty list
+      - 'mean_reversion' is in the family_names
+      - 'unknown' is NOT in the family_names (Universe ancestry is resolved)
     """
     from tests.test_sqlite_writer import _setup_db
     from aletheia.analytics.family_scorecard import compute_family_scorecard
 
     _setup_db(tmp_path, monkeypatch)
-    ids = _build_universe_lifecycle_chain(
+    # Use spot so the position passes assess_position_closure market_type check
+    _build_universe_lifecycle_chain(
         scanner_family="mean_reversion",
+        position_market_type="spot",
+        position_id="uni-spot-position-1",
     )
 
     families = compute_family_scorecard(execution_mode="bitget_demo")
 
     family_names = [f["family"] for f in families]
-    # Current broken behaviour: perp position excluded by economics check → empty scorecard.
-    # Universe ancestry resolver bug is masked by this exclusion.
-    assert "mean_reversion" not in family_names, (
-        "REGRESSION GUARD: family_scorecard should NOT resolve 'mean_reversion' "
-        "until Batch C migrates family_scorecard to use the shared lineage_reader. "
-        "If this fails, family_scorecard was fixed — update this assertion."
+    assert len(families) > 0, (
+        "Spot Universe position must appear in family_scorecard — "
+        "market_type='spot' should pass the economics eligibility check."
     )
-    # Scorecard is empty because the perp market_type fails economics eligibility check;
-    # after Batch C a spot fixture should produce a non-empty list with 'mean_reversion'.
-    assert families == [], (
-        "REGRESSION GUARD: Universe perp position must be excluded (empty scorecard) "
-        "until Batch C introduces a spot/usdt_futures fixture and lineage_reader fix."
+    assert "mean_reversion" in family_names, (
+        "Universe scanner_family='mean_reversion' must be resolved via lineage_reader "
+        "after Batch C migrates family_scorecard."
+    )
+    assert "unknown" not in family_names, (
+        "Universe family must not be 'unknown' after Batch C fix — "
+        "lineage_reader resolves scanner_family from universe_member."
     )
