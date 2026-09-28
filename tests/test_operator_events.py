@@ -1265,3 +1265,62 @@ async def test_operator_command_route_emits_command_events(client):
 
     assert "command_received" in event_types
     assert "command_executed" in event_types
+
+
+def _snapshot_verdict(age_seconds: float | None, *, paused: bool = False, raw: str | None = None):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell.operator_recommendations import (
+        _build_portfolio_snapshot_recommendation,
+    )
+
+    snapshot = None
+    if raw is not None:
+        snapshot = {"id": "s1", "snapshot_at": raw}
+    elif age_seconds is not None:
+        snapshot = {
+            "id": "s1",
+            "snapshot_at": (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat(),
+        }
+    return _build_portfolio_snapshot_recommendation(
+        SimpleNamespace(runtime=SimpleNamespace(paused=paused)), [{"id": "p1"}], snapshot
+    )
+
+
+def test_snapshot_refresh_verdict_matches_the_sizing_guard_boundary(monkeypatch):
+    """The recommendation and risk/engine must agree on the same freshness bound."""
+    from aletheia.agent_runtime import scheduler
+
+    assert _snapshot_verdict(60) is None
+    assert _snapshot_verdict(scheduler.PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS - 1) is None
+    assert _snapshot_verdict(scheduler.PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS + 1) is not None
+    assert _snapshot_verdict(None) is not None
+
+    # The verdict must follow the shared owner, not a private literal: the same
+    # age flips across a patched bound, so a hardcoded 15 minutes would fail here.
+    monkeypatch.setattr(scheduler, "PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS", 1, raising=False)
+    assert _snapshot_verdict(5) is not None
+    monkeypatch.setattr(scheduler, "PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS", 900, raising=False)
+    assert _snapshot_verdict(5) is None
+
+
+def test_untrustworthy_snapshot_timestamps_are_reported_not_silently_fresh():
+    """Future-dated, naive, unparseable or missing timestamps must not read as fresh.
+
+    Regression: the recommendation used a private 15-minute literal with a
+    different boundary, so these cases produced no recommendation at all.
+    """
+    assert _snapshot_verdict(None, raw="not-a-timestamp") is not None
+    assert _snapshot_verdict(None, raw="2099-01-01T00:00:00") is not None  # naive
+    assert _snapshot_verdict(-60) is not None  # future-dated
+    assert _snapshot_verdict(None, raw="") is not None  # missing field
+
+    untrusted = _snapshot_verdict(-60)
+    assert untrusted is not None
+    assert untrusted["metadata"]["stale_minutes"] is None
+    assert "no recent portfolio snapshot" in untrusted["summary"]
+
+    unparseable = _snapshot_verdict(None, raw="not-a-timestamp")
+    assert unparseable is not None
+    assert unparseable["metadata"]["stale_minutes"] is None

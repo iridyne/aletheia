@@ -98,6 +98,25 @@ def _task_age_minutes(task: dict) -> float | None:
     return (datetime.now(timezone.utc) - parsed).total_seconds() / 60.0
 
 
+def _snapshot_age_seconds(snapshot: dict) -> float | None:
+    """Seconds since ``snapshot_at`` for an unambiguous UTC instant, else None.
+
+    Mirrors risk/engine.py's portfolio-snapshot guard: an unparseable, naive or
+    ambiguous timestamp is not evidence that the snapshot is fresh, so the caller
+    must not report it as current.
+    """
+    raw = snapshot.get("snapshot_at")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+
+
 def _run_age_minutes(run: dict) -> float | None:
     parsed = parse_utc(run.get("ended_at") or run.get("started_at"))
     if parsed is None:
@@ -1000,29 +1019,38 @@ def _build_portfolio_snapshot_recommendation(
     open_positions: list[dict],
     latest_portfolio_snapshot: dict | None,
 ) -> dict | None:
-    portfolio_snapshot_age_minutes = (
-        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
+    # Freshness verdict is shared with risk/engine.py: the same bound and the same
+    # "trusted only when 0 <= age <= bound" rule. A private literal here previously
+    # disagreed with the sizing guard at the exact boundary and silently accepted
+    # future-dated, naive or unparseable snapshot timestamps as fresh.
+    from aletheia.agent_runtime.scheduler import (
+        PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS,
+    )
+
+    portfolio_snapshot_age_seconds = (
+        _snapshot_age_seconds(latest_portfolio_snapshot)
         if latest_portfolio_snapshot is not None
         else None
     )
-    if (
-        not cfg.runtime.paused
-        and open_positions
-        and (
-            latest_portfolio_snapshot is None
-            or (
-                portfolio_snapshot_age_minutes is not None
-                and portfolio_snapshot_age_minutes >= 15
-            )
-        )
-    ):
+    # A future-dated timestamp is untrustworthy, not "0 minutes old": keep the
+    # reported age (and therefore the wording) only for a real, non-future age.
+    portfolio_snapshot_age_minutes = (
+        portfolio_snapshot_age_seconds / 60.0
+        if portfolio_snapshot_age_seconds is not None and portfolio_snapshot_age_seconds >= 0
+        else None
+    )
+    snapshot_trusted = (
+        portfolio_snapshot_age_seconds is not None
+        and 0 <= portfolio_snapshot_age_seconds <= PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS
+    )
+    if not cfg.runtime.paused and open_positions and not snapshot_trusted:
         return _make_task_recommendation(
             id_="portfolio-snapshot-refresh-due",
             kind="portfolio_snapshot_refresh_due",
             severity="medium",
             summary=(
                 "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
-                if latest_portfolio_snapshot is None
+                if portfolio_snapshot_age_minutes is None
                 else (
                     "Open positions exist and the latest portfolio snapshot is about "
                     f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
