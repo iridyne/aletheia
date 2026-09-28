@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "ci_plan.v1"
-POLICY_VERSION = "2026-09-27.1"
+POLICY_VERSION = "2026-09-28.1"
 MODES = ("docs_only", "quick", "affected", "deep", "full")
 MODE_RANK = {mode: index for index, mode in enumerate(MODES)}
 LANES = (
@@ -85,9 +85,6 @@ FULL_FILES = {
     "rust-toolchain.toml",
     "scripts/check_change_contract.py",
     "scripts/ci_failure_handoff.py",
-    "scripts/ci_local.py",
-    "scripts/ci_plan.py",
-    "scripts/ci_preflight.py",
     "scripts/ci_yield.py",
     "tests/conftest.py",
     "tox.ini",
@@ -100,7 +97,15 @@ FULL_TEST_FILES = (
     "tests/test_frontend_ci_build_contract.py",
     "tests/specs/spec_codex_shepherd.py",
 )
+# Local verification tools prove their own behaviour, not every product stack.
+VERIFICATION_FILES = (
+    "scripts/dev_check.py", "scripts/ci_plan.py", "scripts/ci_local.py",
+    "scripts/ci_preflight.py", "tests/test_dev_check.py", "tests/test_ci_plan.py",
+    "tests/test_ci_local.py", "tests/test_ci_preflight.py",
+)
 CRITICAL_PREFIXES = (
+    "ops/update/",
+    "deploy/systemd/",
     "core/aletheia/execution/",
     "core/aletheia/gateway/",
     "core/aletheia/portfolio/",
@@ -354,6 +359,8 @@ def _unknown_executable_path(path: str) -> bool:
 
 
 def _path_surfaces(path: str) -> set[str]:
+    if path in VERIFICATION_FILES:
+        return {"verification"}
     surfaces: set[str] = set()
     if _docs_path(path):
         surfaces.add("docs")
@@ -365,6 +372,11 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("native")
     if path.startswith(("core/aletheia/", "tests/")) or path.endswith(".py"):
         surfaces.add("python")
+    if path in {
+        "core/aletheia/server/routes/operator.py",
+        "core/aletheia/gateway/operator_shell.py",
+    }:
+        surfaces.add("operator")
     if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/export_openapi_schema.py"):
         surfaces.add("frontend_contract")
     if path.startswith("core/aletheia/storage/"):
@@ -469,11 +481,16 @@ def plan(
                 continue
             mode = _mode_at_least(mode, "quick")
             if _docs_path(path):
-                if _agents_path(path) or path.startswith(AUTHORITY_DOC_PREFIXES):
+                if (_agents_path(path) or path.startswith(AUTHORITY_DOC_PREFIXES)) and not path.startswith(
+                    "docs/operations/development/"
+                ):
                     mode = "full"
                     reason_codes.update({"AUTHORITATIVE_DOCS", "FULL_AUTHORITY_OR_INFRA"})
                 else:
                     reason_codes.add("DOCS_QUICK")
+                continue
+            if path in VERIFICATION_FILES:
+                reason_codes.add("VERIFICATION_TOOLING")
                 continue
             if _full_path(path):
                 mode = "full"
@@ -574,6 +591,7 @@ def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
             "name": "ci workflow contracts", "lane": "quick",
             "command": [
                 "uv", "run", "pytest", "tests/test_ci_plan.py", "tests/test_ci_local.py",
+                "tests/test_dev_check.py", "tests/test_ci_preflight.py",
                 "tests/specs/spec_codex_shepherd.py", "tests/test_ci_yield.py", "-q", "--tb=short",
             ],
         })

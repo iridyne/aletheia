@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +39,7 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     assert "github_ci" not in safe
     assert "github_checks" not in safe
 
-    authoritative = _plan(["docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"])
+    authoritative = _plan(["docs/design/contracts/persistence_recovery_contract.md"])
     assert authoritative["mode"] == "full"
     assert authoritative["required"]["full_ci"] is True
     assert authoritative["review"]["codex_required"] is False
@@ -142,12 +145,6 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
     assert simulation["mode"] == "deep"
     assert simulation["required"]["runtime"] is True
 
-
-def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:
-    left = _plan(["scripts/ci_plan.py"])
-    right = _plan(["scripts/ci_plan.py"])
-    assert left["mode"] == "full"
-    assert left["plan_fingerprint"] == right["plan_fingerprint"]
 
 
 @pytest.mark.parametrize(
@@ -297,3 +294,71 @@ def test_deep_plan_cannot_reconstitute_full_python_suite_locally():
         assert report["required"][lane] is True
         assert "unavailable_reason" in checks[lane]
         assert "command" not in checks[lane]
+
+
+@pytest.mark.parametrize("path", [
+    "ops/update/applier.py", "deploy/systemd/aletheia-observer.timer",
+])
+@pytest.mark.parametrize("status", ["modified", "removed", "renamed"])
+def test_deployment_changes_keep_deep_proof_when_removed_or_moved(path, status):
+    change = PathChange("docs/references/moved.md", status, path) if status == "renamed" else PathChange(path, status)
+    report = _plan([change])
+    assert report["required"]["integration"] is True
+    assert report["required"]["specifications"] is True
+    assert report["required"]["frontend"] is False
+    assert report["required"]["native"] is False
+
+
+@pytest.mark.parametrize("path", [
+    "scripts/dev_check.py", "scripts/ci_plan.py", "scripts/ci_local.py",
+    "scripts/ci_preflight.py", "tests/test_ci_plan.py", "tests/test_ci_local.py",
+    "tests/test_dev_check.py", "tests/test_ci_preflight.py",
+    "docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md",
+])
+def test_verification_changes_use_their_own_checks_without_weakening_mixed_risk(path):
+    report = _plan([path])
+    commands = [check.get("command", []) for check in report["local_checks"]]
+    assert any("tests/test_ci_plan.py" in command for command in commands)
+    assert not any(report["required"][lane] for lane in ("python_unit", "frontend", "native", "full_ci"))
+    mixed = _plan([path, "core/aletheia/risk/engine.py"])
+    assert mixed["required"]["integration"] is True
+    assert mixed["required"]["specifications"] is True
+
+
+@pytest.mark.parametrize("path", [
+    "core/aletheia/server/routes/operator.py", "core/aletheia/gateway/operator_shell.py",
+])
+def test_operator_backend_changes_select_the_typescript_consumer(path):
+    report = _plan([path])
+    assert report["required"]["operator"] is True
+    assert report["required"]["python_unit"] is True
+    assert report["required"]["native"] is False
+
+
+def test_cli_base_diff_retains_deleted_and_renamed_deployment_owners(tmp_path, monkeypatch):
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    monkeypatch.delenv("GIT_WORK_TREE", raising=False)
+    git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+           "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+    updater = tmp_path / "ops/update/applier.py"
+    timer = tmp_path / "deploy/systemd/aletheia-observer.timer"
+    updater.parent.mkdir(parents=True)
+    timer.parent.mkdir(parents=True)
+    updater.write_text("def apply():\n    return 'update'\n")
+    timer.write_text("[Timer]\nOnBootSec=60\n")
+    for args in (["init"], ["add", "."], ["commit", "-m", "baseline"]):
+        subprocess.run([*git, *args], cwd=tmp_path, check=True, capture_output=True)
+    base = subprocess.run([*git, "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True).stdout.strip()
+    updater.rename(tmp_path / "moved.py")
+    timer.unlink()
+    for args in (["add", "-A"], ["commit", "-m", "move updater and remove timer"]):
+        subprocess.run([*git, *args], cwd=tmp_path, check=True, capture_output=True)
+    result = subprocess.run(
+        [sys.executable, str(Path(ci_plan.__file__).resolve()), "--base-ref", base],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    report = json.loads(result.stdout)
+    assert report["required"]["integration"] is True
+    assert report["required"]["specifications"] is True
+    assert {change["status"] for change in report["changed_files"]} == {"removed", "renamed"}
+    assert any(change["previous_path"] == "ops/update/applier.py" for change in report["changed_files"])

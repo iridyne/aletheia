@@ -184,16 +184,40 @@ deep evidence for that head remains unchanged.
   [documentation governance](../../../governance/policies/documentation_governance.md).
 - Commit only scoped files and publish through the normal PR workflow. Disable a broken
   workflow; do not archive the repository.
-- Run focused local regression tests proportional to the change. If the owner
-  explicitly requests a complete suite and the result cannot wait, use an
-  isolated Fedora CI/Test process in a
-  dedicated Worktree with a temporary data root, no secrets, and no execution
-  authority; never use the stable Runtime checkout or primary data. Windows is
-  not a validation dependency or fallback.
 
-  Run the Fedora fallback only inside a dedicated credential-free CI identity
-  or container which cannot read the stable Runtime root, OS keyring, provider
-  credentials, or execution credentials:
+### Select evidence by behaviour, then choose its environment
+
+There is one machine-readable verification planner: `scripts/ci_plan.py`.
+`dev_check` owns edit-time feedback only; it must not infer PR coverage or a
+Fedora exemption from changed-line keywords. `ci_local` executes the plan and
+records what actually ran. A plan is not evidence and grants no operational authority.
+
+- Select checks from the changed Contract, plausible failures and affected consumers.
+  Pure Risk or settlement logic can require deep regression without Linux-specific
+  code. The planner's existing critical lanes remain conservative defaults.
+- Development workflow prose and the local verification tools use documentation
+  governance and the verification tools' own tests, not every product stack.
+  Mixed changes retain the deeper obligations of their production changes.
+- The TS Operator is a mainline consumer, not an optional Python-test exclusion.
+  Check its suite and the affected backend interaction when changing a shared
+  interface or retiring a command. Separate green suites do not by themselves
+  prove that interaction. Frontend and native changes use their own checks.
+- Select the environment independently: systemd needs Linux service evidence;
+  migrations need representative old schemas/data; locks need actual competing
+  processes; network isolation does not prove a configured endpoint is reachable.
+  Add the smallest safe executable check of the changed behaviour to the PR evidence.
+  Missing evidence stays explicitly unverified, never an inferred pass.
+- Full regression protects against unanticipated interactions. Preserve one full
+  Python run for an owner-selected batch/release or when required by the plan;
+  a plan requiring unavailable proof blocks readiness, not authorizes a remote run.
+  Do not rerun it on every edit or partition the same full selection into repeated
+  invocations. Fedora-specific evidence and Python full regression are distinct:
+  neither replaces the other. Lack of findings in ten batches is not a reason to
+  remove a safety check; removal needs evidence of redundancy or equivalent proof.
+
+When explicitly authorized, run Fedora verification inside a dedicated
+credential-free CI identity or container which cannot read the stable Runtime
+root, OS keyring, provider credentials, or execution credentials:
 
   ```sh
   export ALETHEIA_DATA_DIR="$(mktemp -d /var/tmp/aletheia-ci.XXXXXX)"
@@ -236,6 +260,17 @@ deep evidence for that head remains unchanged.
   than from aggregate counts — "0 failures" next to a large skip count does not
   prove that a specific file passed (some files carry their own skip escapes).
 
+  Build the candidate from a **real clone**: an isolated tree without `.git`
+  metadata fails identity- and artifact-dependent tests for reasons that have
+  nothing to do with the change under test.
+
+- Verification never authorizes deployment or a shared-runtime restart. Only after
+  an owner-authorized deployment, verify the tested content against the deployed
+  identity of every affected component (including independent worker checkouts),
+  then observe the changed operation succeeding. A live process or supervisor
+  heartbeat alone does not prove Operator/worker success. Deployment evidence
+  does not establish economic qualification or authorize resetting its window.
+
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch. It may create or refresh a
   held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
@@ -249,34 +284,34 @@ deep evidence for that head remains unchanged.
 - The gateway is global: do not restart it casually or from competing worktrees.
 - Owner updates lead with outcome, consequence, and current state.
 
-### Reusing a full-proof receipt instead of re-running it
+### Evidence scope and reuse
 
-One isolated Fedora full run is the receipt for one tree. Before scheduling a
-second run for a later head, classify the delta against the receipt's tree:
+A receipt names its candidate SHA/content, environment, executed commands and
+results, including skips and checks not run. `ci_local` preserves all planned
+checks on failure and labels unexecuted product surfaces; its software checks
+never claim deployed runtime health, external connectivity or economic qualification.
+A Python full receipt means the whole `tests/` tree, not all product surfaces.
+TS Operator, frontend, native host and deployed-process behaviour require their
+own evidence. Stating an exclusion does not satisfy a required check.
+
+Before reusing evidence, compare the new candidate with the receipt's content,
+including dependencies, configuration, test changes and environment assumptions:
 
 | Delta since the receipt | What to do |
 |---|---|
-| Documentation, comments, docstrings, or test-only changes | **Reuse** the receipt for the production change and verify the delta with focused tests (a test-only commit does not invalidate a production receipt). State this explicitly in the PR/commit, naming the receipt's candidate and the extra commit. |
-| Production code, schema/migrations, Risk, execution, Gateway, trading authority, config defaults, or schedulers | **Re-run** the isolated full proof on the new head. |
-| Merge commits whose content equals the receipt's tree | **Reuse**, and say the receipt covers the content rather than the merge-commit SHA. |
+| Identical tested content, including a content-identical merge | Reuse the result and name both identities; do not relabel the original run's SHA. |
+| Only changes outside that evidence's scope with no shared dependency or interface effect | Retain the unaffected evidence and validate the delta with its own checks. State the scope and the extra commit, not that the entire new head passed the old run. |
+| Changed tested behaviour, shared dependency/interface, fixtures, selection, or environment assumptions | Invalidate the affected claim and execute the relevant current plan/checks. Required full regression must be repeated if its tested content or assumptions changed. |
+| Applicability cannot be established | Do not reuse as current proof; obtain the missing evidence safely or report the blocker. |
 
-Merging and deploying may share one receipt: merge the verified content, deploy
-that merged head, and reserve a new full run for a genuine source change. A new
-run is still required whenever the merged head contains anything from the
-"re-run" row above.
+Production-code and test-only labels are not reuse decisions. A TS-only change
+can preserve unaffected Python evidence, but never automatically qualifies the
+new TS/backend interaction. A test edit may invalidate a previous test claim.
+No automatic receipt cache or second path/keyword classifier owns these decisions.
 
-If the merged head contains production changes only outside `tests/` (for
-example TypeScript operator-shell surfaces, which the Python suite does not
-execute), the Python receipt is unaffected: verify that change with its own
-suite and, where it drives a deployed process, with the runtime evidence of
-that process.
-
-One full run covers the whole `tests/` tree — it is not narrowed to "the part
-the local loop does not run". The per-marker Fedora wall times and the reason
-(the locally-covered tier is ~13% of the run, while narrowing would split the
-no-collection-gap proof across two receipts on two operating systems) are
-recorded in
-[`CONVERGENCE_FINDINGS_2026-09-28.md` § 1j](../../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md).
+Historical timings and cross-file test interference are recorded in
+[the dated convergence findings](../../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md).
+Fix measured repetition/isolation costs before adding selective-execution machinery.
 
 ## Common commands
 
