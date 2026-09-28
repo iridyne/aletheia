@@ -3306,11 +3306,14 @@ export interface paths {
         };
         /**
          * Get Positions
-         * @description Owner-facing position read.
+         * @description Owner-facing position list read (summary projection).
          *
          *     `status` and `limit` are honored server-side. The route previously declared
          *     no parameters, so `?limit=`/`?status=` sent by the dashboard were dropped by
          *     FastAPI and every response fell back to the repository default of 50 rows.
+         *
+         *     Rows are `PositionSummaryView`s; the detail-only columns are served by
+         *     `GET /api/positions/{position_id}`.
          */
         get: operations["get_positions_api_positions_get"];
         put?: never;
@@ -3361,6 +3364,32 @@ export interface paths {
          *     has (orphaned — disappearance-evidence candidates). Never hits Bitget synchronously.
          */
         get: operations["get_positions_reconciliation_api_positions_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Position
+         * @description Owner-facing single-position read: the full row, blobs included.
+         *
+         *     Registered after `/positions/reconciliation` so that literal path keeps
+         *     precedence. This is the authoritative surface for the detail-only columns the
+         *     list projection strips (#3631) — it answers for exactly the `id` values the
+         *     list returns, so a caller can drill from a summary row into its complete
+         *     record without a second identifier space.
+         */
+        get: operations["get_position_api_positions__position_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10438,6 +10467,122 @@ export interface components {
             items: components["schemas"]["PlanningHistoryItem"][];
             /** Next Before */
             next_before: string | null;
+        };
+        /**
+         * PositionSummaryView
+         * @description List read model: `PositionView` without the per-position detail blobs.
+         *
+         *     A list row answers "which positions, in what state, at what PnL" — a blade of
+         *     200 rows cannot present 200 decision narratives, and measured on a production
+         *     payload the narrative alone was half the bytes (#3631). These columns stay in
+         *     the durable row and are served in full by `GET /api/positions/{position_id}`.
+         *
+         *     Exclusion is declared here rather than filtered in the route so the list's
+         *     OpenAPI schema and its response cannot drift apart; `exclude=True` is also
+         *     what keeps Pydantic from filling a declared-but-absent field back in as a
+         *     `null`, which would read as "no rationale recorded" instead of "not in this
+         *     read model". (`exit_reasoning` is deliberately NOT excluded: it is small and
+         *     the causal-chain view reads it from the list row for an order anchor.)
+         */
+        PositionSummaryView: {
+            /** Close Reason */
+            close_reason?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Current Price */
+            current_price?: number | null;
+            /**
+             * Direction
+             * @default long
+             */
+            direction: string;
+            /** Entry Fee */
+            entry_fee?: number | null;
+            /**
+             * Entry Price
+             * @default 0
+             */
+            entry_price: number;
+            /**
+             * Execution Mode
+             * @default paper
+             */
+            execution_mode: string;
+            /** Exit Fee */
+            exit_fee?: number | null;
+            /** Exit Reasoning */
+            exit_reasoning?: string | null;
+            /** Funding Cost */
+            funding_cost?: number | null;
+            /** Funding Source */
+            funding_source?: string | null;
+            /** Funding Status */
+            funding_status?: string | null;
+            /** Historical Accounting Method */
+            historical_accounting_method?: string | null;
+            /** Historical Accounting Pnl */
+            historical_accounting_pnl?: number | null;
+            /** Historical Accounting Reason */
+            historical_accounting_reason?: string | null;
+            /** Historical Accounting Status */
+            historical_accounting_status?: string | null;
+            /** Id */
+            id: string;
+            /** Known Economics Missing Components */
+            known_economics_missing_components?: string[] | null;
+            /** Known Gross Pnl */
+            known_gross_pnl?: number | null;
+            /** Known Net Before Unresolved Costs */
+            known_net_before_unresolved_costs?: number | null;
+            /** Leverage */
+            leverage?: number | null;
+            /** Liquidation Price */
+            liquidation_price?: number | null;
+            /**
+             * Market Type
+             * @default spot
+             */
+            market_type: string;
+            /** Opened At */
+            opened_at?: string | null;
+            /** Order Id */
+            order_id?: string | null;
+            /** Proposal Id */
+            proposal_id?: string | null;
+            /**
+             * Quantity
+             * @default 0
+             */
+            quantity: number;
+            /** Realized Pnl */
+            realized_pnl?: number | null;
+            /** Realized Pnl Complete */
+            realized_pnl_complete?: boolean | null;
+            /** Realized Pnl Unavailable Reason */
+            realized_pnl_unavailable_reason?: string | null;
+            /** Slippage Cost */
+            slippage_cost?: number | null;
+            /** Source */
+            source?: string | null;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /** Stop Price */
+            stop_price?: number | null;
+            /** Strategy Id */
+            strategy_id?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Take Profit Price */
+            take_profit_price?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
+            /** Unrealized Pnl Source */
+            unrealized_pnl_source?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * PositionView
@@ -18145,7 +18290,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PositionView"][];
+                    "application/json": components["schemas"]["PositionSummaryView"][];
                 };
             };
             /** @description Validation Error */
@@ -18195,6 +18340,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_position_api_positions__position_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -89,7 +89,8 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/proposals/{id}` | Get one proposal by id (404 when absent) |
 | POST | `/proposals/{id}/reject` | Reject proposal with reason |
 | GET | `/proposals/{id}/risk-decision` | View risk engine decision for proposal |
-| GET | `/positions` | List positions; closed rows expose only reproducible net PnL plus explicit completeness/reason fields |
+| GET | `/positions` | List positions (summary projection); closed rows expose only reproducible net PnL plus explicit completeness/reason fields. Detail-only narrative/evidence columns are omitted — see below |
+| GET | `/positions/{id}` | One position, complete: every column of the durable row, including the detail-only columns `/positions` projects away. 404 when the id is unknown |
 | GET | `/positions/reconciliation` | Local vs exchange position comparison |
 | POST | `/positions/reconcile` | Trigger position reconciliation |
 | POST | `/positions/{id}/close` | Owner-initiated manual close of one open position. External demo/testnet modes place a real exchange close order; archived or unknown modes are unavailable. `*_live_limited` returns HTTP 409 `live_position_requires_exchange_close` — close live positions from the exchange UI. Body: `{ order_type: "market"|"limit", limit_price?: number, reason?: string }`. Writes `actor=human`, `close_reason=human_manual_close` or `human_limit_exit`, keeping the attribution separate from AI exit discretion. Guarded by `_PROTECTED_METHOD_PREFIXES POST /api/positions/` when Remote Control / tunnel is enabled. |
@@ -143,6 +144,13 @@ Both the Position read model and CSV export expose signed `funding_cost`, its va
 `gross - entry_fee - exit_fee - funding_cost = realized_pnl`; incomplete futures rows keep funding blank and
 unavailable. Spot rows explicitly use `funding_cost=0` and `funding_source=not_applicable`. CSV `slippage_cost`
 remains a diagnostic execution-drag field and is not subtracted a second time from fill-based realized PnL.
+
+`GET /positions` is a **summary** projection: it omits `decision_reasoning`, `reconciliation_evidence`,
+`reconciliation_identity`, `entry_market_summary`, `last_market_signal_evidence`, and `trailing_json`. These are
+per-position narrative/evidence blobs — `decision_reasoning` alone was ~59% of a 200-row payload — and no list
+consumer renders them. `GET /positions/{id}` returns the complete row, so a caller drills from a summary row into its
+full record using the same `id`. `exit_reasoning` stays on both: it is small, and the causal-chain view reads it from
+the list row for an order anchor.
 
 ---
 
