@@ -201,6 +201,26 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 `SELECT * FROM orders|positions WHERE id=?`，而 seam 已提供 `get_order`/`get_position`（同一连接、
 同一 `_select_one`）。属于"同一问题两处实现"，但位于平仓/恢复关键路径，必须单独批次、单测覆盖后再动。
 
+## 1g. Runtime：portfolio snapshot 新鲜度判定的共享与"不该合并"的部分
+
+`agent_runtime/scheduler.py` 导出的 `PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS` 注释就写明"两个消费者应引用
+同一真相"；`risk/engine.py` 用它作为 sizing 的前置（`0 <= age <= bound` 才信任），而
+`agent_shell/operator_recommendations.py` 曾**自己硬编码 15 分钟**并用不同边界操作符比较。差异在边界
+（恰好 900 秒）以及"时间戳不可信"时两个消费者的相反结论上体现。PR #3633 只收敛**边界与信任谓词**。
+
+**明确不当作"同一问题的两种答案"：**naive 时间戳的处理是**信任策略**差异，不是重复实现：
+`utils/dt.parse_utc` 会把 naive 当作 UTC（`dt.py:14-15`），而 sizing 守卫**直接拒绝** naive
+（`risk/engine.py`：`if latest_at.tzinfo is None: return 1.0, False`）。本次让建议侧**跟从严的那一侧**
+（无法解析／naive／模糊都视为"不新鲜"），把这 4 个用例的行为变化在 PR 中列出并配测试，而不是沿用
+`parse_utc` 的假设把模糊行报成新鲜。
+
+**未来时间戳的处理选择：**会触发同一条建议，但 `stale_minutes: null` + 中性措辞——负的"分钟数"不是
+真实的面向操作员的年龄；行身份仍在 `last_snapshot_id` 中可见。若日后需要区分"时钟偏移"，应新增显式字段，
+而不是复用 `stale_minutes`。
+
+**守卫强度：**边界回归用"同一年龄在 bound=1 时触发、在 bound=900 时不触发"的翻转断言；变异检查确认把共享
+常量换回私有字面量 `900` 会让该测试失败，因此它证明的是"常量是唯一来源"，而不是"恰好 15 分钟也能过"。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
