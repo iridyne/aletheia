@@ -12,7 +12,7 @@ logger = logging.getLogger("aletheia.cli.gateway")
 
 gateway_app = typer.Typer(no_args_is_help=True)
 service_app = typer.Typer(no_args_is_help=True, help="Install and inspect the OS service backend.")
-firewall_app = typer.Typer(no_args_is_help=True, help="Inspect and configure Windows dashboard LAN access.")
+firewall_app = typer.Typer(no_args_is_help=True, help="Inspect and configure Windows dashboard LAN access (archived: Windows-only, unexercised on Linux/Fedora).")
 gateway_app.add_typer(service_app, name="service")
 gateway_app.add_typer(firewall_app, name="firewall")
 
@@ -256,7 +256,12 @@ def service_uninstall(
 
 @service_app.command(name="elevated-apply", hidden=True)
 def service_elevated_apply(request: Path = typer.Option(..., "--request")):
-    """Apply one validated Windows service transaction after UAC elevation."""
+    """Apply one validated Windows service transaction after UAC elevation.
+
+    Archived with the other platform-specific service backends: Windows-only and
+    unreachable from the Linux/Fedora runtime. See
+    docs/design/history/platform_specific_gateway_services.md.
+    """
     from aletheia.gateway.windows_machine_service import apply_elevated_request
     result = apply_elevated_request(request)
     raise typer.Exit(0 if result.get("ok") else 1)
