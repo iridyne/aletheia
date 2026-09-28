@@ -56,10 +56,11 @@ def build_candidate_selection_utility(
 
     Returns a ``CandidateSelectionUtilityV1`` whose ``admission_status`` is
     ``admitted`` or an explicit alternative (``below_floor``, ``unavailable``,
-    ``ineligible``, ``observe_only``, ``direction_conflict``) plus an
-    ``admission_basis`` of ``measured`` or ``startup``. A missing sample, a
-    measured refusal and unusable evidence are different statuses on purpose:
-    they must not be collapsed into one reject.
+    ``ineligible``, ``observe_only``, ``direction_conflict``). ``admission_basis``
+    carries ``measured`` or ``startup`` only for an admitted result and is ``None``
+    for every alternative, so "no basis recorded" is never read as an admission.
+    A missing sample, a measured refusal and unusable evidence are different
+    statuses on purpose: they must not be collapsed into one reject.
 
     Raises ``ValueError`` with a typed code when the inputs do not describe the
     same candidate / exact instrument. That is a caller bug, not an admission

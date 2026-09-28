@@ -273,18 +273,23 @@ def check_domain_6() -> list[tuple[str, bool, str]]:
     has_active = "ACTIVE" in PROTOCOL_PATH.read_text(encoding="utf-8") if exists else False
     results.append(("6.1 Protocol ACTIVE", exists and has_active, str(PROTOCOL_PATH)))
 
-    # 6.2 Experiment freeze rule: retired with Round 1. No current rule file carries
-    # it any more (CLAUDE.md is now only `@AGENTS.md`), so the item asserts the rule
-    # stays retired instead of reading a file whose content moved away.
-    rule_text = Path("AGENTS.md").read_text(encoding="utf-8")
-    freeze_reappeared = "EXPERIMENT FREEZE" in rule_text
+    # 6.2 Experiment freeze rule: this item reproduced a marker in CLAUDE.md while the
+    # Round 1 freeze was live. The freeze is retired and no live rule file carries the
+    # marker, so the historical criterion is no longer reproducible from the working
+    # tree. Reporting it as unmet (rather than inverting the assertion) keeps the
+    # reproduction honest; the evidence survives only under docs/archive/.
+    archived = Path(
+        "docs/archive/legacy/plans/strategy-research/frozen_optimization_backlog.md"
+    )
+    archived_evidence = archived.is_file() and "EXPERIMENT FREEZE" in archived.read_text(
+        encoding="utf-8"
+    )
     results.append(
         (
-            "6.2 冻结规则已退役",
-            not freeze_reappeared,
-            "live EXPERIMENT FREEZE rule reappeared in AGENTS.md"
-            if freeze_reappeared
-            else "not claimed by any current rule file",
+            "6.2 冻结规则（历史项，已退役）",
+            False,
+            "not reproducible from live files; archived evidence "
+            f"{'found' if archived_evidence else 'missing'} in {archived}",
         )
     )
 
