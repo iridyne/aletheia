@@ -290,6 +290,10 @@ supports `--execution-mode` for an explicit diagnostic override.
 `GET /market/ohlcv` preserves its historical candle-array body. The response header
 `X-Aletheia-Data-Source` is `memory_cache`, `provider_fetch`, `database_fallback`,
 or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope.
+Any latest view (`before` unset) is served through the shared TTL cache for **any**
+`limit` — the cache is keyed on (exchange, symbol, market_type, timeframe, limit),
+so two limits are two entries. Historical pages (`before > 0`) are always fetched
+fresh, since each window is distinct.
 
 ---
 

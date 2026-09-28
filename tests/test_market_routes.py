@@ -11,6 +11,13 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot, PortfolioSnapshot
 from aletheia.storage import repositories as repo
 
+# The autouse no-network fixture replaces `CCXTProvider.get_ohlcv` with a stub that
+# takes no `since`/`use_cache`. Captured here, before any fixture runs, so a test
+# that needs the real provider path can put it back.
+from extensions.data.ccxt_provider import CCXTProvider as _CCXTProvider
+
+_REAL_GET_OHLCV = _CCXTProvider.get_ohlcv
+
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
@@ -202,39 +209,88 @@ async def test_ohlcv_route_marks_memory_cache_source(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_ohlcv_route_fresh_tail_bypasses_provider_cache(client, monkeypatch):
+async def test_ohlcv_route_chart_limit_is_cached_end_to_end(client, monkeypatch):
+    """#3624 full loop, with the real provider wiring: the chart's own limit (300)
+    is a cacheable value, so the second identical request never reaches the venue.
+
+    Before the fix the route consulted the cache only for `limit == 100`, and it
+    also passed `use_cache=False` down to the provider for every other limit, so
+    the entry the route reads could never even be populated.
+    """
+    from extensions.data import ccxt_provider
+
+    monkeypatch.setattr(ccxt_provider.CCXTProvider, "get_ohlcv", _REAL_GET_OHLCV)
+
+    class _FakeExchange:
+        calls = 0
+
+        async def fetch_ohlcv(self, *_args, **_kwargs):
+            self.calls += 1
+            return [[1700000000000, 1, 2, 0.5, 1.5, 10]]
+
+    exchange = _FakeExchange()
+    provider = ccxt_provider.CCXTProvider(exchange="binance", fallback_exchange="binance")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
+    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ccxt_provider, "is_venue_available", lambda _name: True)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: provider)
+
+    first = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300")
+    second = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300")
+
+    assert first.headers["x-aletheia-data-source"] == "provider_fetch"
+    assert second.headers["x-aletheia-data-source"] == "memory_cache"
+    assert exchange.calls == 1, "the cached chart page must not hit the venue again"
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_serves_any_limit_from_cache(client):
+    """#3624: the cache was consulted only for `limit == 100`, so the chart's own
+    limit paid a provider round trip on every load. Any latest view is cacheable;
+    the key carries `limit`, so two limits are two entries."""
+    from aletheia.data.cache import get_cache
+    from aletheia.data.providers import Candle
+
+    get_cache().set(
+        "BTC/USDT", "1h", 300,
+        [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)],
+        exchange="binance", market_type="spot",
+    )
+    resp = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "memory_cache"
+    assert resp.json()[0]["close"] == 1.5
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_latest_view_leaves_provider_cache_enabled(client, monkeypatch):
+    """The latest view must not opt the provider out of its own cache when the
+    caller's limit is not 100 — the removed gate did exactly that, so the real
+    provider could never populate the entry the route reads."""
     from extensions.data import ccxt_provider
     from aletheia.data.providers import Candle
 
-    class _LiveProvider:
-        calls = 0
+    seen: list[bool] = []
 
+    class _LiveProvider:
         async def get_ohlcv(self, symbol, timeframe, limit, since=None, *, use_cache=True):
-            assert use_cache is False
-            self.calls += 1
+            seen.append(use_cache)
             return [Candle(
-                timestamp=1700000000000,
-                open=1,
-                high=2,
-                low=0.5,
-                close=1 + self.calls,
-                volume=10,
+                timestamp=1700000000000, open=1, high=2, low=0.5, close=2, volume=10,
             )]
 
         async def close(self):
             pass
 
-    provider = _LiveProvider()
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: provider)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: _LiveProvider())
 
-    first = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=2")
-    second = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=2")
+    first = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300")
+    second = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300")
 
     assert first.headers["x-aletheia-data-source"] == "provider_fetch"
     assert second.headers["x-aletheia-data-source"] == "provider_fetch"
-    assert first.json()[0]["close"] == 2
-    assert second.json()[0]["close"] == 3
-    assert provider.calls == 2
+    assert seen == [True, True]
 
 
 @pytest.mark.anyio

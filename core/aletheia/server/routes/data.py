@@ -1628,12 +1628,14 @@ async def get_market_ohlcv(
       whose open time is strictly BEFORE this timestamp — i.e. older history, used
       when the chart scrolls back. When 0 (default), return the most recent `limit`.
 
-    Caching: the TTL cache is only used for the default latest view at the default
-    limit (before unset). Historical pages (before>0) and any non-default limit are
-    fetched fresh — historical because each window is distinct, and the latest view
-    needs a live tail rather than a cached candle that would freeze the chart.
-    `X-Aletheia-Data-Source` reports memory_cache, provider_fetch, database_fallback,
-    or unavailable without changing the historical array response shape.
+    Caching: every latest view (`before` unset) goes through the shared TTL cache,
+    which is keyed on (exchange, symbol, market_type, timeframe, limit). The cache
+    used to be consulted only for `limit == 100`, so the chart's own limit paid a
+    full upstream provider round trip on every load and every symbol switch (#3624).
+    Historical pages (`before > 0`) are always fetched fresh, since each window is
+    distinct. `X-Aletheia-Data-Source` reports memory_cache, provider_fetch,
+    database_fallback, or unavailable without changing the historical array
+    response shape.
     """
     import asyncio
     import logging
@@ -1669,7 +1671,7 @@ async def get_market_ohlcv(
 
     cache = get_cache()
     cache_key = sym
-    use_cache = since_ms is None and limit == 100
+    use_cache = since_ms is None
     data_source = "memory_cache"
 
     async def _database_fallback() -> list[dict]:
