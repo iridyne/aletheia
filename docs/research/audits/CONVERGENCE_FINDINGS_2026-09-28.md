@@ -525,6 +525,34 @@ uv run pytest tests/test_serenity_workbench.py -q               # 本地：18 �
 - `diagnostics/probes/trading.py` 里的 `market_observer` 只出现在解释"该路径已退役、机会表按设计不再前进"的注释与既有 SQL 默认值中。
 - 旧 Orca worktree（`.orca-worktrees/aletheia/{data_fetch,rival_analysis}`）里仍有 `market_scan_refresh_due` 的旧副本；它们不是 master，属本地工作副本，不参与交付。
 
+## 1m. `spec`/`e2e` 层：分类已做，但没有廉价的提速空间
+
+对 `tests/specs/` 的 105 个文件复用 `tier_unit` 的分类方法（只看模块自身的顶层 import 与
+repo 扫描调用）：
+
+| 判定 | 文件数 | 依据 |
+|---|---:|---|
+| 跨边界（storage / server / httpx / sqlite / subprocess / extensions） | 84 | 自身 import 越界 |
+| 仓库扫描型（`inspect.getsource`、`rglob`、`read_text` 等） | 12 | 干净的 import，成本来自全仓扫描 |
+| 两者都不是 | 9 | |
+
+墙钟（本地 macOS）：`tier_spec` 51.3 s / 1316 passed + 6 skipped + 5 xfailed；Fedora 74.6 s。
+`tier_e2e` 在 Fedora 只有 30.3 s / 107 tests。
+
+**结论：不要把 `tier_unit` 的"重分类"配方原样套到 specs 上。** 对 `tier_unit` 而言
+`RECLASSIFY` 意味着"这条用例本来就不该占着快速层"；但 specs 是**可执行的契约载体**，
+把其中 84 个判定为"跨边界"的用例移出闸门，等于删除契约证据——那是降低验证强度，不是提速。
+唯一正当的候选是那 12 个仓库扫描型文件（可考虑跨用例缓存 AST/文件读取），本轮不改。
+
+至于局部热点：本地 `tier_spec` 的 51 s 里有约 19 s 来自同一个 parametrize 的 5 个用例
+（`spec_universe_pipeline.py::test_target_publication_failure_preserves_previous_authority`，
+每个约 3.8 s）。实测 `_setup_db` 冷启动 0.49 s、热 0.00 s，因此这 19 s 花在**真实的
+`UniverseService.refresh()` 流水线**上，而不是测试脚手架；它是"发布失败不得改写既有权威"
+的原子性证明，削它就是在削弱证据。故不改。
+
+于是 spec/e2e 这一层的结论是：**没有既合法又显著的收益**；墙钟的大头在
+`tier_integration`（Fedora 495.5 s、本地 1233.8 s，见 §1l）。
+
 ## 8. 如何复用，而不是从头再查
 
 1. 先读对应现行 Contract，再确认相关源码 owner 是否变化；未变化的边界复用本记录，
