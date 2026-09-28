@@ -1,4 +1,9 @@
-"""Windows Firewall onboarding for the LAN-facing dashboard front door.
+"""ARCHIVED (platform-specific, unmaintained) — Windows Firewall onboarding for the LAN-facing dashboard front door.
+
+Retained, not deleted, but the Linux/Fedora runtime never reaches it
+(``windows_machine_service.firewall_*`` and the CLI firewall commands are the only
+entry points, and they refuse off Windows). Treat its behaviour as unverified by
+the current runtime. See docs/design/history/platform_specific_gateway_services.md.
 
 The user-facing front door is the only port opened.  The backend worker remains
 outside this rule even though it is supervised beside the front door.  Changes

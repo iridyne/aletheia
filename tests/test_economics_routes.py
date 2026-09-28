@@ -1140,3 +1140,35 @@ async def test_pricing_returns_seeded_snapshots(client):
 async def test_viability_generation_route_is_removed(client):
     response = await client.get("/api/economics/viability")
     assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_context_summary_api_and_cli_ignore_detail_pagination(client):
+    import json
+    from typer.testing import CliRunner
+    from aletheia.cli.audit_cmd import audit_app
+    from aletheia.economics.context_artifacts import record_context_artifacts
+
+    assert record_context_artifacts(
+        run_id="large-window", caller="test", symbol=None,
+        artifacts=[{"kind": "news", "stable_id": str(i), "rendered_chars": 3,
+                    "freshness_status": "fresh"} for i in range(5001)],
+    ) == 5001
+    for include, limit in [(False, 1), (True, 1), (True, 10)]:
+        response = await client.get("/api/economics/context-artifacts", params={
+            "run_id": "large-window", "include_artifacts": str(include).lower(), "limit": limit,
+        })
+        assert response.status_code == 200
+        report = response.json()
+        assert report["artifacts"] == 5001
+        assert report["by_kind"] == {"news": {"artifacts": 5001, "rendered_chars": 15003}}
+        assert report["freshness"] == {"fresh": 5001}
+        if include:
+            assert len(report.pop("items")) == limit
+        result = CliRunner().invoke(audit_app, ["context", "--run-id", "large-window", "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == report
+    text = CliRunner().invoke(audit_app, ["context", "--run-id", "large-window"])
+    assert text.exit_code == 0
+    assert "Artifacts: 5001" in text.output
+    assert "rendered_chars=15003" in text.output

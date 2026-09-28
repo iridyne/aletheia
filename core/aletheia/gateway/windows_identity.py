@@ -1,4 +1,9 @@
-"""Resolve the current Windows account for Task Scheduler XML."""
+"""ARCHIVED (platform-specific, unmaintained) — Windows account resolution for Task Scheduler XML.
+
+Retained, not deleted. Imported at module level by ``autostart``, ``managed_service``
+and ``session_service``, so it must stay importable, but every *use* is inside a
+Windows-only branch and the Linux/Fedora runtime never calls a function here.
+See docs/design/history/platform_specific_gateway_services.md."""
 
 from __future__ import annotations
 
