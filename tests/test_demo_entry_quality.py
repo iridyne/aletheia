@@ -6,7 +6,7 @@ The live family gate remains separate. Open positions are not closed.
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import sqlite3
 from datetime import datetime, timezone

@@ -33,7 +33,6 @@ const PredictionLens = lazy(() => import('./pages/PredictionLens'))
 const Universe = lazy(() => import('./pages/Universe'))
 const Usage = lazy(() => import('./pages/Usage'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
-const PackagedUpdateBanner = lazy(() => import('./components/PackagedUpdateBanner'))
 
 const RAIL_STORAGE_KEY = 'sidebar:collapsed'
 const MOBILE_QUERY = '(max-width: 700px)'
@@ -70,7 +69,6 @@ export default function App() {
   })
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(false)
-  const [updateRequested, setUpdateRequested] = useState(false)
   const shellMarked = useRef(false)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const previewLabel = devPreviewLabel()
@@ -129,11 +127,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const timer = setTimeout(() => setUpdateRequested(true), 3000)
-    return () => clearTimeout(timer)
-  }, [])
-
-  useEffect(() => {
     if (privacyMode) document.body.classList.add('privacy-redact-mode')
     else document.body.classList.remove('privacy-redact-mode')
     return () => document.body.classList.remove('privacy-redact-mode')
@@ -146,7 +139,6 @@ export default function App() {
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
       <Suspense fallback={null}><CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /></Suspense>
-      {updateRequested && shell.data?.runtime?.mode === 'packaged' && <Suspense fallback={null}><PackagedUpdateBanner /></Suspense>}
       {sidebarOpen && <div className="sidebar-backdrop" onClick={closeSidebar} aria-hidden="true" />}
       <aside
         id="primary-navigation"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_relative_rank_shadow_bundle, list_relative_rank_shadow_batches
+from tests.helpers.repo_test_helpers import insert_relative_rank_shadow_bundle, list_relative_rank_shadow_batches
 
 from dataclasses import replace
 

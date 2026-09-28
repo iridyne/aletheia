@@ -103,7 +103,7 @@ def test_report_wires_temporal_section(monkeypatch):
         _o("ETH", -3.0, "2026-07-20T09:30:00Z"),
         _o("BTC", -4.0, "2026-07-21T15:00:00Z"),
     ]
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",

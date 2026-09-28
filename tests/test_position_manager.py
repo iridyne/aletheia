@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations

@@ -1,7 +1,7 @@
 """Unit tests for aletheia.analytics.factor_feedback."""
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_universe_asset
+from tests.helpers.repo_test_helpers import insert_universe_asset
 
 from datetime import datetime, timedelta
 from unittest.mock import patch

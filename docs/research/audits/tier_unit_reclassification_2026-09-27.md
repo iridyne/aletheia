@@ -132,7 +132,8 @@ margin is thin — the remaining ~140 clean files are the floor.
 
 ## 6. Measured `SPEED_UP` result already landed
 
-`tests/authority_writer_checks.py::assert_writer_boundary` re-parses the whole
+`tests/helpers/authority_writer_checks.py::assert_writer_boundary` (moved from
+`tests/authority_writer_checks.py` on 2026-09-28) re-parses the whole
 tree (~1.5 k files) on **every call**, and the writer-boundary tests call it
 once per owned table across four modules. `_parse_cached` memoises
 `ast.parse` on `(path, mtime_ns, size)` — no assertion changes.

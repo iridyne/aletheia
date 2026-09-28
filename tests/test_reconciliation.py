@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -37,7 +37,7 @@ def setup_env(tmp_path, monkeypatch):
 
 def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
     from aletheia.execution import reconciliation as recon
-    from tests.fill_reports import reports
+    from tests.helpers.fill_reports import reports
 
     def typed_rows(market_type):
         rows = []

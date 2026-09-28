@@ -1,7 +1,7 @@
 # L2 Per-Scanner-Family 深度校准分析
 
 > 作成日：2026-07-31
-> 工具：`scripts/shadow_threshold_calibration.py --family <name> --days 30`（新增 `--family` 参数）
+> 工具：`scripts/analysis/shadow_threshold_calibration.py --family <name> --days 30`（新增 `--family` 参数）
 > 数据范围：dev DB，30 天窗口，已结算 deduped candidates
 
 ---
@@ -164,7 +164,7 @@ Advisory: calibration_no_positive_band (L5 信号已触发)
 # 各家族独立校准
 for family in momentum short_bias derivatives mean_reversion volatility; do
     echo "=== $family ==="
-    uv run python scripts/shadow_threshold_calibration.py --family $family --days 30
+    uv run python scripts/analysis/shadow_threshold_calibration.py --family $family --days 30
 done
 ```
 

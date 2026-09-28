@@ -2,7 +2,7 @@
 
 > 作成日：2026-07-31
 > 数据范围：已结算 shadow rows（net_pnl_pct IS NOT NULL），全家族，dev DB
-> 工具：`scripts/shadow_threshold_calibration.py` + 直接 SQL 查询
+> 工具：`scripts/analysis/shadow_threshold_calibration.py` + 直接 SQL 查询
 
 ---
 
@@ -133,7 +133,7 @@ momentum                  1020     -1.155    40.4    50.5
 
 ```bash
 # 全局 30 天校准
-uv run python scripts/shadow_threshold_calibration.py --days 30
+uv run python scripts/analysis/shadow_threshold_calibration.py --days 30
 
 # Per-family（目前 CLI 不支持直接传 family；可用直接 SQL 或扩展 calibration API）
 uv run python -c "

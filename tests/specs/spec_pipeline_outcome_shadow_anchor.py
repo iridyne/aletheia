@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import list_outcome_hook_jobs
+from tests.helpers.repo_test_helpers import list_outcome_hook_jobs
 
-from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+from tests.helpers.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

@@ -79,7 +79,7 @@ sed -n '9229p' core/aletheia/storage/migrations.py       # def run_migrations(
 **验收命令**
 
 ```
-uv run python scripts/dev_check.py
+uv run python scripts/ci/dev_check.py
 ```
 
 **Contract Delta**：`NONE`。**SDD Depth**：无（不产生改动）。
@@ -219,7 +219,7 @@ worktree 上复现证实，与本计划的任何改动无关。两个互不相�
 **验收命令**
 
 ```
-uv run python scripts/dev_check.py
+uv run python scripts/ci/dev_check.py
 uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py -q
 ```
 
@@ -254,7 +254,7 @@ uv run pytest tests/specs/spec_pipeline_middle_state_integrity.py -q
 **验收命令**
 
 ```
-uv run python scripts/dev_check.py
+uv run python scripts/ci/dev_check.py
 uv run pytest tests/test_profit_gradient_evidence.py -q
 ```
 
@@ -337,7 +337,7 @@ grep -rn "cfg\.risk\.max_\|cfg\.risk\.starting_capital_usdt\|cfg\.risk\.max_dail
 验收：
 
 ```
-uv run python scripts/dev_check.py
+uv run python scripts/ci/dev_check.py
 uv run pytest tests/ -q -k "settings or risk_config or risk_policy"
 ```
 
@@ -394,7 +394,7 @@ diff，不可评审，且回归风险远超收益。
 **验收命令**
 
 ```
-uv run python scripts/check_docs.py
+uv run python scripts/ci/check_docs.py
 ```
 
 ---
@@ -451,9 +451,9 @@ observation Main 库 ↔ Lab 库（`migrations.py:4489` `retire_legacy_experimen
 | 3b | `uv run pytest tests/ -q -k "settings or risk_config or risk_policy"` | exit 0 | 未执行 —— 已降级为可选（见 Phase 3b） |
 | 3c | 需 Owner 批准后单独定义 | — | 未执行 —— 不建议现在做（见 Phase 3c） |
 | 4 | — | — | 已撤回，见 Phase 4 |
-| 5 | `uv run python scripts/check_docs.py` | exit 0 | ✅ exit 0 |
+| 5 | `uv run python scripts/ci/check_docs.py` | exit 0 | ✅ exit 0 |
 
-全部完成后跑一次 `uv run python scripts/ci_preflight.py`（或仓库当前的 PR 级 gate）再开 PR。
+全部完成后跑一次 `uv run python scripts/ci/ci_preflight.py`（或仓库当前的 PR 级 gate）再开 PR。
 
 **不允许**为了让验收变绿而放宽断言、跳过测试、加 `xfail`、或改 `dev_check.py` / `check_docs.py` 本身。
 

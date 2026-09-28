@@ -17,7 +17,7 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
 
-    from tests.model_http import mock_model_probe
+    from tests.helpers.model_http import mock_model_probe
 
     mock_model_probe(monkeypatch)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)

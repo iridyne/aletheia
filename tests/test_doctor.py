@@ -610,7 +610,7 @@ def test_filter_evidence_net_complete_requires_temporal_validity(tmp_path, monke
 def test_recent_failures_reads_agent_runs_using_current_columns(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
 
     started_at = _iso_ago(30)
     ended_at = _iso_ago(20)
@@ -639,7 +639,7 @@ def test_recent_failures_reads_agent_runs_using_current_columns(tmp_path, monkey
 def test_recent_failures_excludes_completed_runs_with_empty_error_lists(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
 
     insert_agent_run(
         AgentRun(
@@ -675,7 +675,7 @@ def test_recent_failures_excludes_completed_runs_with_empty_error_lists(tmp_path
 def test_recent_failures_filters_active_rows_before_limit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
 
     active_statuses = ["queued", "running", "queued", "cancel_requested"]
     for index in range(20):
@@ -1999,7 +1999,7 @@ def test_candidate_planning_read_failure_is_unavailable(monkeypatch):
 def test_retired_skip_evidence_does_not_warn_about_current_planning(tmp_path, monkeypatch):
     from aletheia.storage.models import PiDecision
     from aletheia.storage.repositories import insert_pi_decision
-    from tests.fixtures.repo_test_helpers import list_pi_decisions
+    from tests.helpers.repo_test_helpers import list_pi_decisions
 
     setup_env(tmp_path, monkeypatch)
     insert_pi_decision(PiDecision(

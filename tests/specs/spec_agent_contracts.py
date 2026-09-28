@@ -289,7 +289,7 @@ def test_scheduler_job_wrappers_have_try_except():
 )
 def test_registered_scheduler_jobs_record_swallowed_failures():
     import ast
-    from tests.module_source import ROOT, seam_modules
+    from tests.helpers.module_source import ROOT, seam_modules
 
     source = "core/aletheia/agent_runtime/scheduler.py"
     trees = [

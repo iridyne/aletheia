@@ -150,7 +150,7 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
         async def get_open_interest_observation(self, _symbol):
             return None
 
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = Exchange()
     feature = await _fetch_single_feature(
         exchange,

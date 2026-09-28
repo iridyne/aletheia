@@ -44,7 +44,7 @@ npm run build
 uv run pytest tests/test_frontend_runtime_comm.py -q
 # 9 passed
 
-uv run python scripts/check_docs.py
+uv run python scripts/ci/check_docs.py
 # passed
 
 git diff --check

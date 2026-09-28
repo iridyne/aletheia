@@ -38,7 +38,7 @@ def test_story_repository_boundary_rejects_nonprefix_writers_and_aliases(tmp_pat
 
 
 def test_nonexported_seam_callback_cannot_mask_missing_local_failure_telemetry(tmp_path, monkeypatch):
-    from tests import module_source
+    from tests.helpers import module_source
     from tests.specs.spec_agent_contracts import test_registered_scheduler_jobs_record_swallowed_failures
 
     directory = tmp_path / "core/aletheia/agent_runtime"

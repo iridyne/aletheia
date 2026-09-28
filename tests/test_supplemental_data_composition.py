@@ -1,6 +1,6 @@
 """Optional supplements cannot become Core boot or settlement requirements."""
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import asyncio
 import ast

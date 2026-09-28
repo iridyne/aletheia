@@ -100,7 +100,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         async def get_ohlcv_observation(
             self, instrument, *, timeframe="1h", limit=100, use_cache=False,
         ):
-            from tests.ohlcv_test_helpers import observation_reader
+            from tests.helpers.ohlcv_test_helpers import observation_reader
 
             return await observation_reader(self.exchange)(
                 instrument, timeframe=timeframe, limit=limit, use_cache=use_cache,
@@ -565,7 +565,7 @@ async def test_live_funding_override_requires_finite_rate(
                 },
             }
 
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = Exchange()
     feature = await _fetch_single_feature(
         exchange,
@@ -619,7 +619,7 @@ async def test_last_price_uses_scan_time_ticker_not_stale_candle_close(
         ticker = {"quoteVolume": 1_000_000}
         if last is not _MISSING:
             ticker["last"] = last
-        from tests.ohlcv_test_helpers import observation_reader
+        from tests.helpers.ohlcv_test_helpers import observation_reader
 
         exchange = Exchange()
         return await _fetch_single_feature(
@@ -723,7 +723,7 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
                 "fact": {"availability": "available", "value": 123.0},
             }
 
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = Exchange()
     snapshots = []
     feature = await features._fetch_single_feature(
@@ -787,7 +787,7 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
             end = int(now.timestamp() * 1000) // interval * interval
             return [[end - i * interval, 100, 101, 99, 100, 1000] for i in range(limit - 1, -1, -1)]
 
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = Exchange()
     ohlcv = observation_reader(exchange)
     for market in ("spot", "perp"):

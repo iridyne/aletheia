@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.module_source import module_source
+from tests.helpers.module_source import module_source
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent

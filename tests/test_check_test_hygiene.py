@@ -1,4 +1,4 @@
-"""Tests for scripts/check_test_hygiene.py (#3471 candidate 1).
+"""Tests for scripts/ci/check_test_hygiene.py (#3471 candidate 1).
 
 Each rule is proven by a counterexample that must fire and a legitimate pattern
 that must stay green, plus one repository-wide assertion: the current test corpus
@@ -7,7 +7,7 @@ is hygiene-clean, so a new dead skip/xfail or data-guarded silent pass fails her
 
 from __future__ import annotations
 
-import scripts.check_test_hygiene as hygiene
+import scripts.ci.check_test_hygiene as hygiene
 
 LEGIT_SOURCE = '''
 import pytest

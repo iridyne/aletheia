@@ -84,7 +84,7 @@ def test_report_wires_streaks_section(monkeypatch):
         {"symbol": "ETH", "strategy_id": "s1", "close_reason": "sl",
          "realized_pnl": -1.0, "closed_at": "2026-07-20T12:00:00"},
     ]
-    import performance_report as pr
+    from scripts.analysis import performance_report as pr
 
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",

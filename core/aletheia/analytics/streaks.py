@@ -11,7 +11,7 @@ order -- and it answers the questions a totals-only report cannot:
 * what is the current (trailing) streak and how long has it run?
 
 All functions are pure and need no database, so they are trivially unit-testable
-and are reused directly by ``performance_report.py``.
+and are reused directly by ``scripts/analysis/performance_report.py``.
 """
 from __future__ import annotations
 

@@ -719,7 +719,7 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
     from extensions.exchanges.bitget.profile import BitgetUTAV3Profile, BitgetUTAV3LiveProfile
     from tests.uta.test_ccxt_adapter import FakeExchange, _identity as profile_identity, _install
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
 
     profile_type = dict(binance_testnet=BinanceTestnetProfile, binance_live_limited=BinanceLiveProfile,
                         okx_demo=OKXDemoProfile, okx_live_limited=OKXLiveProfile,

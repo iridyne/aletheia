@@ -593,7 +593,7 @@ repo 扫描调用）：
 | Observation Worker 漂移/停摆信号 | 无（部署输出还说 continuity verified） | 出现 `observation-worker-checkout-drift`（worker 停在 `f6a19f13`，运行时已到 `0e4a2e1f`） |
 | 合法命令被拒的行为建议 | 保留 | 保留（`command-center-behavior:set_symbol_observe_only` 仍在） |
 
-一次性历史清理（`scripts/retire_fixed_operator_failures.py`，默认 dry-run、可复跑）：
+一次性历史清理（`scripts/maintenance/retire_fixed_operator_failures.py`，默认 dry-run、可复跑）：
 
 ```
 retire candidates before 2026-09-28T07:00:00Z: 609

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.config.schema import AletheiaConfig
-from tests.live_identity import bind_live_identity
+from tests.helpers.live_identity import bind_live_identity
 
 
 def _config(monkeypatch, broker: str):
