@@ -159,11 +159,20 @@ def list_context_artifacts(*, days: int = 7, run_id: str | None = None, limit: i
 
 
 def summarize_context_artifacts(*, days: int = 7, run_id: str | None = None) -> dict[str, Any]:
-    """Aggregate context usage without exposing rendered text."""
-    records = list_context_artifacts(days=days, run_id=run_id, limit=5_000)
+    """Stream one complete-window snapshot without loading text or detail JSON."""
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    db = ensure_economics_schema()
+    records = db.execute(
+        "SELECT kind, rendered_chars, freshness_status FROM llm_context_artifacts "
+        "WHERE created_at >= ? AND created_at <= ?" + (" AND run_id = ?" if run_id else ""),
+        (start.isoformat(), end.isoformat(), run_id) if run_id else (start.isoformat(), end.isoformat()),
+    )
+    total = 0
     by_kind: dict[str, dict[str, int]] = {}
     freshness: dict[str, int] = {}
     for record in records:
+        total += 1
         bucket = by_kind.setdefault(record["kind"], {"artifacts": 0, "rendered_chars": 0})
         bucket["artifacts"] += 1
         try:
@@ -172,4 +181,4 @@ def summarize_context_artifacts(*, days: int = 7, run_id: str | None = None) -> 
             logger.debug("context_artifacts: rendered_chars aggregation failed for one record; other fields still summarized", exc_info=True)
         status = record["freshness_status"]
         freshness[status] = freshness.get(status, 0) + 1
-    return {"schema_version": _SCHEMA_VERSION, "artifacts": len(records), "by_kind": by_kind, "freshness": freshness}
+    return {"schema_version": _SCHEMA_VERSION, "artifacts": total, "by_kind": by_kind, "freshness": freshness}
