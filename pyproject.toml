@@ -119,6 +119,10 @@ line-length = 120
 # (style preferences), F401 (unused import — trust-boundary files use intentional
 # re-exports), F841 (unused variable — protective assignments), F402 (import
 # shadowed by loop var — one legitimate instance).
+# RUF001/002/003 are NOT listed here: the gate that runs them suppresses its
+# own noise floor (see EXTEND_IGNORE in scripts/ci/dev_check.py), so a bare
+# `ruff check` still reports homoglyph risk in code while the changed-file gate
+# stays quiet about Chinese prose punctuation.
 select = ["E", "F"]
 ignore = ["E501", "E402", "E702", "E731", "E741", "F401", "F841", "F402"]
 

@@ -25,7 +25,7 @@ def _db():
 
 
 def check_domain_1() -> list[tuple[str, bool, str]]:
-    """决策引擎(System Operator)"""
+    """决策引擎（System Operator）"""
     results = []
     conn = _db()
     cur = conn.cursor()
@@ -286,7 +286,7 @@ def check_domain_6() -> list[tuple[str, bool, str]]:
     )
     results.append(
         (
-            "6.2 冻结规则(历史项,已退役)",
+            "6.2 冻结规则（历史项，已退役）",
             False,
             "not reproducible from live files; archived evidence "
             f"{'found' if archived_evidence else 'missing'} in {archived}",
