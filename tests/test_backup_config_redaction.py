@@ -95,7 +95,7 @@ def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
         yaml.safe_dump({
             "market_data": {"coinalyze_api_key": "GLOBALSENTINEL_XYZ"},
             "network": {"proxy_url": "http://usr:GLOBALSENTINEL_XYZ@host:80"},
-            "webhook": {"secret": "WEBHOOK_SENTINEL", "enabled": True},
+            "webhook": {"secret": "WEBHOOK_SENTINEL", "enabled": True, "url": "https://example.invalid/hook"},
         }),
         encoding="utf-8",
     )
@@ -114,3 +114,11 @@ def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
     result = _unpack_config(archive)
     assert result["config"]["webhook"]["enabled"] is True
     assert result["manifest"]["config_status"] == "redacted"
+    from ops.backup.restore import RestoreService
+    from aletheia.config.schema import WebhookConfig
+
+    restored = tmp_path / "restored"
+    outcome = RestoreService().restore(archive, restored)
+    assert outcome.success, outcome.errors
+    config = yaml.safe_load((restored / "config.yaml").read_text())
+    assert not WebhookConfig.model_validate(config["webhook"]).secret
