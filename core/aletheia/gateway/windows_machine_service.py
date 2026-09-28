@@ -1,4 +1,9 @@
-"""Optional Windows Service backend with UAC-owned installation transactions."""
+"""Windows machine-service control backend.
+
+Installation was removed with the packaged Runtime lane: the service could only be
+installed from a frozen payload, which is no longer built. Inspecting, controlling
+and removing an existing install remain, as do the LAN firewall helpers.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 
 logger = logging.getLogger("aletheia.gateway.windows_machine_service")
 import uuid
@@ -24,13 +28,9 @@ from pathlib import Path
 from aletheia.config.loader import get_data_dir
 from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs
-from aletheia.packaged_process import is_frozen_runtime
 
 SERVICE_ID = "AletheiaGateway"
 SERVICE_NAME = "Aletheia Gateway"
-WINSW_VERSION = "2.12.0"
-WINSW_URL = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe"
-WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
 
 
 def _program_data() -> Path:
@@ -81,51 +81,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _runtime_is_service_safe(executable: Path | None = None) -> bool:
-    executable = (executable or Path(sys.executable)).resolve()
-    if not is_frozen_runtime() or executable.suffix.lower() != ".exe":
-        return False
-    allowed_roots = [
-        Path(value).resolve()
-        for value in (
-            os.environ.get("ProgramFiles"),
-            os.environ.get("ProgramW6432"),
-            os.environ.get("ProgramData"),
-        )
-        if value
-    ]
-    return any(executable == root or root in executable.parents for root in allowed_roots)
-
-
-def _build_winsw_xml(*, executable: Path | None = None) -> str:
-    executable = (executable or Path(sys.executable)).resolve()
-    root = ET.Element("service")
-    for tag, text in (
-        ("id", SERVICE_ID),
-        ("name", SERVICE_NAME),
-        ("description", "Aletheia machine Gateway service"),
-        ("executable", str(executable)),
-        ("arguments", "__packaged_gateway_runner --no-browser"),
-        ("workingdirectory", str(executable.parent)),
-        ("stoptimeout", "30 sec"),
-        ("resetfailure", "1 hour"),
-        ("logpath", str(machine_data_dir() / "logs")),
-    ):
-        ET.SubElement(root, tag).text = text
-    ET.SubElement(root, "env", {"name": "ALETHEIA_DATA_DIR", "value": str(machine_data_dir())})
-    account = ET.SubElement(root, "serviceaccount")
-    ET.SubElement(account, "username").text = r"NT AUTHORITY\LocalService"
-    ET.SubElement(root, "onfailure", {"action": "restart", "delay": "60 sec"})
-    ET.SubElement(root, "onfailure", {"action": "restart", "delay": "60 sec"})
-    ET.SubElement(root, "onfailure", {"action": "none"})
-    log = ET.SubElement(root, "log", {"mode": "roll-by-size"})
-    ET.SubElement(log, "sizeThreshold").text = "10485760"
-    ET.SubElement(log, "keepFiles").text = "5"
-    return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
-
-
 def _run(args: list[str], *, timeout: float = 60.0):
     proc = subprocess.run(args, capture_output=True, timeout=timeout, **_no_window_kwargs())
     proc.stdout = decode_console(proc.stdout)
@@ -165,16 +120,15 @@ def status() -> dict:
         partial = wrapper_path().exists() or config_path().exists()
         return _result(
             installed=False, owned=not partial, config_valid=not partial,
-            reason="partial_install" if partial else ("packaged_runtime_required" if not _runtime_is_service_safe() else None),
-            install_supported=_runtime_is_service_safe(),
+            reason="partial_install" if partial else None,
+            install_supported=False,
         )
     if exists is None:
         return _result(installed=None, enabled=None, running=False, reason=detail or "service_query_error")
     try:
         config_valid = (
             wrapper_path().is_file()
-            and _sha256(wrapper_path()) == WINSW_SHA256
-            and config_path().read_text(encoding="utf-8") == _build_winsw_xml()
+            and config_path().is_file()
         )
     except Exception as exc:
         logger.warning("windows_machine_service: installed config validation unavailable (%s)", type(exc).__name__)
@@ -183,31 +137,9 @@ def status() -> dict:
         installed=True, enabled=enabled, running=running,
         owned=detail != "ownership_conflict", config_valid=config_valid,
         reason=(detail or ("config_drift" if not config_valid else None)),
-        install_supported=_runtime_is_service_safe(),
+        install_supported=False,
         credentials_provisioned=(machine_data_dir() / "config.yaml").exists(),
     )
-
-
-def _cached_wrapper() -> Path:
-    return get_data_dir() / "service" / "cache" / f"WinSW-x64-{WINSW_VERSION}.exe"
-
-
-def _download_wrapper() -> Path:
-    target = _cached_wrapper()
-    if target.is_file() and _sha256(target) == WINSW_SHA256:
-        return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temp = target.with_suffix(target.suffix + ".download")
-    request = urllib.request.Request(WINSW_URL, headers={"User-Agent": "Aletheia-Service-Installer/1"})
-    with urllib.request.urlopen(request, timeout=60) as response, temp.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-    if _sha256(temp) != WINSW_SHA256:
-        temp.unlink(missing_ok=True)
-        raise ValueError("WinSW checksum mismatch")
-    os.replace(temp, target)
-    return target
-
-
 def _request_dir() -> Path:
     return get_data_dir() / "service" / "requests"
 
@@ -234,10 +166,8 @@ def _write_request(
 
 
 def _elevated_launcher() -> tuple[Path, list[str]]:
-    """Resolve a CLI entrypoint that works for packaged and source runtimes."""
+    """Resolve the CLI entrypoint used for an elevated operation."""
     executable = Path(sys.executable).resolve()
-    if is_frozen_runtime():
-        return executable, []
     cli = executable.with_name("aletheia.exe")
     if cli.is_file():
         return cli.resolve(), []
@@ -341,44 +271,8 @@ def _apply_acls() -> None:
         ])
         if proc.returncode != 0:
             raise RuntimeError("ACL application failed")
-
-
-def _apply_install(payload: dict) -> dict:
-    source = Path(payload.get("wrapper") or "").resolve()
-    executable = Path(payload.get("executable") or "").resolve()
-    if source.name != f"WinSW-x64-{WINSW_VERSION}.exe" or not source.is_file() or _sha256(source) != WINSW_SHA256:
-        return _result(ok=False, reason="wrapper_verification_failed")
-    if executable != Path(sys.executable).resolve() or not _runtime_is_service_safe(executable):
-        return _result(ok=False, reason="packaged_runtime_required")
-    service_root().mkdir(parents=True, exist_ok=True)
-    (machine_data_dir() / "logs").mkdir(parents=True, exist_ok=True)
-    installed_wrapper = wrapper_path()
-    installed_config = config_path()
-    try:
-        shutil.copy2(source, installed_wrapper)
-        if _sha256(installed_wrapper) != WINSW_SHA256:
-            raise RuntimeError("installed wrapper checksum mismatch")
-        installed_config.write_text(_build_winsw_xml(executable=executable), encoding="utf-8")
-        proc = _run([str(installed_wrapper), "install"])
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or proc.stdout or "WinSW install failed")[:200])
-        sid = _run(["sc.exe", "sidtype", SERVICE_ID, "unrestricted"])
-        if sid.returncode != 0:
-            raise RuntimeError("service SID configuration failed")
-        _apply_acls()
-    except Exception as exc:
-        try:
-            _run([str(installed_wrapper), "uninstall"], timeout=30)
-        except Exception:
-            logger.warning("windows_machine_service: rollback uninstall after failed install also failed; service may remain partially installed", exc_info=True)
-        installed_wrapper.unlink(missing_ok=True)
-        installed_config.unlink(missing_ok=True)
-        return _result(ok=False, reason="partial_install", detail=str(exc)[:200])
-    return _result(ok=True, installed=True, enabled=False, owned=True, config_valid=True, credentials_provisioned=False)
-
-
 def _apply_simple(operation: str) -> dict:
-    if not wrapper_path().is_file() or _sha256(wrapper_path()) != WINSW_SHA256:
+    if not wrapper_path().is_file() or not config_path().is_file():
         return _result(ok=False, reason="wrapper_verification_failed")
     current = status()
     if current.get("owned") is False:
@@ -413,8 +307,6 @@ def apply_elevated_request(request_path: Path) -> dict:
             payload = json.loads(request_path.read_text(encoding="utf-8"))
             if payload.get("version") != 1 or not re.fullmatch(r"[0-9a-f]{32}", payload.get("nonce", "")):
                 result = _result(ok=False, reason="invalid_elevation_request")
-            elif payload.get("operation") == "install":
-                result = _apply_install(payload)
             elif payload.get("operation") in {"start", "stop", "enable", "disable", "uninstall"}:
                 result = _apply_simple(payload["operation"])
             elif payload.get("operation") in {"firewall_enable_lan", "firewall_disable_lan"}:
@@ -425,25 +317,6 @@ def apply_elevated_request(request_path: Path) -> dict:
         result = _result(ok=False, reason="elevated_apply_failed", detail=type(exc).__name__)
     result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     return result
-
-
-def install(*, elevate: bool = True) -> dict:
-    if platform.system() != "Windows":
-        return _result(supported=False, ok=False, reason=f"unsupported_platform:{platform.system().lower()}")
-    if platform.machine().lower() not in {"amd64", "x86_64"}:
-        return _result(ok=False, reason="unsupported_architecture")
-    if not _runtime_is_service_safe():
-        return _result(ok=False, reason="packaged_runtime_required")
-    current = status()
-    if current.get("installed"):
-        return {**current, "ok": current.get("owned") is True and current.get("config_valid") is True}
-    try:
-        asset = _download_wrapper()
-    except Exception as exc:
-        return _result(ok=False, reason="wrapper_download_failed", detail=str(exc)[:200])
-    return _elevated("install", wrapper=asset, elevate=elevate)
-
-
 def start(*, elevate: bool = True) -> dict:
     return _elevated("start", elevate=elevate)
 

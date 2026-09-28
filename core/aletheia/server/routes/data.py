@@ -1115,7 +1115,7 @@ def get_trades(entry_plan_id: str | None = None):
 @router.get("/trades/export")
 def export_trades(
     fmt: str = Query(default="csv", pattern="^csv$"),
-    limit: int = Query(default=5000, le=50000),
+    limit: int = Query(default=5000, ge=1, le=50000),
     execution_mode: str | None = Query(default=None),
 ):
     """Export closed positions as CSV for tax/PnL reporting.
@@ -3015,7 +3015,7 @@ def promote_serenity_theme(theme_id: str):
 def list_serenity_claims(
     run_id: str | None = Query(None),
     price_relevant: bool | None = Query(None),
-    limit: int = Query(200, le=500),
+    limit: int = Query(200, ge=1, le=500),
 ):
     _ensure_db()
     items = repo.list_serenity_claims(run_id=run_id, price_relevant=price_relevant, limit=limit)
@@ -3023,7 +3023,7 @@ def list_serenity_claims(
 
 
 @router.get("/serenity/themes/{theme_id}/claims")
-def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, le=500)):
+def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, ge=1, le=500)):
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:

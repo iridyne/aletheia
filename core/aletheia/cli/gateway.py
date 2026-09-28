@@ -225,10 +225,15 @@ def service_status():
 
 @service_app.command(name="install")
 def service_install(
-    backend: str = typer.Option("session", "--backend", help="session or windows-service"),
+    backend: str = typer.Option("session", "--backend", help="session"),
     elevate: bool = typer.Option(True, "--elevate/--no-elevate", help="Use Windows UAC for machine-scope changes."),
 ):
-    """Install a disabled persistent service definition."""
+    """Install a disabled persistent service definition.
+
+    The Windows machine-service backend is no longer installable: it required a
+    frozen payload, which is not built any more. An install that already exists can
+    still be inspected, controlled and removed through `--backend windows-service`.
+    """
     from aletheia.gateway import service_control
     _service_result(
         service_control.install(backend=backend, elevate=elevate, source="cli"),

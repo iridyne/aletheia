@@ -306,6 +306,13 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
     The returned mapping keeps the historical four-tuple lookup for simple,
     unscoped fixtures and adds five-/six-tuple keys for account fingerprints and
     broker Position identities. ``None`` is an intentional ambiguity marker.
+
+    Cache leniency: "stale" (age-only) and "error" (partial read) caches are
+    still used for uPnL matching. Exchange uPnL (which includes funding fees
+    and mark-price basis) is more accurate than the local (price-entry)*qty
+    estimate even when slightly stale. Only "generation_mismatch" (identity
+    changed) and "unconfigured" (no exchange) are hard rejections, since those
+    make the cached identity keys untrustworthy.
     """
     try:
         from aletheia.data.symbols import to_canonical
@@ -318,7 +325,10 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
             for identity in build_uta_registry().configured_identities()
         )
         cached = exchange_sync.get_unified_cached_state()
-        if exchange_sync.status_for(cached) != "ok":
+        if cached is None or cached.get("cache_error") == "invalid_cache":
+            return {}
+        cache_status = exchange_sync.status_for(cached)
+        if cache_status in {"generation_mismatch", "unconfigured"}:
             return {}
         for position in (cached or {}).get("positions") or []:
             symbol = to_canonical(position.get("symbol", ""))
@@ -411,25 +421,27 @@ def _select_exchange_upnl(
     local_match_count: int,
     local_identity_match_count: int,
 ) -> tuple[float | None, str]:
-    """Select one exchange value and return its owner-facing match status."""
+    """Select one exchange value and return its owner-facing match status.
+
+    Returns "exchange_exact" when the exchange value is uniquely attributable.
+    Returns "ambiguous" when data exists for this instrument but is contested.
+    Returns "unavailable" in all other cases (no exchange data, or data cannot
+    be attributed to this account). Never returns "local_estimate" — callers
+    that need a number must use the exchange value or show nothing.
+    """
+    has_base = _index_has_base(index, base)
     if broker_position_id:
         if local_identity_match_count != 1:
-            return (
-                None,
-                "ambiguous" if _index_has_base(index, base) else "unavailable",
-            )
+            return None, "ambiguous" if has_base else "unavailable"
         for fingerprint in (account_fingerprint, ""):
             key = (*base, fingerprint, broker_position_id)
             if key in index:
                 value = index[key]
                 return value, "exchange_exact" if value is not None else "ambiguous"
-        return None, "ambiguous" if _index_has_base(index, base) else "unavailable"
+        return None, "ambiguous" if has_base else "unavailable"
 
     if local_match_count != 1:
-        return (
-            None,
-            "ambiguous" if _index_has_base(index, base) else "unavailable",
-        )
+        return None, "ambiguous" if has_base else "unavailable"
 
     for fingerprint in (account_fingerprint, ""):
         key = (*base, fingerprint)
@@ -445,9 +457,11 @@ def _select_exchange_upnl(
 def mark_positions_to_market(persist: bool = False) -> list[dict]:
     """Compute unrealized PnL on current external-account open positions.
 
-    Prefers exchange uPnL (includes funding fees and mark-price basis) when the
-    exchange cache is available. Falls back to the local (price - entry) * qty
-    estimate only when the cache is absent or the position has no exchange match.
+    Uses exchange uPnL (includes funding fees and mark-price basis) when the
+    exchange cache contains an exact match for the position. When no exchange
+    data is available, unrealized_pnl is None and unrealized_pnl_source is
+    "unavailable" — the local (price - entry) * qty estimate is not used
+    because it systematically omits funding fees and mark-price divergence.
 
     When persist=False (default, used by GET /api/portfolio), only computes in
     memory — no DB writes, no WAL lock contention with scheduler threads.
@@ -515,7 +529,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             norm_dir,
         )
         account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(p)
-        upnl_source = "local_estimate"
+        upnl_source = "unavailable"
         exc_val = None
         if market_type is not None and identity_valid and exc_upnl_index is not None:
             exc_val, upnl_source = _select_exchange_upnl(
@@ -529,14 +543,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
                     0,
                 ),
             )
-        elif not identity_valid or exc_upnl_index is None:
-            upnl_source = "unavailable"
-        if exc_val is not None:
-            upnl = exc_val
-        elif direction in ("long", "buy"):
-            upnl = (price - entry) * qty
-        else:
-            upnl = (entry - price) * qty
+        upnl = exc_val  # None when unavailable/ambiguous; exact float when exchange_exact
         if persist:
             _persist_fields: dict = {"unrealized_pnl": upnl, "unrealized_pnl_source": upnl_source}
             if exact_mark is not None:
@@ -1433,7 +1440,7 @@ def _compute_portfolio(
     if selected_mode:
         positions = [p for p in positions if p["execution_mode"] == selected_mode]
 
-    total_unrealized = sum(p["unrealized_pnl"] for p in positions)
+    total_unrealized = sum((p.get("unrealized_pnl") or 0.0) for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
     today_closed = _closed_today(selected_mode)
     total_today_realized, today_realized_unavailable_count = _complete_realized_total(today_closed)
@@ -1648,7 +1655,7 @@ def compute_and_store_snapshot(execution_mode: str) -> PortfolioSnapshot:
         raise ValueError("unsupported portfolio snapshot execution mode")
     summary = compute_portfolio(execution_mode=execution_mode, persist_marks=True)
     mode_positions = [p for p in summary.get("positions", []) if p.get("execution_mode") == execution_mode]
-    local_unrealized = sum(p.get("unrealized_pnl", 0) for p in mode_positions)
+    local_unrealized = sum((p.get("unrealized_pnl") or 0.0) for p in mode_positions)
     local_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in mode_positions)
     snap = PortfolioSnapshot(
         total_value_usdt=round(local_notional, 4),

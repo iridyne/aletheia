@@ -88,16 +88,11 @@ def test_frontend_operator_native_do_not_pull_unrelated_stacks() -> None:
     assert frontend["mode"] == "affected"
     assert frontend["required"]["frontend"] is True
     assert frontend["required"]["python_unit"] is False
-    assert frontend["required"]["native"] is False
     assert ["npm", "run", "build"] in [check["command"] for check in frontend["local_checks"]]
 
     operator = _plan(["operator-shell/src/main.ts"])
     assert operator["required"]["operator"] is True
     assert operator["required"]["frontend"] is False
-
-    native = _plan(["native/aletheia-host/src/main.rs"])
-    assert native["required"]["native"] is True
-    assert native["required"]["python_unit"] is False
 
 
 def test_shared_contract_propagates_to_dependents() -> None:

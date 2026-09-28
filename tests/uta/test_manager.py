@@ -7,6 +7,8 @@ import pytest
 from aletheia.config.schema import ExchangeConfig
 from aletheia.uta.manager import (
     DEFAULT_UNIFIED_EXECUTION_MODES,
+    _PER_EXCHANGE_READ_TIMEOUT_SEC,
+    _read_selected_account,
     get_unified_state,
 )
 from aletheia.uta.models import (
@@ -155,6 +157,90 @@ async def test_uta_v1_zero_projection_uses_no_legacy_client(monkeypatch):
     assert state.connected_brokers == ["okx_demo"]
     assert state.accounts[0]["identity"]["credential_generation"] == 7
     assert adapter.connected is True and adapter.closed is True
+
+
+# ---------- per-exchange timeout + retry ----------
+
+class _HangingAdapter(FakeUTAAdapter):
+    """Hangs on connect until cancelled, simulating a stuck TCP socket."""
+
+    async def connect(self):
+        await asyncio.sleep(9999)
+
+
+class _FailOnceAdapter(FakeUTAAdapter):
+    """Raises on the first call to connect; succeeds on all subsequent calls."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._calls = 0
+
+    async def connect(self):
+        self._calls += 1
+        if self._calls == 1:
+            raise OSError("simulated_network_error")
+        await super().connect()
+
+
+@pytest.mark.asyncio
+async def test_per_exchange_read_timeout_is_respected(monkeypatch):
+    """A hanging exchange read does not block beyond _PER_EXCHANGE_READ_TIMEOUT_SEC."""
+    identity = _identity()
+    hanging = _HangingAdapter(identity)
+    registry = _registry(hanging)
+    monkeypatch.setattr("aletheia.uta.manager._PER_EXCHANGE_READ_TIMEOUT_SEC", 0.05)
+
+    account_row, _, errors = await _read_selected_account(None, registry, identity)
+
+    assert account_row is None
+    assert errors == ["okx_demo:account_read_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_transient_error_is_retried_and_succeeds(monkeypatch):
+    """A single failing read is retried; the second attempt's data is used."""
+    identity = _identity()
+    adapter = _FailOnceAdapter(identity)
+
+    call_count = 0
+
+    def create_adapter(_config):
+        nonlocal call_count
+        call_count += 1
+        return adapter
+
+    from aletheia.uta.registry import UTAAdapterFactory
+    registry = UTARegistry()
+    registry.register(UTAAdapterConfig(identity=identity), create_adapter)  # type: ignore[arg-type]
+    _real_sleep = asyncio.sleep
+    monkeypatch.setattr("aletheia.uta.manager.asyncio.sleep", lambda _: _real_sleep(0))
+
+    account_row, _, errors = await _read_selected_account(None, registry, identity)
+
+    assert call_count == 2, "retry must create a fresh adapter"
+    assert account_row is not None
+    assert errors == []
+    assert account_row["broker_id"] == "okx_demo"
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_errors_returns_unavailable(monkeypatch):
+    """When both attempts fail, the exchange is marked unavailable."""
+    identity = _identity()
+
+    class _AlwaysFailAdapter(FakeUTAAdapter):
+        async def connect(self):
+            raise OSError("always_fails")
+
+    adapter = _AlwaysFailAdapter(identity)
+    registry = _registry(adapter)
+    _real_sleep = asyncio.sleep
+    monkeypatch.setattr("aletheia.uta.manager.asyncio.sleep", lambda _: _real_sleep(0))
+
+    account_row, _, errors = await _read_selected_account(None, registry, identity)
+
+    assert account_row is None
+    assert errors == ["okx_demo:account_read_unavailable"]
 
 
 @pytest.mark.asyncio

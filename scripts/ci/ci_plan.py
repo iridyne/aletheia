@@ -66,7 +66,6 @@ AUTHORITY_DOC_PREFIXES = (
 FULL_PREFIXES = (
     ".github/workflows/",
     ".github/actions/",
-    "scripts/release/",
     "migrations/",
     "alembic/",
 )
@@ -344,7 +343,6 @@ def _unknown_executable_path(path: str) -> bool:
         "core/aletheia/",
         "docs/",
         "frontend/",
-        "native/",
         "operator-shell/",
         "scripts/",
         "tests/",
@@ -360,8 +358,6 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("frontend")
     if path.startswith("operator-shell/"):
         surfaces.add("operator")
-    if path.startswith("native/"):
-        surfaces.add("native")
     if path.startswith(("core/aletheia/", "tests/")) or path.endswith(".py"):
         surfaces.add("python")
     if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/ci/export_openapi_schema.py"):
@@ -499,7 +495,7 @@ def plan(
                 mode = _mode_at_least(mode, "deep")
                 reason_codes.add("CRITICAL_TRADING_AUTHORITY")
                 continue
-            if path.startswith(("frontend/", "operator-shell/", "native/", "core/aletheia/", "tests/")) or path.endswith(".py"):
+            if path.startswith(("frontend/", "operator-shell/", "core/aletheia/", "tests/")) or path.endswith(".py"):
                 mode = _mode_at_least(mode, "affected")
                 reason_codes.add("AFFECTED_COMPONENT")
                 continue
@@ -593,12 +589,6 @@ def _local_checks(required: dict[str, bool]) -> list[dict[str, Any]]:
         ])
     if required.get("operator"):
         checks.append({"name": "operator tests", "lane": "operator", "command": ["npm", "test"], "working_directory": "operator-shell"})
-    if required.get("native"):
-        checks.append({
-            "name": "native tests", "lane": "native",
-            "command": ["cargo", "test", "--locked", "--all-targets"],
-            "working_directory": "native/aletheia-host",
-        })
     exhaustive_python = all(
         required.get(lane) for lane in ("python_unit", "integration", "specifications", "e2e")
     )

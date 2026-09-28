@@ -189,11 +189,13 @@ def test_cmd() -> None:
     typer.echo(f"  Enforce: {bool(net.enforce)}")
     if check is None:
         typer.echo("  Reachable: unknown")
-        return
+        raise typer.Exit(1)
 
     reachable = "yes" if check.severity == "ok" and net.proxy_url else "no"
     if not net.proxy_url and check.severity == "ok":
         reachable = "n/a"
+    if check.severity == "info":
+        reachable = "unknown"
     detail = _ascii_detail(check.detail)
     if net.proxy_url:
         detail = detail.replace(net.proxy_url, _safe_proxy_url(net.proxy_url))
@@ -201,3 +203,5 @@ def test_cmd() -> None:
     typer.echo(f"  Result: {check.severity}: {detail}")
     if check.fix_hint:
         typer.echo(f"  Suggestion: {_ascii_detail(check.fix_hint)}")
+    if check.severity != "ok":
+        raise typer.Exit(1)
