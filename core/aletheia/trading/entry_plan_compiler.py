@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 
 
 _RISK_REWARD_TARGET = {"LOW": 1.5, "MEDIUM": 2.5}
-_RISK_TIER_LEVERAGE_CAP = {"LOW": 2, "MEDIUM": 3}
-_RISK_TIER_MAX_RISK_PCT = {"LOW": 0.5, "MEDIUM": 1.0}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
 
@@ -29,8 +27,6 @@ _TACTIC = {"maker_wait_sec": 60, "max_requotes": 0, "urgent_slippage_bps": 20.0}
 def compiler_contract_material() -> dict:
     return {
         "risk_reward_target": _RISK_REWARD_TARGET,
-        "leverage_cap": _RISK_TIER_LEVERAGE_CAP,
-        "max_risk_pct": _RISK_TIER_MAX_RISK_PCT,
         "horizon_hours": _HORIZON_HOURS,
         "lifetime_minutes": _HORIZON_LIFETIME_MINUTES,
         "sideways_stop_mult": SIDEWAYS_STOP_MULT,
@@ -140,35 +136,33 @@ def _compile_bounded_risk_envelope(
             venue_leverage_cap = int(get_max_leverage(generation["symbol"], False, cfg))
         except Exception as exc:
             raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
-        max_leverage = (
-            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[hypothesis.risk_tier])
-        )
-        max_risk_pct = min(
-            float(policy.loss.max_single_trade_risk_pct),
-            _RISK_TIER_MAX_RISK_PCT[hypothesis.risk_tier],
-        )
+        max_leverage = 1 if market_type == "spot" else venue_leverage_cap
+        max_risk_pct = float(policy.loss.max_single_trade_risk_pct)
         try:
             from aletheia.risk.engine import (
-                account_equity_for_execution,
+                account_available_for_execution,
                 per_symbol_notional_ceiling,
             )
+            from aletheia.trading.sizing import available_balance_risk_budget_size
 
-            capital_base = account_equity_for_execution(execution_account_mode, cfg)
+            available_balance = account_available_for_execution(execution_account_mode, cfg)
         except Exception as exc:
             raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE") from exc
-        if capital_base is None or not math.isfinite(float(capital_base)) or float(capital_base) <= 0:
+        if available_balance is None or not math.isfinite(float(available_balance)) or float(available_balance) <= 0:
             raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE")
-        risk_budget = float(capital_base) * max_risk_pct / 100.0
-        worst_entry_price = entry_zone[1] if direction == "long" else entry_zone[0]
-        stop_fraction = abs(worst_entry_price - stop_price) / worst_entry_price
-        if not math.isfinite(stop_fraction) or stop_fraction <= 0:
-            raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
-        risk_bounded_notional = risk_budget / stop_fraction
+        try:
+            risk_bounded_notional = available_balance_risk_budget_size(
+                float(available_balance),
+                max_risk_pct,
+                leverage=float(max_leverage),
+            )
+        except ValueError as exc:
+            raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID") from exc
         max_notional = min(
             float(policy.capital.max_position_margin_usdt) * max_leverage,
             risk_bounded_notional,
         )
-        total_exposure_cap = float(policy.capital.max_total_exposure_pct) / 100.0 * float(capital_base)
+        total_exposure_cap = float(policy.capital.max_total_exposure_pct) / 100.0 * float(available_balance)
         if total_exposure_cap > 0:
             max_notional = min(max_notional, total_exposure_cap)
         per_symbol_cap = per_symbol_notional_ceiling(

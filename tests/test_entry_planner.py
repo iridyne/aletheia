@@ -816,7 +816,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"),
     )
     monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
-    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_a, **_k: 100_000.0)
     monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
     primary = EntryAnchor(
         venue="bitget", symbol="BTC/USDT", market_type="perp",
@@ -1049,7 +1049,7 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     from tests.test_entry_analysis import _anchor, _context_v2
 
     cfg = load_config()
-    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args: 5000.0)
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
