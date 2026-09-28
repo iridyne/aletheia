@@ -1,4 +1,4 @@
-"""Idempotent storage schema for economic runtime facts and viability reports.
+"""Idempotent storage schema for current economic runtime facts.
 
 The economics tables are intentionally isolated from trading state. Creating or
 querying them cannot mutate opportunities, proposals, risk, orders, positions,
@@ -171,35 +171,6 @@ CREATE TABLE IF NOT EXISTS llm_context_pair_reviews (
 CREATE INDEX IF NOT EXISTS idx_llm_context_pair_reviews_fixture
     ON llm_context_pair_reviews(fixture_id, reviewed_at DESC);
 
-CREATE TABLE IF NOT EXISTS viability_reports (
-    id TEXT PRIMARY KEY,
-    dedup_key TEXT NOT NULL UNIQUE,
-    scope TEXT NOT NULL CHECK(scope IN ('system','operator')),
-    window_start TEXT NOT NULL,
-    window_end TEXT NOT NULL,
-    execution_mode TEXT NOT NULL,
-    metric_version TEXT NOT NULL,
-    outcome_contract_version TEXT,
-    net_trading_result_usd REAL,
-    baseline_result_usd REAL,
-    incremental_value_usd REAL,
-    intelligence_cost_usd REAL,
-    tool_cost_usd REAL,
-    data_cost_usd REAL,
-    infrastructure_cost_usd REAL,
-    other_cost_usd REAL,
-    deployment_cost_usd REAL,
-    viability_amount_usd REAL,
-    verdict TEXT NOT NULL CHECK(verdict IN ('positive','neutral','negative','insufficient_data','invalid')),
-    cost_completeness TEXT NOT NULL,
-    sample_count INTEGER NOT NULL DEFAULT 0,
-    exclusion_counts_json TEXT NOT NULL DEFAULT '{}',
-    assumptions_json TEXT NOT NULL DEFAULT '[]',
-    reason TEXT NOT NULL,
-    generated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_viability_reports_scope_window
-    ON viability_reports(scope, window_end DESC);
 
 -- Durable budget-policy storage for the current LLM economics harness.
 -- See docs/design/proposals/tokenomics_harness.md. The table is isolated from
@@ -275,6 +246,10 @@ FROM agent_tool_calls AS calls
 
 
 def _backfill_existing_tool_calls(db: sqlite3.Connection) -> None:
+    from aletheia.economics.tracing import tracing_enabled
+
+    if not tracing_enabled():
+        return
     marker = db.execute(
         "SELECT 1 FROM economics_settings WHERE key=?",
         (_TOOL_BACKFILL_KEY,),

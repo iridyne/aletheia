@@ -256,9 +256,12 @@ def test_schema_upgrade_keeps_caller_transaction_owned(missing):
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='trg_agent_tool_call_cost_event'").fetchone()
 
 
-def test_missing_retired_viability_table_does_not_recreate_it():
+@pytest.mark.parametrize("missing", [None, "economics_settings", "tool_cost_profiles", "llm_context_artifacts"])
+def test_missing_retired_viability_table_does_not_recreate_it(missing):
     with sqlite3.connect(":memory:") as db:
         ensure_economics_schema(db)
-        db.execute("DROP TABLE viability_reports")
+        db.execute("DROP TABLE IF EXISTS viability_reports")
+        if missing:
+            db.execute(f"DROP TABLE {missing}")
         ensure_economics_schema(db)
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name='viability_reports'").fetchone() is None
