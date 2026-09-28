@@ -1,8 +1,12 @@
-"""Windows machine-service control backend.
+"""ARCHIVED (platform-specific, unmaintained) — Windows machine-service control backend.
 
-Installation was removed with the packaged Runtime lane: the service could only be
-installed from a frozen payload, which is no longer built. Inspecting, controlling
-and removing an existing install remain, as do the LAN firewall helpers.
+Retained, not deleted, but nothing on the Linux/Fedora runtime reaches it, and its
+only creation path is already gone: the service could be installed solely from a
+frozen payload, which is no longer built. Inspecting, controlling and removing an
+existing install remain, together with the LAN firewall helpers — all Windows-only.
+
+Treat its behaviour as unverified by the current runtime; its own tests still cover
+it. See docs/design/history/platform_specific_gateway_services.md.
 """
 
 from __future__ import annotations
