@@ -20,6 +20,8 @@
 | **16** | **[alpha 机制对比（主线）](16_alpha_mechanism_comparison.md)** | **我们 vs R20 的 alpha 机制异同、可借鉴项** |
 | — | [证据附录](99_evidence_index.md) | 六仓原始证据清单索引 + 本次未验证项 |
 | — | [CLI 去屎山专项扫描](cli_shitmap.md) | 33 个文件的审查覆盖、隔离复现、已有缺陷查重及建议立卡清单 |
+| — | [Server 去屎山专项扫描](server_shitmap.md) | 29 个文件结构扫描、关键调用链复核、旧卡与分支差异 |
+| — | [Extensions 去屎山专项扫描](extensions_shitmap.md) | 九组 78 个文件结构扫描、验证/失败传播/导出根因及清理候选 |
 | — | 09–15（技术分支，含已暂停项） | detector 排查、regime 门测试等子问题，详见各文档开头的性质说明 |
 
 ## 参与对标的六个仓库
