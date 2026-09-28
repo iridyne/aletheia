@@ -264,11 +264,9 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
 def _position_for_proposal(db, proposal_id: str) -> dict | None:
     if not _table_exists(db, "positions"):
         return None
-    row = db.execute(
-        "SELECT * FROM positions WHERE proposal_id = ? ORDER BY datetime(opened_at) DESC LIMIT 1",
-        (proposal_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    from aletheia.storage.repositories import get_latest_position_for_proposal
+
+    return get_latest_position_for_proposal(proposal_id)
 
 
 def _conviction_for_proposal(db, proposal: dict) -> int | None:

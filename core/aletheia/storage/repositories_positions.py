@@ -17,6 +17,7 @@ __all__ = [
     "enqueue_position_path_observation_buckets_through",
     "get_active_position_disappearance_candidate",
     "get_active_position_disappearance_candidate_for_position",
+    "get_latest_position_for_proposal",
     "get_position",
     "get_position_path_bucket_state",
     "get_position_path_observer_cursor",
@@ -114,6 +115,21 @@ def get_position(position_id: str) -> dict | None:
     from aletheia.storage.repositories import _select_one
 
     return _select_one("positions", position_id)
+
+
+def get_latest_position_for_proposal(proposal_id: str) -> dict | None:
+    """Return the newest Position carrying this exact proposal identity.
+
+    ``datetime(opened_at)`` normalizes stored timestamp formats so callers agree
+    on which Position is newest; a raw string compare can pick a different row.
+    """
+    from aletheia.storage.repositories import get_db
+
+    row = get_db().execute(
+        "SELECT * FROM positions WHERE proposal_id=? ORDER BY datetime(opened_at) DESC LIMIT 1",
+        (proposal_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def list_positions(

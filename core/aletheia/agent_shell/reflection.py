@@ -77,14 +77,11 @@ def _compute_outcome(symbol: str | None, proposal_id: str | None, decided_at: st
     if not proposal_id:
         return "Outcome unavailable: no causally linked proposal/position."
     try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
-            "SELECT * FROM positions WHERE proposal_id=? ORDER BY opened_at DESC LIMIT 1",
-            (proposal_id,),
-        ).fetchone()
-        if row is None:
+        from aletheia.storage.repositories import get_latest_position_for_proposal
+
+        position = get_latest_position_for_proposal(proposal_id)
+        if position is None:
             return "Outcome unavailable: proposal has no causally linked position."
-        position = dict(row)
         if position.get("execution_mode") == "paper_internal":
             return "Outcome unavailable: archived simulator position."
         if position.get("status") == "open":
