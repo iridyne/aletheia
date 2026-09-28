@@ -378,6 +378,42 @@ def record_heartbeat(
     return heartbeat_id
 
 
+def apply_heartbeat_staleness(heartbeat: dict | None) -> dict | None:
+    """Single owner of "is this heartbeat stale?".
+
+    Every read surface (agent-shell status, Operator API, recommendations) must
+    use this verdict instead of recomputing age against the threshold; the
+    recommendation feed previously branch-ed on a ``stale`` key no producer set.
+    """
+    if heartbeat is None:
+        return None
+    from aletheia.config.loader import load_config
+
+    # Copy first: callers now share this verdict, so mutating the row returned by
+    # get_latest_heartbeat() would make one surface's verdict observable to the next.
+    heartbeat = dict(heartbeat)
+    threshold = load_config().operator.heartbeat_stale_after_sec
+    raw_seen = heartbeat.get("last_seen_at")
+    seen_at = None
+    if raw_seen:
+        try:
+            seen_at = datetime.fromisoformat(str(raw_seen).replace("Z", "+00:00"))
+        except ValueError:
+            seen_at = None
+    if seen_at is None:
+        heartbeat["stale"] = False
+        heartbeat["stale_after_sec"] = threshold
+        return heartbeat
+    age = (datetime.now(timezone.utc) - seen_at).total_seconds()
+    stale = age > threshold
+    if stale and heartbeat.get("status") == "online":
+        heartbeat["status"] = "stale"
+    heartbeat["stale"] = stale
+    heartbeat["stale_after_sec"] = threshold
+    heartbeat["heartbeat_age_sec"] = max(0, int(age))
+    return heartbeat
+
+
 def get_latest_heartbeat(agent_id: str = "operator") -> dict | None:
     db = get_db()
     row = db.execute(

@@ -1601,6 +1601,10 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     cfg = load_config()
     recommendations: list[dict] = []
     heartbeat = get_latest_heartbeat()
+    if heartbeat is not None:
+        from aletheia.agent_shell.operator_store import apply_heartbeat_staleness
+
+        heartbeat = apply_heartbeat_staleness(heartbeat)
     failed_tasks = list_tasks(limit=10, status="failed")
     running_tasks = list_tasks(limit=20, status="running")
     queued_tasks = list_tasks(limit=20, status="queued")
