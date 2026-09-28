@@ -416,6 +416,48 @@ watcher 的 `_capture_facts` 读到 `row=None` 后失败。测试让多个 offlo
 | `58190c3f3` | 完整测试 11,625 项有 5 个失败：手工 tier 覆盖及四个导入超时；不能只引用较早的绿结果。 |
 | `6525cee5a` | 三次串行 unit 各 1947 passed、1 skipped；墙钟 55.87 / 54.42 / 53.76 秒。不是完整套件加速比例，也不覆盖后加的回归用例。 |
 
+## 1j. Fedora 分层墙钟与"是否收窄默认 Fedora 步骤"的决定
+
+测量：在隔离沙箱内对 `tests/` 的四个分区 marker 分别取全量墙钟（candidate `85ef7a86a`，
+与批次 3 收据同一棵树），Fedora、串行。
+
+| marker | 墙钟 | passed | skipped | deselected |
+|---|---:|---:|---:|---:|
+| `tier_unit` | 92.5 s | 1952 | 1 | 9682 |
+| `tier_integration` | 495.5 s | 8240 | 8 | 3387 |
+| `tier_spec` | 74.6 s | 1316 | 6 | 10308 |
+| `tier_e2e` | 30.3 s | 107 | 0 | 11528 |
+| 四分区合计 | 692.9 s | **11615** | **15** | — |
+| 参考：同树单次全量（批次 3 收据） | 646.1 s | 11615 | 15 | 0 |
+
+两点结论：
+
+1. **分区收据被实测确认**：四分区 passed 之和 `1952+8240+1316+107 = 11615` 等于同树全量
+   的 passed 数，分区没有漏跑一个用例（此前的结论只由收集数支持）。
+2. **拆开跑比整跑贵 7%**（692.9 s vs 646.1 s）：每个 lane 的启动/收集开销重复付出。
+3. `domain_runtime`（118.6 s，1675 passed）是**重叠域标记**，不是第五个分区；它不得并入
+   分区检查。
+
+本地对照（macOS，同集合）：`tier_unit` 50 s、`tier_spec` 51.3 s —— 本地约为 Fedora 的
+0.55–0.69 倍。
+
+**决定：默认 Fedora 步骤保持整份 `tests/`，不改为"本地未覆盖层集合"。** 依据同上三点：
+本地已经默认跑的那一层只占 Fedora 墙钟的 13.4%（92.5 s / 692.9 s），排掉它只能省
+约 1.5 分钟一次的后台运行，却把"没有漏跑"的证明从**一份制品**变成"本地收据 + Fedora
+收据"两份、且分母换成另一个操作系统。真正的成本在 `tier_integration`：495.5 s，占
+Fedora 全量的 71%，它也同时是本地最贵的一层。要提速就压这一层，而不是压门禁覆盖。
+
+运行快照的两个真实缺陷（均在本次会话中修复，见 PR 与运行时证据）：
+
+| 表面 | 症状 | 根因 | 修复与验证 |
+|---|---|---|---|
+| TS operator shell | `run_market_scan` 每分钟失败 1 次，累计 531 次，最新 2026-09-28 05:34:58Z | Market Observer 退役（#2933）只收敛了 Python 侧；shell 仍在按永久为空的 observer 活跃度发 `market_scan_refresh_due` 并执行后端已不存在的命令 | 删除 shell 中的退役机制表面（[#3641](https://github.com/iridyne/aletheia/pull/3641)）；修复后用同一运行时对照：修复前的重启（05:20:55Z）后 14 分钟内仍有 14 次失败/14 个 high 事件，带修复的重启（05:36:09Z）后为 0 |
+| Observation Worker（systemd oneshot + timer） | 每 6 小时一次 pass 全部 `status=2`，fail-closed 拒绝运行 | 兄弟 checkout `/home/admin/aletheia-observer` 停在 2026-09-12、落后 master **848** 个提交，共享配置的新键（`universe.allowlist`、`models.fast`）与新语义（`max_daily_loss_pct` 允许 0）被旧 schema 拒绝 | 更新该 checkout 到 master 并 `uv sync`，一次 pass `status=0`，`aletheia observe overview --json` 报 `last_service_pass.status=success` |
+
+后者的教训值得留档：worker 漂移只有 `aletheia observe drift` 这条**建议性**通道，没有进
+operator 建议或部署验证，于是"每 6 小时失败一次"连续存在了数天而无人处理。是否把漂移接进
+建议面或部署验证属产品决策（D1），本轮只修复运行态并记录事实。
+
 ## 8. 如何复用，而不是从头再查
 
 1. 先读对应现行 Contract，再确认相关源码 owner 是否变化；未变化的边界复用本记录，

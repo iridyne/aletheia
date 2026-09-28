@@ -240,6 +240,19 @@ that merged head, and reserve a new full run for a genuine source change. A new
 run is still required whenever the merged head contains anything from the
 "re-run" row above.
 
+If the merged head contains production changes only outside `tests/` (for
+example TypeScript operator-shell surfaces, which the Python suite does not
+execute), the Python receipt is unaffected: verify that change with its own
+suite and, where it drives a deployed process, with the runtime evidence of
+that process.
+
+One full run covers the whole `tests/` tree — it is not narrowed to "the part
+the local loop does not run". The per-marker Fedora wall times and the reason
+(the locally-covered tier is ~13% of the run, while narrowing would split the
+no-collection-gap proof across two receipts on two operating systems) are
+recorded in
+[`CONVERGENCE_FINDINGS_2026-09-28.md` § 1j](../../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md).
+
 ## Common commands
 
 - Changed-file gate (first step of every edit loop):
