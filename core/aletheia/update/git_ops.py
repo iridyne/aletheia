@@ -110,6 +110,23 @@ def is_worktree_dirty() -> bool:
     return bool(r.stdout.strip())
 
 
+def commits_between(older: str, newer: str) -> int | None:
+    """Commits ``newer`` has that ``older`` does not, or ``None`` when unknown.
+
+    Used to state how far a pinned sibling checkout (the Observation Worker) sits
+    behind the deployed commit, where only the fact matters, not the exact history.
+    """
+    if not older or not newer:
+        return None
+    r = _git("rev-list", "--count", f"{older}..{newer}")
+    if r.returncode != 0:
+        return None
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return None
+
+
 def changed_files(old: str, new: str) -> list[str] | None:
     """Return changed paths, or ``None`` when Git cannot classify the diff."""
     r = _git("diff", "--name-only", f"{old}..{new}")

@@ -69,6 +69,33 @@ cd /home/admin/aletheia-observer && .venv/bin/aletheia observe drift --fetch --w
 Drift is advisory. The Worker is never auto-updated by this command; the
 operator decides when to `git pull` and restart the timer.
 
+### When the pin must move
+
+Pinning is about *when* the Worker updates, never about letting it fall outside
+the shared contract. Because Main and Worker share `~/.aletheia` (config and
+database), a Worker older than a shared config or schema change cannot read that
+config at all: `aletheia observe run` fail-closes with
+`observation.execution_owner could not be read or validated (owner_unavailable)`
+and every timer pass exits 2.
+
+That is exactly what happened on 2026-09-28: the Worker sat at `7a2b08a4b31c`
+(2026-09-12, **848 commits** behind) and had been failing every six-hourly pass
+for days, while the deployment output still printed
+`Observer continuity verified: … worker_sha=7a2b08a4b31c` — that claim covers
+observation ownership, data-root and checkpoint continuity, not freshness.
+
+So update the Worker checkout (and `uv sync`) whenever a change touches:
+
+- `~/.aletheia` config shape or `core/aletheia/config/` defaults,
+- SQLite schema or migrations,
+- anything the Worker imports while running a pass.
+
+Two surfaces now say so without being asked: the update receipt prints
+`Observer freshness (not part of the continuity claim): … behind=N, last_pass=…`,
+and the operator recommendations raise `observation_worker_pass_stale` (no pass
+for more than 12 h) or `observation_worker_checkout_drift` (worker pass ran on a
+different commit than the running gateway).
+
 ## Rollback (no data migration)
 
 ```sh
