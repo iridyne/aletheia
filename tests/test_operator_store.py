@@ -231,3 +231,133 @@ def test_task_provenance_uses_process_identity_without_registry(tmp_path, monkey
     task_id = create_task(task_type="diagnostic", created_by="test", status="pending", priority="normal")
     assert get_task(task_id)["runtime_id"] == "process-owned"
     assert db.execute("SELECT 1 FROM sqlite_master WHERE name='runtime_ownership'").fetchone() is None
+
+
+def test_heartbeat_staleness_has_one_verdict_used_by_every_read_surface(tmp_path, monkeypatch):
+    """A stale-but-online heartbeat must be reported stale everywhere.
+
+    Regression: the recommendation feed branched on a ``stale`` key that no
+    heartbeat producer set, so a stale Operator produced no operator-stale
+    recommendation while the CLI/API surfaces already reported "stale".
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.agent_shell import commands, operator_recommendations
+    from aletheia.agent_shell.operator_store import (
+        apply_heartbeat_staleness,
+        get_latest_heartbeat,
+        record_heartbeat,
+    )
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import AletheiaConfig
+
+    conn = _init_test_db(tmp_path, monkeypatch)
+    try:
+        save_config(AletheiaConfig())
+        stale_after = load_config().operator.heartbeat_stale_after_sec
+        seen_at = (datetime.now(timezone.utc) - timedelta(seconds=stale_after + 30)).isoformat()
+        record_heartbeat(
+            agent_id="operator",
+            status="online",
+            mode="Reviewing",
+            permission_mode="PaperAuto",
+            is_busy=False,
+            current_task_id=None,
+            current_intent=None,
+            queue_size=0,
+            last_error=None,
+            model_provider=None,
+            session_id="operator-main",
+            last_seen_at=seen_at,
+        )
+
+        verdict = apply_heartbeat_staleness(get_latest_heartbeat("operator"))
+        assert verdict is not None
+        assert verdict["stale"] is True
+        assert verdict["status"] == "stale"
+
+        snapshot = commands._format_operator_snapshot(get_latest_heartbeat("operator"), paused=False)
+        assert snapshot["status"] == "stale"
+
+        ids = {item["id"] for item in operator_recommendations.build_recommendations()}
+        assert "operator-stale" in ids, ids
+    finally:
+        conn.close()
+
+
+def test_fresh_heartbeat_is_not_stale_and_raises_no_recommendation(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from aletheia.agent_shell import operator_recommendations
+    from aletheia.agent_shell.operator_store import (
+        apply_heartbeat_staleness,
+        get_latest_heartbeat,
+        record_heartbeat,
+    )
+    from aletheia.config.loader import save_config
+    from aletheia.config.schema import AletheiaConfig
+
+    conn = _init_test_db(tmp_path, monkeypatch)
+    try:
+        save_config(AletheiaConfig())
+        record_heartbeat(
+            agent_id="operator",
+            status="online",
+            mode="Reviewing",
+            permission_mode="PaperAuto",
+            is_busy=False,
+            current_task_id=None,
+            current_intent=None,
+            queue_size=0,
+            last_error=None,
+            model_provider=None,
+            session_id="operator-main",
+            last_seen_at=datetime.now(timezone.utc).isoformat(),
+        )
+        verdict = apply_heartbeat_staleness(get_latest_heartbeat("operator"))
+        assert verdict is not None
+        assert verdict["stale"] is False
+        assert verdict["status"] == "online"
+        ids = {item["id"] for item in operator_recommendations.build_recommendations()}
+        assert "operator-stale" not in ids, ids
+    finally:
+        conn.close()
+
+
+def test_stale_heartbeat_raises_recommendation_without_new_api(tmp_path, monkeypatch):
+    """Behaviour-only guard: an online-but-old heartbeat must surface operator-stale.
+
+    Deliberately imports only the pre-existing store/recommendation API, so a
+    revert of the recommendation call site fails this test for the real reason
+    (unreachable branch) rather than for a missing symbol.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.agent_shell.operator_recommendations import build_recommendations
+    from aletheia.agent_shell.operator_store import record_heartbeat
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import AletheiaConfig
+
+    conn = _init_test_db(tmp_path, monkeypatch)
+    try:
+        save_config(AletheiaConfig())
+        stale_after = load_config().operator.heartbeat_stale_after_sec
+        record_heartbeat(
+            agent_id="operator",
+            status="online",
+            mode="Reviewing",
+            permission_mode="PaperAuto",
+            is_busy=False,
+            current_task_id=None,
+            current_intent=None,
+            queue_size=0,
+            last_error=None,
+            model_provider=None,
+            session_id="operator-main",
+            last_seen_at=(datetime.now(timezone.utc) - timedelta(seconds=stale_after + 30)).isoformat(),
+        )
+        ids = {item["id"] for item in build_recommendations()}
+        assert "operator-offline" not in ids
+        assert "operator-stale" in ids, ids
+    finally:
+        conn.close()

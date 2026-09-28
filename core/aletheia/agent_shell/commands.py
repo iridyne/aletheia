@@ -371,15 +371,14 @@ def _format_operator_snapshot(heartbeat: dict | None, *, paused: bool) -> dict:
         "last_seen_at": heartbeat.get("last_seen_at"),
         "last_error": heartbeat.get("last_error"),
     }
-    last_seen_at = heartbeat.get("last_seen_at")
-    if last_seen_at:
-        try:
-            seen = datetime.fromisoformat(str(last_seen_at).replace("Z", "+00:00"))
-            stale_after = config_loader.load_config().operator.heartbeat_stale_after_sec
-            if (datetime.now(timezone.utc) - seen).total_seconds() > stale_after and operator["status"] == "online":
-                operator["status"] = "stale"
-        except Exception:
-            logger.debug("agent_shell: operator heartbeat staleness check failed; status left unchanged", exc_info=True)
+    try:
+        from aletheia.agent_shell.operator_store import apply_heartbeat_staleness
+
+        # One owner decides staleness; this surface only republishes its status.
+        verdicted = apply_heartbeat_staleness(dict(heartbeat)) or {}
+        operator["status"] = verdicted.get("status", operator["status"])
+    except Exception:
+        logger.debug("agent_shell: operator heartbeat staleness check failed; status left unchanged", exc_info=True)
     return operator
 
 

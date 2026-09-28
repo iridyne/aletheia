@@ -146,22 +146,9 @@ def _operator_status_payload() -> dict[str, Any]:
 
 
 def _apply_stale_status(heartbeat: dict[str, Any]) -> dict[str, Any]:
-    cfg = load_config()
-    seen_at = _parse_ts(heartbeat.get("last_seen_at"))
-    if seen_at is None:
-        heartbeat["stale"] = False
-        heartbeat["stale_after_sec"] = cfg.operator.heartbeat_stale_after_sec
-        return heartbeat
+    from aletheia.agent_shell.operator_store import apply_heartbeat_staleness
 
-    age = (datetime.now(timezone.utc) - seen_at).total_seconds()
-    stale = age > cfg.operator.heartbeat_stale_after_sec
-    if stale and heartbeat.get("status") == "online":
-        heartbeat = dict(heartbeat)
-        heartbeat["status"] = "stale"
-    heartbeat["stale"] = stale
-    heartbeat["stale_after_sec"] = cfg.operator.heartbeat_stale_after_sec
-    heartbeat["heartbeat_age_sec"] = max(0, int(age))
-    return heartbeat
+    return apply_heartbeat_staleness(heartbeat)  # type: ignore[return-value]
 
 
 def _task_event_type(status: str) -> str | None:
