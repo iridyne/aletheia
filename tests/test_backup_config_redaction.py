@@ -45,9 +45,7 @@ def test_coinalyze_api_key_redacted_in_backup(tmp_path):
     result = _unpack_config(archive)
     assert result["has_config"], "config.yaml must be present in archive"
 
-    raw = (tmp_path / "config.yaml").read_bytes()
     archive_cfg = result["config"]
-    assert b"SENTINEL_COIN_KEY" not in raw or True  # sentinel is in source — confirm it's absent in backup
     assert archive_cfg is not None
     md = archive_cfg.get("market_data") or {}
     assert md.get("coinalyze_api_key") != "SENTINEL_COIN_KEY", "sentinel must be redacted"
@@ -91,12 +89,13 @@ def test_malformed_config_omitted_with_manifest_status(tmp_path):
 
 
 def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
-    """#1175: raw archive bytes must not contain sentinel credential in any form."""
+    """Scan decompressed members, not compressed bytes, for credential leakage."""
     _make_db(tmp_path)
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({
             "market_data": {"coinalyze_api_key": "GLOBALSENTINEL_XYZ"},
             "network": {"proxy_url": "http://usr:GLOBALSENTINEL_XYZ@host:80"},
+            "webhook": {"secret": "WEBHOOK_SENTINEL", "enabled": True},
         }),
         encoding="utf-8",
     )
@@ -104,7 +103,14 @@ def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
     from ops.backup.service import BackupService
     archive = BackupService(data_dir=tmp_path).create_backup()
 
-    archive_bytes = archive.read_bytes()
-    assert b"GLOBALSENTINEL_XYZ" not in archive_bytes, (
-        "sentinel credential must not appear anywhere in the archive bytes"
-    )
+    with tarfile.open(archive) as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                stream = tar.extractfile(member)
+                assert stream is not None
+                content = stream.read()
+                assert b"GLOBALSENTINEL_XYZ" not in content
+                assert b"WEBHOOK_SENTINEL" not in content
+    result = _unpack_config(archive)
+    assert result["config"]["webhook"]["enabled"] is True
+    assert result["manifest"]["config_status"] == "redacted"
