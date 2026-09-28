@@ -173,6 +173,11 @@ def _navigation_linked_py(line: str, source: Path) -> tuple[list[Path], list[Pat
     the symbol, and accepting it would let a row pass by linking only its test
     selector once the implementation moved. Test files are collected separately
     so the row's focused-test column can be checked against the row's symbols.
+
+    A link that resolves outside the repository is skipped rather than reported:
+    one wrong ``../`` depth is an easy typo, ``broken_relative_links`` already
+    reports it with its own line number, and raising here would abort every other
+    gate in the same run.
     """
     owners: list[Path] = []
     tests: list[Path] = []
@@ -184,7 +189,11 @@ def _navigation_linked_py(line: str, source: Path) -> tuple[list[Path], list[Pat
         resolved = (source.parent / path_text).resolve()
         if not resolved.is_file():
             continue
-        if resolved.relative_to(ROOT).parts[0] == "tests":
+        try:
+            relative = resolved.relative_to(ROOT)
+        except ValueError:
+            continue
+        if relative.parts[0] == "tests":
             tests.append(resolved)
         else:
             owners.append(resolved)
@@ -217,7 +226,10 @@ def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
     Non-goals (deliberately not validated here): dotted references
     (``service.build_position_lifecycle_story``), prose outside the region,
     whether the named test is the *only* relevant one, whether a contract
-    citation still holds, and whether a test passes. Link *existence* is already
+    citation still holds, and whether a test passes. Presence is a whole-word
+    text search, not a symbol table: a comment or docstring that still mentions a
+    renamed name satisfies it, so a rename that leaves the old name quoted
+    somewhere in the file can pass unseen. Link *existence* is already
     ``broken_relative_links``' job, so a missing target is not reported twice.
     Tokens that are genuinely not source symbols (job ids, directory names)
     belong in ``NAVIGATION_NON_SYMBOL_TOKENS`` with a reason; nothing is skipped

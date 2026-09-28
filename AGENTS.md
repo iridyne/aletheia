@@ -83,6 +83,15 @@ architecture overviews route readers but do not override these authorities.
 Do not duplicate the manifest or convert a target, Issue status, test count, or
 historical observation into proof of current capability.
 
+Before concluding that code is wrong — especially before judging a deletion to be
+a regression — read the contract, not the call sites:
+
+- `docs/design/contracts/` — approved behavior (authoritative over calling code).
+- `docs/product/ACTIVE_RUNTIME_SCOPE.md` — what is actually admitted at runtime.
+- `docs/product/CAPABILITY_GROUND_TRUTH.md` — capability promises and their evidence limits.
+- `docs/governance/decisions/DECISIONS.md` — decision record.
+- `docs/design/history/` — retired mechanisms (deleted from code, kept as history).
+
 Finding the code a task owns is a separate question, and it has exactly one code
 map: [`docs/design/architecture/SYSTEM_MAP.md`](docs/design/architecture/SYSTEM_MAP.md)
 (task → owner → source → focused tests, checked by
@@ -234,7 +243,9 @@ vendors live in `extensions/`; core receives them as injected factories.
 and registers it into `aletheia.uta.registry`. Core code should never import a
 specific exchange module.
 
-Request/execution path, and where each stage lives:
+Request/execution path, and where each stage lives. This table maps a stage to a
+directory only — task → owner → source → focused-test navigation is the single
+code map named above, `SYSTEM_MAP.md`:
 
 | Stage | Location |
 | --- | --- |
@@ -267,20 +278,6 @@ index are present and the index is not obviously behind. If it is missing or sta
 fall back to `git grep` / language-server lookups — do not build a CodeGraph index
 as a prerequisite for ordinary work. Either way, read the file before editing: the
 index can lag.
-
-### Where truth lives
-
-Before concluding that code is wrong — especially before judging a deletion to be
-a regression — read the contract, not the call sites:
-
-- `docs/design/contracts/` — approved behavior (authoritative over calling code).
-- `docs/product/ACTIVE_RUNTIME_SCOPE.md` — what is actually admitted at runtime.
-- `docs/product/CAPABILITY_GROUND_TRUTH.md` — capability promises and their evidence limits.
-- `docs/governance/decisions/DECISIONS.md` — decision record.
-- `docs/design/history/` — retired mechanisms (deleted from code, kept as history).
-
-This list is a pointer; `docs/governance/policies/documentation_governance.md`
-remains the canonical authority map.
 
 ### Tool-specific entry files
 

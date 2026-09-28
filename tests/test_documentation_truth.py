@@ -314,6 +314,30 @@ def test_navigation_route_gate_requires_a_focused_test_for_each_row(
     ]
 
 
+def test_navigation_route_gate_survives_a_link_that_escapes_the_repository(
+    monkeypatch, tmp_path
+) -> None:
+    """One wrong `../` depth must not abort the whole documentation gate.
+
+    ``broken_relative_links`` reports the escaping link with its own line; the
+    navigation check must not raise before the other gates can report.
+    """
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (tmp_path / "outside.py").write_text("def live_symbol(): ...\n", encoding="utf-8")
+    (root / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [outside.py](../outside.py): `live_symbol` |\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", root)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md:2: route row names live_symbol but links no non-test source file"
+    ]
+
+
 def test_navigation_route_gate_requires_its_region_markers(monkeypatch, tmp_path) -> None:
     """A map that dropped the markers would silently stop being checked."""
     (tmp_path / "MAP.md").write_text("| task | `symbol` |\n", encoding="utf-8")
