@@ -8,6 +8,7 @@ their own independent versions.
 
 ### Changed
 
+* **market-data:** persist and count only confirmed closed candles in historical downloads, while retaining raw-page pagination so forming tails can be fetched after closing (#3676).
 * **runtime:** sample health shortly after Gateway startup so release activation and rollback can verify real readiness before their bounded deadline, while retaining the normal ten-minute cadence and fail-closed checks.
 * **market-data:** restore Bitget Candidate funding enrichment from the existing perpetual ticker and its exchange timestamp, without changing freshness policy or historical outcomes.
 * **entry:** make Candidate/PlanningGeneration/EntryPlan the sole new-entry authority, including source-scoped Serenity publication and separate timing/holding horizons; retain historical decisions and unresolved execution evidence.

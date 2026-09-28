@@ -25,6 +25,7 @@ class FakeCandle:
     low: float = 99.0
     close: float = 100.5
     volume: float = 1000.0
+    is_closed: bool = True
 
 
 def _make_candles(start_ts: int, count: int, tf_ms: int = 3_600_000):
@@ -259,3 +260,61 @@ def test_check_coverage_not_enough():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                 return_value={"bar_count": 50, "oldest_ts": 1, "newest_ts": 2}):
         assert check_coverage("BTC/USDT", "1h", min_bars=200) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["forward", "bootstrap", "left_gap", "all_forming"])
+async def test_history_persists_only_closed_bars_and_recovers_final_tail(monkeypatch, path):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config import loader
+    from aletheia.data import history_downloader as downloader, providers
+    from aletheia.storage import repositories as repo
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    now = 1_800_000_000_000
+    tf = 3_600_000
+    monkeypatch.setattr(downloader.time, "time", lambda: now / 1000)
+    monkeypatch.setattr(downloader, "_PAGE_SIZE", 2)
+    monkeypatch.setattr(downloader, "_RATE_LIMIT_SEC", 0)
+    closed = FakeCandle(now - 2 * tf)
+    forming = FakeCandle(now - tf, close=100.1, is_closed=False)
+    page = [forming] if path == "all_forming" else [closed, forming]
+    if path == "left_gap":
+        repo.upsert_ohlcv_candles("BTC/USDT", "1h", [FakeCandle(now)], exchange="okx", market_type="perp")
+    pages = [[], page] if path == "bootstrap" else [page]
+    calls = []
+    async def fetch(instrument, timeframe, **kwargs):
+        assert str(instrument) == "okx:BTC/USDT:perp"
+        calls.append(kwargs["since"])
+        return pages.pop(0) if pages else []
+    provider = AsyncMock()
+    provider.get_ohlcv.side_effect = fetch
+    monkeypatch.setattr(providers, "get_market_data_provider", lambda *a, **kw: provider)
+    progress = []
+    result = await download_symbol_history("BTC/USDT", "1h", months=1, exchange="okx",
+                                           market_type="perp", progress_callback=progress.append)
+    rows = repo.get_ohlcv_candles("BTC/USDT", "1h", exchange="okx", market_type="perp")
+    assert forming.timestamp not in [row["ts"] for row in rows]
+    assert result.error is None
+    assert result.bars_fetched == (0 if path == "all_forming" else 1)
+    assert result.oldest_ts == result.newest_ts == (None if path == "all_forming" else closed.timestamp)
+    assert progress == ([] if path == "all_forming" else [1])
+    assert len(calls) <= 7
+    provider.close.assert_awaited_once()
+    if path == "forward":
+        assert len(calls) == 1  # Raw page cursor reached now; do not refetch its forming tail.
+    if path in {"forward", "all_forming"}:
+        now += tf
+        final = FakeCandle(forming.timestamp, close=100.9, is_closed=True)
+        async def final_fetch(instrument, timeframe, **kwargs):
+            return [final] if kwargs["since"] <= final.timestamp else []
+        provider.get_ohlcv.side_effect = final_fetch
+        second = await download_symbol_history("BTC/USDT", "1h", months=1, exchange="okx", market_type="perp")
+        assert second.bars_fetched == 1
+        rows = repo.get_ohlcv_candles("BTC/USDT", "1h", exchange="okx", market_type="perp")
+        assert rows[-1]["ts"] == final.timestamp
+        assert rows[-1]["close"] == 100.9
+        assert all(row["exchange"] == "okx" and row["market_type"] == "perp" for row in rows)
+        third = await download_symbol_history("BTC/USDT", "1h", months=1, exchange="okx", market_type="perp")
+        assert third.bars_fetched == 0
