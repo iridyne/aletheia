@@ -43,7 +43,7 @@ def _project_root() -> str:
 def test_shadow_trades_resolution_bounded():
     """GREEN tripwire on the production DB (mirrors LP-S01/S07 data reads).
 
-    After the one-time backfill (scripts/backfill_shadow_trades.py) and the
+    After the one-time backfill (scripts/maintenance/backfill_shadow_trades.py) and the
     periodic shadow_resolver job, shadows older than 7 days should be mostly
     resolved. We allow a generous unresolved share because delisted / out-of-
     universe symbols genuinely have no OHLCV bar to resolve against — the point
@@ -82,7 +82,7 @@ def test_shadow_trades_resolution_bounded():
     assert unresolved_pct < 50.0, (
         f"{unresolved_pct:.1f}% of {old_total} shadow trades older than 7 days are "
         f"still unresolved ({old_unresolved}/{old_total}) — the counterfactual PnL "
-        "resolver has systemically failed. Run scripts/backfill_shadow_trades.py and "
+        "resolver has systemically failed. Run scripts/maintenance/backfill_shadow_trades.py and "
         "check the shadow_resolver scheduler job. See FIX 3 (AN-S01)."
     )
 

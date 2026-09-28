@@ -161,7 +161,7 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
         "VALUES ('asset-btc', 'okx', 'spot', 'BTC/USDT')"
     )
     db.commit()
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = FakeExchange()
     feat = await _fetch_single_feature(
         exchange,
@@ -261,7 +261,7 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
         (json.dumps({"instrument_background": background}),),
     )
     db.commit()
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = FakeExchange()
     feature = await _fetch_single_feature(
         exchange,
@@ -335,7 +335,7 @@ async def test_pending_feature_refresh_bypasses_recent_row_suppression(
     )
     db.commit()
     buffered: list[UniverseFeatureSnapshot] = []
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = FakeExchange()
 
     feature = await _fetch_single_feature(
@@ -407,7 +407,7 @@ async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
     )
     db.commit()
     buffered: list[UniverseFeatureSnapshot] = []
-    from tests.ohlcv_test_helpers import observation_reader
+    from tests.helpers.ohlcv_test_helpers import observation_reader
     exchange = PartialExchange()
 
     feature = await _fetch_single_feature(

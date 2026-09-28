@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-import scripts.ci_local as ci_local
-from scripts.ci_plan import PathChange
+import scripts.ci.ci_local as ci_local
+from scripts.ci.ci_plan import PathChange
 
 
 def test_local_ci_reports_failure_when_required_check_fails(monkeypatch, tmp_path, capsys) -> None:
@@ -15,7 +15,7 @@ def test_local_ci_reports_failure_when_required_check_fails(monkeypatch, tmp_pat
     monkeypatch.setattr(
         ci_local.ci_plan,
         "_load_changes",
-        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci_plan.py")]),
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci/ci_plan.py")]),
     )
 
     calls = []
@@ -34,7 +34,7 @@ def test_local_ci_reports_failure_when_required_check_fails(monkeypatch, tmp_pat
     assert ci_local.main(["--pr-body-file", str(body)]) == 1
     output = capsys.readouterr().out
     assert '"result": "fail"' in output
-    assert calls[0][:5] == ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py"]
+    assert calls[0][:5] == ["uv", "run", "--no-sync", "python", "scripts/ci/ci_preflight.py"]
     assert ["git", "diff", "--quiet", "HEAD", "--"] in calls
     assert ["git", "diff", "--check", f"{'b' * 40}...{'a' * 40}", "--"] in calls
     assert any(any("test_ci_plan.py" in part for part in command) for command in calls)
@@ -76,7 +76,7 @@ def test_local_ci_changed_file_override_still_binds_head_identity(monkeypatch, t
         "--base-ref",
         "origin/master",
         "--changed-file",
-        "scripts/ci_plan.py",
+        "scripts/ci/ci_plan.py",
         "--skip-execute",
     ]) == 0
     output = capsys.readouterr().out
@@ -90,7 +90,7 @@ def test_local_ci_rejects_dirty_tracked_worktree(monkeypatch, tmp_path, capsys) 
     monkeypatch.setattr(
         ci_local.ci_plan,
         "_load_changes",
-        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci_plan.py")]),
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci/ci_plan.py")]),
     )
 
     def fake_run(command, cwd=None):
@@ -109,7 +109,7 @@ def test_local_ci_rejects_dirty_tracked_worktree(monkeypatch, tmp_path, capsys) 
     assert '"failure_reason": "clean tracked worktree failed"' in output
 
 
-@pytest.mark.parametrize("path", ["core/aletheia/execution/gateway.py", "scripts/ci_plan.py"])
+@pytest.mark.parametrize("path", ["core/aletheia/execution/gateway.py", "scripts/ci/ci_plan.py"])
 def test_every_required_proof_lane_has_an_executor_or_explicit_unavailability(path):
     report = ci_local.ci_plan.plan(
         event="local", base_sha="b" * 40, head_sha="a" * 40,
@@ -128,7 +128,7 @@ def test_full_proof_is_unavailable_not_a_passing_print_command(monkeypatch, tmp_
     body.write_text("References #3289")
     monkeypatch.setattr(
         ci_local.ci_plan, "_load_changes",
-        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci_plan.py")]),
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci/ci_plan.py")]),
     )
     commands = []
 

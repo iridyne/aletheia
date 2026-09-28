@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_agent_run
+from tests.helpers.repo_test_helpers import insert_agent_run
 
 from datetime import datetime, timezone
 import asyncio

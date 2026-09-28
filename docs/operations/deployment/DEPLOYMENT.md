@@ -63,6 +63,8 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
 
 Linux source 的人工 `aletheia update` 拉取配置的 `origin/<update.branch>` HEAD；timer
 单独使用 `auto.run` 的稳定 Tag 事务。两条路径都保留 settlement/Observer 门禁及失败恢复。
+Observer continuity 快照、preflight/postflight 证明缺口与失败恢复语义见
+[Observer-aware source update continuity](UPDATE_OBSERVER_CONTINUITY.md)。
 HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
 也不以 master 的 ahead/behind 数量宣称已部署。
 
@@ -85,7 +87,7 @@ HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，�
 （`operational_need=true`）即可——Release Please 会在已有候选存在时更新同一个候选而不创建
 第二个发布 PR。没有 owner 明确的 `operational_need=true` 意图时不会凭空创建发布候选。
 （2026-09-26 之前这一步由 `refresh-release-candidate.yml` 自动完成，已在 PR #3506 中随
-auto-merge 控制面一起退役——见 `MODULAR_MONOLITH_RELEASE.md` 的 "Retired candidate-refresh
+auto-merge 控制面一起退役——见 `docs/design/history/modular_monolith_release_bundle.md`（已退役）的 "Retired candidate-refresh
 automation" 段。）
 
 正常发布不需要手动登录 Fedora。以下命令只用于首次启用 timer、故障恢复或诊断：

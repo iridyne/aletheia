@@ -1,11 +1,11 @@
-"""Focused Phase 1 contract tests for scripts/ci_preflight.py."""
+"""Focused Phase 1 contract tests for scripts/ci/ci_preflight.py."""
 
 from __future__ import annotations
 
 import json
 from types import SimpleNamespace
 
-import scripts.ci_preflight as preflight
+import scripts.ci.ci_preflight as preflight
 
 
 VALID_D1_BODY = """

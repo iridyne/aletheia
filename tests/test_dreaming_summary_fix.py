@@ -154,7 +154,7 @@ async def test_all_knowledge_returns_mixed_active_types(client):
 async def test_dreaming_summary_uses_persisted_run_artifact_links(client):
     from aletheia.storage.models import AgentRun, AgentRunArtifact, KnowledgeItem
     from aletheia.storage.repositories import insert_agent_run_artifacts, insert_knowledge_item
-    from tests.fixtures.repo_test_helpers import insert_agent_run
+    from tests.helpers.repo_test_helpers import insert_agent_run
 
     run = AgentRun(agent_name="dreaming_agent", status="completed")
     item = KnowledgeItem(item_type="dreaming_log", title="linked output")

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.storage import repositories as repo
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 _MODE = "bitget_demo"
 
 

@@ -18,7 +18,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
 from tests.uta.test_execution_coordinator import _insert_bound_position
 from aletheia.uta.models import SubmissionReport, CommandEvidence, OrderStatusReport, OrderLifecycle
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 
 
 def _report(command, *, venue_order_id, state="open", filled_quantity=0, evidence=CommandEvidence.ACKNOWLEDGED, reason_code=None):
@@ -62,7 +62,7 @@ def _prepare_broker(monkeypatch, place_order):
 
 def _execute(**kwargs):
     from aletheia.storage import repositories as repo
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.execution.coordinator import execute_order
 
     if repo.get_trade_proposal(kwargs["proposal_id"]) is None:

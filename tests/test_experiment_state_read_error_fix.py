@@ -12,7 +12,7 @@ Contract verified here:
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import prune_filter_shadow_evaluations, prune_universe_members
+from tests.helpers.repo_test_helpers import prune_filter_shadow_evaluations, prune_universe_members
 
 import sqlite3
 from datetime import datetime, timezone, timedelta

@@ -87,24 +87,22 @@ checkouts, while leaving unrelated user hooks untouched.
 - A transient `gateway start` does not install login startup. Persistent login
   or failure recovery requires the explicit service install/enable commands.
 
-## Optional Windows machine service
+## Windows machine service (no longer installable)
 
-Unattended operation before user login is an explicit packaged-runtime mode:
+The machine-service backend could only be installed from a frozen payload, which
+is no longer built. `aletheia gateway service install --backend windows-service`
+now reports `unsupported_backend`; only the session backend can be created.
+
+An install that already exists can still be inspected, controlled and removed:
 
 ```powershell
-aletheia gateway service install --backend windows-service
+aletheia gateway service status
 aletheia gateway enable
-aletheia gateway start
+aletheia gateway uninstall --backend windows-service
 ```
 
-Windows presents its own UAC secure desktop. Aletheia never accepts an
-administrator password. The service runs as LocalService with a service SID and
-an isolated `%ProgramData%\Aletheia\runtime`; it does not copy the interactive
-user's config or credentials. Source checkouts return
-`packaged_runtime_required` because granting LocalService access to a personal
-repository, venv, and home directory is not a supported deployment.
-
-WinSW 2.12.0 is downloaded before elevation from its official GitHub release and
-accepted only when its pinned SHA-256 matches. Elevated installation performs no
-network access. `service uninstall` requires the service to be stopped and
-preserves the machine runtime data directory.
+Windows presents its own UAC secure desktop; Aletheia never accepts an
+administrator password. Such a service ran as LocalService with a service SID and
+an isolated `%ProgramData%\Aletheia\runtime`, and never copied the interactive
+user's config or credentials. `service uninstall` requires the service to be
+stopped and preserves the machine runtime data directory.

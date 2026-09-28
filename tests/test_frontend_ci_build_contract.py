@@ -37,11 +37,11 @@ def test_manual_full_validation_keeps_frontend_contract_checks() -> None:
 
 
 def test_settings_schema_changes_remain_known_to_local_planner() -> None:
-    planner = (ROOT / "scripts" / "ci_plan.py").read_text(encoding="utf-8")
+    planner = (ROOT / "scripts" / "ci" / "ci_plan.py").read_text(encoding="utf-8")
 
     for path in (
         "core/aletheia/server/routes/settings.py",
         "core/aletheia/config/",
-        "scripts/export_openapi_schema.py",
+        "scripts/ci/export_openapi_schema.py",
     ):
         assert path in planner

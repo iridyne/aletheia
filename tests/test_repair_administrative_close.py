@@ -71,7 +71,7 @@ def _seed_administrative_close(monkeypatch) -> Position:
 
 
 def _private_rows():
-    from tests.fill_reports import reports
+    from tests.helpers.fill_reports import reports
 
     return reports(
         [

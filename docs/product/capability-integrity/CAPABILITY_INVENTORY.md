@@ -26,7 +26,6 @@ Discovery surfaces:
 
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
-| RT-01 | Packaged runtime installation and first launch | Install and run Aletheia independently of a development checkout | Installer, tray, CLI, runbook | `packaging/`, `native/`, `docs/operations/PACKAGED_RUNTIME.md` |
 | RT-02 | Stable Gateway lifecycle | Start, stop, inspect, and retain one stable Gateway across terminal sessions | CLI, API, tray | `aletheia/cli/gateway.py`, `aletheia/gateway/lifecycle.py` |
 | RT-03 | Frontdoor and backend supervision | Keep stable frontdoor/backend processes available and restart failed children | Gateway runner, health UI | `aletheia/_gateway_runner.py`, `aletheia/gateway/state_machine.py` |
 | RT-04 | Gateway pause and resume | Pause trading work while retaining observable runtime services, then safely resume | Top bar, command palette, CLI, API | `frontend/src/App.tsx`, `aletheia/server/routes/health.py` |

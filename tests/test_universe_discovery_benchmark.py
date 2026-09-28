@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import insert_universe_discovery_benchmark
+from tests.helpers.repo_test_helpers import insert_universe_discovery_benchmark
 
 import asyncio
 import gzip

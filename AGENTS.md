@@ -95,7 +95,7 @@ a regression — read the contract, not the call sites:
 Finding the code a task owns is a separate question, and it has exactly one code
 map: [`docs/design/architecture/SYSTEM_MAP.md`](docs/design/architecture/SYSTEM_MAP.md)
 (task → owner → source → focused tests, checked by
-`scripts/check_docs.py`). Other documents link to it rather than keeping a second
+`scripts/ci/check_docs.py`). Other documents link to it rather than keeping a second
 copy of the directory tree, the task routing, or the scheduled-task list.
 
 ### Convergence over compatibility (standing goal)
@@ -165,12 +165,12 @@ Full-suite and concurrency limits:
 
 Remote GitHub CI is retired/unavailable for the current workflow. Agents must not
 start, dispatch, wait for, or claim authority from remote CI. Use focused local
-deterministic validation instead (`scripts/ci_plan.py`, `scripts/ci_preflight.py`,
-`scripts/ci_local.py`, and `scripts/check_docs.py`/targeted pytest), which is local-only
+deterministic validation instead (`scripts/ci/ci_plan.py`, `scripts/ci/ci_preflight.py`,
+`scripts/ci/ci_local.py`, and `scripts/ci/check_docs.py`/targeted pytest), which is local-only
 validation and does not grant merge/runtime authority.
 
 Start every routine change with the changed-file gate
-`uv run python scripts/dev_check.py` (ruff `B/ASYNC/RUF` on changed lines, test
+`uv run python scripts/ci/dev_check.py` (ruff `B/ASYNC/RUF` on changed lines, test
 skip/xfail census, `pytest --lf`, focused tests, `basedpyright` basic). It is the
 mandatory first feedback step and never replaces the PR-level gates above; see
 [`DEVELOPMENT_WORKFLOW.md`](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md#fast-feedback-loop-mandatory-first-step).
@@ -197,9 +197,9 @@ uv run pytest tests/test_x.py::test_y -q       # single test
 uv run pytest tests -q -m "domain_execution"   # one domain (markers in pyproject.toml)
 uv run pytest tests -q -m "fast"               # cheap set for every bug-fix loop
 uv run ruff check core extensions ops tests    # lint (config in pyproject.toml)
-uv run python scripts/check_docs.py            # documentation-governance checks
-uv run python scripts/ci_plan.py               # deterministic local validation plan
-uv run --no-sync python scripts/ci_preflight.py --pr-body-file <file>   # PR body preflight
+uv run python scripts/ci/check_docs.py            # documentation-governance checks
+uv run python scripts/ci/ci_plan.py               # deterministic local validation plan
+uv run --no-sync python scripts/ci/ci_preflight.py --pr-body-file <file>   # PR body preflight
 ```
 
 `tests/` is flat and large: test files are named by area (`test_<area>.py`), and
@@ -221,7 +221,7 @@ npm run check:settings-types   # drift check vs backend settings model
 `npm run build` writes into `core/aletheia/dashboard_static/` (the directory the
 backend serves), so a UI change is live after a build plus a browser refresh — do
 not start a dev server for that. Regenerate types with `npm run generate:api-types`
-after changing backend route models; `scripts/export_openapi_schema.py` produces
+after changing backend route models; `scripts/ci/export_openapi_schema.py` produces
 the schema.
 
 Runtime inspection:

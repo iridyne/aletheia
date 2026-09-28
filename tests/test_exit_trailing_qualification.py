@@ -8,7 +8,7 @@ import pytest
 from aletheia.analytics.exit_trailing_qualification import build_exit_trailing_qualification_report
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
-from tests.position_fixture import force_update_position
+from tests.helpers.position_fixture import force_update_position
 
 
 OPENED = "2026-08-08T00:00:00+00:00"

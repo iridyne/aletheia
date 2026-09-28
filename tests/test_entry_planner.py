@@ -1,4 +1,4 @@
-from tests.fixtures.repo_test_helpers import list_active_candidate_attention
+from tests.helpers.repo_test_helpers import list_active_candidate_attention
 
 import asyncio
 import builtins

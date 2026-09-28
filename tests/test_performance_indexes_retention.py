@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.fixtures.repo_test_helpers import retention_metrics_snapshot
+from tests.helpers.repo_test_helpers import retention_metrics_snapshot
 
 import logging
 from types import SimpleNamespace

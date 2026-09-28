@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 import json
 from datetime import datetime, timezone
-from tests.fill_reports import reports
+from tests.helpers.fill_reports import reports
 
 class _CloseAdapter:
     def __init__(self, captured):
@@ -67,7 +67,7 @@ def _setup_db(tmp_path, monkeypatch):
 
 def _seed_position_with_claim(db, *, position_id: str, order_id: str,
                               quantity: float, market_type: str = "usdt_futures") -> None:
-    from tests.execution_authority import seed_order_authority
+    from tests.helpers.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 

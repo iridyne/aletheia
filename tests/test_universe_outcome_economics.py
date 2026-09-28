@@ -1,6 +1,6 @@
 """Focused tests for market-aware, cost-aware forward outcomes."""
 
-from tests.fixtures.repo_test_helpers import insert_forward_outcome
+from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import asyncio
 from datetime import datetime, timedelta, timezone

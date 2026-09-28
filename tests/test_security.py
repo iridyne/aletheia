@@ -36,7 +36,7 @@ def _isolate(tmp_path, monkeypatch):
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = "bitget"
     save_config(cfg)
-    from tests.live_identity import bind_live_identity
+    from tests.helpers.live_identity import bind_live_identity
 
     bind_live_identity(monkeypatch, lambda ref: f"test-secret:{ref}")
     identity = trust.resolve_live_execution_identity(cfg)
@@ -120,7 +120,7 @@ def test_agent_has_no_tool_to_change_risk_limits():
 
 @pytest.mark.anyio
 async def test_secret_never_in_model_get(client, monkeypatch):
-    from tests.model_http import mock_model_probe
+    from tests.helpers.model_http import mock_model_probe
 
     mock_model_probe(monkeypatch)
     c, _ = client
@@ -148,7 +148,7 @@ async def test_bitget_secret_never_in_get(client):
 
 @pytest.mark.anyio
 async def test_secret_not_in_config_or_logs(client, monkeypatch):
-    from tests.model_http import mock_model_probe
+    from tests.helpers.model_http import mock_model_probe
 
     mock_model_probe(monkeypatch)
     c, tmp_path = client

@@ -80,7 +80,6 @@ def test_apply_update_uses_pull_sha_not_second_current_commit():
         patch("ops.update.applier._persist_current_commit_fresh", side_effect=_persist),
         patch("ops.update.applier.run_smoke_check", return_value={"ok": True}),
         patch("ops.update.applier.write_audit"),
-        patch("ops.update.applier._is_packaged", return_value=False),
         patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
@@ -143,7 +142,6 @@ def test_rollback_failure_records_actual_head_in_config():
             return_value={"ok": False, "stage": "import", "detail": "ImportError"},
         ),
         patch("ops.update.applier.write_audit"),
-        patch("ops.update.applier._is_packaged", return_value=False),
         patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
@@ -208,7 +206,6 @@ def test_gateway_restart_failure_records_rolled_back_sha_in_config():
             return_value={"ok": False, "reason": "gateway_restart_failed"},
         ),
         patch("ops.update.applier.write_audit"),
-        patch("ops.update.applier._is_packaged", return_value=False),
         patch("ops.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=True)
@@ -219,62 +216,4 @@ def test_gateway_restart_failure_records_rolled_back_sha_in_config():
     assert persisted_commits, "target-fresh metadata persist was never called"
     assert persisted_commits[-1] == old_sha, (
         f"Expected old SHA {old_sha!r} after rollback, got {persisted_commits[-1]!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 4: _preflight_candidate uses expected_sha from caller, not candidate manifest
-# ---------------------------------------------------------------------------
-
-def test_preflight_candidate_uses_caller_provided_sha(tmp_path):
-    """_preflight_candidate must use the feed-pinned SHA, not read it from the manifest."""
-    from ops.update import packaged
-
-    candidate = tmp_path / "release"
-    candidate.mkdir()
-    manifest_sha = "feed_sha_from_signed_feed"
-    tampered_sha = "tampered_sha_in_manifest"
-    (candidate / "release-manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "target": "packaged-runtime",
-                "platform": packaged.platform_id(),
-                "git_sha": tampered_sha,
-                "version": "1.0.0",
-                "runtime_entrypoint": "aletheia-core",
-                "files": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    validated_sha_values: list[str] = []
-
-    def _mock_validate(root, *, expected_release_id, expected_sha):
-        validated_sha_values.append(expected_sha)
-        return {"entrypoint_path": str(root / "aletheia-core"), "git_sha": expected_sha}
-
-    with (
-        patch.object(packaged, "_validate_release_dir", side_effect=_mock_validate),
-        patch.object(packaged, "RestoreService") as mock_restore_cls,
-    ):
-        mock_restore = MagicMock()
-        mock_restore.restore.return_value = MagicMock(success=True)
-        mock_restore_cls.return_value = mock_restore
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-            packaged._preflight_candidate(
-                candidate,
-                backup_path=tmp_path / "backup.tar.gz",
-                operation_id="op-123",
-                target_release="v1.0.0",
-                expected_sha=manifest_sha,
-            )
-
-    assert validated_sha_values, "_validate_release_dir was never called"
-    assert validated_sha_values[0] == manifest_sha, (
-        f"_validate_release_dir received {validated_sha_values[0]!r} instead of "
-        f"the feed-pinned SHA {manifest_sha!r}"
     )

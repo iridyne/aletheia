@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 
 from typer.testing import CliRunner
 
@@ -126,6 +127,23 @@ def test_network_test_reports_reachability(tmp_path, monkeypatch):
     assert "Configured: no" in direct.output
     assert "Reachable: n/a" in direct.output
     assert "not configured (direct connection)" in direct.output
+
+
+def test_network_test_unreachable_proxy_fails(tmp_path, monkeypatch):
+    loader = _setup_config(tmp_path, monkeypatch)
+    with socket.socket() as unavailable_proxy:
+        unavailable_proxy.bind(("127.0.0.1", 0))
+        cfg = AletheiaConfig()
+        cfg.network.proxy_host = "127.0.0.1"
+        cfg.network.proxy_port = unavailable_proxy.getsockname()[1]
+        cfg.network.recompose_proxy_url()
+        loader.save_config(cfg)
+
+        result = runner.invoke(network_app, ["test"])
+
+    assert result.exit_code == 1
+    assert "Reachable: no" in result.output
+    assert "Result: warn:" in result.output
 
 
 def test_network_set_writes_audit_log(tmp_path, monkeypatch):

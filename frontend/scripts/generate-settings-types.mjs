@@ -32,7 +32,7 @@ function collectSchemaRefs(value, refs) {
 
 try {
   run('uv', [
-    'run', 'python', join(repositoryRoot, 'scripts/export_openapi_schema.py'),
+    'run', 'python', join(repositoryRoot, 'scripts/ci/export_openapi_schema.py'),
     '--output', openapiPath,
   ], { cwd: repositoryRoot })
 

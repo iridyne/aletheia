@@ -135,7 +135,7 @@ def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> 
     script = _script()
 
     assert "const reviewTriggerActions = new Set" not in script
-    assert "scripts/ci_plan.py" in script
+    assert "scripts/ci/ci_plan.py" in script
     assert "const codexRequired = ciPlan?.review?.codex_required === true" in script
     assert "trusted CI planner says Codex review is not required" in script
     assert "const labelArgs = pullRequest.labels.flatMap" in script

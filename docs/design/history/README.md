@@ -57,3 +57,11 @@ reactivating a historical document in place.
 - [Former OpenWiki architecture snapshot](openwiki/README.md): original simulator, account, entry-loop, Learning and configuration pages, retained as a linked historical set.
 
 - [Former CN Equity Internal Paper proposal](cn_equity_internal_paper.md): retired CNY simulator/account and execution qualification design.
+
+- [Former packaged Runtime operations](packaged_runtime.md): removed signed-bundle/tray install lane (`native/`, `packaging/`, `scripts/release/`, packaged update path).
+
+- [Former packaged Runtime dogfood playbook](packaged_runtime_dogfood_playbook.md): removed one-Mac dogfood and signed-Feed promotion procedure.
+
+- [Former packaged Runtime power optimization](packaged_runtime_power_optimization.md): macOS tray power analysis for the removed native host.
+
+- [Former modular-monolith release bundle](modular_monolith_release_bundle.md): removed immutable release-bundle build/signing/rollback contract.
