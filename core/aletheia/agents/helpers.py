@@ -332,11 +332,23 @@ async def llm_complete(
             provider_name=provider_name,
         )
         if not (resp.content or "").strip():
+            # Empty text is often not a provider outage: a thinking model can spend
+            # the whole output budget on its reasoning block and emit no text block
+            # (see `openai_compatible._extract_text_content`). Record why, so the
+            # durable call envelope distinguishes "provider down" from "budget
+            # exhausted" instead of collapsing both into an opaque empty response.
             _record_call_finished(
                 inference_call,
                 status="error",
                 response=resp,
                 error_type="empty_response",
+                failure_diagnostics={
+                    "finish_reason": resp.finish_reason,
+                    "output_tokens": (
+                        str(resp.output_tokens) if resp.output_tokens is not None else ""
+                    ),
+                    "output_limit": str(max_tokens),
+                },
             )
             _record_llm(False)
             return None, "llm_unavailable: empty_response"

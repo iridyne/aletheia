@@ -436,7 +436,12 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                     "Under 200 words."
                 ),
                 user=f"{ctx}{prompt_suffix}",
-                max_tokens=600,
+                # The routed model is a thinking model: it emits a reasoning block
+                # before its text block, so a budget tight enough to be consumed by
+                # the reasoning leaves no text and the call comes back empty. Every
+                # review request did exactly that at 600 tokens while the sibling
+                # review caller succeeds at 2048 on the same model.
+                max_tokens=2048,
                 caller="post_trade_reviewer.review",
             )
             log_tool(run_id, "llm_complete", "observe", True)
