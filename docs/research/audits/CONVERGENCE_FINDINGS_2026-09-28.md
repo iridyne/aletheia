@@ -59,6 +59,15 @@ Generation 身份或 producer scope，重读上述 owner 并重跑对应失败�
 与 `relative_rank_shadow` 接受 `dedupe=` 参数），且既有测试本就传入主线函数，
 只有生产重放路径使用克隆。删除后 `grep -rn "_dedupe_for_replay"` 在本仓库无剩余引用。
 
+**重要更正（先前的表述不准确）：**`_dedupe_by_symbol_preferred_market` **不是**当前主线在用的去重。
+全仓 grep 显示它只有定义与测试引用（`spec_market_type_dedup.py`、两个 twin 测试）；引入它的提交
+`db3c3f867` 当时确实由 live 路径调用，但今天 live 的同 symbol 市场偏好发生在
+`candidate_selection_shadow.build_candidate_selection_shadow_bundle`（`service.py:203` →
+`_build_candidate_selection_bundle_owned:220` → refresh:790），用 Utility `decision_rank` + `market_rank`。
+因此本轮只是把 replay 侧的**逐行相同副本**换成同一个函数（行为等价），**没有**改变 replay 与 live 的一致性；
+后者是一个独立的保真度问题，已记录为 [#3617](https://github.com/iridyne/aletheia/issues/3617)
+（现有批次里是否真的存在同 symbol 双市场样本、replay 是否应以 Utility 规则复现），不靠猜测改动。
+
 **不要一起改掉的相邻实现：**`candidate_selection_shadow.py` 的市场择优使用的是 Utility
 `decision_rank`，回答的是另一个问题（经济效用排序，而非市场偏好 + 历史分数），不构成重复。
 判断两个实现是否同一能力必须读函数体，不能按名字或“都叫 dedupe”合并。
