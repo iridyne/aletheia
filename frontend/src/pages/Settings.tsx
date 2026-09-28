@@ -8,6 +8,7 @@ import Tabs, { type TabDef } from '../components/Tabs'
 import { hasUncontrolledDraft, isFallbackDraftControl, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
+import type { SettingsOperations } from '../features/settings/types'
 import { HealthNotificationsTab } from '../features/settings/tabs/HealthNotificationsTab'
 import { AdvancedTab, ADVANCED_SECTION } from '../features/settings/tabs/AdvancedTab'
 import {
@@ -272,6 +273,22 @@ export default function Settings() {
   const [isTouched, setIsTouched] = useState(false)
   const [preciseDirtyCount, setPreciseDirtyCount] = useState(0)
   const [draftEpoch, setDraftEpoch] = useState(0)
+  const ops = useMemo<SettingsOperations>(() => ({
+    refreshSettings: async () => {
+      await qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    refreshStatus: async () => {
+      await qc.invalidateQueries({ queryKey: ['status'] })
+    },
+    refreshQuery: async (key: string | readonly string[]) => {
+      const queryKey = Array.isArray(key) ? key : [key]
+      await qc.invalidateQueries({ queryKey })
+    },
+    refetchStatus: async () => {
+      return qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true })
+    },
+  }), [qc])
+
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
     else {
@@ -541,12 +558,12 @@ export default function Settings() {
                   ))}
                 </div>
               </div>
-              {t.id === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
-              {t.id === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
-              {t.id === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
-              {t.id === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
-              {t.id === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
-              {t.id === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'agent'     && <AgentModelsTab        status={status} settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'execution' && <ExecutionTab          status={status} settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'risk'      && <RiskTab               settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'health'    && <HealthNotificationsTab settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'signals'   && <SignalsTab            settings={settings} ops={ops} onDirty={registerDirty} sectionId={section ?? undefined} />}
               {t.id === 'advanced'  && <AdvancedTab           settings={settings} sectionId={section ?? undefined} />}
             </>
           )}

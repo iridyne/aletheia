@@ -79,8 +79,7 @@ export const LLM_COST_SECTION = {
   description: 'Enable default-off budget shadow observation. The read-only usage dashboard (token spend, provider trends, budgets, cooldowns) lives on the Usage page.',
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
-
-export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+export function AgentModelsTab({ status, settings, ops, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
   const isVisible = (id: string) => !sectionId || sectionId === id
   const confirm = useConfirm()
   const agent = settings?.agent || {}
@@ -95,48 +94,54 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
 
   const permMut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => {
+      await Promise.all([
+        ops?.refreshStatus?.(),
+        ops?.refreshSettings?.(),
+      ])
+      setSaveErr(null)
+    },
     onError: onSaveError('Permission mode'),
   })
   const autoLearnMut = useMutation({
     mutationFn: (enabled: boolean) => api.setAutonomousLearning(enabled),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Autonomous learning'),
   })
   const bypassDistressMut = useMutation({
     mutationFn: (enabled: boolean) => api.setBypassDistressGate(enabled),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Bypass distress gate'),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Runtime config'),
   })
   const operatorMut = useMutation({
     mutationFn: (body: any) => api.updateOperatorConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Operator config'),
   })
   const piDaemonMut = useMutation({
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
     onSuccess: () => setSaveErr(null),
     onError: onSaveError('System Operator daemon'),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSettled: async () => { await ops?.refreshSettings?.() },
   })
   const serenityMut = useMutation({
     mutationFn: (body: any) => api.updateSerenityConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Serenity config'),
   })
   const controllerMut = useMutation({
     mutationFn: (body: any) => api.updateControllerConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Filter controller config'),
   })
   const learningMut = useMutation({
     mutationFn: (body: any) => api.updateLearningConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Paper Learning config'),
   })
 
@@ -190,14 +195,14 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
 
   const guardMut = useMutation({
     mutationFn: (body: any) => api.updateGuardConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Guard promotion'),
   })
 
   const regimeCfg = settings?.regime ?? {}
   const regimeMut = useMutation({
     mutationFn: (body: any) => api.updateRegimeConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: onSaveError('Regime config'),
   })
 
@@ -598,17 +603,17 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
       </SettingsFeatureSection>
 )}
 
-      {isVisible(MODEL_PROVIDERS_SECTION.id) && <ModelProvidersSection qc={qc} onDirty={onDirty} />}
+      {isVisible(MODEL_PROVIDERS_SECTION.id) && <ModelProvidersSection ops={ops} onDirty={onDirty} />}
 
       {isVisible(INFERENCE_ADMISSION_SECTION.id) && (
         <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
-          <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
+          <InferenceAdmissionCard ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(LLM_COST_SECTION.id) && (
         <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
-          <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
+          <EconomicsSnapshotCard economics={settings?.economics} ops={ops} />
         </SettingsFeatureSection>
       )}
     </div>
@@ -617,14 +622,14 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['economics']; qc: SettingsProps['qc'] }) {
+function EconomicsSnapshotCard({ economics, ops }: { economics?: SettingsData['economics']; ops?: SettingsProps['ops'] }) {
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const economicsEnabled = economics?.enabled === true
   const shadowEnabled = economics?.budgets_shadow_enabled === true
   const guardrailDetectionEnabled = economics?.prompt_guardrail_detection_enabled === true
   const economicsMut = useMutation({
     mutationFn: (body: { enabled?: boolean; budgets_shadow_enabled?: boolean; prompt_guardrail_detection_enabled?: boolean }) => api.updateEconomicsConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setSaveErr(null) },
     onError: (error: any) => setSaveErr(`Economics controls: ${error?.message || 'save failed'}`),
   })
   const { data: status } = useQuery({
@@ -690,7 +695,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
 // the semantic decoupling shows up in the operator's UI, not just the code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+export function InferenceAdmissionCard({ ops, onDirty }: { ops?: SettingsProps['ops']; onDirty?: SettingsDirtyProps['onDirty'] }) {
   const { data, isPending: modelPending, isError: modelError } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const {
     data: broker,
@@ -769,7 +774,7 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
                 </span>
               )}
             </div>
-            <InferenceLimitsForm name={name} config={cfg} metrics={metrics} qc={qc} onDirty={onDirty} />
+            <InferenceLimitsForm name={name} config={cfg} metrics={metrics} ops={ops} onDirty={onDirty} />
           </div>
         )
       })}
@@ -777,8 +782,8 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   )
 }
 
-function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
-  name: string; config: Partial<SettingsProvider> & Record<string, unknown>; metrics?: Record<string, number>; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty']
+function InferenceLimitsForm({ name, config, metrics, ops, onDirty }: {
+  name: string; config: Partial<SettingsProvider> & Record<string, unknown>; metrics?: Record<string, number>; ops?: SettingsProps['ops']; onDirty?: SettingsDirtyProps['onDirty']
 }) {
   const [maxConcurrency, setMaxConcurrency] = useState(config?.inference_max_concurrency ?? 2)
   const [rpm, setRpm] = useState(config?.inference_requests_per_minute ?? 60)
@@ -824,10 +829,12 @@ function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
         ? api.updateModelProfile(name, payload)
         : api.updateModelIntegration(name, payload)
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['model'] })
-      qc.invalidateQueries({ queryKey: ['model-broker'] })
-      qc.invalidateQueries({ queryKey: ['settings'] })
+    onSuccess: async () => {
+      await Promise.all([
+        ops?.refreshQuery?.('model'),
+        ops?.refreshQuery?.('model-broker'),
+        ops?.refreshSettings?.(),
+      ])
     },
   })
 

@@ -45,8 +45,7 @@ export const PAPER_ACCOUNT_SECTION = {
   description: 'No exchange only. Manage local simulated cash and positions; every change is recorded for audit and shown to the trading agent.',
   searchTerms: ['no exchange', 'paper cash', 'available balance', 'close positions'],
 } satisfies SettingsFeatureDescriptor
-
-export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+export function ExecutionTab({ status, settings, ops, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
   const isVisible = (id: string) => !sectionId || sectionId === id
   const currentPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
@@ -66,25 +65,25 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
       )}
       {isVisible(EXCHANGE_CONNECTION_SECTION.id) && (
         <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
-          <PrimaryExchangeCard settings={settings} qc={qc} />
-          <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
+          <PrimaryExchangeCard settings={settings} ops={ops} />
+          <ExchangeConnectionCard ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(TRADING_MODE_SECTION.id) && (
         <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
-          <ExchangeModeRow status={status} qc={qc} settings={settings} />
-          <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
+          <ExchangeModeRow status={status} ops={ops} settings={settings} />
+          <ExchangeMarketsRow settings={settings} ops={ops} onDirty={onDirty} />
           <div className="danger-zone">
             <div className="danger-zone-header">Danger Zone</div>
-            <LiveStateRow status={status} settings={settings} qc={qc} />
+            <LiveStateRow status={status} settings={settings} ops={ops} />
           </div>
         </SettingsFeatureSection>
       )}
 
       {isVisible(PAPER_PARAMETERS_SECTION.id) && (
         <SettingsFeatureSection descriptor={PAPER_PARAMETERS_SECTION}>
-          <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
+          <TradingParamsCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
@@ -96,7 +95,7 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
 
       {String(settings?.exchange?.paper_execution_mode) === 'paper_internal' && isVisible(PAPER_ACCOUNT_SECTION.id) && (
         <SettingsFeatureSection descriptor={PAPER_ACCOUNT_SECTION}>
-          <PaperAccountCard qc={qc} onDirty={onDirty} />
+          <PaperAccountCard ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
@@ -111,7 +110,7 @@ const PRIMARY_EXCHANGES = [
   { id: 'paper_internal',label: 'Paper (internal)', desc: 'No exchange — local fill simulation only' },
 ] as const
 
-function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
+function PrimaryExchangeCard({ settings, ops }: SettingsProps) {
   const confirm = useConfirm()
   const exchangeName = String(settings?.exchange?.name || 'bitget')
   const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
@@ -120,7 +119,13 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   const [err, setErr] = useState<string | null>(null)
   const mut = useMutation({
     mutationFn: (id: string) => api.setPrimaryExchange(id),
-    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onSuccess: async () => {
+      setErr(null)
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshStatus?.(),
+      ])
+    },
     onError: (e: any) => setErr(e.message || 'Failed to switch exchange'),
   })
 
@@ -157,7 +162,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   )
 }
 
-export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
+export function ExchangeModeRow({ status, ops, settings }: SettingsStatusProps) {
   const confirm = useConfirm()
   const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
   const modeLabel: Record<string, string> = {
@@ -168,7 +173,11 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   const mut = useMutation({
     mutationFn: (mode: string) => api.setExchangeMode(mode),
     onSuccess: async () => {
-      await qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true })
+      if (ops?.refetchStatus) {
+        await ops.refetchStatus()
+      } else {
+        await ops?.refreshStatus?.()
+      }
       setErr(null)
     },
     onError: (e: any) => setErr(`Exchange mode: ${safeErrorText(e?.message || e?.error, 'save failed')}`),
@@ -195,7 +204,7 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   )
 }
 
-function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
+function ExchangeMarketsRow({ settings, ops, onDirty }: SettingsDirtyProps) {
   const markets = settings?.exchange?.enabled_markets || { spot: true, usdt_futures: true }
   const serverPaperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
   const [spot, setSpot] = useState(!!markets.spot)
@@ -219,7 +228,14 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
       paper_execution_mode: paperMode,
       confirm_exchange_divergence: confirmExchangeDivergence,
     }),
-    onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onSuccess: async () => {
+      setConfirmExchangeDivergence(false)
+      setMsg({ ok: true, text: '✓ saved' })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshStatus?.(),
+      ])
+    },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -325,16 +341,18 @@ function LiveUnlockWarningWall({ credError, preflight, broker, onConfirm, onCanc
   )
 }
 
-function LiveStateRow({ status, settings, qc }: SettingsStatusProps) {
+function LiveStateRow({ status, settings, ops }: SettingsStatusProps) {
   const isDisabled = status.live_state === 'live_disabled' || status.live_state === 'disabled'
   const [warning, setWarning] = useState('')
   const [showWall, setShowWall] = useState(false)
-  const [credError, setCredError] = useState<string | undefined>(undefined)
-  const [preflight, setPreflight] = useState<any | null>(null)
-  const broker = String(settings?.exchange?.name || status.exchange || 'not available')
-  const refreshLiveState = () => {
-    qc.invalidateQueries({ queryKey: ['status'] })
-    qc.invalidateQueries({ queryKey: ['settings'] })
+  const [password, setPassword] = useState('')
+  const [unlockErr, setUnlockErr] = useState<string | null>(null)
+
+  const refreshLiveState = async () => {
+    await Promise.all([
+      ops?.refreshStatus?.(),
+      ops?.refreshSettings?.(),
+    ])
   }
   const unlock = useMutation({
     mutationFn: api.liveUnlock,
@@ -401,7 +419,7 @@ const EXCHANGE_CONFIG = [
 
 type ExchangeId = typeof EXCHANGE_CONFIG[number]['id']
 
-function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
+function ExchangeConnectionCard({ ops, onDirty }: SettingsDirtyProps) {
   const [exchange, setExchange] = useState<ExchangeId>('bitget')
   const exCfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
   const [profile, setProfile] = useState<string>(exCfg.profiles[0])
@@ -527,13 +545,15 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
 
       return hasAllRequired
     },
-    onSuccess: (tested) => {
+    onSuccess: async (tested) => {
       setApiKey(''); setApiSecret(''); setPassphrase('')
       setResult({ ok: true, msg: tested ? '✓ verified & saved' : '✓ saved (partial)' })
-      qc.invalidateQueries({ queryKey: ['bitgetCreds'] })
-      qc.invalidateQueries({ queryKey: ['binanceCreds'] })
-      qc.invalidateQueries({ queryKey: ['okxCreds'] })
-      qc.invalidateQueries({ queryKey: ['exchange-test', exchange, profile] })
+      await Promise.all([
+        ops?.refreshQuery?.('bitgetCreds'),
+        ops?.refreshQuery?.('binanceCreds'),
+        ops?.refreshQuery?.('okxCreds'),
+        ops?.refreshQuery?.(`exchange-test:${exchange}:${profile}`),
+      ])
     },
     onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
   })

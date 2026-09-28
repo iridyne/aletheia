@@ -46,8 +46,7 @@ export const NETWORK_PROXY_SECTION = {
   description: 'Route all outbound traffic (exchange, market data, news, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.',
   searchTerms: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'],
 } satisfies SettingsFeatureDescriptor
-
-function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function HistoricalDataCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const hd = settings?.historical_data
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -74,7 +73,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const { mutate: save } = useMutation({
     mutationFn: () => api.updateHistoricalDataConfig(vals as components['schemas']['HistoricalDataConfig']),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
 
@@ -106,8 +105,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     </div>
   )
 }
-
-function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+function AppRows({ status, settings, ops, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const confirm = useConfirm()
   const app = settings?.app || {}
   const runtime = settings?.runtime || {}
@@ -150,12 +148,12 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
 
   const appMut = useMutation({
     mutationFn: (body: any) => api.updateAppConfig(body),
-    onSuccess: () => { clearImmediateError('app'); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { clearImmediateError('app'); await ops?.refreshSettings?.() },
     onError: (error: any) => reportImmediateError('app', 'App setting failed', error),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => { clearImmediateError('runtime'); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { clearImmediateError('runtime'); await ops?.refreshSettings?.() },
     onError: (error: any) => reportImmediateError('runtime', 'Runtime setting failed', error),
   })
   const remoteControlMut = useMutation({
@@ -163,7 +161,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
     onSuccess: () => {
       clearImmediateError('remote')
       if (remoteToken.trim()) storeRemoteControlToken()
-      qc.invalidateQueries({ queryKey: ['settings'] })
+      await ops?.refreshSettings?.()
     },
     onError: (error: any) => reportImmediateError('remote', 'Remote Control setting failed', error),
   })
@@ -304,8 +302,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
     </>
   )
 }
-
-function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function RetentionCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const retention = settings?.retention || {}
   const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -335,7 +332,7 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     mutationFn: () => api.updateRetentionConfig(
       Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as unknown as components['schemas']['RetentionConfig'],
     ),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { setMsg({ ok: true, text: '✓ saved' }); await ops?.refreshSettings?.() },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -352,8 +349,7 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     </div>
   )
 }
-
-function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function UpdateCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const confirm = useConfirm()
   const updateCfg = settings?.update || {}
   const [branch, setBranch] = useState('master')
@@ -365,12 +361,12 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const check = useMutation({
     mutationFn: api.checkForUpdate,
-    onSuccess: result => qc.setQueryData(['update-status'], result),
+    onSuccess: async () => { await ops?.refreshQuery?.('update-status') },
   })
 
   const cfgMut = useMutation({
     mutationFn: () => api.updateUpdateConfig({ enabled, branch }),
-    onSuccess: () => { setCfgMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { setCfgMsg({ ok: true, text: '✓ saved' }); await ops?.refreshSettings?.() },
     onError: (e: any) => setCfgMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -392,7 +388,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setApplyMsg(r.applied
         ? `Updated to ${r.new_commit?.slice(0, 8)} (deps reinstalled: ${r.deps_reinstalled}).`
         : `Not applied: ${r.reason}`)
-      qc.invalidateQueries({ queryKey: ['update-status'] })
+      await ops?.refreshQuery?.('update-status')
     },
   })
 
@@ -461,8 +457,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     </div>
   )
 }
-
-function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function NetworkCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const net = settings?.network || {}
   const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
   const [host, setHost] = useState<string>(net.proxy_host ?? '')
@@ -474,7 +469,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const mut = useMutation({
     mutationFn: (body: any) => api.updateNetworkConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: async () => { await ops?.refreshSettings?.() },
     meta: { errorSurface: 'inline' },
   })
 
@@ -681,14 +676,13 @@ function DataExportCard() {
     </div>
   )
 }
-
-export function RuntimeSystemTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+export function RuntimeSystemTab({ status, settings, ops, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
   const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
       {isVisible(APP_SECTION.id) && (
         <SettingsFeatureSection descriptor={APP_SECTION}>
-          <AppRows status={status} settings={settings} qc={qc} onDirty={onDirty} />
+          <AppRows status={status} settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
@@ -696,11 +690,11 @@ export function RuntimeSystemTab({ status, settings, qc, onDirty, sectionId }: S
         <SettingsFeatureSection descriptor={DATA_RETENTION_SECTION}>
           <Collapsible title="Historical Data">
             <p className="hint mb-2">Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.</p>
-            <HistoricalDataCard settings={settings} qc={qc} onDirty={onDirty} />
+            <HistoricalDataCard settings={settings} ops={ops} onDirty={onDirty} />
           </Collapsible>
           <Collapsible title="Data Retention">
             <p className="hint mb-2">How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.</p>
-            <RetentionCard settings={settings} qc={qc} onDirty={onDirty} />
+            <RetentionCard settings={settings} ops={ops} onDirty={onDirty} />
           </Collapsible>
         </SettingsFeatureSection>
       )}
@@ -715,13 +709,13 @@ export function RuntimeSystemTab({ status, settings, qc, onDirty, sectionId }: S
 
       {isVisible(SOFTWARE_UPDATES_SECTION.id) && (
         <SettingsFeatureSection descriptor={SOFTWARE_UPDATES_SECTION}>
-          <UpdateCard settings={settings} qc={qc} onDirty={onDirty} />
+          <UpdateCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(NETWORK_PROXY_SECTION.id) && (
         <SettingsFeatureSection descriptor={NETWORK_PROXY_SECTION}>
-          <NetworkCard settings={settings} qc={qc} onDirty={onDirty} />
+          <NetworkCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
     </div>

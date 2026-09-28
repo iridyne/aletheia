@@ -48,7 +48,7 @@ function renderCard() {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
-  act(() => root.render(<InferenceAdmissionCard qc={{ invalidateQueries: vi.fn() } as any} />))
+  act(() => root.render(<InferenceAdmissionCard ops={{ refreshQuery: vi.fn(), refreshSettings: vi.fn(), refreshStatus: vi.fn() }} />))
 }
 
 describe('Inference admission read-state contract', () => {

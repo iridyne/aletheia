@@ -45,7 +45,7 @@ export const EQUITIES_SECTION = {
   searchTerms: ['xstocks', 'equity'],
 } satisfies SettingsFeatureDescriptor
 
-function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function MarketDataCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const md = settings?.market_data || {}
   const exchangeSettings = settings?.exchange || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
@@ -82,10 +82,14 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       observed_stock_tokens: parseCsvList(stockTokens),
       observed_prediction_markets: parseCsvList(predMarkets),
       confirm_exchange_divergence: confirmExchangeDivergence,
-    }),
-    onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
+    onSuccess: async () => {
+      setConfirmExchangeDivergence(false)
+      setMsg({ ok: true, text: '✓ saved' })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshStatus?.(),
+      ])
+    },
 
   const dirty = primary !== (md.ccxt_exchange || 'binance')
     || fallback !== (md.ccxt_fallback || 'bybit')
@@ -183,7 +187,7 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   )
 }
 
-function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function MacroSignalsCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const md = settings?.market_data || {}
 
   const [fearGreed, setFearGreed] = useState(md.enable_fear_greed ?? true)
@@ -200,10 +204,10 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       coingecko_top_n: cgTopN,
       enable_hyperliquid: hyperliquid,
       enable_defillama: defillama,
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
+    onSuccess: async () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      await ops?.refreshSettings?.()
+    },
 
   const dirty = fearGreed !== (md.enable_fear_greed ?? true)
     || cgTop !== (md.enable_coingecko_top ?? true)
@@ -258,8 +262,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 // ─── Prediction Markets Toggle ───
-
-function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
+function PredictionToggleCard({ ops }: { ops?: SettingsProps['ops'] }) {
   const statusQuery = useQuery({
     queryKey: ['prediction-status'],
     queryFn: api.getPredictionStatus,
@@ -270,10 +273,10 @@ function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
     mutationFn: (enabled: boolean) => api.togglePrediction(enabled),
     onSuccess: (data) => {
       setMsg({ ok: true, text: data.enabled ? '✓ enabled' : '✓ disabled' })
-      qc.invalidateQueries({ queryKey: ['prediction-status'] })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-    },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+      await Promise.all([
+        ops?.refreshQuery?.('prediction-status'),
+        ops?.refreshSettings?.(),
+      ])
   })
 
   const statusState = statusQuery.data
@@ -311,7 +314,7 @@ function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
 
 // ─── Equities ───
 
-function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function EquitiesCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
   const [draft, setDraft] = useState<string[]>(serverTickers)
   const [input, setInput] = useState('')
@@ -319,9 +322,10 @@ function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const mut = useMutation({
     mutationFn: () => api.updateEquities(draft),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
+    onSuccess: async () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      await ops?.refreshSettings?.()
+    },
 
   const add = () => {
     const t = input.trim().toUpperCase()
@@ -378,7 +382,7 @@ function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
 // ─── News Feeds config ───
 
-function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function NewsFeedsCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const news = settings?.news
   const [enabled, setEnabled] = useState(true)
   const [interval, setInterval_] = useState(15)
@@ -390,10 +394,10 @@ function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       enabled,
       fetch_interval_minutes: interval,
       feeds: feeds.map(f => ({ name: String(f.name || ''), url: String(f.url || ''), source: String(f.source || ''), enabled: f.enabled !== false })),
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
+    onSuccess: async () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      await ops?.refreshSettings?.()
+    },
 
   const dirty = !!news && (
     enabled !== (news.enabled ?? true)
@@ -456,39 +460,39 @@ function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // SIGNALS TAB — market data, news, macro signals, prediction markets, equities
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function SignalsTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
+export function SignalsTab({ settings, ops, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
   const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
       {isVisible(MARKET_DATA_SECTION.id) && (
         <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>
           <Collapsible title="Data Source Overrides">
-            <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+            <MarketDataCard settings={settings} ops={ops} onDirty={onDirty} />
           </Collapsible>
         </SettingsFeatureSection>
       )}
 
       {isVisible(MACRO_SIGNALS_SECTION.id) && (
         <SettingsFeatureSection descriptor={MACRO_SIGNALS_SECTION}>
-          <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
+          <MacroSignalsCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(NEWS_FEEDS_SECTION.id) && (
         <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
-          <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
+          <NewsFeedsCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(PREDICTION_MARKETS_SECTION.id) && (
         <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
-          <PredictionToggleCard qc={qc} />
+          <PredictionToggleCard ops={ops} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(EQUITIES_SECTION.id) && (
         <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
-          <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
+          <EquitiesCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
     </div>

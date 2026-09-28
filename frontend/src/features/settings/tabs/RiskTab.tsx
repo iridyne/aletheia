@@ -49,8 +49,7 @@ export const RISK_LIMITS_SECTION = {
 } satisfies SettingsFeatureDescriptor
 
 // ─── Event Triggers config ───
-
-function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function EventTriggerCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const et = settings?.event_triggers
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -72,7 +71,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const { mutate: save } = useMutation({
     mutationFn: () => api.updateEventTriggerConfig(vals as components['schemas']['EventTriggerConfig']),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
+    onSuccess: async () => { await ops?.refreshSettings?.(); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
 
@@ -101,8 +100,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 // ─── Universe config ───
-
-function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function UniverseConfigCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const universe = settings?.universe
   const snapshotTtlLabelId = useId()
   const [enabled, setEnabled] = useState(false)
@@ -162,7 +160,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         market_type: marketType,
       })
     },
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setChanged(false); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { setMsg({ ok: true, text: '✓ saved' }); setChanged(false); await ops?.refreshSettings?.() },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -313,8 +311,7 @@ function CandidateSelectionAuthorityCard() {
     </div>
   )
 }
-
-function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function FastTriggerConfigCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const server = settings?.fast_trigger
   const [mode, setMode] = useState<'off' | 'shadow' | 'execute'>('shadow')
   const [maxSetups, setMaxSetups] = useState('10')
@@ -341,11 +338,11 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       max_setups: parseInt(maxSetups),
       authorization_ttl_minutes: parseInt(ttlMinutes),
     }),
-    onSuccess: (result: any) => {
+    onSuccess: async (result: any) => {
       const reason = result?.runtime_status?.reason
       setMsg({ ok: !reason, text: reason ? `Saved; inactive: ${reason}` : '✓ saved and applied' })
       setChanged(false)
-      qc.invalidateQueries({ queryKey: ['settings'] })
+      await ops?.refreshSettings?.()
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
@@ -392,8 +389,7 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // ─────────────────────────────────────────────────────────────────────────────
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
-
-export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
+export function RiskTab({ settings, ops, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
   // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
   // now adopts or preserves local state through useSettingsDraftLifecycle.
   const isVisible = (id: string) => !sectionId || sectionId === id
@@ -401,29 +397,29 @@ export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps
     <div>
       {isVisible(UNIVERSE_SECTION.id) && (
         <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
-          <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+          <UniverseConfigCard settings={settings} ops={ops} onDirty={onDirty} />
           <CandidateSelectionAuthorityCard />
-          <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+          <FastTriggerConfigCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(EVENT_TRIGGERS_SECTION.id) && (
         <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
           <Collapsible title="Trigger Thresholds">
-            <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
+            <EventTriggerCard settings={settings} ops={ops} onDirty={onDirty} />
           </Collapsible>
         </SettingsFeatureSection>
       )}
 
       {isVisible(TRADABLE_SYMBOLS_SECTION.id) && (
         <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
-          <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
+          <SymbolsCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
       {isVisible(RISK_LIMITS_SECTION.id) && (
         <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
-          <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
+          <RiskCard settings={settings} ops={ops} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
     </div>
@@ -432,8 +428,7 @@ export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps
 
 
 // ─── Symbols ───
-
-function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function SymbolsCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'blacklist'
   const serverSymbols: string[] = settings?.risk?.symbol_list ?? []
 
@@ -444,7 +439,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const mut = useMutation({
     mutationFn: () => api.updateSymbolFilter({ mode, symbols: draft }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: async () => { setMsg({ ok: true, text: '✓ saved' }); await ops?.refreshSettings?.() },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -578,8 +573,7 @@ export function writePolicyPath(value: RiskPolicyDraft, path: RiskPolicyPath, ne
   cursor[parts[parts.length - 1]] = next
   return clone
 }
-
-export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' | 'live'; initial: RiskPolicyDraft; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+export function RiskPolicyEditor({ mode, initial, ops, onDirty }: { mode: 'demo' | 'live'; initial: RiskPolicyDraft; ops?: SettingsProps['ops']; onDirty?: SettingsDirtyProps['onDirty'] }) {
   const confirm = useConfirm()
   const [policy, setPolicy] = useState<RiskPolicyDraft>(initial)
   const [isDirty, setIsDirty] = useState(false)
@@ -604,12 +598,14 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
       Number(policy.revision ?? 0),
       `${mode} policy edited in Settings`,
     ),
-    onSuccess: (risk) => {
+    onSuccess: async (risk) => {
       setPolicy(risk[mode])
       setIsDirty(false)
       setMsg({ ok: true, text: '✓ policy saved with a new revision' })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshQuery?.('risk-boundaries'),
+      ])
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
@@ -619,12 +615,14 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
       Number(policy.revision ?? 0),
       `${mode} policy reset to shipped defaults in Settings`,
     ),
-    onSuccess: (risk) => {
+    onSuccess: async (risk) => {
       setPolicy(risk[mode])
       setIsDirty(false)
       setMsg({ ok: true, text: '✓ policy reset with a new revision' })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshQuery?.('risk-boundaries'),
+      ])
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
@@ -722,8 +720,7 @@ type RiskPolicyProfilesData = {
   demo: RiskPolicyDraft
   live: RiskPolicyDraft
 }
-
-function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesData; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+function RiskPolicyProfiles({ risk, ops, onDirty }: { risk: RiskPolicyProfilesData; ops?: SettingsProps['ops']; onDirty?: SettingsDirtyProps['onDirty'] }) {
   const confirm = useConfirm()
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const copy = useMutation({
@@ -735,10 +732,12 @@ function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesDat
         Number(risk[target].revision ?? 0),
         `${source} policy copied to ${target} in Settings`,
       ),
-    onSuccess: () => {
+    onSuccess: async () => {
       setMsg({ ok: true, text: '✓ policy copied with a new target revision' })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshQuery?.('risk-boundaries'),
+      ])
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
@@ -765,14 +764,13 @@ function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesDat
       </div>
       <SaveMsg msg={msg} />
       <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <RiskPolicyEditor mode="demo" initial={risk.demo} qc={qc} onDirty={onDirty} />
-        <RiskPolicyEditor mode="live" initial={risk.live} qc={qc} onDirty={onDirty} />
+        <RiskPolicyEditor mode="demo" initial={risk.demo} ops={ops} onDirty={onDirty} />
+        <RiskPolicyEditor mode="live" initial={risk.live} ops={ops} onDirty={onDirty} />
       </div>
     </div>
   )
 }
-
-function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+function RiskCard({ settings, ops, onDirty }: SettingsDirtyProps) {
   type RiskSettings = Partial<SettingsRiskConfig> & Record<string, unknown> & RiskPolicyProfilesData
   const risk = settings?.risk as RiskSettings | undefined
   const [vals, setVals] = useState<Record<string, unknown>>({})
@@ -816,16 +814,18 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const mut = useMutation({
     mutationFn: () => api.updateRiskConfig(vals as Parameters<typeof api.updateRiskConfig>[0]),
-    onSuccess: () => {
+    onSuccess: async () => {
       setMsg({ ok: true, text: '✓ saved' })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+      await Promise.all([
+        ops?.refreshSettings?.(),
+        ops?.refreshQuery?.('risk-boundaries'),
+      ])
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
   if (!risk) return null
-  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />
+  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} ops={ops} onDirty={onDirty} />
 
   return (
     <div className="card mb-0">

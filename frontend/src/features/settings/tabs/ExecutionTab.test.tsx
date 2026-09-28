@@ -68,7 +68,12 @@ describe('ExecutionTab', () => {
     const write = deferred()
     const refetch = deferred()
     vi.mocked(api.setExchangeMode).mockReturnValue(write.promise as any)
-    const qc = { refetchQueries: vi.fn(() => refetch.promise) }
+    const ops = {
+      refreshSettings: vi.fn(),
+      refreshStatus: vi.fn(),
+      refreshQuery: vi.fn(),
+      refetchStatus: vi.fn(() => refetch.promise),
+    }
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -78,7 +83,7 @@ describe('ExecutionTab', () => {
         <ExchangeModeRow
           status={{ exchange_mode: exchangeMode }}
           settings={{ exchange: { paper_execution_mode: 'paper_internal' } }}
-          qc={qc as any}
+          ops={ops}
         />
       </QueryClientProvider>,
     )
@@ -95,7 +100,7 @@ describe('ExecutionTab', () => {
     })
 
     await act(async () => write.resolve())
-    expect(qc.refetchQueries).toHaveBeenCalledWith({ queryKey: ['status'] }, { throwOnError: true })
+    expect(ops.refetchStatus).toHaveBeenCalledTimes(1)
     expect(select.disabled).toBe(true)
 
     await act(async () => {
