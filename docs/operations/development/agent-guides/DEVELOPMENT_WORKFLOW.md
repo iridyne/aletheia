@@ -241,8 +241,8 @@ deep evidence for that head remains unchanged.
   held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
   clear that hold without a separate explicit owner request.
   Qualification runtimes remain pinned unless an owner explicitly selects a
-  deployment. See the
-  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
+  deployment. The former release-bundle contract is retired; see
+  [its history record](../../../design/history/modular_monolith_release_bundle.md).
 - When owner-requested external validation is pending, inspect the available checks, any event state,
   failing log once. Continue independent work and monitor non-blockingly at
   intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.

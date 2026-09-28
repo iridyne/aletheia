@@ -173,8 +173,6 @@ def _surfaces(paths: list[str]) -> tuple[list[str], list[str]]:
             surfaces.add("market_data")
         if path.startswith(("dashboard/", "operator-shell/")):
             surfaces.add("frontend_operator")
-        if path.startswith("native/"):
-            surfaces.add("native")
         if path.startswith("docs/"):
             surfaces.add("docs_governance")
         if path.startswith("tests/"):

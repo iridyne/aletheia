@@ -1,3 +1,10 @@
+> Retired 2026-09-28 with the packaged Runtime lane (`native/`, `packaging/`,
+> `scripts/release/` and the packaged update path were removed). This page
+> describes that removed signed-bundle/tray install path and is historical
+> context only: it is not current code, configuration, execution authority or
+> release process. [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)
+> states what is actually admitted at runtime.
+
 # Aletheia Packaged Runtime Power Optimization（macOS）
 
 更新日期：2026-07-17
@@ -32,8 +39,8 @@
 
 对应证据：
 
-1. 托盘周期轮询：[native/aletheia-host/src/bin/aletheia-tray.rs:343](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L343)、[native/aletheia-host/src/bin/aletheia-tray.rs:399](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L399)
-2. 观察函数细节：[native/aletheia-host/src/bin/aletheia-tray.rs:67](../../../native/aletheia-host/src/bin/aletheia-tray.rs#L67)
+1. 托盘周期轮询：`native/aletheia-host/src/bin/aletheia-tray.rs:343`、`native/aletheia-host/src/bin/aletheia-tray.rs:399`
+2. 观察函数细节：`native/aletheia-host/src/bin/aletheia-tray.rs:67`
 3. 网关监督 1 秒端口检查：[aletheia/_gateway_runner.py:38](../../../core/aletheia/_gateway_runner.py#L38)、[aletheia/_gateway_runner.py:284](../../../core/aletheia/_gateway_runner.py#L284)
 4. 前端状态栏查询：[frontend/src/App.tsx:123](../../../frontend/src/App.tsx#L123)
 5. SSE 事件长连空转：历史实验路由 `aletheia/server/routes/runtime.py:214`（已退役）、[aletheia/server/routes/operator.py:969](../../../core/aletheia/server/routes/operator.py#L969)
