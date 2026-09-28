@@ -18,7 +18,6 @@ def test_release_check_persists_exact_candidate_without_activation(tmp_path, mon
 
     events = []
     auto, git_ops, backup = _configured_candidate_run(tmp_path, monkeypatch, events)
-    monkeypatch.setattr(applier, "_is_packaged", lambda: False)
     monkeypatch.setattr(git_ops, "behind_count", lambda *args: pytest.fail("branch distance is not a release"))
     checked = applier.check_for_update()
     assert checked["has_update"] is True
@@ -610,8 +609,7 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
             prefix + "aletheia/storage/migrations.py": "def migration_status():\n    print(__file__)\n    return {'current': True}\ndef apply_migrations(): raise AssertionError('no migration')\n",
             "ops/__init__.py": "",
             "ops/update/__init__.py": "",
-            "ops/update/packaged.py": "def validate_current_data():\n    print(__file__)\n    return {'ok': True}\n",
-            "ops/update/smoke.py": "def run_smoke_check():\n    print(__file__)\n    return {'ok': True}\n",
+            "ops/update/smoke.py": "def validate_current_data():\n    print(__file__)\n    return {'ok': True}\ndef run_smoke_check():\n    print(__file__)\n    return {'ok': True}\n",
         }
         for name, content in files.items():
             if root == candidate and missing and (name.startswith("core/") if missing == "core" else name.startswith("ops/")):
@@ -645,7 +643,7 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
     if not missing:
         assert observed[0].stdout.splitlines() == [
             str(candidate.resolve() / "core/aletheia/storage/migrations.py"),
-            str(candidate.resolve() / "ops/update/packaged.py"),
+            str(candidate.resolve() / "ops/update/smoke.py"),
             str(candidate.resolve() / "ops/update/smoke.py"),
         ]
 

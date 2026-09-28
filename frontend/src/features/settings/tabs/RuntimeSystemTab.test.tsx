@@ -64,20 +64,6 @@ describe('RuntimeSystemTab', () => {
     expect(html).not.toContain('Apply update</button>')
   })
 
-  it('keeps packaged update apply available', () => {
-    const html = renderRuntimeTab({
-      ok: true,
-      mode: 'packaged',
-      has_update: true,
-      behind_count: 1,
-      branch: 'stable',
-      current_commit: 'aaaaaaaa',
-      remote_commit: 'bbbbbbbb',
-    })
-
-    expect(html).toContain('Apply update</button>')
-  })
-
   it("shows a held source release without claiming it is deployed", () => {
     const html = renderRuntimeTab({
       mode: "source_release", status: "hold", phase: "observer_hold",
@@ -91,8 +77,11 @@ describe('RuntimeSystemTab', () => {
     expect(html).not.toContain("Apply update</button>")
   })
 
-  it('fails closed when update mode is missing or unknown', () => {
-    for (const mode of [undefined, 'unknown']) {
+  it('never offers an apply action, whatever the reported update mode', () => {
+    // Updating is CLI-only: the API route refuses to mutate source and the
+    // packaged staging flow it used to hand off to was removed. There is no mode
+    // for which the dashboard applies an update itself.
+    for (const mode of [undefined, 'unknown', 'development', 'source_release']) {
       const html = renderRuntimeTab({
         ok: true,
         mode,
@@ -103,8 +92,8 @@ describe('RuntimeSystemTab', () => {
         remote_commit: '22222222',
       })
 
-      expect(html).toContain('Update apply action unavailable')
       expect(html).not.toContain('Apply update</button>')
+      expect(html).toContain('Run <code>aletheia update</code> from the controlling terminal')
     }
   })
 })
