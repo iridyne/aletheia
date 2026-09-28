@@ -15,16 +15,12 @@ from aletheia.agents.helpers import (
 )
 
 
-def _request() -> ModelRequest:
-    request = ModelRequest(messages=[{"role": "user", "content": "safe prompt"}])
-    setattr(request, "_aletheia_would_block_observations", [{"policy_id": "budget_test"}])
-    return request
 
 
 def test_budget_enforcement_is_dormant_by_default():
     result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=False, enforcement_mode="hard_block")),
-        _request(),
+        [{"policy_id": "budget_test"}],
     )
     assert result is None, "budget enforcement must be a no-op when economics is disabled"
 
@@ -32,7 +28,7 @@ def test_budget_enforcement_is_dormant_by_default():
 def test_budget_warn_only_never_denies():
     result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="warn_only")),
-        _request(),
+        [{"policy_id": "budget_test"}],
     )
     assert result is None, "warn-only enforcement must never deny"
 
@@ -45,7 +41,7 @@ def test_hard_block_is_explicit_for_non_safety_callers(monkeypatch, logical_agen
     with pytest.raises(BudgetExceededError, match="llm_budget_exhausted"):
         _enforce_budget_if_configured(
             SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
-            _request(),
+            [{"policy_id": "budget_test"}],
         )
 
 
@@ -56,7 +52,7 @@ def test_safety_callers_remain_warn_only_in_every_mode(monkeypatch, logical_agen
     monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": logical_agent})
     result = _enforce_budget_if_configured(
         SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
-        _request(),
+        [{"policy_id": "budget_test"}],
     )
     assert result is None, (
         f"safety caller {logical_agent} must never be hard-blocked by the budget gate"

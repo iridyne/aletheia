@@ -231,43 +231,36 @@ def _observe_would_block(
     request: ModelRequest,
     provider: ModelProvider,
     provider_name: str,
-) -> None:
-    """Attach Phase 2B-2 shadow-mode would-block observations to the request.
+) -> list[dict[str, Any]] | None:
+    """Evaluate budgets once; optionally attach shadow evidence for tracing.
 
-    Runs before the fallback loop. Never raises: any failure is swallowed
-    so measurement cannot break the LLM call. Observations are stored on
-    the request object (rather than a ContextVar) because the request is
-    shared across all fallback attempts and any downstream broker loop,
-    where ContextVars set on the caller loop would not be visible.
-
-    Gated by ``EconomicsConfig.enabled and .budgets_shadow_enabled`` plus
-    the tracing kill switch. Off by default — no ledger row gets a
-    ``would_block`` key until an operator explicitly opts in.
+    None means not evaluated/unavailable, [] means evaluated without crossings.
+    Unknown pricing/storage retains the existing non-denial policy, not a claim
+    of available budget. Enforcement consumes this result, never stale metadata.
     """
+    request.__dict__.pop("_aletheia_would_block_observations", None)
     try:
         econ = getattr(cfg, "economics", None)
-        if econ is None or not econ.enabled or not econ.budgets_shadow_enabled:
-            return
-        # Repeat guard: skip when tracing itself is disabled — the resulting
-        # ledger row would be missing anyway, so a would_block observation
-        # against no persisted evidence would be misleading.
+        if econ is None or not econ.enabled:
+            return None
         from aletheia.economics.tracing import tracing_enabled
 
-        if not tracing_enabled():
-            return
+        observe = econ.budgets_shadow_enabled and tracing_enabled()
+        if econ.enforcement_mode == "warn_only" and not observe:
+            return None
         from aletheia.economics.budgets import check_would_block
         from aletheia.economics.tracing import resolve_pricing_snapshot
         from datetime import datetime, timezone
 
         model = str(getattr(provider, "model", "") or "")
         if not model:
-            return
+            return None
         now_iso = datetime.now(timezone.utc).isoformat()
         pricing = resolve_pricing_snapshot(provider_name, model, now_iso)
         if not pricing:
             # No pricing snapshot means the ledger records cost_status='unknown';
             # a hypothetical estimate would be dishonest here.
-            return
+            return None
         input_tokens_est = _estimate_input_tokens(request)
         output_tokens_est = max(0, int(getattr(request, "max_tokens", 0) or 0))
         input_rate = float(pricing.get("input_usd_per_million") or 0.0)
@@ -277,7 +270,7 @@ def _observe_would_block(
             + output_tokens_est * output_rate / 1_000_000.0
         )
         if not (estimated_cost_usd > 0):
-            return
+            return None
         try:
             from aletheia.agent_runtime.run_context import (
                 current_agent_run_id,
@@ -295,12 +288,14 @@ def _observe_would_block(
             logical_agent=logical_agent,
             provider=provider_name,
         )
-        if observations:
+        if observations and observe:
             setattr(
                 request, "_aletheia_would_block_observations", observations
             )
+        return observations
     except Exception as exc:  # noqa: BLE001 — observation must never break inference
-        logger.debug("would-block observation failed silently: %s", exc)
+        logger.debug("budget evaluation unavailable (%s)", type(exc).__name__)
+        return None
 
 
 def _observe_prompt_guardrail(cfg, request: ModelRequest) -> None:
@@ -458,10 +453,9 @@ def _with_fallback_meta(
     return response
 
 
-def _enforce_budget_if_configured(cfg, request: ModelRequest) -> None:
-    """Apply opt-in policy after the Phase 2 observation has been computed."""
+def _enforce_budget_if_configured(cfg, observations: list[dict[str, Any]] | None) -> None:
+    """Deny known crossings; unavailable evaluation retains the existing policy."""
     econ = getattr(cfg, "economics", None)
-    observations = getattr(request, "_aletheia_would_block_observations", None)
     if econ is None or not econ.enabled or econ.enforcement_mode == "warn_only" or not observations:
         return
     try:
@@ -493,9 +487,9 @@ async def complete_with_fallback(
     if inference is not None:
         inference.set_resolved_provider(resolved_provider_name)
     provider = provider or provider_router.get_provider(resolved_provider_name)
-    _observe_would_block(cfg, request, provider, resolved_provider_name)
+    observations = _observe_would_block(cfg, request, provider, resolved_provider_name)
     _observe_prompt_guardrail(cfg, request)
-    _enforce_budget_if_configured(cfg, request)
+    _enforce_budget_if_configured(cfg, observations)
     if not request.allow_model_fallback:
         return await brokered_complete(resolved_provider_name, provider, request)
     models = await _candidate_models(resolved_provider_name, provider)

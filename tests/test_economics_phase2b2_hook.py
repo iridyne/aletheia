@@ -37,8 +37,10 @@ class _FakeProvider(ModelProvider):
 
     def __init__(self) -> None:
         self.model = "fake-model"
+        self.calls = []
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.calls.append(request)
         return ModelResponse(
             content="ok",
             model=self.model,
@@ -77,6 +79,7 @@ class _FakeEconomics:
     def __init__(self, *, enabled: bool, shadow: bool) -> None:
         self.enabled = enabled
         self.budgets_shadow_enabled = shadow
+        self.enforcement_mode = "warn_only"
 
 
 class _FakeConfig:
@@ -235,3 +238,91 @@ async def test_regular_call_omits_would_block_key():
     assert row is not None
     metadata = json.loads(row[0])
     assert "would_block" not in metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,shadow,tracing,cap,agent,denied", [
+    ("hard_block", False, True, .0001, "research_worker", True),
+    ("hard_block", True, True, .0001, "research_worker", True),
+    ("hard_block", True, False, .0001, "research_worker", True),
+    ("hard_block", False, False, .0001, "research_worker", True),
+    ("fallback_to_defaults", False, False, .0001, "research_worker", True),
+    ("warn_only", False, True, .0001, "research_worker", False),
+    ("hard_block", False, True, 1000, "research_worker", False),
+    ("hard_block", False, False, .0001, "risk_critic", False),
+])
+async def test_enforcement_independent_of_observation(monkeypatch, mode, shadow, tracing, cap, agent, denied):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.agent_runtime.run_context import bind_economic_attribution
+    from aletheia.model_provider import fallback
+
+    cfg = AletheiaConfig()
+    cfg.economics.enabled = True
+    cfg.economics.budgets_shadow_enabled = shadow
+    cfg.economics.enforcement_mode = mode
+    monkeypatch.setattr(fallback, "load_config", lambda: cfg)
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", "1" if tracing else "0")
+    ensure_economics_schema()
+    _seed_pricing()
+    add_budget(scope="system", subject=None, usd_cap=cap, window="daily")
+    provider = _FakeProvider()
+    request = _fake_request()
+    with bind_economic_attribution(logical_agent=agent):
+        if denied:
+            with pytest.raises(fallback.BudgetExceededError, match="llm_budget_exhausted"):
+                await complete_with_fallback(request, provider_name=provider.name, provider=provider)
+            assert provider.calls == []
+        else:
+            response = await complete_with_fallback(request, provider_name=provider.name, provider=provider)
+            assert response.content == "ok"
+            assert provider.calls == [request]
+    if not shadow or not tracing:
+        assert not hasattr(request, "_aletheia_would_block_observations")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", ["pricing", "database"])
+async def test_reused_request_clears_stale_denial_when_evaluation_unavailable(monkeypatch, unavailable):
+    import sqlite3
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.economics import budgets
+    from aletheia.model_provider import fallback
+
+    cfg = AletheiaConfig()
+    cfg.economics.enabled = True
+    cfg.economics.budgets_shadow_enabled = True
+    cfg.economics.enforcement_mode = "hard_block"
+    monkeypatch.setattr(fallback, "load_config", lambda: cfg)
+    db = ensure_economics_schema()
+    _seed_pricing()
+    add_budget(scope="system", subject=None, usd_cap=.0001, window="daily")
+    request = _fake_request()
+    provider = _FakeProvider()
+    with pytest.raises(fallback.BudgetExceededError):
+        await complete_with_fallback(request, provider_name=provider.name, provider=provider)
+    assert provider.calls == []
+    assert getattr(request, "_aletheia_would_block_observations", None)
+    if unavailable == "pricing":
+        db.execute("DELETE FROM pricing_snapshots")
+        db.commit()
+    else:
+        def storage_unavailable():
+            raise sqlite3.OperationalError("synthetic database unavailable")
+        monkeypatch.setattr(budgets, "ensure_economics_schema", storage_unavailable)
+    assert _observe_would_block(cfg, request, provider, provider.name) is None
+    assert not hasattr(request, "_aletheia_would_block_observations")
+    response = await complete_with_fallback(request, provider_name=provider.name, provider=provider)
+    assert response.content == "ok"
+    assert provider.calls == [request]
+
+
+def test_evaluated_within_budget_is_distinct_from_unavailable():
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.economics.enabled = True
+    cfg.economics.enforcement_mode = "hard_block"
+    _seed_pricing()
+    add_budget(scope="system", subject=None, usd_cap=1000, window="daily")
+    provider = _FakeProvider()
+    assert _observe_would_block(cfg, _fake_request(), provider, provider.name) == []
