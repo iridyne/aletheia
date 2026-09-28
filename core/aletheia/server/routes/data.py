@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import is_preview_mode, load_config
@@ -1238,16 +1238,43 @@ def export_trades(
     )
 
 
-@router.get("/positions", response_model=list[PositionView])
+class PositionSummaryView(PositionView):
+    """List read model: `PositionView` without the per-position detail blobs.
+
+    A list row answers "which positions, in what state, at what PnL" — a blade of
+    200 rows cannot present 200 decision narratives, and measured on a production
+    payload the narrative alone was half the bytes (#3631). These columns stay in
+    the durable row and are served in full by `GET /api/positions/{position_id}`.
+
+    Exclusion is declared here rather than filtered in the route so the list's
+    OpenAPI schema and its response cannot drift apart; `exclude=True` is also
+    what keeps Pydantic from filling a declared-but-absent field back in as a
+    `null`, which would read as "no rationale recorded" instead of "not in this
+    read model". (`exit_reasoning` is deliberately NOT excluded: it is small and
+    the causal-chain view reads it from the list row for an order anchor.)
+    """
+
+    decision_reasoning: str | None = Field(default=None, exclude=True)
+    entry_market_summary: str | None = Field(default=None, exclude=True)
+    last_market_signal_evidence: str | None = Field(default=None, exclude=True)
+    reconciliation_evidence: str | None = Field(default=None, exclude=True)
+    reconciliation_identity: str | None = Field(default=None, exclude=True)
+    trailing_json: str | None = Field(default=None, exclude=True)
+
+
+@router.get("/positions", response_model=list[PositionSummaryView])
 def get_positions(
     status: Annotated[str | None, Query(pattern="^(open|closed)$")] = None,
     limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
 ):
-    """Owner-facing position read.
+    """Owner-facing position list read (summary projection).
 
     `status` and `limit` are honored server-side. The route previously declared
     no parameters, so `?limit=`/`?status=` sent by the dashboard were dropped by
     FastAPI and every response fell back to the repository default of 50 rows.
+
+    Rows are `PositionSummaryView`s; the detail-only columns are served by
+    `GET /api/positions/{position_id}`.
     """
     _ensure_db()
     from aletheia.portfolio.pnl import position_realized_pnl_view
@@ -1308,6 +1335,25 @@ def get_positions_reconciliation():
     from aletheia.portfolio.position_reconciler import classify_positions
 
     return classify_positions().to_dict()
+
+
+@router.get("/positions/{position_id}", response_model=PositionView)
+def get_position(position_id: str):
+    """Owner-facing single-position read: the full row, blobs included.
+
+    Registered after `/positions/reconciliation` so that literal path keeps
+    precedence. This is the authoritative surface for the detail-only columns the
+    list projection strips (#3631) — it answers for exactly the `id` values the
+    list returns, so a caller can drill from a summary row into its complete
+    record without a second identifier space.
+    """
+    _ensure_db()
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    row = repo.get_position(position_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="position_not_found")
+    return position_realized_pnl_view(row)
 
 
 @router.post("/positions/reconcile")
@@ -1628,12 +1674,14 @@ async def get_market_ohlcv(
       whose open time is strictly BEFORE this timestamp — i.e. older history, used
       when the chart scrolls back. When 0 (default), return the most recent `limit`.
 
-    Caching: the TTL cache is only used for the default latest view at the default
-    limit (before unset). Historical pages (before>0) and any non-default limit are
-    fetched fresh — historical because each window is distinct, and the latest view
-    needs a live tail rather than a cached candle that would freeze the chart.
-    `X-Aletheia-Data-Source` reports memory_cache, provider_fetch, database_fallback,
-    or unavailable without changing the historical array response shape.
+    Caching: every latest view (`before` unset) goes through the shared TTL cache,
+    which is keyed on (exchange, symbol, market_type, timeframe, limit). The cache
+    used to be consulted only for `limit == 100`, so the chart's own limit paid a
+    full upstream provider round trip on every load and every symbol switch (#3624).
+    Historical pages (`before > 0`) are always fetched fresh, since each window is
+    distinct. `X-Aletheia-Data-Source` reports memory_cache, provider_fetch,
+    database_fallback, or unavailable without changing the historical array
+    response shape.
     """
     import asyncio
     import logging
@@ -1669,7 +1717,7 @@ async def get_market_ohlcv(
 
     cache = get_cache()
     cache_key = sym
-    use_cache = since_ms is None and limit == 100
+    use_cache = since_ms is None
     data_source = "memory_cache"
 
     async def _database_fallback() -> list[dict]:
