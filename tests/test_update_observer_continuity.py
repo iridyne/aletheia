@@ -756,3 +756,64 @@ def test_wrapper_rolls_back_before_barrier_exit_when_reanchor_fails(monkeypatch)
     assert result["rolled_back"] is True
     assert result["reason"] == "observation_checkpoint_reanchor_failed"
     assert events == ["barrier-enter", "rollback", "barrier-exit"]
+
+
+def test_observer_freshness_reports_drift_and_a_failed_pass(monkeypatch):
+    """The continuity claim covers ownership/checkpoints, never worker freshness."""
+    from aletheia.cli import update_cmd
+
+    monkeypatch.setattr(
+        "aletheia.cli.observe_cmd._collect_worker_status",
+        lambda: {
+            "head_sha": "7a2b08a4b31cefd6f7a7b990822f0c635f2a551d",
+            "timer": {"load_state": "loaded", "active_state": "active"},
+            "last_service_pass": {
+                "status": "exit-code",
+                "at": "Mon 2026-09-28 11:41:49 CST",
+                "exit_code": 2,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.update.git_ops.commits_between",
+        lambda older, newer: 848,
+    )
+
+    lines = update_cmd._observer_freshness_lines(deployed_commit="a" * 40)
+
+    assert any("behind=848" in line for line in lines)
+    assert any("848 commit(s) behind" in line for line in lines)
+    assert any("capability is not running" in line for line in lines)
+
+
+def test_observer_freshness_is_quiet_when_the_worker_is_current(monkeypatch):
+    from aletheia.cli import update_cmd
+
+    monkeypatch.setattr(
+        "aletheia.cli.observe_cmd._collect_worker_status",
+        lambda: {
+            "head_sha": "b" * 40,
+            "timer": {"load_state": "loaded", "active_state": "active"},
+            "last_service_pass": {"status": "success", "at": "now", "exit_code": 0},
+        },
+    )
+    monkeypatch.setattr("aletheia.update.git_ops.commits_between", lambda older, newer: 0)
+
+    lines = update_cmd._observer_freshness_lines(deployed_commit="b" * 40)
+
+    assert len(lines) == 1
+    assert "behind=0" in lines[0]
+    assert "warning" not in lines[0].lower()
+
+
+def test_observer_freshness_survives_an_unreadable_worker(monkeypatch):
+    from aletheia.cli import update_cmd
+
+    def _boom():
+        raise RuntimeError("systemd unavailable")
+
+    monkeypatch.setattr("aletheia.cli.observe_cmd._collect_worker_status", _boom)
+
+    lines = update_cmd._observer_freshness_lines(deployed_commit="c" * 40)
+
+    assert lines == ["Observer freshness: unavailable (worker status could not be read)."]

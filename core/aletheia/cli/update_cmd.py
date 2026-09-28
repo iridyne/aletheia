@@ -149,6 +149,55 @@ def update(
     _run_update(restart=restart, verbose=verbose)
 
 
+def _observer_freshness_lines(*, deployed_commit: str) -> list[str]:
+    """Facts the continuity claim does not cover: worker commit, drift, last pass.
+
+    "Observer continuity verified" asserts observation ownership, an unchanged data
+    root and checkpoint continuity — never that the Worker is current or that its
+    timer still completes passes. Printing the freshness facts beside it is what
+    stops the claim from reading as a health statement about the Worker: on
+    2026-09-28 every one of its six-hourly passes had been failing for days behind
+    an 848-commit drift while the deploy output said continuity was verified.
+    """
+    import logging
+
+    logger = logging.getLogger("aletheia.cli.update")
+    try:
+        from aletheia.cli.observe_cmd import _collect_worker_status
+
+        worker = _collect_worker_status()
+    except Exception:
+        logger.debug("update: worker status unavailable for the freshness block", exc_info=True)
+        return ["Observer freshness: unavailable (worker status could not be read)."]
+
+    from aletheia.update.git_ops import commits_between
+
+    head = str(worker.get("head_sha") or "")
+    timer = worker.get("timer") or {}
+    last_pass = worker.get("last_service_pass") or {}
+    behind = commits_between(head, deployed_commit)
+    lines = [
+        "Observer freshness (not part of the continuity claim): "
+        f"worker_head={head[:12] if head else 'unavailable'}, "
+        f"behind={behind if behind is not None else 'unavailable'}, "
+        f"timer={timer.get('active_state') or 'unavailable'}, "
+        f"last_pass={last_pass.get('status') or 'unavailable'}"
+        f"@{last_pass.get('at') or 'n/a'}."
+    ]
+    if behind:
+        lines.append(
+            f"Observer warning: the Worker checkout is {behind} commit(s) behind the deployed "
+            "commit — update it whenever shared config or schema changed "
+            "(`aletheia observe drift` reports the same comparison)."
+        )
+    if last_pass.get("status") not in (None, "success"):
+        lines.append(
+            "Observer warning: the Worker's last pass ended with "
+            f"{last_pass.get('status')} (exit {last_pass.get('exit_code')}); its capability is not running."
+        )
+    return lines
+
+
 def _run_update(*, restart: bool, verbose: bool = False) -> None:
     from ops.update.continuity import describe_failure_code as _desc
     if _is_packaged():
@@ -311,6 +360,8 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
             f"main_health={comparison.get('main_health_status')}."
         )
         typer.echo(f"Continuity verification completed in {int(timings.get('total') or 0)} ms.")
+        for line in _observer_freshness_lines(deployed_commit=str(new_commit or "")):
+            typer.echo(line)
         warnings = comparison.get("warnings") or []
         if warnings:
             typer.echo(f"Observer warnings: {', '.join(str(item) for item in warnings)}")
