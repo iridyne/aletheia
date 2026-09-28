@@ -13,6 +13,7 @@ their own independent versions.
 * **economics:** summarize the complete context-artifact window from one streaming SQLite snapshot instead of silently limiting totals to 5,000 detail rows; preserve malformed-value handling and detail pagination (#3677).
 * **security:** recursively redact Webhook signing keys and nested credentials in shared backup/sync config exports, preserving public token limits, auth switches, and observed stock symbols (#1379).
 * **economics:** evaluate configured hard budgets independently of shadow/tracing switches before inference, without changing safety exemptions or unknown-cost policy; reused requests cannot carry stale denials (#1624).
+* **economics:** recover missing settings, tool-profile and context-artifact tables through the shared idempotent initializer, preserving caller transactions and the retired viability reader boundary (#1725).
 * **runtime:** sample health shortly after Gateway startup so release activation and rollback can verify real readiness before their bounded deadline, while retaining the normal ten-minute cadence and fail-closed checks.
 * **market-data:** restore Bitget Candidate funding enrichment from the existing perpetual ticker and its exchange timestamp, without changing freshness policy or historical outcomes.
 * **entry:** make Candidate/PlanningGeneration/EntryPlan the sole new-entry authority, including source-scoped Serenity publication and separate timing/holding horizons; retain historical decisions and unresolved execution evidence.
