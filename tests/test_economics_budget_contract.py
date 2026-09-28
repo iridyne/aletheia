@@ -178,3 +178,87 @@ def test_ensure_economics_schema_is_idempotent():
         "WHERE type='table' AND name='economics_budgets'"
     ).fetchone()[0]
     assert row_before == row_after == 1
+
+
+@pytest.mark.parametrize("table", ["economics_settings", "tool_cost_profiles", "llm_context_artifacts"])
+def test_partial_schema_repairs_required_tables_without_changing_existing_rows(table):
+    with sqlite3.connect(":memory:") as db:
+        ensure_economics_schema(db)
+        db.execute("CREATE TABLE caller_state(value TEXT)")
+        db.execute("INSERT INTO caller_state VALUES ('preserved')")
+        db.commit()
+        db.execute(f"DROP TABLE {table}")
+        ensure_economics_schema(db)
+        db.execute(f"SELECT * FROM {table}").fetchall()
+        assert db.execute("SELECT value FROM caller_state").fetchall() == [("preserved",)]
+        before = db.execute("SELECT name,sql FROM sqlite_master ORDER BY name").fetchall()
+        ensure_economics_schema(db)
+        assert db.execute("SELECT name,sql FROM sqlite_master ORDER BY name").fetchall() == before
+
+
+@pytest.mark.parametrize("table", ["economics_settings", "tool_cost_profiles", "llm_context_artifacts"])
+def test_partial_schema_repair_refuses_to_commit_or_rollback_caller(table):
+    with sqlite3.connect(":memory:") as db:
+        ensure_economics_schema(db)
+        db.execute("CREATE TABLE caller_state(value TEXT)")
+        db.execute(f"DROP TABLE {table}")
+        db.execute("INSERT INTO caller_state VALUES ('pending')")
+        with pytest.raises(RuntimeError, match="active transaction"):
+            ensure_economics_schema(db)
+        assert db.in_transaction
+        assert db.execute("SELECT value FROM caller_state").fetchall() == [("pending",)]
+        db.rollback()
+        assert db.execute("SELECT value FROM caller_state").fetchall() == []
+
+
+def test_concurrent_first_schema_initialization_is_complete(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    path = tmp_path / "economics.db"
+    barrier = Barrier(2)
+    def initialize():
+        with sqlite3.connect(path, timeout=30) as db:
+            barrier.wait(timeout=5)
+            ensure_economics_schema(db)
+            return {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(initialize) for _ in range(2)]
+        inventories = [future.result(timeout=30) for future in futures]
+    assert inventories[0] == inventories[1]
+    assert {"economics_settings", "tool_cost_profiles", "llm_context_artifacts",
+            "pricing_snapshots", "runtime_cost_events", "economics_budgets",
+            "llm_inference_calls", "llm_structured_attempt_outcomes",
+            "llm_context_pair_reviews"} <= inventories[0]
+
+
+@pytest.mark.parametrize("missing", ["context_column", "tool_trigger"])
+def test_schema_upgrade_keeps_caller_transaction_owned(missing):
+    db = ensure_economics_schema()
+    if missing == "context_column":
+        db.execute("DROP INDEX idx_llm_context_artifacts_call")
+        db.execute("ALTER TABLE llm_context_artifacts DROP COLUMN logical_call_id")
+    else:
+        db.execute("DROP TRIGGER trg_agent_tool_call_cost_event")
+    db.execute("CREATE TABLE caller_state(value TEXT)")
+    db.execute("BEGIN")
+    db.execute("INSERT INTO caller_state VALUES ('pending')")
+    with pytest.raises(RuntimeError, match="active transaction"):
+        ensure_economics_schema(db)
+    assert db.in_transaction
+    assert db.execute("SELECT value FROM caller_state").fetchone()[0] == "pending"
+    db.rollback()
+    assert db.execute("SELECT COUNT(*) FROM caller_state").fetchone()[0] == 0
+    ensure_economics_schema(db)
+    if missing == "context_column":
+        assert "logical_call_id" in {row[1] for row in db.execute("PRAGMA table_info(llm_context_artifacts)")}
+    else:
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='trg_agent_tool_call_cost_event'").fetchone()
+
+
+def test_missing_retired_viability_table_does_not_recreate_it():
+    with sqlite3.connect(":memory:") as db:
+        ensure_economics_schema(db)
+        db.execute("DROP TABLE viability_reports")
+        ensure_economics_schema(db)
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='viability_reports'").fetchone() is None
