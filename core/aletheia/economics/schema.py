@@ -354,6 +354,9 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         db = get_db()
     required_tables = {
         "pricing_snapshots",
+        "economics_settings",
+        "tool_cost_profiles",
+        "llm_context_artifacts",
         "runtime_cost_events",
         "economics_budgets",
         "llm_inference_calls",
