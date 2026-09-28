@@ -63,14 +63,14 @@ def _cleanup_expired_tickets() -> None:
         del _ws_tickets[t]
 
 
-def _ws_remote_auth_required() -> bool:
-    """True when tunnel or token-required Remote Control is active."""
+def _ws_remote_auth_required() -> bool | None:
+    """Required/not required, or None when the admission policy is unavailable."""
     from aletheia.config.loader import load_config
     try:
         cfg = load_config(persist_migrations=False)
     except Exception as exc:
         logger.warning("ws: remote-auth config read unavailable (%s)", type(exc).__name__)
-        return False
+        return None
     tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
     remote_control = getattr(cfg, "remote_control", None)
     return tunnel_enabled or bool(
@@ -339,7 +339,11 @@ async def ws_realtime(
     Push-notification WebSocket.  Pushes category names only (no data payloads).
     Requires a valid ?ticket= when Remote Control owner auth is active.
     """
-    if _ws_remote_auth_required():
+    auth_required = _ws_remote_auth_required()
+    if auth_required is None:
+        await ws.close(code=1013, reason="remote_auth_policy_unavailable")
+        return
+    if auth_required:
         if not ticket or not _consume_ws_ticket(ticket):
             await ws.close(code=4403)
             return

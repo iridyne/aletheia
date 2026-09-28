@@ -161,7 +161,7 @@
     },
     {
       "file": "core/aletheia/server/routes/ws.py",
-      "line": 361,
+      "line": 365,
       "reason": "WebSocketDisconnect is a client disconnect, not a failure"
     },
     {
