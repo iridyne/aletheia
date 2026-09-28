@@ -201,6 +201,45 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 `SELECT * FROM orders|positions WHERE id=?`，而 seam 已提供 `get_order`/`get_position`（同一连接、
 同一 `_select_one`）。属于"同一问题两处实现"，但位于平仓/恢复关键路径，必须单独批次、单测覆盖后再动。
 
+## 1f. 批次收尾：7 个 PR 合并 + 隔离全量收据 + 两个浪费过时间的 harness 陷阱
+
+**已合并（逐个 `--match-head-commit` 锁定已审 head）**：`#3608`（#3561 现行契约门禁）、
+`#3609`（watcher 并发 fixture）、`#3611`（本文件）、`#3614`（twin replay 去重单一实现）、
+`#3615`（proposal 最新持仓单一 owner）、`#3616`（Operator 心跳 stale 单一 owner）、
+`#3623`（cost-complete PnL 算术单一 owner）。合并后 `origin/master` = `eca9e4e2d`。
+
+**隔离 Fedora 全量（候选 `ca2d506c2` = 前 6 个 PR）**：
+**EXIT=0，11611 passed / 15 skipped / 5 xfailed，0 failure，10 分 23 秒**。
+本地同一候选三次串行 `tier_unit` 各 1950 passed / 1 skipped，墙钟 56.37 / 55.37 / 56.35 秒。
+
+**`tests/test_data_retention.py` 结论（按 junit 逐例核对，不是从“0 failure”推断）**：
+该文件在 Fedora 那轮探针结果里共 **37 个 case，只有 2 个非通过且都是 `skipped`**
+（`test_prune_alpha_control_observations`、`test_prune_serenity_evidence_and_run_events`——
+这两个在本机同样被跳过），其余全部通过。本机（macOS）该文件稳定 **12 项失败**，
+在 `origin/master` 上同样 12 项，两者都是那 2 个 skip 之外的用例。
+因此：**这 12 项是本地环境差异，不是 master 回归**；不为此改生产代码、不放宽断言。
+根因表象：`_canonical_lab_authority()` 在本地缺 Observation reader 时 fail-closed，
+prune 返回 0，而测试断言具体删除条数。
+
+（教训：用“失败数=0 且跳过数很多”推断某文件通过并不可靠——本文件自身就有 pytest.skip 逃逸口，
+所以必须按 case 逐一核对 junit 的 `failure/error/skipped` 标签。）
+
+**未解释但已隔离的现象**：第一次全量在 94% 处出现一个 `F` 之后**停止写日志 12 分钟**（进程仍存活），
+即挂死；杀掉并用 `--timeout=180 --timeout-method=thread` 重跑后通过。挂死原因未定位。
+**若再次挂死且超时未触发**，说明阻塞发生在 C 层调用（例如 SQLite 锁等待）而非 Python 层，
+`--timeout-method=thread` 无法打断——这是下一步定位方向。带超时的脚手架应保持为默认。
+
+**两个耗掉过一整轮 10 分钟验证的 harness 陷阱（务必记住）**：
+1. `git clone --branch master file:///本地仓库` 用的是**本地 `master` 分支引用**，可能落后于
+   `origin/master`；导出后必须断言 `git rev-parse HEAD` 等于目标 SHA（probe 已内置该断言，
+   正是它把这次错误挡在了 pytest 之前）。
+2. 重新导出时若 `rm -rf source` 后只解包 git 内容，先前写进该目录的 `ci_isolation_probe.py`
+   会一起消失，运行会以“找不到 probe”失败。导出脚本要幂等地重写 probe/run 脚本。
+
+**#3623 的边界**：它是在 `ca2d506c2` 冻结之后才从 master 分出的，因此**不在那份收据内**。
+已合并进 master，但 `eca9e4e2d`（含全部 7 个）的隔离全量才是**部署前置门**；
+若该收据在结算路径出现失败，先回退 #3623 的合并再评估，而不是带着未验证的资金链路代码部署。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
