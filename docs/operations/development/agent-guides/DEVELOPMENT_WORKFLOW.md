@@ -209,11 +209,17 @@ deep evidence for that head remains unchanged.
   "only meaningful when pytest-xdist starts a worker" — skip serial, run parallel
   is its designed behaviour, not flakiness (8243 + 8 and 8244 + 7 both total 8251).
 
-  The **full `tests/` tree is not yet cleared for `-n 4`**: one run of the whole
-  suite in parallel produced five failures that a serial run of the same tree does
-  not produce, and they are not yet identified (`candidate-0d41760f5`). Until they
-  are explained and fixed, the full proof runs serially and a parallel subset run
-  says so in its receipt.
+  The **full `tests/` tree runs at `-n 2` on this box, not at `-n 4`**. Measured
+  on the same tree: serial 656.9 s, `-n 2` **398.8 s with zero failures**
+  (11624 passed / 14 skipped — the same self-declared xdist-isolation test flips
+  from skip to run, total preserved), `-n 4` **1006.6 s with 27 failures**. The
+  `-n 4` failures are capacity, not test isolation: `subprocess.TimeoutExpired` in
+  the optional-dependency probes, multiprocessing children exiting with code
+  `None` (killed), and xdist workers crashing (`worker 'gw0' crashed`) — the box
+  has 16 CPUs and ~14 GB of which the live runtime holds several GB, so four
+  workers plus their children do not fit. Treat `-n 2` as the default for the
+  full proof and re-run serially if a parallel run fails, before attributing any
+  failure to the change.
 
   Do not split a proof into per-marker invocations when one selection is wanted:
   each invocation pays the full collection again (four markers cost 692.9 s

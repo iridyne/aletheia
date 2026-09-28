@@ -619,8 +619,12 @@ retired 609 row(s)
   （时序断言 `0.0 == 1.0 ± 1.0e-06`）与 `test_update.py::test_apply_no_auto_restart`
   （`ImportError: cannot import name '_psutil_osx' from partially initialized module 'psutil'`）。
   即失败**与 xdist 无关**，是这批文件彼此之间的既有交互。
-- 因此规则维持**串行完整证明**（`DEVELOPMENT_WORKFLOW.md` 已如此写）；并行只用于已实测干净的 marker 子集
-  （`tier_integration` 502.8→178.0s、本地 `tier_spec` 51.3→26.5s）。
+- **更正（同日后续测量）**：整份在 **`-n 2`** 下是**干净且更快**的 ——
+  `EXIT=0，11624 passed / 14 skipped / 5 xfailed，398.8s（6:38）` vs 串行 `656.9s（10:56）`，
+  即 **1.62×**，无需任何排除清单（计数差异同样来自 `test_xdist_runtime_isolation.py` 的 skip→run，
+  总数 11638 不变）。因此 `-n 4` 的 27 个失败是**容量**问题（16 核 / 14.7GB，其中数 GB 被线上运行时占用，
+  4 个 worker + 它们的子进程装不下），不是这些用例有隔离缺陷。规则已改为：完整证明默认 **`-n 2`**，
+  若并行失败先与串行基线对照再归因。
 - 后续若要拿回两遍方案的时间收益（193+83=276s vs 646s），前置条件是把那 2 个交互失败查清并修掉；
   复现：`pytest tests/uta/test_import_boundaries.py tests/test_regime_boundary.py tests/test_public_pricing_composition.py tests/test_risk_lesson_boundary.py tests/test_settings_concurrency.py tests/test_secrets_crossprocess.py tests/test_update.py tests/test_repositories_research.py tests/test_planning_writer_boundary.py tests/test_order_writer_boundary.py -q`
 
