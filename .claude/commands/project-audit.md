@@ -2,7 +2,7 @@
 
 检查：
 
-1. 是否存在 `CLAUDE.md`
+1. 是否存在 `CLAUDE.md`，且它只是 `@AGENTS.md` 指针（不是第二份规则副本）
 2. 是否存在 `AGENTS.md`
 3. `docs/README.md` 是否能把任务路由到唯一的当前权威文档
 4. 当前文档是否误把 `docs/archive/`、旧计划、旧审计或会话记录当成当前事实

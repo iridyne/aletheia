@@ -43,6 +43,17 @@ RETIRED_CONTRACT_PATHS = {
     Path("docs/design/contracts/promotion_gates_contract.md"),
 }
 LINK_PATTERN = re.compile(r"!?\[[^\]]*]\(([^)]+)\)")
+# Task-routing region of the single code map, plus the tokens that live in route
+# rows without being source symbols. See ``navigation_route_failures``.
+NAVIGATION_MAP = Path("docs/design/architecture/SYSTEM_MAP.md")
+NAVIGATION_CHECK_MARKERS = (
+    "<!-- navigation-check:start -->",
+    "<!-- navigation-check:end -->",
+)
+NAVIGATION_TOKEN_PATTERN = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`")
+# Empty as of 2026-09-28: every backticked identifier in the region is a real
+# symbol in its row's linked source. Add an entry only with the reason it is not.
+NAVIGATION_NON_SYMBOL_TOKENS: dict[str, str] = {}
 CURRENT_DOC_PREFIXES = (
     "docs/governance/",
     "docs/product/definition/",
@@ -62,6 +73,9 @@ CURRENT_DOC_PREFIXES = (
 )
 CURRENT_DOC_FILES = {
     "AGENTS.md",
+    # CLAUDE.md is a router too: the 2026-09-25 navigation audit's motivating
+    # defect was this file still routing at a directory that no longer existed.
+    "CLAUDE.md",
     "docs/README.md",
     "docs/product/README.md",
     "docs/product/SCOPE.md",
@@ -123,8 +137,14 @@ def broken_relative_links(markdown_files: list[Path]) -> list[str]:
         if not source.is_file():
             continue
         text = source.read_text(encoding="utf-8")
-        for raw_target in LINK_PATTERN.findall(text):
-            target = unquote(_link_target(raw_target))
+        # Match over the whole document, then derive the line: a Markdown link whose
+        # label or target wraps across lines is still a link, and several current
+        # documents write them that way. Matching per physical line would silently
+        # stop checking those. Line numbers are reported because the fix is a
+        # one-line edit: "which line points at a target that is not there".
+        for match in LINK_PATTERN.finditer(text):
+            lineno = text.count("\n", 0, match.start()) + 1
+            target = unquote(_link_target(match.group(1)))
             if (
                 not target
                 or target.startswith(("#", "/", "//"))
@@ -138,10 +158,154 @@ def broken_relative_links(markdown_files: list[Path]) -> list[str]:
             try:
                 resolved.relative_to(ROOT)
             except ValueError:
-                failures.append(f"{relative}: link escapes repository: {target}")
+                failures.append(
+                    f"{relative}:{lineno}: link escapes repository: {target}"
+                )
                 continue
             if not resolved.exists():
-                failures.append(f"{relative}: missing link target: {target}")
+                failures.append(
+                    f"{relative}:{lineno}: missing link target: {target}"
+                )
+    return failures
+
+
+def _navigation_linked_py(line: str, source: Path) -> tuple[list[Path], list[Path]]:
+    """Existing ``.py`` files a route row links, split into (owner sources, tests).
+
+    Owner sources are non-test files: a test *proves* behaviour, it does not own
+    the symbol, and accepting it would let a row pass by linking only its test
+    selector once the implementation moved. Test files are collected separately
+    so the row's focused-test column can be checked against the row's symbols.
+
+    A link that resolves outside the repository is skipped rather than reported:
+    one wrong ``../`` depth is an easy typo, ``broken_relative_links`` already
+    reports it with its own line number, and raising here would abort every other
+    gate in the same run.
+    """
+    owners: list[Path] = []
+    tests: list[Path] = []
+    for raw_target in LINK_PATTERN.findall(line):
+        target = unquote(_link_target(raw_target))
+        path_text = target.split("#", 1)[0].split("?", 1)[0]
+        if not path_text.endswith(".py"):
+            continue
+        resolved = (source.parent / path_text).resolve()
+        if not resolved.is_file():
+            continue
+        try:
+            relative = resolved.relative_to(ROOT)
+        except ValueError:
+            continue
+        if relative.parts[0] == "tests":
+            tests.append(resolved)
+        else:
+            owners.append(resolved)
+    return sorted(set(owners)), sorted(set(tests))
+
+
+def navigation_route_failures(markdown: Path = NAVIGATION_MAP) -> list[str]:
+    """The marked route table must point at sources that still own the symbols.
+
+    ``SYSTEM_MAP.md`` is the one place a new agent is told "this task starts
+    here", so a route whose owner source moved, or whose named symbol was renamed,
+    sends every reader to a place that no longer answers the question -- and
+    nothing notices, because the link still resolves (the 2026-09-25 navigation
+    audit found ``CLAUDE.md`` still routing at a directory that had already been
+    empty for months, and the map's own Story row describing a split that later
+    commits had superseded).
+
+    Three mechanical rules for the region between the ``navigation-check`` markers:
+      1. every backticked bare identifier in a route row must appear, as a whole
+         word, in a non-test ``.py`` file that the same row links as its owner
+         source -- so a renamed or deleted symbol fails on the row's own line;
+      2. a row that names identifiers but links no owner source fails, so the
+         rule cannot be satisfied by accident;
+      3. a row must link a focused test file, and at least one of them must name
+         one of the row's symbols -- otherwise the "go run this test" instruction
+         sends the reader to a module that never exercises the thing they are
+         chasing (the 2026-09-28 probe found the ACK/Fill/Close row citing a spec
+         that exercises neighbouring materializers only).
+
+    Non-goals (deliberately not validated here): dotted references
+    (``service.build_position_lifecycle_story``), prose outside the region,
+    whether the named test is the *only* relevant one, whether a contract
+    citation still holds, and whether a test passes. Presence is a whole-word
+    text search, not a symbol table: a comment or docstring that still mentions a
+    renamed name satisfies it, so a rename that leaves the old name quoted
+    somewhere in the file can pass unseen. Link *existence* is already
+    ``broken_relative_links``' job, so a missing target is not reported twice.
+    Tokens that are genuinely not source symbols (job ids, directory names)
+    belong in ``NAVIGATION_NON_SYMBOL_TOKENS`` with a reason; nothing is skipped
+    silently.
+    """
+    failures: list[str] = []
+    path = ROOT / markdown
+    if not path.is_file():
+        return [f"{markdown}: missing navigation map"]
+    start, end = NAVIGATION_CHECK_MARKERS
+    text = path.read_text(encoding="utf-8")
+    if start not in text or end not in text:
+        return [f"{markdown}: missing {start} / {end} region markers"]
+    sources: dict[Path, str] = {}
+
+    def source_text(files: list[Path]) -> str:
+        return "".join(
+            sources.setdefault(owner, owner.read_text(encoding="utf-8"))
+            for owner in files
+        )
+
+    inside = False
+    validated_rows = 0
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if start in line:
+            inside = True
+            continue
+        if end in line:
+            inside = False
+            continue
+        if not inside:
+            continue
+        tokens = NAVIGATION_TOKEN_PATTERN.findall(line)
+        checked = [token for token in tokens if token not in NAVIGATION_NON_SYMBOL_TOKENS]
+        owners, tests = _navigation_linked_py(line, path)
+        if checked and not owners:
+            failures.append(
+                f"{markdown}:{lineno}: route row names "
+                f"{', '.join(sorted(checked))} but links no non-test source file"
+            )
+            continue
+        for token in checked:
+            if not re.search(rf"\b{re.escape(token)}\b", source_text(owners)):
+                failures.append(
+                    f"{markdown}:{lineno}: navigation symbol `{token}` is not "
+                    f"in the linked source "
+                    f"({', '.join(str(o.relative_to(ROOT)) for o in owners)})"
+                )
+        if not checked:
+            continue
+        validated_rows += 1
+        if not tests:
+            failures.append(
+                f"{markdown}:{lineno}: route row names "
+                f"{', '.join(sorted(checked))} but links no focused test file"
+            )
+            continue
+        test_text = source_text(tests)
+        if not any(
+            re.search(rf"\b{re.escape(token)}\b", test_text) for token in checked
+        ):
+            failures.append(
+                f"{markdown}:{lineno}: no linked focused test names a row symbol "
+                f"({', '.join(str(t.relative_to(ROOT)) for t in tests)})"
+            )
+    if not validated_rows:
+        # Markers without rows pass every per-row rule, so the region could be
+        # emptied and the gate would stay green. Deleting the route table is a
+        # navigation change, not a way to retire the check.
+        failures.append(
+            f"{markdown}: marked region validates no route rows; restore the table "
+            f"or delete the markers with a stated replacement"
+        )
     return failures
 
 
@@ -1343,6 +1507,7 @@ def main() -> int:
     failures.extend(governance_failures())
     failures.extend(proposal_metadata_failures())
     failures.extend(broken_relative_links(current_authority_markdown_files()))
+    failures.extend(navigation_route_failures())
     failures.extend(contract_code_path_failures())
     failures.extend(timestamp_unit_suffix_failures())
     failures.extend(vacuous_test_failures())

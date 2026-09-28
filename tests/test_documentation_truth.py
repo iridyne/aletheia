@@ -244,3 +244,132 @@ def test_capability_inventory_citations_are_checked(monkeypatch, tmp_path) -> No
 def test_authority_doc_code_paths_are_green_on_the_current_tree() -> None:
     """Every cited path in contracts/ and the capability inventory resolves."""
     assert contract_code_path_failures() == []
+
+
+def test_navigation_route_gate_flags_renamed_symbol_and_unlinked_row(
+    monkeypatch, tmp_path
+) -> None:
+    """The task-routing gate fails on the row that is wrong, not on the file.
+
+    A route row that keeps its link but names a symbol the source no longer has
+    is the expensive failure: the link resolves, so nothing else notices, and the
+    reader lands in the right file looking for the wrong thing.
+    """
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "owner.py").write_text(
+        "def live_symbol():\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_owner.py").write_text(
+        "def test_live_symbol():\n    assert live_symbol()\n", encoding="utf-8"
+    )
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [owner.py](core/owner.py): `live_symbol` / `renamed_symbol` |"
+        " [test_owner.py](tests/test_owner.py) |\n"
+        "| task | `only_symbol` |\n"
+        "<!-- navigation-check:end -->\n"
+        "`outside_the_region` is prose, not a route\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md:2: navigation symbol `renamed_symbol` is not in the linked "
+        "source (core/owner.py)",
+        "MAP.md:3: route row names only_symbol but links no non-test source file",
+    ]
+
+
+def test_navigation_route_gate_requires_a_focused_test_for_each_row(
+    monkeypatch, tmp_path
+) -> None:
+    """A route pointing at a test that never touches its symbol is not a route.
+
+    Both cases were live on 2026-09-28: the ACK/Fill/Close row cited a spec that
+    exercises neighbouring materializers only, and the Story row omitted the test
+    that carries the read-only assertion.
+    """
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "owner.py").write_text(
+        "def live_symbol():\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_other.py").write_text(
+        "def test_something_else():\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [owner.py](core/owner.py): `live_symbol` |"
+        " [test_other.py](tests/test_other.py) |\n"
+        "| task | [owner.py](core/owner.py): `live_symbol` |\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md:2: no linked focused test names a row symbol (tests/test_other.py)",
+        "MAP.md:3: route row names live_symbol but links no focused test file",
+    ]
+
+
+def test_navigation_route_gate_survives_a_link_that_escapes_the_repository(
+    monkeypatch, tmp_path
+) -> None:
+    """One wrong `../` depth must not abort the whole documentation gate.
+
+    ``broken_relative_links`` reports the escaping link with its own line; the
+    navigation check must not raise before the other gates can report.
+    """
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (tmp_path / "outside.py").write_text("def live_symbol(): ...\n", encoding="utf-8")
+    (root / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "| task | [outside.py](../outside.py): `live_symbol` |\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", root)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md:2: route row names live_symbol but links no non-test source file",
+        "MAP.md: marked region validates no route rows; restore the table "
+        "or delete the markers with a stated replacement",
+    ]
+
+
+def test_navigation_route_gate_rejects_a_region_with_no_rows(
+    monkeypatch, tmp_path
+) -> None:
+    """Markers kept while the table is emptied must not pass vacuously."""
+    (tmp_path / "MAP.md").write_text(
+        "<!-- navigation-check:start -->\n"
+        "<!-- navigation-check:end -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    assert check_docs.navigation_route_failures(Path("MAP.md")) == [
+        "MAP.md: marked region validates no route rows; restore the table "
+        "or delete the markers with a stated replacement"
+    ]
+
+
+def test_navigation_route_gate_requires_its_region_markers(monkeypatch, tmp_path) -> None:
+    """A map that dropped the markers would silently stop being checked."""
+    (tmp_path / "MAP.md").write_text("| task | `symbol` |\n", encoding="utf-8")
+    monkeypatch.setattr(check_docs, "ROOT", tmp_path)
+
+    failures = check_docs.navigation_route_failures(Path("MAP.md"))
+
+    assert failures == [
+        "MAP.md: missing <!-- navigation-check:start --> / "
+        "<!-- navigation-check:end --> region markers"
+    ]
+
+
+def test_navigation_route_gate_is_green_on_the_current_tree() -> None:
+    """Every symbol in SYSTEM_MAP's route table resolves in its linked source."""
+    assert check_docs.navigation_route_failures() == []

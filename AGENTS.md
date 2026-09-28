@@ -83,6 +83,21 @@ architecture overviews route readers but do not override these authorities.
 Do not duplicate the manifest or convert a target, Issue status, test count, or
 historical observation into proof of current capability.
 
+Before concluding that code is wrong — especially before judging a deletion to be
+a regression — read the contract, not the call sites:
+
+- `docs/design/contracts/` — approved behavior (authoritative over calling code).
+- `docs/product/ACTIVE_RUNTIME_SCOPE.md` — what is actually admitted at runtime.
+- `docs/product/CAPABILITY_GROUND_TRUTH.md` — capability promises and their evidence limits.
+- `docs/governance/decisions/DECISIONS.md` — decision record.
+- `docs/design/history/` — retired mechanisms (deleted from code, kept as history).
+
+Finding the code a task owns is a separate question, and it has exactly one code
+map: [`docs/design/architecture/SYSTEM_MAP.md`](docs/design/architecture/SYSTEM_MAP.md)
+(task → owner → source → focused tests, checked by
+`scripts/check_docs.py`). Other documents link to it rather than keeping a second
+copy of the directory tree, the task routing, or the scheduled-task list.
+
 ### Convergence over compatibility (standing goal)
 
 One capability keeps exactly one live implementation. Backward compatibility is
@@ -141,6 +156,13 @@ Use `uv run` for Python. macOS is development/control only; do not infer Fedora
 runtime state or start a local Gateway unless explicitly requested. Fedora is the
 operational verification target. Windows is not a validation fallback.
 
+Full-suite and concurrency limits:
+
+- The full suite on macOS is out of scope; run focused tests proportional to the
+  change. Fedora is where the full suite is measured.
+- Never run two full pytest suites concurrently — they share the data directory
+  and crash each other, and the crash reads as a test failure.
+
 Remote GitHub CI is retired/unavailable for the current workflow. Agents must not
 start, dispatch, wait for, or claim authority from remote CI. Use focused local
 deterministic validation instead (`scripts/ci_plan.py`, `scripts/ci_preflight.py`,
@@ -162,6 +184,107 @@ For Orca-owned Mac-to-Windows work, use Orca Remote Runtime and read
 [`ORCA_CLI_WORKFLOW.md`](docs/operations/development/ORCA_CLI_WORKFLOW.md)
 after `orca skills get orca-cli`; pairing codes are credentials. SSH is for
 bootstrap/recovery/OS diagnosis only.
+
+## Commands and code navigation
+
+Python always through `uv` (`uv run` needs no activated venv):
+
+```sh
+uv sync                                        # install/lock deps
+uv run aletheia doctor                         # environment self-check
+uv run pytest tests/test_<area>.py -q          # focused test (the normal loop)
+uv run pytest tests/test_x.py::test_y -q       # single test
+uv run pytest tests -q -m "domain_execution"   # one domain (markers in pyproject.toml)
+uv run pytest tests -q -m "fast"               # cheap set for every bug-fix loop
+uv run ruff check core extensions ops tests    # lint (config in pyproject.toml)
+uv run python scripts/check_docs.py            # documentation-governance checks
+uv run python scripts/ci_plan.py               # deterministic local validation plan
+uv run --no-sync python scripts/ci_preflight.py --pr-body-file <file>   # PR body preflight
+```
+
+`tests/` is flat and large: test files are named by area (`test_<area>.py`), and
+every test also carries a tier marker (`tier_unit` / `tier_integration` /
+`tier_e2e` / `tier_spec`) and a `domain_*` marker. Selecting by marker is usually
+faster than guessing file names. Executable specs live in `tests/specs/`.
+
+Frontend (`frontend/`, React 19 + Vite + Tailwind 4):
+
+```sh
+npm ci
+npm run build          # tsc -b → vite build → compress → perf check
+npm run lint           # eslint src/
+npm test               # vitest run
+npm run check:api-types        # drift check vs backend OpenAPI schema
+npm run check:settings-types   # drift check vs backend settings model
+```
+
+`npm run build` writes into `core/aletheia/dashboard_static/` (the directory the
+backend serves), so a UI change is live after a build plus a browser refresh — do
+not start a dev server for that. Regenerate types with `npm run generate:api-types`
+after changing backend route models; `scripts/export_openapi_schema.py` produces
+the schema.
+
+Runtime inspection:
+
+```sh
+uv run aletheia control status --json          # authoritative read-only runtime snapshot
+uv run aletheia gateway <start|stop|restart|status|logs>
+```
+
+### Where the stages live
+
+One installed distribution, four wheel roots (see `[tool.hatch.build.targets.wheel]`):
+`core/aletheia` (importable as `aletheia`), `extensions`, `ops`, `legacy`.
+
+**Core must stay provider-agnostic.** Concrete venues, data providers, and model
+vendors live in `extensions/`; core receives them as injected factories.
+`extensions/exchanges/composition.py` is the seam: it maps an execution mode
+(`bitget_demo`, `okx_demo`, `binance_testnet`, …) to a profile plus a CCXT adapter
+and registers it into `aletheia.uta.registry`. Core code should never import a
+specific exchange module.
+
+Request/execution path, and where each stage lives. This table maps a stage to a
+directory only — task → owner → source → focused-test navigation is the single
+code map named above, `SYSTEM_MAP.md`:
+
+| Stage | Location |
+| --- | --- |
+| CLI entry (`aletheia` / `ato`) | `core/aletheia/main.py` → `core/aletheia/cli/*` (one module per command group) |
+| HTTP app + routes | `core/aletheia/server/app.py`, `server/routes/` (one module per route group) |
+| Process/service lifecycle, supervisor, frontdoor | `core/aletheia/gateway/` |
+| Candidate discovery / scoring | `core/aletheia/universe/`, `extensions/data/collectors/volume_scanner.py`, `extensions/regime` |
+| Entry strategy authority (plans, triggers, sizing, TA) | `core/aletheia/trading/` |
+| Agent/LLM loop (System Operator) | `core/aletheia/agent_shell/`, `agent_runtime/`, `agents/` |
+| Risk approval (precedes every execution) | `core/aletheia/risk/` |
+| Execution Gateway, coordinator, stops, reconciliation | `core/aletheia/execution/` |
+| Unified trading account abstraction | `core/aletheia/uta/` |
+| Positions, accounting, outcomes | `core/aletheia/portfolio/`, `analytics/`, `economics/` |
+| Persistence (SQLite, migrations, repositories) | `core/aletheia/storage/` |
+| Learning / counterfactual / research | `extensions/learning`, `extensions/counterfactual`, `extensions/research` |
+| Serenity research + Candidate publication | `core/aletheia/trading/serenity_scoring.py`, `serenity_publication.py`, `serenity_evidence.py` (there is no `extensions/serenity`) |
+| Frontend dashboard | `frontend/src` → built into `core/aletheia/dashboard_static/` |
+
+Runtime state is per-user and outside the repo: `~/.aletheia` by default,
+overridden by an absolute `ALETHEIA_DATA_DIR` (`core/aletheia/runtime_paths.py`).
+Tests that touch the DB must point `ALETHEIA_DATA_DIR` at a temp root.
+
+Symbol display has exactly one entry point: `frontend/src/lib/format.ts`'s
+`fmtSymbol()`. Do not concatenate symbol text anywhere else.
+
+Some machines have a CodeGraph index (`.codegraph/`), but this file cannot promise
+that any given checkout has one, or that its index matches the current HEAD. Use it
+only after probing: `codegraph explore "<symbols or question>"` if the command and
+index are present and the index is not obviously behind. If it is missing or stale,
+fall back to `git grep` / language-server lookups — do not build a CodeGraph index
+as a prerequisite for ordinary work. Either way, read the file before editing: the
+index can lag.
+
+### Tool-specific entry files
+
+`CLAUDE.md` (Claude Code) and `CODEX.md` exist only to import this file
+(`@AGENTS.md`). They are pointers, not rule copies: if a tool seems to need a rule
+repeated, fix this file instead. `CONTRIBUTING.md` states the same rule to human
+contributors.
 
 ## Load only when matched
 

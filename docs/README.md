@@ -36,7 +36,7 @@ GitHub Issues/PRs track work and evidence, not a second runtime truth.
 | New agent session | `../AGENTS.md` | choose the narrow task lane below; external orchestrator owns session/worktree state |
 | Product definition or long-term direction | `product/definition/DIRECTION.md` | The single canonical direction document |
 | Product scope, evaluation, or admission | `product/README.md` | `product/ACTIVE_RUNTIME_SCOPE.md`, `product/CAPABILITY_GROUND_TRUTH.md`, then only the relevant contract/gate/experiment |
-| Architecture or subsystem behavior | `design/README.md` | `design/contracts/`, `design/architecture/`, `design/data/` |
+| Architecture or subsystem behavior | `design/README.md` | `design/architecture/SYSTEM_MAP.md` (task → owner → source → tests), then `design/contracts/`, `design/data/` |
 | API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
 | Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |
 | Local setup, preview, tests, deployment | `operations/README.md` | `operations/development/`, `operations/deployment/`, `operations/runbooks/` |

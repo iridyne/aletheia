@@ -18,7 +18,6 @@ from pathlib import Path
 from aletheia.storage.sqlite import db_path
 
 PROTOCOL_PATH = Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md")
-CLAUDE_MD_PATH = Path("CLAUDE.md")
 
 
 def _db():
@@ -274,10 +273,20 @@ def check_domain_6() -> list[tuple[str, bool, str]]:
     has_active = "ACTIVE" in PROTOCOL_PATH.read_text(encoding="utf-8") if exists else False
     results.append(("6.1 Protocol ACTIVE", exists and has_active, str(PROTOCOL_PATH)))
 
-    # 6.2 CLAUDE.md freeze rule
-    exists = CLAUDE_MD_PATH.exists()
-    has_freeze = "EXPERIMENT FREEZE" in CLAUDE_MD_PATH.read_text(encoding="utf-8") if exists else False
-    results.append(("6.2 CLAUDE.md 冻结规则", exists and has_freeze, ""))
+    # 6.2 Experiment freeze rule: retired with Round 1. No current rule file carries
+    # it any more (CLAUDE.md is now only `@AGENTS.md`), so the item asserts the rule
+    # stays retired instead of reading a file whose content moved away.
+    rule_text = Path("AGENTS.md").read_text(encoding="utf-8")
+    freeze_reappeared = "EXPERIMENT FREEZE" in rule_text
+    results.append(
+        (
+            "6.2 冻结规则已退役",
+            not freeze_reappeared,
+            "live EXPERIMENT FREEZE rule reappeared in AGENTS.md"
+            if freeze_reappeared
+            else "not claimed by any current rule file",
+        )
+    )
 
     # 6.3 Git tag
     try:
