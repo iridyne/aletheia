@@ -48,6 +48,23 @@ def build_candidate_selection_utility(
     economic_estimates: Sequence[EconomicUtilityEstimateV2],
     short_enabled: bool = True,
 ) -> CandidateSelectionUtilityV1:
+    """Decide whether one Candidate earns a scarce planning slot.
+
+    Pure: reads no storage, writes nothing, calls no model. Inputs are the
+    already-fetched hard gate, the candidate's mechanism evidence and its
+    economic estimates; the caller owns their freshness and identity.
+
+    Returns a ``CandidateSelectionUtilityV1`` whose ``admission_status`` is
+    ``admitted`` or an explicit alternative (``below_floor``, ``unavailable``,
+    ``ineligible``, ``observe_only``, ``direction_conflict``) plus an
+    ``admission_basis`` of ``measured`` or ``startup``. A missing sample, a
+    measured refusal and unusable evidence are different statuses on purpose:
+    they must not be collapsed into one reject.
+
+    Raises ``ValueError`` with a typed code when the inputs do not describe the
+    same candidate / exact instrument. That is a caller bug, not an admission
+    result, and it must not be degraded into a rejection.
+    """
     if hard_gate.candidate_key != opportunity_evidence.candidate_key:
         raise ValueError("candidate_selection_identity_mismatch")
     if any(item.candidate_key != hard_gate.candidate_key
@@ -192,6 +209,16 @@ def select_admitted_candidates(
     *,
     max_candidates: int,
 ) -> tuple[CandidateSelectionUtilityV1, ...]:
+    """Return the top ``max_candidates`` admitted decisions, in planning order.
+
+    Pure: no storage reads, no writes. ``decisions`` is one snapshot's already
+    computed set; ranking orders measured admissions before Startup ones and
+    only decides planning order -- it grants no planning or execution authority
+    and does not change a decision's admission status.
+
+    Raises ``ValueError`` for a negative cap instead of silently returning
+    everything, so a misconfigured slot count cannot widen admission.
+    """
     if max_candidates < 0:
         raise ValueError("max_candidates_must_be_non_negative")
     admitted = [item for item in decisions if item.admission_status == "admitted"]
