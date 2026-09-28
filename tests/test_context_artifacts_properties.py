@@ -33,6 +33,9 @@ We also assert two behavioural contracts on the public entry point:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from hypothesis import HealthCheck, given, settings, strategies as st
 
@@ -285,3 +288,87 @@ def test_record_persists_normalised_freshness_for_rogue_labels() -> None:
     assert rows["propcheck:legitimate"] == "fresh"
     # The invariant: rogue labels collapse to ``"unknown"``, never persist verbatim.
     assert rows["propcheck:rogue"] == "unknown"
+
+
+@pytest.mark.parametrize("count", [0, 5000, 5001])
+def test_summary_covers_entire_window_and_preserves_detail_limit(monkeypatch, count):
+    from aletheia.economics import context_artifacts as context
+
+    end = datetime(2026, 9, 28, tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return end
+    monkeypatch.setattr(context, "datetime", Clock)
+    if count:
+        assert record_context_artifacts(
+            run_id="target", caller="test", symbol=None, observed_at=end.isoformat(),
+            artifacts=[{"kind": "news", "stable_id": str(i), "rendered_chars": 2,
+                        "freshness_status": "fresh"} for i in range(count - 1)],
+        ) == count - 1
+        assert record_context_artifacts(
+            run_id="target", caller="test", symbol=None,
+            observed_at=(end - timedelta(days=7)).isoformat(),
+            artifacts=[{"kind": "learning", "stable_id": "oldest", "rendered_chars": 7,
+                        "freshness_status": "stale"}],
+        ) == 1
+    for run_id, observed_at in [("other", end), ("target", end + timedelta(microseconds=1)),
+                                ("target", end - timedelta(days=7, microseconds=1))]:
+        record_context_artifacts(run_id=run_id, caller="test", symbol=None,
+                                 observed_at=observed_at.isoformat(),
+                                 artifacts=[{"kind": "environment", "stable_id": "excluded"}])
+    summary = context.summarize_context_artifacts(days=7, run_id="target")
+    assert summary["artifacts"] == count
+    assert summary["by_kind"] == ({"news": {"artifacts": count - 1, "rendered_chars": 2 * (count - 1)},
+                                  "learning": {"artifacts": 1, "rendered_chars": 7}} if count else {})
+    assert summary["freshness"] == ({"fresh": count - 1, "stale": 1} if count else {})
+    assert sum(b["artifacts"] for b in summary["by_kind"].values()) == count
+    assert len(context.list_context_artifacts(days=7, run_id="target", limit=1)) == min(count, 1)
+    assert context.summarize_context_artifacts(days=7, run_id="target") == summary
+
+
+def test_summary_snapshot_survives_concurrent_insert_and_malformed_chars(monkeypatch, tmp_path):
+    import sqlite3
+    from aletheia.economics import context_artifacts as context
+    from aletheia.economics.schema import ensure_economics_schema
+
+    db = sqlite3.connect(tmp_path / "context.db")
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    ensure_economics_schema(db)
+    monkeypatch.setattr(context, "ensure_economics_schema", lambda: db)
+    assert record_context_artifacts(
+        run_id="snapshot", caller="test", symbol=None,
+        artifacts=[{"kind": "news", "stable_id": str(i), "rendered_chars": 2,
+                    "freshness_status": "fresh"} for i in range(5001)],
+    ) == 5001
+    db.execute("UPDATE llm_context_artifacts SET rendered_chars='12invalid' WHERE stable_id='0'")
+    db.commit()
+    writer = sqlite3.connect(db.execute("PRAGMA database_list").fetchone()[2])
+    inserted = False
+    def insert_during_scan():
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            writer.execute(
+                "INSERT INTO llm_context_artifacts "
+                "(id,schema_version,run_id,caller,kind,stable_id,freshness_status,rendered_chars,created_at) "
+                "SELECT 'concurrent',schema_version,run_id,caller,'learning','concurrent','stale',9,created_at "
+                "FROM llm_context_artifacts LIMIT 1"
+            )
+            writer.commit()
+        return 0
+    db.set_progress_handler(insert_during_scan, 100)
+    try:
+        summary = context.summarize_context_artifacts(run_id="snapshot")
+    finally:
+        db.set_progress_handler(None, 0)
+        writer.close()
+    assert inserted
+    assert summary["artifacts"] == 5001
+    assert summary["by_kind"] == {"news": {"artifacts": 5001, "rendered_chars": 10000}}
+    assert summary["freshness"] == {"fresh": 5001}
+    next_summary = context.summarize_context_artifacts(run_id="snapshot")
+    assert next_summary["artifacts"] == 5002
+    assert next_summary["by_kind"]["learning"] == {"artifacts": 1, "rendered_chars": 9}
+    assert next_summary["freshness"] == {"fresh": 5001, "stale": 1}
