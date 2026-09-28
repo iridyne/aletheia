@@ -296,12 +296,11 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
         (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
         for path in [ROOT / source, *seam_modules(source)]
     ]
-    functions = {
-        node.name: (path, node)
-        for path, tree in trees
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
+    functions = {}
+    for path, tree in trees:
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                functions.setdefault(node.name, []).append((path, node))
     registered = []
     for path, tree in trees:
         for node in ast.walk(tree):
@@ -326,9 +325,13 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
     assert registered, "No _guarded scheduler jobs found"
     missing = []
     for job_id, name, path, line in registered:
-        owner = functions.get(name)
-        if owner is not None:
-            path, function = owner
+        owners = functions.get(name, [])
+        if len(owners) > 1:
+            locations = [f"{owner.relative_to(ROOT)}:{fn.lineno}" for owner, fn in owners]
+            missing.append(f"{path.relative_to(ROOT)}:{line}: ambiguous {job_id}->{name}: {locations}")
+            continue
+        if owners:
+            path, function = owners[0]
             line = function.lineno
             if any(
                 isinstance(call, ast.Call) and isinstance(call.func, ast.Name)

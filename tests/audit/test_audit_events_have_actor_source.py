@@ -40,11 +40,14 @@ def literal_audit_failures(tree: ast.Module) -> tuple[int, list[str]]:
                         (isinstance(node.func, ast.Name) and node.func.id == "write_audit")
                         or (isinstance(node.func, ast.Attribute) and node.func.attr == "write_audit")
                     )
-                    and node.args and isinstance(node.args[0], ast.Dict)
                 ):
                     continue
+                payload = node.args[0] if node.args else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "event"), None
+                )
+                if not isinstance(payload, ast.Dict):
+                    continue
                 checked += 1
-                payload = node.args[0]
                 keys = {key.value for key in payload.keys if isinstance(key, ast.Constant)}
                 for key, value in zip(payload.keys, payload.values, strict=True):
                     if key is None and isinstance(value, ast.Name):
