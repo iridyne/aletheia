@@ -964,6 +964,7 @@ CONTRACT_DOC_ALIASES = {
 # documentation, not a budget; nothing asserts on them.
 UNANCHORED_CONTRACT_NAMESPACES = {
     "analytics_contract": 7,
+    "candidate_lifecycle_contract": 3,
     "behavior_authority": 3,
     "factor_feedback": 3,
     "futures_leverage": 10,
