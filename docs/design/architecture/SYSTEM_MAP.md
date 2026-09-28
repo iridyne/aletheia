@@ -28,6 +28,9 @@ Ranker/PaperTrader 入场主线及 Market Observer 已退役；历史 signal_sou
 Core data/analytics 定义当前事实与完整性语义，Extensions 中同名域承载可选采集或研究。
 合并前须证明责任相同；不按目录名强行合并。
 
+日期化分析与反例见 [2026-09-28 收敛结论](../../research/audits/CONVERGENCE_FINDINGS_2026-09-28.md)：
+包含已复核的发布事务边界、历史计数误读和测试隔离经验；不替代现行契约或当前运行检查。
+
 
 ---
 
