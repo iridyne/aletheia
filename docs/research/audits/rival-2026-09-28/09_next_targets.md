@@ -123,3 +123,85 @@ opportunity_id=plan.source_id if plan.source_kind == "serenity" else None,
 - 数据库总量与预算余量（只读容量端点在 runtime 不可用）。
 - `tier_unit` 当前真实耗时（未重跑）。
 - 其余未系统扫描的端点：`/api/trades`、`/api/opportunities`、`/api/knowledge*`、`/api/agent-runs` 是否存在第三个 blob 列投影泄露。
+
+---
+
+## 6. 第二轮补查（部署前继续分析）
+
+### 6.1 端点扫描收敛：blob 列投影只剩 #3642
+
+把剩余列表端点全部按字节量了一遍（`curl --compressed` + 逐列 JSON 字节统计）：
+
+| 端点 | 解码 | 行 | 列 | 最重列 | 判定 |
+|---|---:|---:|---:|---|---|
+| **`/api/universe/planning-history?limit=200`** | **20,420 KB** | 200 | — | **`planner_input_json` 92%** | **#3642** |
+| `/api/opportunities` | 205.6 KB | 25 | 38 | `metadata` 71% · `generation_json` 21% | 有界，不立项 |
+| `/api/trades` | 171.2 KB | 100 | 46 | `uta_account_identity_json` 49% | 可接受 |
+| `/api/analytics/trade-paths` | 76.6 KB | 25 | **98** | 无单列 >4% | 健康 |
+| `/api/market/snapshots` | 53.8 KB | 200 | 11 | 无 blob | 健康 |
+| `/api/agent-runs` | 21.9 KB | 50 | 14 | 无 blob | 健康 |
+| `/api/knowledge` | 14.8 KB | 50 | 10 | 无 blob | 健康 |
+| `/api/analytics/operator-decisions` | 2.2 KB | 2 | 15 | — | 健康 |
+
+**结论：该缺陷类在 #3631（已修）+ #3642 之后收敛完毕，不需再扫。**
+
+两条边界值得记录：
+
+1. `/api/opportunities` 的 `metadata` 占 71%，但 **`limit` 参数无效**（传 25/100/200 恒返回 25 行 / 205.6 KB）。当前有界，**但若将来放开行数上限会立刻变成第三个同类缺陷**。
+2. `/api/analytics/trade-paths` 有 **98 列**却只有 76.6 KB —— **列多 ≠ payload 重**，判定必须按字节。这反向印证 #3631 裁 6 个具体 blob 列（而非按列数一刀切）是对的。
+
+### 6.2 #3644 修复成本已探明：族数据已经存在
+
+原 issue 把 `plan.source_id` 语义列为未验证。查清后结论对实施者直接有用：
+
+- **`candidate_family` 是 EntryPlan 一等字段**（`trading/entry_plan.py:182`）且是表上 **NOT NULL 列**（`storage/migrations.py:3425,4049,4220`）。
+- live 实测 `GET /api/universe/planning-history?limit=50` → `candidate_family` 分布 **`{'mean_reversion': 28, 'momentum': 22}`**。**族归属被正确记录着**，不是没产生。
+- 断链在**连接键缺失**：position 行只有 `proposal_id` / `opportunity_id`，**没有** `entry_plan_id` / `candidate_id` / `planning_generation_id`；`TradeProposal` 也只有 `opportunity_id`（`storage/models.py:383`）。**持有 `candidate_family` 的 EntryPlan 根本不在归因链上。**
+- `EntryPlan._contract_is_coherent`（`trading/entry_plan.py:290-296`）要求 `(source_kind, source_id, trade_school)` 三者同时存在，故 **universe 路径的 `source_id` 必然非空** —— `:360` 不是"没值可用"，是刻意只填 serenity 分支。
+
+**建议路线 B（而非放宽 `:360` 的分支）**：在 proposal/position 上引入指回 EntryPlan 的键，让归因直读已有的 `candidate_family`，**不再绕 `opportunities` 表**。理由：`candidate_family` 是更近的真相源；绕开 `opportunities` 也绕开该表的 retention 风险。放宽 `:360` 的风险是——若 universe 的 `source_id` 不是 `opportunities.id`，则 `family_scorecard.py:74-80` 的 `SELECT ... FROM opportunities WHERE id = ?` 仍查不中，**问题从"恒 None"变成"恒查不中"，被埋得更深**。
+
+### 6.3 发现更大的样本口径：446 笔而非 24 笔
+
+`GET /api/analytics/round1-progress` 暴露了此前未用的口径：
+
+```
+Round1 起点 2026-06-22 · 首笔平仓 2026-08-07 · 末笔 2026-09-28T05:34
+closed_trades 446 · win_rate 35.2% (157W/289L) · profit_factor 0.7215 · total_realized −59.0218
+```
+
+**比此前全程引用的 24 笔 / −5.27 USDT 大 18.6 倍。** 按平仓原因：
+
+| close_reason | n | 占比 | net PnL | 胜率 |
+|---|---:|---:|---:|---:|
+| **`stop_loss`** | **232** | **52%** | **−135.09** | **18.1%** |
+| `pi_agent_portfolio_review` | 152 | 34% | +1.77 | 40% |
+| `take_profit` | 51 | 11% | **+77.10** | **100%** |
+| 其余 4 类 | 11 | 2% | −2.80 | — |
+
+**`stop_loss` 单项 −135.09 = 总亏损的 229%。若止损不亏，Round1 是 +76.07 盈利。** `take_profit` 51 笔全胜说明**赢的一侧正常**，问题集中在止损侧 —— 与 #3618/#3619/#3620 的执行链诊断同向且更强。
+
+按 24 笔实测的 +0.822%/笔 外推到 232 笔止损（均名义 ~20.9 USDT）≈ **40 USDT**，即 59 USDT 总亏损中可能 **~2/3 住在止损执行侧**。**这是外推不是实测** `[推断]` —— 446 笔逐笔滑价受 `/api/positions` 200 行上限限制未能重算。但结论方向不依赖它：止损占 229% 净亏损 + 0/30 有交易所挂单，两个事实各自独立成立。
+
+**优先级影响**：#3619（交易所原生止损）应是执行链里最高优先级，#3618 先做或同做（否则无法度量回收）。
+
+### 6.4 排除一个误判：Observation Lab 关闭是有意默认
+
+`filter-controller/persistent` 返回 `empty_reason: "controller_disabled"`、`schedule.enabled: false`，`observer_pre_filter_diagnostics` 为 `row_count 0 / cohort_count 0`，且该 filter 版本 `decision_count: 1023` 但 `last_seen_at` 停在 2026-08-27。
+
+**这不是缺陷**：`core/aletheia/config/schema.py:2052` 是 `shadow_enabled: bool = False`，注释明写 *"Opt-in switch for a **diagnostic** observe job with **no trading consumer**"*，docstring 强调 *"It NEVER writes trading config."* 属刻意 opt-in 默认关闭。
+
+**且它不是 #3644 的成因**——`family=unknown` 源于写侧 `opportunity_id` 恒 `None`，与该开关无关。前瞻账本本身仍在产出（446 笔、末笔在今天）。
+
+### 6.5 第二轮后的优先级修订
+
+| 序 | issue | 变化 |
+|---|---|---|
+| **1** | **#3619** 交易所原生止损 | **升到首位**：446 笔样本显示止损占 229% 净亏损、胜率 18.1%，而它完全无交易所挂单 |
+| **2** | **#3618** 滑点记账 | 与 1 同做或先做（否则无法度量回收） |
+| **3** | **#3644** 归因链 | 保持高位，但**成本已探明更低**（族数据已存在，见 6.2） |
+| **4** | **#3642** planning 投影 | 不变，低风险高收益 |
+| 5 | #3645 job 无上界 | 不变 |
+| 6 | #3643 retention | 不变 |
+
+**与第一轮的差异**：第一轮把 #3644 排第一（因为它阻塞"alpha 在哪一族"）。446 笔样本出现后，**执行链的确定性收益更大且更直接** —— 止损侧是唯一亏损来源，且修法明确。#3644 仍重要，但它回答的是"方向侧哪一族有问题"，而当前数据显示**方向侧不是主要失血点**。
