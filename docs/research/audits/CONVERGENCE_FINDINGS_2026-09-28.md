@@ -525,6 +525,35 @@ uv run pytest tests/test_serenity_workbench.py -q               # 本地：18 �
 - `diagnostics/probes/trading.py` 里的 `market_observer` 只出现在解释"该路径已退役、机会表按设计不再前进"的注释与既有 SQL 默认值中。
 - 旧 Orca worktree（`.orca-worktrees/aletheia/{data_fetch,rival_analysis}`）里仍有 `market_scan_refresh_due` 的旧副本；它们不是 master，属本地工作副本，不参与交付。
 
+## 1n. 各 marker 的压缩空间：结论是"集成层并行"，以及两处被证伪/确认的假设
+
+新增实测（全部同选择 A/B，`candidate-87a0044c0`）：
+
+| marker | 用例 | Fedora 串行 | Fedora `-n 4` | 本地串行 | 本地 `-n 4` |
+|---|---:|---:|---:|---:|---|
+| `tier_unit` | 1953 | 92.5 s | — | ~50 s | — |
+| `tier_integration` | 8248 | 502.8 s | **178.0 s** | 1233.8 s | 无改善 |
+| `tier_spec` | 1316 | 74.6 s | — | 51.3 s | **26.5 s** |
+| `tier_e2e` | 107 | 30.3 s | — | — | — |
+
+1. **集成层没有热点**：Fedora 最慢 30 条合计 87.05 s / 502.8 s = **17.5%**，最慢单条 10.36 s
+   （`test_update.py::test_candidate_preflight_runs_real_migration_validation_and_smoke`）。
+   82.5% 是弥散成本 → 逐条优化无效，只有并行或减少重复。
+
+2. **`-n 4` 是 2.8×，且套件本就为并行设计**：`tests/conftest.py::_configure_xdist_runtime_dir`
+   给每个 worker 独立运行目录；唯一的计数差异是
+   `tests/test_xdist_runtime_isolation.py:15` —— 它显式声明
+   `only meaningful when pytest-xdist starts a worker`，所以串行下 skip、并行下执行是**设计行为**，
+   不是抖动（8243+8 与 8244+7 总数一致 = 8251）。
+
+3. **本地集成层的 1233.8 s 不是 CPU 瓶颈，也不是出站 HTTP**：900 s（73%）来自同一文件 5 个各
+   约 180.0 s 的等待（该文件单独跑 18.1 s），`-n 4` 无效；`HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`
+   指向死端口后**等待依旧存在** → 先前"这些用例在做真实 HTTP 尝试、经代理黑洞"的推断被证伪，
+   记账为未解释的阻塞等待，定位仍需二分（复现命令见 §1l）。
+
+4. **spec/e2e 不必再压**（见 §1m）；需要多层时用一条
+   `-m "tier_integration or tier_spec or tier_e2e"` 而不是分三次跑，省掉那 7% 的重复收集。
+
 ## 1m. `spec`/`e2e` 层：分类已做，但没有廉价的提速空间
 
 对 `tests/specs/` 的 105 个文件复用 `tier_unit` 的分类方法（只看模块自身的顶层 import 与
