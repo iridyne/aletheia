@@ -13,6 +13,8 @@ model_provider：8 个 Python 文件、3,410 物理行、45 个 except；config�
 
 本轮确认的是当前 sync 导出路径。#1379 还描述了历史 backup 消费者；本轮没有找到并证明当前 backup 同一路径，不能照搬为两个当前可达漏洞。scorecard 健康 list/dict 漂移见 [Core 报告 A4](core_analytics_economics_review_plan.md)，不重复计数。
 
+**后续证据补充（2026-09-28，issue 正文准备）**：沿 `tests/test_backup_config_redaction.py` 的真实 import 找到已迁移的 `ops/backup/service.py:369`，它仍调用相同 redactor 并将结果写入归档。该文件在拉取的 master `a998070130d2ab892e9ba89b7de48886a1a708e4` 与本报告基线一致，因此 backup 和 sync 两条当前消费路径均已确认；实施 #1379 必须覆盖两者。上段保留原轮次证据边界，不再用“未找到”排除 backup。见 [已发布 issue 正文快照](issue_bodies/README.md)。
+
 ## M1：预算评估脱离可选观察开关
 
 触发链：合法配置 economics.enabled=true、enforcement_mode=hard_block、budgets_shadow_enabled=false；`complete_with_fallback` 先调用 `_observe_would_block`，其提前返回；`_enforce_budget_if_configured` 读取不到 `_aletheia_would_block_observations`，继续模型请求。即使已耗尽且可准确计价的预算，也无法通过该路径阻止请求。tracing 关闭同样会使当前观察路径跳过，需一起覆盖。

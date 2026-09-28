@@ -20,6 +20,7 @@
 | **16** | **[alpha 机制对比（主线）](16_alpha_mechanism_comparison.md)** | **我们 vs R20 的 alpha 机制异同、可借鉴项** |
 | — | [证据附录](99_evidence_index.md) | 六仓原始证据清单索引 + 本次未验证项 |
 | — | [专项分析状态与剩余范围](analysis_status.md) | 覆盖深度、已确认根因、待审模块和历史 brief 状态 |
+| — | [首批修复 issue 正文快照](issue_bodies/README.md) | 八项独立可领取的 GitHub issue：背景、修复边界、验收与合并要求 |
 | — | [Core analytics/economics 分析与修复方案](core_analytics_economics_review_plan.md) | 完整窗口汇总、schema 初始化、scorecard 证据与健康契约 |
 | — | [Model/config 分析与修复方案](model_config_review_plan.md) | 硬预算独立评估、共享配置脱敏及验收 |
 | — | [Data 分析与修复方案](data_review_plan.md) | 形成中 K 线持久化、增量游标、存量处理边界 |
