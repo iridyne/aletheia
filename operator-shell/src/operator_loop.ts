@@ -12,7 +12,7 @@ import type {
   OperatorSnapshot,
   OperatorHeartbeat,
 } from './schemas.js'
-import { BackendClient } from './backend_client.js'
+import { BackendClient, GatewayRequestError } from './backend_client.js'
 import type { OperatorShellConfig } from './config.js'
 import { buildHeartbeat } from './heartbeat.js'
 import { SessionRuntime } from './session_runtime.js'
@@ -1015,8 +1015,7 @@ export class OperatorLoop {
               sessionPrefix: 'dreaming',
               startEvent: 'dreaming_started',
               completedEvent: 'dreaming_completed',
-              fallbackSummary: 'Dreaming run completed successfully.',
-              warningSummary: 'Dreaming run completed with non-fatal warnings.',
+              queuedSummary: 'Dreaming run queued for dreaming_agent.',
               userInput: 'Run dreaming consolidation for operator memory.',
               title: 'Dreaming Delegation',
             } as const
@@ -1026,8 +1025,7 @@ export class OperatorLoop {
               sessionPrefix: 'review',
               startEvent: 'review_started',
               completedEvent: 'review_completed',
-              fallbackSummary: 'Post-trade review generation completed successfully.',
-              warningSummary: 'Post-trade review generation completed with non-fatal warnings.',
+              queuedSummary: 'Post-trade review run queued for post_trade_reviewer.',
               userInput: 'Generate post-trade review coverage for recently closed strategies.',
               title: 'Post-Trade Review Delegation',
             } as const
@@ -1037,8 +1035,7 @@ export class OperatorLoop {
               sessionPrefix: 'portfolio-snapshot',
               startEvent: 'portfolio_snapshot_started',
               completedEvent: 'portfolio_snapshot_completed',
-              fallbackSummary: 'Portfolio snapshot refresh completed successfully.',
-              warningSummary: 'Portfolio snapshot refresh completed with non-fatal warnings.',
+              queuedSummary: 'Portfolio snapshot refresh run queued for portfolio_agent.',
               userInput: 'Refresh portfolio snapshot because open positions need a fresh operator view.',
               title: 'Portfolio Snapshot Delegation',
             } as const
@@ -1048,8 +1045,7 @@ export class OperatorLoop {
               sessionPrefix: 'risk-critique',
               startEvent: 'risk_critique_started',
               completedEvent: 'risk_critique_completed',
-              fallbackSummary: 'Risk critique delegation completed successfully.',
-              warningSummary: 'Risk critique delegation completed with non-fatal warnings.',
+              queuedSummary: 'Risk critique run queued for risk_critic.',
               userInput: 'Delegate risk critique for recent risk rejections and guardrail lessons.',
               title: 'Risk Critique Delegation',
             } as const
@@ -1102,76 +1098,66 @@ export class OperatorLoop {
       },
     })
 
+    // `POST /api/agent-runs/start` answers `202` with a durable queued run
+    // (`agent_contracts.md`, AgentRun invocation): the queue worker owns
+    // execution, so enqueueing is the delegation's outcome here. Reading the
+    // run's terminal state is a later, separate observation.
+    let result: Awaited<ReturnType<BackendGatewayClient['startAgentRun']>>
     try {
-      const result = await this.backendClient.startAgentRun(activeTask.assignedTo)
-      const completed =
-        result.status === 'completed' || result.status === 'completed_with_errors'
-      const outputData = {
-        agent_name: activeTask.assignedTo,
-        run_id: result.run_id,
-        run_status: result.status,
-        outputs: result.outputs,
-        errors: result.errors,
-      }
-
-      if (!completed) {
-        const errorMessage =
-          result.errors[0] ||
-          `Delegated dreaming run ended with unexpected status ${result.status}.`
-        await this.taskRuntime.failActiveTask(errorMessage, outputData)
-        throw new Error(errorMessage)
-      }
-
-      await this.taskRuntime.completeActiveTask({
-        ...outputData,
-        summary:
-          result.errors.length > 0
-            ? delegation.warningSummary
-            : delegation.fallbackSummary,
-      })
-      this.sessionRuntime.rememberBranch({
-        id: sessionId,
-        kind: delegation.sessionKind,
-        title: delegation.title,
-        parent_session_id: parentSessionId,
-        summary:
-          result.errors.length > 0
-            ? delegation.warningSummary
-            : delegation.fallbackSummary,
-      })
-      await this.backendClient.createMessage({
-        session_id: sessionId,
-        role: 'assistant',
-        message_type: 'result',
-        related_event_id: null,
-        content: {
-          text: result.errors.length > 0 ? delegation.warningSummary : delegation.fallbackSummary,
-          run_id: result.run_id,
-          outputs: result.outputs,
-          errors: result.errors,
-        },
-      })
-      await this.backendClient.createEvent({
-        event_type: delegation.completedEvent,
-        severity: result.errors.length > 0 ? 'medium' : 'info',
-        source: 'operator_loop',
-        session_id: this.config.mainSessionId,
-        task_id: activeTask.taskId,
-        related_entity_type: 'agent_run',
-        related_entity_id: result.run_id,
-        payload: outputData,
-      })
-      return true
+      result = await this.backendClient.startAgentRun(activeTask.assignedTo)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (this.taskRuntime.getActiveTask()?.taskId === activeTask.taskId) {
+      // `409 agent_already_queued` is the same outcome: this delegation is
+      // already queued and will run; it is not a task failure.
+      if (!(error instanceof GatewayRequestError && error.status === 409)) {
+        const message = errorMessage(error)
         await this.taskRuntime.failActiveTask(message, {
           agent_name: activeTask.assignedTo,
           task_type: activeTask.taskType,
         })
+        throw error
       }
-      throw error
+      result = { job_id: '', run_id: '', status: 'queued' }
     }
+
+    const outputData = {
+      agent_name: activeTask.assignedTo,
+      job_id: result.job_id,
+      run_id: result.run_id,
+      run_status: result.status,
+    }
+
+    await this.taskRuntime.completeActiveTask({
+      ...outputData,
+      summary: delegation.queuedSummary,
+    })
+    this.sessionRuntime.rememberBranch({
+      id: sessionId,
+      kind: delegation.sessionKind,
+      title: delegation.title,
+      parent_session_id: parentSessionId,
+      summary: delegation.queuedSummary,
+    })
+    await this.backendClient.createMessage({
+      session_id: sessionId,
+      role: 'assistant',
+      message_type: 'result',
+      related_event_id: null,
+      content: {
+        text: delegation.queuedSummary,
+        ...outputData,
+      },
+    })
+    await this.backendClient.createEvent({
+      event_type: delegation.completedEvent,
+      severity: 'info',
+      source: 'operator_loop',
+      session_id: this.config.mainSessionId,
+      task_id: activeTask.taskId,
+      related_entity_type: 'agent_run',
+      related_entity_id: result.run_id,
+      payload: outputData,
+    })
+    return true
   }
 
   private async maybeRunOperationalControlTask(): Promise<boolean> {

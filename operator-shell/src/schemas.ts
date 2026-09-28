@@ -397,11 +397,17 @@ export interface OperatorExtensionRecord {
   updated_at: string
 }
 
+/**
+ * `POST /api/agent-runs/start` contract: the request creates a durable queued
+ * AgentRun and answers `202` with the job/run ids. Execution belongs to the
+ * queue worker, so the response carries no run outputs or errors.
+ */
 export interface AgentRunInvocationResult {
+  job_id: string
   run_id: string
   status: string
-  outputs: string[]
-  errors: string[]
+  trigger_type?: string
+  queue?: unknown
 }
 
 export interface AgentRunSummary {
