@@ -557,17 +557,11 @@ def _clear_verified_closed_pending() -> list[str]:
         close_order_id = ""
         with repo.transaction(immediate=True):
             db = get_db()
-            row = db.execute(
-                "SELECT * FROM positions WHERE id=? LIMIT 1", (position_id,)
-            ).fetchone()
-            if row is None:
+            position = repo.get_position(position_id)
+            if position is None:
                 continue
-            position = dict(row)
             close_order_id = str(position.get("pending_close_order_id") or "")
-            order_row = db.execute(
-                "SELECT * FROM orders WHERE id=? LIMIT 1", (close_order_id,)
-            ).fetchone()
-            order = dict(order_row) if order_row is not None else None
+            order = repo.get_order(close_order_id)
             fill_rows = [
                 dict(fill)
                 for fill in db.execute(

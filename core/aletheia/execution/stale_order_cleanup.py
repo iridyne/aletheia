@@ -215,12 +215,9 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
     changed = False
     with repo.transaction(immediate=True):
         db = get_db()
-        row = db.execute(
-            "SELECT * FROM orders WHERE id=? LIMIT 1", (oid,)
-        ).fetchone()
-        if row is None:
+        fresh = repo.get_order(oid)
+        if fresh is None:
             return None
-        fresh = dict(row)
         if fresh.get("status") not in _OPEN_LOCAL_STATES:
             return None  # already resolved by another path
         if _has_real_economics(fresh):

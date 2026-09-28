@@ -36,9 +36,10 @@ from aletheia.storage.repositories import (
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
     get_candidate_planning_generation,
-    get_entry_plan,
     get_db,
+    get_entry_plan,
     get_entry_risk_reservation,
+    get_position,
     get_opportunity,
     get_serenity_opportunity,
     get_trade_proposal,
@@ -131,7 +132,7 @@ def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
         if not math.isfinite(filled) or filled < 0 or filled + float(proposal.quantity or 0) > plan.target_quantity + 1e-12:
             return None
         if filled:
-            position = get_db().execute("SELECT * FROM positions WHERE id=?", (order["position_id"],)).fetchone()
+            position = get_position(order["position_id"])
             if (position is None or position["status"] != "open" or position["pending_close_order_id"]
                 or position["order_id"] != order["id"] or position["proposal_id"] != order["proposal_id"]
                 or not position["entry_fill_verified"] or position["entry_price_source"] != "broker_fill"

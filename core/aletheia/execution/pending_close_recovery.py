@@ -403,16 +403,12 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
     position_id = str(position["id"])
     with repo.transaction(immediate=True):
         db = get_db()
-        fresh_order = db.execute(
-            "SELECT * FROM orders WHERE id=? LIMIT 1", (order_id,)
-        ).fetchone()
-        fresh_position = db.execute(
-            "SELECT * FROM positions WHERE id=? LIMIT 1", (position_id,)
-        ).fetchone()
+        fresh_order = repo.get_order(order_id)
+        fresh_position = repo.get_position(position_id)
         if fresh_order is None or fresh_position is None:
             return False
-        order_row = dict(fresh_order)
-        position_row = dict(fresh_position)
+        order_row = fresh_order
+        position_row = fresh_position
         if not _recovery_claim_is_unchanged(
             order, position, order_row, position_row
         ):
@@ -481,16 +477,12 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
     position_id = str(position["id"])
     with repo.transaction(immediate=True):
         db = get_db()
-        fresh_order = db.execute(
-            "SELECT * FROM orders WHERE id=? LIMIT 1", (order_id,)
-        ).fetchone()
-        fresh_position = db.execute(
-            "SELECT * FROM positions WHERE id=? LIMIT 1", (position_id,)
-        ).fetchone()
+        fresh_order = repo.get_order(order_id)
+        fresh_position = repo.get_position(position_id)
         if fresh_order is None or fresh_position is None:
             return False
-        order_row = dict(fresh_order)
-        position_row = dict(fresh_position)
+        order_row = fresh_order
+        position_row = fresh_position
         if not _recovery_claim_is_unchanged(
             order, position, order_row, position_row
         ):
@@ -582,19 +574,15 @@ def release_rate_limited_close_claim(
     order_id = None
     with repo.transaction(immediate=True):
         db = get_db()
-        fresh_position = db.execute(
-            "SELECT * FROM positions WHERE id=? LIMIT 1", (position_id,)
-        ).fetchone()
+        fresh_position = repo.get_position(position_id)
         if fresh_position is None or str(fresh_position["status"] or "") != "open":
             return {"released": False, "code": "position_not_found_or_not_open"}
         claim_status = str(fresh_position["pending_close_status"] or "")
         order_id = str(fresh_position["pending_close_order_id"] or "")
         if not order_id:
             return {"released": False, "code": "claim_not_parked"}
-        fresh_order = db.execute(
-            "SELECT * FROM orders WHERE id=? LIMIT 1", (order_id,)
-        ).fetchone()
-        if fresh_order is None or not _is_close_order(dict(fresh_order)):
+        fresh_order = repo.get_order(order_id)
+        if fresh_order is None or not _is_close_order(fresh_order):
             return {"released": False, "code": "parked_order_mismatch"}
         if str(fresh_order["position_id"] or "") != position_id:
             return {"released": False, "code": "parked_order_mismatch"}
@@ -804,12 +792,10 @@ def _apply_submission_rejected_release(position: dict) -> bool:
     position_id = str(position["id"])
     with repo.transaction(immediate=True):
         db = get_db()
-        fresh = db.execute(
-            "SELECT * FROM positions WHERE id=? LIMIT 1", (position_id,)
-        ).fetchone()
+        fresh = repo.get_position(position_id)
         if fresh is None:
             return False
-        position_row = dict(fresh)
+        position_row = fresh
         if not _eligible_submission_rejected_release(position_row):
             return False
         before = {
