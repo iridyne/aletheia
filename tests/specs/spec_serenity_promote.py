@@ -183,7 +183,7 @@ def test_settings_serenity_endpoint_registered():
     SpecClaim(
         "SP-S05", _CONTRACT, "§api_reference lists /settings/serenity row", "L2a",
         "api_reference.md documents the new POST /settings/serenity row — config↔UI "
-        "rule (CLAUDE.md) requires every config field to be reachable from the UI and "
+        "rule (CONTRIBUTING.md) requires every config field to be reachable from the UI and "
         "described in the API contract",
     ),
 )

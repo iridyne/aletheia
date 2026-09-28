@@ -63,7 +63,7 @@
 - 仓库共 **9 张流程图**（`01`–`08` + `trading_flow_pi_sole_decision_maker`）。
 - **没有任何一张画了 Serenity 的独立交易入口流。**
 - Serenity 只在 **2 张图**里作为 PI Agent 的上下文输入出现：
-  - `04_pi_agent_decision.mmd:22-23` 标注为 Layer 3 里的"研究洞察 (Serenity output)"
+  - `docs/design/history/diagrams/source/04_pi_agent_decision.mmd:22-23` 标注为 Layer 3 里的"研究洞察 (Serenity output)"
   - `trading_flow_pi_sole_decision_maker.mmd:68-69` 在 Layer 3 Wisdom 子图里提了一句 "serenity"
 
 **所以**：图是有的，但 Serenity 在所有图里的角色都是 **PI Agent 的 Layer-3 旁支输入**，不是独立路径。你记忆中的"流程图上 Serenity 内容"= 这两个输入节点。**要让它成为独立流派，需要新画一张 Path C 流程图**（这是任何方案都要补的文档交付物）。

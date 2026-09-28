@@ -274,7 +274,8 @@ def test_close_routes_through_exchange(tmp_path, monkeypatch, exec_mode):
 def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
     """Governance: LIVE positions are human-only — NEVER auto-closed. The router is the
     chokepoint; an autonomous caller (allow_live=False default) must NOT place a real
-    live exchange order (CLAUDE.md: never place live orders autonomously)."""
+    live exchange order (AGENTS.md safety invariant: live trading is off by default,
+    and no agent places live orders autonomously)."""
     _setup_db(tmp_path, monkeypatch)
     _stub_uta_execution(monkeypatch)
     _patch_filled_place_order(monkeypatch, fill_price=100.0)

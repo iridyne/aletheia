@@ -107,7 +107,8 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
 
     Verifies the threading.local() invariant in storage/sqlite.py — each thread
     owns its own connection rather than sharing a single module-level handle
-    (which would deadlock the WAL writer per CLAUDE.md "SQLite concurrency" rule).
+    (which would deadlock the WAL writer under the SQLite concurrency rules in
+    docs/operations/development/agent-guides/STATE_AND_DATA.md).
     Uses per-thread isolated DB paths to avoid Windows WAL filesystem-lock
     contention while still exercising the per-thread caching contract.
     """

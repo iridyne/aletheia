@@ -21,7 +21,8 @@ def test_live_config_default_is_disabled():
     assert cfg.state == "live_disabled", (
         f"LiveConfig.state default is not 'live_disabled' (got {cfg.state!r}) — "
         f"a fresh config or reset would put the system into a live-eligible state "
-        f"without explicit operator action (CLAUDE.md safety rule violation)"
+        f"without explicit operator action (AGENTS.md safety invariant: live "
+        f"trading is off by default)"
     )
     assert cfg.first_live_confirmation_done is False, (
         f"LiveConfig.first_live_confirmation_done default is not False (got "
