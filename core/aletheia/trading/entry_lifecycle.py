@@ -15,7 +15,7 @@ def _effective_outcome(cycle: dict) -> tuple[str | None, str | None]:
     return legacy.outcome_class, legacy.reason
 
 
-def _state(cycle: dict | None) -> tuple[str, str | None, str]:
+def _state(cycle: dict | None, now: datetime | None = None) -> tuple[str, str | None, str]:
     if cycle is None:
         return "AWAITING_PLANNING", "candidate_selected", "await_planner"
     plan_status = cycle.get("entry_plan_status")
@@ -27,7 +27,7 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
         expires = cycle.get("activation_expires_at")
         if not expires:
             return "WAITING_TRIGGER", "entry_trigger_activation_required", "await_fresh_trigger"
-        if datetime.fromisoformat(expires) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(expires) <= (now or datetime.now(timezone.utc)):
             return "WAITING_TRIGGER", "entry_trigger_activation_expired", "await_fresh_trigger"
         if not cycle.get("activation_stream_current"):
             return "WAITING_TRIGGER", "entry_trigger_activation_monitoring_mismatch", "await_fresh_trigger"
@@ -71,10 +71,10 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
     )
 
 
-def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict]) -> dict[str, Any]:
+def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict], *, now: datetime | None = None) -> dict[str, Any]:
     ordered = sorted(cycles, key=lambda item: (int(item.get("cycle_number") or 0), str(item.get("created_at") or ""), str(item.get("id") or "")))
     current = next((item for item in reversed(ordered) if item.get("is_current")), ordered[-1] if ordered else None)
-    state, reason, next_action = _state(current)
+    state, reason, next_action = _state(current, now)
     expired_count = sum(item.get("entry_plan_status") == "expired" for item in ordered)
     changed_at = (
         current.get("entry_plan_terminal_at")
