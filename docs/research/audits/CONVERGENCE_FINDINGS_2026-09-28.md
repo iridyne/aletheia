@@ -221,6 +221,35 @@ tests/test_experience_loop.py tests/test_opportunity_flow_ledger.py -q`（本次
 **守卫强度：**边界回归用"同一年龄在 bound=1 时触发、在 bound=900 时不触发"的翻转断言；变异检查确认把共享
 常量换回私有字面量 `900` 会让该测试失败，因此它证明的是"常量是唯一来源"，而不是"恰好 15 分钟也能过"。
 
+## 1h. Fedora 分层：tier 标记是精确划分（安全结论），耗时才是成本问题
+
+**收集口径（本地 macOS，`eca9e4e2d` 之后的 master + 两个待合并分支树）：**
+
+| marker | collected |
+|---|---|
+| `tier_unit` | 1953 |
+| `tier_integration` | 8248 |
+| `tier_spec` | 1327 |
+| `tier_e2e` | 107 |
+| 四个 tier 并集 | **11635** |
+| `tests/` 全量 | **11635** |
+| **未分类 remainder** | **0** |
+
+结论：四个 tier 标记**精确划分**整个套件，因此把 Fedora 步骤表达为 tier 子集**不会漏跑**；
+"本地未覆盖层"= 8248+1327+107 = **9682 项**（`tier_unit` 1953 项为本地层）。
+
+**`domain_runtime` 不是分区成员**：它是域标记（`ci_plan.py` 的 runtime lane，1680 项），与 tier 重叠。
+任何"并集等于全量"的检查都必须只用四个 tier 标记，否则会把重叠误当覆盖。
+（本次更正来自一次外部提醒：先前的脚本把 `domain_runtime` 混进并集。）
+
+**仍未测量**：各 marker 在 Fedora 沙箱内的**墙钟**。这决定"本地未覆盖层"能省多少时间，
+属于成本数据，不是安全边界——安全性已由上面的精确划分给出。测量脚本
+（四个 tier + domain_runtime 分别计时，并把无 tier 标记的 case 显式列为 remainder）在候选目录内串行运行，
+避免与全量争用 CPU 污染读数。
+
+**流程未变之前**：默认 Fedora 步骤仍是整个 `tests/`；只在拿到耗时表之后才收窄，并需用"同一次真实全量"
+回归对照证明没有漏跑。
+
 ## 2. 旧扫描计数与历史漏斗不能代表当前准入
 
 **结论：`assets_passed=0` 不能读作零准入；历史 Opportunity 漏斗也不是当前 Entry 主线。**
