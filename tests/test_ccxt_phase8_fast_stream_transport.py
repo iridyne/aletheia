@@ -9,6 +9,7 @@ Acceptance checks for #3699 Phase 8:
 - Facts from old generation do not make a channel ready after reconnect
 - Stale/malformed watch return fails closed (no event emitted, no channel readiness)
 - Missing/malformed source timestamp fails closed — receive time is never exchange time
+- Quote source is per venue: binanceusdm uses watch_bids_asks, bitget keeps watch_ticker
 - Binance depth gap (watch_order_book raising) clears depth channel readiness and re-warms
 """
 
@@ -68,6 +69,7 @@ def _make_exchange_mock():
     ex.on_connected = MagicMock()
     ex.ws_dial_backoff = {}
     ex.watch_ticker = _blocking_watch()
+    ex.watch_bids_asks = _blocking_watch()
     ex.watch_trades = _blocking_watch()
     ex.watch_order_book = _blocking_watch()
     ex.watch_ohlcv = _blocking_watch()
@@ -394,6 +396,81 @@ def test_mappers_fail_closed_when_source_timestamp_unusable():
     assert adapter._map_ticker(inst, {**_ticker(), "timestamp": 0}) is None  # non-positive
     assert adapter._map_trade(inst, {**_trade(), "timestamp": "not-a-time"}) is None  # non-numeric
     assert adapter._map_orderbook(inst, {**_orderbook(), "timestamp": None}) is None  # explicit None
+
+
+# ── Quote source per venue ────────────────────────────────────────────────────
+
+def _quote_payload(ts):
+    return {"bid": 100.0, "ask": 100.1, "timestamp": ts}
+
+
+async def _run_quote_loop_briefly(adapter, inst):
+    """Run the quote watch loop briefly, delivering one payload, then block."""
+    calls = {"ticker": 0, "bids_asks": 0}
+    payload = _quote_payload(int(time.time() * 1_000))
+
+    async def watch_bids_asks(symbols, *_args, **_kwargs):
+        calls["bids_asks"] += 1
+        if calls["bids_asks"] == 1:
+            return {symbols[0]: payload}
+        await asyncio.sleep(3600)
+
+    async def watch_ticker(*_args, **_kwargs):
+        calls["ticker"] += 1
+        if calls["ticker"] == 1:
+            return payload
+        await asyncio.sleep(3600)
+
+    adapter._exchange = _make_exchange_mock()
+    adapter._exchange.watch_bids_asks = watch_bids_asks
+    adapter._exchange.watch_ticker = watch_ticker
+
+    task = asyncio.ensure_future(adapter._watch_loop(inst, "ticker"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    return calls
+
+
+async def test_binanceusdm_quote_comes_from_book_ticker():
+    """binanceusdm's bookless watch_ticker is never used for the quote fact."""
+    from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
+
+    inst = _instrument(exchange="binance", symbol="BTC/USDT", market_type="perp")
+    adapter = CcxtProFastMarketStream("binanceusdm")
+    await _connect_no_instruments(adapter)
+
+    calls = await _run_quote_loop_briefly(adapter, inst)
+
+    assert calls["ticker"] == 0
+    assert calls["bids_asks"] >= 1
+    fact = adapter._channel_facts[(inst, "quote")]
+    assert fact.bid == pytest.approx(100.0)
+    assert fact.ask == pytest.approx(100.1)
+
+    class _NoSuchSymbol:
+        async def watch_bids_asks(self, _symbols):
+            return {}
+
+    assert await adapter._watch_quote(_NoSuchSymbol(), "BTC/USDT:USDT") == {}
+
+
+async def test_bitget_quote_still_comes_from_watch_ticker():
+    """bitget's watch_ticker already carries bid/ask; keep that quote source."""
+    from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
+
+    inst = _instrument(exchange="bitget", symbol="BTC/USDT", market_type="perp")
+    adapter = CcxtProFastMarketStream("bitget")
+    await _connect_no_instruments(adapter)
+
+    calls = await _run_quote_loop_briefly(adapter, inst)
+
+    assert calls["bids_asks"] == 0
+    assert calls["ticker"] >= 1
+    assert adapter._channel_facts[(inst, "quote")].bid == pytest.approx(100.0)
 
 
 # ── Depth gap handling ────────────────────────────────────────────────────────

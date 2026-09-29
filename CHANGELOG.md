@@ -8,6 +8,7 @@ their own independent versions.
 
 ### Changed
 
+* **market-data:** source the FastMarketStream quote fact from the venue stream that actually carries a best bid/ask — `watch_bids_asks` (`bookTicker`) where `watch_ticker` is bookless (`binanceusdm`), unchanged `watch_ticker` elsewhere — so quote-gated entry triggers can activate on that venue (#3723).
 * **market-data:** stop stamping FastMarketStream quote/trade/depth/candle facts with the local receive clock when CCXT Pro omits a source timestamp; a missing/malformed source timestamp now drops the fact instead of inventing exchange time (#3699).
 * **security:** reject private Frontdoor diagnostics and WebSocket admission when the owner-auth configuration is unavailable; public minimal probes and known local/remote policy remain unchanged (#1332).
 * **market-data:** persist and count only confirmed closed candles in historical downloads, while retaining raw-page pagination so forming tails can be fetched after closing (#3676).

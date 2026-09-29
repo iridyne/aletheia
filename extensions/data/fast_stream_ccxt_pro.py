@@ -6,6 +6,10 @@ ticker/trade/OHLCV/orderbook, Binance snapshot/delta protocol.
 This adapter owns: FastMarketEvent mapping, stream_generation_id,
 subscription_generation_id, local monotonic sequence, receive timestamp,
 current-generation channel readiness, Aletheia monitoring projection.
+
+A `quote` fact needs a proven best bid/ask, and whether the ticker stream carries
+one is venue knowledge rather than a CCXT capability flag, so the quote source is
+selected per exchange in `_QUOTE_FROM_BIDS_ASKS`.
 """
 
 from __future__ import annotations
@@ -32,6 +36,17 @@ logger = logging.getLogger("aletheia.universe.fast_stream_ccxt_pro")
 
 _CHANNELS = ("ticker", "trades", "orderbook", "ohlcv")
 _CHANNEL_TO_EVENT = {"ticker": "quote", "trades": "trade", "orderbook": "depth", "ohlcv": "candle"}
+
+# Venues whose CCXT `watch_ticker` channel carries no best bid/ask, so the quote fact
+# comes from the `bookTicker` stream behind `watch_bids_asks()` instead:
+# - binanceusdm: `watch_ticker` defaults to the bookless `24hrMiniTicker`
+#   (ccxt/pro/binance.py: `handle_option_and_params(params, 'watchTickers', 'name',
+#   'miniTicker')`), so bid/ask are always None. `watch_bids_asks()` returns
+#   `bookTicker` payloads with bid, ask, and an exchange timestamp.
+# bitget is deliberately absent: its `watch_ticker` already carries bid/ask.
+# Evidence: public-WS probes 2026-09-29 in
+# docs/research/explorations/FAST_STREAM_CCXT_PRO_QUALIFICATION_2026-09-29.md.
+_QUOTE_FROM_BIDS_ASKS = frozenset({"binanceusdm"})
 
 
 def _source_ms(value) -> int | None:
@@ -72,6 +87,7 @@ class CcxtProFastMarketStream:
 
     def __init__(self, exchange_name: str) -> None:
         self._exchange_name = exchange_name
+        self._quote_from_bids_asks = exchange_name in _QUOTE_FROM_BIDS_ASKS
         self._exchange = None
         self._session = None
         self._instruments: set[InstrumentId] = set()
@@ -185,8 +201,7 @@ class CcxtProFastMarketStream:
         while True:
             try:
                 if channel == "ticker":
-                    data = await exchange.watch_ticker(symbol)
-                    event = self._map_ticker(instrument, data)
+                    event = self._map_ticker(instrument, await self._watch_quote(exchange, symbol))
                 elif channel == "trades":
                     data = await exchange.watch_trades(symbol)
                     # Returns list of trades; take most recent
@@ -256,7 +271,20 @@ class CcxtProFastMarketStream:
     def _ts_now(self) -> int:
         return int(time.time() * 1_000)
 
+    async def _watch_quote(self, exchange, symbol: str) -> dict:
+        """Return the best-bid/ask payload for `symbol` from the venue's quote source.
+
+        Both sources return a CCXT ticker structure; `watch_bids_asks()` returns them
+        keyed by unified symbol and may omit a symbol, which maps to an empty payload
+        and therefore fails closed in `_map_ticker`.
+        """
+        if self._quote_from_bids_asks:
+            books = await exchange.watch_bids_asks([symbol])
+            return books.get(symbol) or {}
+        return await exchange.watch_ticker(symbol)
+
     def _map_ticker(self, instrument: InstrumentId, ticker: dict) -> FastMarketEvent | None:
+        """Map a CCXT ticker/bookTicker payload to a quote fact, else fail closed."""
         bid = ticker.get("bid")
         ask = ticker.get("ask")
         if bid is None or ask is None:
