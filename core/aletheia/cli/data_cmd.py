@@ -59,6 +59,74 @@ def options_volatility(
     typer.echo(json.dumps(result, indent=2, allow_nan=False))
 
 
+@data_app.command("venue-margins")
+def venue_margins(
+    venue: str = typer.Option(..., help="Venue whose public tier API is read, e.g. bitget"),
+    symbol: str = typer.Option(..., help="Canonical symbol, e.g. BTC/USDT"),
+    market_type: str = typer.Option("perp", help="perp | spot"),
+    margin_mode: str = typer.Option("isolated", help="isolated | cross"),
+    show: bool = typer.Option(
+        False, "--show", help="Print the cached facts instead of refreshing them"
+    ),
+):
+    """Refresh (or show) the venue margin-tier facts the Entry path reads (#3729).
+
+    Compiler and Risk read this persisted row synchronously, so no leveraged entry
+    can be planned until an operator has refreshed it here. The facts come from the
+    venue's public leverage-tier API; nothing here touches credentials or orders.
+    """
+    from typing import cast
+
+    from aletheia.execution.margin_mode_policy import MarginMode
+    from aletheia.trading.venue_margin import (
+        VenueMarginUnavailable,
+        load_venue_margin_envelope,
+        refresh_venue_margin_envelope,
+    )
+
+    if market_type not in ("perp", "spot"):
+        raise typer.BadParameter("market_type must be perp or spot")
+    if margin_mode not in ("isolated", "cross"):
+        raise typer.BadParameter("margin_mode must be isolated or cross")
+    mode = cast(MarginMode, margin_mode)
+
+    if show:
+        try:
+            envelope = load_venue_margin_envelope(
+                venue=venue, symbol=symbol, market_type=market_type, margin_mode=mode
+            )
+        except VenueMarginUnavailable as exc:
+            typer.echo(f"Venue margin facts unavailable: {exc.reason} {exc.detail}".strip(), err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(json.dumps(envelope.model_dump(mode="json"), indent=2, allow_nan=False))
+        return
+
+    import asyncio
+
+    from aletheia.net import close_ccxt, make_ccxt_pro
+
+    exchange, session = make_ccxt_pro(venue)
+
+    async def refresh():
+        try:
+            return await refresh_venue_margin_envelope(
+                exchange,
+                venue=venue,
+                symbol=symbol,
+                market_type=market_type,
+                margin_mode=mode,
+            )
+        finally:
+            await close_ccxt(exchange, session)
+
+    try:
+        envelope = asyncio.run(refresh())
+    except VenueMarginUnavailable as exc:
+        typer.echo(f"Venue margin refresh failed: {exc.reason} {exc.detail}".strip(), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(envelope.model_dump(mode="json"), indent=2, allow_nan=False))
+
+
 @data_app.command("migrate")
 def migrate_database():
     """Explicitly apply pending versioned database migrations."""

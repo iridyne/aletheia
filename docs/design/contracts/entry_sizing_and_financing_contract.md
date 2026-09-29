@@ -145,7 +145,11 @@ actually submits, and both the resolver and the submission path read the same de
 
 Venue tier facts come from `VenueMarginEnvelope` (CCXT public market leverage tiers where
 the venue exposes them, persisted with fetch timestamp and provenance, read through a
-freshness TTL). An absent, stale, or incomplete envelope is a typed failure
+freshness TTL). The read path is synchronous and network-free; the fetch is explicit and
+out-of-band: `uv run aletheia data venue-margins --venue <venue> --symbol <symbol>` refreshes
+the row from the venue's public tier API (add `--show` to inspect the cached one). Until a
+fresh row exists for an instrument, its leveraged entry is unavailable — that is the
+fail-closed contract, not a defect to work around. An absent, stale, or incomplete envelope is a typed failure
 (`VENUE_MARGIN_TIERS_UNAVAILABLE`, `VENUE_MARGIN_TIERS_STALE`); a static in-repo
 maintenance-margin default is never the authority.
 
