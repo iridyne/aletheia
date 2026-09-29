@@ -763,7 +763,7 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
     epoch = canonical_fingerprint(candidate_selection_policy_identity(cfg))
     target = UniverseConfig.model_validate({
         **cfg.universe.model_dump(mode="json"),
-        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy": "candidate_selection_utility",
         "candidate_selection_policy_epoch": epoch,
     })
     legacy = UniverseConfig.model_validate({
@@ -790,7 +790,7 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
 
     assert recover_candidate_selection_authority_transition() is True
     restored = load_config().universe
-    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
+    assert restored.candidate_selection_policy == "candidate_selection_utility"
     assert restored.candidate_selection_policy_epoch == epoch
     from aletheia.universe.candidate_selection_authority import candidate_selection_authority_block_reason
     assert candidate_selection_authority_block_reason(load_config()) is None

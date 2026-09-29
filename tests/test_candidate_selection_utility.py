@@ -1120,7 +1120,7 @@ def test_candidate_selection_authority_projects_without_qualification():
     )
     projected = target_candidates_from_bundle(authority, legacy_scored)
     assert 0 < len(projected) <= 3
-    assert all(item["candidate_selection_policy"] == "candidate_selection_utility_v1" for item in projected)
+    assert all(item["candidate_selection_policy"] == "candidate_selection_utility" for item in projected)
     assert all(item["admission_basis"] in {"measured", "startup"} for item in projected)
     unavailable_population = [
         {**item, "spread_bps": None} for item in population
