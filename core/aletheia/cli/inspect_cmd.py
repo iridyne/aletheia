@@ -2368,8 +2368,7 @@ def lifecycle(
             typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
             return
         lineage = resolver_map[anchor_kind](anchor_id, cutoff, db)
-
-    diagnosis = build_lifecycle_diagnosis(lineage, cutoff=cutoff)
+        diagnosis = build_lifecycle_diagnosis(lineage, cutoff=cutoff, db=db)
     if json_output:
         typer.echo(json.dumps(diagnosis, indent=2, ensure_ascii=False, default=str))
     else:

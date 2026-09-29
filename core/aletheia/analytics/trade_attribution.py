@@ -238,11 +238,33 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         lambda decision_id: repo._select_one("risk_decisions", decision_id),
     )
     entry_plan = _read_one(db, "entry_plans", proposal.get("entry_plan_id"), repo.get_entry_plan)
-    universe_member = (
-        _read_one(db, "universe_members", entry_plan["candidate_id"], repo.get_candidate)
-        if entry_plan and direct_opportunity_id is None
-        else _lookup_universe_member(opportunity, db=db)
-    )
+
+    # Universe branch: resolve universe_member and planning_generation via
+    # candidate_lifecycle.lineage_reader instead of an ad-hoc join, so all
+    # consumers share one implementation and identity_conflicts surface.
+    universe_member: dict | None = None
+    planning_generation_id: str | None = None
+    identity_conflicts: list[str] = []
+    if entry_plan and direct_opportunity_id is None and proposal is not None:
+        # Only walk the reader when we have a real DB connection; tests that
+        # mock `repo` at the module boundary skip this path.
+        if db is not None:
+            from datetime import datetime, timezone
+            from aletheia.analytics.candidate_lifecycle import for_proposal
+
+            lineage = for_proposal(str(proposal["id"]), datetime.now(timezone.utc), db)
+            if lineage.source_kind == "universe":
+                universe_member = lineage.universe_member
+                if lineage.generation is not None:
+                    planning_generation_id = str(lineage.generation["id"])
+                identity_conflicts = list(lineage.identity_conflicts)
+        if universe_member is None:
+            # DB-less path or non-Universe fallback — preserve the old direct read.
+            universe_member = _read_one(
+                db, "universe_members", entry_plan["candidate_id"], repo.get_candidate
+            )
+    elif opportunity is not None or serenity_opp is not None:
+        universe_member = _lookup_universe_member(opportunity, db=db)
 
     if opportunity is None and serenity_opp is None and universe_member is None:
         return None
@@ -281,7 +303,11 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         "order_id": pos.get("order_id"),
         "opportunity_id": _opp_id,
         "entry_plan_id": entry_plan["id"] if entry_plan else None,
-        "planning_generation_id": entry_plan["planning_generation_id"] if entry_plan else None,
+        "planning_generation_id": (
+            planning_generation_id
+            or (entry_plan["planning_generation_id"] if entry_plan else None)
+        ),
+        "identity_conflicts": identity_conflicts,
         "strategy_id": pos.get("strategy_id"),
         "symbol": pos.get("symbol"),
         "market_type": pos.get("market_type"),

@@ -333,3 +333,38 @@ def test_factor_feedback_average_ignores_unmeasurable_holding_rows():
     # The helper filters absent values only; it is the producers' job (asserted
     # above) never to emit a negative duration in the first place.
     assert _avg_holding_hours([{"holding_hours": -4.0}]) == -4.0
+
+
+# ---------------------------------------------------------------------------
+# Universe-origin inclusion via lineage_reader (issue #3281 Batch C plan)
+# ---------------------------------------------------------------------------
+
+def test_build_rows_universe_origin_is_included_via_lineage_reader(tmp_path, monkeypatch):
+    """A Universe-origin closed position (opportunity_id=NULL, entry_plan_id set)
+    must be INCLUDED in attribution rows — this is the semantic flip promised in
+    the #3281 Batch C plan. The row also gets its scanner_family and
+    planning_generation_id resolved via the shared lineage_reader.
+    """
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain(
+        scanner_family="mean_reversion",
+        position_market_type="spot",  # perp is excluded by economics eligibility
+        position_id="attr-uni-position-1",
+    )
+
+    rows = build_trade_attribution_rows(limit=10)
+
+    assert len(rows) == 1, (
+        f"Universe-origin position must be included, got {len(rows)} rows"
+    )
+    row = rows[0]
+    assert row["position_id"] == ids["position_id"]
+    assert row["opportunity_id"] is None
+    assert row["entry_plan_id"] == ids["entry_plan_id"]
+    assert row["planning_generation_id"] == ids["generation_id"]
+    assert row["universe_member_id"] == ids["candidate_id"]
+    assert row["scanner_family"] == "mean_reversion"
+    assert row["identity_conflicts"] == []

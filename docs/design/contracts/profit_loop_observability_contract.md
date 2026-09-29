@@ -371,21 +371,73 @@ of six anchors: `candidate_id`, `generation_id`, `entry_plan_id`, `proposal_id`,
 - If `entry_plan_id` and `opportunity_id` are both NULL: `source_kind='unknown'`,
   `evidence_gaps=['entry_plan_not_found']`, no cross-branch fallback.
 
+**`source_kind` three-level fallback:**
+1. `plan_json.$.source_kind` (authoritative when the plan was frozen with it).
+2. Proposal columns — `opportunity_id` present → `serenity`/`opportunity`;
+   `opportunity_id` NULL + `entry_plan_id` set + `entry_plans.candidate_id`
+   populated → `universe`.
+3. Discriminating tables — if a proposal names an `opportunity_id`, the
+   `serenity_opportunities` table wins over `opportunities` when both exist.
+   `unknown` when nothing discriminates.
+
+**Stages — per-leg × per-stage:** the ancestry stages
+(`candidate_discovery`, `planning_generation`, `opportunity`, `entry_plan`) are
+emitted with `leg=null`. Every entry-leg proposal (up to two per plan, keyed by
+`entry_leg_index ∈ {0,1}`) then expands into a repeated execution branch:
+`proposal → risk_decision → order → fill → position → exit`, each stage tagged
+with its leg index. `current_stage` is the latest available stage across all
+legs.
+
+**`attention_state`:**
+- `advancing` — legs exist, no break yet.
+- `waiting` — a downstream execution stage is missing but no leg has ended.
+- `ended_ok` — the latest visible position is in a terminal status
+  (`closed` / `archived`).
+- `ended_reject` — the latest visible order is `rejected` / `failed` /
+  `cancelled` / `invalidated`.
+- `evidence_gap` — `lineage_reader.evidence_gaps` is non-empty.
+- `breakpoint` — `lineage_reader.identity_conflicts` is non-empty (never a
+  silent cross-branch fallback).
+
+**`--as-of` cutoff:** each SELECT in the reader is `<= cutoff`. A row created
+strictly after `cutoff` yields an `<entity>_not_yet_visible` evidence gap. This
+is the sole tense-of-time gate on the diagnosis; `read_at` records the wall
+clock at diagnosis time but does not filter data.
+
+**Economics:**
+- `candidate_fact` — always `unavailable` on this inspector; owned by
+  `candidate-facts`.
+- `position_fact` — when the anchor is a position, the inspector loads
+  `build_position_replay(position_id, as_of_at=cutoff)` and returns it under
+  `profit_loop_fact`. For other anchors, `unavailable` with
+  `unavailable_reason=anchor_is_not_a_position`.
+
 **Invariants:**
 - A PI decision is not required for Universe-origin trades.
 - `identity_conflicts` is non-empty when `plan_json` extracts disagree with
   joined rows; no silent cross-branch fallback occurs.
 - The reader only SELECTs (caller-owned connection, `readonly_db`).
-- `--as-of` before an event's `created_at` returns `record_status='not_yet_visible'`.
-- Exit 0 for a well-formed diagnosis (including unavailable); exit 2 for arg errors.
+- Exit 0 for a well-formed diagnosis (including unavailable); exit 2 for arg
+  errors.
 
 **Composition with existing consumers:** this command does not replace
-`position-replay` or `position-story`; it adds the Candidate-first attribution
-view that those commands use internally (via `candidate_lifecycle.lineage_reader`
-after the Batch C migration).
+`position-replay` or `position-story`; the shared `candidate_lifecycle.lineage_reader`
+is the single implementation of Universe/Serenity ancestry resolution used by
+`position_replay.py`, `position_lifecycle_story/readers.py`,
+`family_scorecard.py`, and `trade_attribution.py`. When the anchor is a
+position, the inspector embeds the full `profit_loop_fact/v1` under
+`economics.position_fact`.
 
-**Executable evidence:** `tests/test_universe_lifecycle_regression.py` (fixture
-chain, lineage_reader, consumer migrations); `tests/specs/spec_candidate_lifecycle_lineage_reader.py`.
+**Executable evidence:**
+- `tests/specs/spec_candidate_lifecycle_lineage_reader.py` — LC-S01…LC-S06
+  (universe resolution, anchor consistency, missing entry_plan gap, SQL
+  equivalence with `_ATTRIBUTION_SQL`, cutoff visibility, identity_conflicts).
+- `tests/test_universe_lifecycle_regression.py` — Universe fixture and
+  consumer regressions.
+- `tests/test_trade_attribution.py::test_build_rows_universe_origin_is_included_via_lineage_reader`
+  — semantic flip: Universe rows are now included.
+- `tests/test_profit_loop_cli.py::test_inspect_lifecycle_*` — CLI E2E, all six
+  anchors, identity conflict, cutoff, per-leg execution stages.
 
 ## Known gaps
 
