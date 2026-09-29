@@ -203,15 +203,21 @@ def _outcomes_for_opportunity(db, row: dict[str, Any]) -> dict[str, Any]:
     outcomes: dict[str, Any] = {}
     member_id = row.get("universe_member_id")
     direction = row.get("direction")
-    if not member_id or not direction or not _table_exists(db, "universe_forward_outcomes"):
+    if not member_id or not direction or not _table_exists(db, "filter_candidate_outcomes"):
+        return outcomes
+    member_row = db.execute(
+        "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member_id,)
+    ).fetchone() if _table_exists(db, "universe_members") else None
+    candidate_key = member_row["learning_candidate_key"] if member_row else None
+    if not candidate_key:
         return outcomes
     for horizon in _HORIZONS:
         found = db.execute(
-            "SELECT * FROM universe_forward_outcomes "
-            "WHERE member_id = ? AND horizon = ? AND status = 'settled' "
-            "AND forward_return_pct IS NOT NULL "
+            "SELECT * FROM filter_candidate_outcomes "
+            "WHERE outcome_candidate_key = ? AND horizon = ? AND status = 'settled' "
+            "AND gross_return_pct IS NOT NULL "
             "ORDER BY datetime(settled_at) DESC LIMIT 1",
-            (member_id, horizon),
+            (candidate_key, horizon),
         ).fetchone()
         if not found:
             continue
