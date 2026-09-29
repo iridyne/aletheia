@@ -140,3 +140,80 @@ def test_backfill_reports_all_siblings_then_exits_for_any_failure(monkeypatch, d
         if error:
             assert error in result.output
     assert "Done:" not in result.output
+
+
+def test_venue_margins_refresh_persists_the_facts_the_entry_path_reads(monkeypatch):
+    """The Entry path reads a persisted fact row; this command is how it is filled."""
+    import asyncio
+    import json
+
+    import aletheia.net as net
+    from aletheia.cli.data_cmd import data_app
+    from aletheia.trading import venue_margin
+
+    envelope = venue_margin.build_venue_margin_envelope(
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        margin_mode="isolated",
+        tiers=(venue_margin.MarginTier(
+            tier=1, min_notional=0.0, max_notional=200_000.0,
+            max_leverage=150.0, maintenance_margin_rate=0.004,
+        ),),
+        source="test-fixture/bitget-market-leverage-tiers",
+        fetched_at_ms=1_800_000_000_000,
+    )
+    seen = {}
+
+    class _Exchange:
+        async def close(self):
+            seen["closed"] = True
+
+    monkeypatch.setattr(net, "make_ccxt_pro", lambda _name: (_Exchange(), None))
+    monkeypatch.setattr(net, "close_ccxt", lambda *_a, **_k: asyncio.sleep(0))
+
+    async def refresh(exchange, *, venue, symbol, market_type, margin_mode, now=None):
+        seen.update(venue=venue, symbol=symbol, market_type=market_type, margin_mode=margin_mode)
+        venue_margin.store_venue_margin_envelope(envelope)
+        return envelope
+
+    monkeypatch.setattr(venue_margin, "refresh_venue_margin_envelope", refresh)
+
+    result = CliRunner().invoke(
+        data_app,
+        ["venue-margins", "--venue", "bitget", "--symbol", "BTC/USDT"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {
+        "venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "margin_mode": "isolated",
+    }
+    assert json.loads(result.output)["tiers"][0]["max_leverage"] == 150.0
+    # The row the compiler reads is really there.
+    stored = venue_margin.load_venue_margin_envelope(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", margin_mode="isolated",
+        now=1_800_000_000_000,
+    )
+    assert stored.facts_fingerprint == envelope.facts_fingerprint
+
+
+def test_venue_margins_show_reports_typed_unavailability(monkeypatch):
+    """`--show` must distinguish "no facts yet" from a healthy row."""
+    from aletheia.cli.data_cmd import data_app
+    from aletheia.trading import venue_margin
+
+    monkeypatch.setattr(
+        venue_margin,
+        "load_venue_margin_envelope",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            venue_margin.VenueMarginUnavailable(venue_margin.REASON_TIERS_UNAVAILABLE, "no row")
+        ),
+    )
+
+    result = CliRunner().invoke(
+        data_app,
+        ["venue-margins", "--venue", "bitget", "--symbol", "BTC/USDT", "--show"],
+    )
+
+    assert result.exit_code == 1
+    assert venue_margin.REASON_TIERS_UNAVAILABLE in result.output
