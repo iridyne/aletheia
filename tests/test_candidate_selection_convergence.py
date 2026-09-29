@@ -517,3 +517,52 @@ def test_allowlist_is_part_of_policy_identity_deterministically():
     cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": ["BTC/USDT"]})
     identity_btc_only = candidate_selection_policy_identity(cfg)
     assert identity_btc_only != identity_btc_eth
+
+
+def test_selected_primary_has_all_four_horizons_in_bundle_and_learning_key():
+    """#3701 Batch A: selected primary Candidate gets 15m/1h/4h/24h in FCO bundle;
+    unselected directions get only 4h. learning_candidate_key is set on projection."""
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+
+    bundle, population = _authority_bundle()
+    selected = target_candidates_from_bundle(bundle, population)
+    assert selected, "expected at least one selected candidate"
+
+    # All selected candidates must have learning_candidate_key set
+    for item in selected:
+        assert item.get("learning_candidate_key"), (
+            f"selected candidate {item['symbol']} missing learning_candidate_key"
+        )
+
+    # Collect outcome horizons per key in the bundle
+    from collections import defaultdict
+    horizons_by_key = defaultdict(set)
+    for outcome in bundle.outcomes:
+        horizons_by_key[outcome.outcome_candidate_key].add(outcome.horizon)
+    for outcome in bundle.selected_primary_extra_outcomes:
+        horizons_by_key[outcome.outcome_candidate_key].add(outcome.horizon)
+
+    for item in selected:
+        key = item["learning_candidate_key"]
+        assert key in horizons_by_key, f"no FCO outcomes for selected key {key}"
+        horizons = horizons_by_key[key]
+        assert horizons == {"15m", "1h", "4h", "24h"}, (
+            f"selected primary {item['symbol']} has horizons {horizons}, expected all four"
+        )
+
+    # Unselected eligible directions should have only 4h
+    selected_keys = {item["learning_candidate_key"] for item in selected}
+    for key, horizons in horizons_by_key.items():
+        if key not in selected_keys:
+            assert horizons == {"4h"}, (
+                f"non-selected key {key} has unexpected horizons {horizons}"
+            )
+
+    # selected_primary_extra_outcomes contains only non-4h horizons
+    for outcome in bundle.selected_primary_extra_outcomes:
+        assert outcome.horizon != "4h", (
+            f"extra outcome has 4h horizon for key {outcome.outcome_candidate_key}"
+        )
+        assert bool(outcome.allocation_selected), (
+            f"extra outcome for {outcome.outcome_candidate_key} not marked selected"
+        )

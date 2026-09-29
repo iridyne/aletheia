@@ -816,6 +816,12 @@ class UniverseService:
                     candidate_selection_authority_bundle,
                     features_list,
                 )
+                # #3701 Batch A: every selected Candidate must have an exact FCO outcome key.
+                for _item in allocated:
+                    if not _item.get("learning_candidate_key"):
+                        raise ValueError(
+                            f"selected_candidate_missing_outcome_key:{_item.get('symbol')}"
+                        )
                 decorate_universe_candidates(allocated, cfg.universe)
                 eligible_attention_identities = target_admitted_identity_keys(
                     candidate_selection_authority_bundle,
@@ -1093,6 +1099,13 @@ class UniverseService:
                     outcomes=candidate_selection_authority_bundle.outcomes,
                     min_interval_sec=0,
                 )
+                # #3701 Batch A: write selected-primary 15m/1h/24h FCO rows.
+                # These are separate from the 4h full-arm denominator in outcomes above.
+                if candidate_selection_authority_bundle.selected_primary_extra_outcomes:
+                    repo.insert_filter_candidate_outcomes_batch(
+                        list(candidate_selection_authority_bundle.selected_primary_extra_outcomes),
+                        db=repo.get_db(),
+                    )
                 repo.publish_candidate_snapshot(snap, member_models)
 
                 selected_generation_ids, new_generation_ids, planning_generations_created = (
