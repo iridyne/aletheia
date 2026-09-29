@@ -354,6 +354,27 @@ async def _load_entry_plan_watchers(
                 plans[plan.plan_id] = plan
             continue
         try:
+            # `getattr` default keeps type-agnostic doubles usable; a real plan
+            # exposes the property, and its failure propagates (PropertyError is
+            # not AttributeError).
+            getattr(plan, "submission_leverage", None)
+        except ValueError as exc:
+            # A plan that cannot produce a submission leverage can never be
+            # submitted (#3729 §10: historical plans gain no new submission
+            # authority). Watching it only makes the trigger loop re-attempt a
+            # deterministic failure at event rate, so retire it with the
+            # execution boundary's own code and stop watching it (#3747).
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason=str(exc)[:120] or "entry_plan_submission_leverage_unavailable",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
+            continue
+        try:
             from aletheia.risk.policy import resolve_risk_policy
 
             current_policy = resolve_risk_policy(cfg, plan.execution_account_mode)
@@ -703,7 +724,13 @@ async def _watch_loop(cfg) -> None:
                 try:
                     await operation(*args, **kwargs)
                 except Exception as exc:
-                    logger.warning("Entry execution stopped: %s", type(exc).__name__)
+                    # Bounded code, never a bare type: a swallowed `ValueError`
+                    # left the cause underivable from logs (#3747).
+                    logger.warning(
+                        "Entry execution stopped: %s%s",
+                        type(exc).__name__,
+                        f":{str(exc)[:120]}" if str(exc) else "",
+                    )
             execution_tasks[plan_id] = asyncio.create_task(run())
         try:
             plans, plan_engines = await _load_entry_plan_watchers(cfg)

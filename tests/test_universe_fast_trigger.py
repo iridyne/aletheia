@@ -1609,6 +1609,49 @@ async def test_entry_plan_watcher_retires_historical_plan_without_starting_engin
 
 
 @pytest.mark.asyncio
+async def test_entry_plan_watcher_retires_a_plan_that_cannot_be_submitted(monkeypatch):
+    """A plan without resolvable financing must be retired, not re-attempted forever.
+
+    Reproduced from the runtime: four `active` pre-#3729 plans (no financing
+    fields) made the trigger loop re-dispatch a deterministic ValueError at event
+    rate -- ~1,000 log lines per minute (#3747).
+    """
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {"id": "legacy-plan", "status": "active", "plan_json": payload,
+           "plan_hash": hashlib.sha256(payload.encode()).hexdigest(), "order_id": None}
+
+    class _LegacyPlan:
+        plan_id = "legacy-plan"
+        planning_generation_id = "generation"
+        execution_mode = "TRIGGERED"
+
+        @property
+        def submission_leverage(self):
+            raise ValueError("entry_plan_submission_leverage_unavailable")
+
+    plan = _LegacyPlan()
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch, "decode_entry_plan", lambda _payload: plan)
+    monkeypatch.setattr(watch, "fast_market_data_unavailability_reason", lambda *a, **k: None)
+    retired = []
+
+    async def retire(row, **kwargs):
+        retired.append((row["id"], kwargs["status"], kwargs["reason"]))
+        return "invalidated"
+
+    monkeypatch.setattr(watch, "_terminalize_entry_plan", retire)
+    plans, engines = await watch._load_entry_plan_watchers(SimpleNamespace())
+
+    assert plans == {} and engines == {}
+    assert retired == [("legacy-plan", "invalidated", "entry_plan_submission_leverage_unavailable")]
+
+
+@pytest.mark.asyncio
 async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch):
     """A sequence anomaly must not permanently silence a Triggered Plan.
 
