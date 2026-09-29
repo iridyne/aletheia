@@ -230,7 +230,7 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         )
     else:
         opportunity = _read_one(db, "opportunities", direct_opportunity_id, repo.get_opportunity)
-    strategy = _read_one(db, "strategy_records", pos.get("strategy_id"), repo.get_strategy)
+    strategy = None  # strategy_records retired in schema v91 (#3702)
     risk_decision = _read_one(
         db,
         "risk_decisions",

@@ -612,61 +612,6 @@ def opportunities(
 
 
 # ---------------------------------------------------------------------------
-# 7. strategies
-# ---------------------------------------------------------------------------
-
-@inspect_app.command("strategies")
-def strategies(
-    state: str = typer.Option("all", help="Filter: active | paper_running | draft | retired | all"),
-    limit: int = typer.Option(20, "--limit", "-n"),
-    json_output: bool = typer.Option(False, "--json"),
-):
-    """List strategy records with key parameters."""
-    from aletheia.storage.repositories import list_strategies
-    from aletheia.storage.models import (
-        StrategyParametersInvalid,
-        decode_strategy_parameters,
-    )
-    rows = list_strategies(limit=limit)
-    if state != "all":
-        rows = [r for r in rows if r.get("state") == state]
-    result = []
-    invalid_rows = 0
-    for r in rows:
-        params: dict = {}
-        parameters_status = "available"
-        parameters_error = None
-        try:
-            params = decode_strategy_parameters(r.get("parameters"))
-        except StrategyParametersInvalid as exc:
-            invalid_rows += 1
-            parameters_status = "invalid"
-            parameters_error = exc.reason
-        result.append({
-            "id": r.get("id"),
-            "name": r.get("name"),
-            "state": r.get("state"),
-            "direction_affinity": r.get("direction_affinity"),
-            "applicable_regimes": r.get("applicable_regimes"),
-            "strategy_type": r.get("strategy_type"),
-            "paper_trading_paused": r.get("paper_trading_paused"),
-            "under_review": r.get("under_review"),
-            "symbol": params.get("symbol"),
-            "has_ruleset": bool(params.get("ruleset")) if parameters_error is None else None,
-            "parameters_status": parameters_status,
-            "parameters_error": parameters_error,
-            "created_at": r.get("created_at"),
-        })
-    if json_output:
-        _output({
-            "availability": "partial" if invalid_rows else "available",
-            "invalid_parameters_count": invalid_rows,
-            "rows": result,
-        }, json_output)
-        return
-    _output(result, json_output)
-
-
 # ---------------------------------------------------------------------------
 # 8. snapshots
 # ---------------------------------------------------------------------------

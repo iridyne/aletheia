@@ -7765,6 +7765,19 @@ def _apply_drop_backtest_tables_v91(db: sqlite3.Connection) -> None:
     db.execute("DROP TABLE IF EXISTS backtest_runs")
 
 
+def _apply_drop_strategy_records_v92(db: sqlite3.Connection) -> None:
+    """Retire strategy_records — the Current Strategy product tables.
+
+    The Current Strategy product was removed and no code writes these tables.
+    DROP is safe because:
+    - No active writers (audit confirmed 2026-09-29, issue #3702)
+    - No unique readers — all read surfaces removed in this issue
+    - Fedora rows: strategy_records=0 at census
+    - PRAGMA foreign_keys=0 on Fedora — orphan strategy_id on positions is safe
+    """
+    db.execute("DROP TABLE IF EXISTS strategy_records")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -8933,6 +8946,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"drop_backtest_tables_v91:backtest_runs:backtest_trades:retired_product_no_writers").hexdigest(),
         schema_version="aletheia-sqlite-v91",
         apply=_apply_drop_backtest_tables_v91,
+    ),
+    MigrationStep(
+        migration_id="20260929_0092_drop_strategy_records_v92",
+        checksum=hashlib.sha256(b"drop_strategy_records_v92:strategy_records:retired_product_no_writers").hexdigest(),
+        schema_version="aletheia-sqlite-v92",
+        apply=_apply_drop_strategy_records_v92,
     ),
 )
 

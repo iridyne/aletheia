@@ -6,7 +6,6 @@ from aletheia.storage.repositories import (
     LEGACY_DERIVATIVES_WHERE,
     Opportunity,
     Sequence,
-    StrategyRecord,
     UniverseAsset,
     UniversePolicy,
     _AUTO_EXPERIMENT_FLOOR,
@@ -30,7 +29,6 @@ from aletheia.storage.repositories import (
     _universe_twin_shadow_capture_due_from_latest,
     _update,
     datetime,
-    decode_strategy_parameters,
     execute_write,
     get_db,
     insert_filter_candidate_outcomes_batch,
@@ -271,16 +269,6 @@ def list_positions_for_path_observation_bucket(*, bucket_open: str, bucket_end: 
         (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
     ).fetchall()
     return [dict(row) for row in rows]
-
-def insert_strategy(s: StrategyRecord) -> None:
-    data = s.model_dump()
-    decode_strategy_parameters(data.get("parameters"))
-    _insert("strategy_records", data)
-
-def update_strategy(sid: str, **kwargs) -> None:
-    if "parameters" in kwargs:
-        decode_strategy_parameters(kwargs["parameters"])
-    _update("strategy_records", sid, kwargs)
 
 def list_outcome_hook_jobs(
     *,

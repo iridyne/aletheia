@@ -15,33 +15,6 @@ def _project_root() -> str:
     return str(pathlib.Path(__file__).resolve().parents[2])
 
 
-# ---------------------------------------------------------------------------
-# SP-S01 — strategy_records DDL lacks PI-visible KPI columns
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim("SP-S01", "strategy_pool", "§schema vs PI", "L2a",
-              "strategy_records DDL does NOT include win_rate/total_pnl/trade_count",
-              status="implemented"),  # this is the observation, not the fix
-)
-def test_strategy_records_ddl_missing_kpi_columns():
-    """Structural fact: strategy_records has no KPI columns; System Operator prompt 必然拿到 None.
-
-    This test passes (status=implemented) as a documentation anchor — it
-    asserts the current schema reality so that if someone adds these columns
-    in Round 2 the test must be updated (forcing a deliberate change).
-    """
-    import sqlite3
-    from aletheia.storage.sqlite import db_path
-
-    conn = sqlite3.connect(db_path())
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(strategy_records)")]
-    conn.close()
-    assert "win_rate" not in cols
-    assert "total_pnl" not in cols
-    assert "trade_count" not in cols
-
 
 # ---------------------------------------------------------------------------
 # SP-S02 — build_strategy_kpis helper must exist and return the expected shape

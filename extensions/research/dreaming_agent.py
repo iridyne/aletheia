@@ -21,12 +21,6 @@ from aletheia.storage.repositories import list_agent_runs
 
 logger = logging.getLogger("aletheia.agents.dreaming_agent")
 
-# Lifecycle states surfaced in the ledger, in pipeline order.
-_LEDGER_STATES = [
-    "draft", "research_note", "strategy_hypothesis", "paper_candidate",
-    "paper_running", "paper_passed", "live_candidate", "live_limited",
-    "retired", "deprecated",
-]
 # Knowledge item types that signal learning output.
 _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
 _LESSON_EXTRACTION_BUDGET_SECONDS = 270.0
@@ -196,22 +190,10 @@ def _build_daily_trading_performance(cutoff_iso: str) -> str:
 def _build_learning_ledger() -> str:
     """A real snapshot of where the self-evolution pipeline stands.
 
-    Two parts:
-      1. Counts (volume): are agents producing strategies/knowledge at all?
-      2. Quality (signal): is what they produce verifiable hypotheses, or noise?
-
-    The quality block is north-star §7 stage-1 evidence — before closing the
-    experience loop end-to-end we need to see learning *converge*, not just *write*.
+    Covers knowledge item counts and lessons-consulted frequency.
+    Strategy state metrics removed: strategy_records was retired in schema v91 (#3702).
     """
-    from aletheia.storage.repositories import list_strategies, list_knowledge_items
-
-    strategies = list_strategies(limit=500)
-    counts = {s: 0 for s in _LEDGER_STATES}
-    for row in strategies:
-        st = row.get("state") or "draft"
-        counts[st] = counts.get(st, 0) + 1
-    active_states = [f"{s}:{counts[s]}" for s in _LEDGER_STATES if counts.get(s)]
-    strat_line = ", ".join(active_states) if active_states else "none yet"
+    from aletheia.storage.repositories import list_knowledge_items
 
     know_parts = []
     know_active_total = 0
@@ -226,34 +208,6 @@ def _build_learning_ledger() -> str:
         if n:
             know_parts.append(f"{t}:{n}")
     know_line = ", ".join(know_parts) if know_parts else "none yet"
-
-    # --- Quality block ---
-    total = len(strategies) or 1  # avoid div-by-zero
-    activated = sum(counts.get(s, 0) for s in
-                    ("paper_candidate", "paper_running", "paper_passed",
-                     "live_candidate", "live_limited"))
-    retired = counts.get("retired", 0) + counts.get("deprecated", 0)
-    activation_ratio = round(activated / total, 3)
-    retire_ratio = round(retired / total, 3)
-
-    # post_trade_review coverage: of strategies that produced trades, how many got reviewed?
-    try:
-        reviews = list_knowledge_items(item_type="post_trade_review", limit=1000)
-        reviewed_strategy_ids = {
-            r.get("strategy_id") for r in reviews
-            if r.get("strategy_id") and (r.get("status") or "active") == "active"
-        }
-    except Exception:
-        reviewed_strategy_ids = set()
-    eligible_strategies = [s for s in strategies if s.get("state") in
-                           ("paper_running", "paper_passed", "retired", "deprecated")]
-    if eligible_strategies:
-        review_coverage = round(
-            sum(1 for s in eligible_strategies if s["id"] in reviewed_strategy_ids)
-            / len(eligible_strategies), 3
-        )
-    else:
-        review_coverage = None
 
     # Lessons-consulted: how often the experience loop actually MOVED information
     # in 24h. Counts retrieve_lessons calls that returned >=1 lesson, parsed from
@@ -296,20 +250,9 @@ def _build_learning_ledger() -> str:
         lessons_consulted = 0
         playbook_reads = 0
 
-    coverage_line = (f"{review_coverage:.0%}" if review_coverage is not None
-                     else "n/a (no strategies past paper yet)")
-
     return (
         "\n\n## Learning Ledger\n"
-        f"- Strategies by state: {strat_line}\n"
         f"- Knowledge items: {know_line}\n"
-        f"- Total strategies: {len(strategies)}\n"
-        "\n### Quality (stage-1 evidence)\n"
-        f"- Activation ratio: {activation_ratio:.0%} "
-        f"(strategies that reached paper_running or beyond)\n"
-        f"- Retire/deprecate ratio: {retire_ratio:.0%} "
-        "(noise being filtered — non-zero is healthy)\n"
-        f"- Post-trade review coverage: {coverage_line}\n"
         f"- Lessons consulted (24h): {lessons_consulted} "
         "(retrieve_lessons calls returning >=1 lesson — real FTS retrieval, not bare calls)\n"
         f"- Playbook reads (24h): {playbook_reads} (load_playbooks calls)\n"

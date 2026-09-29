@@ -3845,8 +3845,7 @@ export interface paths {
          * @description Aggregated post-trade review summary for operator delegation.
          *
          *     Returns recent closed positions, recent active post-trade reviews,
-         *     recent reviewer runs, and the strategy IDs whose Positions are not yet
-         *     covered by any active review (#269).
+         *     and recent reviewer runs.
          */
         get: operations["get_reviews_summary_api_reviews_summary_get"];
         put?: never;
@@ -5583,43 +5582,6 @@ export interface paths {
         };
         /** Status */
         get: operations["status_api_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Strategies */
-        get: operations["get_strategies_api_strategies_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Strategy Summary
-         * @description Operator-facing strategy summary used by the local operator shell.
-         */
-        get: operations["get_strategy_summary_api_strategies_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -22183,46 +22145,6 @@ export interface operations {
         };
     };
     status_api_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_strategies_api_strategies_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_strategy_summary_api_strategies_summary_get: {
         parameters: {
             query?: never;
             header?: never;

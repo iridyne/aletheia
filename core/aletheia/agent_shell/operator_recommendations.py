@@ -990,35 +990,6 @@ def _make_task_recommendation(
     }
 
 
-def _missing_review_strategy_ids(
-    recent_post_trade_reviews: list[dict],
-    recent_closed_positions: list[dict],
-) -> list[str]:
-    # Position-level coverage: a strategy is covered only if the eligible
-    # Position's exact ID appears in an active review's tags (#269).
-    reviewed_position_ids: set[str] = set()
-    for item in recent_post_trade_reviews:
-        try:
-            tags = json.loads(item.get("tags") or "[]")
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(tags, list):
-            continue
-        reviewed_position_ids.update(
-            str(tag).split(":", 1)[1]
-            for tag in tags
-            if str(tag).startswith("position:")
-        )
-    return sorted(
-        {
-            str(position.get("strategy_id"))
-            for position in recent_closed_positions
-            if position.get("strategy_id")
-            and str(position.get("id")) not in reviewed_position_ids
-        }
-    )
-
-
 def _group_agent_runs(
     recent_agent_runs: list[dict],
     failed_run_statuses: set[str],
@@ -1883,43 +1854,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     recent_closed_positions = list(reversed(
         eligible_strategy_outcomes(closed_after=cutoff_24h)
     ))[:20]
-    # Exclude archived/deprecated reviews so they do not suppress regeneration
-    # after an owner archives an invalid review (#269).
-    recent_post_trade_reviews = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND status NOT IN ('archived', 'deprecated') AND created_at > ?",
-        params=("post_trade_review", cutoff_24h),
-        limit=20,
-    )
-    recent_reviewer_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("post_trade_reviewer", cutoff_15m),
-        limit=5,
-    )
-    missing_review_strategy_ids = _missing_review_strategy_ids(
-        recent_post_trade_reviews,
-        recent_closed_positions,
-    )
-    if not cfg.runtime.paused and missing_review_strategy_ids and not recent_reviewer_runs:
-        recommendations.append(
-            _make_task_recommendation(
-                id_="review-due",
-                kind="review_due",
-                severity="medium",
-                summary=(
-                    f"Closed strategy {missing_review_strategy_ids[0]} still lacks a recent post-trade review."
-                    if len(missing_review_strategy_ids) == 1
-                    else f"{len(missing_review_strategy_ids)} closed strategies still lack recent post-trade reviews."
-                ),
-                task_type="generate_review",
-                metadata={
-                    "missing_review_strategy_ids": missing_review_strategy_ids,
-                    "closed_position_count": len(recent_closed_positions),
-                },
-            )
-        )
-
     if (
         not cfg.runtime.paused
         and recent_closed_positions
@@ -1945,7 +1879,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                     "report_type": "trade_review",
                     "title": "Trade Review Report",
                     "closed_position_count": len(recent_closed_positions),
-                    "missing_review_strategy_ids": missing_review_strategy_ids,
                     "refresh_window_minutes": 360,
                 },
             )

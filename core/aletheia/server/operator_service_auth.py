@@ -20,7 +20,6 @@ _OPERATOR_SERVICE_READ_PATHS = frozenset(
         "/api/operator/extensions",
         "/api/dreaming/summary",
         "/api/reviews/summary",
-        "/api/strategies/summary",
         "/api/risk/summary",
         "/api/portfolio",
         "/api/market/portfolio-history",

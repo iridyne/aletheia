@@ -153,33 +153,15 @@ def test_stability_does_not_require_retired_strategy_binding(tmp_path, monkeypat
 # === Gap 3: Learning Ledger quality block ===
 
 def test_ledger_quality_block_present(tmp_path, monkeypatch):
+    # strategy_records retired in #3702 — ledger no longer includes strategy state metrics
     setup_env(tmp_path, monkeypatch)
     from extensions.research.dreaming_agent import _build_learning_ledger
     out = _build_learning_ledger()
-    assert "Quality (stage-1 evidence)" in out
-    assert "Activation ratio" in out
-    assert "Retire/deprecate ratio" in out
-    assert "Post-trade review coverage" in out
+    assert "Learning Ledger" in out
+    assert "Knowledge items" in out
     assert "Lessons consulted (24h)" in out
+    assert "Playbook reads (24h)" in out
 
-
-def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
-    """A strategy promoted to paper_running should bump activation ratio above 0."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import StrategyRecord
-    from tests.helpers.repo_test_helpers import insert_strategy, update_strategy
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
-    s = StrategyRecord(name="Active", state="draft", parameters='{"k": "v"}')
-    insert_strategy(s)
-    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=s.id, debate_ran=False))
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        update_strategy(s.id, state=target)
-
-    from extensions.research.dreaming_agent import _build_learning_ledger
-    out = _build_learning_ledger()
-    # 1 of 1 strategy reached paper_running → 100%
-    assert "Activation ratio: 100%" in out
 
 
 def test_ledger_lessons_consulted_counts_only_hits(tmp_path, monkeypatch):

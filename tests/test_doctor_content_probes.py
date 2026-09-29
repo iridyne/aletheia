@@ -53,20 +53,6 @@ def _verdict(probe):
     return r.checks[0]
 
 
-# --- content.strategy_health ------------------------------------------------
-
-def test_strategy_health_empty_is_info(db):
-    assert _verdict(dx._probe_content_strategy_health).severity == "info"
-
-
-def test_strategy_health_reports_legacy_count_as_info(db):
-    # Rules engine deleted (Position C 2026-07-02): strategy_records is a frozen
-    # legacy table. Any records → info with the count, never zombie WARN / ok.
-    _ins(db, "strategy_records", id="s1", name="old", state="paper_running",
-         created_at=_ago(days=10), paper_trading_paused=0)
-    v = _verdict(dx._probe_content_strategy_health)
-    assert v.severity == "info" and "legacy" in v.detail.lower()
-
 
 # --- content.memo_quality ----------------------------------------------------
 
@@ -294,12 +280,12 @@ def test_proposal_bias_mixed_is_ok(db):
     assert _verdict(dx._probe_content_proposal_bias).severity == "ok"
 
 
-# --- registration: all 7 content probes run inside build_report -------------
+# --- registration: all 6 content probes run inside build_report -------------
 
 def test_all_content_probes_registered(db):
     names = {c.name for c in dx.build_report().checks}
     for expected in (
-        "content.strategy_health", "content.memo_quality", "content.lesson_chain",
+        "content.memo_quality", "content.lesson_chain",
         "content.attribution", "content.shadow_trades", "content.signal_settlement",
         "content.proposal_bias",
     ):

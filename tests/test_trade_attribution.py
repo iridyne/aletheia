@@ -136,7 +136,6 @@ def test_build_rows_with_full_chain():
             "id": "ord-1", "proposal_id": "prop-1", "risk_decision_id": "rd-1",
         }
         mock_repo.get_opportunity.return_value = fake_opportunity
-        mock_repo.get_strategy.return_value = fake_strategy
         mock_repo.get_universe_member.return_value = fake_universe_member
         mock_repo._select_one.return_value = fake_risk_decision
 
@@ -174,7 +173,6 @@ def test_build_rows_missing_opportunity_is_excluded():
         mock_repo.get_trade_proposal.return_value = None
         mock_repo.get_order.return_value = None
         mock_repo.get_opportunity.return_value = None
-        mock_repo.get_strategy.return_value = None
         mock_repo.get_universe_member.return_value = None
         mock_repo.list_risk_decisions.return_value = []
 
