@@ -14,11 +14,19 @@ Both paths are conservative:
   * never act when local Fill economics exist;
   * for Bitget modes, require an authoritative open-order view showing the
     order absent AND empty exact fill history before releasing a submitted claim;
-  * that confirmed-absent path uses ``ABSENT_UNFILLED_RELEASE_HOURS`` (ack-lag
-    floor), not the 4h ``STALE_PENDING_CLOSE_RELEASE_HOURS`` used for
-    ``submission_rejected`` without a recoverable cancel and for
-    ``position_manager`` escalation. Waiting 4h after the exchange already
-    shows no order and no fill leaves protective exits deadlocked.
+  * release additionally requires the venue to *positively* report the exact
+    order as terminal and fully unfilled (``filled_quantity == 0`` with the full
+    original quantity still remaining). Unavailable evidence, or a complete read
+    that did not find the order, authorizes nothing: absence from the read window
+    is not proof the venue never received it (``execution_contract`` §10.2.4).
+  * that path uses ``ABSENT_UNFILLED_RELEASE_HOURS`` (ack-lag floor), not the 4h
+    ``STALE_PENDING_CLOSE_RELEASE_HOURS`` used for ``submission_rejected``
+    without a recoverable cancel and for ``position_manager`` escalation.
+    Waiting 4h after the exchange already reports the order terminal and unfilled
+    leaves protective exits deadlocked.
+  * a ``manual_reconciliation_pending`` Position is never a candidate: that
+    claim is human-owned and only operator resolution or later venue proof
+    leaves it.
   * UTA ``trade_too_many_times_cancel`` is not a lost ack. Park the claim as
     ``venue_trade_rate_limited`` (never auto-released). Releasing it would
     resubmit into Bitget 40725. Do not overwrite ``pending_close_requested_at``
@@ -59,7 +67,16 @@ TRADE_RATE_LIMIT_CANCEL_REASON = "trade_too_many_times_cancel"
 # (which may age out after STALE_PENDING_CLOSE_RELEASE_HOURS).
 VENUE_TRADE_RATE_LIMITED_STATUS = "venue_trade_rate_limited"
 
-_HISTORY_FAILED = object()
+# Terminal, human-owned close claim (``position_manager`` sets it at the 24h
+# bound). Only operator resolution or later venue proof may leave it, so the
+# automatic paths must not even consider it a candidate.
+MANUAL_RECONCILIATION_PENDING_STATUS = "manual_reconciliation_pending"
+
+class _HistoryReadFailed:
+    """Sentinel: the venue could not answer the exact-order read (fail closed)."""
+
+
+_HISTORY_FAILED = _HistoryReadFailed()
 
 
 def is_recoverable_cancelled_close(order: dict) -> bool:
@@ -246,8 +263,12 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
         return None
 
 
-def _uta_history_lookup(order: dict):
-    """Exact UTA order report; partial/unavailable evidence fails closed."""
+def _uta_history_lookup(order: dict) -> dict[str, object] | _HistoryReadFailed | None:
+    """Exact UTA order report; partial/unavailable/absent evidence fails closed.
+
+    ``None`` means the complete read did not find the order at all — usable as
+    "no positive evidence", never as "the venue never received it".
+    """
     execution_mode = str(order.get("execution_mode") or "")
     exchange_order_id = str(order.get("exchange_order_id") or "").strip()
     client_order_id = str(order.get("client_order_id") or "").strip()
@@ -275,11 +296,23 @@ def _uta_history_lookup(order: dict):
         if report.completeness is not ReadCompleteness.COMPLETE:
             return _HISTORY_FAILED
         if report.found is None:
+            # A COMPLETE read that found nothing proves only that the read window
+            # completed, never that the venue did not receive the order
+            # (execution_contract §10.2.4). The caller must not read this as a
+            # terminal state.
             return None
+        found = report.found
         return {
-            "orderStatus": report.found.state.value,
-            "status": report.found.state.value,
+            "orderStatus": found.state.value,
+            "status": found.state.value,
             "cancelReason": report.reason_code or "",
+            "original_quantity": float(found.original_quantity),
+            "filled_quantity": float(found.filled_quantity),
+            "remaining_quantity": (
+                None
+                if found.remaining_quantity is None
+                else float(found.remaining_quantity)
+            ),
         }
     except Exception as exc:
         logger.warning(
@@ -307,12 +340,38 @@ def record_operator_confirmed_order_absence(order_id: str, *, reason: str) -> No
     )
 
 
+def _venue_reports_fully_unfilled(history: dict) -> bool:
+    """True only when the venue itself accounted for the order as unfilled.
+
+    ``filled_quantity == 0`` alone is not proof: the typed adapter maps an absent
+    payload field to zero, so a venue that never reported a quantity reads exactly
+    like a reported zero. Requiring the venue to also report the full original
+    quantity still remaining is the strongest proof this boundary can make; a
+    missing or contradictory quantity fails closed.
+    """
+    original = history.get("original_quantity")
+    filled = history.get("filled_quantity")
+    remaining = history.get("remaining_quantity")
+    if original is None or filled is None or remaining is None:
+        return False
+    if original <= 0 or filled != 0:
+        return False
+    return abs(remaining - original) <= max(1e-12, original * 1e-9)
+
+
 def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
     if not _is_close_order(order):
         return None
     if str(order.get("status") or "") not in _RECOVERABLE_ORDER_STATES:
         return None
     if str(position.get("status") or "") != "open":
+        return None
+    if (
+        str(position.get("pending_close_status") or "")
+        == MANUAL_RECONCILIATION_PENDING_STATUS
+    ):
+        # Human-owned terminal claim: only operator resolution or later venue
+        # proof may leave it. No automatic path — including this one — releases it.
         return None
     if str(position.get("pending_close_order_id") or "") != str(order.get("id") or ""):
         return None
@@ -332,15 +391,19 @@ def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
         return None
 
     history = _uta_history_lookup(order)
-    if history is _HISTORY_FAILED:
+    if not isinstance(history, dict):
+        # Unavailable evidence (the venue could not answer), or a complete read
+        # that did not find the order: neither authorizes a release. Only a
+        # found, terminal, unfilled order does.
         return None
-    if isinstance(history, dict):
-        status = str(history.get("orderStatus") or history.get("status") or "").lower()
-        cancel_reason = str(history.get("cancelReason") or "")
-        if status not in {"canceled", "cancelled", "expired", "rejected"}:
-            return None
-        if cancel_reason == TRADE_RATE_LIMIT_CANCEL_REASON:
-            return TRADE_RATE_LIMIT_CANCEL_REASON
+    status = str(history.get("orderStatus") or history.get("status") or "").lower()
+    cancel_reason = str(history.get("cancelReason") or "")
+    if status not in {"canceled", "cancelled", "expired", "rejected"}:
+        return None
+    if cancel_reason == TRADE_RATE_LIMIT_CANCEL_REASON:
+        return TRADE_RATE_LIMIT_CANCEL_REASON
+    if not _venue_reports_fully_unfilled(history):
+        return None
 
     age_hours = _age_hours(
         position.get("pending_close_requested_at"),
@@ -690,10 +753,11 @@ def recover_absent_stale_close_orders() -> dict:
         FROM orders o
         JOIN positions p ON p.pending_close_order_id = o.id
         WHERE p.status = 'open'
+          AND COALESCE(p.pending_close_status, '') <> ?
           AND o.status IN (?, ?, ?, ?)
         ORDER BY o.created_at ASC, o.rowid ASC
         """,
-        _RECOVERABLE_ORDER_STATES,
+        (MANUAL_RECONCILIATION_PENDING_STATUS, *_RECOVERABLE_ORDER_STATES),
     ).fetchall()
 
     released: list[str] = []
