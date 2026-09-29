@@ -233,11 +233,12 @@ def _probe_content_shadow_trades(report: Report) -> None:
     * key IS NULL — pre-b9ad957 orphans whose parent position carries no
       opportunity_id. `resolve_stale_shadows` (and `scripts/maintenance/backfill_shadow_trades.py`
       on top of it) resolve these by their own historical horizon.
-    * key IS NOT NULL — resolved only by `settle_linked_shadow_outcomes()`, which
-      fires when the linked 24h `filter_candidate_outcomes` row settles. Both
-      backfill paths SELECT `outcome_candidate_key IS NULL`, so they cannot move a
-      single one of these rows; naming them here would be a no-op fix hint hiding
-      the real dependency (a filter-outcome settler that cannot keep up).
+    * key IS NOT NULL — was resolved by `settle_linked_shadow_outcomes()`, which
+      fired when the linked 24h `filter_candidate_outcomes` row settled. That
+      settler was retired with the rest of the shadow storage surface (#3708) and
+      the table is a tombstone awaiting its drop migration, so these rows have no
+      owner left. Both backfill paths SELECT `outcome_candidate_key IS NULL`, so
+      neither can move a single one of them either.
     """
     try:
         from aletheia.storage.sqlite import get_db

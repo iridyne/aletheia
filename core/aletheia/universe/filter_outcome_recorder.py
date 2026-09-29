@@ -286,10 +286,9 @@ async def settle_due_filter_outcomes(
         )
         if won is False:
             return _ALREADY_TERMINAL
-        # The repository projects the linked 24h shadow in the same transaction;
-        # keep this idempotent call for legacy/custom repository implementations.
-        if row.get("horizon") == "24h":
-            repo.settle_linked_shadow_outcomes(row["outcome_candidate_key"])
+        # The linked 24h shadow projection this used to trigger was retired with
+        # the shadow storage surface (#3708); the tombstoned rows have no owner
+        # left to settle them, so the row above is the whole transaction.
         return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------
