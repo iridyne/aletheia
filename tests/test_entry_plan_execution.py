@@ -945,7 +945,9 @@ def _persist_waiting_plan(
     opportunity = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            # #3708 Batch C: the canonical policy identity is unsuffixed; a
+            # freshly built context must state it, not the retired v1 label.
+            "policy": "candidate_selection_utility",
             "policy_epoch": "epoch-1",
             "source_record_hash": "a" * 64,
         },
