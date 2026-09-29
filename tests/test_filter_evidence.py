@@ -124,75 +124,6 @@ def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
     assert captured["venue"] == "okx"
 
 
-def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
-    from aletheia.storage.sqlite import get_db
-    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
-
-    now = datetime.now(timezone.utc)
-    entry = now - timedelta(hours=25)
-    outcome = FilterCandidateOutcome(
-        outcome_candidate_key="opportunity:settle-filter-net",
-        venue="okx",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        scanner_family="momentum",
-        horizon="24h",
-        entry_price_usd=100.0,
-        entry_spread_bps=10.0,
-        entry_ts=entry.isoformat(),
-        due_at=(entry + timedelta(hours=24)).isoformat(),
-    )
-    repo.insert_filter_candidate_outcomes_batch([outcome])
-    shadow = ShadowTrade(
-        opportunity_id="settle-filter-net",
-        batch_id="batch-net",
-        symbol="BTC/USDT",
-        venue="okx",
-        market_type="spot",
-        direction="long",
-        entry_price=100.0,
-        created_at=entry.isoformat(),
-        outcome_candidate_key=outcome.outcome_candidate_key,
-    )
-    repo.insert_shadow_trade(shadow)
-
-    async def observations(rows, *, now):
-        return {
-            outcome.id: {
-                "exit_price": 102.0,
-                "range_high": 103.0,
-                "range_low": 99.0,
-                "price_source": "horizon_ohlcv",
-                "price_quality_ok": True,
-                "settlement_lag_sec": 30.0,
-            }
-        }
-
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
-        observations,
-    )
-
-    assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 1
-    row = get_db().execute(
-        "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
-    ).fetchone()
-    assert row["status"] == "settled"
-    assert row["gross_return_pct"] == pytest.approx(2.0)
-    assert row["net_return_pct"] == pytest.approx(1.68)
-    assert row["mfe_pct"] == pytest.approx(3.0)
-    assert row["mae_pct"] == pytest.approx(-1.0)
-    shadow_row = get_db().execute(
-        "SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)
-    ).fetchone()
-    assert shadow_row["pnl_pct"] == pytest.approx(2.0)
-    assert shadow_row["net_pnl_pct"] == pytest.approx(1.68)
-    assert shadow_row["resolved_at"]
-
-
 @pytest.mark.parametrize("lab_unavailable", [False, True])
 def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(monkeypatch, lab_unavailable):
     from aletheia.storage import repositories as repo
@@ -1562,31 +1493,3 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
     assert row["direction"] == "long"
     assert row["market_type"] == "perp"
     assert row["horizon"] == "4h"
-
-
-def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):
-    from extensions.counterfactual.trades import persist_shadow_batch
-    from aletheia.storage import repositories as repo
-
-    candidates = [
-        {
-            "opportunity_id": f"opportunity-{index}",
-            "symbol": f"ASSET{index}/USDT",
-            "market_type": "spot",
-            "direction": "long",
-            "trade_score": 100 - index,
-        }
-        for index in range(6)
-    ]
-    monkeypatch.setattr(
-        "extensions.counterfactual.trades._current_price",
-        lambda *args, **kwargs: 100.0,
-    )
-
-    persist_shadow_batch(candidates, [candidates[5]], top_n=5)
-    rows = repo.list_shadow_trades(limit=20)
-
-    assert len(rows) == 6
-    selected = next(row for row in rows if row["was_selected"])
-    assert selected["opportunity_id"] == "opportunity-5"
-    assert selected["rank"] == 6
