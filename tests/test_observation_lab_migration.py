@@ -353,9 +353,6 @@ def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
         started_at="2026-01-01T00:00:00+00:00",
     ))
     get_db().execute(
-        "INSERT INTO strategy_records (id, name) VALUES ('retired-strategy', 'retired')"
-    )
-    get_db().execute(
         "INSERT INTO strategy_experiments (id, strategy_id, experiment_type) "
         "VALUES ('retired-experiment', 'retired-strategy', 'legacy')"
     )

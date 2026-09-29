@@ -79,7 +79,6 @@ def test_serenity_trade_selects_namespace_before_uuid_lookup(monkeypatch):
         "get_serenity_opportunity",
         lambda _opportunity_id: serenity_opportunity,
     )
-    monkeypatch.setattr(trade_attribution.repo, "get_strategy", lambda _strategy_id: None)
     monkeypatch.setattr(
         trade_attribution.repo,
         "get_pi_decision_for_proposal",

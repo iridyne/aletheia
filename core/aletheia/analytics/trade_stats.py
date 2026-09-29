@@ -211,19 +211,13 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
     from aletheia.storage import repositories as repo
     import json
 
-    strategies = {str(row["id"]): row for row in repo.list_strategies(limit=10_000)}
     rows = []
     for position in outcome_integrity.eligible_strategy_outcomes(
         execution_mode=execution_mode,
     ):
-        strategy = strategies.get(str(position.get("strategy_id") or ""), {})
-        try:
-            parameters = json.loads(strategy.get("parameters") or "{}")
-        except (TypeError, ValueError):
-            parameters = {}
         rows.append({
             **position,
-            "source_type": "ruleset" if parameters.get("ruleset") is not None else "opportunity",
+            "source_type": "opportunity",
         })
 
     source_agg: dict[str, dict] = {}

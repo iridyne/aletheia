@@ -43,9 +43,7 @@ from aletheia.storage.models import (
     SerenityReplaySnapshot,
     SerenityRiskGate,
     SerenityTheme,
-    StrategyRecord,
     TradeProposal,
-    decode_strategy_parameters,
 )
 from aletheia.storage.sqlite import (
     SQLITE_PYTHON_STRIP_CHARS_SQL,
@@ -1927,16 +1925,6 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
     if not was_in_tx:
         db.commit()
 
-
-# --- Strategy Records ---
-
-
-def get_strategy(sid: str) -> dict | None:
-    return _select_one("strategy_records", sid)
-
-
-def list_strategies(limit: int = 50) -> list[dict]:
-    return _select_all("strategy_records", limit=limit)
 
 
 # --- Knowledge Items ---

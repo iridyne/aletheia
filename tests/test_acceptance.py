@@ -4,8 +4,6 @@ The old implementation-guide checklist is archived; these tests cover current
 storage, read models, review coverage, permissions and runtime interfaces.
 """
 
-from tests.helpers.repo_test_helpers import insert_strategy
-
 import json
 import asyncio
 from datetime import datetime, timezone
@@ -94,52 +92,10 @@ async def test_ac04_storage_initialized(client):
 async def test_ac05_dashboard_data_endpoints(client):
     c, _ = client
     for path in ["/api/agent-runs", "/api/opportunities", "/api/proposals", "/api/trades",
-                 "/api/positions", "/api/strategies", "/api/portfolio", "/api/settings",
+                 "/api/positions", "/api/portfolio", "/api/settings",
                  "/api/audit/events"]:
         assert (await c.get(path)).status_code == 200
 
-
-@pytest.mark.anyio
-async def test_strategy_summary_endpoint_supports_operator_shell(client):
-    c, _ = client
-    from aletheia.storage.models import StrategyRecord
-
-    insert_strategy(StrategyRecord(id="paper-running", name="Paper Running", state="paper_running"))
-    insert_strategy(
-        StrategyRecord(
-            id="under-review",
-            name="Under Review",
-            state="paper_running",
-            under_review=True,
-        )
-    )
-    insert_strategy(
-        StrategyRecord(
-            id="paused-paper",
-            name="Paused Paper",
-            state="paper_candidate",
-            paper_trading_paused=True,
-        )
-    )
-    insert_strategy(StrategyRecord(id="paper-passed", name="Paper Passed", state="paper_passed"))
-    insert_strategy(StrategyRecord(id="live-candidate", name="Live Candidate", state="live_candidate"))
-
-    response = await c.get("/api/strategies/summary")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert {item["id"] for item in data["active_paper_strategies"]} == {
-        "paper-running",
-        "under-review",
-        "paused-paper",
-        "paper-passed",
-    }
-    assert [item["id"] for item in data["under_review_strategies"]] == ["under-review"]
-    assert [item["id"] for item in data["paused_paper_strategies"]] == ["paused-paper"]
-    assert [item["id"] for item in data["live_candidate_strategies"]] == ["live-candidate"]
-    assert data["needs_operator_evaluation_strategy_ids"] == ["paused-paper", "under-review"]
-    assert data["needs_operator_promotion_proposal_strategy_ids"] == ["paper-passed"]
-    assert data["needs_operator_live_limited_enablement_strategy_ids"] == ["live-candidate"]
 
 
 # #6 HTTP model provider layer (OpenAI/Anthropic)
@@ -202,92 +158,6 @@ async def test_ac08_knowledge_base(client, monkeypatch):
     assert len((await c.get("/api/knowledge/dreaming-logs")).json()) >= 1
     assert len((await c.get("/api/knowledge?type=daily_review")).json()) >= 1
 
-
-@pytest.mark.anyio
-async def test_review_summary_reports_missing_post_trade_review_coverage(client):
-    c, tmp_path = client
-    from extensions.knowledge.manager import create_post_trade_review
-    from aletheia.storage.models import Position
-
-    for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
-        (tmp_path / path).mkdir(parents=True, exist_ok=True)
-
-    pos = Position(
-        symbol="BTCUSDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.1,
-        entry_price=60000,
-        execution_mode="bitget_demo",
-        strategy_id="strat-1",
-        status="closed",
-        opened_at=datetime.now(timezone.utc).isoformat(),
-        closed_at=datetime.now(timezone.utc).isoformat(),
-    )
-    repo.insert_position(pos)
-
-    first = await c.get("/api/reviews/summary")
-    assert first.status_code == 200
-    first_data = first.json()
-    assert len(first_data["recent_closed_positions"]) == 1
-    assert first_data["missing_review_strategy_ids"] == ["strat-1"]
-
-    # Review must tag the specific Position for position-level coverage (#269);
-    # strategy-level recency alone is no longer sufficient.
-    create_post_trade_review(
-        "Post-Trade Review",
-        "Reviewed the BTC Demo position closed at a loss. Entry momentum confirmed but exit was premature. "
-        "Recommend tighter stop placement and trailing stop on profitable positions.",
-        strategy_id="strat-1",
-        tags=[f"position:{pos.id}"],
-    )
-
-    second = await c.get("/api/reviews/summary")
-    assert second.status_code == 200
-    second_data = second.json()
-    assert len(second_data["recent_post_trade_reviews"]) == 1
-    assert second_data["missing_review_strategy_ids"] == []
-
-
-@pytest.mark.anyio
-async def test_archived_review_does_not_suppress_missing_coverage(client):
-    """#269: archiving an invalid review must re-expose the strategy as needing review."""
-    c, tmp_path = client
-    from extensions.knowledge.manager import create_post_trade_review
-    from aletheia.storage import repositories as _repo
-    from aletheia.storage.models import Position
-
-    for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
-        (tmp_path / path).mkdir(parents=True, exist_ok=True)
-
-    pos = Position(
-        symbol="ETHUSDT", market_type="spot", direction="long", quantity=0.5,
-        entry_price=3000, execution_mode="bitget_demo", strategy_id="strat-arch",
-        status="closed",
-        opened_at=datetime.now(timezone.utc).isoformat(),
-        closed_at=datetime.now(timezone.utc).isoformat(),
-    )
-    _repo.insert_position(pos)
-
-    item = create_post_trade_review(
-        "Post-Trade Review",
-        "This is a review that will be archived because it contained hallucinated details. "
-        "ETH position closed with a minor loss. Exit was timely given resistance at 3100.",
-        strategy_id="strat-arch",
-        tags=[f"position:{pos.id}"],
-    )
-    assert item is not None
-
-    data = (await c.get("/api/reviews/summary")).json()
-    assert data["missing_review_strategy_ids"] == []
-
-    # Archive the review (simulates owner detecting a hallucination).
-    _repo.update_knowledge_item(item.id, status="archived")
-
-    after_archive = (await c.get("/api/reviews/summary")).json()
-    assert "strat-arch" in after_archive["missing_review_strategy_ids"], (
-        "Archived review must not suppress strategy from missing list"
-    )
 
 
 

@@ -1951,7 +1951,6 @@ export const api = {
 		),
 	getPortfolio: () => fetchJson<import("../types").PortfolioAccount>("/portfolio"),
 	getUtaState: () => fetchJson<Record<string, any>>("/uta/state"),
-	getStrategies: () => fetchJson<any[]>("/strategies"),
 	// #95: removed dead setStrategyVenue() — it PATCHed /strategies/{id}/venue, a route
 	// deleted with the rules engine (Position C); no backend handler, no TSX caller.
 	getKnowledge: (type = "research_note") =>

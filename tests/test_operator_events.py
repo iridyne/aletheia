@@ -419,64 +419,13 @@ async def test_operator_recommendations_escalate_queue_review_to_urgent_for_deep
 
 @pytest.mark.anyio
 async def test_operator_recommendations_include_shell_specialist_work_from_backend_truth(client):
-    from aletheia.agent_shell.operator_store import create_artifact
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import StrategyRecord
-    from tests.helpers.repo_test_helpers import insert_strategy, update_strategy
-
-    from aletheia.storage.models import PiDecision
-    review_strategy = StrategyRecord(name="Review Candidate", description="needs operator review", state="draft")
-    insert_strategy(review_strategy)
-    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=review_strategy.id, debate_ran=False))
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        update_strategy(review_strategy.id, state=target)
-    update_strategy(
-        review_strategy.id,
-        under_review=1,
-        review_notes="needs evaluation",
-        review_updated_at=datetime.now(timezone.utc).isoformat(),
-    )
-
-    promotion_strategy = StrategyRecord(name="Promotion Candidate", description="promotion proposal due", state="draft")
-    insert_strategy(promotion_strategy)
-    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=promotion_strategy.id, debate_ran=False))
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        update_strategy(promotion_strategy.id, state=target)
-
-    _insert_eligible_closed_position(
-        position_id="review-position-1",
-        strategy_id="review-strat-1",
-    )
-
-    create_artifact(
-        task_id=None,
-        session_id="strategy-eval-session",
-        artifact_type="strategy_evaluation",
-        title="Promotion-ready evaluation",
-        content={
-            "strategy_id": promotion_strategy.id,
-            "strategy_name": "Promotion Candidate",
-            "summary": "Promotion gates passed for paper_running strategy.",
-            "evaluation": {
-                "strategy": {
-                    "id": promotion_strategy.id,
-                    "name": "Promotion Candidate",
-                    "state": "paper_running",
-                },
-                "promotion_gates": {
-                    "passed": True,
-                    "failures": [],
-                },
-            },
-        },
-    )
-
+    # strategy_records retired in #3702 — review_due recommendation removed
+    # dreaming_due is time-based and fires when no dreaming run has happened recently
     recommendations = await client.get("/api/operator/recommendations")
     assert recommendations.status_code == 200
 
     kinds = {item["kind"] for item in recommendations.json()}
     assert "dreaming_due" in kinds
-    assert "review_due" in kinds
 
 
 @pytest.mark.anyio

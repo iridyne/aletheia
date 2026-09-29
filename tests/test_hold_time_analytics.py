@@ -65,11 +65,6 @@ def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch, optio
     monkeypatch.setattr(trade_stats, "execution_mode_identity", lambda _mode: {})
     monkeypatch.setattr(trade_stats, "outcome_window_metadata", lambda: {})
     monkeypatch.setattr(
-        repo,
-        "list_strategies",
-        lambda limit=10_000: [{"id": "strategy-1", "parameters": "{}"}],
-    )
-    monkeypatch.setattr(
         family_scorecard,
         "compute_family_scorecard",
         lambda **_kwargs: [],
@@ -112,11 +107,6 @@ def test_trade_stats_even_hold_samples_use_conventional_median(monkeypatch, opti
     )
     monkeypatch.setattr(trade_stats, "execution_mode_identity", lambda _mode: {})
     monkeypatch.setattr(trade_stats, "outcome_window_metadata", lambda: {})
-    monkeypatch.setattr(
-        repo,
-        "list_strategies",
-        lambda limit=10_000: [{"id": "strategy-1", "parameters": "{}"}],
-    )
     monkeypatch.setattr(
         family_scorecard,
         "compute_family_scorecard",
