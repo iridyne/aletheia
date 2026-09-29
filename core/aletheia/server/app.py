@@ -1475,7 +1475,7 @@ except ModuleNotFoundError as exc:
     if exc.name not in {
         "extensions.exchanges.credential_routes",
         "extensions", "extensions.exchanges",
-        "extensions.exchanges.bitget", "extensions.exchanges.bitget.auth",
+        "extensions.exchanges.bitget",
     }:
         raise
     logger.warning("exchange_credential_routes_unavailable")
