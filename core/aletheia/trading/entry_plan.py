@@ -11,6 +11,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aletheia.trading.entry_sizing import SizingResolution
+from aletheia.trading.leverage_resolution import LeverageResolution
+
 
 ENTRY_PLAN_MIN_RISK_REWARD = 1.0
 ENTRY_PLAN_MAX_RISK_REWARD = 10.0
@@ -223,7 +226,22 @@ class EntryPlan(BaseModel):
     worst_price: float | None = None
     max_notional: float = Field(gt=0)
     max_risk_pct: float = Field(gt=0)
+    # Legacy mirror of `execution_leverage`. Historical plans carry only this, and
+    # it grants no submission authority: the execution boundary reads
+    # `execution_leverage` (#3729 §10).
     max_leverage: int = Field(ge=1)
+    # ── Canonical adaptive sizing and financing (#3729) ──────────────────────
+    # Absent only on historical plans, which cannot obtain new submission
+    # authority. See docs/design/contracts/entry_sizing_and_financing_contract.md.
+    risk_intent_posture: Literal["BASELINE", "REDUCED"] | None = None
+    risk_intent_multiplier: float | None = Field(default=None, gt=0)
+    sizing_resolution: SizingResolution | None = None
+    leverage_resolution: LeverageResolution | None = None
+    policy_leverage_cap: int | None = Field(default=None, ge=1)
+    execution_leverage: int | None = Field(default=None, ge=1)
+    target_notional_usdt: float | None = Field(default=None, gt=0)
+    execution_notional_usdt: float | None = Field(default=None, gt=0)
+    margin_mode: Literal["isolated", "cross"] | None = None
     required_permission: str = Field(min_length=1)
     execution_account_mode: str = Field(min_length=1)
     risk_policy_id: str = Field(min_length=1)
@@ -265,7 +283,21 @@ class EntryPlan(BaseModel):
     def target_quantity(self) -> float:
         # A fixed target must fit the notional ceiling at every permitted price,
         # including a short Maker price above its worst (lowest) IOC price.
-        return self.max_notional / max(self.entry_zone)
+        # New plans size from the financed exposure; historical plans fall back
+        # to their frozen notional ceiling.
+        notional = (
+            self.execution_notional_usdt
+            if self.execution_notional_usdt is not None
+            else self.max_notional
+        )
+        return notional / max(self.entry_zone)
+
+    @property
+    def submission_leverage(self) -> int:
+        """The leverage the venue receives. Historical plans have none."""
+        if self.execution_leverage is None:
+            raise ValueError("entry_plan_submission_leverage_unavailable")
+        return self.execution_leverage
 
     @property
     def ioc_limit_price(self) -> float:
@@ -288,6 +320,48 @@ class EntryPlan(BaseModel):
 
     @model_validator(mode="after")
     def _contract_is_coherent(self) -> EntryPlan:
+        financing_fields = (
+            "risk_intent_posture",
+            "risk_intent_multiplier",
+            "sizing_resolution",
+            "leverage_resolution",
+            "policy_leverage_cap",
+            "execution_leverage",
+            "target_notional_usdt",
+            "execution_notional_usdt",
+        )
+        financing_present = [getattr(self, field) is not None for field in financing_fields]
+        if any(financing_present) and not all(financing_present):
+            raise ValueError("entry_plan_financing_incomplete")
+        if all(financing_present):
+            # A plan may only claim submission authority for a financing it
+            # actually resolved, and only up to its own financed exposure.
+            assert self.leverage_resolution is not None and self.sizing_resolution is not None
+            assert self.execution_notional_usdt is not None
+            execution_notional = float(self.execution_notional_usdt)
+            if self.leverage_resolution.status != "resolved" and not (
+                self.leverage_resolution.status == "not_applicable"
+                and self.market_type == "spot"
+                and self.execution_leverage == 1
+            ):
+                raise ValueError("entry_plan_financing_unresolved")
+            if self.sizing_resolution.status != "resolved":
+                raise ValueError("entry_plan_financing_unresolved")
+            if self.leverage_resolution.execution_leverage != self.execution_leverage:
+                raise ValueError("entry_plan_financing_mismatch")
+            if self.leverage_resolution.execution_notional_usdt is None or (
+                abs(self.leverage_resolution.execution_notional_usdt - execution_notional) > 1e-6
+            ):
+                raise ValueError("entry_plan_financing_mismatch")
+            if execution_notional > float(self.max_notional) + 1e-6:
+                raise ValueError("entry_plan_execution_over_ceiling")
+            # Only a leveraged venue order posts a margin mode; spot is
+            # structurally 1x and carries none.
+            if self.market_type == "perp":
+                if self.margin_mode is None or self.margin_mode != self.leverage_resolution.margin_mode:
+                    raise ValueError("entry_plan_financing_mismatch")
+            elif self.margin_mode is not None:
+                raise ValueError("entry_plan_financing_mismatch")
         source = (self.source_kind, self.source_id, self.trade_school)
         if any(value is not None for value in source):
             if not all(value is not None for value in source):

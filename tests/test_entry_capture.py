@@ -5,7 +5,8 @@ from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesi
 from aletheia.trading.entry_capture import CAPTURE_POLICIES
 from aletheia.trading.entry_contract import entry_contract_fingerprints
 from aletheia.trading.entry_plan_compiler import compile_entry_plan
-from tests.test_entry_analysis import _anchor, _context_v2
+from tests.test_entry_analysis import _anchor, _context_v2, _risk_intent
+from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
 
 
 def capture_input(monkeypatch, profile, priority, direction="long"):
@@ -21,6 +22,7 @@ def capture_input(monkeypatch, profile, priority, direction="long"):
     # dir can supply; pin the same fixture capital there too, or the compiler fails
     # closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.)
+    seed_venue_margin_envelope()
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -44,7 +46,7 @@ def capture_input(monkeypatch, profile, priority, direction="long"):
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
         entry_profile_id=profile, capture_priority=priority, capture_reason="supplied current structure supports capture",
         capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW", horizon="SWING",
-        supporting_fact_refs=(invalidation.anchor_id,))
+        supporting_fact_refs=(invalidation.anchor_id,), risk_intent=_risk_intent(invalidation.anchor_id))
     return generation, context, hypothesis, cfg
 
 
@@ -101,3 +103,94 @@ def test_compiled_direct_ioc_accepts_improvement_without_repricing(monkeypatch, 
     passive = compile_entry_plan(*capture_input(monkeypatch, "grounded-anchor-direct", "PRICE_FIRST", direction))
     with pytest.raises(ValueError, match="taker_bounds_required"):
         bounded_entry_ioc_price(passive, bid=bid, ask=ask)
+
+
+def test_compile_freezes_risk_intent_and_financing_into_the_plan(monkeypatch):
+    """#3729: AI posture -> loss budget -> target exposure -> financed influence.
+
+    The compiler (not a pure helper) is the authority under test: the same
+    supplied geometry compiles to a smaller financed exposure when the AI
+    reduces risk, leverage never enlarges the target, and the Proposal the venue
+    would receive carries the resolved leverage and margin mode rather than the
+    Owner policy ceiling.
+    """
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
+    from aletheia.trading.risk_intent import RiskIntent
+
+    baseline = compile_entry_plan(*capture_input(monkeypatch, "grounded-anchor-direct", "MAKER_PREFERRED"))
+    # This test's claim is the frozen financing, not the generation contract:
+    # the fixture generation is never persisted, so the runtime AI-entry
+    # authority read (which resolves it from the store) is stubbed, exactly as
+    # the other order-intent tests in this suite do.
+    monkeypatch.setattr(
+        "aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda _plan: None
+    )
+
+    generation, context, hypothesis, cfg = capture_input(
+        monkeypatch, "grounded-anchor-direct", "MAKER_PREFERRED"
+    )
+    cfg.risk.demo.loss.reduced_risk_multiplier = 0.5
+    invalidation_ref = hypothesis.invalidation_anchor_ref
+    assert invalidation_ref is not None
+    reduced = compile_entry_plan(
+        generation, context,
+        hypothesis.model_copy(update={
+            "risk_intent": RiskIntent(
+                posture="REDUCED", reason="thin liquidity", evidence_refs=(invalidation_ref,),
+            ),
+        }),
+        cfg,
+    )
+
+    baseline_sizing, reduced_sizing = baseline.sizing_resolution, reduced.sizing_resolution
+    assert baseline_sizing is not None and reduced_sizing is not None
+    assert reduced_sizing.risk_intent_multiplier == pytest.approx(0.5)
+    baseline_budget = baseline_sizing.effective_loss_budget_usdt
+    assert baseline_budget is not None
+    assert reduced_sizing.effective_loss_budget_usdt == pytest.approx(baseline_budget / 2)
+    assert reduced.target_notional_usdt is not None and baseline.target_notional_usdt is not None
+    assert reduced.execution_notional_usdt is not None and baseline.execution_notional_usdt is not None
+    assert reduced.target_notional_usdt <= baseline.target_notional_usdt
+    assert reduced.execution_notional_usdt <= baseline.execution_notional_usdt
+
+    # The policy tier cap is a ceiling, not the execution leverage, and the
+    # frozen resolution is what the Plan claims.
+    assert baseline.execution_leverage is not None and baseline.policy_leverage_cap is not None
+    assert baseline.execution_leverage <= baseline.policy_leverage_cap
+    assert baseline.leverage_resolution is not None
+    assert baseline.leverage_resolution.execution_notional_usdt == pytest.approx(
+        float(baseline.execution_notional_usdt)
+    )
+    assert baseline.margin_mode == "isolated"
+
+    proposal = build_entry_plan_order_intent(
+        baseline,
+        bid=100.0,
+        ask=100.05,
+        observed_at=baseline.approved_at,
+        source_observed_at=baseline.approved_at,
+    )
+    assert proposal.leverage == baseline.execution_leverage
+    assert proposal.margin_mode == baseline.margin_mode
+    assert proposal.quantity is not None
+    assert float(proposal.quantity) * max(baseline.entry_zone) <= (
+        float(baseline.execution_notional_usdt) + 1e-6
+    )
+
+
+def test_compile_chooses_the_lowest_sufficient_leverage(monkeypatch):
+    """A target a low leverage can reach is not financed at the safe cap."""
+    args = capture_input(monkeypatch, "grounded-anchor-direct", "MAKER_PREFERRED")
+    # A margin budget that comfortably covers the stop-risk target: the resolver
+    # then finances it with the lowest leverage that reaches it.
+    args[-1].risk.demo.capital.max_position_margin_usdt = 50_000.0
+    plan = compile_entry_plan(*args)
+
+    assert plan.leverage_resolution is not None and plan.sizing_resolution is not None
+    assert plan.target_notional_usdt is not None and plan.execution_leverage is not None
+    assert plan.policy_leverage_cap is not None
+    assert plan.leverage_resolution.target_fill_ratio == pytest.approx(1.0)
+    assert plan.execution_leverage < plan.policy_leverage_cap
+    margin_budget = plan.sizing_resolution.margin_budget_usdt
+    assert margin_budget
+    assert plan.execution_leverage == int(-(-plan.target_notional_usdt // margin_budget))

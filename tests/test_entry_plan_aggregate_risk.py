@@ -10,6 +10,18 @@ from aletheia.trading.entry_plan import entry_plan_payload
 from tests.test_entry_plan_execution import _plan
 
 
+@pytest.fixture(autouse=True)
+def _pin_account_authority(monkeypatch):
+    """`_plan()` resolves financing through the canonical sizer (#3729).
+
+    That path fails closed when no cached account snapshot exists, which a test
+    data root never has; pin the same fixture capital the other entry tests use.
+    """
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.0)
+
+
 @pytest.mark.parametrize("state,filled,new_quantity,exceeded", [
     ("cancelled", .4, .6, False),
     ("cancelled", .4, .7, True),
@@ -18,7 +30,20 @@ from tests.test_entry_plan_execution import _plan
     ("filled", 1., .1, True),
 ])
 def test_same_plan_fills_and_unresolved_remainder_share_caps(monkeypatch, state, filled, new_quantity, exceeded):
-    plan = _plan().model_copy(update={"max_notional": 100., "max_risk_pct": .2})
+    from tests.helpers.entry_plan_financing_fixture import apply_entry_financing
+
+    # A small but COHERENT Plan envelope: for a financed Plan the financed
+    # exposure is its notional ceiling and its frozen loss budget is its risk
+    # ceiling (#3729), so the two caps cannot be stated independently. 100 USDT
+    # of exposure at this Plan's 2% stop is 2.0 USDT of risk, which is exactly
+    # the `capital_base 1000 x 0.2%` the leg arithmetic below was written for.
+    financed = apply_entry_financing(_plan(), executable_notional_cap_usdt=100.0)
+    plan = financed.model_copy(update={
+        "max_risk_pct": .2,
+        "sizing_resolution": financed.sizing_resolution.model_copy(update={
+            "baseline_loss_budget_usdt": 2.0, "effective_loss_budget_usdt": 2.0,
+        }),
+    })
     payload, digest = entry_plan_payload(plan)
     monkeypatch.setattr(engine, "get_entry_plan", lambda _: {
         "plan_json": payload, "plan_hash": digest, "status": "active"})
@@ -36,7 +61,17 @@ def test_same_plan_fills_and_unresolved_remainder_share_caps(monkeypatch, state,
     second = first.model_copy(update={"id": "next-leg", "entry_leg_index": 1,
                                       "quantity": new_quantity, "stop_price": plan.stop_price})
     violations = engine._entry_plan_authority_violations(second, capital_base=1000.,
-        resolved_policy=SimpleNamespace(policy=SimpleNamespace(policy_id="demo-v1", revision=1), policy_hash="risk-hash"))
+        resolved_policy=SimpleNamespace(
+            policy=SimpleNamespace(
+                policy_id="demo-v1",
+                revision=1,
+                # The new financing checks read the Owner policy for the
+                # same-symbol risk-unit bound; 0 keeps this test's claim about
+                # the Plan's own caps isolated from it.
+                capital=SimpleNamespace(max_per_symbol_entries=0),
+            ),
+            policy_hash="risk-hash",
+        ))
     assert "entry_plan_contract_invalid" not in violations
     assert ("entry_plan_max_notional_exceeded" in violations) is exceeded
     assert ("entry_plan_max_risk_exceeded" in violations) is exceeded

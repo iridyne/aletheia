@@ -15,6 +15,7 @@ from aletheia.trading.entry_analysis import (
     entry_model_view,
     validate_hypothesis_references,
 )
+from aletheia.trading.risk_intent import RiskIntent
 
 
 def _anchor(kind: str, price: float, source: str) -> EntryAnchor:
@@ -23,6 +24,10 @@ def _anchor(kind: str, price: float, source: str) -> EntryAnchor:
         price=price, directional_role="both", known_at_ms=1_700_000_000_000,
         source_fact_refs=(source,), source_fingerprint=source,
     )
+
+
+def _risk_intent(*refs: str) -> RiskIntent:
+    return RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=refs)
 
 
 def _context(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
@@ -193,6 +198,7 @@ def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(m
         "entry_profile_id": "missing-profile",
         "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [context.anchors[1].anchor_id], "risk_tier": "LOW", "horizon": "INTRADAY",
         "supporting_fact_refs": [context.anchors[1].anchor_id],
+        "risk_intent": {"posture": "BASELINE", "reason": "fixture baseline posture", "evidence_refs": [context.anchors[1].anchor_id]},
     }) == "entry_profile_not_registered"
     assert semantic_validator(result.model_dump(mode="json")) is None
 
@@ -216,6 +222,7 @@ def test_v2_hypothesis_binds_mechanism_profile_and_current_market_fact():
         entry_profile_id="grounded-anchor-direct",
         capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,), learning_evidence_refs=("learning:1",),
+        risk_intent=_risk_intent(invalidation.anchor_id),
     )
     validate_hypothesis_references(hypothesis, context)
     contract = entry_model_view(context)["reference_contract"]

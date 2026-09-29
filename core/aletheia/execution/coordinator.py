@@ -410,6 +410,7 @@ def execute_order(
     price: float,
     execution_mode: str,
     leverage: int | None = None,
+    margin_mode: str | None = None,
     stop_price: float | None = None,
     take_profit_price: float | None = None,
     native_tpsl_enabled: bool = False,
@@ -521,6 +522,9 @@ def execute_order(
         time_in_force=time_in_force,
         post_only=post_only,
         leverage=Decimal(leverage) if leverage is not None else None,
+        # The mode the financing was resolved for; the profile submits exactly
+        # this (#3729 §8). None keeps legacy rows on the venue default.
+        margin_mode=margin_mode,
     )
     if before_submission is not None:
         try:

@@ -578,7 +578,9 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
     opportunity = CandidateOpportunityContext(
         candidate_id="bitget-planning-candidate",
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            # #3708 Batch C canonical identity: a freshly built context states
+            # the unsuffixed policy; the v1 label is legacy decode input only.
+            "policy": "candidate_selection_utility",
             "policy_epoch": "epoch-1",
             "source_record_hash": "a" * 64,
         },
@@ -614,7 +616,7 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
         scanner_family="momentum",
         scanner_direction="long",
         execution_eligible=fast_market_data_unavailability_reason(cfg, "bitget") is None,
-        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy="candidate_selection_utility",
         candidate_selection_policy_epoch="epoch-1",
         candidate_selection_utility_pct=1.0,
         opportunity_mechanism="continuation",

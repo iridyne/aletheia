@@ -33,6 +33,11 @@ def compiler_contract_material() -> dict:
         "geometry": _GEOMETRY, "tactic": _TACTIC,
         "planning_market_quality": "exact-envelope-before-input-bind/v1",
         "static_risk_feasibility": "shared-instrument-and-stop-floor/v1",
+        # Canonical sizing and financing identities (#3729). The compiler freezes
+        # both resolutions; neither leverage nor a policy cap may enlarge the target.
+        "sizing_policy": "adaptive-risk-intent-sizing/v2",
+        "financing_policy": "lowest-sufficient-deterministic-leverage/v1",
+        "submission_margin_mode": "declared-per-execution-route/v1",
     }
 
 
@@ -77,6 +82,9 @@ def _compile_bounded_risk_envelope(
     hypothesis: "EntryHypothesis",
     cfg,
     *,
+    sizing,
+    financing,
+    policy_leverage_cap: int,
     now: datetime | None = None,
 ) -> EntryPlan:
     """Compute the existing conservative risk envelope for canonical compilation."""
@@ -131,49 +139,16 @@ def _compile_bounded_risk_envelope(
         if entry_execution_minimum_permission(execution_account_mode) is None:
             raise PlanIntentError("RISK_POLICY_UNKNOWN")
         policy = resolved_policy.policy
-
-        try:
-            venue_leverage_cap = int(get_max_leverage(generation["symbol"], False, cfg))
-        except Exception as exc:
-            raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
-        max_leverage = 1 if market_type == "spot" else venue_leverage_cap
         max_risk_pct = float(policy.loss.max_single_trade_risk_pct)
-        try:
-            from aletheia.risk.engine import (
-                account_available_for_execution,
-                per_symbol_notional_ceiling,
-            )
-            from aletheia.trading.sizing import available_balance_risk_budget_size
-
-            available_balance = account_available_for_execution(execution_account_mode, cfg)
-        except Exception as exc:
-            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE") from exc
-        if available_balance is None or not math.isfinite(float(available_balance)) or float(available_balance) <= 0:
-            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE")
-        try:
-            risk_bounded_notional = available_balance_risk_budget_size(
-                float(available_balance),
-                max_risk_pct,
-                leverage=float(max_leverage),
-            )
-        except ValueError as exc:
-            raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID") from exc
-        max_notional = min(
-            float(policy.capital.max_position_margin_usdt) * max_leverage,
-            risk_bounded_notional,
-        )
-        total_exposure_cap = float(policy.capital.max_total_exposure_pct) / 100.0 * float(available_balance)
-        if total_exposure_cap > 0:
-            max_notional = min(max_notional, total_exposure_cap)
-        per_symbol_cap = per_symbol_notional_ceiling(
-            execution_account_mode,
-            leverage=max_leverage,
-            cfg=cfg,
-        )
-        if per_symbol_cap is None:
-            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE")
-        if per_symbol_cap > 0:
-            max_notional = min(max_notional, per_symbol_cap)
+        # Sizing and financing are resolved once, from the final stop geometry, by
+        # the canonical pure functions (#3729). Leverage is a financing output,
+        # never an input to the target exposure.
+        if sizing.status != "resolved":
+            raise PlanIntentError(sizing.reason or "COMPILER_RISK_BUDGET_UNAVAILABLE")
+        if financing.execution_leverage is None or financing.execution_notional_usdt is None:
+            raise PlanIntentError(financing.reason or "NO_FEASIBLE_FINANCING")
+        max_leverage = int(financing.execution_leverage)
+        max_notional = float(financing.execution_notional_usdt)
         if max_leverage < 1 or max_risk_pct <= 0 or max_notional <= 0:
             raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
 
@@ -218,6 +193,15 @@ def _compile_bounded_risk_envelope(
                 max_notional=max_notional,
                 max_risk_pct=max_risk_pct,
                 max_leverage=max_leverage,
+                risk_intent_posture=sizing.risk_intent_posture,
+                risk_intent_multiplier=sizing.risk_intent_multiplier,
+                sizing_resolution=sizing,
+                leverage_resolution=financing,
+                policy_leverage_cap=policy_leverage_cap,
+                execution_leverage=max_leverage,
+                target_notional_usdt=sizing.target_notional_usdt,
+                execution_notional_usdt=max_notional,
+                margin_mode=None if market_type == "spot" else financing.margin_mode,
                 required_permission=str(cfg.agent.permission_mode),
                 execution_account_mode=execution_account_mode,
                 risk_policy_id=str(policy.policy_id),
@@ -374,13 +358,80 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             {key: value for key, value in trigger_params.items() if key != "geometry_fingerprint"}
         )
         geometry_material["trigger_params"] = trigger_params
+    # ── Canonical adaptive sizing + deterministic financing (#3729) ──────────
+    from aletheia.execution.margin_mode_policy import submission_margin_mode
+    from aletheia.risk.engine import account_sizing_state, sizing_policy_facts
+    from aletheia.trading.entry_sizing import SizingUnavailable, resolve_entry_sizing
+    from aletheia.trading.leverage_resolution import resolve_execution_financing
+    from aletheia.trading.risk_intent import RiskIntentInvalid, resolve_risk_intent_multiplier
+    from aletheia.trading.venue_margin import VenueMarginUnavailable, load_venue_margin_envelope
+
+    resolved_policy = resolve_risk_policy(cfg, authority.execution_route)
+    market_type = generation["market_type"]
+    try:
+        multiplier, multiplier_source = resolve_risk_intent_multiplier(
+            hypothesis.risk_intent, resolved_policy.policy
+        )
+    except RiskIntentInvalid as exc:
+        raise PlanIntentError(exc.reason) from exc
+    # The Owner policy tier leverage is a ceiling for the resolver, never the
+    # execution leverage: the resolver finances the target with the lowest
+    # leverage the venue and its own liquidation buffer allow.
+    try:
+        policy_leverage_cap = (
+            1 if market_type == "spot"
+            else int(get_max_leverage(generation["symbol"], False, cfg))
+        )
+    except Exception as exc:
+        raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
+    margin_mode = submission_margin_mode(authority.execution_route)
+    if market_type == "perp" and margin_mode is None:
+        raise PlanIntentError("MARGIN_MODE_UNAVAILABLE")
+    try:
+        envelope = None if market_type == "spot" else load_venue_margin_envelope(
+            venue=generation["venue"],
+            symbol=generation["symbol"],
+            market_type=market_type,
+            margin_mode=margin_mode or "isolated",
+            cfg=cfg,
+        )
+        account = account_sizing_state(
+            authority.execution_route,
+            generation["symbol"],
+            cfg=cfg,
+            # The preflight depth envelope is the executable exposure the entry
+            # market can absorb; venue order-rule minima stay enforced by the
+            # existing submission boundary (`prepare_exchange_quantity`).
+            executable_notional_cap_usdt=float(context.execution_context["depth_10bps_usd"]),
+            instrument_min_notional_usdt=(
+                envelope.tiers[0].min_notional if envelope is not None else None
+            ),
+        )
+        sizing = resolve_entry_sizing(
+            risk_intent_posture=hypothesis.risk_intent.posture,
+            risk_intent_multiplier=multiplier,
+            risk_intent_multiplier_source=multiplier_source,
+            worst_entry_price=float(worst_entry),
+            stop_price=float(stop),
+            policy=sizing_policy_facts(authority.execution_route, cfg=cfg),
+            account=account,
+        )
+        financing = resolve_execution_financing(
+            sizing=sizing,
+            envelope=envelope,
+            policy_leverage_cap=policy_leverage_cap,
+            liquidation_buffer_pct=float(
+                resolved_policy.policy.margin.min_entry_liquidation_buffer_pct
+            ),
+            existing_position_notional_usdt=account.open_pool_notional_usdt,
+            spot=market_type == "spot",
+        )
+    except (SizingUnavailable, VenueMarginUnavailable) as exc:
+        raise PlanIntentError(exc.reason, getattr(exc, "detail", "") or "") from exc
     base = _compile_bounded_risk_envelope(
-        frozen_generation, frozen_candidate, frozen_feature, hypothesis, cfg
+        frozen_generation, frozen_candidate, frozen_feature, hypothesis, cfg,
+        sizing=sizing, financing=financing, policy_leverage_cap=policy_leverage_cap,
     )
-    old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
-    old_fraction = abs(old_entry - base.stop_price) / old_entry
-    new_fraction = abs(worst_entry - stop) / worst_entry
-    bounded_notional = min(base.max_notional, base.max_notional * old_fraction / new_fraction)
     from aletheia.trading.entry_capture import CAPTURE_POLICIES
     capture_policy = CAPTURE_POLICIES[hypothesis.capture_priority]
     maker = hypothesis.capture_priority != "FILL_FIRST"
@@ -418,7 +469,6 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "trigger_freshness_ms": 2000 if retrace else None,
         "limit_price": limit_price,
         "worst_price": worst_entry,
-        "max_notional": bounded_notional,
         "required_permission": authority.minimum_permission,
         "execution_account_mode": authority.execution_route,
         "treatment_exposure_id": None,

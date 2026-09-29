@@ -146,11 +146,137 @@ def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
         return None
 
 
+def _recomputed_entry_financing(plan, proposal: TradeProposal, resolved_policy, cfg):
+    """Re-resolve one Plan's financing from submission-time facts (#3729 §11).
+
+    Same pure functions, same geometry, same frozen market-quality envelope;
+    only the account/portfolio and venue facts are re-read. Market-quality
+    freshness remains the existing preflight's job.
+    """
+    from aletheia.trading.entry_sizing import (
+        REASON_CAPITAL_UNAVAILABLE,
+        SizingUnavailable,
+        resolve_entry_sizing,
+    )
+    from aletheia.trading.leverage_resolution import resolve_execution_financing
+    from aletheia.trading.venue_margin import load_venue_margin_envelope
+
+    frozen = plan.sizing_resolution
+    if frozen is None or plan.worst_price is None or plan.execution_leverage is None:
+        raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "plan_financing_incomplete")
+    is_spot = plan.market_type == "spot"
+    account = account_sizing_state(
+        proposal.execution_mode,
+        plan.symbol,
+        cfg=cfg,
+        exclude_proposal_id=proposal.id,
+        executable_notional_cap_usdt=frozen.executable_notional_cap_usdt,
+        instrument_min_notional_usdt=frozen.instrument_min_notional_usdt,
+        instrument_max_notional_usdt=frozen.instrument_max_notional_usdt,
+    )
+    envelope = None if is_spot else load_venue_margin_envelope(
+        venue=plan.venue,
+        symbol=plan.symbol,
+        market_type=plan.market_type,
+        margin_mode=plan.margin_mode or "isolated",
+        cfg=cfg,
+    )
+    try:
+        from aletheia.trading.instruments import get_max_leverage
+
+        policy_leverage_cap = (
+            1 if is_spot else int(get_max_leverage(plan.symbol, _is_live(proposal.execution_mode), cfg))
+        )
+    except Exception as exc:
+        raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "leverage_cap_unavailable") from exc
+    sizing = resolve_entry_sizing(
+        risk_intent_posture=str(plan.risk_intent_posture),
+        risk_intent_multiplier=float(plan.risk_intent_multiplier or 0.0),
+        risk_intent_multiplier_source=frozen.risk_intent_multiplier_source,
+        worst_entry_price=float(plan.worst_price),
+        stop_price=float(plan.stop_price),
+        policy=sizing_policy_facts(proposal.execution_mode, cfg=cfg),
+        account=account,
+    )
+    return resolve_execution_financing(
+        sizing=sizing,
+        envelope=envelope,
+        policy_leverage_cap=policy_leverage_cap,
+        liquidation_buffer_pct=float(resolved_policy.policy.margin.min_entry_liquidation_buffer_pct),
+        existing_position_notional_usdt=account.open_pool_notional_usdt,
+        spot=is_spot,
+    )
+
+
+def _entry_plan_financing_violations(
+    plan, proposal: TradeProposal, resolved_policy, cfg
+) -> list[str]:
+    """Risk re-verifies the frozen financing and never mutates it (#3729 §11)."""
+    from aletheia.trading.entry_sizing import SizingUnavailable
+    from aletheia.trading.venue_margin import VenueMarginUnavailable
+
+    if plan.leverage_resolution is None or plan.sizing_resolution is None:
+        # Historical plan: it holds no financing authority to re-verify, and the
+        # execution boundary refuses to build new intents from it.
+        return []
+    violations: list[str] = []
+    if plan.market_type == "perp" and plan.margin_mode != "isolated":
+        # V1 has no account-aware cross model; the isolated liquidation estimate
+        # must never stand in for it (#3729 §8.2).
+        violations.append(
+            "CROSS_MARGIN_SAFETY_UNAVAILABLE"
+            if plan.margin_mode == "cross"
+            else "MARGIN_MODE_UNAVAILABLE"
+        )
+    if proposal.margin_mode != plan.margin_mode:
+        violations.append("entry_plan_margin_mode_mismatch")
+    if int(proposal.leverage or 0) != int(plan.execution_leverage or 0):
+        violations.append("entry_plan_execution_leverage_mismatch")
+    # Per-symbol cumulative bound in RISK UNITS (#3729 §6.3): the same-symbol
+    # allowance counts full-size stop-loss risk units, so leverage can never
+    # enlarge it. Check #19's legacy notional ceiling is skipped for a financed
+    # Proposal (see `evaluate_proposal`).
+    frozen_budget = float(plan.sizing_resolution.effective_loss_budget_usdt or 0.0)
+    entries = int(getattr(resolved_policy.policy.capital, "max_per_symbol_entries", 0) or 0)
+    if frozen_budget > 0 and entries > 0 and proposal.price and proposal.quantity:
+        try:
+            symbol_risk = account_sizing_state(
+                proposal.execution_mode, plan.symbol, cfg=cfg, exclude_proposal_id=proposal.id,
+            ).symbol_projected_stop_risk_usdt + abs(
+                float(proposal.price) - float(plan.stop_price)
+            ) * float(proposal.quantity)
+        except SizingUnavailable as exc:
+            violations.append(exc.reason)
+            return violations
+        allowance = frozen_budget * entries
+        if symbol_risk > allowance + 1e-9:
+            violations.append(
+                f"exceeds_per_symbol_risk:{symbol_risk:.2f}>{allowance:.2f}(entries={entries})"
+            )
+    try:
+        fresh = _recomputed_entry_financing(plan, proposal, resolved_policy, cfg)
+    except (SizingUnavailable, VenueMarginUnavailable) as exc:
+        violations.append(exc.reason)
+        return violations
+    if fresh.status != "resolved" and plan.market_type != "spot":
+        violations.append(fresh.reason or "NO_FEASIBLE_FINANCING")
+        return violations
+    frozen_notional = float(plan.execution_notional_usdt or 0.0)
+    fresh_notional = fresh.execution_notional_usdt
+    if fresh_notional is not None and fresh_notional < frozen_notional - max(1e-9, frozen_notional * 1e-9):
+        # Same facts give the same resolution; a smaller allowance means the
+        # account or venue moved under the frozen Plan. Never accept silently and
+        # never enlarge: reject and let the Planner re-plan.
+        violations.append("SIZING_RESOLUTION_DRIFT")
+    return violations
+
+
 def _entry_plan_authority_violations(
     proposal: TradeProposal,
     *,
     capital_base: float,
     resolved_policy,
+    cfg=None,
 ) -> list[str]:
     """Revalidate one bounded Entry Plan envelope inside canonical Risk."""
 
@@ -322,9 +448,21 @@ def _entry_plan_authority_violations(
         violations.append("entry_plan_max_leverage_exceeded")
     if proposal.stop_price is not None and capital_base > 0:
         risk_amount = prior_risk + abs(price - float(proposal.stop_price)) * quantity
-        plan_max_risk = capital_base * plan.max_risk_pct / 100.0
+        # The AI Risk Intent governs the budget this Plan may lose, so the frozen
+        # effective budget is the ceiling, not the raw policy percentage.
+        frozen_budget = (
+            plan.sizing_resolution.effective_loss_budget_usdt
+            if plan.sizing_resolution is not None
+            else None
+        )
+        plan_max_risk = (
+            float(frozen_budget)
+            if frozen_budget is not None
+            else capital_base * plan.max_risk_pct / 100.0
+        )
         if risk_amount > plan_max_risk + 1e-12:
             violations.append("entry_plan_max_risk_exceeded")
+    violations.extend(_entry_plan_financing_violations(plan, proposal, resolved_policy, cfg))
     return violations
 
 
@@ -1237,6 +1375,7 @@ def _evaluate_proposal_locked(
             proposal,
             capital_base=capital_base,
             resolved_policy=resolved_policy,
+            cfg=cfg,
         )
     )
     # Check #8 — Max Daily Loss. `max_daily_loss_pct` defaults to 0, which
@@ -1463,12 +1602,18 @@ def _evaluate_proposal_locked(
     #     had no such guarantee: once equity passed $400/(20%×3x)=$666.67 it rejected
     #     every normal first entry, which is how this deadlocked a live paper account.
     per_symbol_entries = int(getattr(risk, "max_per_symbol_entries", 0) or 0)
-    per_symbol_cap = _derive_per_symbol_cap(
-        capital_base,
-        float(risk.max_single_trade_risk_pct),
-        float(proposal.leverage or 1),
-        per_symbol_entries,
-    )
+    if proposal.margin_mode is None:
+        # Legacy path only: `_entry_plan_financing_violations` already enforced
+        # the financed path's bound in risk units (#3729 §6.3), which must not be
+        # re-derived from leverage x risk_pct here.
+        per_symbol_cap = _derive_per_symbol_cap(
+            capital_base,
+            float(risk.max_single_trade_risk_pct),
+            float(proposal.leverage or 1),
+            per_symbol_entries,
+        )
+    else:
+        per_symbol_cap = 0.0
     if per_symbol_cap > 0 and proposal.price and proposal.quantity:
         prop_is_live = _is_live(proposal.execution_mode)
         existing_sym_notional = 0.0
@@ -2565,18 +2710,168 @@ def account_available_for_execution(execution_mode: str, cfg=None) -> float | No
     return _cached_available_balance_usdt(execution_mode, cfg or load_config())
 
 
+def sizing_policy_facts(execution_mode: str, *, cfg=None):
+    """Owner-policy inputs to the canonical entry sizer (#3729).
+
+    One resolution for both callers: the Compiler freezes these values into the
+    Plan, the Risk Engine recomputes with them at submission. A second copy of
+    this mapping is how the compiler and check #13 drifted apart before.
+    """
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.entry_sizing import SizingPolicyFacts
+
+    cfg = cfg or load_config()
+    resolved = resolve_risk_policy(cfg, execution_mode)
+    policy = resolved.policy
+    return SizingPolicyFacts(
+        risk_pct=float(policy.loss.max_single_trade_risk_pct),
+        max_position_margin_usdt=float(policy.capital.max_position_margin_usdt),
+        max_per_symbol_entries=int(policy.capital.max_per_symbol_entries or 0),
+        max_total_exposure_pct=float(policy.capital.max_total_exposure_pct),
+        account_leverage_cap=float(policy.leverage.account_cap),
+        policy_snapshot_id=f"{policy.policy_id}@{policy.revision}:{resolved.policy_hash}",
+    )
+
+
+def account_sizing_state(
+    execution_mode: str,
+    symbol: str,
+    *,
+    cfg=None,
+    exclude_proposal_id: str | None = None,
+    executable_notional_cap_usdt: float | None = None,
+    instrument_min_notional_usdt: float | None = None,
+    instrument_max_notional_usdt: float | None = None,
+):
+    """Fresh account/portfolio facts for one entry sizing decision (#3729).
+
+    ``open_pool_notional_usdt`` carries everything already committed in the same
+    demo/live pool (open Positions, unresolved entry Orders, pre-Order Risk
+    reservations), which is what makes a sequence of entries shrink instead of
+    re-spending the same exposure. ``symbol_projected_stop_risk_usdt`` is the
+    same-symbol loss-at-stop already projected by existing exposure.
+
+    Authority that cannot be read is a typed failure, never a zero.
+    """
+    import hashlib
+
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.entry_sizing import (
+        REASON_CAPITAL_UNAVAILABLE,
+        AccountSizingState,
+        SizingUnavailable,
+    )
+
+    cfg = cfg or load_config()
+    policy = resolve_risk_policy(cfg, execution_mode).policy
+    capital_base, _capital_reason = _resolve_capital_base(execution_mode, policy, cfg)
+    available_balance = account_available_for_execution(execution_mode, cfg)
+    equity = account_equity_for_execution(execution_mode, cfg)
+
+    prop_is_live = _is_live(execution_mode)
+    try:
+        positions = [
+            row for row in _active_open_positions()
+            if _is_live(row.get("execution_mode", "")) == prop_is_live
+        ]
+        unresolved = [
+            entry for entry in _unresolved_entry_reservations()
+            if _is_live(entry.execution_mode) == prop_is_live
+        ]
+        pre_order = [
+            entry for entry in _pre_order_entry_reservations(
+                exclude_proposal_id=exclude_proposal_id,
+            )
+            if _is_live(entry.execution_mode) == prop_is_live
+        ]
+    except Exception as exc:
+        raise SizingUnavailable(
+            REASON_CAPITAL_UNAVAILABLE, f"entry_authority_unreadable:{type(exc).__name__}"
+        ) from exc
+    invalid = sorted(
+        {reason for entry in (*unresolved, *pre_order) for reason in entry.invalid_reasons}
+    )
+    if invalid:
+        raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, invalid[0])
+
+    open_pool_notional = 0.0
+    symbol_stop_risk = 0.0
+    for row in positions:
+        try:
+            quantity = abs(float(row.get("quantity") or 0.0))
+            entry_price = float(row.get("entry_price") or 0.0)
+            mark = float(row.get("current_price") or entry_price)
+        except (TypeError, ValueError):
+            raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid") from None
+        if not all(math.isfinite(value) for value in (quantity, entry_price, mark)):
+            raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid")
+        open_pool_notional += abs(mark * quantity)
+        if row.get("symbol") != symbol:
+            continue
+        stop_raw = row.get("stop_price")
+        try:
+            stop_price = float(stop_raw) if stop_raw is not None else None
+        except (TypeError, ValueError):
+            stop_price = None
+        if stop_price is not None and math.isfinite(stop_price) and stop_price > 0:
+            symbol_stop_risk += abs(entry_price - stop_price) * quantity
+        else:
+            # A same-symbol position with no recorded stop is fully at risk; the
+            # conservative reading can only make the cumulative bound bind earlier.
+            symbol_stop_risk += abs(entry_price * quantity)
+    for entry in (*unresolved, *pre_order):
+        try:
+            price = float(entry.price or 0.0)
+            quantity = abs(float(entry.reserved_quantity or 0.0))
+        except (TypeError, ValueError):
+            raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid") from None
+        if not all(math.isfinite(value) for value in (price, quantity)):
+            raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid")
+        open_pool_notional += abs(price * quantity)
+        if entry.symbol == symbol:
+            symbol_stop_risk += abs(price * quantity)
+
+    snapshot_payload = "|".join(
+        str(value) for value in (
+            execution_mode,
+            symbol,
+            round(float(capital_base), 10) if capital_base is not None else None,
+            round(float(available_balance), 10) if available_balance is not None else None,
+            round(float(equity), 10) if equity is not None else None,
+            round(open_pool_notional, 10),
+            round(symbol_stop_risk, 10),
+            tuple(sorted(str(row.get("id")) for row in positions)),
+        )
+    )
+    return AccountSizingState(
+        capital_base_usdt=capital_base,
+        available_balance_usdt=available_balance,
+        equity_usdt=equity,
+        open_pool_notional_usdt=open_pool_notional,
+        symbol_projected_stop_risk_usdt=symbol_stop_risk,
+        executable_notional_cap_usdt=executable_notional_cap_usdt,
+        instrument_min_notional_usdt=instrument_min_notional_usdt,
+        instrument_max_notional_usdt=instrument_max_notional_usdt,
+        snapshot_id=hashlib.sha256(snapshot_payload.encode()).hexdigest()[:16],
+    )
+
+
 def _derive_per_symbol_cap(
     capital_base: float,
     per_trade_risk_pct: float,
     leverage: float,
     entries: int,
 ) -> float:
-    """THE single definition of check #19's per-symbol ceiling.
+    """THE single definition of the LEGACY check #19 notional ceiling.
 
-    Deliberately one function with two callers (check #19 and pyramid add-on
-    sizing).  A second copy of this arithmetic is how the retired absolute cap
-    drifted out of agreement with sizing in the first place, so the formula must
-    not be re-expressed anywhere else.
+    Deliberately one function with two callers (legacy check #19 and pyramid
+    add-on sizing).  A second copy of this arithmetic is how the retired absolute
+    cap drifted out of agreement with sizing in the first place, so the formula
+    must not be re-expressed anywhere else.
+
+    A financed Entry Plan does not use it: that path bounds the same-symbol
+    allowance in stop-loss RISK UNITS (#3729 §6.3), because a ceiling derived
+    from `risk_pct x leverage` moves whenever financing does.
 
     Returns 0.0 when the check is disabled or the denominator is unavailable —
     callers treat 0.0 as "no ceiling to enforce".

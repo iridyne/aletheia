@@ -31,7 +31,8 @@ from aletheia.trading.entry_activation import require_entry_trigger_activation a
     ("universe", "short_term", "c1", 24),
 ])
 def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, school, source_id, holding):
-    from tests.test_entry_analysis import _anchor, _context_v2
+    from tests.test_entry_analysis import _anchor, _context_v2, _risk_intent
+    from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
     from aletheia.config.loader import load_config
     from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis
     from aletheia.trading.entry_contract import entry_contract_fingerprints
@@ -46,6 +47,7 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     # (entry_plan_compiler -> account_available_for_execution), which no test data
     # dir can supply.
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args, **_kwargs: 5000.0)
+    seed_venue_margin_envelope()
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -67,7 +69,7 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
         entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW",
-        horizon="SWING", supporting_fact_refs=(invalidation.anchor_id,))
+        horizon="SWING", supporting_fact_refs=(invalidation.anchor_id,), risk_intent=_risk_intent(invalidation.anchor_id))
     plan = compile_entry_plan(generation, context, hypothesis, cfg)
     assert plan.expected_horizon_hours == 24
     assert plan.holding_horizon_hours == holding
@@ -140,6 +142,8 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     from extensions.data.collectors.microstructure import _parse_orderbook
     from aletheia.agent_shell.entry_planner import plan_next_candidate
     from aletheia.trading.entry_analysis import EntryHypothesis
+    from tests.test_entry_analysis import _risk_intent
+    from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
 
     from tests.test_sqlite_writer import _setup_db
     _setup_db(tmp_path, monkeypatch)
@@ -174,6 +178,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     cfg = load_config()
     now = datetime.now(timezone.utc)
     symbol = candidate.symbol
+    seed_venue_margin_envelope(symbol=symbol, market_type=market_type)
     repo.upsert_universe_asset(UniverseAsset(id=candidate.asset_id, venue="bitget", symbol=symbol, market_type=market_type,
         min_notional=1, price_precision=4, amount_precision=6))
     interval = 900_000
@@ -200,7 +205,8 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
         hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
             primary_anchor_ref=primary["anchor_id"], invalidation_anchor_ref=invalidation["anchor_id"],
             entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation["anchor_id"],), risk_tier="LOW",
-            horizon="SWING" if school == "serenity" else "INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],))
+            horizon="SWING" if school == "serenity" else "INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],),
+            risk_intent=_risk_intent(invalidation["anchor_id"]))
         from aletheia.agents import helpers
         from aletheia.model_provider.base import ModelResponse
         from aletheia.agent_shell.entry_planner import system_operator_entry_planner
@@ -235,10 +241,19 @@ def _isolate_execution_contract(monkeypatch):
     # test_entry_activation; the bypass regression below restores this gate.
     monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation",
                         lambda *args, **kwargs: None)
+    # `_plan()` now freezes a real financing (#3729) via apply_entry_financing,
+    # which reads live account authority. These unit tests own order/gateway/
+    # reconciliation logic, not account state, so pin a fixed pool here; a test
+    # that cares about a specific balance overrides it after this fixture runs.
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_a, **_k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_a, **_k: 5000.0)
 
 
 def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
     from aletheia.trading.entry_analysis import EntryAnchor, EntryHypothesis, fingerprint
+    from aletheia.trading.risk_intent import RiskIntent
+    from tests.helpers.entry_plan_financing_fixture import apply_entry_financing
 
     now = datetime.now(timezone.utc)
     triggered = mode == "TRIGGERED"
@@ -277,6 +292,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         risk_tier="LOW",
         horizon="INTRADAY",
         supporting_fact_refs=(primary.anchor_id,),
+        risk_intent=RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=(primary.anchor_id,)),
     )
     hypothesis_json = hypothesis.model_dump_json()
     trigger_params = (
@@ -359,6 +375,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         entry_profile_id=hypothesis.entry_profile_id,
         compiled_geometry_fingerprint=fingerprint(geometry),
     )
+    plan = apply_entry_financing(plan)
     if provenance:
         return plan
     return plan.model_copy(
@@ -371,6 +388,28 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
             "entry_profile_id": None,
             "compiled_geometry_fingerprint": None,
         }
+    )
+
+
+def _resolved_risk_policy() -> SimpleNamespace:
+    """Minimal Risk-policy mock matching the real defaults `apply_entry_financing`
+    freezes into a Plan, so recomputed financing cannot drift on fixture noise."""
+    return SimpleNamespace(
+        policy=SimpleNamespace(
+            policy_id="demo-v1", revision=1,
+            capital=SimpleNamespace(max_per_symbol_entries=3),
+            margin=SimpleNamespace(min_entry_liquidation_buffer_pct=5.0),
+        ),
+        policy_hash="risk-hash",
+    )
+
+
+def _authority_violations(proposal, *, capital_base, resolved_policy) -> list[str]:
+    from aletheia.config.loader import load_config
+    from aletheia.risk import engine
+
+    return engine._entry_plan_authority_violations(
+        proposal, capital_base=capital_base, resolved_policy=resolved_policy, cfg=load_config(),
     )
 
 
@@ -615,19 +654,23 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
         "get_candidate_planning_generation",
         lambda _generation_id: {"is_current": 1},
     )
-    proposal = build_entry_plan_order_intent(
+    exact = build_entry_plan_order_intent(
         plan,
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
-    ).model_copy(update={"quantity": 2.0})
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
     )
+    # A proposal beyond BOTH frozen ceilings: the financed notional ceiling and
+    # the frozen loss budget the AI Risk Intent governs (#3729).
+    assert plan.sizing_resolution is not None
+    loss_budget = plan.sizing_resolution.effective_loss_budget_usdt
+    assert loss_budget is not None and isinstance(exact.price, (int, float))
+    worst_quantity = 2.0 * float(loss_budget) / abs(float(exact.price) - plan.stop_price)
+    proposal = exact.model_copy(update={"quantity": worst_quantity})
+    resolved = _resolved_risk_policy()
 
-    violations = engine._entry_plan_authority_violations(
+    violations = _authority_violations(
         proposal,
         capital_base=1_000,
         resolved_policy=resolved,
@@ -678,12 +721,9 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(mon
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={field: value})
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
 
-    violations = engine._entry_plan_authority_violations(
+    violations = _authority_violations(
         proposal,
         capital_base=1_000,
         resolved_policy=resolved,
@@ -717,12 +757,9 @@ def test_canonical_risk_enforces_the_plan_worst_price_boundary(monkeypatch):
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={"worst_price": plan.worst_price})
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
 
-    assert "entry_plan_worst_price_exceeded" in engine._entry_plan_authority_violations(
+    assert "entry_plan_worst_price_exceeded" in _authority_violations(
         proposal, capital_base=1_000, resolved_policy=resolved
     )
 
@@ -748,10 +785,7 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
         "get_candidate_planning_generation",
         lambda _generation_id: {"is_current": 1},
     )
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
     proposal = build_entry_plan_order_intent(
         plan,
         bid=100,
@@ -760,12 +794,15 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    assert engine._entry_plan_authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
-    reduced = proposal.model_copy(update={"quantity": proposal.quantity / 2, "leverage": 1})
-    assert engine._entry_plan_authority_violations(reduced, capital_base=1_000, resolved_policy=resolved) == []
+    assert _authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
+    # Leverage is frozen by the financing resolution (#3729 §10): only the size
+    # may shrink, and a smaller size is still verified rather than re-financed.
+    assert proposal.quantity is not None
+    reduced = proposal.model_copy(update={"quantity": proposal.quantity / 2})
+    assert _authority_violations(reduced, capital_base=1_000, resolved_policy=resolved) == []
     for forged in (proposal.model_copy(update={"trade_school": "forged"}),
                    proposal.model_copy(update={"opportunity_id": "other-source"})):
-        assert "entry_plan_order_identity_mismatch" in engine._entry_plan_authority_violations(
+        assert "entry_plan_order_identity_mismatch" in _authority_violations(
             forged, capital_base=1_000, resolved_policy=resolved
         )
 
@@ -801,12 +838,9 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
 
-    assert engine._entry_plan_authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
+    assert _authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
 
 
 def test_canonical_risk_requires_exact_resting_maker_limit(monkeypatch):
@@ -833,12 +867,9 @@ def test_canonical_risk_requires_exact_resting_maker_limit(monkeypatch):
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={"price": 100.5})
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
 
-    assert "entry_plan_limit_price_mismatch" in engine._entry_plan_authority_violations(
+    assert "entry_plan_limit_price_mismatch" in _authority_violations(
         proposal, capital_base=1_000, resolved_policy=resolved
     )
 
@@ -873,12 +904,9 @@ def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):
         observed_at=datetime.now(timezone.utc).isoformat(),
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
-    resolved = SimpleNamespace(
-        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
-        policy_hash="risk-hash",
-    )
+    resolved = _resolved_risk_policy()
 
-    violations = engine._entry_plan_authority_violations(
+    violations = _authority_violations(
         proposal,
         capital_base=1_000,
         resolved_policy=resolved,
@@ -917,7 +945,9 @@ def _persist_waiting_plan(
     opportunity = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            # #3708 Batch C: the canonical policy identity is unsuffixed; a
+            # freshly built context must state it, not the retired v1 label.
+            "policy": "candidate_selection_utility",
             "policy_epoch": "epoch-1",
             "source_record_hash": "a" * 64,
         },

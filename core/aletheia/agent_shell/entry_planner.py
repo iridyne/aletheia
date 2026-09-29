@@ -241,6 +241,16 @@ def _compile_current_entry_plan(
         if code in {
             "RISK_POLICY_UNKNOWN", "COMPILER_LEVERAGE_UNAVAILABLE",
             "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_INTERNAL",
+            # #3729: an unreadable account authority, a missing/stale venue
+            # margin fact, an unresolvable financing, or a route with no
+            # qualified margin mode is "cannot prove it is safe right now", not
+            # "this hypothesis is invalid", so the generation defers and retries
+            # under its own bounded attempts. Invalid intent/evidence/geometry
+            # stays terminal below.
+            "SIZING_CAPITAL_UNAVAILABLE", "NO_EXECUTABLE_NOTIONAL",
+            "VENUE_MARGIN_TIERS_UNAVAILABLE", "VENUE_MARGIN_TIERS_STALE",
+            "MARGIN_MODE_UNAVAILABLE", "CROSS_MARGIN_SAFETY_UNAVAILABLE",
+            "NO_FEASIBLE_FINANCING",
         }:
             stored = repo.defer_candidate_planning(
                 generation["id"], owner, f"ENTRY_PLAN_COMPILE_UNAVAILABLE:{code}",

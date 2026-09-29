@@ -22,6 +22,7 @@ from aletheia.trading.entry_plan import EntryPlan
 from aletheia.model_provider.base import portable_json_schema_payload
 
 from aletheia.trading.entry_analysis import EntryHypothesis
+from aletheia.trading.risk_intent import RiskIntent
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +209,7 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
         entry_profile_id="grounded-anchor-retrace-reclaim", capture_priority="FILL_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(primary.anchor_id,),
         risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,),
+        risk_intent=RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=(primary.anchor_id,)),
     )
     hypothesis_json = hypothesis.model_dump_json()
     trigger_params = {
@@ -809,7 +811,8 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     policy = SimpleNamespace(
         policy_id="test", revision=1,
         capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
-        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
+        loss=SimpleNamespace(max_single_trade_risk_pct=1.0, reduced_risk_multiplier=0.5),
+        margin=SimpleNamespace(min_entry_liquidation_buffer_pct=5.0),
     )
     monkeypatch.setattr(
         "aletheia.trading.entry_plan_compiler.resolve_risk_policy",
@@ -818,6 +821,9 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_a, **_k: 100_000.0)
     monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_a, **_k: 100_000.0)
+    from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
+    seed_venue_margin_envelope()
     primary = EntryAnchor(
         venue="bitget", symbol="BTC/USDT", market_type="perp",
         kind="candidate_reference" if profile == "grounded-anchor-direct" else "confirmed_swing",
@@ -865,6 +871,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         capture_priority="PRICE_FIRST" if profile == "grounded-anchor-direct" else "FILL_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,),
         risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,),
+        risk_intent=RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=(invalidation.anchor_id,)),
     )
     input_payload = canonical_json(context.model_dump(mode="json"))
     repo.execute_write(
@@ -1051,6 +1058,8 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     cfg = load_config()
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args: 5000.0)
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
+    from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
+    seed_venue_margin_envelope()
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.execute_write("UPDATE candidate_planning_generations SET producer_commit='controlled-passive-test' WHERE id=?",
@@ -1077,7 +1086,8 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
         return EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
             primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
             entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,),
-            risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(invalidation.anchor_id,))
+            risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(invalidation.anchor_id,),
+            risk_intent=RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=(invalidation.anchor_id,)))
 
     result = asyncio.run(plan_next_candidate(model, cfg=cfg))
     assert result["status"] == "planned", repo.get_candidate_planning_generation(generation["id"])["outcome_reason"]

@@ -345,14 +345,18 @@ def test_build_rows_universe_origin_is_included_via_lineage_reader(tmp_path, mon
     """
     from tests.test_sqlite_writer import _setup_db
     from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
-
     _setup_db(tmp_path, monkeypatch)
+    # apply_entry_financing (via _persist_waiting_plan -> _plan) runs the real
+    # canonical sizer, which needs cached account equity/available balance
+    # (#3729); pin the same fixture capital other financing-fixture callers use.
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.0)
     ids = _build_universe_lifecycle_chain(
         scanner_family="mean_reversion",
         position_market_type="spot",  # perp is excluded by economics eligibility
         position_id="attr-uni-position-1",
     )
-
     rows = build_trade_attribution_rows(limit=10)
 
     assert len(rows) == 1, (

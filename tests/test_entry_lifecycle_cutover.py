@@ -25,7 +25,9 @@ def _typed_candidate(
     context = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            # #3708 Batch C canonical identity: a freshly built context states
+            # the unsuffixed policy; the v1 label is legacy decode input only.
+            "policy": "candidate_selection_utility",
             "policy_epoch": "epoch-1",
             "source_record_hash": "a" * 64,
         },
@@ -52,7 +54,7 @@ def _typed_candidate(
         total_score=90, scanner_family="mean_reversion", scanner_direction="long",
         regime_tag="trending", entry_price_usd=100,
         expires_at="2099-01-01T00:00:00+00:00",
-        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy="candidate_selection_utility",
         candidate_selection_policy_epoch="epoch-1", candidate_selection_utility_pct=1.0,
         opportunity_mechanism="reversal", opportunity_mechanism_version="reversal/v1",
         opportunity_source_component="mean_reversion",
@@ -353,6 +355,11 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
             "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [invalidation.anchor_id], "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [invalidation.anchor_id],
+            "risk_intent": {
+                "posture": "BASELINE",
+                "reason": "fixture baseline posture",
+                "evidence_refs": [invalidation.anchor_id],
+            },
         }
 
     result = asyncio.run(plan_next_candidate(
@@ -474,6 +481,11 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
             "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [_context["anchors"][1]["anchor_id"]], "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [_context["anchors"][1]["anchor_id"]],
+            "risk_intent": {
+                "posture": "BASELINE",
+                "reason": "fixture baseline posture",
+                "evidence_refs": [_context["anchors"][1]["anchor_id"]],
+            },
         }
 
     result = asyncio.run(plan_next_candidate(planner, cfg=cfg))

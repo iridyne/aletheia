@@ -356,6 +356,15 @@ def build_entry_plan_order_intent(
     risk_reward = calculate_entry_plan_risk_reward(price, plan.stop_price, plan.target_price)
     if quantity <= 0 or risk_reward is None:
         raise ValueError("entry_order_intent_geometry_invalid")
+    # The venue receives the financing the resolver actually proved, never the
+    # Owner policy ceiling (#3729 §10). A historical Plan carries neither and
+    # therefore obtains no new submission authority.
+    try:
+        leverage = plan.submission_leverage
+    except ValueError as exc:
+        raise ValueError("entry_plan_submission_financing_unavailable") from exc
+    if plan.market_type == "perp" and plan.margin_mode is None:
+        raise ValueError("entry_plan_margin_mode_unavailable")
     return TradeProposal(
         opportunity_id=plan.source_id if plan.source_kind == "serenity" else None,
         trade_school=plan.trade_school,
@@ -365,7 +374,8 @@ def build_entry_plan_order_intent(
         order_type="limit",
         quantity=quantity,
         price=price,
-        leverage=plan.max_leverage,
+        leverage=leverage,
+        margin_mode=plan.margin_mode,
         stop_price=plan.stop_price,
         take_profit=plan.target_price,
         risk_reward=risk_reward,
