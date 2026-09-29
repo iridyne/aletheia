@@ -73,6 +73,37 @@ def normalize_bitget_funding_rows(rows: Iterable[Mapping]) -> list[dict]:
     )
 
 
+# Bitget UTA v3 perpetual funding settlement type codes (financial-records endpoint).
+_BITGET_UTA_FUNDING_TYPES = frozenset({
+    "CONTRACT_MAIN_SETTLE_FEE_USER_IN",
+    "CONTRACT_MAIN_SETTLE_FEE_USER_OUT",
+})
+
+
+def normalize_bitget_uta_funding_rows(rows: Iterable[Mapping]) -> list[dict]:
+    """Normalize Bitget UTA v3 financial-records rows into canonical funding events.
+
+    Receives raw info dicts from CCXT's fetchLedger response.  The signed
+    ``amount`` is preserved directly: USER_IN is a receipt (positive), USER_OUT
+    is a payment (negative).  Unknown types are silently skipped so a CCXT
+    upgrade that adds new ledger categories does not break existing rows.
+    """
+    events = []
+    for row in rows:
+        fund_type = str(row.get("type") or "")
+        if fund_type not in _BITGET_UTA_FUNDING_TYPES:
+            continue
+        events.append(_event(
+            row.get("id"),
+            row.get("symbol"),
+            row.get("amount"),
+            row.get("coin"),
+            row.get("ts"),
+            fund_type,
+        ))
+    return _deduplicate(events)
+
+
 def normalize_okx_funding_rows(rows: Iterable[Mapping]) -> list[dict]:
     events = []
     for row in rows:
