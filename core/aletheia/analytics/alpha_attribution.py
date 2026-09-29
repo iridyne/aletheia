@@ -687,7 +687,7 @@ def _universe_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dic
 
     rows = db.execute(
         "SELECT symbol, direction, horizon, entry_ts, directional_return_pct "
-        "FROM universe_forward_outcomes "
+        "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
         f"AND {complete_outcome_economics_sql()} "
         "AND horizon IN ('1h', '4h', '24h') "

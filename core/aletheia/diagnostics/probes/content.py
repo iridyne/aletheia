@@ -291,25 +291,25 @@ def _probe_content_shadow_trades(report: Report) -> None:
 
 
 def _probe_content_signal_settlement(report: Report) -> None:
-    """universe_forward_outcomes that are past due_at but still pending — the outcome
+    """filter_candidate_outcomes that are past due_at but still pending — the outcome
     settler job is stalled, so signal effectiveness silently stops updating."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
-        total = db.execute("SELECT COUNT(*) FROM universe_forward_outcomes").fetchone()[0]
+        total = db.execute("SELECT COUNT(*) FROM filter_candidate_outcomes").fetchone()[0]
         if total == 0:
             report.add("content.signal_settlement", "info", "no forward outcomes yet")
             return
         now_iso = datetime.now(timezone.utc).isoformat()
         overdue = db.execute(
-            "SELECT COUNT(*) FROM universe_forward_outcomes "
+            "SELECT COUNT(*) FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
             (now_iso,),
         ).fetchone()[0]
         oldest_due = None
         if overdue > 0:
             oldest_due = db.execute(
-                "SELECT MIN(due_at) FROM universe_forward_outcomes "
+                "SELECT MIN(due_at) FROM filter_candidate_outcomes "
                 "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
                 (now_iso,),
             ).fetchone()[0]
