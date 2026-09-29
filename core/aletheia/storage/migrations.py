@@ -8406,6 +8406,70 @@ def _apply_cost_covering_edge_backfill_v89(db: sqlite3.Connection) -> None:
         )
 
 
+def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None:
+    """Rename candidate_selection_utility_v1 → candidate_selection_utility in stored rows.
+
+    Rebuilds candidate_planning_generations to add the canonical name to the CHECK constraint
+    (keeping v1 for backward compat), then backfills both tables.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'"
+    ).fetchone()
+    if row is not None:
+        sql = str(row[0])
+        old_in = "('legacy_total_score_v1','candidate_selection_utility_v1','serenity_research_v1')"
+        new_in = "('legacy_total_score_v1','candidate_selection_utility_v1','candidate_selection_utility','serenity_research_v1')"
+        old_neq = "candidate_selection_policy!='candidate_selection_utility_v1'"
+        new_neq = "candidate_selection_policy NOT IN ('candidate_selection_utility_v1','candidate_selection_utility')"
+        if old_in in sql:
+            new_sql = sql.replace(old_in, new_in).replace(old_neq, new_neq)
+            if '"candidate_planning_generations"' in new_sql:
+                new_sql = new_sql.replace('"candidate_planning_generations"', "candidate_planning_generations_v93", 1)
+            else:
+                new_sql = new_sql.replace("CREATE TABLE candidate_planning_generations", "CREATE TABLE candidate_planning_generations_v93", 1)
+            objects = db.execute(
+                "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND "
+                "(type='trigger' OR (type='index' AND tbl_name='candidate_planning_generations'))"
+            ).fetchall()
+            row_count = int(db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0])
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("SAVEPOINT candidate_policy_name_convergence_v93")
+            try:
+                for kind, name, _ in objects:
+                    if kind == "trigger":
+                        db.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+                db.execute(new_sql)
+                db.execute("INSERT INTO candidate_planning_generations_v93 SELECT * FROM candidate_planning_generations")
+                db.execute("DROP TABLE candidate_planning_generations")
+                db.execute("ALTER TABLE candidate_planning_generations_v93 RENAME TO candidate_planning_generations")
+                for _, _, statement in objects:
+                    db.execute(statement)
+                db.execute(
+                    "UPDATE candidate_planning_generations "
+                    "SET candidate_selection_policy='candidate_selection_utility' "
+                    "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
+                )
+                if db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise MigrationStateError("candidate_policy_name_convergence_foreign_key_invalid")
+                if int(db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0]) != row_count:
+                    raise MigrationStateError("candidate_policy_name_convergence_count_mismatch")
+                db.execute("RELEASE SAVEPOINT candidate_policy_name_convergence_v93")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT candidate_policy_name_convergence_v93")
+                db.execute("RELEASE SAVEPOINT candidate_policy_name_convergence_v93")
+                raise
+            finally:
+                db.execute("PRAGMA foreign_keys=ON")
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='universe_members'"
+    ).fetchone():
+        db.execute(
+            "UPDATE universe_members SET candidate_selection_policy='candidate_selection_utility' "
+            "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
+        )
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8952,6 +9016,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"drop_strategy_records_v92:strategy_records:retired_product_no_writers").hexdigest(),
         schema_version="aletheia-sqlite-v92",
         apply=_apply_drop_strategy_records_v92,
+    ),
+    MigrationStep(
+        migration_id="20260929_0093_candidate_policy_name_convergence_v93",
+        checksum=hashlib.sha256(b"candidate_policy_name_convergence_v93:candidate_selection_utility_v1->candidate_selection_utility:backfill+constraint").hexdigest(),
+        schema_version="aletheia-sqlite-v93",
+        apply=_apply_candidate_policy_name_convergence_v93,
     ),
 )
 

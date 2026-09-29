@@ -315,12 +315,12 @@ def _normalize_candidate_selection(cfg: AletheiaConfig) -> bool:
     from aletheia.config.schema import UniverseConfig
 
     epoch = canonical_fingerprint(candidate_selection_policy_identity(cfg))
-    if (cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+    if (cfg.universe.candidate_selection_policy == "candidate_selection_utility"
             and cfg.universe.candidate_selection_policy_epoch == epoch):
         return False
     cfg.universe = UniverseConfig.model_validate({
         **cfg.universe.model_dump(),
-        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy": "candidate_selection_utility",
         "candidate_selection_policy_epoch": epoch,
     })
     return True

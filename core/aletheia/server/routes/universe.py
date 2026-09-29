@@ -13,7 +13,7 @@ from typing_extensions import NotRequired, TypedDict
 
 
 def _hide_retired_candidate_scores(member: dict) -> None:
-    if member.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+    if member.get("candidate_selection_policy") in {"candidate_selection_utility", "candidate_selection_utility_v1"}:
         member.update(dict.fromkeys((
             "total_score", "opportunity_score", "tradability_score", "liquidity_score",
             "crowding_risk", "late_entry_penalty", "all_scores",

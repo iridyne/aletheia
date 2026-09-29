@@ -1379,7 +1379,7 @@ class UniverseMember(BaseModel):
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
+        "legacy_total_score_v1", "candidate_selection_utility", "serenity_research_v1"
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
@@ -1398,7 +1398,7 @@ class UniverseMember(BaseModel):
     def _validate_candidate_selection_evidence(self):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-        target = self.candidate_selection_policy in {"candidate_selection_utility_v1", "serenity_research_v1"}
+        target = self.candidate_selection_policy in {"candidate_selection_utility", "serenity_research_v1"}
         mechanism_evidence = (
             self.opportunity_mechanism_version,
             self.opportunity_source_component,
@@ -1481,7 +1481,7 @@ class CandidatePlanningGeneration(_Provenanced):
         "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
     ] | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
+        "legacy_total_score_v1", "candidate_selection_utility", "serenity_research_v1"
     ] | None = None
     candidate_selection_policy_epoch: str | None = None
     mechanism_version: str | None = None
@@ -1539,7 +1539,7 @@ class CandidatePlanningGeneration(_Provenanced):
             if any(value is None or not str(value).strip() for value in fields):
                 raise ValueError("mechanism planning identity is incomplete")
             if (
-                self.candidate_selection_policy == "candidate_selection_utility_v1"
+                self.candidate_selection_policy == "candidate_selection_utility"
                 and not str(self.candidate_selection_policy_epoch or "").strip()
             ):
                 raise ValueError("target mechanism planning epoch is missing")

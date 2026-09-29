@@ -413,7 +413,7 @@ def build_candidate_selection_shadow_bundle(
             "minimum_interval_sec": CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
             "legacy_rollback": False,
             "authority_policy": (
-                "candidate_selection_utility_v1" if authority_applied else "legacy_total_score_v1"
+                "candidate_selection_utility" if authority_applied else "legacy_total_score_v1"
             ),
         }),
         candidate_count=len(evidence_rows),
@@ -694,7 +694,7 @@ def target_candidates_from_bundle(
             "startup_reason": decision.get("startup_reason"),
             "pessimistic_strength": mechanism.get("pessimistic_strength"),
             "candidate_selection_key": row.candidate_key,
-            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy": "candidate_selection_utility",
             "candidate_selection_policy_epoch": bundle.batch.policy_epoch_id,
             "opportunity_mechanism": decision["primary_mechanism"],
             "opportunity_mechanism_version": mechanism["mechanism_version"],

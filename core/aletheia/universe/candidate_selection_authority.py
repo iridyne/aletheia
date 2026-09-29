@@ -12,7 +12,7 @@ from aletheia.config.schema import UniverseConfig
 
 
 LEGACY_CANDIDATE_POLICY = "legacy_total_score_v1"
-TARGET_CANDIDATE_POLICY = "candidate_selection_utility_v1"
+TARGET_CANDIDATE_POLICY = "candidate_selection_utility"
 _TRANSITION_JOURNAL = "candidate_selection_authority_transition.json"
 
 
