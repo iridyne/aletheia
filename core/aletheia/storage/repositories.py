@@ -3923,6 +3923,34 @@ def ensure_candidate_planning_generation(
         return data, True
 
 
+_CLAIMABLE_PLANNING_SOURCE = (
+    "FROM candidate_planning_generations pg "
+    "JOIN universe_members um ON um.id=pg.last_candidate_id "
+)
+
+# The one claim predicate: which Generation the Entry Planner may take *next*.
+# Shared verbatim by the claim, the pending count, and the venue-margin demand
+# projection (#3741) so the instrument facts the runtime maintains cannot drift
+# from the generations the Planner actually claims. Placeholder order is
+# ``(resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp)``.
+_CLAIMABLE_PLANNING_WHERE = (
+    "pg.is_current=1 AND pg.attention_status='active' "
+    "AND pg.entry_behavior_fingerprint IS NOT NULL "
+    "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
+    "AND um.execution_eligible=1 "
+    "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+    "AND pg.attempt_count<? AND (pg.status='pending' "
+    "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
+    "OR (pg.status='planning' AND pg.claim_expires_at<=?))"
+)
+
+
+def _claimable_planning_params(
+    resume_only: bool, max_attempts: int, timestamp: str
+) -> tuple:
+    return (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp)
+
+
 def claim_next_candidate_planning(
     owner_token: str,
     *,
@@ -3941,20 +3969,11 @@ def claim_next_candidate_planning(
         row = (
             get_db()
             .execute(
-                "SELECT pg.* FROM candidate_planning_generations pg "
-                "JOIN universe_members um ON um.id=pg.last_candidate_id "
-                "WHERE pg.is_current=1 AND pg.attention_status='active' "
-                "AND pg.entry_behavior_fingerprint IS NOT NULL "
-                "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
-                "AND um.execution_eligible=1 "
-                "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
-                "AND pg.attempt_count<? AND (pg.status='pending' "
-                "OR (pg.status='unavailable' "
-                "AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
-                "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
-                "ORDER BY CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC, "
+                "SELECT pg.* " + _CLAIMABLE_PLANNING_SOURCE
+                + "WHERE " + _CLAIMABLE_PLANNING_WHERE
+                + " ORDER BY CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC, "
                 "pg.created_at ASC, pg.id ASC LIMIT 1",
-                (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
+                _claimable_planning_params(resume_only, max_attempts, timestamp),
             )
             .fetchone()
         )
@@ -4198,17 +4217,9 @@ def count_pending_candidate_planning(
     row = (
         get_db()
         .execute(
-            "SELECT COUNT(*) FROM candidate_planning_generations pg "
-            "JOIN universe_members um ON um.id=pg.last_candidate_id "
-            "WHERE pg.is_current=1 AND pg.attention_status='active' "
-            "AND pg.entry_behavior_fingerprint IS NOT NULL "
-            "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
-            "AND um.execution_eligible=1 "
-            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
-            "AND pg.attempt_count<? AND (pg.status='pending' "
-            "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
-            "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
-            (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
+            "SELECT COUNT(*) " + _CLAIMABLE_PLANNING_SOURCE
+            + "WHERE " + _CLAIMABLE_PLANNING_WHERE,
+            _claimable_planning_params(resume_only, max_attempts, timestamp),
         )
         .fetchone()
     )

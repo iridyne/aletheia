@@ -406,6 +406,53 @@ async def test_demand_refresh_isolates_one_instrument_failure(tmp_path, monkeypa
     ) is None
 
 
+async def test_demand_refresh_uses_the_routes_submission_margin_mode(tmp_path, monkeypatch):
+    """The cached mode is not part of the key, so a row in another mode is not usable.
+
+    The Compiler asks for the route's submission mode; a refresh that wrote any
+    other mode would leave a row that still fails closed with
+    REASON_MARGIN_MODE_UNAVAILABLE.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    now = 1_000_000_000_000
+    vm.store_venue_margin_envelope(_make_envelope(vm, margin_mode="cross", fetched_at_ms=now))
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="bitget_demo",  # submission mode for this route is isolated
+        pairs=[("BTC/USDT", "perp")],
+        exchange=exchange,
+        now=now + 1_000,
+    )
+
+    assert exchange.fetched == ["BTC/USDT:USDT"], "a cross row is not fresh for an isolated order"
+    assert (result["refreshed"], result["fresh"], result["margin_mode"]) == (1, 0, "isolated")
+    stored = vm.load_venue_margin_envelope(
+        venue="bitget", symbol="BTC/USDT", market_type="perp",
+        margin_mode="isolated", now=now + 2_000,
+    )
+    assert stored.margin_mode == "isolated"
+
+
+async def test_demand_refresh_is_not_applicable_without_a_qualified_margin_mode(tmp_path, monkeypatch):
+    """A route with no submission mode cannot be financed, so nothing is fetched for it."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="binance_testnet",  # venue registered, no submission margin mode
+        pairs=[("BTC/USDT", "perp")],
+        exchange=exchange,
+    )
+
+    assert result["status"] == "not_applicable"
+    assert result["reason"] == "margin_mode_unavailable"
+    assert exchange.fetched == []
+
+
 async def test_demand_refresh_is_not_applicable_without_a_registered_venue(tmp_path, monkeypatch):
     """An internal/paper route holds no exchange position, so there is nothing to fetch."""
     setup_env(tmp_path, monkeypatch)
