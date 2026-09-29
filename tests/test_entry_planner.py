@@ -1927,3 +1927,85 @@ def test_replacement_candidate_handoff_uses_canonical_cycle_association():
     [projection] = _attach_candidate_handoff_state([repo.get_candidate(replacement.id)])
     assert projection["entry_plan_id"] == record["id"]
     assert projection["entry_plan_status"] == record["status"]
+
+
+def test_release_candidate_planning_claim_detail_is_optional():
+    """#3750: ``detail`` mirrors ``fail_candidate_planning`` -- persisted beside
+    ``reason`` only when non-empty, never changing the existing shape."""
+    for i, (reason, detail, expected) in enumerate([
+        ("SOME_REASON", "", {"reason": "SOME_REASON"}),
+        ("SOME_REASON", "category=stale elapsed_ms=12",
+         {"reason": "SOME_REASON", "detail": "category=stale elapsed_ms=12"}),
+    ]):
+        candidate = _candidate(asset_id=f"asset-{i}", symbol=f"SYM{i}/USDT")
+        generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+        repo.claim_next_candidate_planning("owner")
+        kwargs = {"retry_seconds": 1}
+        if detail:
+            kwargs["detail"] = detail
+        assert repo.release_candidate_planning_claim(generation["id"], "owner", reason, **kwargs)
+        row = repo.get_candidate_planning_generation(generation["id"])
+        assert json.loads(row["result_json"]) == expected
+
+
+def test_live_fetch_failure_orderbook_records_category(monkeypatch):
+    """Mechanism A (#3750): a live-fetch failure's category now survives past
+    the dropped ``logger.warning`` into the persisted ``result_json.detail``."""
+    from aletheia.data import providers
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    class Provider:
+        async def get_orderbook_observation(self, symbol, *, market_type):
+            raise TimeoutError
+        async def close(self):
+            pass
+    monkeypatch.setattr(providers, "get_market_data_provider", lambda *a, **k: Provider())
+
+    async def forbidden_model(*args):
+        pytest.fail("model must not be invoked when execution context is unavailable")
+
+    result = asyncio.run(plan_next_candidate(forbidden_model))
+    assert result["status"] == "unavailable"
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    payload = json.loads(stored["result_json"])
+    assert payload["reason"] == "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE"
+    assert payload["detail"].startswith("category=timeout elapsed_ms=")
+
+
+def test_inner_fresh_outer_stale_orderbook_records_mechanism(monkeypatch):
+    """Mechanism B (#3750): the persisted book was fresh at
+    ``_ensure_entry_orderbook``'s own check, but the caller's fresh recheck a
+    moment later falls outside the 2s window -- previously left no trace at
+    all; now persists ``inner_fresh_outer_stale:elapsed_ms=...``."""
+    from aletheia.agent_shell import entry_planner
+    from extensions.data.collectors.microstructure import _parse_orderbook
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    base = datetime(2026, 9, 3, 12, 0, 0, tzinfo=timezone.utc)
+    book = _parse_orderbook("BTC/USDT", "bitget", {
+        "bids": [[99.99, 200]], "asks": [[100.01, 200]],
+    }, 0, market_type="perp")
+    book.observed_at = base.isoformat()
+    repo.insert_orderbook_snapshot(book.model_dump())
+
+    class AdvancingClock(datetime):
+        calls = 0
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls += 1
+            return base if cls.calls == 1 else base + timedelta(seconds=3)
+
+    monkeypatch.setattr(entry_planner, "datetime", AdvancingClock)
+
+    async def forbidden_model(*args):
+        pytest.fail("model must not be invoked when execution context is unavailable")
+
+    result = asyncio.run(plan_next_candidate(forbidden_model))
+    assert result["status"] == "unavailable"
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    payload = json.loads(stored["result_json"])
+    assert payload["reason"] == "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE"
+    assert payload["detail"] == "inner_fresh_outer_stale:elapsed_ms=3000"
