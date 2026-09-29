@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_secret, set_secret
-from extensions.exchanges.bitget.auth import probe_candidate_credentials
 from aletheia.files.jsonl import write_audit
 from aletheia.trust.live_unlock import active_live_profile_conflict
 
@@ -78,14 +77,35 @@ class TestCandidateCredsRequest(BaseModel):
 @router.post("/bitget/test-candidate")
 async def test_candidate_credentials(req: TestCandidateCredsRequest):
     """Verify-before-commit probe: test CANDIDATE Bitget credentials live without
-    persisting them. Credentials are used to sign one read-only account-info request
-    and are never stored, logged, or echoed back. No audit (nothing is persisted)."""
+    persisting them. Credentials are used for one read-only account-info request
+    via CCXT and are never stored, logged, or echoed back. No audit (nothing is persisted)."""
     if req.profile not in ("demo", "live"):
         raise HTTPException(400, "profile must be 'demo' or 'live'")
-
-    return await probe_candidate_credentials(
-        req.api_key, req.api_secret, req.passphrase, req.profile
-    )
+    try:
+        from aletheia.net import close_ccxt, make_ccxt
+        exchange, session = make_ccxt(
+            "bitget",
+            apiKey=req.api_key,
+            secret=req.api_secret,
+            password=req.passphrase,
+        )
+        try:
+            if req.profile == "demo":
+                exchange.set_sandbox_mode(True)
+            await exchange.privateSpotGetV2SpotAccountInfo({})
+        finally:
+            if not await close_ccxt(exchange, session):
+                raise RuntimeError("credential_probe_cleanup_failed")
+        return {"connected": True, "profile": req.profile}
+    except Exception as e:
+        err_msg = str(e)
+        if "timeout" in err_msg.lower():
+            return {"connected": False, "profile": req.profile, "error": "connection_timeout"}
+        if "connect" in err_msg.lower():
+            return {"connected": False, "profile": req.profile, "error": "connection_failed"}
+        # error-leak: never echo raw str(e) — a CCXT/exchange error can carry the
+        # request (incl. candidate api_key/secret) or internal URLs.
+        return {"connected": False, "profile": req.profile, "error": type(e).__name__}
 
 
 def _binance_cred_status() -> dict:

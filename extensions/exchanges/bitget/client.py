@@ -3,12 +3,10 @@
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Iterable
-from urllib.parse import urlencode
 
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.models import FillReport, UTAAccountIdentity
-from aletheia.net import httpx_client
-from extensions.exchanges.bitget.auth import BASE_URL, build_headers
+from aletheia.net import close_ccxt, make_ccxt
 from extensions.exchanges.bitget.profile_config import _KNOWN_PROFILES
 from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_canonical
@@ -139,13 +137,10 @@ class BitgetClient:
         self.mode = mode
         self.profile = profile
         self.demo = mode == "demo"
-        self._base = BASE_URL
+        self._uta = profile == "uta_v3"
 
-    def _cred_prefix(self) -> str:
-        return f"bitget.{self.mode}"
-
-    def _get_creds(self) -> tuple[str, str, str]:
-        prefix = self._cred_prefix()
+    def _make_exchange(self):
+        prefix = f"bitget.{self.mode}"
         api_key = get_secret(f"{prefix}.api_key")
         api_secret = get_secret(f"{prefix}.api_secret")
         passphrase = get_secret(f"{prefix}.passphrase")
@@ -153,11 +148,16 @@ class BitgetClient:
             raise RuntimeError(
                 f"Bitget {self.mode} credentials not configured. Use: aletheia secrets set {prefix}.api_key"
             )
-        return api_key, api_secret, passphrase
-
-    def _headers(self, method: str, path: str, body: str = "") -> dict:
-        api_key, secret, passphrase = self._get_creds()
-        return build_headers(api_key, secret, passphrase, method, path, body, demo=self.demo)
+        exchange, session = make_ccxt(
+            "bitget",
+            apiKey=api_key,
+            secret=api_secret,
+            password=passphrase,
+            options={"uta": self._uta},
+        )
+        if self.demo:
+            exchange.set_sandbox_mode(True)
+        return exchange, session
 
     async def _uta_plan_history(self, symbol, order_id):
         """Return UTA strategy children in the classic plan-history shape.
@@ -172,43 +172,42 @@ class BitgetClient:
         if not order_id:
             raise ValueError("Bitget UTA strategy history requires order_id")
 
-        endpoint = "/api/v3/trade/strategy-sub-orders"
-        cursor: str | None = None
-        rows: list[dict] = []
-        for _ in range(100):
-            params = {"orderId": order_id, "limit": "100"}
-            if cursor:
-                params["cursor"] = cursor
-            path = f"{endpoint}?{urlencode(params)}"
-            headers = self._headers("GET", path)
-            async with httpx_client(timeout=15) as client:
-                resp = await client.get(f"{self._base}{path}", headers=headers)
-                data = resp.json()
-            if data.get("code") != "00000":
-                raise RuntimeError("Bitget UTA strategy sub-order history rejected")
-            payload = data.get("data") or {}
-            page = payload.get("list") if isinstance(payload, dict) else None
-            if not isinstance(page, list):
-                raise ValueError("Bitget UTA strategy sub-order history malformed")
-            for child in page:
-                if not isinstance(child, dict):
-                    continue
-                child_id = str(child.get("subOrderId") or "").strip()
-                status = str(child.get("status") or "").strip().lower()
-                if not child_id:
-                    continue
-                row = dict(child)
-                row["orderId"] = order_id
-                row["executeOrderId"] = child_id if status == "filled" else ""
-                row["planStatus"] = "executed" if status == "filled" else status
-                rows.append(row)
-            if len(page) < 100:
-                return rows
-            next_cursor = str(payload.get("cursor") or "").strip()
-            if not next_cursor or next_cursor == cursor:
-                raise RuntimeError("Bitget UTA strategy sub-order pagination incomplete")
-            cursor = next_cursor
-        raise RuntimeError("Bitget UTA strategy sub-order history incomplete")
+        exchange, session = self._make_exchange()
+        try:
+            cursor: str | None = None
+            rows: list[dict] = []
+            for _ in range(100):
+                params: dict[str, object] = {"orderId": order_id, "limit": "100"}
+                if cursor:
+                    params["cursor"] = cursor
+                data = await exchange.privateUtaGetV3TradeStrategySubOrders(params)
+                if data.get("code") != "00000":
+                    raise RuntimeError("Bitget UTA strategy sub-order history rejected")
+                payload = data.get("data") or {}
+                page = payload.get("list") if isinstance(payload, dict) else None
+                if not isinstance(page, list):
+                    raise ValueError("Bitget UTA strategy sub-order history malformed")
+                for child in page:
+                    if not isinstance(child, dict):
+                        continue
+                    child_id = str(child.get("subOrderId") or "").strip()
+                    status = str(child.get("status") or "").strip().lower()
+                    if not child_id:
+                        continue
+                    row = dict(child)
+                    row["orderId"] = order_id
+                    row["executeOrderId"] = child_id if status == "filled" else ""
+                    row["planStatus"] = "executed" if status == "filled" else status
+                    rows.append(row)
+                if len(page) < 100:
+                    return rows
+                next_cursor = str(payload.get("cursor") or "").strip()
+                if not next_cursor or next_cursor == cursor:
+                    raise RuntimeError("Bitget UTA strategy sub-order pagination incomplete")
+                cursor = next_cursor
+            raise RuntimeError("Bitget UTA strategy sub-order history incomplete")
+        finally:
+            await close_ccxt(exchange, session)
 
     async def get_order_fills(
         self,
@@ -227,39 +226,39 @@ class BitgetClient:
         if self.profile == "uta_v3":
             return await self._get_order_fills_uta_v3(order_id=order_id, symbol=symbol)
 
-        endpoint = "/api/v2/mix/order/fills"
-        cursor: str | None = None
-        fills: list[dict] = []
-        for _ in range(100):
-            params = {
-                "productType": "USDT-FUTURES",
-                "symbol": symbol,
-                "orderId": order_id,
-                "limit": "100",
-            }
-            if cursor:
-                params["idLessThan"] = cursor
-            path = f"{endpoint}?{urlencode(params)}"
-            headers = self._headers("GET", path)
-            async with httpx_client(timeout=15) as client:
-                response = await client.get(f"{self._base}{path}", headers=headers)
-                payload = response.json()
-            if payload.get("code") != "00000":
-                raise RuntimeError("Bitget exact private fill history rejected")
-            data = payload.get("data")
-            if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
-                raise ValueError("Bitget exact private fill history malformed")
-            page = [
-                row for row in data["fillList"] if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
-            ]
-            fills.extend(page)
-            if len(data["fillList"]) < 100:
-                return fills
-            next_cursor = str(data.get("endId") or "")
-            if not next_cursor or next_cursor == cursor:
-                raise RuntimeError("Bitget exact private fill pagination incomplete")
-            cursor = next_cursor
-        raise RuntimeError("Bitget exact private fill history incomplete")
+        exchange, session = self._make_exchange()
+        try:
+            cursor: str | None = None
+            fills: list[dict] = []
+            for _ in range(100):
+                params: dict[str, object] = {
+                    "productType": "USDT-FUTURES",
+                    "symbol": symbol,
+                    "orderId": order_id,
+                    "limit": "100",
+                }
+                if cursor:
+                    params["idLessThan"] = cursor
+                payload = await exchange.privateMixGetV2MixOrderFills(params)
+                if payload.get("code") != "00000":
+                    raise RuntimeError("Bitget exact private fill history rejected")
+                data = payload.get("data")
+                if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
+                    raise ValueError("Bitget exact private fill history malformed")
+                page = [
+                    row for row in data["fillList"]
+                    if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+                ]
+                fills.extend(page)
+                if len(data["fillList"]) < 100:
+                    return fills
+                next_cursor = str(data.get("endId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    raise RuntimeError("Bitget exact private fill pagination incomplete")
+                cursor = next_cursor
+            raise RuntimeError("Bitget exact private fill history incomplete")
+        finally:
+            await close_ccxt(exchange, session)
 
     async def get_order_fill_reports(
         self,
@@ -286,17 +285,17 @@ class BitgetClient:
 
     async def _get_order_fills_uta_v3(self, *, order_id: str, symbol: str) -> list[dict]:
         """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id."""
-        params = {
+        params: dict[str, object] = {
             "category": "USDT-FUTURES",
             "symbol": symbol,
             "orderId": order_id,
             "limit": "100",
         }
-        path = f"/api/v3/trade/fills?{urlencode(params)}"
-        headers = self._headers("GET", path)
-        async with httpx_client(timeout=15) as client:
-            response = await client.get(f"{self._base}{path}", headers=headers)
-            payload = response.json()
+        exchange, session = self._make_exchange()
+        try:
+            payload = await exchange.privateUtaGetV3TradeFills(params)
+        finally:
+            await close_ccxt(exchange, session)
         if payload.get("code") != "00000":
             raise RuntimeError("Bitget UTA exact private fill history rejected")
         data = payload.get("data") or {}
@@ -312,15 +311,16 @@ class BitgetClient:
         """
         if self.profile == "uta_v3":
             return await self._uta_plan_history(symbol=symbol, order_id=order_id)
-        path = "/api/v2/mix/order/orders-plan-history?productType=USDT-FUTURES&planType=profit_loss"
+        params: dict[str, object] = {"productType": "USDT-FUTURES", "planType": "profit_loss"}
         if symbol:
-            path += f"&symbol={symbol}"
+            params["symbol"] = symbol
         if order_id:
-            path += f"&orderId={order_id}"
-        headers = self._headers("GET", path)
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(f"{self._base}{path}", headers=headers)
-            data = resp.json()
+            params["orderId"] = order_id
+        exchange, session = self._make_exchange()
+        try:
+            data = await exchange.privateMixGetV2MixOrderOrdersPlanHistory(params)
+        finally:
+            await close_ccxt(exchange, session)
         if data.get("code") != "00000":
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
         return data.get("data", {}).get("entrustedList", []) or []

@@ -29,10 +29,8 @@ def test_exchange_compartment_has_no_core_forwarding_path(current, retired):
      "import asyncio\nfrom aletheia.config.schema import AletheiaConfig\ncfg = AletheiaConfig()\ncfg.exchange.name = 'bitget'\ncfg.exchange.mode = 'live'\nassert asyncio.run(module.run_live_preflight(cfg))['reason_code'] == 'exchange_adapter_unavailable'"),
     ("aletheia.server.routes.bitget", ("aletheia.config.secrets", "aletheia.exchanges", "extensions.exchanges", "ccxt"),
      "assert not {'set_exchange_credentials', 'test_candidate_credentials', 'get_secret', 'set_secret'} & vars(module).keys()"),
-    ("aletheia.server.app", ("extensions.exchanges.bitget.auth",),
-     "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
     ("aletheia.server.app", ("extensions.exchanges.bitget",),
-     "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
+     "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' in paths\nassert '/api/bitget/credentials-status' in paths"),
     ("aletheia.server.app", ("extensions.exchanges.credential_routes",),
      "paths = {route.path for route in module.app.routes}\nassert '/api/uta/state' in paths\nassert '/api/bitget/test-connection' in paths\nassert '/api/bitget/test-candidate' not in paths\nassert '/api/bitget/credentials-status' not in paths"),
     ("extensions.exchanges.composition", ("extensions.exchanges.binance.profile", "extensions.exchanges.okx.profile"),
@@ -80,7 +78,7 @@ def test_venue_profile_has_one_extension_implementation(venue):
         importlib.import_module(f"aletheia.uta.profiles.{venue}")
 
 
-@pytest.mark.parametrize("name", ["auth", "client", "native_protection", "profile_config"])
+@pytest.mark.parametrize("name", ["client", "native_protection", "profile_config"])
 def test_native_bitget_has_one_extension_implementation(name):
     import importlib
 
