@@ -25,11 +25,9 @@ from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_divergence_opportunity_by_source_version,
     insert_divergence_opportunity_once,
-    list_strategies,
     transaction,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
-from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 logger = logging.getLogger("aletheia.divergence_scanner")
 
@@ -298,12 +296,6 @@ async def run_divergence_scanner(
                 input_data=f"qualifying_markets={len(rows)}", output_data=None)
 
     # Step 2: For each qualifying market, check crypto price divergence
-    linked_strategy_id = None
-    for s in list_strategies(limit=50):
-        if is_active_paper_strategy(s):
-            linked_strategy_id = s["id"]
-            break
-
     provider = get_market_data_provider()
     opps_created = 0
 
@@ -554,7 +546,6 @@ async def run_divergence_scanner(
                 confidence_score=score,
                 source_agent="divergence_scanner",
                 scanner_family="reversion",
-                linked_strategy_id=linked_strategy_id,
                 asset_class="crypto",
                 # Divergence remains a Candidate until a family-specific trigger
                 # can freeze entry, invalidation, cost, and exact venue evidence.

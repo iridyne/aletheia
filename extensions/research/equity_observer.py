@@ -39,9 +39,8 @@ from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.symbols import ticker_to_stock_tokens, stock_token_exchange
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity, list_strategies
+from aletheia.storage.repositories import insert_opportunity
 from aletheia.config.loader import load_config
-from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 logger = logging.getLogger("aletheia.agents.equity_observer")
 
@@ -267,7 +266,6 @@ async def _analyze_equity(
     ticker: str,
     permission_mode: str,
     run_id: str | None,
-    linked_strategy_id: str | None,
     observed_xstocks: list[str],
 ) -> tuple[str | None, str | None]:
     """Fetch indicators + optional xstock price + LLM read for one equity ticker.
@@ -446,7 +444,6 @@ async def _analyze_equity(
         confidence=confidence,
         confidence_score=confidence_score if confidence_score is not None else 0,
         source_agent="equity_observer",
-        linked_strategy_id=linked_strategy_id,
         asset_class="equity",
         asset_subclass="equity_daily",
         canonical_ticker=ticker,
@@ -488,12 +485,6 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
 
     observed_xstocks = list(dict.fromkeys(cfg.market_data.observed_stock_tokens))
 
-    linked_strategy_id = None
-    for s in list_strategies(limit=50):
-        if is_active_paper_strategy(s):
-            linked_strategy_id = s["id"]
-            break
-
     hard_errors: list[str] = []
     soft_warnings: list[str] = []
 
@@ -503,7 +494,6 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
                 ticker=ticker,
                 permission_mode=permission_mode,
                 run_id=run_id,
-                linked_strategy_id=linked_strategy_id,
                 observed_xstocks=observed_xstocks,
             )
             if opp_id:
