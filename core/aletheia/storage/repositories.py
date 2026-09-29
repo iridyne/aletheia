@@ -76,14 +76,12 @@ from aletheia.storage.repositories_universe import (
     _forward_outcome_insert_payload as _forward_outcome_insert_payload,
     _project_candidate_admission as _project_candidate_admission,
     _protected_universe_outcome_ids as _protected_universe_outcome_ids,
-    _shadow_candidate_identity_sql as _shadow_candidate_identity_sql,
     _universe_twin_shadow_capture_due_from_latest as _universe_twin_shadow_capture_due_from_latest,
     _validate_universe_twin_prospective_bundle as _validate_universe_twin_prospective_bundle,
     get_candidate_planning_generation as get_candidate_planning_generation,
     get_universe_member as get_universe_member,
     insert_filter_candidate_outcomes_batch as insert_filter_candidate_outcomes_batch,
     list_universe_members as list_universe_members,
-    settle_linked_shadow_outcomes as settle_linked_shadow_outcomes,
 )
 
 from aletheia.storage.repositories_research import *  # noqa: F403
@@ -117,6 +115,13 @@ _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerp
 
 
 _CANDIDATE_SELECTION_RECORD_VERSIONS = frozenset({
+    "candidate-selection-utility-record",
+    "candidate-selection-utility-record/v1",
+    "candidate-selection-utility-record/v2",
+    "candidate-selection-utility-record/v3",
+    "candidate-selection-utility-record/v4",
+})
+_LEGACY_SELECTION_RECORD_VERSIONS = frozenset({
     "candidate-selection-utility-record/v1",
     "candidate-selection-utility-record/v2",
     "candidate-selection-utility-record/v3",
@@ -2479,10 +2484,8 @@ _PRUNABLE = {
     "market_snapshots": "snapshot_at",
     "portfolio_snapshots": "snapshot_at",
     # Analytics/telemetry tables that grew unbounded with no prune path (DG-1):
-    # serenity_claims (research evidence) + shadow_trades (counterfactual analysis).
-    # NOT causal-chain tables — safe to prune old rows. 90-day retention.
+    # serenity_claims (research evidence). NOT causal-chain tables — safe to prune old rows.
     "serenity_claims": "created_at",
-    "shadow_trades": "created_at",
     # Filter evidence is analytical and reproducible from source decisions. Keep
     # enough history for paired cohorts without allowing 10-minute batches to
     # grow the SQLite file forever. Authoritative RiskDecision/order rows remain
@@ -2617,14 +2620,10 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT j.value FROM universe_twin_shadow_records r "
                 "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
                 "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
-                "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE b.record_version LIKE 'candidate-selection-utility-record%' "
                 "AND ((b.policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE record_version LIKE 'candidate-selection-utility-record%' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -2644,9 +2643,7 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
                 "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE record_version LIKE 'candidate-selection-utility-record%' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -4062,7 +4059,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
                     "SELECT b.policy_epoch_id, b.policy_json FROM universe_twin_shadow_batches b "
                     "JOIN universe_scanner_runs s ON s.id=b.scanner_run_id "
                     "WHERE b.policy_epoch_id IS NOT NULL AND s.status='completed' "
-                    "AND b.record_version LIKE 'candidate-selection-utility-record/%' "
+                    "AND b.record_version LIKE 'candidate-selection-utility-record%' "
                     "ORDER BY b.captured_at DESC,b.scanner_run_id DESC LIMIT 1"
                 ).fetchone()
                 epoch = epoch_row[0] if epoch_row else None
@@ -4164,7 +4161,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             blockers["entry_outcome_identity_unavailable"] = relation_gaps
         due = db.execute(
             "WITH epoch_batches AS MATERIALIZED (SELECT scanner_run_id FROM universe_twin_shadow_batches "
-            "WHERE policy_epoch_id=? AND record_version LIKE 'candidate-selection-utility-record/%'), "
+            "WHERE policy_epoch_id=? AND record_version LIKE 'candidate-selection-utility-record%'), "
             "selection_keys AS (SELECT j.value AS key FROM epoch_batches b "
             "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
             "JOIN json_each(r.compact_output_json,'$.outcome_candidate_keys') j), "
@@ -5049,10 +5046,7 @@ def _settle_outcome_with_exact_venue(
                     "settlement_producer_commit": provenance.get("producer_commit"),
                     "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
                 }
-            won = _update_pending(table, outcome_id, updates)
-            if won and table == "filter_candidate_outcomes" and row.get("horizon") == "24h":
-                settle_linked_shadow_outcomes(str(row.get("outcome_candidate_key") or ""))
-            return won
+            return _update_pending(table, outcome_id, updates)
 
 
 def insert_forward_outcomes_batch(outcomes: list) -> None:
@@ -6242,33 +6236,6 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
                 "ttl_hours": ttl_hours,
             },
         )
-
-
-# ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
-
-
-def insert_shadow_trade(shadow) -> None:
-    data = _to_payload_dict(shadow)
-    keyed_result_fields = (
-        "exit_price",
-        "pnl_pct",
-        "gross_return_pct",
-        "net_pnl_pct",
-        "estimated_fee_pct",
-        "estimated_spread_slippage_pct",
-        "estimated_funding_pct",
-        "min_tradable_edge_pct",
-        "settlement_price_source",
-        "settlement_lag_sec",
-        "cost_model_version",
-        "btc_return_pct",
-        "resolved_at",
-    )
-    if str(data.get("outcome_candidate_key") or "").strip() and any(
-        data.get(field) is not None for field in keyed_result_fields
-    ):
-        raise ValueError("keyed shadow results require canonical projection")
-    _insert("shadow_trades", data)
 
 
 # ── Market Regime ─────────────────────────────────────────────────────────────

@@ -21,7 +21,6 @@ from aletheia.storage.models import (
 )
 
 __all__ = [
-    "anchor_shadow_trade_exit_price_if_pending",
     "cancel_all_pending_forward_outcomes",
     "candidate_selection_cost_assumptions",
     "close_pending_filter_outcomes_for_inactive_benchmarks",
@@ -39,7 +38,6 @@ __all__ = [
     "get_candidate_entry_lifecycle",
     "get_candidate_planning_for_candidate",
     "get_candidate_planning_generation",
-    "get_decision_grade_shadow_outcome",
     "get_exit_breakeven_shadow_assignment",
     "get_latest_feature_snapshot",
     "get_universe_asset",
@@ -62,7 +60,6 @@ __all__ = [
     "list_pending_filter_candidate_outcomes_for_keys",
     "list_pending_forward_outcomes",
     "list_pending_universe_discovery_outcomes",
-    "list_shadow_trades",
     "list_universe_assets",
     "list_universe_discovery_batches",
     "list_universe_discovery_outcomes",
@@ -72,13 +69,10 @@ __all__ = [
     "list_universe_twin_shadow_records",
     "mark_outlier_outcomes_failed",
     "prune_perp_structure_shadow_outcomes",
-    "prune_shadow_trades",
     "prune_universe_scanner_runs",
     "prune_universe_twin_shadow_evidence",
-    "resolve_shadow_trade_if_pending",
     "settle_filter_candidate_outcome",
     "settle_forward_outcome",
-    "settle_linked_shadow_outcomes",
     "settle_perp_structure_shadow_outcome",
     "sync_universe_assets",
     "upsert_universe_asset",
@@ -177,12 +171,6 @@ def _filter_outcome_loss_event(
             f"incomplete population."
         ),
     )
-
-
-def prune_shadow_trades(days: int = 90) -> int:
-    from aletheia.storage.repositories import _delete_old_rows
-
-    return _delete_old_rows("shadow_trades", days)
 
 
 def _candidate_selection_retention_state() -> tuple[bool, str | None]:
@@ -381,7 +369,11 @@ def _validate_universe_twin_prospective_bundle(
 
     if batch.record_version in _CANDIDATE_SELECTION_RECORD_VERSIONS:
         authority_applied = bool(batch.promotion_eligible)
-        if batch.record_version in {"candidate-selection-utility-record/v3", "candidate-selection-utility-record/v4"}:
+        if batch.record_version in {
+            "candidate-selection-utility-record",
+            "candidate-selection-utility-record/v3",
+            "candidate-selection-utility-record/v4",
+        }:
             try:
                 sampling = json.loads(batch.allocation_context_json)
             except (TypeError, ValueError):
@@ -392,7 +384,10 @@ def _validate_universe_twin_prospective_bundle(
                 or sampling.get("minimum_interval_sec") != 4 * 60 * 60
             ):
                 raise ValueError("candidate_selection_sampling_contract_invalid")
-        if batch.record_version == "candidate-selection-utility-record/v4":
+        if batch.record_version in {
+            "candidate-selection-utility-record",
+            "candidate-selection-utility-record/v4",
+        }:
             authority_policy = sampling.get("authority_policy")
             if authority_policy not in {"candidate_selection_utility_v1", "legacy_total_score_v1"}:
                 raise ValueError("candidate_selection_authority_contract_invalid")
@@ -436,7 +431,11 @@ def _validate_universe_twin_prospective_bundle(
             if contract.get("outcome_contract_version") != "candidate-selection-utility-outcome/v1":
                 raise ValueError("candidate_selection_shadow_outcome_contract_invalid")
             if (
-                batch.record_version in {"candidate-selection-utility-record/v3", "candidate-selection-utility-record/v4"}
+                batch.record_version in {
+                    "candidate-selection-utility-record",
+                    "candidate-selection-utility-record/v3",
+                    "candidate-selection-utility-record/v4",
+                }
                 and contract.get("evidence_sampling_contract")
                 != "candidate-selection-evidence-cadence/v2"
             ):
@@ -1085,10 +1084,7 @@ def valid_keyed_shadow_projection_sql(
     require_not_invalidated: bool = True,
 ) -> str:
     """Require one keyed shadow net to equal its canonical settled 24h outcome."""
-    from aletheia.storage.repositories import (
-        _shadow_candidate_identity_sql,
-        complete_outcome_economics_sql,
-    )
+    from aletheia.storage.repositories import complete_outcome_economics_sql
 
     shadow = f"{shadow_alias}." if shadow_alias else ""
     outcome = "canonical_outcome."
@@ -1124,47 +1120,6 @@ def valid_keyed_shadow_projection_sql(
         f"AND {shadow}cost_model_version = {outcome}cost_model_version "
         f"{equality})"
     )
-
-
-def get_decision_grade_shadow_outcome(
-    shadow_id: str,
-    horizon: str,
-) -> dict | None:
-    """Return exact canonical outcome evidence for one persisted shadow exposure."""
-    from aletheia.storage.repositories import (
-        _shadow_candidate_identity_sql,
-        complete_outcome_economics_sql,
-        get_db,
-        valid_keyed_shadow_projection_sql,
-    )
-
-    normalized_horizon = str(horizon).strip().lower()
-    authority_sql = (
-        valid_keyed_shadow_projection_sql("shadow_trades")
-        if normalized_horizon == "24h"
-        else _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
-    )
-    row = (
-        get_db()
-        .execute(
-            "SELECT canonical_outcome.*, shadow_trades.id AS shadow_id, "
-            "shadow_trades.batch_id AS shadow_batch_id, "
-            "shadow_trades.opportunity_id AS shadow_opportunity_id, "
-            "shadow_trades.was_selected AS shadow_was_selected, "
-            "shadow_trades.created_at AS shadow_created_at, "
-            "shadow_trades.rank AS shadow_rank "
-            "FROM shadow_trades JOIN filter_candidate_outcomes AS canonical_outcome "
-            "ON canonical_outcome.outcome_candidate_key=shadow_trades.outcome_candidate_key "
-            "AND canonical_outcome.horizon=? "
-            "WHERE shadow_trades.id=? AND canonical_outcome.status='settled' "
-            f"AND {complete_outcome_economics_sql('canonical_outcome')} "
-            f"AND {authority_sql} "
-            "LIMIT 1",
-            (normalized_horizon, shadow_id),
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
 
 
 def _forward_outcome_insert_payload(outcome) -> dict:
@@ -1705,9 +1660,7 @@ def candidate_selection_cost_assumptions(outcome_candidate_key: str) -> dict | N
         "FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
         "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
-        "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
-        "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-        "'candidate-selection-utility-record/v4') "
+        "WHERE b.record_version LIKE 'candidate-selection-utility-record%' "
         "AND j.value=? LIMIT 1",
         (outcome_candidate_key,),
     ).fetchone()
@@ -1888,52 +1841,6 @@ def fail_filter_candidate_outcome(
         updates,
         kind="filter",
     )
-
-
-def settle_linked_shadow_outcomes(
-    outcome_candidate_key: str,
-) -> int:
-    """Project the unique decision-grade canonical 24h row onto linked shadows."""
-    from aletheia.storage.repositories import (
-        _shadow_candidate_identity_sql,
-        complete_outcome_economics_sql,
-        execute_write,
-        get_db,
-    )
-
-    db = get_db()
-    was_in_tx = db.in_transaction
-    identity_sql = _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
-    canonical_where = (
-        "canonical_outcome.outcome_candidate_key="
-        "shadow_trades.outcome_candidate_key "
-        "AND canonical_outcome.horizon='24h' "
-        "AND canonical_outcome.status='settled' "
-        "AND typeof(canonical_outcome.settled_at)='text' "
-        "AND typeof(canonical_outcome.gross_return_pct) IN ('integer','real') "
-        "AND ABS(canonical_outcome.gross_return_pct) < 1e999 "
-        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
-        f"AND {identity_sql}"
-    )
-    cur = execute_write(
-        "UPDATE shadow_trades SET (exit_price,pnl_pct,gross_return_pct,net_pnl_pct,"
-        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
-        "min_tradable_edge_pct,min_cost_covering_edge_pct,settlement_price_source,settlement_lag_sec,"
-        "cost_model_version,resolved_at) = (SELECT exit_price_usd,"
-        "directional_return_pct,gross_return_pct,net_return_pct,estimated_fee_pct,"
-        "estimated_spread_slippage_pct,estimated_funding_pct,min_tradable_edge_pct,"
-        "min_cost_covering_edge_pct,"
-        "settlement_price_source,settlement_lag_sec,cost_model_version,settled_at "
-        "FROM filter_candidate_outcomes AS canonical_outcome "
-        f"WHERE {canonical_where}) "
-        "WHERE outcome_candidate_key=? AND resolved_at IS NULL "
-        "AND EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
-        f"WHERE {canonical_where})",
-        (outcome_candidate_key,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
 
 
 def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
@@ -2149,9 +2056,7 @@ def prune_universe_twin_shadow_evidence(
                 "WHERE event_type='candidate_selection_authority_admitted' GROUP BY 1), "
                 "protected_epochs(policy_epoch_id) AS ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE record_version LIKE 'candidate-selection-utility-record%' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT policy_epoch_id FROM admissions), "
@@ -2161,9 +2066,7 @@ def prune_universe_twin_shadow_evidence(
                 "SELECT b.scanner_run_id FROM universe_twin_shadow_batches b CROSS JOIN training "
                 "LEFT JOIN admissions a ON a.policy_epoch_id=b.policy_epoch_id "
                 "WHERE b.captured_at < ? AND ("
-                "b.record_version NOT IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') OR "
+                "b.record_version NOT LIKE 'candidate-selection-utility-record%' OR "
                 "((training.cutoff IS NULL OR b.captured_at > training.cutoff) AND ("
                 "COALESCE(b.policy_epoch_id, '') NOT IN protected_epochs OR "
                 "(a.admitted_at IS NOT NULL AND b.captured_at > a.admitted_at))))",
@@ -2173,9 +2076,7 @@ def prune_universe_twin_shadow_evidence(
             run_rows = db.execute(
                 "SELECT scanner_run_id FROM universe_twin_shadow_batches "
                 "WHERE captured_at < ? "
-                "AND record_version NOT IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4')",
+                "AND record_version NOT LIKE 'candidate-selection-utility-record%'",
                 (cutoff,),
             ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]
@@ -2203,128 +2104,6 @@ def prune_universe_twin_shadow_evidence(
             or 0
         )
     return deleted
-
-
-def anchor_shadow_trade_exit_price_if_pending(
-    shadow_id: str,
-    *,
-    exit_price: float,
-) -> bool:
-    """Anchor one legacy unkeyed close-event price without resolving the row."""
-    from aletheia.storage.repositories import (
-        execute_write,
-        get_db,
-    )
-
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cursor = execute_write(
-        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? "
-        "AND outcome_candidate_key IS NULL "
-        "AND resolved_at IS NULL AND exit_price IS NULL",
-        (exit_price, shadow_id),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cursor.rowcount == 1
-
-
-def resolve_shadow_trade_if_pending(
-    shadow_id: str,
-    *,
-    exit_price: float,
-    pnl_pct: float,
-    resolved_at: str,
-    economics: dict | None = None,
-    settlement_price_source: str | None = None,
-    settlement_lag_sec: float | None = None,
-) -> bool:
-    """Resolve one legacy unkeyed shadow once, leaving keyed rows untouched.
-
-    When ``economics`` is provided (dict returned by
-    ``aletheia.universe.outcome_economics.estimate_outcome_economics``), the
-    cost-model fields are populated in the same UPDATE. Rows resolved without
-    ``economics`` remain compatible with the historic minimal-writer contract:
-    only ``exit_price``, ``pnl_pct``, ``resolved_at`` change.
-    """
-    from aletheia.storage.repositories import (
-        execute_write,
-        get_db,
-    )
-
-    db = get_db()
-    was_in_tx = db.in_transaction
-    if not economics:
-        cursor = execute_write(
-            "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
-            "WHERE id = ? AND outcome_candidate_key IS NULL "
-            "AND resolved_at IS NULL",
-            (exit_price, pnl_pct, resolved_at, shadow_id),
-        )
-    else:
-        cursor = execute_write(
-            "UPDATE shadow_trades SET "
-            " exit_price = ?, pnl_pct = ?, "
-            " gross_return_pct = ?, net_pnl_pct = ?, "
-            " estimated_fee_pct = ?, estimated_spread_slippage_pct = ?, "
-            " estimated_funding_pct = ?, min_tradable_edge_pct = ?, "
-            " min_cost_covering_edge_pct = ?, "
-            " settlement_price_source = ?, settlement_lag_sec = ?, "
-            " cost_model_version = ?, resolved_at = ? "
-            "WHERE id = ? AND outcome_candidate_key IS NULL "
-            "AND resolved_at IS NULL",
-            (
-                exit_price,
-                pnl_pct,
-                economics.get("gross_return_pct"),
-                economics.get("net_return_pct"),
-                economics.get("estimated_fee_pct"),
-                economics.get("estimated_spread_slippage_pct"),
-                economics.get("estimated_funding_pct"),
-                economics.get("min_tradable_edge_pct"),
-                economics.get("min_cost_covering_edge_pct"),
-                settlement_price_source,
-                settlement_lag_sec,
-                economics.get("cost_model_version"),
-                resolved_at,
-                shadow_id,
-            ),
-        )
-    if not was_in_tx:
-        db.commit()
-    return cursor.rowcount == 1
-
-
-def list_shadow_trades(
-    batch_id: str | None = None,
-    scanner_family: str | None = None,
-    opportunity_id: str | None = None,
-    was_selected: bool | None = None,
-    resolved: bool | None = None,
-    limit: int = 200,
-) -> list[dict]:
-    from aletheia.storage.repositories import _select_all
-
-    conditions: list[str] = ["invalidated_at IS NULL"]
-    params: list = []
-    if batch_id is not None:
-        conditions.append("batch_id = ?")
-        params.append(batch_id)
-    if scanner_family is not None:
-        conditions.append("scanner_family = ?")
-        params.append(scanner_family)
-    if opportunity_id is not None:
-        conditions.append("opportunity_id = ?")
-        params.append(opportunity_id)
-    if was_selected is not None:
-        conditions.append("was_selected = ?")
-        params.append(int(was_selected))
-    if resolved is True:
-        conditions.append("resolved_at IS NOT NULL")
-    elif resolved is False:
-        conditions.append("resolved_at IS NULL")
-    where = " AND ".join(conditions) if conditions else None
-    return _select_all("shadow_trades", where=where, params=tuple(params), limit=limit)
 
 
 def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
