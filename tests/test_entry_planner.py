@@ -786,7 +786,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-direct", "grounded-anchor-retrace-reclaim"])
-@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH"])
+@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH", "stop_distance_below_vol_target:0.0125<0.0150"])
 def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
@@ -931,7 +931,10 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
                 monkeypatch.setattr("aletheia.trading.entry_contract.entry_contract_fingerprints",
                     lambda: ("new-running-behavior", "new-running-schema"))
                 return plan
-            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE" if compiler_error == "COMPILER_RETRY_EXHAUSTED" else compiler_error)
+            code, _, detail = str(compiler_error).partition(":")
+            if compiler_error == "COMPILER_RETRY_EXHAUSTED":
+                code = "COMPILER_RISK_BUDGET_UNAVAILABLE"
+            raise PlanIntentError(code, detail)
         monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", fail_compile)
     result = asyncio.run(
         plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
@@ -950,6 +953,13 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         }.get(compiler_error)
         if expected_activation:
             assert stored["outcome_reason"] == f"ENTRY_PLAN_ACTIVATION_INVALID:{expected_activation}"
+        if ":" in str(compiler_error):
+            # A rejection that measured something must keep the measurement: the
+            # typed reason stays the code consumers match on (#3743).
+            measured = json.loads(stored["result_json"])
+            assert stored["outcome_reason"] == "ENTRY_PLAN_COMPILE_INVALID:stop_distance_below_vol_target"
+            assert measured["reason"] == stored["outcome_reason"]
+            assert measured["detail"] == "0.0125<0.0150"
         if compiler_error == "COMPILER_RETRY_EXHAUSTED":
             for attempt in (2, 3):
                 repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
