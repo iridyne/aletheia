@@ -32,7 +32,7 @@ from aletheia.universe.opportunity_evidence import (
 from aletheia.universe.twin_persistence import TwinShadowBundle
 from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT
 
-CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v4"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v2"
 CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION = "candidate-selection-evidence-cadence/v2"
 CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC = 4 * 60 * 60
@@ -580,15 +580,13 @@ def candidate_selection_training_cutoff(
     from aletheia.storage import repositories as repo
 
     epoch_clause = " AND b.policy_epoch_id=?" if policy_epoch_id is not None else ""
-    params: tuple[object, ...] = (
-        (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3", policy_epoch_id)
-        if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3")
-    )
+    params: tuple[object, ...] = (policy_epoch_id,) if policy_epoch_id is not None else ()
     rows = repo.get_db().execute(
         "SELECT b.captured_at, b.policy_json, r.compact_output_json "
         "FROM universe_twin_shadow_batches b "
         "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
-        "WHERE b.record_version IN (?,?) AND b.policy_epoch_id IS NOT NULL "
+        "WHERE b.record_version LIKE 'candidate-selection-utility-record%' "
+        "AND b.policy_epoch_id IS NOT NULL "
         f"{epoch_clause} "
         "ORDER BY b.captured_at, r.candidate_index",
         params,
