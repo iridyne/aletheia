@@ -4946,10 +4946,6 @@ def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
 # Universe Forward Outcomes
 # ---------------------------------------------------------------------------
 
-_OUTCOME_MARKET_SQL = (
-    "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
-    "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
-)
 SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 
@@ -4997,9 +4993,6 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
         f"AND {prefix}min_tradable_edge_pct >= 0 "
         f"AND {prefix}min_tradable_edge_pct < 1e999"
     )
-
-
-_COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
 
 
 def _settle_outcome_with_exact_venue(
@@ -5268,38 +5261,20 @@ def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 10
 def calibration_stats(*, cost_model_version: str) -> list[dict]:
     """Aggregate one exact cost-model cohort by family/direction/market/horizon.
 
-    Legacy gross-only rows are intentionally excluded. A win must clear the
-    persisted minimum tradable edge after fees, spread/slippage and funding.
+    Reads filter_candidate_outcomes (full filter arm, selected + unselected).
+    Legacy gross-only rows are intentionally excluded.
     """
     from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.analytics.candidate_outcome_projection import (
+        calibration_cohort,
+        calibration_lineage,
+    )
 
-    db = get_db()
     cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "cost_model_version, "
-        "COUNT(*) as n, "
-        "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
-        "  THEN 1 ELSE 0 END) as win_count, "
-        "MIN(net_return_pct) as min_return, "
-        "MAX(net_return_pct) as max_return "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND entry_ts >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
-        "cost_model_version "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff, cost_model_version),
-    ).fetchall()
-    lineage = _calibration_source_lineage(db, cutoff, cost_model_version)
+    rows = calibration_cohort(cost_model_version=cost_model_version, cutoff=cutoff)
+    lineage = calibration_lineage(cost_model_version=cost_model_version, cutoff=cutoff)
     result = []
-    for raw in rows:
-        row = dict(raw)
+    for row in rows:
         key = (
             row.get("scanner_family"),
             row.get("direction"),
@@ -5316,108 +5291,6 @@ def calibration_stats(*, cost_model_version: str) -> list[dict]:
     return result
 
 
-def _horizon_to_seconds(h: str) -> int:
-    if h.endswith("m"):
-        return int(h[:-1]) * 60
-    if h.endswith("h"):
-        return int(h[:-1]) * 3600
-    if h.endswith("d"):
-        return int(h[:-1]) * 86400
-    raise ValueError(f"unknown horizon: {h!r}")
-
-
-def _horizon_separated_counts(
-    rows: list[tuple[str, str, str]],
-    horizon: str,
-) -> tuple[int, int, int]:
-    """Greedy horizon-separated counts for (symbol, venue, entry_ts) rows.
-
-    Within each (symbol, venue) pair, admit a row only if its entry_ts is at
-    least one target horizon after the last admitted row for that pair.
-    Returns (independent_n, distinct_symbols, distinct_days).
-    """
-    from datetime import datetime
-
-    try:
-        horizon_sec = _horizon_to_seconds(horizon)
-    except (ValueError, TypeError):
-        horizon_sec = 0
-
-    sorted_rows = sorted(rows, key=lambda r: (r[0], r[1], r[2]))
-    last_admitted: dict[tuple, float] = {}
-    admitted_symbols: set[str] = set()
-    admitted_days: set[str] = set()
-    independent_n = 0
-
-    for symbol, venue, entry_ts_str in sorted_rows:
-        try:
-            ts = datetime.fromisoformat(entry_ts_str.replace("Z", "+00:00")).timestamp()
-        except (ValueError, TypeError):
-            continue
-        sv = (symbol, venue)
-        last = last_admitted.get(sv)
-        if last is None or ts >= last + horizon_sec:
-            last_admitted[sv] = ts
-            independent_n += 1
-            admitted_symbols.add(symbol)
-            admitted_days.add(entry_ts_str[:10])
-
-    return independent_n, len(admitted_symbols), len(admitted_days)
-
-
-def _calibration_source_lineage(
-    db,
-    cutoff: str,
-    cost_model_version: str,
-) -> dict[tuple, dict]:
-    """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
-    cursor = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, id, "
-        "outcome_candidate_key, member_id, symbol, venue, entry_ts, settled_at, net_return_pct, "
-        "min_tradable_edge_pct, cost_model_version "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND entry_ts >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        "ORDER BY scanner_family, direction, market_type, horizon, id",
-        (cutoff, cost_model_version),
-    )
-    hashers: dict[tuple, object] = {}
-    counts: dict[tuple, int] = {}
-    group_rows: dict[tuple, list] = {}
-    for raw in cursor:
-        row = dict(raw)
-        key = (
-            row.pop("scanner_family"),
-            row.pop("direction"),
-            row.pop("market_type"),
-            row.pop("horizon"),
-        )
-        symbol = row.pop("symbol", None) or ""
-        venue = row.pop("venue", None) or ""
-        entry_ts = row.get("entry_ts")
-        hasher = hashers.setdefault(key, hashlib.sha256())
-        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
-        hasher.update(canonical.encode("utf-8"))
-        hasher.update(b"\n")
-        counts[key] = counts.get(key, 0) + 1
-        if entry_ts:
-            group_rows.setdefault(key, []).append((symbol, venue, entry_ts))
-    result = {}
-    for key, hasher in hashers.items():
-        horizon = key[3]
-        ind_n, dist_sym, dist_days = _horizon_separated_counts(group_rows.get(key, []), horizon)
-        result[key] = {
-            "fingerprint": hasher.hexdigest(),
-            "count": counts[key],
-            "independent_n": ind_n,
-            "distinct_symbols": dist_sym,
-            "distinct_days": dist_days,
-        }
-    return result
 
 
 def family_spread_tolerance_stats(
@@ -5426,46 +5299,16 @@ def family_spread_tolerance_stats(
     cutoff: str | None = None,
     settled_through: str | None = None,
 ) -> list[dict]:
-    """Per-family spread sensitivity from settled universe forward outcomes.
-
-    Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
-    measure whether a family retains positive net expectancy at higher spreads. Used
-    by filter_advisor to compute per-family spread tolerance multipliers.
-    """
+    """Per-family spread sensitivity from filter_candidate_outcomes full-arm rows."""
     from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.analytics.candidate_outcome_projection import spread_tolerance_cohort
 
-    db = get_db()
     cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "cost_model_version, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
-        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
-        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
-        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND cost_model_version = ? "
-        "AND scanner_family IS NOT NULL "
-        "AND entry_spread_bps IS NOT NULL "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"{settled_clause}"
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
-        "cost_model_version "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (
-            (cost_model_version, cutoff, settled_through)
-            if settled_through is not None else (cost_model_version, cutoff)
-        ),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return spread_tolerance_cohort(
+        cost_model_version=cost_model_version,
+        cutoff=cutoff,
+        settled_through=settled_through,
+    )
 
 
 def family_direction_edge(
@@ -5476,45 +5319,20 @@ def family_direction_edge(
 ) -> list[dict]:
     """Per-(scanner_family, direction, market_type) cost-aware edge.
 
-    Risk live-family evidence and explicit research query. Like
-    calibration_stats(), this keeps long/short and spot/perpetual evidence
-    separate; unlike calibration_stats(), it selects one horizon and recent
-    time window. Reuses the existing universe_forward_outcomes store and
-    excludes legacy gross-only rows.
+    Risk live-family evidence and explicit research query. Reads selected
+    filter_candidate_outcomes (allocation_selected = 1) for the given horizon
+    and recent time window.
 
     Returns rows: {scanner_family, direction, market_type, n, win_rate, avg_return}.
     Only families with n >= 1 in the window are returned.
     """
-    db = get_db()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, "
-        "cost_model_version, "
-        "COUNT(*) as n, "
-        "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
-        "  THEN 1 ELSE 0 END) as win_count "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' AND horizon = ? "
-        "AND settled_at >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND scanner_family IS NOT NULL "
-        "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, "
-        "cost_model_version "
-        "ORDER BY n DESC",
-        (horizon, cutoff, cost_model_version),
-    ).fetchall()
-    out: list[dict] = []
-    for r in rows:
-        d = dict(r)
-        n = d.get("n") or 0
-        d["win_rate"] = round((d.get("win_count") or 0) / n * 100, 1) if n else None
-        d["avg_return"] = round(d["avg_return"], 3) if d.get("avg_return") is not None else None
-        out.append(d)
-    return out
+    from aletheia.analytics.candidate_outcome_projection import family_edge_stats
+
+    return family_edge_stats(
+        horizon=horizon,
+        within_days=within_days,
+        cost_model_version=cost_model_version,
+    )
 
 
 def guard_candidate_exists_recent(

@@ -367,10 +367,9 @@ def test_row_verdict_requires_reconcilable_cost_economics():
 )
 def test_calibration_excludes_gross_only_rows():
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.models import FilterCandidateOutcome
 
     common = dict(
-        snapshot_id="snap-oo",
         venue="bitget",
         scanner_family="momentum",
         direction="long",
@@ -383,21 +382,19 @@ def test_calibration_excludes_gross_only_rows():
         settlement_lag_sec=0.0,
         status="settled",
     )
-    repo.insert_forward_outcomes_batch([
-        UniverseForwardOutcome(
-            member_id="member-gross-only", symbol="AAA/USDT",
-            exit_price_usd=109.0,
-            forward_return_pct=9.0, gross_return_pct=9.0, **common,
+    # gross-only row: no net economics — excluded by complete_outcome_economics_sql filter
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key="key-gross-only:long", symbol="AAA/USDT",
+            exit_price_usd=109.0, gross_return_pct=9.0, **common,
         ),
-        UniverseForwardOutcome(
-                member_id="member-net", symbol="BBB/USDT",
-                    exit_price_usd=99.0,
-                    forward_return_pct=-1.0, gross_return_pct=-1.0,
-                    directional_return_pct=-1.0, net_return_pct=-1.2,
-                    estimated_fee_pct=0.1,
-                    estimated_spread_slippage_pct=0.1,
-                    estimated_funding_pct=0.0,
-                    min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
+        FilterCandidateOutcome(
+            outcome_candidate_key="key-net:long", symbol="BBB/USDT",
+            exit_price_usd=99.0, gross_return_pct=-1.0,
+            directional_return_pct=-1.0, net_return_pct=-1.2,
+            estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1,
+            estimated_funding_pct=0.0,
+            min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
         ),
     ])
 

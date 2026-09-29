@@ -631,31 +631,37 @@ def test_public_shadow_diagnostics_sanitize_unauthorized_results():
 
 def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
     from aletheia.storage.sqlite import get_db
+    from datetime import datetime, timezone
 
-    _insert_outcome(
-        "large-valid", 0.05,
-        directional_return_pct=200.0,
-        net_return_pct=200.0,
-    )
-    _insert_outcome(
-        "physical-outlier", 0.05,
-        directional_return_pct=1_000_001.0,
-        net_return_pct=1_000_001.0,
-    )
+    # UFO: outlier detection still marks physical outliers as failed in UFO.
+    _insert_outcome("large-valid", 0.05, directional_return_pct=200.0, net_return_pct=200.0)
+    _insert_outcome("physical-outlier", 0.05, directional_return_pct=1_000_001.0, net_return_pct=1_000_001.0)
     get_db().commit()
 
     assert repo.mark_outlier_outcomes_failed() == 1
     statuses = {
         row["id"]: row["status"]
-        for row in get_db().execute(
-            "SELECT id, status FROM universe_forward_outcomes"
-        ).fetchall()
+        for row in get_db().execute("SELECT id, status FROM universe_forward_outcomes").fetchall()
     }
-    assert statuses == {
-        "large-valid": "settled",
-        "physical-outlier": "failed",
-    }
+    assert statuses == {"large-valid": "settled", "physical-outlier": "failed"}
+
+    # Calibration reads FCO — seed the valid row there to verify large-but-real returns pass.
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key="fco-large-valid:long", symbol="BTC/USDT",
+            venue="okx", scanner_family="momentum", direction="long",
+            market_type="spot", horizon="24h", entry_price_usd=100.0,
+            exit_price_usd=300.0, entry_ts=now, due_at=now, settled_at=now,
+            settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
+            gross_return_pct=200.0, directional_return_pct=200.0,
+            estimated_fee_pct=0.0, estimated_spread_slippage_pct=0.0,
+            estimated_funding_pct=0.0, net_return_pct=200.0,
+            min_tradable_edge_pct=0.05, cost_model_version="v1", status="settled",
+        ),
+    ])
     calibration = repo.calibration_stats(cost_model_version="v1")
     assert len(calibration) == 1
     assert calibration[0]["n"] == 1

@@ -833,8 +833,9 @@ def _setup_du_db(tmp_path, monkeypatch):
 
 def _seed_forward_outcome(
     conn, family, direction, forward_return, horizon="24h", edge=0.05,
-    cost_model_version="v1", cost_covering=0.25,
+    cost_model_version="v1", cost_covering=0.25, allocation_selected=1,
 ):
+    """Seed a settled FilterCandidateOutcome row (selected by default)."""
     import uuid
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
@@ -845,21 +846,23 @@ def _seed_forward_outcome(
     )
     net = directional - 0.2 if directional is not None else None
     conn.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, scanner_family, direction, horizon, "
         " entry_price_usd, entry_ts, due_at, settled_at, "
         " settlement_price_source, settlement_lag_sec, exit_price_usd, "
-        " forward_return_pct, gross_return_pct, directional_return_pct, "
+        " gross_return_pct, directional_return_pct, "
         " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         " net_return_pct, "
-        " min_tradable_edge_pct, min_cost_covering_edge_pct, market_type, cost_model_version, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "bitget", "X/USDT",
+        " min_tradable_edge_pct, min_cost_covering_edge_pct, market_type, cost_model_version, "
+        " allocation_selected, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), str(uuid.uuid4()), "bitget", "X/USDT",
          family, direction, horizon, 100.0, now, now, now,
          "horizon_ohlcv", 0.0,
          100.0 * (1.0 + forward_return / 100.0),
-         forward_return, forward_return, directional, 0.1, 0.1, 0.0,
-         net, edge, cost_covering, "spot", cost_model_version, "settled"),
+         forward_return, directional, 0.1, 0.1, 0.0,
+         net, edge, cost_covering, "spot", cost_model_version,
+         allocation_selected, "settled"),
     )
     conn.commit()
 
@@ -884,8 +887,8 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     # momentum:short — 2 outcomes, 2 wins (negative return = short win)
     _seed_forward_outcome(conn, "momentum", "short", -2.0)
     _seed_forward_outcome(conn, "momentum", "short", -3.0)
-    # Unknown-direction legacy row must not be folded into momentum:long.
-    _seed_forward_outcome(conn, "momentum", None, 9.0)
+    # Non-(long/short) direction row must not be folded into momentum:long.
+    _seed_forward_outcome(conn, "momentum", "unknown", 9.0)
 
     rows = family_direction_edge(
         horizon="24h", within_days=7, cost_model_version="v1",
