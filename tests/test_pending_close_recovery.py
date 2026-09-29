@@ -963,6 +963,135 @@ def test_rate_limited_park_is_not_released_after_four_hour_floor():
     assert stored["pending_close_status"] == "venue_trade_rate_limited"
 
 
+# ── #3719: the 40725 park is a close claim, not an unclaimed position ───────
+
+
+def _seed_parked_claim(*, position_id="pos-parked-40725", age_hours=22.5):
+    from tests.helpers.execution_authority import seed_order_authority
+    from tests.helpers.fill_reports import DEFAULT_IDENTITY
+
+    proposal, decision = seed_order_authority(
+        proposal_id=f"prop-{position_id}",
+        risk_decision_id=f"risk-{position_id}",
+        symbol="XRP/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        order_type="market",
+        quantity=9.0,
+        price=1.1219,
+        execution_mode="bitget_demo",
+    )
+    entry = Order(
+        proposal_id=proposal.id, risk_decision_id=decision.id,
+        client_order_id=proposal.id, symbol="XRP/USDT", market_type="usdt_futures",
+        direction="short", order_type="market", quantity=9.0, price=1.1219,
+        execution_mode="bitget_demo", status="filled",
+        uta_account_identity_json=DEFAULT_IDENTITY.model_dump_json(),
+    )
+    repo.insert_order(entry)
+    repo.insert_position(
+        _position(
+            id=position_id,
+            order_id=entry.id,
+            proposal_id=proposal.id,
+            pending_close_order_id=f"close-{position_id}",
+            pending_close_status=pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+            pending_close_requested_at=_iso(age_hours),
+        )
+    )
+    repo.insert_order(
+        Order(
+            id=f"close-{position_id}",
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            proposal_id=proposal.id,
+            close_reason="stop_loss",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.1219,
+            execution_mode="bitget_demo",
+            status="cancelled",
+            source="native",
+            exchange_order_id="1471627178020290560",
+            error_reason=pcr.TRADE_RATE_LIMIT_CANCEL_REASON,
+            created_at=_iso(age_hours),
+        )
+    )
+
+
+def _orders_for_position(position_id: str) -> list[dict]:
+    return [
+        dict(row)
+        for row in repo.get_db().execute(
+            "SELECT id, status, error_reason FROM orders WHERE position_id = ?",
+            (position_id,),
+        ).fetchall()
+    ]
+
+
+def test_parked_claim_holds_the_close_fence_without_immediate_reconciliation():
+    from aletheia.execution.close_convergence import (
+        CLOSE_CLAIM_STATES,
+        IMMEDIATE_RECONCILIATION_STATES,
+        has_unresolved_close_claim,
+    )
+
+    assert pcr.VENUE_TRADE_RATE_LIMITED_STATUS in CLOSE_CLAIM_STATES
+    assert pcr.VENUE_TRADE_RATE_LIMITED_STATUS not in IMMEDIATE_RECONCILIATION_STATES
+    assert has_unresolved_close_claim({
+        "pending_close_order_id": "close-pos-parked-40725",
+        "pending_close_status": pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+    }) is True
+
+
+@pytest.mark.parametrize(
+    ("age_hours", "escalated"),
+    [
+        (0.5, False),   # fresh park: still inside the ordinary flight window
+        (22.5, True),   # stale park: escalated, but the owner action is unchanged
+    ],
+)
+def test_parked_claim_view_names_the_owner_unlock_at_any_age(age_hours, escalated):
+    from aletheia.execution.close_convergence import close_convergence_view
+
+    view = close_convergence_view({
+        "status": "open",
+        "pending_close_order_id": "close-pos-parked-40725",
+        "pending_close_status": pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+        "pending_close_requested_at": _iso(age_hours),
+    })
+
+    assert view["pending_close"] is True
+    assert view["close_convergence_state"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+    assert view["close_convergence_owner_status"] == (
+        "venue rate limited; owner unlock required"
+    )
+    assert view["close_convergence_requires_reconciliation"] is escalated
+    assert view["close_convergence_escalated"] is escalated
+
+
+def test_repeated_close_on_parked_claim_returns_already_pending():
+    """#3719: the second close must return the parked claim, never claim an Order."""
+    _seed_parked_claim()
+
+    from aletheia.execution.coordinator import close_position
+
+    result = close_position("pos-parked-40725", reason="stop_loss")
+
+    assert result["already_pending"] is True
+    assert result["closed"] is False
+    assert result["order_id"] == "close-pos-parked-40725"
+    assert result["status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+    orders = _orders_for_position("pos-parked-40725")
+    assert [order["id"] for order in orders] == ["close-pos-parked-40725"]
+    assert orders[0]["status"] == "cancelled"
+    assert orders[0]["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
+
+
 def test_legacy_submission_rejected_40725_is_still_not_released():
     """Pre-normalization rows must remain parked even on submission_rejected."""
     _seed_order(
@@ -1001,12 +1130,16 @@ def test_legacy_submission_rejected_40725_is_still_not_released():
 
 
 # ---------------------------------------------------------------------------
-# Issue #3719 validation checkpoint (2026-09-29).
+# Issue #3719 validation checkpoint (2026-09-29, #3728).
 #
-# V2 pins the CURRENT source contract, not a desired one: the 40725 park is
-# invisible to `has_unresolved_close_claim`. That test must be inverted (or
-# deleted) when the parked-claim vocabulary is fixed.
-# V3/V4 pin the recovery semantics that must survive any wiring work.
+# V2 pinned the pre-fix contract (the 40725 park invisible to
+# `has_unresolved_close_claim`) and was written to be inverted by the vocabulary
+# fix. It is gone: the parked-claim fence is pinned by
+# `test_parked_claim_holds_the_close_fence_without_immediate_reconciliation`,
+# `test_parked_claim_view_names_the_owner_unlock_at_any_age`,
+# `test_repeated_close_on_parked_claim_returns_already_pending` and
+# `test_parked_close_claim_is_not_resubmitted_or_rewritten` (position_manager).
+# V3/V4 pin the recovery semantics that survive that fix and the wiring.
 # ---------------------------------------------------------------------------
 
 
@@ -1139,47 +1272,6 @@ def _close_orders_for(position_id: str) -> list[dict]:
         .execute("SELECT * FROM orders WHERE position_id=?", (position_id,))
         .fetchall()
     ]
-
-
-def test_v2_venue_trade_rate_limited_does_not_hold_the_close_claim(monkeypatch):
-    """V2 (#3719): a parked 40725 claim is not reported as an unresolved claim.
-
-    `venue_trade_rate_limited` is absent from `CLOSE_CLAIM_STATES`, so the
-    coordinator and `position_manager.evaluate_open_positions` both read the
-    parked Position as claim-free and start another close attempt.
-    """
-    _seed_parked_40725()
-
-    from aletheia.execution.close_convergence import (
-        close_convergence_view,
-        has_unresolved_close_claim,
-    )
-
-    stored = _position_row("pos-parked")
-    assert has_unresolved_close_claim(stored) is False
-
-    view = close_convergence_view(stored)
-    assert view["pending_close"] is False
-    assert view["close_convergence_state"] == "still_open"
-    assert view["close_convergence_requires_reconciliation"] is False
-
-    # Consequence: the coordinator tries to claim a second close for the same
-    # Position. The CAS in `claim_position_close` still refuses the fork, so the
-    # attempt fails loudly instead of reaching the venue.
-    from aletheia.execution.coordinator import close_position
-    from aletheia.storage.repositories import PositionClaimConflict
-
-    with pytest.raises(PositionClaimConflict) as conflict:
-        close_position("pos-parked", "take_profit")
-    assert "position_close_claim_conflict:pos-parked" in str(conflict.value)
-    assert [order["id"] for order in _close_orders_for("pos-parked")] == [
-        "close-pos-parked"
-    ]
-
-    assert _order_row("close-pos-parked")["status"] == "cancelled"
-    fresh = _position_row("pos-parked")
-    assert fresh["pending_close_order_id"] == "close-pos-parked"
-    assert fresh["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
 
 
 @pytest.mark.parametrize("venue_evidence", ["open_order", "exact_fill"])

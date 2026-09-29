@@ -48,6 +48,12 @@ _PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 # resolution (PR4) or later venue proof leaves it.
 _MANUAL_RECONCILIATION_PENDING = "manual_reconciliation_pending"
 
+# Owner-unlock-only close claim (Bitget 40725). It is the one unresolved close
+# claim whose venue side is provably closed — the venue terminally cancelled the
+# close — so the exchange-side protective bracket must keep tracking the local
+# stop instead of being left stale.
+_VENUE_TRADE_RATE_LIMITED = "venue_trade_rate_limited"
+
 
 def _pending_close_age_hours(requested_at: str | None) -> float | None:
     age_hours = pending_close_age_hours(requested_at)
@@ -1399,7 +1405,12 @@ def evaluate_open_positions() -> dict:
                 catastrophic_exits += 1
             else:
                 _maybe_update_trailing_stop(
-                    p, float(price), cfg, sync_exchange=not pending_close,
+                    p, float(price), cfg,
+                    sync_exchange=(
+                        not pending_close
+                        or p.get("pending_close_status")
+                        == _VENUE_TRADE_RATE_LIMITED
+                    ),
                 )
                 decision = _decide_exit(p, float(price), cfg)
                 # Horizon reached but not yet at the hard backstop → wake the Operator

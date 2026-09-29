@@ -434,8 +434,15 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
   `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
   价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
-  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）是 order-attempt rate-limit 标记，
-  **不是** `CLOSE_CLAIM_STATES` 成员，因此不参与 `has_unresolved_close_claim` 的 claim 判定。
+  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）**是** `CLOSE_CLAIM_STATES` 成员：
+  停泊态继续持有 claim fence，任何路径（保护性平仓、手动平仓、coordinator `_claim_close`）都不得
+  再为该 Position 创建第二条 Close Order，只能返回既有 claim 的 `already_pending` 路径。它
+  **不在** `IMMEDIATE_RECONCILIATION_STATES` 里——它需要的是 owner 解锁，机器对账永不释放它；
+  owner read model 以 `close_convergence_state=venue_trade_rate_limited` 与
+  `close_convergence_owner_status="venue rate limited; owner unlock required"` 暴露，且该 owner
+  文案不随 claim 年龄被通用 stale 文案覆盖。停泊 claim 仍按普通 stale claim 升级（超过 stale
+  时限后进入 `stale:venue_trade_rate_limited` 的启动阻挡与 `position_manager` 升级，owner 必须
+  知道存在平不掉的 Position），但该升级绝不释放、绝不重发、绝不伪造成交。
 - **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
   撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
   按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
@@ -459,7 +466,8 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   遗留 `ps_*` intent、Order、Position 状态仅供历史读取，不再授予或阻挡启动/交易权限。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
   `overfilled` 立即阻挡新的
-  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
+  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态与 owner-unlock-only 的
+  `venue_trade_rate_limited` 停泊只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
 - **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
@@ -538,6 +546,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 | Claim state | Meaning | Membership / behavior |
 |---|---|---|
 | `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
+| `venue_trade_rate_limited` | Bitget 40725 park, owner-unlock-only | In `CLOSE_CLAIM_STATES` (the fence holds and every second close returns `already_pending`); not in `IMMEDIATE_RECONCILIATION_STATES`. The convergence view names the owner unlock and that owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close` (`pending_close_recovery.release_rate_limited_close_claim`); machine recovery never releases it. |
 
 **INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
 raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`

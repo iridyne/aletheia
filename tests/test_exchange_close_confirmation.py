@@ -277,6 +277,71 @@ def test_position_manager_keeps_observing_pending_close_without_resubmitting(
     )
 
 
+def test_position_manager_keeps_exchange_stop_tracking_a_parked_close(
+    tmp_path, monkeypatch,
+):
+    """#3719: a 40725 park must not leave the exchange bracket at the stale level.
+
+    The park is the one unresolved close claim with positive venue evidence that
+    no close is live (the venue terminally cancelled it), so the trailed stop must
+    still be written to the exchange; every other claim keeps suppressing it.
+    """
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=90.0,
+        execution_mode="bitget_demo",
+        stop_price=95.0,
+        pending_close_order_id="close-order-parked",
+        pending_close_status="venue_trade_rate_limited",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(minutes=1)
+        ).isoformat(),
+    )
+    repo.insert_position(pos)
+
+    import aletheia.portfolio.position_manager as pm
+
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 90.0,
+    )
+    monkeypatch.setattr(pm, "_layer0_safety_exit", lambda *_args: None)
+    trailing_calls: list[dict] = []
+    monkeypatch.setattr(
+        pm,
+        "_maybe_update_trailing_stop",
+        lambda *_args, **kwargs: trailing_calls.append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        pm, "_decide_exit", lambda *_args: ("stop_loss", 90.0),
+    )
+    monkeypatch.setattr(
+        pm,
+        "close_position_routed",
+        lambda *args, **kwargs: pytest.fail(
+            "a parked close claim must suppress a second exchange submission"
+        ),
+    )
+
+    result = pm.evaluate_open_positions()
+
+    assert result["checked"] == 1
+    assert trailing_calls and trailing_calls[0]["sync_exchange"] is True
+    assert any(
+        observation["code"] == "pending_close_protection_waiting"
+        for observation in result["observations"]
+    )
+    stored = repo.get_position(pos.id)
+    assert stored is not None
+    assert stored["pending_close_status"] == "venue_trade_rate_limited"
+
+
 @pytest.mark.parametrize(
     "pending_status,expected_state,expected_owner_status,requires_reconciliation",
     [
