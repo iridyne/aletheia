@@ -86,7 +86,7 @@ def stop_distance_pct(entry_price: float | None, stop_price: float | None) -> fl
     return (distance / entry) * 100.0
 
 
-def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
+def min_stop_distance_pct(*, execution_mode: str | None, cfg, atr_pct: float | None = None) -> float | None:
     """Exchange-demo floor: stop must be at least ``trading.vol_target_pct``.
 
     That field is the existing ATR vol-target percent used for sizing, not a
@@ -94,6 +94,16 @@ def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
     ``vol_target_pct * SIDEWAYS_STOP_MULT`` (never tighter than the base
     floor). This floor applies only to external Demo modes. ``0`` disables.
     Unpublished regime is fail-open to the base floor.
+
+    DRAFT (#3743, owner-requested, decision 2026-09-30): when
+    ``cfg.trading.stop_floor_policy == "atr_multiple_draft"``, the floor is
+    instead ``cfg.trading.stop_floor_atr_multiple_draft * atr_pct`` (the
+    caller's measured 15m ATR%, frozen at compile time). A missing,
+    non-finite or non-positive ``atr_pct`` falls back to the static
+    ``vol_target_pct`` floor above — the draft policy never loosens the
+    floor without a measurement. The published-sideways doubling still
+    applies to the resulting draft floor (kept simple and conservative,
+    not skipped for the draft policy).
     """
     from aletheia.risk.demo_entry_quality import (
         applies_to_execution_mode,
@@ -102,12 +112,26 @@ def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
 
     if not applies_to_execution_mode(execution_mode):
         return None
+    trading_cfg = getattr(cfg, "trading", None)
     try:
-        floor = float(getattr(getattr(cfg, "trading", None), "vol_target_pct", 0.0) or 0.0)
+        base_floor = float(getattr(trading_cfg, "vol_target_pct", 0.0) or 0.0)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(floor) or floor <= 0:
+    if not math.isfinite(base_floor) or base_floor <= 0:
         return None
+    floor = base_floor
+    if str(getattr(trading_cfg, "stop_floor_policy", "vol_target_pct") or "vol_target_pct") == "atr_multiple_draft":
+        try:
+            atr_value = float(atr_pct) if atr_pct is not None else None
+        except (TypeError, ValueError):
+            atr_value = None
+        if atr_value is not None and math.isfinite(atr_value) and atr_value > 0:
+            try:
+                k = float(getattr(trading_cfg, "stop_floor_atr_multiple_draft", 1.0) or 0.0)
+            except (TypeError, ValueError):
+                k = 0.0
+            if math.isfinite(k) and k > 0:
+                floor = k * atr_value
     try:
         state, _confidence = load_published_regime()
     except Exception:
@@ -125,9 +149,10 @@ def stop_distance_below_min_floor(
     *,
     execution_mode: str | None,
     cfg,
+    atr_pct: float | None = None,
 ) -> str | None:
     """Return a violation token when the stop is tighter than the demo floor."""
-    floor = min_stop_distance_pct(execution_mode=execution_mode, cfg=cfg)
+    floor = min_stop_distance_pct(execution_mode=execution_mode, cfg=cfg, atr_pct=atr_pct)
     distance = stop_distance_pct(entry_price, stop_price)
     if floor is None or distance is None:
         return None

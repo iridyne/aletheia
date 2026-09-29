@@ -297,8 +297,14 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     # A fixed structural stop must clear the same floor Risk will recheck.
     # Check the closest permitted entry: all prices in the frozen zone must fit.
     closest_entry = zone[0] if direction == "long" else zone[1]
+    # DRAFT (#3743): the same 15m ATR% the compiler already carries below
+    # (into `frozen_feature`) — never a second derivation — feeds the floor
+    # gate. Risk rechecks the draft floor against the instrument's current
+    # measured ATR% at execution time, not a value frozen into the Plan.
+    quant_values = context.quant_context.get("values") or {}
+    atr_pct = quant_values.get("atr_pct") or (atr / float(context.candidate["candidate_price"]) * 100.0)
     tight_stop = stop_distance_below_min_floor(
-        closest_entry, stop, execution_mode=authority.execution_route, cfg=cfg,
+        closest_entry, stop, execution_mode=authority.execution_route, cfg=cfg, atr_pct=atr_pct,
     )
     if tight_stop:
         # The token already carries its own code; the rejection detail is the
@@ -330,16 +336,12 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "last_candidate_id": context_generation["candidate_id"],
         "candidate_family": context_generation["candidate_family"],
     }
-    quant_values = context.quant_context.get("values") or {}
     frozen_candidate = {
         "id": context_generation["candidate_id"],
         "entry_price_usd": context.candidate["candidate_price"],
         "learning_candidate_key": None,
     }
-    frozen_feature = {
-        "atr_pct": quant_values.get("atr_pct")
-        or (atr / float(context.candidate["candidate_price"]) * 100.0),
-    }
+    frozen_feature = {"atr_pct": atr_pct}
     geometry_material = {
         "entry_zone": zone,
         "invalidation_price": invalidation.price,

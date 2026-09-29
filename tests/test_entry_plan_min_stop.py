@@ -12,8 +12,12 @@ from aletheia.trading.entry_plan import (
 )
 
 
-def _cfg(vol_target_pct=1.5):
-    return SimpleNamespace(trading=SimpleNamespace(vol_target_pct=vol_target_pct))
+def _cfg(vol_target_pct=1.5, stop_floor_policy="vol_target_pct", stop_floor_atr_multiple_draft=1.0):
+    return SimpleNamespace(trading=SimpleNamespace(
+        vol_target_pct=vol_target_pct,
+        stop_floor_policy=stop_floor_policy,
+        stop_floor_atr_multiple_draft=stop_floor_atr_multiple_draft,
+    ))
 
 
 def test_stop_distance_pct_matches_doge_noise_stop():
@@ -95,3 +99,29 @@ def test_zero_vol_target_disables_floor():
         )
         is None
     )
+
+
+# --- DRAFT (#3743, owner-requested, decision 2026-09-30): atr_multiple_draft policy ---
+
+
+def test_atr_multiple_draft_floor_uses_measured_atr():
+    cfg = _cfg(stop_floor_policy="atr_multiple_draft", stop_floor_atr_multiple_draft=2.0)
+    assert min_stop_distance_pct(execution_mode="bitget_demo", cfg=cfg, atr_pct=0.5) == pytest.approx(1.0)
+    # distance 0.6% < floor 1.0% -> rejected
+    assert (
+        stop_distance_below_min_floor(100.0, 99.4, execution_mode="bitget_demo", cfg=cfg, atr_pct=0.5)
+        is not None
+    )
+    # distance 1.1% > floor 1.0% -> clears
+    assert (
+        stop_distance_below_min_floor(100.0, 98.9, execution_mode="bitget_demo", cfg=cfg, atr_pct=0.5)
+        is None
+    )
+
+
+@pytest.mark.parametrize("missing_atr", [None, 0.0, float("nan"), float("-1.0")])
+def test_atr_multiple_draft_falls_back_to_static_floor_when_atr_missing(missing_atr):
+    cfg = _cfg(vol_target_pct=1.5, stop_floor_policy="atr_multiple_draft", stop_floor_atr_multiple_draft=2.0)
+    assert min_stop_distance_pct(
+        execution_mode="bitget_demo", cfg=cfg, atr_pct=missing_atr
+    ) == pytest.approx(1.5)
