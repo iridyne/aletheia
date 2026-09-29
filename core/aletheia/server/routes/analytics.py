@@ -265,11 +265,11 @@ class StrategyKpisUnavailable(AnalyticsUnavailable):
 
 
 class StrategyPerformanceResponse(StrategyKpisResponse):
-    latest_backtest: dict[str, JsonValue]
+    pass
 
 
 class StrategyPerformanceUnavailable(StrategyKpisUnavailable):
-    latest_backtest: dict[str, JsonValue]
+    pass
 
 
 class CostComponents(BaseModel):
@@ -799,9 +799,7 @@ def get_trade_insights(execution_mode: str | None = None):
 
 @router.get("/strategy-performance", responses={200: {"model": StrategyPerformanceResponse | StrategyPerformanceUnavailable}})
 def get_strategy_performance(execution_mode: str | None = None):
-    """Per-strategy detailed performance KPIs. Backtest run summary removed with
-    the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
-    object for response-shape back-compat. Scoped to the resolved execution_mode (#1939)."""
+    """Per-strategy detailed performance KPIs. Scoped to the resolved execution_mode (#1939)."""
     from aletheia.analytics.execution_mode import (
         execution_mode_identity,
         resolve_selected_execution_mode,
@@ -812,14 +810,12 @@ def get_strategy_performance(execution_mode: str | None = None):
     if not mode:
         return {
             "strategies": {},
-            "latest_backtest": {},
             "outcome_status": "unavailable",
             "unavailable_reason": "execution_mode_unresolved",
             **execution_mode_identity(None),
         }
     return {
         "strategies": build_strategy_kpis(execution_mode=mode),
-        "latest_backtest": {},
         **execution_mode_identity(mode),
         **build_outcome_cohort_summary(execution_mode=mode),
     }

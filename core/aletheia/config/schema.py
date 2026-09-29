@@ -1442,7 +1442,6 @@ class RetentionConfig(BaseModel):
     serenity_evidence_days: int = 60
     serenity_run_events_days: int = 60
     runtime_sessions_days: int = 90
-    backtest_runs_days: int = 60
 
     # market_ohlcv per-timeframe TTL. Newer, denser bars decay fastest;
     # daily bars persist for training-window use.

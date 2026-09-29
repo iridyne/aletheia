@@ -2512,7 +2512,7 @@ _PRUNABLE = {
     # were unbounded prior to this pass. Audit-chain + learning tables remain
     # intentionally absent (see AGENTS.md hard rules). Only entries where the
     # column is an ISO-8601 timestamp are listed — bespoke-column tables
-    # (integer-ms `ts` on market_ohlcv/backtest_trades, cascade-only children
+    # (integer-ms `ts` on market_ohlcv, cascade-only children
     # like universe_members/filter_shadow_evaluations) rely on their dedicated
     # prune_* functions.
     "alpha_control_observations": "entry_ts",
@@ -2530,7 +2530,6 @@ _PRUNABLE = {
     "serenity_evidence": "created_at",
     "serenity_run_events": "created_at",
     "runtime_sessions": "started_at",
-    "backtest_runs": "created_at",
     "filter_shadow_experiments": "started_at",
 }
 
@@ -6171,45 +6170,6 @@ def scan_orphan_session_ids() -> dict:
         }
     except Exception as e:
         return {"error": str(e), "total_orphan_refs": 0, "by_table": {}, "orphan_session_ids": []}
-
-
-def prune_backtest_trades(days: int = 60) -> int:
-    """Prune backtest_trades whose parent run created_at is older than ``days``.
-
-    Exposed for symmetry with the _PRUNABLE whitelist; ``prune_backtest_runs``
-    cascades through this function first inside a single transaction.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = execute_write(
-        "DELETE FROM backtest_trades WHERE run_id IN (  SELECT id FROM backtest_runs WHERE created_at < ?)",
-        (cutoff,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
-
-
-def prune_backtest_runs(days: int = 60) -> int:
-    """Prune backtest_runs older than ``days`` + cascade-delete backtest_trades.
-
-    backtest_trades.run_id has no ON DELETE CASCADE; children must be deleted
-    first in the same transaction to avoid FK IntegrityError.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    run_ids = [row[0] for row in db.execute("SELECT id FROM backtest_runs WHERE created_at < ?", (cutoff,)).fetchall()]
-    if not run_ids:
-        return 0
-    placeholders = ",".join("?" * len(run_ids))
-    with transaction():
-        execute_write(
-            f"DELETE FROM backtest_trades WHERE run_id IN ({placeholders})",
-            run_ids,
-        )
-        execute_write("DELETE FROM backtest_runs WHERE created_at < ?", (cutoff,))
-    return len(run_ids)
 
 
 def prune_filter_shadow_experiments(days: int = 90) -> int:
