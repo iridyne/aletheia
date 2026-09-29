@@ -1394,6 +1394,13 @@ class UniverseMember(BaseModel):
     candidate_opportunity_context_json: str | None = None
     candidate_opportunity_context_hash: str | None = Field(default=None, min_length=64, max_length=64)
 
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
+
     @model_validator(mode="after")
     def _validate_candidate_selection_evidence(self):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
@@ -1486,6 +1493,13 @@ class CandidatePlanningGeneration(_Provenanced):
     candidate_selection_policy_epoch: str | None = None
     mechanism_version: str | None = None
     is_current: bool = True
+
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
     status: Literal["pending", "planning", "planned", "no_plan", "unavailable", "superseded"] = "pending"
     result_kind: Literal["entry_plan", "no_plan", "unavailable", "stale_result"] | None = None
     owner_token: str | None = None
