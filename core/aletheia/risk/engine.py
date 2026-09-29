@@ -197,8 +197,12 @@ def _recomputed_entry_financing(plan, proposal: TradeProposal, resolved_policy, 
         instrument_min_notional_usdt=frozen.instrument_min_notional_usdt,
         instrument_max_notional_usdt=frozen.instrument_max_notional_usdt,
     )
+    # Same venue rule as the Compiler: the execution route's venue owns the
+    # financing facts (the Plan's `venue` only identifies the market data).
+    from aletheia.config.exchanges import execution_mode_venue
+
     envelope = None if is_spot else load_venue_margin_envelope(
-        venue=plan.venue,
+        venue=execution_mode_venue(proposal.execution_mode) or plan.venue,
         symbol=plan.symbol,
         market_type=plan.market_type,
         margin_mode=plan.margin_mode or "isolated",
