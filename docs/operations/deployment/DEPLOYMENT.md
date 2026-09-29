@@ -72,6 +72,11 @@ Observer continuity 快照、preflight/postflight 证明缺口与失败恢复语
 HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
 也不以 master 的 ahead/behind 数量宣称已部署。
 
+一次 `aletheia update` 是分钟级事务，并且会被 settlement/Observer continuity 门禁阻断：
+不要把它当成发现问题的循环。先把已知失败收集齐（聚焦测试、真实路径 smoke、runtime
+preflight），按可独立复核的批次合并，再部署一次；门禁失败不会改变已部署的 commit，重试前
+先读 `update status` 与门禁原因，不要因为「可能没执行」就反复重跑。
+
 已明确配置为 `paper` 角色的 runtime，只允许以下精确部署组合：
 `bitget_demo` / `external_exchange`，并且必须为 `live_disabled`。
 其他模式和交叉组合均拒绝。此准入同时

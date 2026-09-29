@@ -116,6 +116,13 @@ a "soft deprecation".
 - `additive-only` constrains the **data layer** (migrations must not rewrite
   history). It does not license a compatibility layer in the **code** layer.
   A legacy read/write alias is not additive; it is a second authority.
+- The data layer's immutability also constrains what "delete the loser" may
+  touch: an applied migration's ID and definition are frozen
+  ([data_model.md §6](docs/design/data/data_model.md)), and a database that has
+  already applied one fails closed against a code tree that no longer knows it.
+  Deleting a migration any deployed runtime has applied is not convergence — it
+  is a cutover that breaks that runtime, and code-layer tolerance of pre-ledger
+  columns does not license it.
 - A compatibility shim is a stopgap that must ship with the deletion that
   retires it, or an Issue that owns the deletion. Never leave one as the end
   state. If you add one to stop active bleeding, say so in the commit and name

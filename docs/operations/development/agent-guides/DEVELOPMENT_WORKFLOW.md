@@ -47,6 +47,13 @@ Before changing code:
 5. **Identify Non-goals**: what this change explicitly does not modify.
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
+7. **Name the single owner of every value the change introduces.** For each new
+   column, field, or resolution, say which aggregate owns it and who only reads
+   it, and write that into the Contract before the first edit. A mirrored copy of
+   a value another aggregate already owns is a second authority, not a
+   convenience: adding one costs a migration and a later deletion, and the two
+   copies can disagree while both look correct. Decide the owner once, then add
+   no mirror.
 
 SDD depth is a semantic classifier, not an approval process. Under root
 [AGENTS.md](../../../../AGENTS.md#bounded-engineering-delegation), the AI derives
@@ -145,6 +152,23 @@ verified false positive and say so in the commit.
   spread rather than the single most favourable number.
 - Before claiming a failure is pre-existing, prove it: `git stash push -- <files>`,
   re-run, `git stash pop`, re-run. Same reds both ways ⇒ pre-existing.
+
+## Verifying a seam, not a stub
+
+A test that stubs the seam proves the stub, not the seam. When a change adds or
+rewires an entry point that crosses a real boundary — a CLI command, an event
+loop, a live venue or provider API, an environment-specific path — exercise that
+real path once, in the environment that will run it, before the merge. Doubles
+cannot see a constructor bound outside its loop, a request sent to the wrong
+target, or a config value that never reaches the code; those defects surface only
+on the real path, and each one found after the merge costs a PR plus a deployment.
+Cheap real-path checks (a public API call, one CLI invocation, one smoke run) are
+always worth less than the round trip they prevent.
+
+For the same reason, do not treat deployment as a discovery loop: collect the
+known failures first (focused tests, real-path smoke, runtime preflight), fix
+them together, and deploy one coherent batch instead of a fix-deploy-discover
+chain.
 
 ## PR metadata preflight (Phase 1)
 
