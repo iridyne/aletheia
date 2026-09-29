@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v94"
+SCHEMA_VERSION = "aletheia-sqlite-v95"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7778,6 +7778,22 @@ def _apply_drop_strategy_records_v92(db: sqlite3.Connection) -> None:
     db.execute("DROP TABLE IF EXISTS strategy_records")
 
 
+def _apply_entry_plan_financing_v95(db: sqlite3.Connection) -> None:
+    """Additive margin-mode column on trade_proposals (#3729).
+
+    Retained although the code no longer writes or reads the column: #3730 applied
+    it to live databases, and the migration ledger must keep matching this
+    registry, or every already-migrated database refuses to start
+    (`DatabaseSchemaAheadError`). The column itself remains data-layer history
+    under `additive-only`; nothing in Core reads it.
+    """
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(trade_proposals)").fetchall()
+    }
+    if "margin_mode" not in columns:
+        db.execute("ALTER TABLE trade_proposals ADD COLUMN margin_mode TEXT")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -9034,6 +9050,14 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"drop_universe_forward_outcomes_v94:retired_product_no_writers:drain_settled").hexdigest(),
         schema_version="aletheia-sqlite-v94",
         apply=_apply_drop_universe_forward_outcomes_v94,
+    ),
+    MigrationStep(
+        migration_id="20260930_0095_entry_plan_financing_v95",
+        checksum=hashlib.sha256(
+            b"entry_plan_financing_v95:trade_proposals.margin_mode:nullable_no_backfill"
+        ).hexdigest(),
+        schema_version="aletheia-sqlite-v95",
+        apply=_apply_entry_plan_financing_v95,
     ),
 )
 
