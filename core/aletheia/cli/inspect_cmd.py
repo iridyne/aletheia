@@ -2292,6 +2292,90 @@ def position_story(
         typer.echo(render_position_lifecycle_story(story))
 
 
+@inspect_app.command("lifecycle")
+def lifecycle(
+    candidate_id: Optional[str] = typer.Option(None, "--candidate-id"),
+    generation_id: Optional[str] = typer.Option(None, "--generation-id"),
+    entry_plan_id: Optional[str] = typer.Option(None, "--entry-plan-id"),
+    proposal_id: Optional[str] = typer.Option(None, "--proposal-id"),
+    order_id: Optional[str] = typer.Option(None, "--order-id"),
+    position_id: Optional[str] = typer.Option(None, "--position-id"),
+    as_of: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Candidate-first lifecycle lineage diagnosis (Universe and Opportunity origins).
+
+    Prefer over opportunity-lifecycle for current Universe-origin trades.
+    Exactly one anchor (--candidate-id / --generation-id / --entry-plan-id /
+    --proposal-id / --order-id / --position-id) is required.
+
+    Exit codes: 0 well-formed diagnosis (including unavailable); 2 arg error.
+    """
+    from aletheia.analytics.candidate_lifecycle import (
+        for_candidate,
+        for_entry_plan,
+        for_generation,
+        for_order,
+        for_position,
+        for_proposal,
+    )
+    from aletheia.analytics.candidate_lifecycle.inspector import build_lifecycle_diagnosis
+    from aletheia.analytics.candidate_lifecycle.renderer import render_lifecycle_diagnosis
+    from aletheia.storage.sqlite import readonly_db
+
+    anchors = {
+        "candidate": candidate_id,
+        "generation": generation_id,
+        "entry_plan": entry_plan_id,
+        "proposal": proposal_id,
+        "order": order_id,
+        "position": position_id,
+    }
+    provided = [(k, v) for k, v in anchors.items() if v is not None]
+    if len(provided) != 1:
+        raise typer.BadParameter(
+            f"exactly one anchor required; {len(provided)} provided",
+            param_hint="--candidate-id / --entry-plan-id / --position-id (etc.)",
+        )
+    anchor_kind, anchor_id = provided[0]
+
+    cutoff: datetime
+    if as_of:
+        try:
+            parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            cutoff = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError) as exc:
+            raise typer.BadParameter("invalid timestamp; use ISO-8601", param_hint="--as-of") from exc
+    else:
+        cutoff = datetime.now(timezone.utc)
+
+    resolver_map = {
+        "candidate": for_candidate,
+        "generation": for_generation,
+        "entry_plan": for_entry_plan,
+        "proposal": for_proposal,
+        "order": for_order,
+        "position": for_position,
+    }
+
+    with readonly_db(allow_missing=True) as db:
+        if db is None:
+            payload = {
+                "contract_version": "lifecycle_diagnosis/v1",
+                "availability": "unavailable",
+                "unavailable_reason": "database_missing",
+            }
+            typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+            return
+        lineage = resolver_map[anchor_kind](anchor_id, cutoff, db)
+
+    diagnosis = build_lifecycle_diagnosis(lineage, cutoff=cutoff)
+    if json_output:
+        typer.echo(json.dumps(diagnosis, indent=2, ensure_ascii=False, default=str))
+    else:
+        typer.echo(render_lifecycle_diagnosis(diagnosis))
+
+
 @inspect_app.command("opportunity-lifecycle")
 def opportunity_lifecycle(
     opportunity_id: str = typer.Option(..., "--id", "--opportunity-id"),

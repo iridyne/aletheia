@@ -53,7 +53,14 @@ required shape requires a new Story contract version.
 - `profit-counterfactual --cost-model <json>` evaluates the fixed
   `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
 - `profit-gradient --evidence <json>` applies `profit_gradient/v3` gates to a
-  frozen evidence artifact.
+  frozen evidence artifact;
+- `lifecycle --position-id <id> [--as-of <ts>] [--json]` (and the other five
+  anchors: `--candidate-id`, `--generation-id`, `--entry-plan-id`,
+  `--proposal-id`, `--order-id`) emits a `lifecycle_diagnosis/v1` artifact
+  tracing the full attributable chain for Universe-origin and
+  Serenity/Opportunity-origin trades. Prefer this over `opportunity-lifecycle`
+  for current Universe-origin trades (where `opportunity_id` is NULL). Exit
+  codes: 0 well-formed (including availability=unavailable); 2 arg error.
 
 All commands are synchronous, read-only inspection commands. The cost-model and
 gradient evidence files are inputs only.
@@ -71,9 +78,13 @@ SHA-256 of the five-treatment registry; the offline `evidence epoch register
 --commit` override cannot supply or replace this identity. No migration,
 configuration field, or Learning treatment is introduced.
 
-Position replay joins existing immutable IDs across Opportunity, PI decision,
-Proposal, authoritative Risk decision, Order, Fill, Position, exit plan,
-protection state, settlement, runtime provenance, and `market_ohlcv`.
+Position replay joins existing immutable IDs across Proposal, authoritative Risk
+decision, Order, Fill, Position, exit plan, protection state, settlement,
+runtime provenance, and `market_ohlcv`. For Universe-origin trades
+(`opportunity_id` is NULL), ancestry resolves via
+`Candidate → Generation → EntryPlan → Proposal`; a PI decision is not required
+on that path (see `decision_lifecycle_contract.md`). For Serenity/Opportunity-
+origin trades, ancestry resolves via `Opportunity → Proposal` as before.
 The lifecycle boundary is:
 
 ```text
@@ -330,6 +341,51 @@ A manifest remains prohibited until one of those observable triggers occurs.
 - `tests/test_position_path_observer.py`
 - `tests/test_position_lifecycle_story.py`
 - `tests/test_stop_loss_path_attribution.py`
+
+## Lifecycle diagnosis (v1)
+
+`aletheia inspect lifecycle` resolves the complete attributable chain from any
+of six anchors: `candidate_id`, `generation_id`, `entry_plan_id`, `proposal_id`,
+`order_id`, `position_id`. It emits a `lifecycle_diagnosis/v1` object:
+
+```
+{
+  contract_version: "lifecycle_diagnosis/v1",
+  anchor:  { kind, id },
+  source:  { kind: "universe" | "serenity" | "opportunity" | "unknown", ids: {...} },
+  evidence_context: { cutoff, read_at },
+  stages:  [ { stage, status, record_status, ... } ],
+  current_stage, attention_state,
+  first_break: null | { stage, reason, owner, evidence_refs },
+  coverage: { legs, gaps, identity_conflicts, truncated },
+  economics: { candidate_fact, position_fact },   // always availability=unavailable here
+  next_inspection: [ { command, args } ]
+}
+```
+
+**Anchors and resolution path:**
+- Universe trades: `entry_plans → candidate_planning_generations → universe_members
+  → universe_snapshots` (cross-checked against `plan_json.$.source_kind='universe'`).
+- Serenity/Opportunity trades: `trade_proposals.opportunity_id → opportunities /
+  serenity_opportunities`.
+- If `entry_plan_id` and `opportunity_id` are both NULL: `source_kind='unknown'`,
+  `evidence_gaps=['entry_plan_not_found']`, no cross-branch fallback.
+
+**Invariants:**
+- A PI decision is not required for Universe-origin trades.
+- `identity_conflicts` is non-empty when `plan_json` extracts disagree with
+  joined rows; no silent cross-branch fallback occurs.
+- The reader only SELECTs (caller-owned connection, `readonly_db`).
+- `--as-of` before an event's `created_at` returns `record_status='not_yet_visible'`.
+- Exit 0 for a well-formed diagnosis (including unavailable); exit 2 for arg errors.
+
+**Composition with existing consumers:** this command does not replace
+`position-replay` or `position-story`; it adds the Candidate-first attribution
+view that those commands use internally (via `candidate_lifecycle.lineage_reader`
+after the Batch C migration).
+
+**Executable evidence:** `tests/test_universe_lifecycle_regression.py` (fixture
+chain, lineage_reader, consumer migrations); `tests/specs/spec_candidate_lifecycle_lineage_reader.py`.
 
 ## Known gaps
 

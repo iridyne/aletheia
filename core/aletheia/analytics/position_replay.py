@@ -586,6 +586,13 @@ def _build_position_replay_inner(
         opportunity = None
     member = _row(source, "universe_members", (opportunity or {}).get("universe_member_id"))
     asset = _row(source, "universe_registry", (member or {}).get("asset_id"))
+    # Universe branch: when opportunity_id is NULL, resolve ancestry via lineage reader
+    _universe_lineage = None
+    if opportunity is None and not position.get("opportunity_id"):
+        from aletheia.analytics.candidate_lifecycle import for_position as _lreader_for_position
+        _universe_lineage = _lreader_for_position(position_id, cutoff, source)
+        if _universe_lineage.source_kind == "universe" and _universe_lineage.universe_member is not None:
+            member = _universe_lineage.universe_member
     pi_decision, pi_error = (
         _pi_decision(source, str(proposal["id"]), cutoff) if proposal is not None else (None, "proposal_not_recorded")
     )
@@ -693,7 +700,13 @@ def _build_position_replay_inner(
     ):
         causal_errors.append("authoritative_risk_identity_mismatch")
     if pi_error:
-        causal_errors.append(pi_error)
+        if _universe_lineage is not None and _universe_lineage.source_kind == "universe":
+            # Universe positions have no PI decision — it's not an error on this branch.
+            # Signal a missing generation only if lineage resolution found none.
+            if _universe_lineage.generation is None:
+                causal_errors.append("planning_generation_not_recorded")
+        else:
+            causal_errors.append(pi_error)
     # #1271: verify entry fill chains
     if entry_order is not None and not entry_fills:
         causal_errors.append("entry_fills_missing")
@@ -810,7 +823,7 @@ def _build_position_replay_inner(
             "market_data_identity": market_identity,
             "stages": {
                 "discovery": {
-                    "availability": "available" if opportunity is not None else "unavailable",
+                    "availability": "available" if (opportunity is not None or member is not None) else "unavailable",
                     "opportunity": opportunity,
                     "universe_member": member,
                     "universe_asset": asset,
