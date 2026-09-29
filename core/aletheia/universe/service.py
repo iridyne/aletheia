@@ -628,7 +628,7 @@ class UniverseService:
         """
         from aletheia.universe.allocator import decorate_universe_candidates
         from aletheia.universe.features import collect_features
-        from aletheia.universe.outcome_recorder import build_pending, settle_due
+        from aletheia.universe.outcome_recorder import settle_due
         from aletheia.universe.registry import sync_registry
 
         from aletheia.universe.candidate_selection_authority import (
@@ -1083,7 +1083,6 @@ class UniverseService:
                         "expires_at": member_expires,
                     }
                 )
-            pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
             requalifications = _prepare_planning_requalifications(member_models)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
@@ -1135,9 +1134,6 @@ class UniverseService:
                     new_generation_ids=new_generation_ids,
                     now=now,
                 )
-
-                # Register forward outcome tracking for all members with valid prices
-                repo.insert_forward_outcomes_batch(pending_outcomes)
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
