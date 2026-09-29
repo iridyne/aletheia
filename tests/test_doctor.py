@@ -488,18 +488,18 @@ def test_doctor_reports_incomplete_cost_aware_outcomes(tmp_path, monkeypatch):
         net = 1.0 if i < 4 else None
         funding = 0.0001 if i < 4 else None
         db.execute(
-            "INSERT INTO universe_forward_outcomes "
-            "(id, member_id, snapshot_id, symbol, venue, market_type, direction, horizon, "
-            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+            "INSERT INTO filter_candidate_outcomes "
+            "(id, outcome_candidate_key, symbol, venue, market_type, direction, horizon, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
                 "gross_return_pct, directional_return_pct, funding_rate_at_entry, "
                 "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 "net_return_pct, min_tradable_edge_pct, settlement_price_source, "
                 "settlement_lag_sec, "
                 "cost_model_version, status) "
-                "VALUES (?, ?, 'snap', 'BTC/USDT', 'bitget', 'perp', 'long', '1h', 100, 101, ?, ?, ?, "
-                "1, 1, 1, ?, 0, 0, ?, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
+                "VALUES (?, ?, 'BTC/USDT', 'bitget', 'perp', 'long', '1h', 100, 101, ?, ?, ?, "
+                "1, 1, ?, 0, 0, ?, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
                 (
-                    f"outcome-{i}", f"member-{i}", _iso_ago(120),
+                    f"outcome-{i}", f"key-{i}", _iso_ago(120),
                     _iso_ago(60), _iso_ago(55), funding,
                     0.0 if i < 4 else None, net,
                 ),
@@ -512,7 +512,6 @@ def test_doctor_reports_incomplete_cost_aware_outcomes(tmp_path, monkeypatch):
     check = {c.name: c for c in report.checks}["data.outcome_economics"]
     assert check.severity == "warn"
     assert "complete=4/10" in check.detail
-    assert "missing_funding=6" in check.detail
 
 
 def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):

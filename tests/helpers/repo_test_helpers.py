@@ -16,10 +16,8 @@ from aletheia.storage.repositories import (
     _benchmark_payload,
     _canonical_lab_authority,
     _effective_cutoff,
-    _forward_outcome_insert_payload,
     _insert,
     _project_candidate_admission,
-    _protected_universe_outcome_ids,
     _resolve_experiment_floor,
     _retention_metrics,
     _retention_metrics_lock,
@@ -526,8 +524,6 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
 def insert_universe_policy(policy: UniversePolicy) -> None:
     _insert("universe_policies", policy.model_dump())
 
-def insert_forward_outcome(outcome) -> None:
-    _insert("universe_forward_outcomes", _forward_outcome_insert_payload(outcome))
 
 def insert_universe_discovery_benchmark(window) -> dict:
     """Insert one frozen read-only benchmark window, enforcing one active row."""
@@ -676,48 +672,19 @@ def prune_universe_members(
     days: int = 30,
     min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
-    """Prune universe_members whose parent snapshot is older than ``days``.
-
-    Exposed for the _PRUNABLE whitelist. ``prune_universe_snapshots`` calls
-    this first inside a single transaction.
-    """
+    """Prune universe_members whose parent snapshot is older than ``days``."""
     try:
-        lab_authority = _canonical_lab_authority()
+        _canonical_lab_authority()
     except ExperimentStateReadError:
         return 0
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    protected_members: tuple[str, ...] = ()
-    if lab_authority:
-        try:
-            refs = _active_observation_claim_refs("universe_forward_outcomes")
-            protected_members, _ = _protected_universe_outcome_ids(get_db(), refs)
-        except (ExperimentStateReadError, sqlite3.Error):
-            return 0
-        if protected_members in {
-            ("__claim_set_too_large__",),
-            ("__claim_source_unavailable__",),
-        }:
-            return 0
-        outcome_cutoff = _effective_cutoff(days, None)
-    else:
-        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-        outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
+    cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     was_in_tx = db.in_transaction
-    protected_clause = ""
-    protected_params: tuple[str, ...] = ()
-    if protected_members:
-        placeholders = ",".join("?" for _ in protected_members)
-        protected_clause = f" AND id NOT IN ({placeholders})"
-        protected_params = protected_members
     cur = execute_write(
         "DELETE FROM universe_members WHERE snapshot_id IN ("
         "  SELECT id FROM universe_snapshots WHERE created_at < ?"
-        ") AND NOT EXISTS ("
-        "  SELECT 1 FROM universe_forward_outcomes o "
-        "  WHERE o.member_id=universe_members.id AND o.entry_ts>=?"
-        ")" + protected_clause,
-        (cutoff, outcome_cutoff, *protected_params),
+        ")",
+        (cutoff,),
     )
     if not was_in_tx:
         db.commit()

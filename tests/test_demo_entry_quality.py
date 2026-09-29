@@ -6,8 +6,6 @@ The live family gate remains separate. Open positions are not closed.
 
 from __future__ import annotations
 
-from tests.helpers.repo_test_helpers import insert_forward_outcome
-
 import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -27,7 +25,7 @@ from aletheia.risk.demo_entry_quality import (
 )
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Opportunity, TradeProposal, UniverseForwardOutcome
+from aletheia.storage.models import FilterCandidateOutcome, Opportunity, TradeProposal
 from aletheia.storage.sqlite import reset_db
 
 
@@ -365,20 +363,19 @@ def _publish_regime(monkeypatch, *, state="sideways", confidence=0.50):
 def _insert_family_outcomes(family, direction, *, n, net_return_pct, market_type="spot"):
     now = datetime.now(timezone.utc).isoformat()
     gross_return_pct = net_return_pct if direction == "long" else -net_return_pct
-    for i in range(n):
-        insert_forward_outcome(UniverseForwardOutcome(
-            member_id=f"m{i}",
-            snapshot_id="snap1",
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key=f"{family}-{direction}-{market_type}-{i}",
             symbol="BTC/USDT",
             venue="okx",
             scanner_family=family,
             direction=direction,
             horizon="24h",
             entry_price_usd=100.0,
+            entry_ts=now,
             due_at=now,
             settled_at=now,
             exit_price_usd=100.0 + gross_return_pct,
-            forward_return_pct=gross_return_pct,
             gross_return_pct=gross_return_pct,
             directional_return_pct=net_return_pct,
             estimated_fee_pct=0.0,
@@ -391,7 +388,10 @@ def _insert_family_outcomes(family, direction, *, n, net_return_pct, market_type
             cost_model_version="v1",
             market_type=market_type,
             status="settled",
-        ))
+            allocation_selected=1,
+        )
+        for i in range(n)
+    ])
 
 
 def _proposal(execution_mode, *, family="momentum", direction="long"):

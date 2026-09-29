@@ -231,9 +231,9 @@ def test_shadow_trades_detail_reports_the_two_populations(db):
 # --- content.signal_settlement -----------------------------------------------
 
 def _ins_outcome(conn, oid, status, due_at):
-    _ins(conn, "universe_forward_outcomes", id=oid, member_id="m", snapshot_id="s",
-         symbol="BTC/USDT", horizon="4h", entry_price_usd=100.0, entry_ts=_ago(days=3),
-         due_at=due_at, status=status)
+    _ins(conn, "filter_candidate_outcomes", id=oid, outcome_candidate_key=oid,
+         symbol="BTC/USDT", venue="bitget", direction="long", horizon="4h",
+         entry_price_usd=100.0, entry_ts=_ago(days=3), due_at=due_at, status=status)
 
 
 def test_signal_settlement_empty_is_info(db):

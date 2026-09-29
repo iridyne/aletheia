@@ -16,7 +16,7 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
     from aletheia.config.loader import load_config, save_config
     from aletheia.data.providers import Candle
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.models import FilterCandidateOutcome
 
     cfg = load_config()
     cfg.runtime.scheduler_enabled = True
@@ -39,11 +39,9 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
     now = datetime.now(timezone.utc)
     entry = now - timedelta(minutes=20)
     due = entry + timedelta(minutes=15)
-    outcome = UniverseForwardOutcome(
+    outcome = FilterCandidateOutcome(
         id="reachability-outcome",
         outcome_candidate_key="reachability-candidate:15m",
-        member_id="reachability-member",
-        snapshot_id="reachability-snapshot",
         symbol="BTC/USDT",
         venue="fixture",
         market_type="spot",
@@ -51,11 +49,11 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
         direction="long",
         horizon="15m",
         entry_price_usd=100.0,
-        entry_spread_bps=4.0,
         entry_ts=entry.isoformat(),
         due_at=due.isoformat(),
+        status="pending",
     )
-    repo.insert_forward_outcomes_batch([outcome])
+    repo.insert_filter_candidate_outcomes_batch([outcome])
 
     class FixtureMarketProvider:
         async def get_ohlcv(self, instrument, timeframe="1m", limit=100, since=None):
@@ -74,7 +72,7 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
             return None
 
     monkeypatch.setattr(
-        "extensions.data.ccxt_provider.get_market_data_provider",
+        "aletheia.data.providers.get_market_data_provider",
         lambda *args, **kwargs: FixtureMarketProvider(),
     )
     # Guard-candidate generation is a separate downstream feature. Keep its real
@@ -86,7 +84,7 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
 
     # This is the exact coroutine the registered scheduler adapter invokes.
     await scheduler._async_settle_outcomes()
-    settled = repo._select_one("universe_forward_outcomes", outcome.id)
+    settled = repo._select_one("filter_candidate_outcomes", outcome.id)
     assert settled["status"] == "settled"
     assert settled["net_return_pct"] is not None
     assert settled["cost_model_version"] is not None

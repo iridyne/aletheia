@@ -311,16 +311,16 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provid
     # Seed >= _MIN_SETTLED_EVIDENCE settled outcomes so the deterministic floor passes.
     for _ in range(25):
         db.execute(
-            "INSERT INTO universe_forward_outcomes "
-                "(id, outcome_candidate_key, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
+            "INSERT INTO filter_candidate_outcomes "
+                "(id, outcome_candidate_key, venue, symbol, scanner_family, direction, horizon, "
                 " market_type, entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
                 " settlement_price_source, settlement_lag_sec, "
-                " forward_return_pct, gross_return_pct, directional_return_pct, "
+                " gross_return_pct, directional_return_pct, "
                 " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 " net_return_pct, min_tradable_edge_pct, min_cost_covering_edge_pct, cost_model_version, status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (new_id(), new_id(), "m", "s", "bitget", "BTC/USDT", "momentum", "long", "24h",
-                 "spot", 100.0, _ts, _ts, _ts, 102.0, "horizon_ohlcv", 0, 2.0, 2.0, 2.0,
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (new_id(), new_id(), "bitget", "BTC/USDT", "momentum", "long", "24h",
+                 "spot", 100.0, _ts, _ts, _ts, 102.0, "horizon_ohlcv", 0, 2.0, 2.0,
                  0.1, 0.1, 0.0,
                  1.8, 0.05, 0.25, "v1", "settled"),
         )

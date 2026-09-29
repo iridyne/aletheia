@@ -1,16 +1,17 @@
-"""Universe Forward Outcome Recorder.
+"""Universe Outcome Recorder.
 
-Tracks how universe members perform AFTER being selected, answering:
-"did the scanner families actually pick winners?"
+Drives FCO (filter_candidate_outcomes) settlement and guard-candidate generation.
 
-Two entry points called from UniverseService.refresh():
-  1. register_pending(members) — create outcome rows for each member × horizon
-  2. settle_due() — find overdue pending rows, fetch exit price, compute return
+Entry point called from UniverseService.refresh():
+  settle_due() — delegate to FCO settler; generates guard_candidate items for losses.
 
 Self-evolution Tier 1:
   After settling, outcomes with 4h net_return below the loss threshold
   automatically generate guard_candidate knowledge items for human review.
   Closes the feedback loop: scanner signal → actual result → candidate rule.
+
+universe_forward_outcomes (UFO) was retired in #3701. build_pending / register_pending
+and the UFO drain loop in _settle_due_once were removed in Batch E.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from datetime import datetime, timedelta, timezone
 
 from aletheia.utils.dt import parse_utc
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import UniverseForwardOutcome
 
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
 
@@ -164,82 +164,6 @@ def is_deferred(observation: dict | None) -> bool:
     return bool(observation) and bool(observation.get(_DEFER_KEY))
 
 
-def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOutcome]:
-    """Create pending outcome rows for each member × horizon.
-
-    Args:
-        members: list of member dicts (must have id, snapshot_id, symbol, venue,
-                 scanner_family, entry_price_usd).
-        entry_ts: ISO timestamp of the universe snapshot creation.
-
-    Returns:
-        Precomputed outcome rows ready for bulk persistence.
-    """
-    ts = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-
-    outcomes: list[UniverseForwardOutcome] = []
-    skipped_no_price = 0
-    skipped_no_venue = 0
-    for m in members:
-        entry_price = m.get("entry_price_usd")
-        if not entry_price or entry_price <= 0:
-            skipped_no_price += 1
-            continue
-        venue = m.get("venue")
-        if not isinstance(venue, str) or not venue.strip():
-            skipped_no_venue += 1
-            continue
-        venue = venue.strip()
-
-        for horizon_key, delta in _HORIZONS.items():
-            due_at = (ts + delta).isoformat()
-            outcomes.append(UniverseForwardOutcome(
-                outcome_candidate_key=(
-                    f"{m['learning_candidate_key']}:{horizon_key}"
-                    if m.get("learning_candidate_key") else None
-                ),
-                member_id=m["id"],
-                snapshot_id=m["snapshot_id"],
-                symbol=m["symbol"],
-                venue=venue,
-                market_type=m.get("market_type", "spot"),
-                scanner_family=m.get("scanner_family"),
-                direction=m.get("direction"),
-                horizon=horizon_key,
-                entry_price_usd=entry_price,
-                entry_spread_bps=m.get("spread_bps"),
-                funding_rate_at_entry=m.get("funding_rate"),
-                entry_ts=entry_ts,
-                due_at=due_at,
-            ))
-
-    if skipped_no_price:
-        logger.info(
-            "Forward-outcome registration skipped %d/%d members with no entry price "
-            "(missing 1h OHLCV at feature collection)", skipped_no_price, len(members),
-        )
-    if skipped_no_venue:
-        logger.warning(
-            "Forward-outcome registration skipped %d/%d members with "
-            "outcome_identity_unavailable (missing venue)",
-            skipped_no_venue,
-            len(members),
-        )
-
-    return outcomes
-
-
-def register_pending(members: list[dict], entry_ts: str) -> int:
-    """Build outside the writer transaction when possible, then bulk insert."""
-
-    outcomes = build_pending(members, entry_ts)
-    if outcomes:
-        repo.insert_forward_outcomes_batch(outcomes)
-        logger.debug("Registered %d forward outcome rows", len(outcomes))
-    return len(outcomes)
-
 
 async def settle_due(max_rows: int = 8000, time_budget_sec: float = 240.0) -> int:
     """Settle all overdue pending outcomes, at most one drain at a time.
@@ -273,63 +197,14 @@ async def settle_due(max_rows: int = 8000, time_budget_sec: float = 240.0) -> in
 
 
 async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
-    """Settle all overdue pending outcomes by fetching current prices.
+    """Delegate to FCO settler and optional structure-shadow cohort.
 
-    Processes rows in batches until the queue is empty or the wall-clock budget
-    is exhausted (default 240s, safely under the scheduler's 300s job timeout).
-    This prevents large backlogs from accumulating when many rows pile up between
-    runs — previously a fixed limit=500 per call took hours to drain a deep queue.
-
-    Args:
-        max_rows: Maximum rows to process per call (safety cap across all batches).
-        time_budget_sec: Wall-clock seconds to spend before stopping early.
+    universe_forward_outcomes (UFO) drain loop was removed in #3701 Batch E;
+    filter_candidate_outcomes is the sole outcome authority.
 
     Returns:
-        Number of outcomes settled (status='settled', not 'failed').
+        Number of outcomes settled across FCO + structure-shadow cohort.
     """
-    import time as _time
-
-    deadline = _time.monotonic() + time_budget_sec
-    now = datetime.now(timezone.utc)
-    now_iso = now.isoformat()
-    identity_unavailable = repo.count_pending_forward_outcomes_missing_venue(now_iso)
-    if identity_unavailable:
-        logger.warning(
-            "outcome_settler: %d due rows have outcome_identity_unavailable — "
-            "left pending for exact-identity repair and excluded from fetch budget",
-            identity_unavailable,
-        )
-
-    total_settled = 0
-    total_processed = 0
-    all_settled_rows: list[dict] = []
-    # Bound one network wave below the scheduler's wall-clock budget even when
-    # requests hit their timeout. The outer loop drains more waves while time remains.
-    batch_size = 32
-    from aletheia.config.loader import load_config
-    from aletheia.universe.outcome_economics import estimate_outcome_economics
-
-    cfg = load_config()
-
-    # Canonical filter outcomes are the authority for Learning contribution and
-    # filter feedback.  They used to run only after the (often much larger)
-    # Universe mirror queue, so a busy/slow forward queue could consume the whole
-    # wall-clock budget and leave already-due canonical rows pending forever, so a
-    # bounded share is reserved before draining mirrors.  This is measurement
-    # scheduling only; it does not alter candidate selection, and it does not enter
-    # the policy-epoch hash (see learning/experiments._policy_epoch_definition,
-    # which folds decision policy only and deliberately excludes scheduling knobs).
-    #
-    # The share was a quarter, split on the assumption that the two queues were
-    # comparable in size.  Measured, they are not: the canonical queue had 209,090
-    # overdue rows while the forward mirror had ~25, so three quarters of the
-    # budget sat on the queue that had nothing to do.  Inverted to match the
-    # measurement.  The forward mirror still gets a quarter of the rows plus
-    # whatever wall clock canonical leaves, which is ample for a two-digit queue.
-    #
-    # Tiny explicit calls are commonly used to settle one forward row in tests
-    # and maintenance probes; preserve that contract. Scheduled production calls
-    # use a large cap and therefore receive the reserved canonical quota.
     filter_row_budget = min(6000, max_rows * 3 // 4) if max_rows >= 4 else 0
     filter_time_budget = min(180.0, max(0.0, time_budget_sec * 0.75))
     filter_settled = 0
@@ -346,197 +221,9 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             )
         except Exception as exc:
             logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
-
-    forward_row_budget = max(0, max_rows - filter_row_budget)
-    # Rows this cycle asked about and could not reach. They keep status='pending',
-    # which is also what list_pending_forward_outcomes selects on, so without this
-    # exclusion the next batch re-selects the same oldest-due head and asks the
-    # same unreachable venue about the same rows until the wall clock runs out —
-    # an unbounded retry inside one cycle, aimed at an endpoint that is very
-    # possibly refusing us for volume in the first place.
-    deferred_ids: set[str] = set()
-    while total_processed < forward_row_budget:
-        if _time.monotonic() >= deadline:
-            logger.info(
-                "outcome_settler: time budget (%.0fs) reached — %d processed, %d settled; "
-                "remaining rows will be handled in the next cycle",
-                time_budget_sec, total_processed, total_settled,
-            )
-            break
-
-        # The limit is widened by the deferrals so excluding them still leaves a
-        # full batch of rows this cycle has not tried yet.
-        pending = [
-            row
-            for row in repo.list_pending_forward_outcomes(
-                before_ts=now_iso, limit=batch_size + len(deferred_ids)
-            )
-            if row["id"] not in deferred_ids
-        ]
-        if not pending:
-            break  # queue drained
-
-        observations = await _batch_fetch_market_observations(pending, now=now)
-
-        batch_settled_rows: list[dict] = []
-        batch_deferred = 0
-        batch_defer_reasons: dict[str, int] = {}
-        for row in pending:
-            symbol = row["symbol"]
-            observation = observations.get(row["id"])
-            if is_deferred(observation):
-                # No market observation occurred, so there is no verdict to write.
-                # It stays pending until reachability or exact identity is repaired.
-                deferred_ids.add(row["id"])
-                batch_deferred += 1
-                reason = str(observation.get("defer_reason") or "unknown")
-                batch_defer_reasons[reason] = batch_defer_reasons.get(reason, 0) + 1
-                total_processed += 1
-                continue
-            price = observation.get("exit_price") if observation else None
-            if price is None or price <= 0:
-                repo.fail_forward_outcome(row["id"], settled_at=now_iso)
-                logger.warning(
-                    "forward_outcome FAILED: symbol=%s horizon=%s — price unavailable",
-                    symbol, row.get("horizon"),
-                )
-                total_processed += 1
-                continue
-
-            entry = row["entry_price_usd"]
-
-            # Sanity: reject price deviating >10x from entry in either direction.
-            # Catches cross-symbol contamination (e.g. BTC price ~50000 applied to
-            # PEPE at entry 0.000003 → ratio 1.6B), which ccxt can return without
-            # raising when a symbol isn't found on the fallback exchange.
-            ratio = price / entry
-            if ratio > 10.0 or ratio < 0.1:
-                # A real verdict on a real observation: record what was seen and
-                # rejected, so this row is not mistaken for one that was never
-                # measured at all (see repo.fail_forward_outcome).
-                repo.fail_forward_outcome(
-                    row["id"],
-                    settled_at=now_iso,
-                    exit_price=price,
-                    settlement_price_source=observation.get("price_source"),
-                )
-                logger.warning(
-                    "forward_outcome FAILED: symbol=%s horizon=%s — exit price rejected",
-                    symbol, row.get("horizon"),
-                )
-                logger.warning(
-                    "Rejected anomalous exit price for %s: entry=%.8g exit=%.8g ratio=%.2f",
-                    symbol, entry, price, ratio,
-                )
-                total_processed += 1
-                continue
-
-            entry_dt = parse_utc(row.get("entry_ts"))
-            due_dt = parse_utc(row.get("due_at"))
-            hold_seconds = (
-                max(0.0, (due_dt - entry_dt).total_seconds())
-                if entry_dt and due_dt
-                else _HORIZONS.get(row.get("horizon"), timedelta()).total_seconds()
-            )
-            economics = estimate_outcome_economics(
-                entry_price=entry,
-                exit_price=price,
-                direction=row.get("direction"),
-                market_type=row.get("market_type") or "spot",
-                hold_seconds=hold_seconds,
-                entry_spread_bps=row.get("entry_spread_bps"),
-                fallback_spread_bps=cfg.universe.max_spread_bps,
-                funding_rate_at_entry=row.get("funding_rate_at_entry"),
-                execution_fee_pct=cfg.trading.execution_fee_pct,
-                slippage_bps=cfg.trading.slippage_bps,
-                range_high=observation.get("range_high"),
-                range_low=observation.get("range_low"),
-                price_quality_ok=bool(observation.get("price_quality_ok")),
-            )
-            forward_return = economics["gross_return_pct"]
-
-            won = repo.settle_forward_outcome(
-                outcome_id=row["id"],
-                exit_price=price,
-                forward_return=forward_return,
-                settled_at=now_iso,
-                economics=economics,
-                settlement_price_source=observation.get("price_source"),
-                settlement_lag_sec=observation.get("settlement_lag_sec"),
-            )
-            if won is not False:
-                total_settled += 1
-                batch_settled_rows.append({
-                    **row,
-                    **economics,
-                    "forward_return_pct": forward_return,
-                    "settlement_price_source": observation.get("price_source"),
-                    "settlement_lag_sec": observation.get("settlement_lag_sec"),
-                })
-            total_processed += 1
-
-        if batch_settled_rows:
-            logger.info(
-                "outcome_settler: settled %d / %d in this batch",
-                len(batch_settled_rows), len(pending),
-            )
-        all_settled_rows.extend(batch_settled_rows)
-
-        if batch_deferred == len(pending):
-            if set(batch_defer_reasons) == {_IDENTITY_UNAVAILABLE}:
-                logger.warning(
-                    "outcome_settler: %d rows have outcome_identity_unavailable — "
-                    "left pending for exact-identity repair; continuing past them",
-                    len(pending),
-                )
-                continue
-            # A whole batch reached nothing: the venue is down, not this batch.
-            # Draining further batches against it would only add load to an
-            # endpoint that is already refusing, and every one of those rows is
-            # measurable again the moment it answers.
-            logger.warning(
-                "outcome_settler: none of %d rows could be observed (%s) — stopping "
-                "the forward drain for this cycle, %d rows left pending",
-                len(pending),
-                " ".join(
-                    f"{key}={value}"
-                    for key, value in sorted(batch_defer_reasons.items())
-                ),
-                len(deferred_ids),
-            )
-            break
-
-    if total_settled:
-        logger.info(
-            "outcome_settler: settled %d forward outcomes total (%d processed)",
-            total_settled, total_processed,
-        )
-
-    # Emit cost-aware cohort metrics for observability (§4.2).
-    if total_settled:
-        try:
-            from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-
-            stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
-            for row in stats:
-                if row["n"] >= 10:
-                    wr = row["win_count"] / row["n"] * 100
-                    logger.info(
-                        "METRIC family=%s direction=%s market_type=%s "
-                        "horizon=%s n=%d net_win_rate=%.1f%%",
-                        row["scanner_family"],
-                        row["direction"],
-                        row["market_type"],
-                        row["horizon"],
-                        row["n"],
-                        wr,
-                    )
-        except Exception:
-            logger.warning("outcome_recorder: cohort metric logging failed (skipping)", exc_info=True)
     # Log per-family filter pressure: families whose filter-rejected candidates
-    # show positive net returns (only meaningful once filter_candidate_outcomes
-    # accumulates rows with scanner_family from the fine filter stage).
-    if total_settled:
+    # show positive net returns.
+    if filter_settled:
         try:
             from aletheia.universe.filter_advisor import get_family_filter_pressure_summary
             pressure = get_family_filter_pressure_summary()
@@ -555,11 +242,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
         except Exception:
             logger.debug("outcome_recorder: secondary miss-rate metrics failed; outcome recording unaffected", exc_info=True)
 
-    # Tier 1: auto-generate guard candidates for significant losses
-    if all_settled_rows:
-        _maybe_generate_guard_candidates(all_settled_rows)
-
-    total_settled += filter_settled
+    total_settled = filter_settled
 
     # Position X rows are a separate, observation-only cohort. They reuse the
     # exact-instrument price path but never enter scanner or Operator ranking.

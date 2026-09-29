@@ -9,41 +9,6 @@ _CONTRACT = "opportunity_outcome_contract"
 
 @spec_claim(
     SpecClaim(
-        "OO-S01", _CONTRACT, "§2 instrument identity", "L2a",
-        "Forward outcomes persist venue and market_type so spot and perpetual results cannot mix.",
-        status="implemented",
-    )
-)
-def test_forward_outcome_carries_instrument_identity():
-    from aletheia.storage.models import UniverseForwardOutcome
-
-    fields = UniverseForwardOutcome.model_fields
-    assert "venue" in fields
-    assert "market_type" in fields
-
-
-@spec_claim(
-    SpecClaim(
-        "OO-S02", _CONTRACT, "§4 net return fields", "L2a",
-        "Forward outcomes persist gross, directional, cost, funding, net, edge and path-quality fields.",
-        status="implemented",
-    )
-)
-def test_forward_outcome_carries_net_economics():
-    from aletheia.storage.models import UniverseForwardOutcome
-
-    required = {
-        "entry_spread_bps", "funding_rate_at_entry", "gross_return_pct",
-        "directional_return_pct", "estimated_fee_pct",
-        "estimated_spread_slippage_pct", "estimated_funding_pct",
-        "net_return_pct", "min_tradable_edge_pct", "mfe_pct", "mae_pct",
-        "settlement_price_source", "settlement_lag_sec", "cost_model_version",
-    }
-    assert required <= set(UniverseForwardOutcome.model_fields)
-
-
-@spec_claim(
-    SpecClaim(
         "OO-B01", _CONTRACT, "§4 cost formula", "L2b",
         "Net return is direction-adjusted gross return minus round-trip fees, spread/slippage and funding.",
         status="implemented",
@@ -228,59 +193,6 @@ def test_unreachable_venue_is_not_a_measurement_failure(monkeypatch):
     )
     asyncio.run(settle_due_filter_outcomes(max_rows=8))
     assert _status() == "failed"
-
-
-@spec_claim(
-    SpecClaim(
-        "OO-B05", _CONTRACT, "§6 evidence preservation", "L2b",
-        "A failed row records the observation it rejected, so NULL exit price with NULL price source means never observed and is reclaimable.",
-        status="implemented",
-    )
-)
-def test_failed_rows_separate_a_rejected_observation_from_no_observation():
-    from datetime import datetime, timedelta, timezone
-
-    from ops.maintenance.settlement_requeue import (
-        requeue_unobserved_failed_outcomes,
-    )
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseForwardOutcome
-    from aletheia.storage.sqlite import get_db
-
-    entry = datetime.now(timezone.utc) - timedelta(hours=25)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    common = dict(
-        snapshot_id="snap-oo-b05", scanner_family="momentum", direction="long",
-        venue="binance", market_type="spot", horizon="1h", entry_price_usd=100.0,
-        entry_ts=entry.isoformat(), due_at=(entry + timedelta(hours=1)).isoformat(),
-    )
-    repo.insert_forward_outcomes_batch([
-        UniverseForwardOutcome(member_id="m-rejected", symbol="AAA/USDT", **common),
-        UniverseForwardOutcome(member_id="m-unobserved", symbol="BBB/USDT", **common),
-    ])
-    ids = {
-        row["symbol"]: row["id"]
-        for row in get_db().execute("SELECT id, symbol FROM universe_forward_outcomes")
-    }
-    # The venue answered and the answer was rejected as cross-symbol contamination.
-    repo.fail_forward_outcome(
-        ids["AAA/USDT"], now_iso,
-        exit_price=99_999.0, settlement_price_source="horizon_ohlcv",
-    )
-    # The venue was never reached, which is what an IP ban produced in practice.
-    repo.fail_forward_outcome(ids["BBB/USDT"], now_iso)
-
-    result = requeue_unobserved_failed_outcomes(dry_run=False)
-
-    assert result["universe_forward_outcomes"] == 1
-    statuses = {
-        row["symbol"]: row["status"]
-        for row in get_db().execute(
-            "SELECT symbol, status FROM universe_forward_outcomes"
-        )
-    }
-    assert statuses["AAA/USDT"] == "failed", "a real verdict must stay terminal"
-    assert statuses["BBB/USDT"] == "pending", "never-observed evidence is reclaimable"
 
 
 @spec_claim(

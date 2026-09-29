@@ -40,7 +40,6 @@ from typing import Any
 # Queues that share the one observation layer and therefore shared the defect.
 _TABLES = (
     "filter_candidate_outcomes",
-    "universe_forward_outcomes",
     "perp_structure_shadow_outcomes",
 )
 

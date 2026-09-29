@@ -1,7 +1,5 @@
 """Optional supplements cannot become Core boot or settlement requirements."""
 
-from tests.helpers.repo_test_helpers import insert_forward_outcome
-
 import asyncio
 import ast
 import builtins
@@ -136,22 +134,23 @@ def test_cli_absence_precedes_producer_and_payload_read(tmp_path, monkeypatch, c
 def test_canonical_settlement_survives_absent_structure_settler(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.models import FilterCandidateOutcome
     now = datetime.now(timezone.utc)
-    row = UniverseForwardOutcome(
-        member_id="core-member", snapshot_id="core-snapshot", symbol="BTC/USDT",
-        venue="okx", market_type="spot", direction="long", scanner_family="momentum",
-        horizon="4h", entry_price_usd=100.0,
-        entry_ts=(now-timedelta(hours=5)).isoformat(), due_at=(now-timedelta(hours=1)).isoformat(),
+    row = FilterCandidateOutcome(
+        outcome_candidate_key="supp-test-core-member",
+        symbol="BTC/USDT", venue="okx", market_type="spot", direction="long",
+        scanner_family="momentum", horizon="4h", entry_price_usd=100.0,
+        entry_ts=(now - timedelta(hours=5)).isoformat(),
+        due_at=(now - timedelta(hours=1)).isoformat(),
     )
-    insert_forward_outcome(row)
+    repo.insert_filter_candidate_outcomes_batch([row])
     monkeypatch.setattr(outcome_recorder, "_batch_fetch_market_observations", AsyncMock(return_value={row.id: {
         "exit_price": 101.0, "range_high": 101.0, "range_low": 100.0,
         "price_source": "horizon_ohlcv", "price_quality_ok": True, "settlement_lag_sec": 0,
     }}))
     monkeypatch.setattr(outcome_recorder, "_maybe_generate_guard_candidates", lambda *_: None)
-    assert asyncio.run(outcome_recorder.settle_due(max_rows=1)) == 1
-    assert repo._select_one("universe_forward_outcomes", row.id)["status"] == "settled"
+    assert asyncio.run(outcome_recorder.settle_due(max_rows=4)) == 1
+    assert repo._select_one("filter_candidate_outcomes", row.id)["status"] == "settled"
 
 
 def test_doctor_absent_structure_producer_still_reads_stored_rows(monkeypatch):

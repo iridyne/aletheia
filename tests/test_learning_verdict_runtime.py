@@ -43,7 +43,7 @@ def _experiment(
         cohort_id="universe-clean-net-v1",
         path_id=path_id,
         overlap_group="universe",
-        source_type="universe_forward_outcomes:clean_net:v2",
+        source_type="filter_candidate_outcomes:clean_net:v2",
         scope_json='{"family":"momentum","direction":"long","market_type":"perp"}',
         action_json='{"type":"opportunity_multiplier","multiplier":1.1}',
         consumer="universe_allocator",
@@ -1311,7 +1311,7 @@ def test_conflict_provenance_bounds_rows_inside_one_conflict():
     from extensions.learning.cohorts import _conflict_provenance
 
     rows = [
-        ("universe_forward_outcomes", {
+        ("filter_candidate_outcomes", {
             "id": index,
             "net_return_pct": float(index),
         })
@@ -1335,11 +1335,11 @@ def test_bounded_conflict_provenance_keeps_a_triggering_mirror():
 
     canonical = ("filter_candidate_outcomes", {"id": 1, "net_return_pct": 1.0})
     matching = [
-        ("universe_forward_outcomes", {"id": index, "net_return_pct": 1.0})
+        ("filter_candidate_outcomes", {"id": index, "net_return_pct": 1.0})
         for index in range(2, 24)
     ]
     differing = (
-        "universe_forward_outcomes",
+        "filter_candidate_outcomes",
         {"id": 99, "net_return_pct": -1.0},
     )
 

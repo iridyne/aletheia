@@ -13,8 +13,7 @@ have been measured from still exist, and the row must come back next cycle.
 
 Measured consequence of conflating them: a 20-minute Binance IP ban
 (``418 -1003 ... IP banned until ...``) permanently wrote off 335 rows across
-``filter_candidate_outcomes`` and ``universe_forward_outcomes`` in two settlement
-cycles. Every one had ``exit_price_usd IS NULL`` and
+``filter_candidate_outcomes`` in two settlement cycles. Every one had ``exit_price_usd IS NULL`` and
 ``settlement_price_source IS NULL`` — no observation was ever taken — while their
 1m bars sat in ``market_ohlcv`` the whole time.
 
@@ -394,42 +393,6 @@ def test_a_deferred_cycle_says_the_venue_was_unreachable(monkeypatch, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_forward_row_stays_pending_when_the_venue_is_unreachable(monkeypatch):
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseForwardOutcome
-    from aletheia.storage.sqlite import get_db
-    from aletheia.universe.outcome_recorder import settle_due
-
-    entry = datetime.now(timezone.utc) - timedelta(hours=25)
-    outcome = UniverseForwardOutcome(
-        member_id="member-fwd-defer",
-        snapshot_id="snapshot-fwd-defer",
-        symbol="ADA/USDT",
-        venue="binance",
-        market_type="spot",
-        scanner_family="momentum",
-        direction="long",
-        horizon="1h",
-        entry_price_usd=100.0,
-        entry_ts=entry.isoformat(),
-        due_at=(entry + timedelta(hours=1)).isoformat(),
-    )
-    repo.insert_forward_outcomes_batch([outcome])
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
-        _deferring_observations(),
-    )
-
-    asyncio.run(settle_due(max_rows=2, time_budget_sec=5.0))
-
-    row = get_db().execute(
-        "SELECT status, settled_at FROM universe_forward_outcomes WHERE id=?",
-        (outcome.id,),
-    ).fetchone()
-    assert row["status"] == "pending"
-    assert row["settled_at"] is None
-
-
 def test_missing_outcome_venue_is_typed_deferral_without_market_data(monkeypatch):
     from aletheia.universe.outcome_recorder import (
         _batch_fetch_market_observations,
@@ -456,111 +419,6 @@ def test_missing_outcome_venue_is_typed_deferral_without_market_data(monkeypatch
     observation = observations[row["id"]]
     assert is_deferred(observation)
     assert observation["defer_reason"] == "outcome_identity_unavailable"
-
-
-def test_identity_deferrals_do_not_block_later_exact_venue_rows(monkeypatch):
-    from aletheia.universe.outcome_recorder import (
-        _settle_due_once,
-        deferred_observation,
-    )
-
-    rows = [_forward_row(f"missing-venue-{index}") for index in range(32)]
-    for row in rows:
-        row["venue"] = None
-    exact = _forward_row("exact-venue-after-missing")
-    rows.append(exact)
-    settled = []
-
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
-        lambda *, limit, **_: rows[:limit],
-    )
-
-    async def observations(batch, *, now):
-        del now
-        return {
-            row["id"]: (
-                deferred_observation("outcome_identity_unavailable")
-                if not row.get("venue")
-                else {
-                    "exit_price": 101.0,
-                    "range_high": 101.0,
-                    "range_low": 100.0,
-                    "price_source": "horizon_ohlcv_local",
-                    "price_quality_ok": True,
-                    "settlement_lag_sec": 0.0,
-                }
-            )
-            for row in batch
-        }
-
-    async def no_rows(**_):
-        return 0
-
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
-        observations,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.fail_forward_outcome",
-        lambda *a, **k: pytest.fail("identity deferral must not become failed"),
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.settle_forward_outcome",
-        lambda **kwargs: settled.append(kwargs),
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.calibration_stats", lambda **_: []
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._maybe_generate_guard_candidates",
-        lambda rows: None,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.filter_outcome_recorder.settle_due_filter_outcomes",
-        no_rows,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._structure_shadow_settler",
-        no_rows,
-    )
-
-    asyncio.run(_settle_due_once(max_rows=132, time_budget_sec=5.0))
-
-    assert [item["outcome_id"] for item in settled] == [exact["id"]]
-
-
-def test_the_forward_loop_does_not_reselect_a_row_it_deferred(monkeypatch):
-    """The forward loop re-queries the same oldest-due head every batch.
-
-    A deferred row keeps ``status='pending'``, so it is still at the head of that
-    query. Without excluding it the loop asks the same unreachable venue about the
-    same row until the wall clock runs out, which is both an infinite retry inside
-    one cycle and load on a banned IP.
-    """
-    from aletheia.universe.outcome_recorder import settle_due
-
-    rows = [_forward_row(f"row-reselect-{i}") for i in range(3)]
-    calls = []
-
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
-        lambda **kwargs: list(rows),
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.repo.fail_forward_outcome",
-        lambda *a, **k: pytest.fail("a deferred row must not be written off"),
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
-        _deferring_observations(calls),
-    )
-
-    asyncio.run(settle_due(max_rows=8, time_budget_sec=5.0))
-
-    assert len(calls) == 1, (
-        f"each row may be asked about once per cycle, got waves {calls}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -617,29 +475,17 @@ def _insert_failed(table, row_id, *, observed):
 
     entry = datetime.now(timezone.utc) - timedelta(hours=25)
     db = get_db()
-    common = (
-        row_id, "ADA/USDT", "binance", "spot", "long", "1h", 100.0,
-        entry.isoformat(), (entry + timedelta(hours=1)).isoformat(),
-        datetime.now(timezone.utc).isoformat(),
-        102.0 if observed else None,
-        "horizon_ohlcv" if observed else None,
+    db.execute(
+        "INSERT INTO filter_candidate_outcomes (id, outcome_candidate_key, symbol, "
+        "venue, market_type, direction, horizon, entry_price_usd, entry_ts, due_at, "
+        "settled_at, exit_price_usd, settlement_price_source, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'failed')",
+        (row_id, f"key-{row_id}", "ADA/USDT", "binance", "spot", "long", "1h", 100.0,
+         entry.isoformat(), (entry + timedelta(hours=1)).isoformat(),
+         datetime.now(timezone.utc).isoformat(),
+         102.0 if observed else None,
+         "horizon_ohlcv" if observed else None),
     )
-    if table == "filter_candidate_outcomes":
-        db.execute(
-            "INSERT INTO filter_candidate_outcomes (id, outcome_candidate_key, symbol, "
-            "venue, market_type, direction, horizon, entry_price_usd, entry_ts, due_at, "
-            "settled_at, exit_price_usd, settlement_price_source, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'failed')",
-            (row_id, f"key-{row_id}", *common[1:]),
-        )
-    else:
-        db.execute(
-            "INSERT INTO universe_forward_outcomes (id, member_id, snapshot_id, symbol, "
-            "venue, market_type, direction, horizon, entry_price_usd, entry_ts, due_at, "
-            "settled_at, exit_price_usd, settlement_price_source, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'failed')",
-            (row_id, f"member-{row_id}", f"snap-{row_id}", *common[1:]),
-        )
     db.commit()
 
 
@@ -658,17 +504,14 @@ def test_requeue_restores_only_the_rows_that_were_never_observed():
 
     _insert_failed("filter_candidate_outcomes", "fco-unobserved", observed=False)
     _insert_failed("filter_candidate_outcomes", "fco-observed", observed=True)
-    _insert_failed("universe_forward_outcomes", "ufo-unobserved", observed=False)
 
     result = requeue_unobserved_failed_outcomes(dry_run=False)
 
     assert result["filter_candidate_outcomes"] == 1
-    assert result["universe_forward_outcomes"] == 1
     db = get_db()
     for table, row_id, expected in (
         ("filter_candidate_outcomes", "fco-unobserved", "pending"),
         ("filter_candidate_outcomes", "fco-observed", "failed"),
-        ("universe_forward_outcomes", "ufo-unobserved", "pending"),
     ):
         row = db.execute(
             f"SELECT status, settled_at FROM {table} WHERE id=?", (row_id,)
@@ -682,7 +525,6 @@ def test_requeue_restores_only_the_rows_that_were_never_observed():
     # Idempotent: a second pass has nothing left to reclaim.
     again = requeue_unobserved_failed_outcomes(dry_run=False)
     assert again["filter_candidate_outcomes"] == 0
-    assert again["universe_forward_outcomes"] == 0
 
 
 def test_settler_closes_outcomes_whose_benchmark_can_never_settle():
@@ -842,7 +684,7 @@ def test_doctor_reports_destroyed_evidence_and_how_to_reclaim_it():
     assert baseline.severity == "ok", baseline.detail
     assert "unobserved_failed=0" in baseline.detail
 
-    _insert_failed("universe_forward_outcomes", "ufo-doc-destroyed", observed=False)
+    _insert_failed("filter_candidate_outcomes", "fco-doc-destroyed", observed=False)
 
     report = Report()
     _probe_filter_evidence(report)

@@ -205,16 +205,10 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
         "settle_due_filter_outcomes",
         settle_filters,
     )
-    monkeypatch.setattr(
-        outcome_recorder.repo,
-        "list_pending_forward_outcomes",
-        lambda **kwargs: calls.append(("forward", kwargs["limit"], None)) or [],
-    )
-
     assert asyncio.run(
         outcome_recorder.settle_due(max_rows=20, time_budget_sec=8.0)
     ) == 1
-    assert [call[0] for call in calls[:2]] == ["filter", "forward"]
+    assert calls[0][0] == "filter"
     assert calls[0][1] > 0
     assert 0 < calls[0][2] < 8.0
     # The canonical queue is given a bounded exchange-request ceiling, not just a

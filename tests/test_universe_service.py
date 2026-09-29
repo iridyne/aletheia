@@ -787,7 +787,6 @@ async def test_refresh_cancellation_terminalizes_scanner_after_worker_drain(monk
     monkeypatch.setattr(outcome_recorder, "settle_due", AsyncMock())
     monkeypatch.setattr(registry, "sync_registry", AsyncMock())
     monkeypatch.setattr(scheduler, "get_latest_volume_ranking", lambda: None)
-    monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
     monkeypatch.setattr(service.repo, "insert_universe_scanner_run", lambda _run: None)
     monkeypatch.setattr(service.repo, "list_universe_assets", lambda **_kwargs: [{"id": "asset"}])
     monkeypatch.setattr(service.repo, "list_candidate_planning_refresh_assets", lambda **_kwargs: [])

@@ -476,7 +476,7 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
     repo.claim_next_candidate_planning("schema-proof")
     plan = _plan(generation)
     assert repo.complete_candidate_planning_with_plan(generation["id"], "schema-proof", plan)[0] == "planned"
-    repo.insert_forward_outcomes_batch([
+    repo.insert_filter_candidate_outcomes_batch([
         _settled("BTC/USDT", "long", 1.0, member_id=candidate.id, cost_model_version=COST_MODEL_VERSION),
     ])
 

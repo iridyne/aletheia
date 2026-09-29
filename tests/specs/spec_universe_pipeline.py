@@ -21,7 +21,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 @pytest.mark.parametrize("writer", [
     "publish_candidate_snapshot",
     "ensure_candidate_planning_generation",
-    "insert_forward_outcomes_batch",
     "insert_filter_candidate_outcomes_batch",
     "insert_universe_twin_shadow_bundle",
 ])

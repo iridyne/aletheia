@@ -1058,15 +1058,6 @@ def get_calibration():
     }
 
 
-@router.get("/members/{member_id}/outcomes")
-def get_member_outcomes(member_id: str):
-    """Forward outcomes for a specific universe member."""
-    outcomes = repo.list_forward_outcomes_by_member(member_id)
-    if not outcomes:
-        raise HTTPException(404, "No outcomes found for this member")
-    return outcomes
-
-
 @router.get("/registry/stats", responses={200: {"model": UniverseRegistryStats}})
 def registry_stats():
     """Asset registry statistics."""

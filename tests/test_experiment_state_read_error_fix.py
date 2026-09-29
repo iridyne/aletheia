@@ -158,7 +158,6 @@ def test_guarded_retention_skips_deletion_when_authority_is_unavailable(monkeypa
     monkeypatch.setattr(repo, "_canonical_lab_authority", unavailable)
     guarded = (
         (repo.prune_filter_candidate_outcomes, {"min_experiment_started_at": None}),
-        (repo.prune_universe_forward_outcomes, {"min_experiment_started_at": None}),
         (prune_universe_members, {"min_experiment_started_at": None}),
         (repo.prune_universe_snapshots, {"min_experiment_started_at": None}),
         (prune_filter_shadow_evaluations, {}),
@@ -174,7 +173,6 @@ def _run_cleanup_with_guard_spies(tmp_path, monkeypatch, floor_result):
 
     setup_env(tmp_path, monkeypatch)
     calls = {name: [] for name in (
-        "prune_universe_forward_outcomes",
         "prune_filter_decisions",
         "prune_filter_candidate_outcomes",
         "prune_universe_snapshots",
@@ -232,7 +230,6 @@ def test_scheduler_unavailable_floor_skips_guarded_prunes_and_continues(
     monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
     monkeypatch.setattr(repo, "min_open_experiment_exposure_at", fail_floor_read)
     for name in (
-        "prune_universe_forward_outcomes",
         "prune_filter_decisions",
         "prune_filter_candidate_outcomes",
         "prune_universe_snapshots",

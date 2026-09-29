@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v90"
+SCHEMA_VERSION = "aletheia-sqlite-v94"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8470,6 +8470,12 @@ def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None
     db.execute("PRAGMA optimize")
 
 
+def _apply_drop_universe_forward_outcomes_v94(db: sqlite3.Connection) -> None:
+    """Drop universe_forward_outcomes. All writers removed in #3701 Batch D."""
+    db.execute("DROP TABLE IF EXISTS universe_forward_outcomes")
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -9022,6 +9028,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"candidate_policy_name_convergence_v93:candidate_selection_utility_v1->candidate_selection_utility:backfill+constraint").hexdigest(),
         schema_version="aletheia-sqlite-v93",
         apply=_apply_candidate_policy_name_convergence_v93,
+    ),
+    MigrationStep(
+        migration_id="20260929_0094_drop_universe_forward_outcomes_v94",
+        checksum=hashlib.sha256(b"drop_universe_forward_outcomes_v94:retired_product_no_writers:drain_settled").hexdigest(),
+        schema_version="aletheia-sqlite-v94",
+        apply=_apply_drop_universe_forward_outcomes_v94,
     ),
 )
 
