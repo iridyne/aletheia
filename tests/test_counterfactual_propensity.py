@@ -1,8 +1,6 @@
 """Tests for extensions.counterfactual.propensity."""
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from extensions.counterfactual.propensity import (
     _encode,
     _fit,
@@ -10,8 +8,10 @@ from extensions.counterfactual.propensity import (
     _roc_auc,
     build_propensity_report,
 )
-from extensions.counterfactual.trades import persist_shadow_batch
-from tests.helpers.shadow_outcome_fixture import settle_pending_keyed_shadows
+from tests.helpers.shadow_outcome_fixture import (
+    insert_shadow_batch,
+    settle_pending_keyed_shadows,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,8 +43,7 @@ def _insert_and_settle(
     net_pnl_pct: float = 0.3,
 ) -> None:
     """Insert a shadow batch then mark all rows as settled."""
-    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-        persist_shadow_batch(candidates, selected, top_n=top_n)
+    insert_shadow_batch(candidates, selected, top_n=top_n, entry_price=50000.0)
     settle_pending_keyed_shadows(net_pnl_pct)
 
 

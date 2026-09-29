@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
+
+from tests.helpers.shadow_outcome_fixture import (
+    insert_shadow_batch,
+    project_keyed_shadow,
+)
 
 
 def _candidate(opportunity_id: str) -> dict:
@@ -20,14 +23,14 @@ def _candidate(opportunity_id: str) -> dict:
 
 
 def _persist_shadow(opportunity_id: str, *, epoch: str | None = "epoch-test") -> str:
-    from extensions.counterfactual.trades import persist_shadow_batch
-
     candidate = _candidate(opportunity_id)
-    with (
-        patch("extensions.counterfactual.trades._current_price", return_value=100.0),
-        patch("extensions.counterfactual.trades._current_policy_epoch", return_value=epoch),
-    ):
-        return persist_shadow_batch([candidate], candidate, top_n=1)[0]
+    return insert_shadow_batch(
+        [candidate],
+        candidate,
+        top_n=1,
+        entry_price=100.0,
+        policy_epoch_id=epoch,
+    )[0]
 
 
 def _set_created_at(shadow_id: str, created_at: str) -> None:
@@ -39,20 +42,7 @@ def _set_created_at(shadow_id: str, created_at: str) -> None:
 
 
 def _settle_shadow(shadow_id: str) -> None:
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
-    from tests.helpers.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
-
-    db = get_db()
-    key = db.execute(
-        "SELECT outcome_candidate_key FROM shadow_trades WHERE id=?", (shadow_id,)
-    ).fetchone()["outcome_candidate_key"]
-    insert_canonical_outcome_for_shadow(
-        shadow_id,
-        horizon="24h",
-        net_return_pct=1.0,
-    )
-    assert repo.settle_linked_shadow_outcomes(key) >= 1
+    assert project_keyed_shadow(shadow_id, horizon="24h", net_return_pct=1.0) >= 1
 
 
 def test_rolling_window_uses_utc_instants_for_space_and_timestamps():

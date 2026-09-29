@@ -104,10 +104,15 @@ def _assert_complete_closed_position_fixture(
     assert close_filled_at == closed_at
 
     jobs = list_outcome_hook_jobs(position_id=position_id)
-    if expected_outcome_eligible:
-        assert jobs
-    else:
-        assert jobs == []
+    # Only the serenity post-mortem hook is enqueued now that the shadow_trades
+    # hook was retired with its producer (#3704).
+    expected_hooks = (
+        expected_outcome_eligible
+        and position.get("execution_mode") != "paper_internal"
+        and position.get("trade_school") == "serenity"
+        and bool(position.get("opportunity_id"))
+    )
+    assert bool(jobs) is expected_hooks
     assert any(
         event["event_type"] == "position_closed"
         and event["entity_id"] == position_id

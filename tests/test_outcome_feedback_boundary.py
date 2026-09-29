@@ -54,7 +54,9 @@ def test_absent_feedback_preserves_close_and_replays_under_core_lease(tmp_path, 
 
     _setup_db(tmp_path, monkeypatch)
     monkeypatch.setattr(outcome_hooks, '_feedback_executor', None)
-    position = _position(execution_mode='bitget_demo')
+    position = _position(execution_mode='bitget_demo').model_copy(
+        update={'trade_school': 'serenity'}
+    )
     repo.insert_position(position)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
     before = repo.get_position(position.id)
@@ -73,6 +75,6 @@ def test_absent_feedback_preserves_close_and_replays_under_core_lease(tmp_path, 
     monkeypatch.setattr(outcome_hooks, '_feedback_executor', feedback)
     result = outcome_hooks.process_outcome_hook_jobs(position_id=position.id, now='2100-01-01T00:00:00+00:00')
     assert result['completed'] == 1
-    assert calls == [('shadow_trades', position.id)]
+    assert calls == [('serenity_post_mortem', position.id)]
     assert repo.get_position(position.id) == before
     assert outcome_hooks.process_outcome_hook_jobs(position_id=position.id)['claimed'] == 0

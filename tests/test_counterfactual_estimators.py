@@ -1,7 +1,7 @@
 """Tests for extensions.counterfactual.estimators and DR-mode calibration."""
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from extensions.counterfactual.calibration import build_calibration
 from extensions.counterfactual.estimators import (
@@ -10,8 +10,10 @@ from extensions.counterfactual.estimators import (
     ips_estimate,
 )
 from extensions.counterfactual.propensity import build_propensity_report
-from extensions.counterfactual.trades import persist_shadow_batch
-from tests.helpers.shadow_outcome_fixture import settle_pending_keyed_shadows
+from tests.helpers.shadow_outcome_fixture import (
+    insert_shadow_batch,
+    settle_pending_keyed_shadows,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers (shared with test_counterfactual_propensity pattern)
@@ -26,8 +28,7 @@ def _insert_batch(
     top_n: int = 50,
     net_pnl_pct: float = 0.3,
 ) -> None:
-    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-        persist_shadow_batch(candidates, selected, top_n=top_n)
+    insert_shadow_batch(candidates, selected, top_n=top_n, entry_price=50000.0)
     settle_pending_keyed_shadows(net_pnl_pct)
 
 
@@ -238,17 +239,16 @@ def test_calibration_dr_numeric_values():
 
 def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 0.3) -> None:
     """Insert one resolved shadow row with the given policy_epoch_id."""
-    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-        with patch("extensions.counterfactual.trades._current_policy_epoch", return_value=epoch):
-            persist_shadow_batch(
-                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
-                  "market_type": "spot", "direction": "long",
-                  "scanner_family": "momentum", "trade_score": 60.0}],
-                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
-                           "market_type": "spot", "direction": "long",
-                           "scanner_family": "momentum", "trade_score": 60.0},
-                top_n=5,
-            )
+    candidate = {"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
+                 "market_type": "spot", "direction": "long",
+                 "scanner_family": "momentum", "trade_score": 60.0}
+    insert_shadow_batch(
+        [candidate],
+        candidate,
+        top_n=5,
+        entry_price=50000.0,
+        policy_epoch_id=epoch,
+    )
     settle_pending_keyed_shadows(net_pnl_pct)
 
 

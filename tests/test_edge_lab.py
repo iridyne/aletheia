@@ -1,6 +1,5 @@
-"""Tests for Edge Lab features: shadow trades, BTC benchmark and family scorecard."""
+"""Tests for Edge Lab features: BTC benchmark and family scorecard."""
 
-import json
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -36,48 +35,6 @@ def _isolate_db(tmp_path, monkeypatch):
     conn.close()
     sq._db_conn = None
 
-
-class TestShadowTrades:
-    """P1: shadow trade persistence."""
-
-    def test_persist_shadow_batch(self):
-        from extensions.counterfactual.trades import persist_shadow_batch
-        from aletheia.storage.repositories import list_shadow_trades
-
-        candidates = [
-            {"opportunity_id": "opp1", "symbol": "BTC/USDT", "direction": "long",
-             "scanner_family": "momentum", "trade_score": 80.0,
-             "learning_score_trace": [
-                 {"path_id": "ranker_case_score", "proposed_delta": -4.0}
-             ]},
-            {"opportunity_id": "opp2", "symbol": "ETH/USDT", "direction": "short",
-             "scanner_family": "mean_reversion", "trade_score": 60.0},
-            {"opportunity_id": "opp3", "symbol": "SOL/USDT", "direction": "long",
-             "scanner_family": "derivatives", "trade_score": 40.0},
-        ]
-        selected = candidates[0]
-
-        with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-            ids = persist_shadow_batch(candidates, selected, top_n=3)
-
-        assert len(ids) == 3
-        shadows = list_shadow_trades()
-        assert len(shadows) == 3
-        # First one should be marked as selected
-        selected_shadows = [s for s in shadows if s["was_selected"]]
-        assert len(selected_shadows) == 1
-        assert selected_shadows[0]["opportunity_id"] == "opp1"
-        assert json.loads(selected_shadows[0]["learning_score_trace_json"]) == [
-            {"path_id": "ranker_case_score", "proposed_delta": -4.0}
-        ]
-        # All should share the same batch_id
-        batch_ids = {s["batch_id"] for s in shadows}
-        assert len(batch_ids) == 1
-
-    def test_persist_empty_candidates(self):
-        from extensions.counterfactual.trades import persist_shadow_batch
-        ids = persist_shadow_batch([], None, top_n=5)
-        assert ids == []
 
 
 class TestBTCBenchmark:

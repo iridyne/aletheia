@@ -702,14 +702,11 @@ def test_injected_connection_query_only_state_is_restored():
 def test_production_shadow_and_canonical_outcome_writers_become_audit_eligible(monkeypatch):
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
-    from extensions.counterfactual import trades
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.outcome_economics import estimate_outcome_economics
+    from tests.helpers.shadow_outcome_fixture import insert_shadow_batch
 
-    monkeypatch.setattr(trades, "_current_price", lambda *args, **kwargs: 100.0)
-    monkeypatch.setattr(trades, "_current_regime", lambda: "normal")
-    monkeypatch.setattr(trades, "_current_policy_epoch", lambda: "epoch-production")
     candidate = {
         "opportunity_id": "opp-production",
         "symbol": "BTC/USDT",
@@ -720,7 +717,13 @@ def test_production_shadow_and_canonical_outcome_writers_become_audit_eligible(m
         "trade_score": 80.0,
     }
 
-    shadow_ids = trades.persist_shadow_batch([candidate], candidate, top_n=1)
+    shadow_ids = insert_shadow_batch(
+        [candidate],
+        candidate,
+        top_n=1,
+        entry_price=100.0,
+        policy_epoch_id="epoch-production",
+    )
     assert len(shadow_ids) == 1
     db = get_db()
     shadow = db.execute(

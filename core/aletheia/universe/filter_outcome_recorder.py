@@ -286,10 +286,6 @@ async def settle_due_filter_outcomes(
         )
         if won is False:
             return _ALREADY_TERMINAL
-        # The repository projects the linked 24h shadow in the same transaction;
-        # keep this idempotent call for legacy/custom repository implementations.
-        if row.get("horizon") == "24h":
-            repo.settle_linked_shadow_outcomes(row["outcome_candidate_key"])
         return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------

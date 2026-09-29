@@ -42,7 +42,7 @@ def test_missing_window_guard_never_updates(monkeypatch):
 
 
 @pytest.mark.parametrize("window", [None, "w"])
-def test_guard_spans_status_transaction_cas_and_linked_shadow(monkeypatch, window):
+def test_guard_spans_status_transaction_and_cas(monkeypatch, window):
     events = []
     row = {"benchmark_window_id": window, "status": "pending", "venue": "bitget",
            "horizon": "24h", "outcome_candidate_key": "key"}
@@ -65,9 +65,8 @@ def test_guard_spans_status_transaction_cas_and_linked_shadow(monkeypatch, windo
     monkeypatch.setattr(repo, "_lab_outcome_guard", guard)
     monkeypatch.setattr(repo, "transaction", transaction)
     monkeypatch.setattr(repo, "_update_pending", lambda *_: events.append("cas") or True)
-    monkeypatch.setattr(repo, "settle_linked_shadow_outcomes", lambda *_: events.append("linked"))
     assert repo._settle_outcome_with_exact_venue("filter_candidate_outcomes", "o", {}, kind="filter")
-    expected = ["tx-enter", "cas", "linked", "tx-exit"]
+    expected = ["tx-enter", "cas", "tx-exit"]
     assert events == (["guard-enter", *expected, "guard-exit"] if window else expected)
 
 

@@ -934,6 +934,7 @@ def _persist_waiting_plan(
     candidate_id="candidate-1",
     candidate_family="momentum",
     executable_notional_cap_usdt=None,
+    historical_policy_v1=False,
 ) -> EntryPlan:
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
@@ -1007,8 +1008,39 @@ def _persist_waiting_plan(
         candidate_opportunity_context_json=opportunity.model_dump_json(),
         candidate_opportunity_context_hash=opportunity.context_hash,
     )
-    repo._insert("universe_members", candidate.model_dump())
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    payload = candidate.model_dump()
+    if historical_policy_v1:
+        # A frozen-schema fixture must write its rows the way that schema wrote
+        # them: the v86 CHECKs predate the #3708 rename and the model boundary
+        # normalizes the retired label on every write, so the historical values
+        # are restored here instead of being re-derived.
+        legacy_context = CandidateOpportunityContext(
+            candidate_id=candidate_id,
+            candidate_selection={
+                **opportunity.candidate_selection,
+                "policy": "candidate_selection_utility_v1",
+            },
+            source=opportunity.source,
+            opportunity=opportunity.opportunity,
+            context=opportunity.context,
+        )
+        payload["candidate_selection_policy"] = "candidate_selection_utility_v1"
+        payload["candidate_opportunity_context_json"] = legacy_context.model_dump_json()
+        payload["candidate_opportunity_context_hash"] = legacy_context.context_hash
+
+    def _write(table: str, data: dict) -> None:
+        if historical_policy_v1 and "candidate_selection_policy" in data:
+            data = {**data, "candidate_selection_policy": "candidate_selection_utility_v1"}
+        original_insert(table, data)
+
+    original_insert = repo._insert
+    try:
+        if historical_policy_v1:
+            repo._insert = _write
+        repo._insert("universe_members", payload)
+        generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    finally:
+        repo._insert = original_insert
     repo.claim_next_candidate_planning("owner")
     plan = _plan(
         account_mode=account_mode,

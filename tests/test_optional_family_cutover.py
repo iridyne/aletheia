@@ -86,7 +86,6 @@ if missing in ("knowledge", "all"):
 from aletheia.agent_runtime import scheduler
 from aletheia.analytics import family_scorecard
 if missing in ("counterfactual", "all"):
-    assert scheduler._resolve_stale_shadows is None
     assert family_scorecard._read_shadow_cohort is None
 if missing in ("knowledge", "all"):
     assert scheduler._expire_learned_guards is None
@@ -128,16 +127,13 @@ def test_optional_job_absence_is_failure_not_success(monkeypatch):
     from types import SimpleNamespace
     from aletheia.agent_runtime import scheduler
     failures = []
-    monkeypatch.setattr(scheduler, "_resolve_stale_shadows", None)
     monkeypatch.setattr(scheduler, "_expire_learned_guards", None)
     monkeypatch.setattr(scheduler, "_learning_daily_catchup_due", None)
     monkeypatch.setattr(scheduler, "load_config", lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)))
     monkeypatch.setattr(scheduler, "_record_job_failure", lambda job, reason: failures.append((job, reason)))
-    scheduler._run_shadow_resolver()
     scheduler._run_guard_promotion()
     scheduler._run_learning_startup_catchup()
     assert failures == [
-        ("shadow_resolver", "counterfactual_extension_unavailable"),
         ("guard_promotion", "knowledge_extension_unavailable"),
         ("learning_startup_catchup", "learning_control_unavailable"),
     ]
