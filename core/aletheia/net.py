@@ -571,6 +571,24 @@ def make_ccxt_prediction(name: str, **options):
     return exchange, session
 
 
+def make_ccxt_pro(name: str, **options):
+    """Build a ccxt.pro WebSocket exchange with the managed proxy session injected.
+
+    Extends the sanctioned CCXT construction seam to the ccxt.pro family (async
+    WebSocket exchanges). Same session/proxy/lifecycle policy as make_ccxt.
+    Returns (exchange, session); caller must close_ccxt.
+    """
+    import ccxt.pro as pro
+
+    if not hasattr(pro, name):
+        raise ValueError(f"unknown ccxt pro exchange: {name}")
+    session = aiohttp_session()
+    opts = {**ccxt_timeout_options(), "enableRateLimit": True, "session": session}
+    opts.update(options)
+    exchange = getattr(pro, name)(opts)
+    return exchange, session
+
+
 async def close_ccxt(exchange, session) -> bool:
     """Close an injected CCXT exchange and its separately owned session."""
     import asyncio as _aio
