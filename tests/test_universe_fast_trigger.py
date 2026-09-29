@@ -1608,6 +1608,26 @@ async def test_entry_plan_watcher_retires_historical_plan_without_starting_engin
     assert retired == [(plan.plan_id, "entry_plan_runtime_authority_revoked")]
 
 
+def test_deterministic_submission_failures_are_classified_by_code():
+    """A refusal the boundary cannot change must be recognised, not retried.
+
+    Reproduced from the runtime: a two-day-old Plan failing
+    `ai_entry_running_contract_mismatch` was re-dispatched at ~18 attempts/second,
+    because the dispatch wrapper treated every exception as retryable (#3747).
+    """
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    assert watch._deterministic_submission_failure(
+        ValueError("ai_entry_running_contract_mismatch")
+    ) == "ai_entry_running_contract_mismatch"
+    assert watch._deterministic_submission_failure(
+        ValueError("entry_plan_submission_leverage_unavailable")
+    ) == "entry_plan_submission_leverage_unavailable"
+    # Transient refusals keep their retry behaviour.
+    assert watch._deterministic_submission_failure(ValueError("post_only_would_cross_bbo")) is None
+    assert watch._deterministic_submission_failure(TimeoutError()) is None
+
+
 @pytest.mark.asyncio
 async def test_entry_plan_watcher_retires_a_plan_that_cannot_be_submitted(monkeypatch):
     """A plan without resolvable financing must be retired, not re-attempted forever.
