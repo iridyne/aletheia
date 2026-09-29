@@ -114,10 +114,7 @@ estimand。不同 estimand
 
 ## 6. Failure and recovery semantics
 
-- `persist_shadow_batch` 单行失败不阻塞批次（warning log + 继续），但**批 id 已成型**，下游可容忍缺行；批本身不重试。
-- `resolve_shadow_trades_for_position` 若 batch 中任一行失败（invalid entry / exit 价格不可得），**整个 batch 抛 `RuntimeError`**，由 `outcome_hooks` 记为 hook failure、进入 `outcome_hook_replay`。第一次尝试写下的 `exit_price` 锚点在下次 replay 时被 `anchor_shadow_trade_exit_price_if_pending` 通过 CAS 保留，从而幂等。
-- `resolve_stale_shadows` 是 backfill 类作业，对 orphaned（`opportunity_id NULL` 或 parent close 时间丢失）的 pre-b9ad957 行做固定 horizon 结算；无 OHLCV 或坏 entry 计入 `skipped_no_ohlcv` / `skipped_bad_entry`，永不 fail-close 整批。
-- `_current_policy_epoch` 异常时返回 `None`（see CF-I04）；shadow 写入本身继续。
+- **已退役（#3704 / #3708）**：shadow 写入路径整体删除，其失败与恢复语义不再存在——`persist_shadow_batch` 的批级容错、`resolve_shadow_trades_for_position` 的 batch `RuntimeError` + `outcome_hooks` hook failure + `outcome_hook_replay`、`anchor_shadow_trade_exit_price_if_pending` 的 `_current_price` CAS 锚点幂等，以及 `resolve_stale_shadows` 的 `skipped_no_ohlcv` / `skipped_bad_entry` backfill 结算。`shadow_trades` 表是等待 DROP 迁移的墓碑，不再有 owner 结算它。
 - `build_calibration` 在 DB 未初始化 / 查询错误时返回带 `errors` 字段的 report，不 raise；这是只读诊断的一贯语义。
 - `evaluate_active_shadow_experiments` 检测到 `filter_version` 中途换代时把实验 `status="invalidated"` 并落一条空 evaluation；不做部分归因。
 
@@ -125,10 +122,8 @@ estimand。不同 estimand
 
 反事实模块的行为由以下测试锁定；每条以 `SpecClaim` 或 focused test 形式存在：
 
-- `tests/test_edge_lab.py` — `persist_shadow_batch` 端到端与 first-exposure 语义。
-- `tests/test_shadow_trade_economics_enrichment.py` — `_compute_shadow_economics` 与 cost-model 字段。
-- `tests/specs/spec_pipeline_outcome_shadow_anchor.py` — Position 关闭锚点、CAS 幂等、historical snapshot 时间钉。
-- `tests/specs/spec_pipeline_outcome_feedback.py` — hook replay + shadow batch 完整或全失败的语义。
+- `tests/test_edge_lab.py` — Position 关闭时的 BTC benchmark 记录与 family scorecard 投影。
+- `tests/specs/spec_pipeline_outcome_feedback.py` — eligible close 的 durable hook job（enqueue / replay / 并发 lease / 幂等）。
 - `tests/test_filter_shadow_experiments.py` — 前瞻实验的 register / evaluate / status 转换。
 - `tests/test_filter_replay.py` — 有界回放的边界 (`_MAX_ALTERNATIVES`, `_MAX_CANDIDATES`, `read_only`).
 - `tests/specs/spec_filter_evidence.py` — 全模块的 `production_mutation_allowed=0` 与 `first exposure` 断言。

@@ -104,10 +104,12 @@ def _assert_complete_closed_position_fixture(
     assert close_filled_at == closed_at
 
     jobs = list_outcome_hook_jobs(position_id=position_id)
-    if expected_outcome_eligible:
-        assert jobs
-    else:
-        assert jobs == []
+    # #3704 retired the `shadow_trades` hook that made every eligible close
+    # enqueue a job. The surviving producer (`outcome_hooks.enqueue_outcome_hook_jobs`)
+    # enqueues `serenity_post_mortem` only, and this fixture is never a Serenity
+    # close, so the current contract is zero jobs for either eligibility.
+    assert position["trade_school"] != "serenity"
+    assert jobs == []
     assert any(
         event["event_type"] == "position_closed"
         and event["entity_id"] == position_id
