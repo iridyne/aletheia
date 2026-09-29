@@ -191,12 +191,12 @@
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 804,
+      "line": 807,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 813,
+      "line": 816,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {

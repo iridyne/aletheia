@@ -178,7 +178,7 @@ def _is_sandbox_mode(execution_mode: str) -> bool:
     mode = str(execution_mode or "").strip().lower()
     if mode not in EXTERNAL_EXECUTION_MODES:
         return False
-    sandbox, _ = _listing_view(mode)
+    sandbox, _, _xn = _listing_view(mode)
     return bool(sandbox)
 
 
@@ -253,13 +253,15 @@ async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
     venue = execution_mode_venue(execution_mode)
     if venue is None:
         return None
-    sandbox, extra = _listing_view(execution_mode)
+    sandbox, extra, exchange_name = _listing_view(execution_mode)
     provider = get_market_data_provider(venue, exact_venue=True)
     try:
         read = getattr(provider, "get_public_market_capabilities", None)
         if not callable(read):
             raise RuntimeError("market capabilities unavailable")
-        capabilities = await read(sandbox=sandbox, extra_options=extra)
+        from typing import cast, Callable, Any, Awaitable
+        read_fn = cast(Callable[..., Awaitable[Any]], read)
+        capabilities = await read_fn(sandbox=sandbox, extra_options=extra, exchange_name=exchange_name or None)
         if not isinstance(capabilities, dict) or any(
             key not in {"spot", "usdt_futures"}
             or not isinstance(symbols, frozenset)
