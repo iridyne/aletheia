@@ -2047,3 +2047,85 @@ def test_entry_cancel_retry_v90_adds_nullable_columns_without_backfill():
     ).fetchone()
     assert row == (None, None, "submitted", "entry_cancel_pending:window")
     connection.close()
+
+
+def test_candidate_policy_name_convergence_v93_preserves_context_identity():
+    """#3706 P1: renaming the column alone desyncs it from the frozen, hash-verified
+    candidate_opportunity_context_json (whose candidate_selection.policy is immutable
+    and covered by candidate_opportunity_context_hash). Historical rows must keep
+    their stored value; only the CHECK constraint may widen to accept new writes.
+    """
+
+    import aletheia.storage.migrations as migrations
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
+
+    context = CandidateOpportunityContext(
+        candidate_id="cand-1",
+        candidate_selection={
+            "policy": "candidate_selection_utility_v1",
+            "policy_epoch": "epoch-1",
+            "source_record_hash": "a" * 64,
+        },
+        source={"detected_at": "2026-09-01T00:00:00+00:00",
+                "source_cutoff_at": "2026-09-01T00:00:00+00:00",
+                "feature_snapshot_id": "feature-1"},
+        opportunity={
+            "primary_mechanism": "continuation", "mechanism_version": "continuation/v1",
+            "mechanism_source": "target_authority", "source_component_id": "momentum",
+            "direction": "long", "horizon": "4h", "economic_utility_pct": 1.0,
+            "capability_status": "supported", "capability_gaps": (),
+            "primary_evidence_refs": ("fact-1",), "secondary_mechanisms": (),
+        },
+        context={"regime": "trending"},
+    )
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE universe_members (
+            id TEXT PRIMARY KEY,
+            candidate_selection_policy TEXT,
+            candidate_opportunity_context_json TEXT,
+            candidate_opportunity_context_hash TEXT
+        );
+        CREATE TABLE candidate_planning_generations (
+            id TEXT PRIMARY KEY,
+            candidate_selection_policy TEXT CHECK(candidate_selection_policy IN
+                ('legacy_total_score_v1','candidate_selection_utility_v1','serenity_research_v1'))
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO universe_members VALUES (?, ?, ?, ?)",
+        ("cand-1", "candidate_selection_utility_v1", context.model_dump_json(), context.context_hash),
+    )
+    connection.execute(
+        "INSERT INTO candidate_planning_generations VALUES ('gen-1', 'candidate_selection_utility_v1')",
+    )
+
+    migrations._apply_candidate_policy_name_convergence_v93(connection)
+
+    member = dict(connection.execute("SELECT * FROM universe_members WHERE id='cand-1'").fetchone())
+    generation = dict(connection.execute("SELECT * FROM candidate_planning_generations WHERE id='gen-1'").fetchone())
+    assert member["candidate_selection_policy"] == "candidate_selection_utility_v1"
+    assert generation["candidate_selection_policy"] == "candidate_selection_utility_v1"
+
+    replayed = CandidateOpportunityContext.model_validate_json(member["candidate_opportunity_context_json"])
+    assert replayed.context_hash == member["candidate_opportunity_context_hash"]
+    assert replayed.candidate_selection["policy"] == member["candidate_selection_policy"], (
+        "stored column drifted from the immutable, hash-verified context — this is "
+        "exactly what makes repositories.get_candidate_path_progress() and "
+        "entry_analysis.build_entry_analysis_context() degrade a live pre-upgrade "
+        "planner to planning_identity_unavailable after restart"
+    )
+
+    # The widened CHECK constraint must accept new writers using the canonical name.
+    connection.execute(
+        "INSERT INTO candidate_planning_generations VALUES ('gen-2', 'candidate_selection_utility')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO candidate_planning_generations VALUES ('gen-3', 'not_a_real_policy')"
+        )
+    connection.close()

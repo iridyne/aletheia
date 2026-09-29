@@ -8423,10 +8423,21 @@ def _apply_cost_covering_edge_backfill_v89(db: sqlite3.Connection) -> None:
 
 
 def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None:
-    """Rename candidate_selection_utility_v1 → candidate_selection_utility in stored rows.
+    """Add candidate_selection_utility to the CHECK constraint; never rewrite stored rows.
 
-    Rebuilds candidate_planning_generations to add the canonical name to the CHECK constraint
-    (keeping v1 for backward compat), then backfills both tables.
+    Rebuilds candidate_planning_generations so the canonical unsuffixed name is
+    accepted going forward (new writers already emit it — see config.schema).
+
+    Historical rows carrying 'candidate_selection_utility_v1' are left untouched
+    on purpose: candidate_opportunity_context_json embeds that same literal in
+    candidate_selection.policy and is fingerprinted by candidate_opportunity_context_hash
+    over its own frozen content. Renaming only the column would desync it from that
+    immutable, hash-verified context — readiness/activation paths
+    (get_candidate_path_progress, build_entry_analysis_context) compare the two
+    exactly and would degrade to planning_identity_unavailable or raise
+    candidate_opportunity_generation_identity_mismatch for every live pre-upgrade
+    candidate. UniverseMember._normalize_candidate_policy already treats the two
+    spellings as equivalent at the Pydantic layer, so no consumer needs the rename.
     """
     row = db.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'"
@@ -8460,11 +8471,6 @@ def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None
                 db.execute("ALTER TABLE candidate_planning_generations_v93 RENAME TO candidate_planning_generations")
                 for _, _, statement in objects:
                     db.execute(statement)
-                db.execute(
-                    "UPDATE candidate_planning_generations "
-                    "SET candidate_selection_policy='candidate_selection_utility' "
-                    "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
-                )
                 if db.execute("PRAGMA foreign_key_check").fetchall():
                     raise MigrationStateError("candidate_policy_name_convergence_foreign_key_invalid")
                 if int(db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0]) != row_count:
@@ -8476,13 +8482,6 @@ def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None
                 raise
             finally:
                 db.execute("PRAGMA foreign_keys=ON")
-    if db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='universe_members'"
-    ).fetchone():
-        db.execute(
-            "UPDATE universe_members SET candidate_selection_policy='candidate_selection_utility' "
-            "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
-        )
     db.execute("PRAGMA optimize")
 
 
