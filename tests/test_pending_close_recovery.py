@@ -1135,20 +1135,76 @@ def test_reconcile_is_the_production_entry_to_absent_close_recovery(monkeypatch)
     assert stored["pending_close_status"] is None
 
 
-def test_reconcile_never_releases_a_parked_close_claim(monkeypatch):
-    """The 40725 park stays owner-unlock-only on the new production path too."""
-    _seed_parked_claim(age_hours=6)
+def test_reconcile_parks_a_40725_close_claim_without_releasing_it(monkeypatch):
+    """The production path must park 40725 and never free the claim for a retry.
+
+    The candidate Order is in a *recoverable* local state, so it really is
+    selected by the recovery's own query — the outcome depends on the park
+    guard, not on the fixture being invisible to the decision.
+    """
+    _seed_order(
+        Order(
+            id="close-40725-live",
+            client_order_id="close-pos-40725-live",
+            position_id="pos-40725-live",
+            close_reason="stop_loss",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="1471627178020290560",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-40725-live",
+            pending_close_order_id="close-40725-live",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        lambda order: {
+            "orderId": "1471627178020290560",
+            "orderStatus": "cancelled",
+            "cancelReason": "trade_too_many_times_cancel",
+            "cumExecQty": "0",
+        },
+    )
 
     from aletheia.execution.reconciliation import reconcile
 
     summary = reconcile()
 
     assert summary["pending_close_released"] == 0
-    assert summary["pending_close_parked"] == 0
-    stored = repo.get_position("pos-parked-40725")
+    assert summary["pending_close_parked"] == 1
+    stored_order = repo.get_order("close-40725-live")
+    assert stored_order is not None
+    assert stored_order["status"] == "cancelled"
+    assert stored_order["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
+    stored = repo.get_position("pos-40725-live")
     assert stored is not None
-    assert stored["pending_close_order_id"] == "close-pos-parked-40725"
+    assert stored["pending_close_order_id"] == "close-40725-live"
     assert stored["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+    # A parked claim is never a release candidate: a second pass must leave the
+    # owner-unlock-only park exactly where it is.
+    second = reconcile()
+    assert second["pending_close_released"] == 0
+    resumed = repo.get_position("pos-40725-live")
+    assert resumed is not None
+    assert resumed["pending_close_order_id"] == "close-40725-live"
+    assert resumed["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
 
 
 def test_legacy_submission_rejected_40725_is_still_not_released():
