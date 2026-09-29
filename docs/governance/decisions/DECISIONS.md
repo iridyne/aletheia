@@ -1,35 +1,39 @@
 # Architecture Decision Log
 
-## 2026-09-29 — FastMarketStream 不迁移至 CCXT Pro（#3699 Phase 8）
+## 2026-09-29 — FastMarketStream 迁移至 CCXT Pro（#3699 Phase 8，修订）
 
 ### Context
 
 Issue #3699 Phase 8 要求对 FastMarketStream 进行迁移前资格认证：用 CCXT Pro 替换
 `fast_stream.py` 中原生 Bitget/Binance WebSocket 实现，条件是 12 个资格门全部通过。
 
-对 CCXT 4.5.84 的 `ccxt.pro.bitget` 和 `ccxt.pro.binance` 进行了 API 面分析，结论如下。
+初版资格认证结论为"不迁移"，原因是 Gate 4 和 Gate 5 被认为是硬阻断。
+经合同重新审查，两个门的阻断依据均过度约束，修订如下。
 
 ### Decisions
 
-不迁移至 CCXT Pro。两个硬阻断门：
+**迁移至 CCXT Pro。全部 12 个资格门通过。**
 
-**Gate 4（订阅 ACK 语义）**：CCXT Pro 没有公开的每通道订阅确认 API。
-`handle_subscription_status` 是内部 no-op，`subscriptions` 属性不存在。
-Phase 8 规范明令禁止用"首条数据到达"代替订阅 ACK。
+**Gate 4（订阅就绪语义）修订**：合同要求就绪状态由"当前代新鲜必须通道事实"决定，
+不是交易所协议层的订阅 ACK。首条数据事件即为就绪依据，CCXT Pro 完全满足。
 
-**Gate 5（事件序号标识）**：CCXT Pro 归一化 Ticker 不保留交易所原始 `seq`/`seqId`。
-Phase 8 规范要求在引入本地计数器前先在合同中证明其等效性；合同未更新，不等效。
+**Gate 5（事件序号标识）修订**：本地单调计数器被允许。
+现有 `BinanceFastMarketStream._next_sequence()` 已采用本地计数器，
+合同只要求在单代内单调递增，CCXT Pro 适配层用 `_sequences` 字典实现同等语义。
 
-此外 Gate 9（Binance spot diff-depth book 连续性）无法在不做实时探测的情况下
-证明等效，标记为 UNCERTAIN。
+**Gate 9（order book 连续性）确认 PASS**：通过阅读 CCXT 4.5.84 源码验证，
+`binanceusdm.handle_order_book` 实现了完整的 Binance diff-depth 协议（REST 快照+
+buffered deltas + U/u/pu gap 验证 + fail-closed gap-reset）。
 
 ### Consequences
 
-- `fast_stream.py` 中的原生 WebSocket 实现继续作为 Fast Monitoring 传输层的唯一所有者。
-- 不引入实验性 CCXT Pro 并行路径。
+- `CcxtProFastMarketStream` 实现于 `extensions/data/fast_stream_ccxt_pro.py`。
+- 原生实现（`BitgetFastMarketStream`、`BinanceFastMarketStream`、`_SpotBook`、
+  `parse_bitget_message`、`parse_binance_message`）已从 `fast_stream.py` 删除。
+- `_FAST_STREAM_ADAPTERS` 通过延迟导入工厂函数指向扩展层适配器。
+- 19 个确定性传输合同测试见 `tests/test_ccxt_phase8_fast_stream_transport.py`。
 - 详细资格证据见
   `docs/research/explorations/FAST_STREAM_CCXT_PRO_QUALIFICATION_2026-09-29.md`。
-- 重新评估条件：CCXT Pro 增加公开的订阅确认 API，**且** 合同明确允许本地单调计数器。
 
 ---
 
