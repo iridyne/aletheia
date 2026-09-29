@@ -4,8 +4,9 @@ Observation-only data source for ``prediction_observer``. ``fetch_active_markets
 returns ``PolymarketMarket`` objects sorted by 24h volume descending;
 ``format_prediction_context`` renders them as a compact markdown block for the LLM.
 
-Transport: async httpx through the managed network client. Hard failures propagate
-to the caller (prediction_observer), which records an error rather than crashing.
+Transport: CCXT Prediction (ccxt.prediction.polymarket) through the managed network
+client. Hard failures propagate to the caller (prediction_observer), which records
+an error rather than crashing.
 """
 
 from __future__ import annotations
@@ -14,9 +15,10 @@ import json
 import logging
 from dataclasses import dataclass
 
+from aletheia.net import close_ccxt, make_ccxt_prediction
+
 logger = logging.getLogger("aletheia.polymarket")
 
-_GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 _TIMEOUT = 10.0
 
 
@@ -92,13 +94,14 @@ def _matches_categories(raw: dict, categories: list[str]) -> bool:
 
 
 async def _fetch_raw(params: str) -> list[dict]:
-    from aletheia.net import httpx_client
-
-    async with httpx_client(timeout=_TIMEOUT) as client:
-        resp = await client.get(_GAMMA_URL, params=dict(p.split("=", 1) for p in params.split("&")))
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else data.get("data", [])
+    exchange, session = make_ccxt_prediction("polymarket")
+    try:
+        data = await exchange.gammaPublicGetMarkets(
+            {k: v for k, v in (p.split("=", 1) for p in params.split("&"))}
+        )
+    finally:
+        await close_ccxt(exchange, session)
+    return data if isinstance(data, list) else (data or {}).get("data", [])
 
 
 async def fetch_active_markets(categories: list[str], limit: int = 50) -> list[PolymarketMarket]:
@@ -137,24 +140,24 @@ async def fetch_market_history(token_id: str, interval: str = "1h", fidelity: in
     Returns list of {ts: str, yes_probability: float} sorted by time ascending.
     Falls back to empty list on any error (non-critical).
     """
-    clob_url = "https://clob.polymarket.com/prices-history"
-    params = f"market={token_id}&interval=all&fidelity={fidelity}"
     try:
-        from aletheia.net import httpx_client
-        async with httpx_client(timeout=_TIMEOUT) as client:
-            resp = await client.get(f"{clob_url}?{params}")
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, dict):
-                history = data.get("history", [])
-            elif isinstance(data, list):
-                history = data
-            else:
-                return []
-            return [
-                {"ts": str(pt.get("t", "")), "yes_probability": float(pt.get("p", 0))}
-                for pt in history if isinstance(pt, dict)
-            ]
+        exchange, session = make_ccxt_prediction("polymarket")
+        try:
+            data = await exchange.clobPublicGetPricesHistory(
+                {"market": token_id, "interval": "all", "fidelity": fidelity}
+            )
+        finally:
+            await close_ccxt(exchange, session)
+        if isinstance(data, dict):
+            history = data.get("history", [])
+        elif isinstance(data, list):
+            history = data
+        else:
+            return []
+        return [
+            {"ts": str(pt.get("t", "")), "yes_probability": float(pt.get("p", 0))}
+            for pt in history if isinstance(pt, dict)
+        ]
     except Exception as e:
         logger.debug("fetch_market_history failed for %s: %s", token_id, e)
         return []
