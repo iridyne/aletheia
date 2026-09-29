@@ -42,6 +42,10 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     # (_resolve_capital_base); give it the same fixture equity so the ceiling
     # resolves instead of failing closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
+    # The compiled size is bounded by the cached *available* balance
+    # (entry_plan_compiler -> account_available_for_execution), which no test data
+    # dir can supply.
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args, **_kwargs: 5000.0)
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -146,6 +150,10 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     cfg.agent.permission_mode = "Full"
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args, **_kwargs: 5000.0)
+    # The compiled size is bounded by the cached *available* balance
+    # (entry_plan_compiler -> account_available_for_execution), which no test data
+    # dir can supply.
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args, **_kwargs: 5000.0)
     cfg.market_data.ccxt_exchange = "bitget"
     cfg.universe.max_candidates = 3
     save_config(cfg)

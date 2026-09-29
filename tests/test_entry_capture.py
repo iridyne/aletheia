@@ -16,6 +16,11 @@ def capture_input(monkeypatch, profile, priority, direction="long"):
     # too; otherwise the ceiling resolves as unavailable and the compiler fails
     # closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.)
+    # The compiled size is bounded by the cached *available* balance
+    # (entry_plan_compiler -> account_available_for_execution), which no test data
+    # dir can supply; pin the same fixture capital there too, or the compiler fails
+    # closed on COMPILER_RISK_BUDGET_UNAVAILABLE.
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.)
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"

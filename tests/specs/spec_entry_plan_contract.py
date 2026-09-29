@@ -591,6 +591,12 @@ def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, mon
     from aletheia.data.symbols import InstrumentId
 
     args = capture_input(monkeypatch, "grounded-anchor-direct", "FILL_FIRST")
+    # Risk check #18 (liquidation buffer) needs a feasible tier cap: the shipped
+    # demo major_cap is 20x, whose ~4.6% liquidation distance is below the 5% floor,
+    # so a plan at that cap is always rejected. This spec claims the FillFirst
+    # submission path, not the leverage tier, so it states a feasible policy
+    # explicitly instead of relying on unconfigured defaults.
+    args[-1].risk.demo.leverage.major_cap = 5
     save_config(args[-1])
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
