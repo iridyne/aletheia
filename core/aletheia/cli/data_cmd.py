@@ -105,9 +105,10 @@ def venue_margins(
 
     from aletheia.net import close_ccxt, make_ccxt_pro
 
-    exchange, session = make_ccxt_pro(venue)
-
     async def refresh():
+        # The exchange session binds to the running loop, so it is built here and
+        # not before `asyncio.run` (aiohttp rejects construction without a loop).
+        exchange, session = make_ccxt_pro(venue)
         try:
             return await refresh_venue_margin_envelope(
                 exchange,

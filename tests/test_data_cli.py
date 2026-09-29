@@ -144,10 +144,8 @@ def test_backfill_reports_all_siblings_then_exits_for_any_failure(monkeypatch, d
 
 def test_venue_margins_refresh_persists_the_facts_the_entry_path_reads(monkeypatch):
     """The Entry path reads a persisted fact row; this command is how it is filled."""
-    import asyncio
     import json
 
-    import aletheia.net as net
     from aletheia.cli.data_cmd import data_app
     from aletheia.trading import venue_margin
 
@@ -165,12 +163,10 @@ def test_venue_margins_refresh_persists_the_facts_the_entry_path_reads(monkeypat
     )
     seen = {}
 
-    class _Exchange:
-        async def close(self):
-            seen["closed"] = True
-
-    monkeypatch.setattr(net, "make_ccxt_pro", lambda _name: (_Exchange(), None))
-    monkeypatch.setattr(net, "close_ccxt", lambda *_a, **_k: asyncio.sleep(0))
+    # The real constructor (and the real close) are exercised on purpose: the
+    # exchange session binds to the running loop, which a command that built it
+    # outside asyncio.run() would get wrong — that is how this shipped once. Only
+    # the venue call is stubbed.
 
     async def refresh(exchange, *, venue, symbol, market_type, margin_mode, now=None):
         seen.update(venue=venue, symbol=symbol, market_type=market_type, margin_mode=margin_mode)
