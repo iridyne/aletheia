@@ -4154,7 +4154,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             "OR (ep.order_id IS NULL AND ep.status IN ('ordered','partially_filled','filled') "
             "AND (SELECT COUNT(*) FROM orders exact_order WHERE exact_order.entry_plan_id=ep.id "
             "AND exact_order.close_reason IS NULL)!=1))",
-            (policy, epoch if policy == "candidate_selection_utility_v1" else None),
+            (policy, epoch if policy == "candidate_selection_utility" else None),
         ).fetchone()[0]
         if relation_gaps:
             result["availability"] = {"available": False, "reason": "entry_outcome_identity_unavailable"}
@@ -4175,7 +4175,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             "SELECT COUNT(*) AS count, MIN(o.due_at) AS oldest FROM filter_candidate_outcomes o "
             "JOIN keys ON keys.key=o.outcome_candidate_key "
             "WHERE o.horizon='4h' AND o.status='pending' AND o.due_at<=?",
-            (epoch, policy, epoch if policy == "candidate_selection_utility_v1" else None, timestamp),
+            (epoch, policy, epoch if policy == "candidate_selection_utility" else None, timestamp),
         ).fetchone()
         result["due_outcome_count"] = due["count"]
         result["oldest_due_at"] = due["oldest"]

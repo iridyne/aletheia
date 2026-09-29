@@ -184,7 +184,7 @@ def _candidate_selection_retention_state() -> tuple[bool, str | None]:
         return False, None
     epoch = (
         str(universe.candidate_selection_policy_epoch)
-        if universe.candidate_selection_policy == "candidate_selection_utility_v1"
+        if universe.candidate_selection_policy == "candidate_selection_utility"
         and universe.candidate_selection_policy_epoch
         else None
     )
@@ -389,9 +389,9 @@ def _validate_universe_twin_prospective_bundle(
             "candidate-selection-utility-record/v4",
         }:
             authority_policy = sampling.get("authority_policy")
-            if authority_policy not in {"candidate_selection_utility_v1", "legacy_total_score_v1"}:
+            if authority_policy not in {"candidate_selection_utility", "legacy_total_score_v1"}:
                 raise ValueError("candidate_selection_authority_contract_invalid")
-            authority_applied = authority_policy == "candidate_selection_utility_v1"
+            authority_applied = authority_policy == "candidate_selection_utility"
             if batch.promotion_eligible:
                 raise ValueError("candidate_selection_runtime_promotion_invalid")
         try:

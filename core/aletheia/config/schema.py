@@ -1776,8 +1776,8 @@ class UniverseConfig(BaseModel):
     # Utility is the runtime default; Legacy remains readable for historical records.
     # The config loader derives the operational epoch from full config semantics.
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
-    ] = "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility"
+    ] = "candidate_selection_utility"
     candidate_selection_policy_epoch: str | None = None
     # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.

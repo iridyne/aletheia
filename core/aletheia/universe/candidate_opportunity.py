@@ -55,9 +55,9 @@ class CandidateOpportunityContext(BaseModel):
             if (source["kind"] == "serenity") != (selection.get("policy") == "serenity_research_v1"):
                 raise ValueError("candidate_opportunity_source_policy_invalid")
         opportunity = self.opportunity
-        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"}:
+        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1", "candidate_selection_utility", "serenity_research_v1"}:
             raise ValueError("candidate_opportunity_policy_invalid")
-        if selection.get("policy") == "candidate_selection_utility_v1" and not selection.get("policy_epoch"):
+        if selection.get("policy") in {"candidate_selection_utility_v1", "candidate_selection_utility"} and not selection.get("policy_epoch"):
             raise ValueError("candidate_opportunity_policy_epoch_missing")
         source_record_hash = str(selection.get("source_record_hash") or "")
         if len(source_record_hash) != 64 or any(
@@ -106,7 +106,7 @@ class CandidateOpportunityContext(BaseModel):
         if basis == "startup":
             strength = opportunity.get("pessimistic_strength")
             if (
-                selection.get("policy") != "candidate_selection_utility_v1"
+                selection.get("policy") not in {"candidate_selection_utility_v1", "candidate_selection_utility"}
                 or selection.get("decision_version") != "candidate-selection-utility/v2"
                 or not reason_proves_evidence_absent(startup_reason)
                 or utility is not None
@@ -122,7 +122,7 @@ class CandidateOpportunityContext(BaseModel):
         else:
             if startup_reason is not None:
                 raise ValueError("candidate_opportunity_startup_reason_invalid")
-            if selection.get("policy") == "candidate_selection_utility_v1" and (
+            if selection.get("policy") in {"candidate_selection_utility_v1", "candidate_selection_utility"} and (
                 isinstance(utility, bool)
                 or not isinstance(utility, (int, float))
                 or not math.isfinite(float(utility))
@@ -163,7 +163,7 @@ def target_candidate_opportunity_context(
     return CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            "policy": "candidate_selection_utility",
             "policy_epoch": policy_epoch,
             "source_record_hash": source_record_hash,
             "decision_version": decision["version"],

@@ -761,7 +761,7 @@ class UniverseService:
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
-            if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+            if cfg.universe.candidate_selection_policy == "candidate_selection_utility":
                 from aletheia.universe.candidate_selection_authority import (
                     candidate_selection_authority_block_reason,
                 )

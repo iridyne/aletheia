@@ -563,7 +563,7 @@ def universe(
     result = []
     for r in rows:
         entry = {k: r.get(k) for k in display_keys}
-        if r.get("candidate_selection_policy") != "candidate_selection_utility_v1":
+        if r.get("candidate_selection_policy") not in {"candidate_selection_utility", "candidate_selection_utility_v1"}:
             entry["historical_total_score"] = r.get("total_score")
         rf = entry.get("risk_flags")
         if isinstance(rf, str):
