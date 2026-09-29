@@ -8,6 +8,7 @@ Acceptance checks for #3699 Phase 8:
 - Instrument change (set_instruments) produces a new subscription_generation_id
 - Facts from old generation do not make a channel ready after reconnect
 - Stale/malformed watch return fails closed (no event emitted, no channel readiness)
+- Missing/malformed source timestamp fails closed — receive time is never exchange time
 - Binance depth gap (watch_order_book raising) clears depth channel readiness and re-warms
 """
 
@@ -366,8 +367,36 @@ def test_map_orderbook_returns_none_when_empty():
     assert adapter._map_orderbook(inst, {}) is None
 
 
-# ── Depth gap handling ────────────────────────────────────────────────────────
+def test_mappers_fail_closed_when_source_timestamp_unusable():
+    """A missing/malformed source time drops the fact instead of stamping local now.
 
+    Gate 3 requires source time "without inventing": ``exchange_timestamp_ms`` is
+    the exchange's own clock, so promoting the receive clock into it would make an
+    unproven fact look fresh to entry activation.
+    """
+    from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
+
+    inst = _instrument()
+    adapter = CcxtProFastMarketStream("bitget")
+
+    ticker = _ticker()
+    trade = _trade()
+    orderbook = _orderbook()
+    del ticker["timestamp"]
+    del trade["timestamp"]
+    del orderbook["timestamp"]
+
+    assert adapter._map_ticker(inst, ticker) is None  # missing timestamp key
+    assert adapter._map_trade(inst, trade) is None
+    assert adapter._map_orderbook(inst, orderbook) is None
+    assert adapter._map_ohlcv(inst, [None, 1, 2, 1, 2, 10]) is None  # bar[0] missing
+
+    assert adapter._map_ticker(inst, {**_ticker(), "timestamp": 0}) is None  # non-positive
+    assert adapter._map_trade(inst, {**_trade(), "timestamp": "not-a-time"}) is None  # non-numeric
+    assert adapter._map_orderbook(inst, {**_orderbook(), "timestamp": None}) is None  # explicit None
+
+
+# ── Depth gap handling ────────────────────────────────────────────────────────
 async def test_depth_gap_clears_channel_readiness():
     """When watch_order_book raises, depth channel fact is cleared (fail-closed)."""
     from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream

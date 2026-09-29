@@ -3,12 +3,13 @@
 Issue: #3699 Phase 8.
 Decision: **Migrate to CCXT Pro.** All 12 required qualification gates pass.
 Evidence scope: code probe + API surface inspection on CCXT 4.5.84 with `ccxt.pro.bitget`
-and `ccxt.pro.binanceusdm`. Contract authority: `docs/design/contracts/` (readiness semantics
+and `ccxt.pro.binanceusdm`, plus a public-WS smoke re-run on 2026-09-29 (see
+[Public-WS smoke](#public-ws-smoke-2026-09-29)). Contract authority: `docs/design/contracts/` (readiness semantics
 are current-generation fresh channel facts, not protocol-level ACK; local monotonic sequence
 is allowed per existing BinanceFastMarketStream `_next_sequence()` precedent).
 
 Implementation: `extensions/data/fast_stream_ccxt_pro.py` — `CcxtProFastMarketStream`.
-Tests: `tests/test_ccxt_phase8_fast_stream_transport.py` (19 deterministic tests, all pass).
+Tests: `tests/test_ccxt_phase8_fast_stream_transport.py` (20 deterministic tests, all pass).
 
 ---
 
@@ -17,8 +18,8 @@ Tests: `tests/test_ccxt_phase8_fast_stream_transport.py` (19 deterministic tests
 | # | Gate | Verdict | Notes |
 |---|------|---------|-------|
 | 1 | Exact venue + symbol + market type | PASS | Wrap CCXT unified symbol → InstrumentId at adapter boundary; `_ccxt_symbol()` handles spot vs perp suffix |
-| 2 | Quote / trade / depth / candle channel meaning | PASS | `watch_ticker` → quote, `watch_trades` → trade, `watch_order_book` → depth, `watch_ohlcv` → candle |
-| 3 | Source and receive times without inventing | PASS | CCXT Pro Ticker/Trade `timestamp` = exchange-provided. Receive time captured as `int(time.time()*1000)` immediately after each `await watch_*()` — adds internal parse latency (~sub-ms). Acceptable given 2–120 s freshness windows. |
+| 2 | Quote / trade / depth / candle channel meaning | PASS, caveat | `watch_ticker` → quote, `watch_trades` → trade, `watch_order_book` → depth, `watch_ohlcv` → candle. Public-WS smoke (2026-09-29) found `binanceusdm.watch_ticker` delivers a bookless `24hrMiniTicker` (`bid`/`ask` both `None`) — the quote channel never produces a fact on that venue with the current mapping. `watch_bids_asks` carries `bid`/`ask` and a source timestamp instead; tracked as a follow-up, not fixed here (different root cause than gate 3). |
+| 3 | Source and receive times without inventing | PASS, repaired 2026-09-29 | CCXT Pro Ticker/Trade/OrderBook/OHLCV `timestamp` is exchange-provided when present. The initial implementation fell back to `int(time.time()*1000)` (the receive clock) whenever `timestamp` was `None` — inventing exchange time exactly as this gate forbids. Repaired: a missing/malformed source timestamp now drops the fact (`_source_ms()` returns `None` → mapper returns `None`, same fail-closed path as missing bid/ask). See [§3](#3-source-vs-receive-time-repaired-2026-09-29). Receive time captured as `int(time.time()*1000)` immediately after each `await watch_*()` — adds internal parse latency (~sub-ms). Acceptable given 2–120 s freshness windows. |
 | 4 | Subscription readiness / ack semantics | PASS | Readiness is determined by **current-generation fresh required-channel facts** (first data event). Protocol-level ACK not required per contract revision. `subscriptions_confirmed` set True after first event, False on reconnect. |
 | 5 | Monotonic event-order identity | PASS | Local monotonic counter per `(InstrumentId, channel)`. Matches existing `BinanceFastMarketStream._next_sequence()` semantics. Contract permits local counter within a generation; exchange-native seq not required. |
 | 6 | Stream-generation reset across reconnect | PASS | `on_connected` override: `exchange.on_connected = _on_ws_connected`. Called on every (re)connect. Bumps `stream_generation_id` (new UUID) and clears `channel_facts`. Probe: `client(url)` captures `self.on_connected` at construction time; `client.open()` calls it on connect and reconnect. |
@@ -28,6 +29,29 @@ Tests: `tests/test_ccxt_phase8_fast_stream_transport.py` (19 deterministic tests
 | 10 | Reconnect cannot silently replay old generation as current | PASS | `on_connected` clears `channel_facts`; old generation facts are gone before new events arrive |
 | 11 | No cross-venue / sandbox substitution | PASS | `pro.bitget()` / `pro.binanceusdm()` without `set_sandbox_mode(True)` uses production public endpoints |
 | 12 | Watcher / Entry activation deterministic, no-LLM | PASS | Transport layer does not affect this |
+
+---
+
+## §3 — Source vs receive time (repaired 2026-09-29)
+
+**Prior evidence (incorrect):** claimed CCXT Pro `timestamp` is always exchange-provided.
+
+**Actual initial implementation:** `_map_ticker` / `_map_trade` / `_map_orderbook` used
+`ticker.get("timestamp") or self._ts_now()` — when a venue payload had no `timestamp`,
+the adapter stamped `exchange_timestamp_ms` with the local receive clock. That is exactly
+the invented-source-time failure this gate exists to catch: a fact with no proven exchange
+clock would look maximally fresh to entry activation's `0 <= received - exchange <= freshness`
+check, instead of being unusable.
+
+**Repair:** `_source_ms(value)` parses a CCXT timestamp and returns `None` for `None`,
+non-numeric, or non-positive values. Each mapper now requires a usable source timestamp
+the same way it already required bid/ask or non-empty book levels — missing it drops the
+fact (`_drop_without_source_time`, debug-logged) instead of emitting one. No new channel
+state or reason vocabulary: an unusable-source-time channel stays `warming`, same as a
+channel with no data at all.
+
+Regression test: `tests/test_ccxt_phase8_fast_stream_transport.py::test_mappers_fail_closed_when_source_timestamp_unusable`
+(fails against the pre-repair implementation, passes after).
 
 ---
 
@@ -112,3 +136,31 @@ The superseded native implementations (`BitgetFastMarketStream`, `BinanceFastMar
 `core/aletheia/universe/fast_stream.py`. Their 18 unit tests have been deleted.
 `_FAST_STREAM_ADAPTERS` now uses lazy-import factory functions pointing to the extension
 adapter.
+
+---
+
+## Public-WS smoke (2026-09-29)
+
+Re-run after the §3 repair, against real production public WebSockets (no credentials,
+no sandbox). `CcxtProFastMarketStream("bitget")` and `CcxtProFastMarketStream("binanceusdm")`,
+instrument `BTC/USDT` perp, 25 s per venue, debug logging on
+`aletheia.universe.fast_stream_ccxt_pro` to count `_drop_without_source_time` calls.
+
+| Venue | quote | trade | depth | candle | source-timestamp drops |
+|---|---|---|---|---|---|
+| bitget | 211 events, ready | 21 events, ready | 198 events, ready | 10 events, ready | 0 |
+| binanceusdm | **0 events, warming** | 216 events, ready | 235 events, ready | 41 events, ready | 0 |
+
+**No invented exchange time observed on either venue** — every delivered event carried a
+real CCXT `timestamp`, and zero facts were dropped for a missing source timestamp. The
+repair is validated against live traffic, not only the deterministic unit tests.
+
+**binanceusdm quote gap (pre-existing, not caused by this repair):** `watch_ticker` on
+`binanceusdm` returns a bookless `24hrMiniTicker` (`info.e == "24hrMiniTicker"`,
+`bid`/`ask` both `None`). `_map_ticker`'s existing bid/ask guard has always dropped this —
+before and after the §3 repair — so the quote channel never becomes ready on this venue.
+Direct probe confirms `exchange.watch_bids_asks(["BTC/USDT:USDT"])` delivers a real
+bookTicker (`bid`/`ask`/`timestamp` all populated). Filed as a follow-up rather than
+folded into this repair: it is a channel-source-selection defect (gate 2), not a
+timestamp-honesty defect (gate 3), and changing which CCXT Pro stream backs `quote` on
+`binanceusdm` needs its own qualification pass.
