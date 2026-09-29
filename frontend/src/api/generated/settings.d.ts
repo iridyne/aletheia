@@ -1199,11 +1199,6 @@ export interface components {
              */
             app_db_capacity_mb: number;
             /**
-             * Backtest Runs Days
-             * @default 60
-             */
-            backtest_runs_days: number;
-            /**
              * Backups Keep Recent
              * @default 7
              */
@@ -1747,6 +1742,11 @@ export interface components {
              * @default 0.25
              */
             max_single_trade_risk_pct: number;
+            /**
+             * Reduced Risk Multiplier
+             * @default 0.5
+             */
+            reduced_risk_multiplier: number;
         };
         /** RiskMarginPolicy */
         RiskMarginPolicy: {
@@ -2287,10 +2287,10 @@ export interface components {
             candidate_max_continuous_age_sec: number;
             /**
              * Candidate Selection Policy
-             * @default candidate_selection_utility_v1
+             * @default candidate_selection_utility
              * @enum {string}
              */
-            candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
+            candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility";
             /** Candidate Selection Policy Epoch */
             candidate_selection_policy_epoch?: string | null;
             /**
