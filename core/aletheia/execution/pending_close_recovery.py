@@ -79,6 +79,21 @@ class _HistoryReadFailed:
 _HISTORY_FAILED = _HistoryReadFailed()
 
 
+def _warn_read_incomplete(read: str, order: dict, report) -> None:
+    """One typed line per partial/unsupported venue read (INV-EX-1).
+
+    A non-COMPLETE report is the case that can strand a claim forever, so it must
+    be attributable in ``errors.log`` instead of only changing the return value.
+    """
+    logger.warning(
+        "pending_close_recovery: %s incomplete for order %s (%s: %s)",
+        read,
+        order.get("id"),
+        report.completeness.value,
+        report.reason_code or "no_reason_code",
+    )
+
+
 def is_recoverable_cancelled_close(order: dict) -> bool:
     return (
         str(order.get("status") or "") == "cancelled"
@@ -199,13 +214,15 @@ def _exchange_open_order_ids(order: dict) -> set[str] | None:
         ))
     except Exception as exc:
         logger.warning(
-            "pending_close_recovery: open-order query unavailable for %s/%s (%s)",
+            "pending_close_recovery: open-order query unavailable for %s/%s (%s: %s)",
             execution_mode,
             order.get("market_type"),
             type(exc).__name__,
+            getattr(exc, "reason_code", "no_reason_code"),
         )
         return None
     if report.completeness is not ReadCompleteness.COMPLETE:
+        _warn_read_incomplete("open-order read", order, report)
         return None
     ids: set[str] = set()
     for row in report.orders:
@@ -252,13 +269,15 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
             expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
+            _warn_read_incomplete("exact fill read", order, report)
             return None
         return [row.model_dump(mode="json") for row in report.fills]
     except Exception as exc:
         logger.warning(
-            "pending_close_recovery: exact fill query unavailable for %s (%s)",
+            "pending_close_recovery: exact fill query unavailable for %s (%s: %s)",
             order.get("id"),
             type(exc).__name__,
+            getattr(exc, "reason_code", "no_reason_code"),
         )
         return None
 
@@ -294,6 +313,7 @@ def _uta_history_lookup(order: dict) -> dict[str, object] | _HistoryReadFailed |
             expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
+            _warn_read_incomplete("exact order read", order, report)
             return _HISTORY_FAILED
         if report.found is None:
             # A COMPLETE read that found nothing proves only that the read window
@@ -316,9 +336,10 @@ def _uta_history_lookup(order: dict) -> dict[str, object] | _HistoryReadFailed |
         }
     except Exception as exc:
         logger.warning(
-            "pending_close_recovery: UTA history unavailable for %s (%s)",
+            "pending_close_recovery: UTA history unavailable for %s (%s: %s)",
             order.get("id"),
             type(exc).__name__,
+            getattr(exc, "reason_code", "no_reason_code"),
         )
         return _HISTORY_FAILED
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tests.helpers.position_fixture import force_update_position
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -506,6 +507,52 @@ def test_close_with_local_fill_is_not_released(monkeypatch):
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 0
+
+
+@pytest.mark.parametrize("read", ["open_orders", "fills"])
+def test_incomplete_venue_read_logs_the_typed_reason(read, caplog, monkeypatch):
+    """INV-EX-1: a partial/unsupported venue read must be attributable, not silent.
+
+    The newly production-reachable recovery reads three UTA surfaces; a
+    structural PARTIAL on any of them leaves the claim unresolved, so the venue's
+    own reason code has to reach ``errors.log`` instead of only changing a return
+    value. (Exercised through the two readers the suite's autouse fixture does not
+    replace; the exact-order read shares the same warning helper.)
+    """
+    from types import SimpleNamespace
+
+    import aletheia.uta.manager as uta_manager
+    from aletheia.uta.models import ReadCompleteness
+    from tests.helpers.fill_reports import DEFAULT_IDENTITY
+
+    order = {
+        "id": "close-unavailable",
+        "client_order_id": "close-pos-unavailable",
+        "execution_mode": "bitget_demo",
+        "symbol": "XRP/USDT",
+        "market_type": "usdt_futures",
+        "created_at": _iso(1),
+        "uta_account_identity_json": DEFAULT_IDENTITY.model_dump_json(),
+    }
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.PARTIAL,
+        reason_code="private_order_history_start_required",
+    )
+
+    async def _incomplete(*_args, **_kwargs):
+        return report
+
+    monkeypatch.setattr(uta_manager, "query_uta", _incomplete)
+    reader = (
+        pcr._exchange_open_order_ids if read == "open_orders"
+        else pcr._exchange_fill_rows
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aletheia.pending_close_recovery"):
+        assert reader(order) is None
+
+    assert "private_order_history_start_required" in caplog.text
+    assert "partial" in caplog.text
 
 
 def test_submission_rejected_claim_released_after_soft_window():
