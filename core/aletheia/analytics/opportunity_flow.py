@@ -1013,40 +1013,36 @@ def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str,
                 "rank": d.get("rank"),
                 "status": "resolved" if d.get("resolved_at") or d.get("pnl_pct") is not None else "pending",
             }
-    snapshot_id = opp.get("universe_snapshot_id")
     member_id = opp.get("universe_member_id")
-    if snapshot_id and direction and _table_exists(db, "universe_forward_outcomes"):
-        for horizon in _FORWARD_HORIZONS:
-            conditions = [
-                "snapshot_id = ?",
-                "horizon = ?",
-                "status = 'settled'",
-                "forward_return_pct IS NOT NULL",
-            ]
-            params: list[Any] = [snapshot_id, horizon]
-            if member_id:
-                conditions.insert(1, "member_id = ?")
-                params.insert(1, member_id)
-            row = db.execute(
-                "SELECT * FROM universe_forward_outcomes WHERE " + " AND ".join(conditions) + " "
-                "ORDER BY datetime(settled_at) DESC LIMIT 1",
-                tuple(params),
-            ).fetchone()
-            if not row:
-                continue
-            d = dict(row)
-            values = outcome_values(d, direction)
-            out["forward"][horizon] = {
-                "forward_return_pct": _round(values["gross_return_pct"]),
-                "gross_return_pct": _round(values["gross_return_pct"]),
-                "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
-                "directional_return_pct": _round(values["directional_return_pct"]),
-                "net_return_pct": _round(values["net_return_pct"]),
-                "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
-                "verdict": classify_outcome_row(d, direction),
-                "settled_at": d.get("settled_at"),
-                "status": d.get("status"),
-            }
+    if member_id and direction and _table_exists(db, "filter_candidate_outcomes"):
+        member_row = db.execute(
+            "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member_id,)
+        ).fetchone() if _table_exists(db, "universe_members") else None
+        candidate_key = member_row["learning_candidate_key"] if member_row else None
+        if candidate_key:
+            for horizon in _FORWARD_HORIZONS:
+                row = db.execute(
+                    "SELECT * FROM filter_candidate_outcomes "
+                    "WHERE outcome_candidate_key = ? AND horizon = ? AND status = 'settled' "
+                    "AND gross_return_pct IS NOT NULL "
+                    "ORDER BY datetime(settled_at) DESC LIMIT 1",
+                    (candidate_key, horizon),
+                ).fetchone()
+                if not row:
+                    continue
+                d = dict(row)
+                values = outcome_values(d, direction)
+                out["forward"][horizon] = {
+                    "forward_return_pct": _round(values["gross_return_pct"]),
+                    "gross_return_pct": _round(values["gross_return_pct"]),
+                    "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
+                    "directional_return_pct": _round(values["directional_return_pct"]),
+                    "net_return_pct": _round(values["net_return_pct"]),
+                    "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
+                    "verdict": classify_outcome_row(d, direction),
+                    "settled_at": d.get("settled_at"),
+                    "status": d.get("status"),
+                }
     return out
 
 
