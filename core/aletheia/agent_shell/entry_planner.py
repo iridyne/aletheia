@@ -52,6 +52,19 @@ class PlannerBackpressure(RuntimeError):
     """Local broker admission refusal; no physical model attempt was consumed."""
 
 
+def _plan_intent_detail(exc: BaseException) -> str:
+    """The bounded measurement a ``PlanIntentError`` carried and would otherwise lose.
+
+    Geometry rejections compute the distance they refused (``0.0125<0.0150``) and
+    then the planner persisted only the code, so the class could be counted but
+    never measured. Nothing here is a secret: the compiler formats numbers.
+    """
+    if not isinstance(exc, PlanIntentError):
+        return ""
+    _, separator, detail = str(exc).partition(":")
+    return detail.strip() if separator else ""
+
+
 def _intent_validation_code(exc: BaseException) -> str:
     errors = getattr(exc, "errors", None)
     if callable(errors):
@@ -262,6 +275,7 @@ def _compile_current_entry_plan(
         repo.fail_candidate_planning(
             generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{code}",
             stage="compiler", model_invoked=dispatched, compiler_invoked=True,
+            detail=_plan_intent_detail(exc),
         )
         return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": True}
     except Exception as exc:

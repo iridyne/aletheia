@@ -4375,16 +4375,27 @@ def fail_candidate_planning(
     stage: str,
     model_invoked: bool,
     compiler_invoked: bool,
+    detail: str = "",
     now: datetime | None = None,
 ) -> bool:
-    """Persist a terminal non-economic validation or Compiler failure."""
+    """Persist a terminal non-economic validation or Compiler failure.
+
+    ``detail`` is the bounded, content-free measurement a rejection computed and
+    used to discard (e.g. the rejected stop distance and the floor it missed):
+    the typed ``reason`` stays the stable code that consumers match on, and the
+    numbers land beside it so a rejection class can be measured instead of
+    merely counted (#3743).
+    """
 
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
-    payload = json.dumps(
-        {"outcome_class": "planning_failed", "reason": str(reason)[:160], "stage": stage},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    payload_fields = {
+        "outcome_class": "planning_failed",
+        "reason": str(reason)[:160],
+        "stage": stage,
+    }
+    if detail:
+        payload_fields["detail"] = str(detail)[:120]
+    payload = json.dumps(payload_fields, sort_keys=True, separators=(",", ":"))
     updated = execute_write(
         "UPDATE candidate_planning_generations SET status='unavailable', result_kind='unavailable', "
         "result_json=?, retry_not_before=NULL, owner_token=NULL, claim_expires_at=NULL, "
