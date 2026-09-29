@@ -99,6 +99,10 @@ async def settle_due_filter_outcomes(
     cfg = load_config()
     processed = 0
     settled = 0
+    # Self-evolution Tier 1 (guard candidates) needs the full row+economics
+    # payload of every row this cycle actually settled to _SETTLED; the
+    # counters above only track how many, not which.
+    settled_rows: list[dict] = []
     # The current UFC observation window must not sit behind the historical
     # canonical backlog: its exact outcomes are the evidence required by LCO.
     # This only changes settlement order inside the already-bounded canonical
@@ -286,9 +290,12 @@ async def settle_due_filter_outcomes(
         )
         if won is False:
             return _ALREADY_TERMINAL
-        # The linked 24h shadow projection this used to trigger was retired with
-        # the shadow storage surface (#3708); the tombstoned rows have no owner
-        # left to settle them, so the row above is the whole transaction.
+        settled_rows.append({
+            **row,
+            **economics,
+            "settlement_price_source": observation.get("price_source"),
+            "settlement_lag_sec": observation.get("settlement_lag_sec"),
+        })
         return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------
@@ -484,6 +491,18 @@ async def settle_due_filter_outcomes(
             len(priority_pending),
             time.monotonic() >= deadline,
         )
+    if settled_rows:
+        from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
+
+        try:
+            _maybe_generate_guard_candidates(settled_rows)
+        except Exception:
+            logger.warning(
+                "filter outcome settler: guard candidate generation failed "
+                "(non-fatal, settlement unaffected)",
+                exc_info=True,
+            )
+
     return settled
 
 
