@@ -133,7 +133,7 @@ class _BitgetDemoProfile(CCXTProfile):
             await exchange.set_leverage(
                 int(prepared.leverage),
                 prepared.instrument.venue_symbol,
-                {"uta": self._uta},
+                {"uta": self._uta, **({"marginMode": prepared.margin_mode} if prepared.margin_mode else {})},
             )
         return prepared
 

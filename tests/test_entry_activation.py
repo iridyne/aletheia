@@ -11,6 +11,19 @@ from aletheia.universe.fast_trigger import TriggerPolicy
 from tests.test_entry_plan_execution import _plan, _with_geometry_hash
 
 
+@pytest.fixture(autouse=True)
+def _pin_account_authority(monkeypatch):
+    """`_plan()` (imported from test_entry_plan_execution) runs the real canonical
+    sizer via `apply_entry_financing`, which needs cached account equity/available
+    balance (#3729). test_entry_plan_execution.py pins this in its own autouse
+    fixture, but autouse fixtures are module-scoped, so this module needs the same
+    pin — same fixture capital `tests/test_entry_capture.py::capture_input` uses.
+    """
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.0)
+
+
 def _observed_activation(tactic="OPPOSING_BBO_IOC"):
     now = datetime.now(timezone.utc)
     params = {**_plan().trigger_params, "geometry_fingerprint": "f" * 64,

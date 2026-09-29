@@ -389,6 +389,10 @@ class TradeProposal(_Provenanced):
     price: float | None = None
     # Optional fields used by §21.3 risk checks (max_leverage, max_single_trade_risk).
     leverage: int | None = None
+    # Margin mode the venue will receive for this futures order. Declared by the
+    # Entry Plan's financing resolution (#3729); historical rows are NULL and are
+    # excluded from the commit hash so their stored hashes stay valid.
+    margin_mode: str | None = None
     stop_price: float | None = None
     # Entry discipline (2026-07-03, owner discussion #6): a System Operator entry
     # must commit to all four numbers BEFORE the order — entry (price, used as the

@@ -1,4 +1,4 @@
-"""Conviction-weighted notional sizing.
+"""Sizing helpers: conviction-weighted notional and the retired equity-based budget.
 
 Legacy formula retained for policy compatibility:
   size = base_notional * kelly_fraction * conviction_ratio * drawdown_scale
@@ -8,8 +8,15 @@ estimate Kelly-optimal exposure: it consumes neither calibrated win probability
 nor payoff odds/return distributions.  The field is a bounded policy scaling
 factor until a separately measured Kelly policy exists.
 
-The System Operator path uses ``available_balance_risk_budget_size``.
-The conviction formula remains available for sizing analysis.
+The canonical Entry path no longer sizes here: it uses
+``aletheia.trading.entry_sizing.resolve_entry_sizing()`` (loss budget + stop
+geometry, then ``aletheia.trading.leverage_resolution`` for financing), per
+Issue #3729 and
+[the entry sizing contract](../../../docs/design/contracts/entry_sizing_and_financing_contract.md).
+``available_balance_risk_budget_size`` is retained as an explicit helper for
+sizing analysis; it has no production caller, and it must not be re-wired into
+the Entry path because its ``available x risk_pct x leverage`` notional is
+exactly the leverage-coupled target #3729 replaced.
 All proposals still pass through Risk Engine gates after sizing.
 """
 from __future__ import annotations

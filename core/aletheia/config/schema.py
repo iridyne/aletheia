@@ -617,6 +617,10 @@ class RiskLossPolicy(StrictRiskPolicyModel):
     # mode, demo and live. Set a positive percentage to re-enable it; the engine
     # gates check #8 on this value, so at 0 the check is inert.
     max_daily_loss_pct: float = Field(default=0.0, ge=0)
+    # Issue #3729 Contract A: the AI's declared risk_intent is a posture only
+    # (BASELINE/REDUCED); this is the Owner-set number REDUCED resolves to.
+    # There is no policy field for an "increased" posture -- V1 has none.
+    reduced_risk_multiplier: float = Field(default=0.5, gt=0, lt=1)
 
 
 class RiskPositionsPolicy(StrictRiskPolicyModel):
@@ -686,6 +690,7 @@ LIVE_RISK_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
     # 0 is allowed and disables the daily-loss comparison in the engine.
     "loss.max_daily_loss_pct": (0.0, 20.0),
     "loss.max_single_trade_risk_pct": (0.01, 10.0),
+    "loss.reduced_risk_multiplier": (0.01, 0.99),
     "capital.max_total_exposure_pct": (1.0, 50.0),
     "capital.max_position_margin_usdt": (1.0, 100_000.0),
     "capital.base_usdt": (1.0, 100_000.0),
@@ -768,6 +773,7 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 0.25 if is_live else 20.0,
             ),
             "max_daily_loss_pct": data.get("max_daily_loss_pct", 0.0),
+            "reduced_risk_multiplier": data.get("reduced_risk_multiplier", 0.5),
         },
         "positions": {
             "max_open_positions": data.get(

@@ -71,14 +71,17 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | 只接受 Proposal 对应 venue + physical market 的精确快照；同 symbol 的其他 venue/market 不得替代。live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` / `_MAX_DEMO_DATA_AGE_SECONDS=1800` | `stale_market_data:age={a}` (live); `stale_market_data_demo:age={a}` (registered demo modes) | engine.py `_market_data_age_seconds` |
 | 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |
-| 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
+| 13 | Single Trade Risk | 止损距离×数量<上限；`max_single_trade_risk_pct` 只有一种语义：资本基数中允许在止损处亏损的比例。已融资 Entry Plan 的上限是其冻结的 `sizing_resolution.effective_loss_budget_usdt`（已含 AI RiskIntent 倍率），不再是原始策略百分比；历史 Plan 保持原式。demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo); `entry_plan_max_risk_exceeded` (financed Plan over its frozen budget) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 14b | Exchange-demo entry quality | 仅 `bitget_demo`/`okx_demo`/`binance_testnet` 的**新开仓**：已发布 regime confidence ≤ 门槛（mean_reversion 豁免 confidence）、已发布 regime 为 sideways（**含 mean_reversion**）、family×direction 在干净窗 n≥门槛且 expectancy&lt;0、或同标的 24h 内 `stop_loss` 后反向，则拒。未发布 regime / 样本不足 fail-open；policy epoch、regime、family-edge、recent-stop authority 读取失败则 fail-closed 并保留来源 token。live #14 不变；不平已有仓 | `risk.demo.eligibility.min_regime_confidence_to_enter`(0.60) / `sideways_standdown`(true) / `family_min_samples`(20) / `family_min_expectancy`(0.0) | `regime_confidence_standdown:*` / `regime_sideways_standdown:*` / `family_not_demo_eligible:*` / `reverse_after_stop:*` / `demo_entry_quality_unavailable:<source>` | `core/aletheia/risk/demo_entry_quality.py` |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta；持仓数低于 `correlation.min_positions_for_concentration`(默认 4)时跳过，少于 4 个持仓时浓度百分比粒度不足以区分信号 | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta/min_positions_for_concentration` | `sector_concentration/portfolio_beta:...` | :245,387 |
 | 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
-| 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
+| 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾。**已融资 Entry Plan 不走本关**：改为 #20 的 risk-unit 上限 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
+| 20 | Per-symbol Risk Units (financed Entry Plan) | 同标的同池累计**止损风险** ≤ `effective_loss_budget × max_per_symbol_entries`；`max_per_symbol_entries` 是整仓位风险单元计数，leverage 无法放大它（#3729 §6.3） | `risk.capital.max_per_symbol_entries` + Plan 冻结 `sizing_resolution.effective_loss_budget_usdt` | `exceeds_per_symbol_risk:{risk}>{cap}(entries={n})` | engine.py `_entry_plan_financing_violations` |
+| 21 | Financing Drift | 已融资 Entry Plan：用提交时 fresh facts 重跑同一套纯函数；重算出的 `execution_notional` 小于 Plan 冻结值则拒；变大利不自动放大（保持原值）。Risk 永不改写 leverage/notional | Plan `sizing_resolution`/`leverage_resolution` + fresh account/portfolio/venue facts | `SIZING_RESOLUTION_DRIFT` / 重算的 typed 失败（`SIZING_CAPITAL_UNAVAILABLE`、`VENUE_MARGIN_TIERS_*` 等） | engine.py `_recomputed_entry_financing` |
+| 22 | Financed Leverage & Margin Mode | 已融资 Entry Plan：Proposal 的 `leverage`/`margin_mode` 必须等于 Plan 的 `execution_leverage`/`margin_mode`；perp 的 margin mode 必须是 V1 已验证的 isolated，cross 一律拒（不得用 isolated 估算冒充 cross 安全性） | Plan `execution_leverage`/`margin_mode` + `aletheia.execution.margin_mode_policy` | `entry_plan_execution_leverage_mismatch` / `entry_plan_margin_mode_mismatch` / `CROSS_MARGIN_SAFETY_UNAVAILABLE` / `MARGIN_MODE_UNAVAILABLE` | engine.py `_entry_plan_financing_violations` |
 
 关卡 #14b 的 epoch 写入由既有 Web/CLI 启动入口绑定
 `learning.demo_entry_quality.ensure_demo_entry_quality_policy_epoch`，启动绑定不执行写入。
@@ -171,15 +174,31 @@ authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome s
 
 当前新入场的规划消费者为 System Operator，Entry Plan 经 Risk / Gateway 执行。
 
-System Operator 的权威 sizing 路径为 `available_balance_risk_budget_size()`：用账户**可用余额**（available balance，非 equity）× `max_single_trade_risk_pct` × leverage 得到名义价值。使用可用余额而非净值，可实现几何自收敛——每笔入场后余额减少，下一笔 sizing 自动变小，保证金永不耗尽。
+System Operator 的权威 sizing 路径是 **自适应 sizing + 确定性杠杆解析**，
+实现于 [`entry_sizing_and_financing_contract.md`](entry_sizing_and_financing_contract.md)：
 
-policy version：`available-balance-risk-budget/v1`（换代用于隔离 learning evidence cohort）。
+```text
+baseline_loss_budget = min(hard_capital_base, fresh_available_balance) x max_single_trade_risk_pct/100
+effective_loss_budget = baseline_loss_budget x risk_intent_multiplier   # AI 只能保持或降低
+target_notional       = effective_loss_budget / stop_fraction           # 与 leverage 解耦
+margin_budget         = min(fresh_available_balance, policy.max_position_margin_usdt)
+execution_leverage    = 目标敞口的“最低必要且可证明安全”杠杆（不放大 target）
+```
 
-历史路径 `vol_target_size()` 已无生产调用者，保留为 helper；`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction` 等为旧版兼容字段，不影响当前权威路径。
+- `max_single_trade_risk_pct` 只有一种语义：资本基数中允许在止损处亏损的比例（见关卡 #13）。
+- 保证金预算（margin budget）独立于亏损预算，不再由同一字段兼任。
+- `policy_leverage_cap`（major/mid/alt 档位 + futures cap）只是上限；它**不等于**实际下单杠杆。
+- policy version：`adaptive-risk-intent-sizing/v2`（换代用于隔离 learning evidence cohort）。
 
-**关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 第 5 关
-(Max Position Margin)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
-不会把超限请求优化或裁剪成另一个仓位。
+历史路径 `available_balance_risk_budget_size()`（`available x risk_pct x leverage`）已无生产
+调用者，保留为 sizing analysis helper；`vol_target_size()`、`trading.default_notional_usdt=25`、
+`vol_kelly_cap_fraction` 等同为旧版兼容字段，不影响当前权威路径。legacy conviction/Kelly/persona
+sizing 不得接回 canonical Entry 路径。
+
+**关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 各关（#5 保证金上限、#12 总敞口、
+#13 单笔风险、#17 账户杠杆比、#18 爆仓缓冲、#20 同标的 risk units）。Risk Engine 只能批准或拒绝，
+不会把超限请求优化或裁剪成另一个仓位；已融资 Plan 的冻结果与冻结杠杆必须与提交时 fresh facts
+重算结果一致（#21），否则 `SIZING_RESOLUTION_DRIFT` 拒绝而不改写。
 
 ---
 

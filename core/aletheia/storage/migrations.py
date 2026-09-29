@@ -7752,6 +7752,20 @@ def _apply_entry_cancel_retry_v90(db: sqlite3.Connection) -> None:
     db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_retry_after TEXT")
 
 
+def _apply_entry_plan_financing_v91(db: sqlite3.Connection) -> None:
+    """Additive margin-mode column on trade_proposals (#3729).
+
+    The Entry Plan's financing resolution declares the mode the venue receives.
+    Historical rows stay NULL, and the Proposal commit hash excludes a NULL
+    margin_mode, so existing stored hashes remain valid.
+    """
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(trade_proposals)").fetchall()
+    }
+    if "margin_mode" not in columns:
+        db.execute("ALTER TABLE trade_proposals ADD COLUMN margin_mode TEXT")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -8914,6 +8928,14 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"entry_cancel_retry_v90:orders.entry_cancel_attempts_and_retry_after:nullable_no_backfill").hexdigest(),
         schema_version="aletheia-sqlite-v90",
         apply=_apply_entry_cancel_retry_v90,
+    ),
+    MigrationStep(
+        migration_id="20260929_0090_entry_plan_financing_v91",
+        checksum=hashlib.sha256(
+            b"entry_plan_financing_v91:trade_proposals.margin_mode:nullable_no_backfill"
+        ).hexdigest(),
+        schema_version="aletheia-sqlite-v91",
+        apply=_apply_entry_plan_financing_v91,
     ),
 )
 

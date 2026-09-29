@@ -7,6 +7,21 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+@pytest.fixture(autouse=True)
+def _pin_account_authority(monkeypatch):
+    """The canonical sizing path reads account authority a test root cannot have.
+
+    `compile_entry_plan` → `aletheia.risk.engine.account_sizing_state` fails
+    closed (`SIZING_CAPITAL_UNAVAILABLE`) when the cached exchange-account
+    snapshot is missing, which is the correct production behaviour and the
+    reason this module pins the same fixture capital the other entry tests use
+    (#3729).
+    """
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.0)
+
+
 @spec_claim(
     SpecClaim(
         "EP-S01",

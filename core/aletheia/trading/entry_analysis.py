@@ -15,6 +15,7 @@ from aletheia.trading.entry_learning import (
     EntryLearningContext, empty_entry_learning_context, resolve_entry_learning_context,
 )
 from aletheia.trading.entry_contract import entry_prompt_fingerprint
+from aletheia.trading.risk_intent import RiskIntent
 
 
 def canonical_json(value: object) -> str:
@@ -158,6 +159,7 @@ class EntryHypothesis(BaseModel):
     supporting_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     opposing_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     learning_evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
+    risk_intent: RiskIntent | None = None
 
     @model_validator(mode="after")
     def _semantics(self) -> "EntryHypothesis":
@@ -170,6 +172,7 @@ class EntryHypothesis(BaseModel):
                 "entry_profile_id",
                 "capture_priority",
                 "capture_reason",
+                "risk_intent",
             ):
                 object.__setattr__(self, field, None)
             object.__setattr__(self, "capture_evidence_refs", ())
@@ -190,6 +193,8 @@ class EntryHypothesis(BaseModel):
             raise ValueError("entry_risk_horizon_required")
         if not self.supporting_fact_refs:
             raise ValueError("supporting_fact_required")
+        if self.risk_intent is None:
+            raise ValueError("entry_risk_intent_required")
         return self
 
 

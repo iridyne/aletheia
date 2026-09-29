@@ -1701,6 +1701,7 @@ def _execute_proposal(
                     take_profit_price=execution_proposal.take_profit,
                     native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
                     leverage=execution_proposal.leverage,
+                    margin_mode=execution_proposal.margin_mode,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
@@ -1907,6 +1908,7 @@ def _execute_proposal(
                     take_profit_price=execution_proposal.take_profit,
                     native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
                     leverage=execution_proposal.leverage,
+                    margin_mode=execution_proposal.margin_mode,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )

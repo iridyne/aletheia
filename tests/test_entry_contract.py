@@ -90,6 +90,12 @@ def test_retained_activation_survives_validator_refactor_but_rejects_semantic_ch
     from aletheia.trading import trigger_specs
     from tests.test_entry_activation import _observed_activation
 
+    # _observed_activation -> _plan() runs the real canonical sizer via
+    # apply_entry_financing (#3729); pin the same fixture capital
+    # tests/test_entry_capture.py::capture_input uses.
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *a, **k: 5000.0)
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *a, **k: 5000.0)
     plan, ready, now = _observed_activation()
     activation = build_entry_trigger_activation(plan, ready, now=now)
     before = (plan.model_dump_json(), activation.model_dump_json())
