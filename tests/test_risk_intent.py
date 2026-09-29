@@ -80,11 +80,54 @@ def test_risk_intent_reason_must_be_nonempty():
         RiskIntent(posture="BASELINE", reason="", evidence_refs=("candidate:c1",))
 
 
-def test_entry_plan_without_risk_intent_raises():
+@pytest.mark.parametrize(
+    "intent",
+    [
+        None,
+        "BASELINE",
+        {"posture": "BASELINE"},
+        {"posture": "BASELINE", "reason": "", "evidence_refs": []},
+    ],
+)
+def test_omitted_or_partial_risk_intent_resolves_to_bounded_baseline(intent):
+    """A model that omits or under-specifies the intent expresses no reduction.
+
+    The Owner baseline posture therefore stands, with the reason and evidence the
+    hypothesis already had to supply — the planner keeps working, and the AI still
+    cannot express a number or increase risk (that is asserted separately below).
+    """
     primary = _anchor("candidate_reference", 100.0, "candidate:c1")
     invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
-    with pytest.raises(ValueError, match="entry_risk_intent_required"):
-        EntryHypothesis(**_entry_plan_kwargs(primary, invalidation, risk_intent=None))
+    hypothesis = EntryHypothesis(
+        **_entry_plan_kwargs(primary, invalidation, risk_intent=intent)
+    )
+
+    assert hypothesis.risk_intent is not None
+    assert hypothesis.risk_intent.posture == "BASELINE"
+    assert hypothesis.risk_intent.reason == hypothesis.capture_reason
+    assert hypothesis.risk_intent.evidence_refs == tuple(hypothesis.capture_evidence_refs)
+
+
+def test_partial_reduced_intent_keeps_its_posture():
+    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
+    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
+    hypothesis = EntryHypothesis(
+        **_entry_plan_kwargs(primary, invalidation, risk_intent="REDUCED")
+    )
+
+    assert hypothesis.risk_intent is not None
+    assert hypothesis.risk_intent.posture == "REDUCED"
+    assert hypothesis.risk_intent.evidence_refs == tuple(hypothesis.capture_evidence_refs)
+
+
+def test_increased_posture_is_never_accepted():
+    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
+    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
+    with pytest.raises(ValidationError):
+        EntryHypothesis(**_entry_plan_kwargs(
+            primary, invalidation,
+            risk_intent={"posture": "INCREASED", "reason": "scale up", "evidence_refs": ["candidate:c1"]},
+        ))
 
 
 def test_entry_plan_carries_valid_risk_intent():

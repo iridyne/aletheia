@@ -34,7 +34,18 @@ leverage cap as the execution leverage.
 | `reason` | Non-empty, ≤512 chars. |
 | `evidence_refs` | 1–8 admissible current fact refs, same admissibility as `capture_evidence_refs`. |
 
-- `ENTRY_PLAN` requires a valid `RiskIntent`; `NO_PLAN` clears it.
+- `ENTRY_PLAN` carries a `RiskIntent`; `NO_PLAN` clears it.
+- A **partial or omitted** intent is normalized rather than rejected: a bare posture
+  string, or a posture without a reason/evidence, resolves to that posture (omitted →
+  `BASELINE`) with the reason and `evidence_refs` taken from the hypothesis's own
+  `capture_reason` / `capture_evidence_refs`, which `ENTRY_PLAN` already requires and
+  which the reference validator checks against the supplied context. The live
+  System Operator model is not reliable at emitting a nested object it was never
+  trained for, and defaulting to the Owner baseline is the non-expanding direction:
+  an omitted intent can never increase risk, and no numeric field exists to omit.
+  An explicit posture is never overridden, and an unknown posture (`INCREASED`, …)
+  still fails validation. The normalization is logged.
+- An explicit intent is validated as written: nonempty reason, 1–8 admissible refs.
 - `BASELINE` maps to multiplier `1.0`.
 - `REDUCED` maps to `policy.loss.reduced_risk_multiplier`, which must satisfy `0 < m < 1`.
 - Anything else fails with `RISK_INTENT_INVALID`; a hypothesis carrying a numeric

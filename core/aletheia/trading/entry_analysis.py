@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import hashlib
 import json
 import math
@@ -134,6 +136,9 @@ class EntryAnalysisContext(BaseModel):
         return self
 
 
+logger = logging.getLogger("aletheia.trading.entry_analysis")
+
+
 class EntryHypothesis(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -160,6 +165,37 @@ class EntryHypothesis(BaseModel):
     opposing_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     learning_evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     risk_intent: RiskIntent | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_risk_intent(cls, value):
+        """Accept the shapes a model actually emits for the risk intent (#3729).
+
+        A bare posture string, or a mapping that leaves the posture out, still
+        expresses exactly what the AI is allowed to express. Normalizing here keeps
+        the *bound* intact — `posture` is still a closed Literal and no numeric
+        field exists — while the missing reason/evidence is completed from the
+        hypothesis itself in `_semantics`.
+        """
+        if not isinstance(value, dict) or "risk_intent" not in value:
+            return value
+        intent = value.get("risk_intent")
+        if intent is None:
+            return value  # `_semantics` derives the whole intent
+        if isinstance(intent, str):
+            intent = {"posture": intent}
+        if not isinstance(intent, dict):
+            return value
+        completed = dict(intent)
+        completed.setdefault("posture", "BASELINE")
+        if not str(completed.get("reason") or "").strip():
+            # The reason and evidence the AI already had to supply for this entry.
+            completed["reason"] = value.get("capture_reason")
+        if not completed.get("evidence_refs"):
+            completed["evidence_refs"] = (
+                value.get("capture_evidence_refs") or value.get("supporting_fact_refs")
+            )
+        return {**value, "risk_intent": completed}
 
     @model_validator(mode="after")
     def _semantics(self) -> "EntryHypothesis":
@@ -193,9 +229,36 @@ class EntryHypothesis(BaseModel):
             raise ValueError("entry_risk_horizon_required")
         if not self.supporting_fact_refs:
             raise ValueError("supporting_fact_required")
-        if self.risk_intent is None:
-            raise ValueError("entry_risk_intent_required")
+        object.__setattr__(self, "risk_intent", self._resolved_risk_intent())
         return self
+
+    def _resolved_risk_intent(self) -> "RiskIntent":
+        """The risk intent, completed from evidence the AI already had to supply.
+
+        A model that omits the intent, or supplies only a posture, has expressed no
+        *reduction* — so the Owner baseline posture stands, and the reason/evidence
+        come from `capture_reason`/`capture_evidence_refs`, which ENTRY_PLAN already
+        requires and `validate_hypothesis_references` checks against the context.
+        An explicit posture is never overridden, and nothing numeric can enter
+        here (#3729).
+        """
+        supplied = self.risk_intent
+        reason = (supplied.reason if supplied else "") or (self.capture_reason or "")
+        refs = tuple(supplied.evidence_refs) if supplied else ()
+        if not refs:
+            refs = tuple(self.capture_evidence_refs) or tuple(self.supporting_fact_refs)
+        if supplied is None or not supplied.reason or not supplied.evidence_refs:
+            logger.warning(
+                "entry hypothesis %s risk_intent (model omitted part of it); posture=%s "
+                "derived from capture evidence",
+                "omitted" if supplied is None else "incomplete",
+                supplied.posture if supplied else "BASELINE",
+            )
+        return RiskIntent(
+            posture=supplied.posture if supplied else "BASELINE",
+            reason=str(reason).strip()[:512],
+            evidence_refs=tuple(refs)[:8],
+        )
 
 
 def entry_reference_contract(context: EntryAnalysisContext) -> dict[str, list[str]]:
