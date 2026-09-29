@@ -149,9 +149,11 @@ New plans write explicit fields; historical JSON and hashes are never rewritten.
 | `policy_leverage_cap` | Owner policy ceiling |
 | `execution_leverage` | financing actually resolved for this plan |
 | `target_notional_usdt`, `execution_notional_usdt` | wanted vs financed exposure |
-| `margin_mode` | the submitted mode the resolution is valid for |
+| `margin_mode` | the submitted mode the resolution is valid for; the Gateway reads it from this frozen Plan, so no Proposal can carry a different one |
 
-- `TradeProposal.leverage = EntryPlan.execution_leverage`.
+- `TradeProposal.leverage = EntryPlan.execution_leverage`. The Plan is the sole
+authority for the submission margin mode: the order boundary reads it from the frozen
+Plan (the Proposal does not repeat it, so the two can never disagree).
 - Quantity is derived from `execution_notional_usdt`, not from the policy cap.
 - `max_leverage`, `max_notional`, and `max_risk_pct` remain populated as legacy mirrors so
   historical rows and existing readers keep working; only `execution_leverage` and

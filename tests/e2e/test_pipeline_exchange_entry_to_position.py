@@ -220,13 +220,16 @@ def _seeded_plan():
     return _seeded_plan_with(None)
 
 
-def _seeded_plan_with(plan_updates):
+def _seeded_plan_with(plan_updates, *, executable_notional_cap_usdt=None):
     from tests.test_entry_plan_execution import _persist_waiting_plan
 
     return _persist_waiting_plan(
         account_mode=_MODE,
         mode="TRIGGERED",
         tactic="OPPOSING_BBO_IOC",
+        # A plan's size ceiling IS its financed exposure (#3729), so a test that
+        # wants a small plan caps the financing instead of overwriting the mirror.
+        executable_notional_cap_usdt=executable_notional_cap_usdt,
         plan_updates={"approved_at": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
                       **(plan_updates or {})},
     )
@@ -641,7 +644,11 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
             "age_seconds": 1.0,
             "status": "healthy",
             "errors": [],
-            "accounts": [{"broker_id": _MODE, "equity_usdt": 5_000.0}],
+            # The canonical sizer's margin budget comes from AVAILABLE balance
+            # (#3729), so the fabricated snapshot states it, not only equity.
+            "accounts": [
+                {"broker_id": _MODE, "equity_usdt": 5_000.0, "available_usdt": 5_000.0}
+            ],
             "positions": [],
         },
     )
@@ -653,17 +660,22 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
 
     plan = _seeded_plan_with(
         {
-            "max_notional": 10.0,
             "risk_policy_id": resolved.policy.policy_id,
             "risk_policy_revision": resolved.policy.revision,
             "risk_policy_hash": resolved.policy_hash,
-        }
+        },
+        executable_notional_cap_usdt=10.0,
     )
 
     result = _drive_entry(plan)
 
     assert result["status"] == "submitted", result
     assert len(submitted) == 1
+    # The venue command carries the Plan's financed leverage and declared margin
+    # mode, not the Owner policy ceiling and not the venue's implicit default
+    # (#3729 §10).
+    assert submitted[0].leverage == plan.execution_leverage
+    assert submitted[0].margin_mode == plan.margin_mode == "isolated"
 
     approved = [row for row in repo.list_risk_decisions(limit=20) if row["approved"]]
     assert approved, repo.list_risk_decisions(limit=20)

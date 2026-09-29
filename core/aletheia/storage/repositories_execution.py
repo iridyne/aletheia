@@ -62,8 +62,6 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
     # Additive identity: NULL historical rows retain their exact original hash.
     if p.entry_leg_index is None:
         payload.pop("entry_leg_index")
-    if p.margin_mode is None:
-        payload.pop("margin_mode")
     return sha256_json(payload)[:16]
 
 

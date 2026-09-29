@@ -146,6 +146,29 @@ def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
         return None
 
 
+def _proposal_plan_carries_financing(proposal: TradeProposal) -> bool:
+    """Whether this Proposal's Plan froze a canonical financing (#3729).
+
+    Read straight from the durable Plan: a financed Plan declares its own
+    per-symbol risk-unit bound, so check #19's leverage-amplified notional
+    ceiling must not also apply to it.
+    """
+    if not proposal.entry_plan_id:
+        return False
+    row = get_entry_plan(proposal.entry_plan_id)
+    if row is None:
+        return False
+    try:
+        return decode_entry_plan(str(row["plan_json"])).leverage_resolution is not None
+    except Exception as exc:
+        # An undecodable Plan cannot claim the financed relaxation, so the legacy
+        # ceiling still applies; the reason is reported rather than swallowed.
+        logger.warning(
+            "entry plan financing probe failed (legacy bound kept): %s", type(exc).__name__
+        )
+        return False
+
+
 def _recomputed_entry_financing(plan, proposal: TradeProposal, resolved_policy, cfg):
     """Re-resolve one Plan's financing from submission-time facts (#3729 §11).
 
@@ -198,6 +221,10 @@ def _recomputed_entry_financing(plan, proposal: TradeProposal, resolved_policy, 
         policy=sizing_policy_facts(proposal.execution_mode, cfg=cfg),
         account=account,
     )
+    if sizing.status != "resolved":
+        # Report what actually could not be read (capital, geometry, size) rather
+        # than degrading it to a generic financing failure.
+        raise SizingUnavailable(sizing.reason or REASON_CAPITAL_UNAVAILABLE, "sizing_unavailable")
     return resolve_execution_financing(
         sizing=sizing,
         envelope=envelope,
@@ -228,8 +255,6 @@ def _entry_plan_financing_violations(
             if plan.margin_mode == "cross"
             else "MARGIN_MODE_UNAVAILABLE"
         )
-    if proposal.margin_mode != plan.margin_mode:
-        violations.append("entry_plan_margin_mode_mismatch")
     if int(proposal.leverage or 0) != int(plan.execution_leverage or 0):
         violations.append("entry_plan_execution_leverage_mismatch")
     # Per-symbol cumulative bound in RISK UNITS (#3729 §6.3): the same-symbol
@@ -1602,18 +1627,18 @@ def _evaluate_proposal_locked(
     #     had no such guarantee: once equity passed $400/(20%×3x)=$666.67 it rejected
     #     every normal first entry, which is how this deadlocked a live paper account.
     per_symbol_entries = int(getattr(risk, "max_per_symbol_entries", 0) or 0)
-    if proposal.margin_mode is None:
-        # Legacy path only: `_entry_plan_financing_violations` already enforced
-        # the financed path's bound in risk units (#3729 §6.3), which must not be
-        # re-derived from leverage x risk_pct here.
+    if _proposal_plan_carries_financing(proposal):
+        # A financed Entry Plan bounds its same-symbol allowance in RISK UNITS
+        # (#3729 §6.3) inside `_entry_plan_financing_violations`; a ceiling
+        # re-derived here from `risk_pct x leverage` would contradict it.
+        per_symbol_cap = 0.0
+    else:
         per_symbol_cap = _derive_per_symbol_cap(
             capital_base,
             float(risk.max_single_trade_risk_pct),
             float(proposal.leverage or 1),
             per_symbol_entries,
         )
-    else:
-        per_symbol_cap = 0.0
     if per_symbol_cap > 0 and proposal.price and proposal.quantity:
         prop_is_live = _is_live(proposal.execution_mode)
         existing_sym_notional = 0.0

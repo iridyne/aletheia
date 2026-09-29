@@ -364,6 +364,9 @@ def build_entry_plan_order_intent(
     except ValueError as exc:
         raise ValueError("entry_plan_submission_financing_unavailable") from exc
     if plan.market_type == "perp" and plan.margin_mode is None:
+        # The venue receives the Plan's declared mode at submission
+        # (`gateway._entry_plan_submission_margin_mode`); a leveraged Plan without
+        # one has no qualified safety model, so no intent is built for it.
         raise ValueError("entry_plan_margin_mode_unavailable")
     return TradeProposal(
         opportunity_id=plan.source_id if plan.source_kind == "serenity" else None,
@@ -375,7 +378,6 @@ def build_entry_plan_order_intent(
         quantity=quantity,
         price=price,
         leverage=leverage,
-        margin_mode=plan.margin_mode,
         stop_price=plan.stop_price,
         take_profit=plan.target_price,
         risk_reward=risk_reward,
