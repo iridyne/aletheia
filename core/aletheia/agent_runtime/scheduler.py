@@ -3897,6 +3897,8 @@ def _run_venue_margin_facts() -> None:
     cfg = load_config()
     authority = resolve_entry_runtime_authority(cfg)
     if not authority.allowed:
+        # The one state a tick cannot otherwise distinguish from "nothing to do".
+        logger.info("venue_margin_facts skipped: %s", authority.reason or "entry_route_unsupported")
         return
     demand = repo.list_candidate_planning_demand()
     if not demand:

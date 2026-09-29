@@ -359,7 +359,7 @@ async def refresh_venue_margin_demand(
     *,
     execution_mode: str,
     pairs: Sequence[tuple[str, str]],
-    margin_mode: MarginMode = "isolated",
+    margin_mode: MarginMode | None = None,
     max_symbols: int = VENUE_MARGIN_DEMAND_MAX_SYMBOLS,
     exchange=None,
     now: int | None = None,
@@ -368,10 +368,16 @@ async def refresh_venue_margin_demand(
 
     ``pairs`` is the Planner's live demand as ``(symbol, market_type)`` and the
     venue is the one that will hold the position (``execution_mode_venue``), not
-    the venue that produced the market data (#3740). Existing non-stale rows are
-    skipped, so a steady state costs no fetch at all and a rolling universe costs
-    one fetch per newly demanded instrument; a single instrument's failure never
-    blocks another, and nothing is ever defaulted or guessed.
+    the venue that produced the market data (#3740). ``margin_mode`` defaults to
+    the route's qualified *submission* mode (``submission_margin_mode``) — the
+    same value the Compiler asks for. The mode is not part of the cache key, so
+    writing any other mode would leave a row that still fails closed with
+    ``REASON_MARGIN_MODE_UNAVAILABLE``.
+
+    Existing non-stale rows in the requested mode are skipped, so a steady state
+    costs no fetch at all and a rolling universe costs one fetch per newly
+    demanded instrument; a single instrument's failure never blocks another, and
+    nothing is ever defaulted or guessed.
 
     ``exchange`` is injectable for tests. When omitted, a CCXT Pro session is
     built here -- inside the running loop, because the session binds to it -- and
@@ -379,11 +385,15 @@ async def refresh_venue_margin_demand(
     """
 
     from aletheia.config.exchanges import execution_mode_venue
+    from aletheia.execution.margin_mode_policy import submission_margin_mode
 
     venue = execution_mode_venue(execution_mode)
+    mode: MarginMode | None = margin_mode or submission_margin_mode(execution_mode)
     summary: dict = {
         "status": "not_applicable",
         "venue": venue,
+        "margin_mode": mode,
+        "reason": None,
         "considered": 0,
         "refreshed": 0,
         "fresh": 0,
@@ -391,7 +401,17 @@ async def refresh_venue_margin_demand(
         "skipped_market_type": 0,
         "skipped_over_cap": 0,
     }
-    if not venue:
+    if not venue or mode is None:
+        # No position to hold (internal/paper route) or no qualified submission
+        # mode for this route: the Compiler would refuse the instrument anyway.
+        summary["reason"] = (
+            "execution_venue_unavailable" if not venue else "margin_mode_unavailable"
+        )
+        logger.info(
+            "venue_margin demand refresh skipped: execution_mode=%s reason=%s",
+            execution_mode,
+            summary["reason"],
+        )
         return summary
 
     demand = list(dict.fromkeys(pairs))
@@ -402,6 +422,11 @@ async def refresh_venue_margin_demand(
     summary["considered"] = len(considered)
     summary["status"] = "ok"
     if not considered:
+        logger.info(
+            "venue_margin demand refresh: venue=%s mode=%s considered=0 (nothing demanded)",
+            venue,
+            mode,
+        )
         return summary
 
     owns_exchange = exchange is None
@@ -420,7 +445,7 @@ async def refresh_venue_margin_demand(
                     venue=venue,
                     symbol=symbol,
                     market_type=market_type,
-                    margin_mode=margin_mode,
+                    margin_mode=mode,
                     now=now,
                 )
             except VenueMarginUnavailable:
@@ -435,7 +460,7 @@ async def refresh_venue_margin_demand(
                     venue=venue,
                     symbol=symbol,
                     market_type=market_type,
-                    margin_mode=margin_mode,
+                    margin_mode=mode,
                     now=now,
                 )
                 summary["refreshed"] += 1
