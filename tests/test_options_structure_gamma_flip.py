@@ -1,7 +1,7 @@
 """Tests for the spot-sweep gamma flip estimation (issue #1161)."""
 
 import asyncio
-from contextlib import asynccontextmanager
+
 import math
 
 import pytest
@@ -98,21 +98,10 @@ def test_options_collector_rejects_non_finite_source_values(monkeypatch):
         ]
     }
 
-    class Response:
-        def raise_for_status(self):
-            return None
+    from unittest.mock import AsyncMock, MagicMock
 
-        def json(self):
-            return payload
+    exchange = MagicMock()
+    exchange.publicGetGetBookSummaryByCurrency = AsyncMock(return_value=payload)
 
-    class Client:
-        async def get(self, *args, **kwargs):
-            return Response()
-
-    @asynccontextmanager
-    async def fake_httpx_client(**kwargs):
-        yield Client()
-
-    monkeypatch.setattr(mod, "httpx_client", fake_httpx_client)
     with pytest.raises(ValueError, match="invalid_numeric_inputs"):
-        asyncio.run(mod._collect_currency("BTC"))
+        asyncio.run(mod._collect_currency(exchange, "BTC"))

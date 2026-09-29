@@ -216,6 +216,7 @@ def test_cutoff_storage_and_legacy_isolation():
 @pytest.mark.parametrize("invalid_iv", [None, 5e-324, 1e308])
 def test_same_response_gex_unchanged(monkeypatch, invalid_iv):
     import extensions.data.collectors.options_structure as collector
+    from unittest.mock import AsyncMock, MagicMock
 
     calls = []
 
@@ -224,38 +225,50 @@ def test_same_response_gex_unchanged(monkeypatch, invalid_iv):
         def now(cls, tz=None):
             return NOW
 
-    class Response:
-        def __init__(self, currency):
-            self.currency = currency
+    def _make_exchange_for(currency):
+        """Return a mock exchange that returns the frozen chain for *currency*."""
+        exchange = MagicMock()
+        items = chain(currency)
+        if invalid_iv is not None:
+            items[1]["mark_iv"] = invalid_iv
+        exchange.publicGetGetBookSummaryByCurrency = AsyncMock(
+            side_effect=lambda params: (
+                calls.append(params), {"result": chain(params["currency"]) if invalid_iv is None else (
+                    [dict(i, mark_iv=invalid_iv) if i == chain(params["currency"])[1] else i for i in chain(params["currency"])]
+                )}
+            )[-1]
+        )
+        return exchange
 
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            items = chain(self.currency)
-            if invalid_iv is not None:
-                items[1]["mark_iv"] = invalid_iv
-            return {"result": items}
-
-    class Client:
-        async def get(self, url, params):
-            calls.append((url, params))
-            return Response(params["currency"])
-
-    @asynccontextmanager
-    async def client(**kwargs):
-        yield Client()
-
+    # For _collect_currency(exchange, currency) calls: inject a per-currency exchange
     monkeypatch.setattr(collector, "datetime", FrozenDatetime)
-    monkeypatch.setattr(collector, "httpx_client", client)
+
+    # Build mock_exchange shared for OptionsStructureCollector().collect() — it must
+    # answer both BTC and ETH queries.
+    shared_exchange = MagicMock()
+    async def _book_summary(params):
+        ccy = params["currency"]
+        items = chain(ccy)
+        if invalid_iv is not None:
+            items[1]["mark_iv"] = invalid_iv
+        calls.append(params)
+        return {"result": items}
+    shared_exchange.publicGetGetBookSummaryByCurrency = AsyncMock(side_effect=_book_summary)
+    mock_session = MagicMock()
+    mock_session.close = AsyncMock()
+
+    monkeypatch.setattr(collector, "make_ccxt", lambda name: (shared_exchange, mock_session))
+    monkeypatch.setattr(collector, "close_ccxt", AsyncMock())
+
     legacy = []
     for currency in ("BTC", "ETH"):
         if invalid_iv == 1e308:
-            # Preserve the existing GEX rejection as well as successful output.
             with pytest.raises(OverflowError):
-                asyncio.run(collector._collect_currency(currency))
+                asyncio.run(collector._collect_currency(shared_exchange, currency))
         else:
-            legacy.append(asyncio.run(collector._collect_currency(currency)).model_dump())
+            snap = asyncio.run(collector._collect_currency(shared_exchange, currency))
+            assert snap is not None
+            legacy.append(snap.model_dump())
     calls.clear()
     enriched = asyncio.run(collector.OptionsStructureCollector().collect())
     assert [s.model_dump() for s in enriched["snapshots"]] == legacy
