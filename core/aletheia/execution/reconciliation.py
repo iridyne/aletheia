@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
 from aletheia.data.symbols import to_bitget
@@ -29,6 +30,7 @@ from aletheia.execution.exchange_materialization import (
     materialize_bitget_close,
     materialize_bitget_entry,
 )
+from aletheia.infra.events import mark_resolved_from_durable, upsert_critical_unresolved
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.repositories import transition_order, update_order_metadata
@@ -814,6 +816,38 @@ def _write_filled_gap_event(
         )
 
 
+# Per-(execution_mode, market_type) circuit-breaker state for private fill floods.
+# ponytail: module-level dict; per-process singleton is correct for this scheduler
+_fill_breaker: dict[tuple[str, str], dict] = {}
+_FILL_BREAKER_THRESHOLD = 5
+_FILL_BREAKER_COOLDOWN_S = 300.0
+
+
+def _on_fill_unavailable(execution_mode: str, market_type: str) -> None:
+    key = (execution_mode, market_type)
+    state = _fill_breaker.setdefault(key, {"consecutive": 0})
+    state["consecutive"] += 1
+    if state["consecutive"] >= _FILL_BREAKER_THRESHOLD:
+        state.setdefault("open_until", time.monotonic() + _FILL_BREAKER_COOLDOWN_S)
+        upsert_critical_unresolved(
+            "reconciliation",
+            "exchange_reconciliation_stalled",
+            f"{execution_mode}/{market_type}/get_fills",
+            f"Private fill surface unavailable: {state['consecutive']} consecutive failures",
+        )
+
+
+def _on_fill_complete(execution_mode: str, market_type: str) -> None:
+    key = (execution_mode, market_type)
+    state = _fill_breaker.pop(key, None)
+    if state and state.get("consecutive", 0) >= _FILL_BREAKER_THRESHOLD:
+        mark_resolved_from_durable(
+            "reconciliation",
+            "exchange_reconciliation_stalled",
+            f"{execution_mode}/{market_type}/get_fills",
+        )
+
+
 class _UTAReconciliationProjection:
     """Typed UTA projection for the existing atomic materializer."""
 
@@ -862,6 +896,21 @@ class _UTAReconciliationProjection:
         market_type: str = "usdt_futures",
         start_at=None,
     ) -> list[FillReport]:
+        breaker = _fill_breaker.get((self.execution_mode, market_type), {})
+        if breaker.get("consecutive", 0) >= _FILL_BREAKER_THRESHOLD:
+            cooldown_until = breaker.get("open_until", 0.0)
+            if time.monotonic() < cooldown_until:
+                raise IncompleteReadError(
+                    "exchange_reconciliation_stalled",
+                    "get_fills",
+                    self.execution_mode,
+                    market_type,
+                    symbol,
+                    completeness=ReadCompleteness.UNAVAILABLE,
+                )
+            # Cooldown expired: allow one probe through and reset the timer.
+            breaker.pop("open_until", None)
+
         scope = (
             scope_from_local(symbol, market_type, start_at=start_at)
             if symbol
@@ -876,6 +925,8 @@ class _UTAReconciliationProjection:
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
+            if report.completeness is ReadCompleteness.UNAVAILABLE:
+                _on_fill_unavailable(self.execution_mode, market_type)
             raise IncompleteReadError(
                 report.reason_code,
                 "get_fills",
@@ -884,6 +935,7 @@ class _UTAReconciliationProjection:
                 symbol,
                 completeness=report.completeness,
             )
+        _on_fill_complete(self.execution_mode, market_type)
         return [
             fill for fill in report.fills
             if fill.instrument.market_type == market_type
