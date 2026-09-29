@@ -1092,6 +1092,65 @@ def test_repeated_close_on_parked_claim_returns_already_pending():
     assert orders[0]["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
 
 
+def test_reconcile_is_the_production_entry_to_absent_close_recovery(monkeypatch):
+    """#3719: the recovery is runtime-reachable through the reconcile job."""
+    _seed_order(
+        Order(
+            id="close-ack-lost",
+            client_order_id="close-pos-ack-lost",
+            position_id="pos-ack-lost",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-ack-lost",
+            pending_close_order_id="close-ack-lost",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+
+    from aletheia.execution.reconciliation import reconcile
+
+    summary = reconcile()
+
+    assert summary["pending_close_released"] == 1
+    assert summary["pending_close_released_ids"] == ["pos-ack-lost"]
+    stored = repo.get_position("pos-ack-lost")
+    assert stored is not None
+    assert stored["pending_close_order_id"] is None
+    assert stored["pending_close_status"] is None
+
+
+def test_reconcile_never_releases_a_parked_close_claim(monkeypatch):
+    """The 40725 park stays owner-unlock-only on the new production path too."""
+    _seed_parked_claim(age_hours=6)
+
+    from aletheia.execution.reconciliation import reconcile
+
+    summary = reconcile()
+
+    assert summary["pending_close_released"] == 0
+    assert summary["pending_close_parked"] == 0
+    stored = repo.get_position("pos-parked-40725")
+    assert stored is not None
+    assert stored["pending_close_order_id"] == "close-pos-parked-40725"
+    assert stored["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+
 def test_legacy_submission_rejected_40725_is_still_not_released():
     """Pre-normalization rows must remain parked even on submission_rejected."""
     _seed_order(

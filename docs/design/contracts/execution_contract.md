@@ -245,6 +245,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`extensions/exchanges/ccxt/adapter.py` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
 | 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
+| 未决平仓 claim 的自动收敛 | `reconcile()` 是对账 job 内**唯一**的自动入口：先按既有顺序完成逐单收敛，再调用 `pending_close_recovery.recover_absent_stale_close_orders()`。仅当完整 open-order 视图证明该 close Order 缺席、精确 fill 历史为空、typed order history 为终态或交易所已无该单，且本地 claim（Order status/clientOid/exchange id、Position claim 字段、零本地 Fill）CAS 复验未变时，才释放 claim，让保护性平仓以全新 `close-{id}-rN` clientOid 重试；不完整/不可用证据保持未决，`venue_trade_rate_limited` 停泊永不被释放。释放与停泊都只改本地 Order/Position 状态，绝不下单或撤单 | `execution/reconciliation.py`、`execution/pending_close_recovery.py` |
 
 UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
 （`core/aletheia/execution/errors.py`）抛出，不得使用裸 `RuntimeError`。异常携带
