@@ -254,7 +254,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
 
     authority = require_entry_runtime_authority(cfg)
 
-    from aletheia.trading.entry_plan import entry_instrument_violation, stop_distance_below_min_floor
+    from aletheia.trading.entry_plan import (
+        STOP_DISTANCE_BELOW_VOL_TARGET,
+        entry_instrument_violation,
+        stop_distance_below_min_floor,
+    )
 
     instrument_violation = entry_instrument_violation(generation["market_type"], generation["direction"])
     if instrument_violation:
@@ -297,7 +301,10 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         closest_entry, stop, execution_mode=authority.execution_route, cfg=cfg,
     )
     if tight_stop:
-        raise PlanIntentError("stop_distance_below_vol_target", tight_stop)
+        # The token already carries its own code; the rejection detail is the
+        # measurement alone, so the persisted reason never doubles the code.
+        _, _, measured = tight_stop.partition(":")
+        raise PlanIntentError(STOP_DISTANCE_BELOW_VOL_TARGET, measured)
     target = (
         worst_entry + rr * (worst_entry - stop)
         if direction == "long" else worst_entry - rr * (stop - worst_entry)
