@@ -1047,14 +1047,21 @@ def test_parked_claim_holds_the_close_fence_without_immediate_reconciliation():
     }) is True
 
 
-def test_parked_claim_view_names_the_owner_unlock_at_any_age():
+@pytest.mark.parametrize(
+    ("age_hours", "escalated"),
+    [
+        (0.5, False),   # fresh park: still inside the ordinary flight window
+        (22.5, True),   # stale park: escalated, but the owner action is unchanged
+    ],
+)
+def test_parked_claim_view_names_the_owner_unlock_at_any_age(age_hours, escalated):
     from aletheia.execution.close_convergence import close_convergence_view
 
     view = close_convergence_view({
         "status": "open",
         "pending_close_order_id": "close-pos-parked-40725",
         "pending_close_status": pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
-        "pending_close_requested_at": _iso(22.5),
+        "pending_close_requested_at": _iso(age_hours),
     })
 
     assert view["pending_close"] is True
@@ -1062,8 +1069,8 @@ def test_parked_claim_view_names_the_owner_unlock_at_any_age():
     assert view["close_convergence_owner_status"] == (
         "venue rate limited; owner unlock required"
     )
-    assert view["close_convergence_requires_reconciliation"] is True
-    assert view["close_convergence_escalated"] is True
+    assert view["close_convergence_requires_reconciliation"] is escalated
+    assert view["close_convergence_escalated"] is escalated
 
 
 def test_repeated_close_on_parked_claim_returns_already_pending():
