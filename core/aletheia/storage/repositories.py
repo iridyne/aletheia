@@ -4518,14 +4518,23 @@ def release_candidate_planning_claim(
     reason: str,
     *,
     retry_seconds: int = 0,
+    detail: str = "",
     now: datetime | None = None,
 ) -> bool:
-    """Release locally refused/cancelled work without consuming a model attempt."""
+    """Release locally refused/cancelled work without consuming a model attempt.
+
+    ``detail`` is the bounded, content-free measurement behind ``reason``
+    (mirrors ``fail_candidate_planning``'s ``detail``, #3750): it lands beside
+    ``reason`` in ``result_json`` only when non-empty.
+    """
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
     retry_at = (current + timedelta(seconds=max(int(retry_seconds), 0))).isoformat()
-    payload = json.dumps({"reason": str(reason)[:160]}, sort_keys=True)
+    payload_fields = {"reason": str(reason)[:160]}
+    if detail:
+        payload_fields["detail"] = str(detail)[:120]
+    payload = json.dumps(payload_fields, sort_keys=True)
     updated = execute_write(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "attempt_count=MAX(attempt_count-1, 0), result_kind='unavailable', "

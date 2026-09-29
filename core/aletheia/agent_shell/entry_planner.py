@@ -97,12 +97,13 @@ def _parse_candidate_opportunity(candidate: dict) -> tuple:
     return (opportunity,)
 
 
-async def _ensure_entry_orderbook(generation: dict) -> dict | None:
+async def _ensure_entry_orderbook(generation: dict) -> tuple[dict | None, str]:
     from aletheia.data.providers import MarketDataObservationError, get_market_data_provider
 
     orderbook = repo.latest_orderbook(
         generation["symbol"], generation["venue"], generation["market_type"]
     )
+    detail = ""
     if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
         started = asyncio.get_running_loop().time()
         category, phase, exception_type = "invalid_payload", "parse", None
@@ -155,14 +156,16 @@ async def _ensure_entry_orderbook(generation: dict) -> dict | None:
             if orderbook is not None:
                 book_age_ms = int((datetime.now(timezone.utc) - observed).total_seconds() * 1000)
                 category, phase, exception_type = "stale", "freshness", None
+            elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            detail = f"category={category} elapsed_ms={elapsed_ms}"[:120]
             logger.warning("entry_orderbook_unavailable", extra={
                 "generation_id": generation["id"], "venue": generation["venue"],
                 "symbol": generation["symbol"], "market_type": generation["market_type"],
                 "category": category, "phase": phase, "exception_type": exception_type,
-                "elapsed_ms": int((asyncio.get_running_loop().time() - started) * 1000),
+                "elapsed_ms": elapsed_ms,
                 "book_age_ms": book_age_ms,
             })
-    return orderbook
+    return orderbook, detail
 
 
 def _build_fresh_entry_context(
@@ -445,11 +448,17 @@ async def plan_next_candidate(
                 if generation.get("planner_input_json"):
                     context_model = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
                 else:
-                    orderbook = await _ensure_entry_orderbook(generation)
+                    orderbook, orderbook_detail = await _ensure_entry_orderbook(generation)
                     if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+                        if not orderbook_detail and orderbook is not None:
+                            observed = datetime.fromisoformat(
+                                str(orderbook["observed_at"]).replace("Z", "+00:00")
+                            )
+                            elapsed_ms = int((datetime.now(timezone.utc) - observed).total_seconds() * 1000)
+                            orderbook_detail = f"inner_fresh_outer_stale:elapsed_ms={elapsed_ms}"[:120]
                         repo.release_candidate_planning_claim(
                             generation["id"], owner, "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
-                            retry_seconds=60,
+                            retry_seconds=60, detail=orderbook_detail,
                         )
                         return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
                     _feature, context_model = _build_fresh_entry_context(
