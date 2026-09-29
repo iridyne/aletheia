@@ -478,9 +478,10 @@ def httpx_client(
 def aiohttp_session(**kwargs) -> aiohttp.ClientSession:
     """Return an aiohttp.ClientSession wired to the managed proxy path.
 
-    HTTP(S) proxy: env-based (trust_env=True). apply_proxy_env() sets
-    HTTP(S)_PROXY + ALL_PROXY from config and always refreshes NO_PROXY so
-    loopback/internal traffic stays direct. Existing shell/system env proxy wins.
+    HTTP(S) proxy: env-based (trust_env=True). Uses _effective_proxy() as the
+    canonical authority — same policy as httpx_client() — so HTTP and CCXT traffic
+    always resolve the same proxy. Overwrites any pre-existing shell proxy env var
+    to prevent silent split when config and shell disagree (Phase 0 / #1639).
 
     SOCKS proxy: aiohttp has no native SOCKS support, so we route through an
     aiohttp_socks ProxyConnector (remote DNS via socks5h avoids the c-ares issue).
@@ -509,8 +510,20 @@ def aiohttp_session(**kwargs) -> aiohttp.ClientSession:
         connector = ProxyConnector.from_url(proxy)
         return aiohttp.ClientSession(connector=connector, timeout=timeout, **kwargs)
 
-    # HTTP proxy (or direct) via env.
-    apply_proxy_env()
+    # HTTP proxy (or direct): publish the canonical _effective_proxy() decision to
+    # env so aiohttp trust_env=True uses the same source as httpx_client(). Writing
+    # the config-derived URL even when a shell proxy exists prevents silent splits
+    # between httpx and CCXT when the two disagree about the active proxy.
+    if proxy:
+        os.environ["HTTP_PROXY"] = proxy
+        os.environ["HTTPS_PROXY"] = proxy
+        os.environ["ALL_PROXY"] = proxy
+    else:
+        for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            os.environ.pop(_v, None)
+    no_proxy_val = _no_proxy_value()
+    os.environ["NO_PROXY"] = no_proxy_val
+    os.environ["no_proxy"] = no_proxy_val
     connector = aiohttp.TCPConnector(resolver=ThreadedResolver())
     return aiohttp.ClientSession(
         connector=connector,
