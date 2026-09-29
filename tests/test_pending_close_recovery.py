@@ -1123,12 +1123,16 @@ def test_legacy_submission_rejected_40725_is_still_not_released():
 
 
 # ---------------------------------------------------------------------------
-# Issue #3719 validation checkpoint (2026-09-29).
+# Issue #3719 validation checkpoint (2026-09-29, #3728).
 #
-# V2 pins the CURRENT source contract, not a desired one: the 40725 park is
-# invisible to `has_unresolved_close_claim`. That test must be inverted (or
-# deleted) when the parked-claim vocabulary is fixed.
-# V3/V4 pin the recovery semantics that must survive any wiring work.
+# V2 pinned the pre-fix contract (the 40725 park invisible to
+# `has_unresolved_close_claim`) and was written to be inverted by the vocabulary
+# fix. It is gone: the parked-claim fence is pinned by
+# `test_parked_claim_holds_the_close_fence_without_immediate_reconciliation`,
+# `test_parked_claim_view_names_the_owner_unlock_at_any_age`,
+# `test_repeated_close_on_parked_claim_returns_already_pending` and
+# `test_parked_close_claim_is_not_resubmitted_or_rewritten` (position_manager).
+# V3/V4 pin the recovery semantics that survive that fix and the wiring.
 # ---------------------------------------------------------------------------
 
 
@@ -1261,47 +1265,6 @@ def _close_orders_for(position_id: str) -> list[dict]:
         .execute("SELECT * FROM orders WHERE position_id=?", (position_id,))
         .fetchall()
     ]
-
-
-def test_v2_venue_trade_rate_limited_does_not_hold_the_close_claim(monkeypatch):
-    """V2 (#3719): a parked 40725 claim is not reported as an unresolved claim.
-
-    `venue_trade_rate_limited` is absent from `CLOSE_CLAIM_STATES`, so the
-    coordinator and `position_manager.evaluate_open_positions` both read the
-    parked Position as claim-free and start another close attempt.
-    """
-    _seed_parked_40725()
-
-    from aletheia.execution.close_convergence import (
-        close_convergence_view,
-        has_unresolved_close_claim,
-    )
-
-    stored = _position_row("pos-parked")
-    assert has_unresolved_close_claim(stored) is False
-
-    view = close_convergence_view(stored)
-    assert view["pending_close"] is False
-    assert view["close_convergence_state"] == "still_open"
-    assert view["close_convergence_requires_reconciliation"] is False
-
-    # Consequence: the coordinator tries to claim a second close for the same
-    # Position. The CAS in `claim_position_close` still refuses the fork, so the
-    # attempt fails loudly instead of reaching the venue.
-    from aletheia.execution.coordinator import close_position
-    from aletheia.storage.repositories import PositionClaimConflict
-
-    with pytest.raises(PositionClaimConflict) as conflict:
-        close_position("pos-parked", "take_profit")
-    assert "position_close_claim_conflict:pos-parked" in str(conflict.value)
-    assert [order["id"] for order in _close_orders_for("pos-parked")] == [
-        "close-pos-parked"
-    ]
-
-    assert _order_row("close-pos-parked")["status"] == "cancelled"
-    fresh = _position_row("pos-parked")
-    assert fresh["pending_close_order_id"] == "close-pos-parked"
-    assert fresh["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
 
 
 @pytest.mark.parametrize("venue_evidence", ["open_order", "exact_fill"])
