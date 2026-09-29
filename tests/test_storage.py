@@ -14,7 +14,7 @@ from aletheia.storage.sqlite import get_db, reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
-    RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
+    RiskDecision, Order, Fill, Position, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity,
     SerenityRiskGate, SerenityReplaySnapshot, SerenityPostMortem,
 )
@@ -42,7 +42,7 @@ def test_migrations_create_tables(tmp_path):
     db = get_db()
     tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     expected = ["audit_events", "agent_runs", "opportunities", "orders", "fills",
-                "positions", "strategy_records", "knowledge_items", "trade_proposals", "risk_decisions",
+                "positions", "knowledge_items", "trade_proposals", "risk_decisions",
                 "serenity_themes", "serenity_evidence", "serenity_opportunities",
                 "serenity_risk_gates", "serenity_replay_snapshots", "serenity_post_mortems"]
     for t in expected:

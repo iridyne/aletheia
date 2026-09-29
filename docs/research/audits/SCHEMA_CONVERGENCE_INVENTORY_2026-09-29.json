@@ -1,0 +1,157 @@
+{
+  "meta": {
+    "audit_sha": "63fc1c40776431641875d7db4ed42630f2a29e86",
+    "migration_head": "20260927_0089_entry_cancel_retry_v90",
+    "schema_version": "aletheia-sqlite-v90",
+    "fedora_schema_version": "aletheia-sqlite-v90",
+    "fedora_config_sha": "12d4d21d8b55988f987514fb8502d449b8c5ec10",
+    "audit_date": "2026-09-29",
+    "status": "READ-ONLY / NO SOURCE COMMIT"
+  },
+  "counts": {
+    "total_sqlite_master_tables": 149,
+    "sqlite_internal": 2,
+    "fts_shadow": 6,
+    "migration_ledger": 1,
+    "application_tables": 141,
+    "ps_historical": 15,
+    "effective_current": 126
+  },
+  "already_retired": [
+    {"table": "strategy_experiments", "authority": "#2737"},
+    {"table": "learning_experiments", "authority": "#2737"},
+    {"table": "learning_exposures", "authority": "#2737"},
+    {"table": "learning_contribution_verdicts", "authority": "#2737"},
+    {"table": "learning_inference_decisions", "authority": "#2737"},
+    {"table": "learning_lifecycle_events", "authority": "#2737"},
+    {"table": "filter_shadow_experiments", "authority": "#2737"},
+    {"table": "filter_shadow_evaluations", "authority": "#2737"}
+  ],
+  "classification": {
+    "current_canonical": {
+      "count": 94,
+      "tables": [
+        "agent_run_artifacts","agent_run_steps","agent_runs","agent_shell_artifacts","agent_shell_commands","agent_shell_events","agent_shell_heartbeats","agent_shell_messages","agent_shell_sessions","agent_shell_tasks","agent_tool_calls",
+        "audit_events","runtime_sessions","observation_authority_cutover_proofs","observation_authority_state","operator_evaluation_events",
+        "broker_funding_settlement_cursor","coingecko_top_snapshots","collector_health_state","fast_trigger_market_snapshots","fred_source_batches","funding_rate_snapshots","liquidation_events","macro_snapshots","market_ohlcv","market_regimes","market_snapshots","news_items","ohlcv_backfill_state","onchain_snapshots","open_interest_snapshots","options_market_structure_snapshots","options_volatility_snapshots","orderbook_snapshots","perp_price_snapshots","volume_ranking_snapshots",
+        "candidate_planning_generations","conditional_entry_authorizations","entry_plans","entry_risk_reservations","entry_trigger_activations",
+        "fills","orders","positions","proposal_execution_claims","risk_decisions","trade_proposals","exit_breakeven_shadow_assignments","exit_breakeven_shadow_outcomes","reconciliation_integrity_incidents",
+        "filter_candidate_outcomes","filter_decision_batches","filter_decisions","observation_delivery_outbox","observation_deny_tombstones",
+        "knowledge_items","learning_hypotheses","learning_hypothesis_nominations","learning_job_health","learning_lesson_reviewer_attempts","learning_policy_epochs",
+        "capital_events","historical_accounting_reconciliations","paper_account_events","paper_funding_revival_cursor","perp_structure_shadow_outcomes","perp_structure_snapshots","portfolio_snapshots","position_close_events","position_disappearance_candidates","position_disappearance_observations","position_exit_plan_versions","position_path_observation_deferred_buckets","position_path_observations","position_path_observer_cursor","position_protection_state","position_protection_triggers","position_realtime_revision",
+        "prediction_events","prediction_market_claims","prediction_markets","prediction_observer_runs","prediction_probability_snapshots",
+        "extension_registry","extension_runs","persona_rollout_events","persona_rollouts","settings",
+        "serenity_agent_locks","serenity_claims","serenity_evidence","serenity_feedback_events","serenity_opportunities","serenity_post_mortems","serenity_profile_snapshots","serenity_replay_snapshots","serenity_research_runs","serenity_risk_gates","serenity_run_events","serenity_theme_claims","serenity_themes","serenity_user_profiles",
+        "controller_recommendations","universe_discovery_benchmarks","universe_feature_snapshots","universe_members","universe_registry","universe_scanner_runs","universe_setups","universe_snapshots","universe_twin_shadow_batches","universe_twin_shadow_records",
+        "pi_decisions","outcome_hook_jobs"
+      ]
+    },
+    "current_supporting_mixed": [
+      {"table": "opportunities", "note": "three active writers: equity, prediction, crypto observers"},
+      {"table": "alpha_control_observations", "note": "serenity-layer writer current; universe-layer is old writer residue (last 2026-09-10)"},
+      {"table": "outcome_hook_jobs", "note": "all completed; last entry today; shadow settlement"}
+    ],
+    "intentional_historical": {
+      "authority": "#3134",
+      "tables": ["ps_checkpoints","ps_event_log","ps_execution_intents","ps_fills","ps_gateway_locks","ps_gateway_sessions","ps_job_runs","ps_lessons","ps_order_intents","ps_orders","ps_policy_versions","ps_positions","ps_reconciliation_reports","ps_scheduled_jobs","ps_skills"]
+    },
+    "retirement_candidates_confirmed": [
+      {
+        "table": "backtest_runs",
+        "fedora_rows": 0,
+        "production_writer": false,
+        "business_reader": false,
+        "residue": ["scheduler.py:3049", "repositories.py:6194-6211", "config:backtest_runs_days", "ops/maintenance/data_retention_backfill.py"],
+        "owner": "#3703",
+        "verdict": "CLEAR"
+      },
+      {
+        "table": "backtest_trades",
+        "fedora_rows": 0,
+        "production_writer": false,
+        "business_reader": false,
+        "residue": ["repositories.py:6176-6192 (prune_backtest_trades)"],
+        "owner": "#3703",
+        "verdict": "CLEAR"
+      },
+      {
+        "table": "strategy_records",
+        "fedora_rows": 0,
+        "production_writer": false,
+        "business_reader": "legacy compatibility (observers attach frozen strategy_id to new facts)",
+        "residue": ["divergence_scanner.py:302", "equity_observer.py:492", "prediction_observer.py:299", "dreaming_agent.py:208", "routes/data.py /strategies API", "frontend getStrategies()", "context.py:345"],
+        "owner": "#3702",
+        "verdict": "CONDITIONAL — #3702 Batch A must sever compatibility readers first"
+      },
+      {
+        "table": "approvals",
+        "fedora_rows": 0,
+        "production_writer": false,
+        "business_reader": false,
+        "residue": ["test_architecture_fitness.py:701 (guard test — moot on retirement)", "data_retention_backfill.py (protective listing)"],
+        "owner": "NEW FOCUSED CHILD (create after #3706 DoD)",
+        "verdict": "CLEAR — cleanest orphan"
+      }
+    ],
+    "conditional_retirement": [
+      {
+        "table": "shadow_trades",
+        "fedora_rows": 37968,
+        "fedora_last_write": "2026-08-27",
+        "production_writer": false,
+        "writer_evidence": "persist_shadow_batch() in extensions/counterfactual/trades.py:46 — sole caller (agents/paper_trader.py) deleted in #2945",
+        "active_readers": ["reflection.py", "routes/data.py", "CLI inspect shadow-trades", "thesis.py", "Doctor content.shadow_trades probe", "alpha_attribution.py", "ranker_objective_audit.py", "opportunity_lifecycle_story.py", "thesis_lineage.py", "learning/hypothesis_research.py", "counterfactual/advisories.py", "counterfactual/propensity.py", "guard_impact.py"],
+        "owner": "#3704",
+        "verdict": "DECISION REQUIRED — full semantic census needed per #3704 contract"
+      }
+    ],
+    "active_scheduled_for_convergence": [
+      {
+        "table": "universe_forward_outcomes",
+        "fedora_rows": 101828,
+        "fedora_last_write": "2026-09-29",
+        "fedora_pending_rows": 987,
+        "production_writer": true,
+        "writers": ["service.py:1127", "outcome_recorder.py:239,398,417,458", "registry.py:90"],
+        "learning_fallback": "cohorts.py:962-965 falls back to UFO when FCO coverage incomplete",
+        "owner": "#3701",
+        "verdict": "NOT READY — active writer today; Learning fallback must be removed before UFO can retire"
+      }
+    ],
+    "no_writer_config_fallback": [
+      {
+        "table": "universe_policies",
+        "fedora_rows": 0,
+        "production_writer": false,
+        "reader": "get_active_universe_policy() with config fallback",
+        "owner": "#2914",
+        "verdict": "RETIREMENT via #2914; route/client stub cleanup needed"
+      }
+    ]
+  },
+  "fedora_census": {
+    "db_path": "/home/admin/.aletheia/app.db",
+    "schema_version": "aletheia-sqlite-v90",
+    "gateway_running": false,
+    "tables": {
+      "backtest_runs": {"rows": 0},
+      "backtest_trades": {"rows": 0},
+      "strategy_records": {"rows": 0},
+      "shadow_trades": {"rows": 37968, "min_ts": "2026-08-07", "max_ts": "2026-08-27", "resolved": 36349, "unresolved": 1619},
+      "universe_forward_outcomes": {"rows": 101828, "min_entry_ts": "2026-08-29", "max_entry_ts": "2026-09-29", "settled": 88078, "cancelled": 12763, "pending": 987},
+      "filter_candidate_outcomes": {"rows": 184345, "horizon_4h": 116280, "horizon_1h": 56245, "horizon_24h": 5910, "horizon_15m": 5910},
+      "approvals": {"rows": 0},
+      "universe_policies": {"rows": 0},
+      "alpha_control_observations": {"rows": 69798, "layer_universe": 69798, "layer_serenity": 0, "max_ts": "2026-09-10"},
+      "pi_decisions": {"rows": 1676, "max_ts": "2026-09-29", "signal_source_all_market_observer": true},
+      "outcome_hook_jobs": {"rows": 788, "all_completed": true, "max_ts": "2026-09-29"}
+    }
+  },
+  "v3708_notes": {
+    "cosmetic_renaming_only": ["CandidateOpportunityContextV1", "CandidateSelectionUtilityV1", "HardGateDecisionV1", "TailEvidenceV1", "EconomicUtilityEstimateV2"],
+    "real_discriminator_branches": ["candidate-selection-utility-record/v1-v4 (reader has version-gated branches)", "candidate_selection_utility_v1 (CURRENT active policy name)", "legacy_total_score_v1 (STILL WRITTEN by candidate_selection_shadow.py:407 when authority not applied)"],
+    "stop_note": "legacy_total_score_v1 still written today; #3708 must not execute renaming until this write path is severed"
+  },
+  "recommended_next_child": "#3703",
+  "next_child_rationale": "Smallest, cleanest retirement — 0 rows everywhere, no producer, no reader, validates retirement pattern"
+}

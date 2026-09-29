@@ -618,7 +618,7 @@ def _probe_ohlcv_coverage(report: Report) -> None:
         total = db.execute("SELECT COUNT(*) FROM market_ohlcv").fetchone()[0]
         if total == 0:
             report.add("data.ohlcv", "warn",
-                       "market_ohlcv is empty — backtest and Optuna cannot run",
+                       "market_ohlcv is empty — OHLCV-dependent features cannot run",
                        "run: uv run aletheia data backfill")
             return
 

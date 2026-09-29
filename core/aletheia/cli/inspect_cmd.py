@@ -563,7 +563,7 @@ def universe(
     result = []
     for r in rows:
         entry = {k: r.get(k) for k in display_keys}
-        if r.get("candidate_selection_policy") != "candidate_selection_utility_v1":
+        if r.get("candidate_selection_policy") not in {"candidate_selection_utility", "candidate_selection_utility_v1"}:
             entry["historical_total_score"] = r.get("total_score")
         rf = entry.get("risk_flags")
         if isinstance(rf, str):
@@ -612,61 +612,6 @@ def opportunities(
 
 
 # ---------------------------------------------------------------------------
-# 7. strategies
-# ---------------------------------------------------------------------------
-
-@inspect_app.command("strategies")
-def strategies(
-    state: str = typer.Option("all", help="Filter: active | paper_running | draft | retired | all"),
-    limit: int = typer.Option(20, "--limit", "-n"),
-    json_output: bool = typer.Option(False, "--json"),
-):
-    """List strategy records with key parameters."""
-    from aletheia.storage.repositories import list_strategies
-    from aletheia.storage.models import (
-        StrategyParametersInvalid,
-        decode_strategy_parameters,
-    )
-    rows = list_strategies(limit=limit)
-    if state != "all":
-        rows = [r for r in rows if r.get("state") == state]
-    result = []
-    invalid_rows = 0
-    for r in rows:
-        params: dict = {}
-        parameters_status = "available"
-        parameters_error = None
-        try:
-            params = decode_strategy_parameters(r.get("parameters"))
-        except StrategyParametersInvalid as exc:
-            invalid_rows += 1
-            parameters_status = "invalid"
-            parameters_error = exc.reason
-        result.append({
-            "id": r.get("id"),
-            "name": r.get("name"),
-            "state": r.get("state"),
-            "direction_affinity": r.get("direction_affinity"),
-            "applicable_regimes": r.get("applicable_regimes"),
-            "strategy_type": r.get("strategy_type"),
-            "paper_trading_paused": r.get("paper_trading_paused"),
-            "under_review": r.get("under_review"),
-            "symbol": params.get("symbol"),
-            "has_ruleset": bool(params.get("ruleset")) if parameters_error is None else None,
-            "parameters_status": parameters_status,
-            "parameters_error": parameters_error,
-            "created_at": r.get("created_at"),
-        })
-    if json_output:
-        _output({
-            "availability": "partial" if invalid_rows else "available",
-            "invalid_parameters_count": invalid_rows,
-            "rows": result,
-        }, json_output)
-        return
-    _output(result, json_output)
-
-
 # ---------------------------------------------------------------------------
 # 8. snapshots
 # ---------------------------------------------------------------------------
@@ -1577,37 +1522,6 @@ def serenity(
         } for r in rows]
     _output(display, json_output)
 
-
-@inspect_app.command("shadow-trades")
-def shadow_trades(
-    scanner: Optional[str] = typer.Option(None, "--scanner", help="Filter by scanner_family"),
-    resolved: bool = typer.Option(False, "--resolved", help="Only show resolved trades"),
-    limit: int = typer.Option(20, "--limit", "-n"),
-    json_output: bool = typer.Option(False, "--json"),
-):
-    """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
-    from extensions.counterfactual.trades import list_shadow_trade_diagnostics
-
-    rows = list_shadow_trade_diagnostics(
-        scanner_family=scanner,
-        resolved=resolved or None,
-        limit=limit,
-    )
-    display = [{
-        "batch_id": (r.get("batch_id") or "")[:8],
-        "symbol": r.get("symbol"),
-        "direction": r.get("direction"),
-        "scanner_family": r.get("scanner_family"),
-        "rank": r.get("rank"),
-        "trade_score": r.get("trade_score"),
-        "was_selected": r.get("was_selected"),
-        "pnl_pct": r.get("pnl_pct"),
-        "resolved_at": r.get("resolved_at"),
-        "authority_status": r.get("authority_status"),
-        "authorized": r.get("authorized"),
-        "authority_reason": r.get("authority_reason"),
-    } for r in rows]
-    _output(display, json_output)
 
 
 @inspect_app.command("agent-runs")

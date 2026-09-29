@@ -233,29 +233,6 @@ def _seed_universe_member(*, member_id: str, snap_id: str, asset_id: str) -> Non
     db.commit()
 
 
-def _seed_backtest_run(*, run_id: str, created_at: str) -> None:
-    db = get_db()
-    db.execute(
-        "INSERT INTO backtest_runs "
-        "(id, symbol, timeframe, direction, created_at) "
-        "VALUES (?, 'BTCUSDT', '1h', 'long', ?)",
-        (run_id, created_at),
-    )
-    db.commit()
-
-
-def _seed_backtest_trade(*, run_id: str, entry_ms: int) -> None:
-    db = get_db()
-    db.execute(
-        "INSERT INTO backtest_trades "
-        "(id, run_id, trade_index, direction, entry_ts, exit_ts, "
-        " entry_bar_index, exit_bar_index, entry_price, exit_price, quantity) "
-        "VALUES (?, ?, 0, 'long', ?, ?, 0, 1, 1, 1, 1)",
-        (str(uuid.uuid4()), run_id, entry_ms, entry_ms + 3600_000),
-    )
-    db.commit()
-
-
 # ---------------------------------------------------------------------------
 # _PRUNABLE whitelist / audit-chain guardrails
 # ---------------------------------------------------------------------------
@@ -1489,31 +1466,6 @@ def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
     _assert_invariants_preserved(*invariant_baseline)
 
 
-def test_prune_backtest_runs_cascades_trades(invariant_baseline):
-    from aletheia.storage.repositories import prune_backtest_runs
-
-    _seed_backtest_run(run_id="btr-old", created_at=_iso(120))
-    _seed_backtest_run(run_id="btr-young", created_at=_iso(1))
-    old_ts = int((datetime.now(timezone.utc) - timedelta(days=120)).timestamp() * 1000)
-    young_ts = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp() * 1000)
-    _seed_backtest_trade(run_id="btr-old", entry_ms=old_ts)
-    _seed_backtest_trade(run_id="btr-young", entry_ms=young_ts)
-
-    deleted = prune_backtest_runs(days=60)
-    assert deleted == 1
-
-    db = get_db()
-    remaining_runs = {
-        r[0] for r in db.execute("SELECT id FROM backtest_runs").fetchall()
-    }
-    remaining_trade_runs = {
-        r[0] for r in db.execute("SELECT run_id FROM backtest_trades").fetchall()
-    }
-    assert remaining_runs == {"btr-young"}
-    assert remaining_trade_runs == {"btr-young"}
-    _assert_invariants_preserved(*invariant_baseline)
-
-
 def test_prune_filter_shadow_experiments_keeps_collecting(invariant_baseline):
     from aletheia.storage.repositories import (
         prune_filter_shadow_experiments,
@@ -1558,3 +1510,38 @@ def test_prune_filter_shadow_experiments_keeps_collecting(invariant_baseline):
     # Idempotent.
     assert prune_filter_shadow_experiments(days=90) == 0
     _assert_invariants_preserved(*invariant_baseline)
+
+
+# ---------------------------------------------------------------------------
+# Backtest retirement: negative tests (tables + code surfaces are gone)
+# ---------------------------------------------------------------------------
+
+
+def test_backtest_tables_absent(invariant_baseline):
+    db = get_db()
+    tables = {
+        r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "backtest_runs" not in tables
+    assert "backtest_trades" not in tables
+
+
+def test_backtest_prune_functions_absent():
+    import aletheia.storage.repositories as repo_mod
+
+    assert not hasattr(repo_mod, "prune_backtest_runs"), (
+        "prune_backtest_runs must be deleted — backtest_runs is retired"
+    )
+    assert not hasattr(repo_mod, "prune_backtest_trades"), (
+        "prune_backtest_trades must be deleted — backtest_trades is retired"
+    )
+
+
+def test_backtest_config_field_absent():
+    from aletheia.config.schema import RetentionConfig
+
+    assert not hasattr(RetentionConfig(), "backtest_runs_days"), (
+        "backtest_runs_days must be deleted — no Backtest product"
+    )

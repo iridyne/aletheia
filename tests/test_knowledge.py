@@ -121,19 +121,17 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     setup_test_env(tmp_path, monkeypatch)
 
     from extensions.research import post_trade_reviewer
-    from aletheia.storage.models import StrategyRecord
-    from tests.helpers.repo_test_helpers import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     init_tool_registry()
-    strategy = StrategyRecord(name="Post Trade Review Strategy", state="draft")
-    insert_strategy(strategy)
+    # strategy_records retired in #3702 — use a stable opaque ID directly
+    strategy_id = "test-strategy-post-trade-review"
     _insert_closed_position_via_producer(
         position_id="position-knowledge-review",
         symbol="BTC/USDT", market_type="spot", direction="long", quantity=0.01,
         entry_price=60_000.0, realized_pnl=10.0, execution_mode="bitget_demo",
-        strategy_id=strategy.id, close_reason="take_profit",
+        strategy_id=strategy_id, close_reason="take_profit",
         closed_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -147,7 +145,7 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", deterministic_review)
 
     result = await run_post_trade_reviewer(permission_mode="Observe")
-    review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
+    review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy_id)
     assert result["errors"] == []
     assert len(review_items) == 1
     assert "position:position-knowledge-review" in review_items[0]["tags"]

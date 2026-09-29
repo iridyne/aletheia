@@ -1013,7 +1013,6 @@ def compact_finalized_generations(
                     for claim in claims:
                         table = {
                             "filter_candidate_outcomes": "filter_candidate_outcomes",
-                            "universe_forward_outcomes": "universe_forward_outcomes",
                         }.get(str(claim["claim_domain"]))
                         source = None
                         if table is not None:
@@ -2517,12 +2516,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                             # smallest safe retention claim.  The claim is
                             # created in the same Lab transaction, so pruning
                             # cannot observe the exposure without its guard.
-                            claim_domain = (
-                                "universe_forward_outcomes"
-                                if str(row["outcome_source"] or "")
-                                in {"universe_forward_outcome", "forward_outcome"}
-                                else "filter_candidate_outcomes"
-                            )
+                            claim_domain = "filter_candidate_outcomes"
                             try:
                                 upsert_retention_claim(
                                     observation_id=str(row["observation_id"]),

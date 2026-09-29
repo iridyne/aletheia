@@ -47,7 +47,6 @@ _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 _extract_research_lessons: Callable[[str | None, list[str], list[str]], Awaitable[list[dict[str, str]]]] | None = None
 _enqueue_research_run: Callable[[str], None] | None = None
-_resolve_stale_shadows = None
 _expire_learned_guards = None
 _observe_filter_controller = None
 _learning_daily_catchup_due = None
@@ -70,12 +69,11 @@ def configure_learning_job_lifecycle(*, gate=None, skipped=None, started=None,
     _learning_job_failed = failed
 
 
-def configure_optional_evidence_jobs(*, resolve_shadows=None, expire_guards=None,
+def configure_optional_evidence_jobs(*, expire_guards=None,
                                      observe_filters=None, daily_catchup_due=None) -> None:
     """Bind optional producers; scheduling, pause and job lifecycle remain Core."""
-    global _resolve_stale_shadows, _expire_learned_guards
+    global _expire_learned_guards
     global _observe_filter_controller, _learning_daily_catchup_due
-    _resolve_stale_shadows = resolve_shadows
     _expire_learned_guards = expire_guards
     _observe_filter_controller = observe_filters
     _learning_daily_catchup_due = daily_catchup_due
@@ -157,7 +155,6 @@ _ESSENTIAL_JOBS: set[str] = {
     "broker_funding_settler",
     "funding_audit_reconciler",
     "outcome_hook_replay",
-    "shadow_resolver",
     "universe_scanner_audit_reconciler",
     "observation_lab_bridge",
 }
@@ -224,7 +221,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "news_fetch": 120.0,
     "news_analyze": 105.0,
     "lesson_reviewer": 300.0,
-    "shadow_resolver": 60.0,
     # Raised 120 -> 300 so the settler's 240s drain budget fits. The job runs on a
     # 600s interval with max_instances=1, so a 300s ceiling still cannot overlap
     # its own next fire.
@@ -1446,12 +1442,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
         **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
-    # Forward catch-up for shadow trades that the event-driven resolver missed
-    # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
-    _scheduler.add_job(
-        _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
-        id="shadow_resolver", misfire_grace_time=300, executor="io",
-    )
     _scheduler.add_job(
         _guarded("outcome_hook_replay", _run_outcome_hook_replay),
         "interval",
@@ -2315,27 +2305,6 @@ def _run_lesson_reviewer():
         _record_job_failure("lesson_reviewer", str(e), type(e).__name__)
 
 
-def _run_shadow_resolver():
-    """Forward catch-up for shadow trades whose parent never linked an opportunity_id.
-
-    The event-driven resolver only fires at parent-position close and only when the
-    position carries an opportunity_id; this periodic sweep resolves anything that
-    slipped through, using each shadow's own 24h forward horizon (historical OHLCV).
-    """
-    try:
-        if _resolve_stale_shadows is None:
-            raise RuntimeError("counterfactual_extension_unavailable")
-        counts = _resolve_stale_shadows()
-        if counts.get("resolved"):
-            logger.info(
-                "shadow_resolver: resolved=%d skipped_no_ohlcv=%d skipped_bad_entry=%d",
-                counts["resolved"], counts["skipped_no_ohlcv"], counts["skipped_bad_entry"],
-            )
-    except Exception as e:
-        logger.warning("shadow_resolver job failed: %s", e)
-        _record_job_failure("shadow_resolver", str(e))
-
-
 def _run_outcome_hook_replay():
     """Replay committed Outcome hook intents even while decision jobs are paused."""
     try:
@@ -3002,10 +2971,6 @@ def _run_cleanup():
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
-            "universe_forward_outcomes": (
-                repo.prune_universe_forward_outcomes(30, min_experiment_started_at=min_open_exp_at)
-                if experiment_floor_read_ok else 0
-            ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
             "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),
@@ -3046,7 +3011,6 @@ def _run_cleanup():
             "serenity_evidence": repo.prune_serenity_evidence(r.serenity_evidence_days),
             "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
             "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
-            "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
             # Twin Shadow evidence is a logical child of scanner runs (no FK so
             # retention remains safe across legacy databases). It is not
             # experiment evidence, so its fixed retention must not be extended

@@ -17,7 +17,6 @@ from aletheia.storage.repositories import (
     list_market_snapshots,
     list_orders,
     list_positions,
-    list_strategies,
 )
 
 _list_learning_lessons = None
@@ -37,7 +36,6 @@ ALL_SECTIONS = (
     "proposals",
     "risk",
     "knowledge",
-    "strategies",
     "errors",
     "doctor",
     "operator_state",
@@ -55,9 +53,9 @@ DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND: dict[str, str] = {
 CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
     "minimal_context": ("system", "operator_state"),
     "operational_context": ("system", "agents", "proposals", "errors", "operator_state"),
-    "trading_context": ("system", "market", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
-    "knowledge_context": ("system", "agents", "knowledge", "strategies", "operator_state"),
-    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "doctor", "operator_state", "learning"),
+    "trading_context": ("system", "market", "trading", "proposals", "risk", "errors", "operator_state"),
+    "knowledge_context": ("system", "agents", "knowledge", "operator_state"),
+    "repair_context": ("system", "agents", "trading", "proposals", "risk", "errors", "doctor", "operator_state", "learning"),
 }
 
 
@@ -340,21 +338,6 @@ def build_app_context(sections: list[str] | None = None) -> dict:
 
     if "learning" in wanted:
         ctx["learning"] = _curated_learning_context()
-
-    if "strategies" in wanted:
-        strats = list_strategies(limit=20)
-        ctx["strategies"] = [
-            {
-                "name": s["name"],
-                "state": s["state"],
-                "symbol": (s.get("parameters") or {}).get("symbol") if isinstance(s.get("parameters"), dict) else None,
-                "paused": s.get("paper_trading_paused", False),
-                "under_review": s.get("under_review", False),
-                "total_pnl": s.get("total_pnl"),
-                "win_rate": s.get("win_rate"),
-            }
-            for s in strats
-        ]
 
     if "errors" in wanted:
         from aletheia.agent_runtime.health import compute_health

@@ -24,6 +24,10 @@ CLOSE_CLAIM_STATES = frozenset({
     "position_absence_unverified",
     "overfilled",
     "manual_reconciliation_pending",
+    # Bitget 40725 park (``pending_close_recovery.VENUE_TRADE_RATE_LIMITED_STATUS``).
+    # It is a close claim — the fence keeps holding and no second close may be
+    # claimed — but it is released only by an owner unlock, never by reconciliation.
+    "venue_trade_rate_limited",
 })
 
 # Compatibility name used by the existing Position Manager and broker tests.
@@ -62,8 +66,18 @@ _STATE_LABELS = {
         "manual_attention_required",
         "manual reconciliation required",
     ),
+    # The park is owner-unlock-only, so this text names the one sanctioned
+    # resolution and is never replaced by the generic stale-escalation text.
+    "venue_trade_rate_limited": (
+        "venue_trade_rate_limited",
+        "venue rate limited; owner unlock required",
+    ),
     "error": ("manual_attention_required", "manual attention required"),
 }
+
+# Owner-unlock-only claims: age does not change what the owner must do, so the
+# generic stale text must not erase the only statement of that action.
+_OWNER_UNLOCK_ONLY_STATES = frozenset({"venue_trade_rate_limited"})
 
 _IMMEDIATE_RECONCILIATION_STATES = frozenset({
     "submission_unknown",
@@ -150,7 +164,7 @@ def close_convergence_view(
             pending_status in _IMMEDIATE_RECONCILIATION_STATES or stale
         )
         escalated = stale
-        if stale:
+        if stale and pending_status not in _OWNER_UNLOCK_ONLY_STATES:
             owner_status = "manual attention required"
 
     return {

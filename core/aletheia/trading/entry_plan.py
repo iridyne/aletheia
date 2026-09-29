@@ -518,9 +518,9 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
 
     context_json = candidate.get("candidate_opportunity_context_json")
     if context_json:
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-        context = CandidateOpportunityContextV1.model_validate_json(context_json)
+        context = CandidateOpportunityContext.model_validate_json(context_json)
         opportunity = context.opportunity
         selection = context.candidate_selection
         ownership = {

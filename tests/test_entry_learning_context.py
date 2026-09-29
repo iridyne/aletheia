@@ -13,14 +13,14 @@ from aletheia.storage.models import (
     Fill, FilterCandidateOutcome, Order, Position, TradeProposal, UniverseMember,
     UniverseSnapshot,
 )
-from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
 
 def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
     candidate_id = uuid4().hex[:12]
     snapshot = UniverseSnapshot(created_at=created_at, expires_at="2099-01-01T00:00:00+00:00")
     repo._insert("universe_snapshots", snapshot.model_dump())
-    context = CandidateOpportunityContextV1(
+    context = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
             "policy": "candidate_selection_utility_v1",

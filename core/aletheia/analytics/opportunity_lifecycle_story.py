@@ -375,27 +375,27 @@ def _counterfactual(
         if len(observations) > 1:
             gaps.append("shadow_trades:multiple_observations_not_collapsed")
 
-    snapshot_id = opportunity.get("universe_snapshot_id")
     member_id = opportunity.get("universe_member_id")
-    if not snapshot_id or not member_id or not direction:
-        if snapshot_id and not member_id:
-            gaps.append("universe_forward_outcomes:member_identity_unavailable")
+    if not member_id or not direction:
+        if opportunity.get("universe_snapshot_id") and not member_id:
+            gaps.append("filter_candidate_outcomes:member_identity_unavailable")
         return result
-    if not _table_exists(db, "universe_forward_outcomes"):
-        gaps.append("universe_forward_outcomes:table_unavailable")
+    if not _table_exists(db, "filter_candidate_outcomes"):
+        gaps.append("filter_candidate_outcomes:table_unavailable")
         return result
-    if not _has_column(db, "universe_forward_outcomes", "member_id"):
-        gaps.append("universe_forward_outcomes:member_id_unavailable")
-        return result
-    if not _has_column(db, "universe_forward_outcomes", "direction"):
-        gaps.append("universe_forward_outcomes:direction_unavailable")
+    member_row = db.execute(
+        "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member_id,)
+    ).fetchone() if _table_exists(db, "universe_members") else None
+    candidate_key = member_row["learning_candidate_key"] if member_row else None
+    if not candidate_key:
+        gaps.append("filter_candidate_outcomes:candidate_key_unavailable")
         return result
     for horizon in ("15m", "1h", "4h", "24h"):
-        clauses = ["snapshot_id=?", "member_id=?", "direction=?", "horizon=?", "status='settled'"]
-        params: list[Any] = [snapshot_id, member_id, direction, horizon]
+        clauses = ["outcome_candidate_key=?", "direction=?", "horizon=?", "status='settled'"]
+        params: list[Any] = [candidate_key, direction, horizon]
         rows = _rows(
             db,
-            "universe_forward_outcomes",
+            "filter_candidate_outcomes",
             " AND ".join(clauses),
             tuple(params),
             order_by="datetime(settled_at) DESC, rowid DESC",
@@ -405,7 +405,7 @@ def _counterfactual(
             rows,
             cutoff,
             fields=("settled_at",),
-            label="universe_forward_outcomes",
+            label="filter_candidate_outcomes",
             gaps=gaps,
         )
         if visible:
@@ -414,7 +414,7 @@ def _counterfactual(
 
             result["forward"][horizon] = {
                 "id": row.get("id"),
-                "forward_return_pct": row.get("forward_return_pct"),
+                "forward_return_pct": row.get("gross_return_pct"),
                 "net_return_pct": outcome_values(dict(row), direction)[
                     "net_return_pct"
                 ],

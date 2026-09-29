@@ -5,8 +5,6 @@ account_mode_match, strategy_lifecycle_state (live), max_leverage (futures),
 max_single_trade_risk (live, stop-based), and bounded external Demo trades.
 """
 
-from tests.helpers.repo_test_helpers import insert_forward_outcome
-
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +14,7 @@ from aletheia.risk.engine import evaluate_proposal
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
+    FilterCandidateOutcome,
     MarketSnapshot,
     TradeProposal,
 )
@@ -382,16 +381,17 @@ def test_live_family_gate_requires_complete_edge_evidence(
     _unlock_live_auto(tmp_path)
     from datetime import datetime, timezone
 
-    from aletheia.storage.models import Opportunity, UniverseForwardOutcome
+    from aletheia.storage.models import Opportunity
     now = datetime.now(timezone.utc).isoformat()
     # 30 winning settled outcomes for (momentum, long) in the 7d clean window.
-    for i in range(30):
-        insert_forward_outcome(UniverseForwardOutcome(
-            member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key=f"live-edge-{i}",
+            symbol="BTC/USDT",
             venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
-            entry_price_usd=100.0, due_at=now, settled_at=now,
-            exit_price_usd=105.0, forward_return_pct=5.0,
+            entry_price_usd=100.0, entry_ts=now, due_at=now, settled_at=now,
+            exit_price_usd=105.0,
             gross_return_pct=5.0, directional_return_pct=5.0,
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
@@ -399,8 +399,10 @@ def test_live_family_gate_requires_complete_edge_evidence(
             min_cost_covering_edge_pct=(0.27 + edge_threshold) if edge_threshold is not None else None,
             cost_model_version=cost_model_version,
             settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
-            market_type="spot", status="settled",
-        ))
+            market_type="spot", status="settled", allocation_selected=1,
+        )
+        for i in range(30)
+    ])
     if raw_update is not None:
         from aletheia.storage.sqlite import get_db
         column, value = raw_update
@@ -409,7 +411,7 @@ def test_live_family_gate_requires_complete_edge_evidence(
             "estimated_spread_slippage_pct", "estimated_funding_pct",
         }
         get_db().execute(
-            f"UPDATE universe_forward_outcomes SET {column}=? WHERE snapshot_id='snap1'",
+            f"UPDATE filter_candidate_outcomes SET {column}=? WHERE outcome_candidate_key LIKE 'live-edge-%'",
             (value,),
         )
         get_db().commit()
@@ -483,26 +485,26 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     _unlock_live_auto(tmp_path)
     from datetime import datetime, timezone
 
-    from aletheia.storage.models import Opportunity, UniverseForwardOutcome
+    from aletheia.storage.models import Opportunity
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     now = datetime.now(timezone.utc).isoformat()
 
-    def _outcome(index: int, version: str) -> UniverseForwardOutcome:
-        return UniverseForwardOutcome(
-            member_id=f"mixed-{version}-{index}", snapshot_id="mixed-models",
+    def _outcome(index: int, version: str) -> FilterCandidateOutcome:
+        return FilterCandidateOutcome(
+            outcome_candidate_key=f"mixed-{version}-{index}",
             symbol="BTC/USDT", venue="bitget", scanner_family="momentum", direction="long",
-            horizon="24h", entry_price_usd=100.0, due_at=now, settled_at=now,
-            exit_price_usd=105.0, forward_return_pct=5.0,
+            horizon="24h", entry_price_usd=100.0, entry_ts=now, due_at=now, settled_at=now,
+            exit_price_usd=105.0,
             gross_return_pct=5.0, directional_return_pct=5.0,
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
             min_tradable_edge_pct=0.05, min_cost_covering_edge_pct=0.32, cost_model_version=version,
             settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
-            market_type="spot", status="settled",
+            market_type="spot", status="settled", allocation_selected=1,
         )
 
-    repo.insert_forward_outcomes_batch([
+    repo.insert_filter_candidate_outcomes_batch([
         *(_outcome(index, "legacy-v0") for index in range(30)),
         *(_outcome(index, COST_MODEL_VERSION) for index in range(29)),
     ])
@@ -527,7 +529,7 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     before = evaluate_proposal(_proposal())
     assert "family_not_live_eligible:momentum:samples=29<30" in before.violations
 
-    insert_forward_outcome(_outcome(29, COST_MODEL_VERSION))
+    repo.insert_filter_candidate_outcomes_batch([_outcome(29, COST_MODEL_VERSION)])
     after = evaluate_proposal(_proposal())
     assert not any(
         "family_not_live_eligible" in violation for violation in after.violations

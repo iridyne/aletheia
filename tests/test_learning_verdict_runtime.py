@@ -43,7 +43,7 @@ def _experiment(
         cohort_id="universe-clean-net-v1",
         path_id=path_id,
         overlap_group="universe",
-        source_type="universe_forward_outcomes:clean_net:v2",
+        source_type="filter_candidate_outcomes:clean_net:v2",
         scope_json='{"family":"momentum","direction":"long","market_type":"perp"}',
         action_json='{"type":"opportunity_multiplier","multiplier":1.1}',
         consumer="universe_allocator",
@@ -159,31 +159,35 @@ def _outcome(
     settlement_lag_sec: float = 0.0,
     suffix: str = "",
 ):
+    """Write an FCO row for this candidate. Strips a trailing :horizon suffix so
+    callers that used the old UFO `:4h`-in-the-key convention still resolve
+    correctly. INSERT OR IGNORE: duplicate rows are silently dropped."""
     from aletheia.storage.sqlite import get_db
 
-    db = get_db()
+    # Strip the horizon suffix when it was embedded in the candidate string
+    # (old UFO convention: outcome_candidate_key="foo:4h").
+    suffix_tag = f":{horizon}"
+    fco_key = candidate[:-len(suffix_tag)] if candidate.endswith(suffix_tag) else candidate
+
     entry = entry_at or _iso(minutes=1)
     entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
     due = (entry_dt + timedelta(hours=4)).isoformat()
     settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
     directional = net + 0.2 if net is not None else None
     exit_price = 100.0 * (1.0 + directional / 100.0) if directional is not None else None
-    db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, market_type, "
-        "scanner_family, direction, horizon, entry_price_usd, exit_price_usd, "
+    get_db().execute(
+        "INSERT OR IGNORE INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
+        "horizon, allocation_selected, entry_price_usd, exit_price_usd, "
         "entry_ts, due_at, settled_at, "
-        "directional_return_pct, net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
-        "estimated_spread_slippage_pct, estimated_funding_pct, "
-        "mae_pct, settlement_price_source, settlement_lag_sec, "
-        "cost_model_version, status) "
-        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, ?, ?, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
+        "settlement_price_source, settlement_lag_sec, cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, 1, 100, ?, ?, ?, ?, ?, ?, ?, "
         "0.1, 0.1, 0.0, ?, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
-            candidate,
-            f"member-{candidate}-{suffix or 'primary'}",
-            f"snapshot-{candidate}-{suffix or 'primary'}",
+            fco_key,
             horizon,
             exit_price,
             entry,
@@ -409,7 +413,8 @@ def _run(experiment_id: str, **kwargs):
     return [evaluate_cohort(cohort) for cohort in _cohorts(experiment_id, **kwargs)]
 
 
-def test_full_arm_filter_outcomes_are_primary_and_universe_mirror_is_not_double_counted():
+def test_full_arm_filter_outcomes_resolve_from_fco_only():
+    """FCO is the sole outcome ledger: all three outcomes come from filter_candidate_outcomes."""
     hypothesis, experiment = _experiment()
     _exposure(
         experiment, hypothesis, candidate="full-arm-treatment", assignment="treatment",
@@ -425,7 +430,6 @@ def test_full_arm_filter_outcomes_are_primary_and_universe_mirror_is_not_double_
     )
     _filter_outcome("full-arm-treatment", net=1.4)
     _filter_outcome("mirrored-treatment", net=0.6)
-    _outcome("mirrored-treatment:4h", net=0.6)
     _outcome("selected-control:4h", net=0.2)
     _filter_outcome("same-symbol-unrelated-candidate", net=99.0)
 
@@ -441,10 +445,9 @@ def test_full_arm_filter_outcomes_are_primary_and_universe_mirror_is_not_double_
     }
     metrics = verdict.harm_metrics
     assert metrics["outcome_source_member_counts"] == {
-        "filter_candidate_outcomes": 2,
-        "universe_forward_outcomes_legacy_fallback": 1,
+        "filter_candidate_outcomes": 3,
     }
-    assert metrics["mirrored_universe_row_n"] == 1
+    assert metrics["mirrored_universe_row_n"] == 0
 
 
 def test_full_arm_metric_measures_allocation_utility_not_exogenous_candidate_mean():
@@ -499,82 +502,6 @@ def test_normal_sibling_horizons_do_not_create_wrong_horizon_evidence():
     assert "wrong_horizon" not in metrics["exclusion_reasons"]
 
 
-def test_canonical_and_selected_mirror_economic_disagreement_fails_closed():
-    hypothesis, experiment = _experiment()
-    _exposure(
-        experiment, hypothesis, candidate="conflict", assignment="treatment",
-        outcome_key="conflict:4h",
-    )
-    _exposure(
-        experiment, hypothesis, candidate="clean", assignment="control",
-        outcome_key="clean:4h",
-    )
-    _filter_outcome("conflict", net=1.0)
-    _outcome("conflict:4h", net=-1.0)
-    _filter_outcome("clean", net=0.0)
-
-    verdict = _run(experiment.experiment_id)[0]
-
-    assert verdict.verdict == "invalid"
-    assert verdict.harm_metrics["invalid_reasons"] == {
-        "conflicting_mirrored_outcome": 1,
-    }
-    metrics = verdict.harm_metrics
-    assert len(metrics["evidence_conflict_fingerprints"]) == 1
-    assert metrics["evidence_conflict_total_n"] == 1
-    assert metrics["evidence_conflict_provenance_truncated"] is False
-    conflict = metrics["evidence_conflicts"][0]
-    assert conflict["reason"] == "conflicting_mirrored_outcome"
-    assert conflict["outcome_candidate_key"] == "conflict:4h"
-    assert conflict["canonical"]["source"] == "filter_candidate_outcomes"
-    assert conflict["canonical"]["row_id"]
-    assert conflict["mirrors"][0]["source"] == "universe_forward_outcomes"
-    assert conflict["mirrors"][0]["row_id"]
-    assert conflict["differing_fields"]["net_return_pct"] == {
-        "canonical": 1.0,
-        "mirrors": [-1.0],
-    }
-
-
-def test_canonical_and_mirror_temporal_disagreement_fails_closed():
-    hypothesis, experiment = _experiment()
-    _exposure(
-        experiment, hypothesis, candidate="temporal-mirror", assignment="treatment",
-        outcome_key="temporal-mirror:4h",
-    )
-    _exposure(
-        experiment, hypothesis, candidate="temporal-clean", assignment="control",
-        outcome_key="temporal-clean:4h",
-    )
-    _filter_outcome("temporal-mirror", net=1.0)
-    _outcome("temporal-mirror:4h", net=1.0)
-    _filter_outcome("temporal-clean", net=0.0)
-
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    mirror = db.execute(
-        "SELECT settled_at FROM universe_forward_outcomes "
-        "WHERE outcome_candidate_key='temporal-mirror:4h'"
-    ).fetchone()
-    invalid_due = (
-        datetime.fromisoformat(mirror["settled_at"]) + timedelta(minutes=1)
-    ).isoformat()
-    db.execute(
-        "UPDATE universe_forward_outcomes SET due_at=? "
-        "WHERE outcome_candidate_key='temporal-mirror:4h'",
-        (invalid_due,),
-    )
-    db.commit()
-
-    verdict = _run(experiment.experiment_id)[0]
-    metrics = verdict.harm_metrics
-
-    assert verdict.verdict == "invalid"
-    assert metrics["invalid_reasons"] == {"conflicting_mirrored_outcome": 1}
-    assert "due_at" in metrics["evidence_conflicts"][0]["differing_fields"]
-
-
 def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflict():
     hypothesis, experiment = _experiment()
     _exposure(
@@ -598,177 +525,6 @@ def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflic
 
     assert verdict.verdict != "invalid"
     assert "conflicting_mirrored_outcome" not in metrics["invalid_reasons"]
-
-
-def test_valid_canonical_and_invalid_mirror_price_provenance_conflict():
-    hypothesis, experiment = _experiment()
-    _exposure(
-        experiment, hypothesis, candidate="provenance-treatment", assignment="treatment",
-        outcome_key="provenance-treatment:4h",
-    )
-    _exposure(
-        experiment, hypothesis, candidate="provenance-control", assignment="control",
-        outcome_key="provenance-control:4h",
-    )
-    _filter_outcome("provenance-treatment", net=1.0)
-    _outcome(
-        "provenance-treatment:4h",
-        net=1.0,
-        settlement_price_source="late_ticker",
-        settlement_lag_sec=3600.0,
-    )
-    _filter_outcome("provenance-control", net=0.0)
-
-    verdict = _run(experiment.experiment_id)[0]
-    metrics = verdict.harm_metrics
-
-    assert verdict.verdict == "invalid"
-    assert metrics["invalid_reasons"] == {"conflicting_mirrored_outcome": 1}
-    conflict = metrics["evidence_conflicts"][0]
-    assert conflict["canonical"]["settlement_price_source"] == "horizon_ohlcv"
-    assert conflict["mirrors"][0]["settlement_price_source"] == "late_ticker"
-
-
-def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():
-    hypothesis, experiment = _experiment()
-    for candidate, assignment, net in (
-        ("legacy-treatment", "treatment", 1.0),
-        ("legacy-control", "control", 0.0),
-    ):
-        _exposure(
-            experiment,
-            hypothesis,
-            candidate=candidate,
-            assignment=assignment,
-            outcome_key=f"{candidate}:4h",
-        )
-        _filter_outcome(candidate, net=net, allocation_selected=None)
-        _outcome(f"{candidate}:4h", net=net)
-
-    inferred = _run(experiment.experiment_id)[0]
-    inferred_metrics = inferred.harm_metrics
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET allocation_selected=1 "
-        "WHERE outcome_candidate_key IN ('legacy-treatment', 'legacy-control')"
-    )
-    db.commit()
-    explicit = _run(experiment.experiment_id)[0]
-    explicit_metrics = explicit.harm_metrics
-
-    assert inferred.harm_metrics != explicit.harm_metrics
-    assert inferred_metrics["allocation_selection_source_member_counts"] == {
-        "universe_forward_outcomes_mirror_inference": 2,
-    }
-    assert explicit_metrics["allocation_selection_source_member_counts"] == {
-        "filter_candidate_outcomes": 2,
-    }
-
-
-def test_fallback_and_later_canonical_outcome_create_distinct_verdict_history():
-    hypothesis, experiment = _experiment()
-    for candidate, assignment, net in (
-        ("fallback-treatment", "treatment", 1.0),
-        ("fallback-control", "control", 0.0),
-    ):
-        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
-        _outcome(candidate, net=net)
-
-    fallback = _run(experiment.experiment_id)[0]
-    for candidate, net in (("fallback-treatment", 1.0), ("fallback-control", 0.0)):
-        _filter_outcome(candidate, net=net, allocation_selected=True)
-    canonical = _run(experiment.experiment_id)[0]
-
-    assert fallback.harm_metrics != canonical.harm_metrics
-    assert fallback.harm_metrics["outcome_source_member_counts"] == {
-        "universe_forward_outcomes_legacy_fallback": 2,
-    }
-    assert canonical.harm_metrics["outcome_source_member_counts"] == {
-        "filter_candidate_outcomes": 2,
-    }
-
-
-def test_changed_conflicting_evidence_creates_a_distinct_invalid_verdict():
-    hypothesis, experiment = _experiment()
-    _exposure(
-        experiment, hypothesis, candidate="changing-conflict", assignment="treatment",
-        outcome_key="changing-conflict:4h",
-    )
-    _exposure(
-        experiment, hypothesis, candidate="changing-clean", assignment="control",
-        outcome_key="changing-clean:4h",
-    )
-    _filter_outcome("changing-conflict", net=1.0)
-    _outcome("changing-conflict:4h", net=-1.0)
-    _filter_outcome("changing-clean", net=0.0)
-    first = _run(experiment.experiment_id)[0]
-
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    db.execute(
-        "UPDATE universe_forward_outcomes SET directional_return_pct=-1.8, "
-        "exit_price_usd=entry_price_usd * 0.982, net_return_pct=-2.0 "
-        "WHERE outcome_candidate_key='changing-conflict:4h'"
-    )
-    db.commit()
-    second = _run(experiment.experiment_id)[0]
-
-    assert first.verdict == second.verdict == "invalid"
-    assert first.harm_metrics != second.harm_metrics
-
-
-@pytest.mark.parametrize("conflicting_nets", [(1.0, -2.0), (-2.0, 1.0)])
-def test_conflicting_universe_fallback_duplicates_fail_closed_in_any_insertion_order(
-    conflicting_nets,
-):
-    hypothesis, experiment = _experiment()
-    _exposure(experiment, hypothesis, candidate="ambiguous", assignment="treatment")
-    _exposure(experiment, hypothesis, candidate="clean-control", assignment="control")
-    for index, net in enumerate(conflicting_nets):
-        _outcome("ambiguous", net=net, suffix=str(index))
-    _outcome("clean-control", net=0.0)
-
-    verdict = _run(experiment.experiment_id)[0]
-    metrics = verdict.harm_metrics
-
-    assert verdict.verdict == "invalid"
-    assert metrics["invalid_reasons"] == {"ambiguous_duplicate_outcome": 1}
-    assert verdict.unique_treatment_n == 0
-
-
-def test_due_only_universe_duplicate_conflict_fails_closed():
-    hypothesis, experiment = _experiment()
-    _exposure(experiment, hypothesis, candidate="due-ambiguous", assignment="treatment")
-    _exposure(experiment, hypothesis, candidate="due-clean", assignment="control")
-    _outcome("due-ambiguous", net=1.0, suffix="valid")
-    _outcome("due-ambiguous", net=1.0, suffix="invalid")
-    _outcome("due-clean", net=0.0)
-
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    invalid = db.execute(
-        "SELECT settled_at FROM universe_forward_outcomes "
-        "WHERE id='outcome-due-ambiguous-4h-invalid'"
-    ).fetchone()
-    db.execute(
-        "UPDATE universe_forward_outcomes SET due_at=? "
-        "WHERE id='outcome-due-ambiguous-4h-invalid'",
-        (
-            (
-                datetime.fromisoformat(invalid["settled_at"])
-                + timedelta(minutes=1)
-            ).isoformat(),
-        ),
-    )
-    db.commit()
-
-    verdict = _run(experiment.experiment_id)[0]
-    metrics = verdict.harm_metrics
-
-    assert verdict.verdict == "invalid"
-    assert metrics["invalid_reasons"] == {"ambiguous_duplicate_outcome": 1}
 
 
 def test_future_duplicate_cannot_invalidate_historical_cohort():
@@ -816,7 +572,7 @@ def test_future_row_keeps_higher_priority_temporal_invalid_reason():
     )
     db = get_db()
     db.execute(
-        "UPDATE universe_forward_outcomes SET due_at=? "
+        "UPDATE filter_candidate_outcomes SET due_at=? "
         "WHERE outcome_candidate_key='future-invalid'",
         (_iso(days=2, minutes=-1),),
     )
@@ -832,36 +588,35 @@ def test_future_row_keeps_higher_priority_temporal_invalid_reason():
     assert metrics["invalid_reasons"] == {"due_before_entry": 1}
 
 
-def test_conflicting_allocation_result_excludes_sample_without_invalidating_cohort():
-    """A stale/backfilled allocation flag must not invalidate the whole cohort.
+def test_false_allocation_selected_sample_is_included_but_not_selected():
+    """After Batch D (FCO-only), allocation_selected=False means not-selected but still included.
 
-    ``conflicting_allocation_result`` fires when the filter ``allocation_selected``
-    flag (largely a ``_backfill_fco_allocation_selected`` NULL→0 artifact) disagrees
-    with an authoritative universe_forward_outcomes mirror. This is a missing/ambiguous
-    *allocation identity*, not a genuine economic value conflict, so per #323/#324 it
-    must fail closed as a benign exclusion — the one ambiguous sample is dropped, but
-    the cohort is not branded corrupt and refrozen. (issues #160/#323/#324)
+    The old ``conflicting_allocation_result`` exclusion path required a UFO mirror that
+    contradicted FCO's allocation_selected=False. With UFO retired, allocation_selected=False
+    just means the sample is in the cohort with _allocation_selected=False — no conflict,
+    no exclusion. (issues #160/#323/#324, retired in Batch D)
     """
 
     hypothesis, experiment = _experiment()
     _exposure(
-        experiment, hypothesis, candidate="amb", assignment="treatment",
-        outcome_key="amb:4h",
+        experiment, hypothesis, candidate="not-selected", assignment="treatment",
+        outcome_key="not-selected:4h",
     )
     _exposure(
         experiment, hypothesis, candidate="clean", assignment="control",
         outcome_key="clean:4h",
     )
-    # Filter says NOT selected while an authoritative universe mirror exists.
-    _filter_outcome("amb", net=0.0, allocation_selected=False, status="pending")
-    _outcome("amb:4h", net=0.5)
+    # allocation_selected=False: sample is included with _allocation_selected=False.
+    _filter_outcome("not-selected", net=1.0, allocation_selected=False)
     _filter_outcome("clean", net=0.0)
 
     cohort = _cohorts(experiment.experiment_id)[0]
 
+    assert "conflicting_allocation_result" not in cohort.exclusion_reasons
     assert "conflicting_allocation_result" not in cohort.invalid_reasons
-    assert cohort.exclusion_reasons["conflicting_allocation_result"] == 1
     assert not cohort.invalid_reasons
+    # Both candidates are included as samples.
+    assert len(cohort.samples) == 2
 
     verdict = _run(experiment.experiment_id)[0]
     assert verdict.verdict != "invalid"
@@ -1109,10 +864,11 @@ def test_exact_outcome_key_and_horizon_are_required_not_symbol_or_approximation(
     _outcome("exact-control", horizon="4h", net=0.0)
 
     verdict = _run(experiment.experiment_id)[0]
-    metrics = verdict.harm_metrics
 
+    # delta=1.0 proves the 4h row was used and the 1h row was ignored.
+    # In FCO-only, sibling-horizon rows coexist without triggering wrong_horizon
+    # once the target-horizon row is found; the old UFO-side count is gone.
     assert verdict.delta == pytest.approx(1.0)
-    assert metrics["exclusion_reasons"]["wrong_horizon"] == 1
 
 
 def test_duplicate_exposure_and_identical_outcome_rows_count_once():
@@ -1133,7 +889,9 @@ def test_duplicate_exposure_and_identical_outcome_rows_count_once():
 
     assert (verdict.unique_treatment_n, verdict.unique_control_n) == (1, 1)
     assert metrics["duplicate_exposure_n"] == 1
-    assert metrics["duplicate_outcome_n"] == 1
+    # FCO UNIQUE(outcome_candidate_key, horizon) prevents a second row; INSERT OR IGNORE
+    # silently drops it, so there is no duplicate outcome to count.
+    assert metrics["duplicate_outcome_n"] == 0
 
 
 def test_assignment_cluster_counts_as_one_statistical_unit():
@@ -1223,7 +981,7 @@ def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source,
         ("current-linked", "treatment", COST_MODEL_VERSION),
         ("legacy-linked", "control", "legacy-v0"),
     ):
-        outcome_key = candidate if outcome_source == "universe" else f"{candidate}:4h"
+        outcome_key = f"{candidate}:4h"
         _exposure(
             experiment, hypothesis, candidate=candidate, assignment=assignment,
             outcome_key=outcome_key,
@@ -1553,7 +1311,7 @@ def test_conflict_provenance_bounds_rows_inside_one_conflict():
     from extensions.learning.cohorts import _conflict_provenance
 
     rows = [
-        ("universe_forward_outcomes", {
+        ("filter_candidate_outcomes", {
             "id": index,
             "net_return_pct": float(index),
         })
@@ -1577,11 +1335,11 @@ def test_bounded_conflict_provenance_keeps_a_triggering_mirror():
 
     canonical = ("filter_candidate_outcomes", {"id": 1, "net_return_pct": 1.0})
     matching = [
-        ("universe_forward_outcomes", {"id": index, "net_return_pct": 1.0})
+        ("filter_candidate_outcomes", {"id": index, "net_return_pct": 1.0})
         for index in range(2, 24)
     ]
     differing = (
-        "universe_forward_outcomes",
+        "filter_candidate_outcomes",
         {"id": 99, "net_return_pct": -1.0},
     )
 

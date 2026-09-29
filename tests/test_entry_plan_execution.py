@@ -925,7 +925,7 @@ def _persist_waiting_plan(
     candidate_id="candidate-1",
     candidate_family="momentum",
 ) -> EntryPlan:
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     repo.upsert_universe_asset(
         UniverseAsset(
@@ -942,7 +942,7 @@ def _persist_waiting_plan(
     repo._insert("universe_snapshots", snapshot.model_dump())
     detected_at = datetime.now(timezone.utc).isoformat()
     mechanism = "reversal" if candidate_family == "mean_reversion" else "continuation"
-    opportunity = CandidateOpportunityContextV1(
+    opportunity = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
             "policy": "candidate_selection_utility_v1",

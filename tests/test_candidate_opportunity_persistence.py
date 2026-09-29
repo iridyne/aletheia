@@ -7,7 +7,7 @@ import pytest
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import UniverseMember, UniverseSnapshot
 from aletheia.universe.candidate_opportunity import (
-    CandidateOpportunityContextV1,
+    CandidateOpportunityContext,
     target_candidate_opportunity_context,
 )
 
@@ -97,7 +97,7 @@ def test_startup_persists_null_utility_and_can_own_planning_generation():
     repo.publish_candidate_snapshot(UniverseSnapshot(id=member.snapshot_id, created_at=AT), [member])
     persisted = repo.get_candidate(member.id)
     assert persisted["candidate_selection_utility_pct"] is None
-    restored = CandidateOpportunityContextV1.model_validate_json(
+    restored = CandidateOpportunityContext.model_validate_json(
         persisted["candidate_opportunity_context_json"]
     )
     assert restored.context_hash == context.context_hash
@@ -122,7 +122,7 @@ def test_null_utility_requires_valid_startup_evidence(change):
     payload["context_hash"] = ""
     payload["opportunity"].update(change)
     with pytest.raises(ValueError):
-        CandidateOpportunityContextV1.model_validate(payload)
+        CandidateOpportunityContext.model_validate(payload)
 
 
 def test_startup_preserves_hash_epoch_and_member_identity_checks():
@@ -130,11 +130,11 @@ def test_startup_preserves_hash_epoch_and_member_identity_checks():
     payload = context.model_dump()
     payload["opportunity"]["startup_reason"] = "child_sample_insufficient"
     with pytest.raises(ValueError, match="hash_mismatch"):
-        CandidateOpportunityContextV1.model_validate(payload)
+        CandidateOpportunityContext.model_validate(payload)
     payload["context_hash"] = ""
     payload["candidate_selection"]["policy_epoch"] = None
     with pytest.raises(ValueError, match="epoch_missing"):
-        CandidateOpportunityContextV1.model_validate(payload)
+        CandidateOpportunityContext.model_validate(payload)
     member = _member(context).model_dump()
     for change in ({"candidate_selection_utility_pct": 1}, {"scanner_direction": "short"},
                    {"opportunity_source_component": "mean_reversion"}):
@@ -149,9 +149,9 @@ def test_historical_measured_context_hash_is_not_rewritten():
     for field in ("admission_basis", "startup_reason", "pessimistic_strength"):
         payload["opportunity"].pop(field)
     payload["opportunity"]["economic_utility_pct"] = 1.5
-    historical = CandidateOpportunityContextV1.model_validate(payload)
+    historical = CandidateOpportunityContext.model_validate(payload)
     serialized = historical.model_dump_json()
-    restored = CandidateOpportunityContextV1.model_validate_json(serialized)
+    restored = CandidateOpportunityContext.model_validate_json(serialized)
     assert restored.model_dump_json() == serialized
     assert "admission_basis" not in restored.opportunity
     assert _member(restored).candidate_selection_utility_pct == 1.5
@@ -251,7 +251,7 @@ def test_cross_source_cannot_replace_active_instrument_owner():
     context["context_hash"] = ""
     context["source"].update(kind="universe", id="universe-collision", detected_at=datetime.now(timezone.utc).isoformat(), source_cutoff_at=datetime.now(timezone.utc).isoformat())
     context["source"]["detected_at"] = context["source"]["source_cutoff_at"]
-    frozen = CandidateOpportunityContextV1.model_validate(context)
+    frozen = CandidateOpportunityContext.model_validate(context)
     candidate = UniverseMember.model_validate(_member(_context()).model_dump() | {
         "id": frozen.candidate_id, "venue": source["venue"], "market_type": source["market_type"], "asset_id": source["asset_id"],
         "opportunity_source_cutoff_at": frozen.source["source_cutoff_at"],

@@ -241,11 +241,11 @@ def _assert_candidate_writer_boundary(root):
         ("storage/repositories.py", "refresh_active_snapshot_ttls"): {
             "UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)",
         },
+        ("storage/migrations.py", "_apply_candidate_policy_name_convergence_v93"): {
+            "UPDATE universe_members SET candidate_selection_policy='candidate_selection_utility' WHERE candidate_selection_policy='candidate_selection_utility_v1'",
+        },
     }
     expression_writes = {
-        ("storage/repositories.py", "prune_universe_members"): {
-            repr("DELETE FROM universe_members WHERE snapshot_id IN (  SELECT id FROM universe_snapshots WHERE created_at < ?) AND NOT EXISTS (  SELECT 1 FROM universe_forward_outcomes o   WHERE o.member_id=universe_members.id AND o.entry_ts>=?)") + " + protected_clause",
-        },
         # Pin complete SQL expression ASTs, not an independently allowed prefix.
         # Runtime placeholder/parameter values remain outside lexical proof.
         ("storage/repositories.py", "prune_universe_snapshots"): {

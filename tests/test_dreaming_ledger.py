@@ -507,16 +507,6 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _mock_llm_unavailable(monkeypatch)
 
-    # Seed strategies across lifecycle states + a couple of knowledge items.
-    from aletheia.storage.models import StrategyRecord
-    from tests.helpers.repo_test_helpers import insert_strategy
-    from tests.helpers.repo_test_helpers import update_strategy
-    s1 = StrategyRecord(name="S1", description="draft one", state="draft")
-    insert_strategy(s1)
-    s2 = StrategyRecord(name="S2", description="to hypothesis", state="draft")
-    insert_strategy(s2)
-    update_strategy(s2.id, state="strategy_hypothesis")
-
     from extensions.knowledge.manager import create_research_note
     # Content must be ≥80 chars to pass _is_quality_pass's _MIN_CONTENT_LENGTH gate.
     create_research_note("note A", "Evidence A: momentum divergence observed in BTC 4h chart. RSI overbought while price flat — bearish signal.")
@@ -536,10 +526,7 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
 
     content = captured["content"]
     assert "Learning Ledger" in content
-    # state distribution reflects the seeded strategies
-    assert "draft" in content
-    assert "strategy_hypothesis" in content
-    # knowledge counts present
+    # strategy_records retired in #3702 — ledger now shows knowledge counts only
     assert "research_note" in content
 
 

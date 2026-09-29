@@ -75,9 +75,10 @@ def _insert_opp(db, idx: int, *, direction: str = "long", family: str = "momentu
     db.execute(
         "INSERT INTO universe_members "
         "(id, snapshot_id, asset_id, symbol, market_type, rank, total_score, opportunity_score, "
-        "tradability_score, late_entry_penalty, scanner_family, regime_tag, risk_flags, expires_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'usdt_futures', ?, 71, 66, 80, 4, ?, 'bull', '[\"late_entry\"]', ?)",
-        (f"um-lineage-{idx}", f"snap-lineage-{idx}", f"asset-lineage-{idx}", idx, family, _iso(-1)),
+        "tradability_score, late_entry_penalty, scanner_family, regime_tag, risk_flags, expires_at, "
+        "learning_candidate_key) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'usdt_futures', ?, 71, 66, 80, 4, ?, 'bull', '[\"late_entry\"]', ?, ?)",
+        (f"um-lineage-{idx}", f"snap-lineage-{idx}", f"asset-lineage-{idx}", idx, family, _iso(-1), f"candidate-lineage-{idx}"),
     )
     db.execute(
         "INSERT INTO opportunities "
@@ -232,19 +233,19 @@ def _insert_forward_net(db, idx: int, *, gross: float, net: float) -> None:
     spread = gross - 0.1 - net
     assert spread >= 0
     db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, venue, symbol, market_type, scanner_family, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, "
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, settlement_price_source, settlement_lag_sec, "
         "cost_model_version, status) "
-        "VALUES (?, ?, ?, 'bitget', 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, ?, "
-        "?, ?, ?, 0.1, ?, 0, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, ?, "
+        "?, ?, 0.1, ?, 0, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
         (
-            f"forward-lineage-{idx}", f"um-lineage-{idx}", f"snap-lineage-{idx}",
+            f"forward-lineage-{idx}", f"candidate-lineage-{idx}",
             _iso(25), _iso(), _iso(), 100.0 * (1.0 + gross / 100.0),
-            gross, gross, gross, spread, net,
+            gross, gross, spread, net,
         ),
     )
 

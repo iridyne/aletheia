@@ -1491,57 +1491,6 @@ def get_audit_events(limit: int = 100):
     return repo.list_audit_events(limit=limit)
 
 
-@router.get("/strategies")
-def get_strategies():
-    _ensure_db()
-    return repo.list_strategies()
-
-
-def _truthy_strategy_flag(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-    return False
-
-
-def _strategy_operator_summary(strategies: list[dict]) -> dict:
-    under_review = [item for item in strategies if _truthy_strategy_flag(item.get("under_review"))]
-    paused_paper = [item for item in strategies if _truthy_strategy_flag(item.get("paper_trading_paused"))]
-    active_paper = [
-        item for item in strategies if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
-    ]
-    live_candidate = [item for item in strategies if item.get("state") in {"live_candidate", "live_limited_candidate"}]
-
-    flagged_ids = {str(item.get("id")) for item in [*under_review, *paused_paper] if item.get("id")}
-    promotion_ids = {
-        str(item.get("id")) for item in strategies if item.get("id") and item.get("state") == "paper_passed"
-    }
-    live_limited_ids = {str(item.get("id")) for item in live_candidate if item.get("id")}
-
-    return {
-        "active_paper_strategies": active_paper,
-        "under_review_strategies": under_review,
-        "paused_paper_strategies": paused_paper,
-        "live_candidate_strategies": live_candidate,
-        "recent_strategy_evaluations": [],
-        "needs_operator_evaluation_strategy_ids": sorted(flagged_ids),
-        "recent_strategy_promotion_proposals": [],
-        "needs_operator_promotion_proposal_strategy_ids": sorted(promotion_ids),
-        "recent_live_limited_enablement_proposals": [],
-        "needs_operator_live_limited_enablement_strategy_ids": sorted(live_limited_ids),
-    }
-
-
-@router.get("/strategies/summary")
-def get_strategy_summary():
-    """Operator-facing strategy summary used by the local operator shell."""
-    _ensure_db()
-    return _strategy_operator_summary(repo.list_strategies(limit=500))
-
-
 @router.get("/market/snapshots")
 def get_market_snapshots(
     symbol: str | None = None,
@@ -2465,8 +2414,7 @@ def get_reviews_summary():
     """Aggregated post-trade review summary for operator delegation.
 
     Returns recent closed positions, recent active post-trade reviews,
-    recent reviewer runs, and the strategy IDs whose Positions are not yet
-    covered by any active review (#269).
+    and recent reviewer runs.
     """
     _ensure_db()
     import json
@@ -2501,30 +2449,10 @@ def get_reviews_summary():
         limit=5,
     )
 
-    # Position-level coverage: a strategy is covered only if its specific
-    # Positions appear in an active review's position:{id} tags (#269).
-    reviewed_position_ids: set[str] = set()
-    for item in recent_post_trade_reviews:
-        try:
-            tags = json.loads(item.get("tags") or "[]")
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(tags, list):
-            continue
-        reviewed_position_ids.update(str(tag).split(":", 1)[1] for tag in tags if str(tag).startswith("position:"))
-    missing_review_strategy_ids = sorted(
-        {
-            str(position.get("strategy_id"))
-            for position in recent_closed_positions
-            if position.get("strategy_id") and str(position.get("id")) not in reviewed_position_ids
-        }
-    )
-
     return {
         "recent_closed_positions": recent_closed_positions,
         "recent_post_trade_reviews": recent_post_trade_reviews,
         "recent_post_trade_reviewer_runs": recent_reviewer_runs,
-        "missing_review_strategy_ids": missing_review_strategy_ids,
     }
 
 
@@ -3150,22 +3078,3 @@ def get_family_scorecard():
 
     scorecard = compute_family_scorecard_with_epoch()
     return {**scorecard, **build_outcome_cohort_summary()}
-
-
-@router.get("/analytics/shadow-trades")
-def get_shadow_trades(
-    batch_id: str | None = None,
-    scanner_family: str | None = None,
-    resolved: bool | None = None,
-    limit: int = 100,
-):
-    """List authority-aware shadow trade diagnostics for counterfactual analysis."""
-    _ensure_db()
-    from extensions.counterfactual.trades import list_shadow_trade_diagnostics
-
-    return list_shadow_trade_diagnostics(
-        batch_id=batch_id,
-        scanner_family=scanner_family,
-        resolved=resolved,
-        limit=limit,
-    )

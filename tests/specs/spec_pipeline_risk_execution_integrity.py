@@ -1866,6 +1866,22 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
     ))
 
+    # #3719: the Bitget 40725 park is a close claim. A fresh park is still inside
+    # the ordinary flight window; a stale park blocks admission like any other
+    # stale claim (it is owner-unlock-only, never machine-reconciled).
+    repo.insert_position(Position(
+        id="fresh-parked-close",
+        symbol="XRP/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=9.0,
+        entry_price=1.12,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-fresh-parked",
+        pending_close_status="venue_trade_rate_limited",
+        pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
     allowed, detail = _check_pending_closes(None)
     assert allowed is True, detail
 
@@ -1895,10 +1911,26 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         ).isoformat(),
     ))
 
+    repo.insert_position(Position(
+        id="stale-parked-close",
+        symbol="XRP/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=9.0,
+        entry_price=1.12,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-stale-parked",
+        pending_close_status="venue_trade_rate_limited",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=5)
+        ).isoformat(),
+    ))
+
     allowed, detail = _check_pending_closes(None)
     assert allowed is False
     assert "position_absence_unverified=1" in detail
     assert "stale:submitted=1" in detail
+    assert "stale:venue_trade_rate_limited=1" in detail
 
     # A restart or legacy row with the durable claim but no status is still
     # unresolved; startup must not admit new decisions on a guessed absence.

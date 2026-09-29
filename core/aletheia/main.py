@@ -81,12 +81,11 @@ def _configure_runtime() -> None:
         configure_guard_candidate_writer(create_guard_candidate)
 
     try:
-        from extensions.counterfactual.trades import resolve_stale_shadows
         from extensions.counterfactual.family_scorecard import read_shadow_cohort
     except ModuleNotFoundError as exc:
-        if exc.name not in {"extensions", "extensions.counterfactual", "extensions.counterfactual.trades", "extensions.counterfactual.family_scorecard"}:
+        if exc.name not in {"extensions", "extensions.counterfactual", "extensions.counterfactual.family_scorecard"}:
             raise
-        resolve_stale_shadows = read_shadow_cohort = None
+        read_shadow_cohort = None
     try:
         from extensions.analytics.guard_promotion import _deprecate_expired_learned_guards
     except ModuleNotFoundError as exc:
@@ -116,7 +115,7 @@ def _configure_runtime() -> None:
         failed=record_learning_job_failure,
     )
     configure_optional_evidence_jobs(
-        resolve_shadows=resolve_stale_shadows, expire_guards=_deprecate_expired_learned_guards,
+        expire_guards=_deprecate_expired_learned_guards,
         observe_filters=run_controller_observe, daily_catchup_due=daily_catchup_due,
     )
     configure_shadow_cohort_reader(read_shadow_cohort)

@@ -455,3 +455,49 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
                for message in messages)
     assert any("Pending close second-unresolved-close has remained" in message
                for message in messages)
+
+
+def test_parked_close_claim_is_not_resubmitted_or_rewritten(tmp_path, monkeypatch):
+    """#3719: the 40725 park is a close claim, not a free Position.
+
+    A protective trigger must not attempt a second close (the previous failure
+    mode: the attempt died on the claim CAS), and the stale/terminal handling
+    must not rewrite the park into another state — only the owner unlock ends it.
+    """
+    setup_env(tmp_path, monkeypatch)
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        execution_mode="bitget_demo", stop_price=98.0,
+        pending_close_order_id="parked-close",
+        pending_close_status="venue_trade_rate_limited",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=30)
+        ).isoformat(),
+    )
+    repo.insert_position(p)
+    _snap("BTC/USDT", 90.0, market_type="usdt_futures")
+
+    from aletheia.portfolio import position_manager as pm_mod
+
+    routed: list[str] = []
+    monkeypatch.setattr(
+        pm_mod, "close_position_routed",
+        lambda position_id, *args, **kwargs: routed.append(position_id),
+    )
+
+    result = pm_mod.evaluate_open_positions()
+
+    assert routed == []
+    assert result["closed"] == 0
+    error_codes = {error["code"] for error in result["errors"]}
+    assert "close_failed" not in error_codes
+    assert "pending_close_reconciliation_required" in error_codes
+
+    stored = repo.get_position(p.id)
+    assert stored is not None
+    assert stored["pending_close_order_id"] == "parked-close"
+    assert stored["pending_close_status"] == "venue_trade_rate_limited"
+    assert repo._select_all(
+        "orders", where="position_id=?", params=(p.id,), limit=10
+    ) == []

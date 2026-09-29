@@ -254,12 +254,15 @@ def _harm_signal_from_epoch_windows(
 def _epoch_start(policy_epoch_id: str) -> datetime | None:
     """Return the earliest shadow_trades.created_at for a given policy epoch.
 
-    Used as the effective epoch-activation time for windowed comparison.
-    This is the first recorded shadow sample, not proof of policy activation.
+    Returns None after migration v93 drops the shadow_trades table.
     """
     from aletheia.storage.sqlite import get_db
+    from aletheia.storage.table_utils import table_exists
 
-    row = get_db().execute(
+    db = get_db()
+    if not table_exists(db, "shadow_trades"):
+        return None
+    row = db.execute(
         "SELECT MIN(created_at) FROM shadow_trades WHERE policy_epoch_id = ?",
         (policy_epoch_id,),
     ).fetchone()

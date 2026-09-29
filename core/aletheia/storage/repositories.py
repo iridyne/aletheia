@@ -43,9 +43,7 @@ from aletheia.storage.models import (
     SerenityReplaySnapshot,
     SerenityRiskGate,
     SerenityTheme,
-    StrategyRecord,
     TradeProposal,
-    decode_strategy_parameters,
 )
 from aletheia.storage.sqlite import (
     SQLITE_PYTHON_STRIP_CHARS_SQL,
@@ -75,17 +73,13 @@ from aletheia.storage.repositories_universe import (
     _effective_candidate_attention as _effective_candidate_attention,
     _filter_outcome_insert_payload as _filter_outcome_insert_payload,
     _filter_outcome_loss_event as _filter_outcome_loss_event,
-    _forward_outcome_insert_payload as _forward_outcome_insert_payload,
     _project_candidate_admission as _project_candidate_admission,
-    _protected_universe_outcome_ids as _protected_universe_outcome_ids,
-    _shadow_candidate_identity_sql as _shadow_candidate_identity_sql,
     _universe_twin_shadow_capture_due_from_latest as _universe_twin_shadow_capture_due_from_latest,
     _validate_universe_twin_prospective_bundle as _validate_universe_twin_prospective_bundle,
     get_candidate_planning_generation as get_candidate_planning_generation,
     get_universe_member as get_universe_member,
     insert_filter_candidate_outcomes_batch as insert_filter_candidate_outcomes_batch,
     list_universe_members as list_universe_members,
-    settle_linked_shadow_outcomes as settle_linked_shadow_outcomes,
 )
 
 from aletheia.storage.repositories_research import *  # noqa: F403
@@ -119,6 +113,13 @@ _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerp
 
 
 _CANDIDATE_SELECTION_RECORD_VERSIONS = frozenset({
+    "candidate-selection-utility-record",
+    "candidate-selection-utility-record/v1",
+    "candidate-selection-utility-record/v2",
+    "candidate-selection-utility-record/v3",
+    "candidate-selection-utility-record/v4",
+})
+_LEGACY_SELECTION_RECORD_VERSIONS = frozenset({
     "candidate-selection-utility-record/v1",
     "candidate-selection-utility-record/v2",
     "candidate-selection-utility-record/v3",
@@ -1928,16 +1929,6 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
         db.commit()
 
 
-# --- Strategy Records ---
-
-
-def get_strategy(sid: str) -> dict | None:
-    return _select_one("strategy_records", sid)
-
-
-def list_strategies(limit: int = 50) -> list[dict]:
-    return _select_all("strategy_records", limit=limit)
-
 
 # --- Knowledge Items ---
 
@@ -2491,10 +2482,8 @@ _PRUNABLE = {
     "market_snapshots": "snapshot_at",
     "portfolio_snapshots": "snapshot_at",
     # Analytics/telemetry tables that grew unbounded with no prune path (DG-1):
-    # serenity_claims (research evidence) + shadow_trades (counterfactual analysis).
-    # NOT causal-chain tables — safe to prune old rows. 90-day retention.
+    # serenity_claims (research evidence). NOT causal-chain tables — safe to prune old rows.
     "serenity_claims": "created_at",
-    "shadow_trades": "created_at",
     # Filter evidence is analytical and reproducible from source decisions. Keep
     # enough history for paired cohorts without allowing 10-minute batches to
     # grow the SQLite file forever. Authoritative RiskDecision/order rows remain
@@ -2512,7 +2501,7 @@ _PRUNABLE = {
     # were unbounded prior to this pass. Audit-chain + learning tables remain
     # intentionally absent (see AGENTS.md hard rules). Only entries where the
     # column is an ISO-8601 timestamp are listed — bespoke-column tables
-    # (integer-ms `ts` on market_ohlcv/backtest_trades, cascade-only children
+    # (integer-ms `ts` on market_ohlcv, cascade-only children
     # like universe_members/filter_shadow_evaluations) rely on their dedicated
     # prune_* functions.
     "alpha_control_observations": "entry_ts",
@@ -2530,7 +2519,6 @@ _PRUNABLE = {
     "serenity_evidence": "created_at",
     "serenity_run_events": "created_at",
     "runtime_sessions": "started_at",
-    "backtest_runs": "created_at",
     "filter_shadow_experiments": "started_at",
 }
 
@@ -2630,14 +2618,10 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT j.value FROM universe_twin_shadow_records r "
                 "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
                 "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
-                "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE b.record_version LIKE 'candidate-selection-utility-record%' "
                 "AND ((b.policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE record_version LIKE 'candidate-selection-utility-record%' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -2657,9 +2641,7 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
                 "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
-                "'candidate-selection-utility-record/v4') "
+                "WHERE record_version LIKE 'candidate-selection-utility-record%' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -3453,13 +3435,13 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
     from aletheia.trading.entry_analysis import entry_orderbook_available
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.trading.entry_plan import candidate_planning_identity
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     if get_db().in_transaction:
         raise ValueError("requalification_preparation_inside_transaction")
     if not candidate.get("execution_eligible") or not candidate.get("candidate_opportunity_context_json"):
         return None
-    context = CandidateOpportunityContextV1.model_validate_json(candidate["candidate_opportunity_context_json"])
+    context = CandidateOpportunityContext.model_validate_json(candidate["candidate_opportunity_context_json"])
     cutoff = _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
     behavior, schema = entry_contract_fingerprints()
     instrument = tuple(str(candidate[key]) for key in ("venue", "symbol", "market_type"))
@@ -3496,7 +3478,7 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
 
 def _candidate_planning_existing_state(candidate_id: str, candidate: dict, context, timestamp: str):
     """Read the current owner and requalification state inside the caller's transaction."""
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     existing_row = (
         get_db().execute(
@@ -3545,7 +3527,7 @@ def _candidate_planning_existing_state(candidate_id: str, candidate: dict, conte
         newer_requalification_cutoff = False
     try:
         existing_context = (
-            CandidateOpportunityContextV1.model_validate_json(
+            CandidateOpportunityContext.model_validate_json(
                 existing_candidate["candidate_opportunity_context_json"]
             )
             if existing_candidate and existing_candidate.get("candidate_opportunity_context_json")
@@ -3765,7 +3747,7 @@ def ensure_candidate_planning_generation(
 
     from aletheia.trading.entry_plan import candidate_planning_identity
     from aletheia.trading.entry_contract import entry_contract_fingerprints
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
     from aletheia.trading.entry_analysis import fingerprint, planning_structure_material
 
     if requalification is None and not get_db().in_transaction:
@@ -3784,7 +3766,7 @@ def ensure_candidate_planning_generation(
         if not bool(candidate.get("execution_eligible")):
             raise ValueError("candidate_execution_ineligible")
         context = (
-            CandidateOpportunityContextV1.model_validate_json(
+            CandidateOpportunityContext.model_validate_json(
                 candidate["candidate_opportunity_context_json"]
             )
             if candidate.get("candidate_opportunity_context_json") else None
@@ -4022,7 +4004,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
     """Read current Candidate debt in one snapshot, without evaluator or write paths."""
     from aletheia.config.loader import load_config
     from aletheia.trading.entry_profiles import compatible_entry_profiles
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
@@ -4075,7 +4057,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
                     "SELECT b.policy_epoch_id, b.policy_json FROM universe_twin_shadow_batches b "
                     "JOIN universe_scanner_runs s ON s.id=b.scanner_run_id "
                     "WHERE b.policy_epoch_id IS NOT NULL AND s.status='completed' "
-                    "AND b.record_version LIKE 'candidate-selection-utility-record/%' "
+                    "AND b.record_version LIKE 'candidate-selection-utility-record%' "
                     "ORDER BY b.captured_at DESC,b.scanner_run_id DESC LIMIT 1"
                 ).fetchone()
                 epoch = epoch_row[0] if epoch_row else None
@@ -4116,7 +4098,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
         blockers = result["blocking_reason_counts"]
         for row in rows:
             try:
-                context = CandidateOpportunityContextV1.model_validate_json(row["context_json"] or "")
+                context = CandidateOpportunityContext.model_validate_json(row["context_json"] or "")
                 if (context.candidate_id != row["member_id"] or context.context_hash != row["context_hash"]
                     or any(row[field] != row["member_" + alias] for field, alias in
                            (("venue", "venue"), ("symbol", "symbol"), ("market_type", "market")))
@@ -4170,14 +4152,14 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             "OR (ep.order_id IS NULL AND ep.status IN ('ordered','partially_filled','filled') "
             "AND (SELECT COUNT(*) FROM orders exact_order WHERE exact_order.entry_plan_id=ep.id "
             "AND exact_order.close_reason IS NULL)!=1))",
-            (policy, epoch if policy == "candidate_selection_utility_v1" else None),
+            (policy, epoch if policy == "candidate_selection_utility" else None),
         ).fetchone()[0]
         if relation_gaps:
             result["availability"] = {"available": False, "reason": "entry_outcome_identity_unavailable"}
             blockers["entry_outcome_identity_unavailable"] = relation_gaps
         due = db.execute(
             "WITH epoch_batches AS MATERIALIZED (SELECT scanner_run_id FROM universe_twin_shadow_batches "
-            "WHERE policy_epoch_id=? AND record_version LIKE 'candidate-selection-utility-record/%'), "
+            "WHERE policy_epoch_id=? AND record_version LIKE 'candidate-selection-utility-record%'), "
             "selection_keys AS (SELECT j.value AS key FROM epoch_batches b "
             "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
             "JOIN json_each(r.compact_output_json,'$.outcome_candidate_keys') j), "
@@ -4191,7 +4173,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             "SELECT COUNT(*) AS count, MIN(o.due_at) AS oldest FROM filter_candidate_outcomes o "
             "JOIN keys ON keys.key=o.outcome_candidate_key "
             "WHERE o.horizon='4h' AND o.status='pending' AND o.due_at<=?",
-            (epoch, policy, epoch if policy == "candidate_selection_utility_v1" else None, timestamp),
+            (epoch, policy, epoch if policy == "candidate_selection_utility" else None, timestamp),
         ).fetchone()
         result["due_outcome_count"] = due["count"]
         result["oldest_due_at"] = due["oldest"]
@@ -4959,10 +4941,6 @@ def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
 # Universe Forward Outcomes
 # ---------------------------------------------------------------------------
 
-_OUTCOME_MARKET_SQL = (
-    "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
-    "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
-)
 SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 
@@ -5010,9 +4988,6 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
         f"AND {prefix}min_tradable_edge_pct >= 0 "
         f"AND {prefix}min_tradable_edge_pct < 1e999"
     )
-
-
-_COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
 
 
 def _settle_outcome_with_exact_venue(
@@ -5069,20 +5044,7 @@ def _settle_outcome_with_exact_venue(
                     "settlement_producer_commit": provenance.get("producer_commit"),
                     "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
                 }
-            won = _update_pending(table, outcome_id, updates)
-            if won and table == "filter_candidate_outcomes" and row.get("horizon") == "24h":
-                settle_linked_shadow_outcomes(str(row.get("outcome_candidate_key") or ""))
-            return won
-
-
-def insert_forward_outcomes_batch(outcomes: list) -> None:
-    if not outcomes:
-        return
-    with transaction():
-        _insert_many(
-            "universe_forward_outcomes",
-            [_forward_outcome_insert_payload(outcome) for outcome in outcomes],
-        )
+            return _update_pending(table, outcome_id, updates)
 
 
 # ---------------------------------------------------------------------------
@@ -5281,38 +5243,20 @@ def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 10
 def calibration_stats(*, cost_model_version: str) -> list[dict]:
     """Aggregate one exact cost-model cohort by family/direction/market/horizon.
 
-    Legacy gross-only rows are intentionally excluded. A win must clear the
-    persisted minimum tradable edge after fees, spread/slippage and funding.
+    Reads filter_candidate_outcomes (full filter arm, selected + unselected).
+    Legacy gross-only rows are intentionally excluded.
     """
     from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.analytics.candidate_outcome_projection import (
+        calibration_cohort,
+        calibration_lineage,
+    )
 
-    db = get_db()
     cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "cost_model_version, "
-        "COUNT(*) as n, "
-        "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
-        "  THEN 1 ELSE 0 END) as win_count, "
-        "MIN(net_return_pct) as min_return, "
-        "MAX(net_return_pct) as max_return "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND entry_ts >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
-        "cost_model_version "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff, cost_model_version),
-    ).fetchall()
-    lineage = _calibration_source_lineage(db, cutoff, cost_model_version)
+    rows = calibration_cohort(cost_model_version=cost_model_version, cutoff=cutoff)
+    lineage = calibration_lineage(cost_model_version=cost_model_version, cutoff=cutoff)
     result = []
-    for raw in rows:
-        row = dict(raw)
+    for row in rows:
         key = (
             row.get("scanner_family"),
             row.get("direction"),
@@ -5329,108 +5273,6 @@ def calibration_stats(*, cost_model_version: str) -> list[dict]:
     return result
 
 
-def _horizon_to_seconds(h: str) -> int:
-    if h.endswith("m"):
-        return int(h[:-1]) * 60
-    if h.endswith("h"):
-        return int(h[:-1]) * 3600
-    if h.endswith("d"):
-        return int(h[:-1]) * 86400
-    raise ValueError(f"unknown horizon: {h!r}")
-
-
-def _horizon_separated_counts(
-    rows: list[tuple[str, str, str]],
-    horizon: str,
-) -> tuple[int, int, int]:
-    """Greedy horizon-separated counts for (symbol, venue, entry_ts) rows.
-
-    Within each (symbol, venue) pair, admit a row only if its entry_ts is at
-    least one target horizon after the last admitted row for that pair.
-    Returns (independent_n, distinct_symbols, distinct_days).
-    """
-    from datetime import datetime
-
-    try:
-        horizon_sec = _horizon_to_seconds(horizon)
-    except (ValueError, TypeError):
-        horizon_sec = 0
-
-    sorted_rows = sorted(rows, key=lambda r: (r[0], r[1], r[2]))
-    last_admitted: dict[tuple, float] = {}
-    admitted_symbols: set[str] = set()
-    admitted_days: set[str] = set()
-    independent_n = 0
-
-    for symbol, venue, entry_ts_str in sorted_rows:
-        try:
-            ts = datetime.fromisoformat(entry_ts_str.replace("Z", "+00:00")).timestamp()
-        except (ValueError, TypeError):
-            continue
-        sv = (symbol, venue)
-        last = last_admitted.get(sv)
-        if last is None or ts >= last + horizon_sec:
-            last_admitted[sv] = ts
-            independent_n += 1
-            admitted_symbols.add(symbol)
-            admitted_days.add(entry_ts_str[:10])
-
-    return independent_n, len(admitted_symbols), len(admitted_days)
-
-
-def _calibration_source_lineage(
-    db,
-    cutoff: str,
-    cost_model_version: str,
-) -> dict[tuple, dict]:
-    """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
-    cursor = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, id, "
-        "outcome_candidate_key, member_id, symbol, venue, entry_ts, settled_at, net_return_pct, "
-        "min_tradable_edge_pct, cost_model_version "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND entry_ts >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        "ORDER BY scanner_family, direction, market_type, horizon, id",
-        (cutoff, cost_model_version),
-    )
-    hashers: dict[tuple, object] = {}
-    counts: dict[tuple, int] = {}
-    group_rows: dict[tuple, list] = {}
-    for raw in cursor:
-        row = dict(raw)
-        key = (
-            row.pop("scanner_family"),
-            row.pop("direction"),
-            row.pop("market_type"),
-            row.pop("horizon"),
-        )
-        symbol = row.pop("symbol", None) or ""
-        venue = row.pop("venue", None) or ""
-        entry_ts = row.get("entry_ts")
-        hasher = hashers.setdefault(key, hashlib.sha256())
-        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
-        hasher.update(canonical.encode("utf-8"))
-        hasher.update(b"\n")
-        counts[key] = counts.get(key, 0) + 1
-        if entry_ts:
-            group_rows.setdefault(key, []).append((symbol, venue, entry_ts))
-    result = {}
-    for key, hasher in hashers.items():
-        horizon = key[3]
-        ind_n, dist_sym, dist_days = _horizon_separated_counts(group_rows.get(key, []), horizon)
-        result[key] = {
-            "fingerprint": hasher.hexdigest(),
-            "count": counts[key],
-            "independent_n": ind_n,
-            "distinct_symbols": dist_sym,
-            "distinct_days": dist_days,
-        }
-    return result
 
 
 def family_spread_tolerance_stats(
@@ -5439,46 +5281,16 @@ def family_spread_tolerance_stats(
     cutoff: str | None = None,
     settled_through: str | None = None,
 ) -> list[dict]:
-    """Per-family spread sensitivity from settled universe forward outcomes.
-
-    Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
-    measure whether a family retains positive net expectancy at higher spreads. Used
-    by filter_advisor to compute per-family spread tolerance multipliers.
-    """
+    """Per-family spread sensitivity from filter_candidate_outcomes full-arm rows."""
     from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.analytics.candidate_outcome_projection import spread_tolerance_cohort
 
-    db = get_db()
     cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "cost_model_version, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
-        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
-        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
-        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND cost_model_version = ? "
-        "AND scanner_family IS NOT NULL "
-        "AND entry_spread_bps IS NOT NULL "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"{settled_clause}"
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
-        "cost_model_version "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (
-            (cost_model_version, cutoff, settled_through)
-            if settled_through is not None else (cost_model_version, cutoff)
-        ),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return spread_tolerance_cohort(
+        cost_model_version=cost_model_version,
+        cutoff=cutoff,
+        settled_through=settled_through,
+    )
 
 
 def family_direction_edge(
@@ -5489,45 +5301,20 @@ def family_direction_edge(
 ) -> list[dict]:
     """Per-(scanner_family, direction, market_type) cost-aware edge.
 
-    Risk live-family evidence and explicit research query. Like
-    calibration_stats(), this keeps long/short and spot/perpetual evidence
-    separate; unlike calibration_stats(), it selects one horizon and recent
-    time window. Reuses the existing universe_forward_outcomes store and
-    excludes legacy gross-only rows.
+    Risk live-family evidence and explicit research query. Reads selected
+    filter_candidate_outcomes (allocation_selected = 1) for the given horizon
+    and recent time window.
 
     Returns rows: {scanner_family, direction, market_type, n, win_rate, avg_return}.
     Only families with n >= 1 in the window are returned.
     """
-    db = get_db()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, "
-        "cost_model_version, "
-        "COUNT(*) as n, "
-        "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
-        "  THEN 1 ELSE 0 END) as win_count "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' AND horizon = ? "
-        "AND settled_at >= ? "
-        "AND cost_model_version = ? "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
-        "AND scanner_family IS NOT NULL "
-        "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, "
-        "cost_model_version "
-        "ORDER BY n DESC",
-        (horizon, cutoff, cost_model_version),
-    ).fetchall()
-    out: list[dict] = []
-    for r in rows:
-        d = dict(r)
-        n = d.get("n") or 0
-        d["win_rate"] = round((d.get("win_count") or 0) / n * 100, 1) if n else None
-        d["avg_return"] = round(d["avg_return"], 3) if d.get("avg_return") is not None else None
-        out.append(d)
-    return out
+    from aletheia.analytics.candidate_outcome_projection import family_edge_stats
+
+    return family_edge_stats(
+        horizon=horizon,
+        within_days=within_days,
+        cost_model_version=cost_model_version,
+    )
 
 
 def guard_candidate_exists_recent(
@@ -5864,6 +5651,12 @@ def prune_prediction_probability_snapshots(days: int = 90) -> int:
     return _delete_by_rowid_batches("prediction_probability_snapshots", "ts < ?", (cutoff,))
 
 
+def prune_shadow_trades(days: int = 90) -> int:
+    """Prune shadow_trades older than `days`. Write path retired in #3704; reads remain."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches("shadow_trades", "created_at < ?", (cutoff,))
+
+
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return _delete_by_rowid_batches("liquidation_events", "observed_at < ?", (cutoff,))
@@ -5925,46 +5718,6 @@ def prune_universe_feature_snapshots(days: int = 14) -> int:
     return _delete_by_rowid_batches(
         "universe_feature_snapshots",
         "ts < ?",
-        (cutoff,),
-    )
-
-
-def prune_universe_forward_outcomes(
-    days: int = 30,
-    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
-) -> int:
-    """Prune selected-member outcomes without deleting open-experiment fallback evidence."""
-    protected_refs: tuple[str, ...] = ()
-    try:
-        lab_authority = _canonical_lab_authority()
-    except ExperimentStateReadError:
-        return 0
-    if lab_authority:
-        try:
-            protected_refs = _active_observation_claim_refs("universe_forward_outcomes")
-        except ExperimentStateReadError:
-            return 0
-        cutoff = _effective_cutoff(days, None)
-    else:
-        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-        cutoff = _effective_cutoff(days, min_experiment_started_at)
-    if lab_authority and protected_refs:
-        # Keep the exact outcome identity; no global Experiment date floor is
-        # consulted after Lab cutover.
-        if len(protected_refs) > 900:
-            # ponytail: keep this bounded and fail closed; a future bulk
-            # cleanup can use a temporary claim table instead of widening SQL.
-            return 0
-        placeholders = ",".join("?" for _ in protected_refs)
-        return _delete_by_rowid_batches(
-            "universe_forward_outcomes",
-            f"entry_ts < ? AND id NOT IN ({placeholders}) "
-            f"AND (outcome_candidate_key IS NULL OR outcome_candidate_key NOT IN ({placeholders}))",
-            (cutoff, *protected_refs, *protected_refs),
-        )
-    return _delete_by_rowid_batches(
-        "universe_forward_outcomes",
-        "entry_ts < ?",
         (cutoff,),
     )
 
@@ -6173,45 +5926,6 @@ def scan_orphan_session_ids() -> dict:
         return {"error": str(e), "total_orphan_refs": 0, "by_table": {}, "orphan_session_ids": []}
 
 
-def prune_backtest_trades(days: int = 60) -> int:
-    """Prune backtest_trades whose parent run created_at is older than ``days``.
-
-    Exposed for symmetry with the _PRUNABLE whitelist; ``prune_backtest_runs``
-    cascades through this function first inside a single transaction.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = execute_write(
-        "DELETE FROM backtest_trades WHERE run_id IN (  SELECT id FROM backtest_runs WHERE created_at < ?)",
-        (cutoff,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
-
-
-def prune_backtest_runs(days: int = 60) -> int:
-    """Prune backtest_runs older than ``days`` + cascade-delete backtest_trades.
-
-    backtest_trades.run_id has no ON DELETE CASCADE; children must be deleted
-    first in the same transaction to avoid FK IntegrityError.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    run_ids = [row[0] for row in db.execute("SELECT id FROM backtest_runs WHERE created_at < ?", (cutoff,)).fetchall()]
-    if not run_ids:
-        return 0
-    placeholders = ",".join("?" * len(run_ids))
-    with transaction():
-        execute_write(
-            f"DELETE FROM backtest_trades WHERE run_id IN ({placeholders})",
-            run_ids,
-        )
-        execute_write("DELETE FROM backtest_runs WHERE created_at < ?", (cutoff,))
-    return len(run_ids)
-
-
 def prune_filter_shadow_experiments(days: int = 90) -> int:
     """Prune completed filter_shadow_experiments older than ``days`` + cascade evaluations.
 
@@ -6255,62 +5969,27 @@ def prune_universe_snapshots(
     """Prune universe_snapshots older than ``days`` + cascade-delete universe_members.
 
     FK universe_members.snapshot_id has no ON DELETE CASCADE; children must be
-    removed first in the same transaction. universe_forward_outcomes references
-    universe_members. Snapshots with fallback outcomes protected by an active
-    experiment remain until those outcomes leave their guarded window.
+    removed first in the same transaction.
     """
     try:
         lab_authority = _canonical_lab_authority()
     except ExperimentStateReadError:
         return 0
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    protected_snapshots: tuple[str, ...] = ()
-    if lab_authority:
-        try:
-            refs = _active_observation_claim_refs("universe_forward_outcomes")
-            _, protected_snapshots = _protected_universe_outcome_ids(get_db(), refs)
-        except (ExperimentStateReadError, sqlite3.Error):
-            return 0
-        if protected_snapshots in {
-            ("__claim_set_too_large__",),
-            ("__claim_source_unavailable__",),
-        }:
-            return 0
-        outcome_cutoff = _effective_cutoff(days, None)
-    else:
+    if not lab_authority:
         min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-        outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
+    cutoff = _effective_cutoff(days, min_experiment_started_at if not lab_authority else None)
     db = get_db()
-    protected_clause = ""
-    protected_params: tuple[str, ...] = ()
-    if protected_snapshots:
-        placeholders = ",".join("?" for _ in protected_snapshots)
-        protected_clause = f" AND s.id NOT IN ({placeholders})"
-        protected_params = protected_snapshots
     snap_ids = [
         row[0]
         for row in db.execute(
-            "SELECT s.id FROM universe_snapshots s WHERE s.created_at < ? "
-            "AND NOT EXISTS ("
-            "  SELECT 1 FROM universe_members m "
-            "  JOIN universe_forward_outcomes o ON o.member_id=m.id "
-            "  WHERE m.snapshot_id=s.id AND o.entry_ts>=?"
-            ")" + protected_clause,
-            (cutoff, outcome_cutoff, *protected_params),
+            "SELECT s.id FROM universe_snapshots s WHERE s.created_at < ?",
+            (cutoff,),
         ).fetchall()
     ]
     if not snap_ids:
         return 0
     placeholders = ",".join("?" * len(snap_ids))
     with transaction():
-        # universe_forward_outcomes references universe_members. Delete those
-        # forward-outcome rows first to avoid FK IntegrityError.
-        execute_write(
-            f"DELETE FROM universe_forward_outcomes WHERE member_id IN ("
-            f"  SELECT id FROM universe_members WHERE snapshot_id IN ({placeholders})"
-            f")",
-            snap_ids,
-        )
         execute_write(
             f"DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})",
             snap_ids,
@@ -6476,33 +6155,6 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
                 "ttl_hours": ttl_hours,
             },
         )
-
-
-# ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
-
-
-def insert_shadow_trade(shadow) -> None:
-    data = _to_payload_dict(shadow)
-    keyed_result_fields = (
-        "exit_price",
-        "pnl_pct",
-        "gross_return_pct",
-        "net_pnl_pct",
-        "estimated_fee_pct",
-        "estimated_spread_slippage_pct",
-        "estimated_funding_pct",
-        "min_tradable_edge_pct",
-        "settlement_price_source",
-        "settlement_lag_sec",
-        "cost_model_version",
-        "btc_return_pct",
-        "resolved_at",
-    )
-    if str(data.get("outcome_candidate_key") or "").strip() and any(
-        data.get(field) is not None for field in keyed_result_fields
-    ):
-        raise ValueError("keyed shadow results require canonical projection")
-    _insert("shadow_trades", data)
 
 
 # ── Market Regime ─────────────────────────────────────────────────────────────

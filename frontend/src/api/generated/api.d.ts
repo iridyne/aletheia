@@ -744,9 +744,7 @@ export interface paths {
         };
         /**
          * Get Strategy Performance
-         * @description Per-strategy detailed performance KPIs. Backtest run summary removed with
-         *     the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
-         *     object for response-shape back-compat. Scoped to the resolved execution_mode (#1939).
+         * @description Per-strategy detailed performance KPIs. Scoped to the resolved execution_mode (#1939).
          */
         get: operations["get_strategy_performance_api_analytics_strategy_performance_get"];
         put?: never;
@@ -946,8 +944,8 @@ export interface paths {
         /**
          * Test Candidate Credentials
          * @description Verify-before-commit probe: test CANDIDATE Bitget credentials live without
-         *     persisting them. Credentials are used to sign one read-only account-info request
-         *     and are never stored, logged, or echoed back. No audit (nothing is persisted).
+         *     persisting them. Credentials are used for one read-only account-info request
+         *     via CCXT and are never stored, logged, or echoed back. No audit (nothing is persisted).
          */
         post: operations["test_candidate_credentials_api_bitget_test_candidate_post"];
         delete?: never;
@@ -3847,8 +3845,7 @@ export interface paths {
          * @description Aggregated post-trade review summary for operator delegation.
          *
          *     Returns recent closed positions, recent active post-trade reviews,
-         *     recent reviewer runs, and the strategy IDs whose Positions are not yet
-         *     covered by any active review (#269).
+         *     and recent reviewer runs.
          */
         get: operations["get_reviews_summary_api_reviews_summary_get"];
         put?: never;
@@ -5585,43 +5582,6 @@ export interface paths {
         };
         /** Status */
         get: operations["status_api_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Strategies */
-        get: operations["get_strategies_api_strategies_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Strategy Summary
-         * @description Operator-facing strategy summary used by the local operator shell.
-         */
-        get: operations["get_strategy_summary_api_strategies_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10899,11 +10859,6 @@ export interface components {
              */
             app_db_capacity_mb: number;
             /**
-             * Backtest Runs Days
-             * @default 60
-             */
-            backtest_runs_days: number;
-            /**
              * Backups Keep Recent
              * @default 7
              */
@@ -12436,10 +12391,6 @@ export interface components {
             execution_mode: string | null;
             /** Execution Mode Status */
             execution_mode_status: string;
-            /** Latest Backtest */
-            latest_backtest: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
             /** Outcome Exclusion Reasons */
             outcome_exclusion_reasons: {
                 [key: string]: number;
@@ -12463,10 +12414,6 @@ export interface components {
             execution_mode: string | null;
             /** Execution Mode Status */
             execution_mode_status: string;
-            /** Latest Backtest */
-            latest_backtest: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
             /** Outcome Status */
             outcome_status: string;
             /** Strategies */
@@ -22198,46 +22145,6 @@ export interface operations {
         };
     };
     status_api_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_strategies_api_strategies_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_strategy_summary_api_strategies_summary_get: {
         parameters: {
             query?: never;
             header?: never;

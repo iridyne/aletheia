@@ -65,10 +65,9 @@ def _minimal_args(**overrides):
         # alpha control
         alpha_control_observations_days=180,
         controller_recommendations_days=90,
-        # serenity / backtest
+        # serenity
         serenity_evidence_days=90,
         serenity_run_events_days=90,
-        backtest_runs_days=90,
         pre_migration_backup_days=90,
         # retention learning tables
         learning_experiments_days=180,

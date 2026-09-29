@@ -245,6 +245,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`extensions/exchanges/ccxt/adapter.py` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
 | 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
+| 未决平仓 claim 的自动收敛 | `reconcile()` 是对账 job 内**唯一**的自动入口：先按既有顺序完成逐单收敛，再调用 `pending_close_recovery.recover_absent_stale_close_orders()`。释放要求：完整 open-order 视图证明该 close Order 缺席、精确 fill 历史为空，且 **venue 对该精确订单给出肯定报告——终态且未成交**（`filled_quantity == 0`，并由 `remaining_quantity == original_quantity` 作数量见证；任一数量字段缺失或矛盾一律 fail closed）。**不得**从“读到了但没有该单”推断未发送：COMPLETE 读取未命中只证明读取窗口完成，而 typed adapter 会把缺失的 payload 字段折叠为 0，因此单独的 `filled_quantity == 0` 不是证据。满足后再对本地 claim（Order status/clientOid/exchange id、Position claim 字段、零本地 Fill）做 CAS 复验，未变才释放，让保护性平仓以全新 `close-{id}-rN` clientOid 重试。`manual_reconciliation_pending` 这类 human-owned claim 既不在候选集内、也不被判定函数放行，`venue_trade_rate_limited` 停泊永不被释放。释放与停泊都只改本地 Order/Position 状态，绝不下单或撤单 | `execution/reconciliation.py`、`execution/pending_close_recovery.py` |
 
 UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
 （`core/aletheia/execution/errors.py`）抛出，不得使用裸 `RuntimeError`。异常携带
@@ -434,8 +435,15 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
   `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
   价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
-  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）是 order-attempt rate-limit 标记，
-  **不是** `CLOSE_CLAIM_STATES` 成员，因此不参与 `has_unresolved_close_claim` 的 claim 判定。
+  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）**是** `CLOSE_CLAIM_STATES` 成员：
+  停泊态继续持有 claim fence，任何路径（保护性平仓、手动平仓、coordinator `_claim_close`）都不得
+  再为该 Position 创建第二条 Close Order，只能返回既有 claim 的 `already_pending` 路径。它
+  **不在** `IMMEDIATE_RECONCILIATION_STATES` 里——它需要的是 owner 解锁，机器对账永不释放它；
+  owner read model 以 `close_convergence_state=venue_trade_rate_limited` 与
+  `close_convergence_owner_status="venue rate limited; owner unlock required"` 暴露，且该 owner
+  文案不随 claim 年龄被通用 stale 文案覆盖。停泊 claim 仍按普通 stale claim 升级（超过 stale
+  时限后进入 `stale:venue_trade_rate_limited` 的启动阻挡与 `position_manager` 升级，owner 必须
+  知道存在平不掉的 Position），但该升级绝不释放、绝不重发、绝不伪造成交。
 - **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
   撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
   按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
@@ -459,7 +467,8 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   遗留 `ps_*` intent、Order、Position 状态仅供历史读取，不再授予或阻挡启动/交易权限。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
   `overfilled` 立即阻挡新的
-  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
+  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态与 owner-unlock-only 的
+  `venue_trade_rate_limited` 停泊只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
 - **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
@@ -538,6 +547,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 | Claim state | Meaning | Membership / behavior |
 |---|---|---|
 | `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
+| `venue_trade_rate_limited` | Bitget 40725 park, owner-unlock-only | In `CLOSE_CLAIM_STATES` (the fence holds and every second close returns `already_pending`); not in `IMMEDIATE_RECONCILIATION_STATES`. The convergence view names the owner unlock and that owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close` (`pending_close_recovery.release_rate_limited_close_claim`); machine recovery never releases it. |
 
 **INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
 raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`

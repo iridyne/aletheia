@@ -37,9 +37,9 @@ RANKER_CASE_OUTCOME_SOURCE = "filter_candidate_outcomes"
 # after its exact outcome and statistical-unit contracts are executable AND have
 # focused passing cohort tests that exercise the full round-trip.
 #
-# Historical Universe full-arm support (the current Utility path does not write it):
-#   - outcome contract: universe_forward_outcomes (universe-keyed, {learning_key}:{horizon})
-#   - allocation_selected: persisted by the retired Universe calibration writer
+# Full-arm Universe support (Batch D: UFO retired, FCO is the sole outcome ledger):
+#   - outcome contract: filter_candidate_outcomes keyed by outcome_candidate_key
+#   - allocation_selected: persisted by Batch A FCO write path
 #   - statistical unit: full-arm Universe allocation member
 #
 # Ranker case support:
@@ -76,14 +76,15 @@ _TRANSIENT_EXCLUSION_REASONS = frozenset({
 # ``conflicting_mirrored_outcome`` / ``ambiguous_duplicate_outcome``).
 #
 # These fail closed as benign EXCLUSIONS rather than corrupt INVALIDs:
-#   - conflicting_allocation_result: filter ``allocation_selected`` disagrees
-#     with an authoritative universe_forward_outcomes mirror. That flag is
-#     unreliable here — it is largely a ``_backfill_fco_allocation_selected``
-#     artifact (NULL→0 for rows whose True-write was blocked by an earlier
-#     INSERT OR IGNORE). Per issue #324 we must NOT default the unknown
-#     allocation to True (that would silently rewrite ITT economics), and per
-#     issue #323 missing/ambiguous identity must fail closed — so we exclude the
-#     one ambiguous sample instead of invalidating the whole cohort.
+#   - conflicting_allocation_result: (retired with UFO in Batch D)
+#   - missing_allocation_result: ``allocation_selected`` is NULL/0 in FCO.
+#     That flag is unreliable for some rows — it is largely a
+#     ``_backfill_fco_allocation_selected`` artifact (NULL→0 for rows whose
+#     True-write was blocked by an earlier INSERT OR IGNORE). Per issue #324 we
+#     must NOT default the unknown allocation to True (that would silently rewrite
+#     ITT economics), and per issue #323 missing/ambiguous identity must fail
+#     closed — so we exclude the one ambiguous sample instead of invalidating the
+#     whole cohort.
 #   - missing_allocation_result: allocation is unknown/pending. Issue #324's
 #     acceptance is explicit — "a pending outcome remains unsettled, not
 #     invalid:missing_allocation_result".
@@ -815,33 +816,21 @@ def _load_exact_outcomes(
         )
     filter_keys = {_filter_base_key(key, horizon) for key in requested}
     filter_rows = _rows_for_keys("filter_candidate_outcomes", filter_keys)
-    universe_rows = _rows_for_keys("universe_forward_outcomes", requested)
     filters: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    universe: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in filter_rows:
         filters[str(row.get("outcome_candidate_key") or "")].append(row)
-    for row in universe_rows:
-        universe[str(row.get("outcome_candidate_key") or "")].append(row)
 
     resolved = {}
     for outcome_key in requested:
         filter_all, future_filter = _split_future_settlements(
             filters.get(_filter_base_key(outcome_key, horizon), []), cutoff,
         )
-        universe_all, future_universe = _split_future_settlements(
-            universe.get(outcome_key, []), cutoff,
-        )
         filter_matches = [row for row in filter_all if str(row.get("horizon") or "") == horizon]
-        universe_matches = [row for row in universe_all if str(row.get("horizon") or "") == horizon]
         future_matches = [
-            row
-            for row in (*future_filter, *future_universe)
+            row for row in future_filter
             if str(row.get("horizon") or "") == horizon
         ]
-        wrong_horizon_n = (
-            (len(filter_all) if filter_all and not filter_matches else 0)
-            + len(universe_all) - len(universe_matches)
-        )
+        wrong_horizon_n = len(filter_all) if filter_all and not filter_matches else 0
 
         if filter_matches:
             distinct = {_outcome_fingerprint(row) for row in filter_matches}
@@ -861,76 +850,18 @@ def _load_exact_outcomes(
                 continue
             canonical = dict(filter_matches[0])
             allocation_selected = canonical.get("allocation_selected")
-            allocation_selection_source = "filter_candidate_outcomes"
-            if allocation_selected is None and universe_matches:
-                allocation_selected = True
-                allocation_selection_source = "universe_forward_outcomes_mirror_inference"
             if allocation_selected is None:
                 resolved[outcome_key] = (
                     None, "missing_allocation_result", 0, wrong_horizon_n, None, None,
-                )
-                continue
-            settled_mirrors = [
-                row for row in universe_matches
-                if str(row.get("status") or "").lower() == "settled"
-            ]
-            if (
-                str(canonical.get("status") or "").lower() == "settled"
-                and any(
-                    _economic_fingerprint(row) != _economic_fingerprint(canonical)
-                    for row in settled_mirrors
-                )
-            ):
-                conflict_rows = [
-                    ("filter_candidate_outcomes", canonical),
-                    *(
-                        ("universe_forward_outcomes", row)
-                        for row in settled_mirrors
-                    ),
-                ]
-                fingerprint = _conflict_fingerprint(
-                    "conflicting_mirrored_outcome", [row for _, row in conflict_rows]
-                )
-                resolved[outcome_key] = (
-                    None, "conflicting_mirrored_outcome", 0, wrong_horizon_n,
-                    fingerprint,
-                    _conflict_provenance(
-                        "conflicting_mirrored_outcome",
-                        outcome_key,
-                        conflict_rows,
-                        canonical_index=0,
-                    ),
-                )
-                continue
-            if not bool(allocation_selected) and universe_matches:
-                conflict_rows = [
-                    ("filter_candidate_outcomes", canonical),
-                    *(
-                        ("universe_forward_outcomes", row)
-                        for row in universe_matches
-                    ),
-                ]
-                fingerprint = _conflict_fingerprint(
-                    "conflicting_allocation_result", [row for _, row in conflict_rows]
-                )
-                resolved[outcome_key] = (
-                    None, "conflicting_allocation_result", 0, wrong_horizon_n,
-                    fingerprint,
-                    _conflict_provenance(
-                        "conflicting_allocation_result",
-                        outcome_key,
-                        conflict_rows,
-                        canonical_index=0,
-                    ),
                 )
                 continue
             resolved[outcome_key] = (
                 {
                     **canonical,
                     "_learning_outcome_source": "filter_candidate_outcomes",
-                    "_mirrored_universe_row_n": len(universe_matches),
+                    "_mirrored_universe_row_n": 0,
                     "_allocation_selected": bool(allocation_selected),
-                    "_allocation_selection_source": allocation_selection_source,
+                    "_allocation_selection_source": "filter_candidate_outcomes",
                 },
                 None,
                 len(filter_matches) - 1,
@@ -940,45 +871,12 @@ def _load_exact_outcomes(
             )
             continue
 
-        if universe_matches:
-            distinct = {_outcome_fingerprint(row) for row in universe_matches}
-            if len(distinct) > 1:
-                fingerprint = _conflict_fingerprint(
-                    "ambiguous_duplicate_outcome", universe_matches
-                )
-                resolved[outcome_key] = (
-                    None, "ambiguous_duplicate_outcome", 0, wrong_horizon_n,
-                    fingerprint,
-                    _conflict_provenance(
-                        "ambiguous_duplicate_outcome",
-                        outcome_key,
-                        [("universe_forward_outcomes", row) for row in universe_matches],
-                    ),
-                )
-                continue
-            resolved[outcome_key] = (
-                {
-                    **universe_matches[0],
-                    "_learning_outcome_source": "universe_forward_outcomes_legacy_fallback",
-                    "_mirrored_universe_row_n": 0,
-                    "_allocation_selected": True,
-                    "_allocation_selection_source": "universe_forward_outcomes_legacy_fallback",
-                },
-                None,
-                len(universe_matches) - 1,
-                wrong_horizon_n,
-                None,
-                None,
-            )
-            continue
-
-        all_rows = filter_all + universe_all
         resolved[outcome_key] = (
             None,
             "settlement_after_as_of"
             if future_matches
             else "wrong_horizon"
-            if all_rows
+            if filter_all
             else "missing_exact_outcome",
             0,
             wrong_horizon_n,

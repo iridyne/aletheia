@@ -98,6 +98,10 @@ class TwinShadowBundle:
     batch: UniverseTwinShadowBatch
     evidence: tuple[UniverseTwinShadowEvidence, ...]
     outcomes: tuple[FilterCandidateOutcome, ...] = ()
+    # Selected-primary extra-horizon FCO rows (15m/1h/24h).
+    # Not included in `outcomes` (which is the 4h full-arm denominator).
+    # Written separately by the publication caller (#3701 Batch A).
+    selected_primary_extra_outcomes: tuple[FilterCandidateOutcome, ...] = ()
 
 
 @dataclass(frozen=True)

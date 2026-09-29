@@ -13,7 +13,6 @@ __all__ = [
     "_probe_content_proposal_bias",
     "_probe_content_shadow_trades",
     "_probe_content_signal_settlement",
-    "_probe_content_strategy_health",
 ]
 
 
@@ -25,24 +24,6 @@ __all__ = [
 # config-gated states report info with the numbers, not a false warn). See
 # docs/archive/legacy/plans/engineering/ai_native_bugfix_path.md §3. They are deliberately NON-overlapping with
 # loop.knowledge_flood / loop.retrieval_pool / loop.reconciled_ratio / loop.concentration.
-
-def _probe_content_strategy_health(report: Report) -> None:
-    """Legacy strategy records (read-only). The rules engine was deleted (Position C
-    2026-07-02): no new strategies are generated or promoted, so strategy_records is a
-    frozen legacy table kept only for historical attribution. Probe-honesty: report the
-    count as info — the old zombie / PI-approval WARN no longer applies (there is no
-    engine to act on a stuck strategy)."""
-    try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute("SELECT COUNT(*) AS n FROM strategy_records").fetchone()
-        n = (row["n"] if row else 0) or 0
-    except Exception as e:
-        report.add("content.strategy_health", "info", f"probe error: {e}")
-        return
-    report.add("content.strategy_health", "info",
-               f"{n} legacy strategy records (rules engine removed 2026-07-02; "
-               "frozen legacy table, historical attribution only)")
-
 
 def _probe_content_memo_quality(report: Report) -> None:
     """Trading memo (the regime playbook injected into PI context): absent vs
@@ -310,25 +291,25 @@ def _probe_content_shadow_trades(report: Report) -> None:
 
 
 def _probe_content_signal_settlement(report: Report) -> None:
-    """universe_forward_outcomes that are past due_at but still pending — the outcome
+    """filter_candidate_outcomes that are past due_at but still pending — the outcome
     settler job is stalled, so signal effectiveness silently stops updating."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
-        total = db.execute("SELECT COUNT(*) FROM universe_forward_outcomes").fetchone()[0]
+        total = db.execute("SELECT COUNT(*) FROM filter_candidate_outcomes").fetchone()[0]
         if total == 0:
             report.add("content.signal_settlement", "info", "no forward outcomes yet")
             return
         now_iso = datetime.now(timezone.utc).isoformat()
         overdue = db.execute(
-            "SELECT COUNT(*) FROM universe_forward_outcomes "
+            "SELECT COUNT(*) FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
             (now_iso,),
         ).fetchone()[0]
         oldest_due = None
         if overdue > 0:
             oldest_due = db.execute(
-                "SELECT MIN(due_at) FROM universe_forward_outcomes "
+                "SELECT MIN(due_at) FROM filter_candidate_outcomes "
                 "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
                 (now_iso,),
             ).fetchone()[0]
@@ -388,7 +369,6 @@ def _probe_content_proposal_bias(report: Report) -> None:
 # The content-quality probe set (Phase 2). Named once so build_report() and the
 # Operator's System Health Monitor (build_content_report) cannot drift apart.
 _CONTENT_PROBES = (
-    _probe_content_strategy_health,
     _probe_content_memo_quality,
     _probe_content_lesson_chain,
     _probe_content_lesson_guards,

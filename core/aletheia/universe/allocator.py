@@ -123,7 +123,7 @@ def get_family_multipliers(
         if evidence_out is not None:
             evidence = {
                 "contract": "universe-calibration-source-evidence/v1",
-                "source": "universe_forward_outcomes",
+                "source": "filter_candidate_outcomes",
                 "window": window_metadata,
                 "scanner_family": family,
                 "direction": direction,

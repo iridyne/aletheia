@@ -31,7 +31,7 @@ def fingerprint(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
-class CandidateOpportunityContextV1(BaseModel):
+class CandidateOpportunityContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     version: Literal["candidate-opportunity-context/v1"] = CANDIDATE_OPPORTUNITY_CONTEXT_VERSION
@@ -43,7 +43,7 @@ class CandidateOpportunityContextV1(BaseModel):
     context_hash: str = ""
 
     @model_validator(mode="after")
-    def _validate_and_hash(self) -> "CandidateOpportunityContextV1":
+    def _validate_and_hash(self) -> "CandidateOpportunityContext":
         selection = self.candidate_selection
         source = self.source
         if any(key in source for key in ("kind", "id", "trade_school")) or selection.get("policy") == "serenity_research_v1":
@@ -55,9 +55,9 @@ class CandidateOpportunityContextV1(BaseModel):
             if (source["kind"] == "serenity") != (selection.get("policy") == "serenity_research_v1"):
                 raise ValueError("candidate_opportunity_source_policy_invalid")
         opportunity = self.opportunity
-        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"}:
+        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1", "candidate_selection_utility", "serenity_research_v1"}:
             raise ValueError("candidate_opportunity_policy_invalid")
-        if selection.get("policy") == "candidate_selection_utility_v1" and not selection.get("policy_epoch"):
+        if selection.get("policy") in {"candidate_selection_utility_v1", "candidate_selection_utility"} and not selection.get("policy_epoch"):
             raise ValueError("candidate_opportunity_policy_epoch_missing")
         source_record_hash = str(selection.get("source_record_hash") or "")
         if len(source_record_hash) != 64 or any(
@@ -106,7 +106,7 @@ class CandidateOpportunityContextV1(BaseModel):
         if basis == "startup":
             strength = opportunity.get("pessimistic_strength")
             if (
-                selection.get("policy") != "candidate_selection_utility_v1"
+                selection.get("policy") not in {"candidate_selection_utility_v1", "candidate_selection_utility"}
                 or selection.get("decision_version") != "candidate-selection-utility/v2"
                 or not reason_proves_evidence_absent(startup_reason)
                 or utility is not None
@@ -122,7 +122,7 @@ class CandidateOpportunityContextV1(BaseModel):
         else:
             if startup_reason is not None:
                 raise ValueError("candidate_opportunity_startup_reason_invalid")
-            if selection.get("policy") == "candidate_selection_utility_v1" and (
+            if selection.get("policy") in {"candidate_selection_utility_v1", "candidate_selection_utility"} and (
                 isinstance(utility, bool)
                 or not isinstance(utility, (int, float))
                 or not math.isfinite(float(utility))
@@ -152,7 +152,7 @@ def target_candidate_opportunity_context(
     policy_epoch: str,
     source_record_hash: str,
     detected_at: str,
-) -> CandidateOpportunityContextV1:
+) -> CandidateOpportunityContext:
     evidence = decision["opportunity_evidence"]
     mechanisms = tuple(evidence["mechanisms"])
     primary = next(
@@ -160,10 +160,10 @@ def target_candidate_opportunity_context(
     )
     gaps = tuple(str(value) for value in primary.get("capability_gaps") or ())
     capability = "observe_only" if gaps else "supported"
-    return CandidateOpportunityContextV1(
+    return CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            "policy": "candidate_selection_utility",
             "policy_epoch": policy_epoch,
             "source_record_hash": source_record_hash,
             "decision_version": decision["version"],
@@ -204,7 +204,7 @@ def legacy_candidate_opportunity_context(
     candidate_id: str,
     candidate: Mapping[str, Any],
     detected_at: str,
-) -> CandidateOpportunityContextV1 | None:
+) -> CandidateOpportunityContext | None:
     family = str(candidate.get("scanner_family") or "")
     mechanism = LEGACY_MECHANISM_MAP.get(family)
     direction = str(candidate.get("scanner_direction") or candidate.get("direction") or "")
@@ -223,7 +223,7 @@ def legacy_candidate_opportunity_context(
         "feature_snapshot_id": candidate.get("feature_snapshot_id"),
         "detected_at": detected_at,
     }
-    return CandidateOpportunityContextV1(
+    return CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
             "policy": "legacy_total_score_v1",
@@ -262,7 +262,7 @@ def legacy_candidate_opportunity_context(
 def serenity_candidate_opportunity_context(
     *, candidate_id: str, opportunity: Mapping[str, Any], feature: Mapping[str, Any],
     source_record_hash: str, detected_at: str,
-) -> CandidateOpportunityContextV1:
+) -> CandidateOpportunityContext:
     """Research proves provenance; the shared PA evaluator proves timing."""
     from aletheia.trading.entry_profiles import compatible_entry_profiles
     from aletheia.universe.opportunity_evidence import build_opportunity_evidence
@@ -276,7 +276,7 @@ def serenity_candidate_opportunity_context(
     primary = max(supported, key=lambda item: item.pessimistic_strength)
     if primary.direction != opportunity["direction"]:
         raise ValueError("serenity_pa_direction_conflict")
-    return CandidateOpportunityContextV1(
+    return CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={"policy": "serenity_research_v1", "policy_epoch": "serenity_research_v1",
                              "source_record_hash": source_record_hash},
@@ -294,7 +294,7 @@ def serenity_candidate_opportunity_context(
 
 
 __all__ = [
-    "CANDIDATE_OPPORTUNITY_CONTEXT_VERSION", "CandidateOpportunityContextV1",
+    "CANDIDATE_OPPORTUNITY_CONTEXT_VERSION", "CandidateOpportunityContext",
     "LEGACY_MECHANISM_MAP", "legacy_candidate_opportunity_context",
     "target_candidate_opportunity_context",
 ]

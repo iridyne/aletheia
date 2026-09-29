@@ -1383,7 +1383,7 @@ class UniverseMember(BaseModel):
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
+        "legacy_total_score_v1", "candidate_selection_utility", "serenity_research_v1"
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
@@ -1398,11 +1398,18 @@ class UniverseMember(BaseModel):
     candidate_opportunity_context_json: str | None = None
     candidate_opportunity_context_hash: str | None = Field(default=None, min_length=64, max_length=64)
 
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
+
     @model_validator(mode="after")
     def _validate_candidate_selection_evidence(self):
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-        target = self.candidate_selection_policy in {"candidate_selection_utility_v1", "serenity_research_v1"}
+        target = self.candidate_selection_policy in {"candidate_selection_utility", "serenity_research_v1"}
         mechanism_evidence = (
             self.opportunity_mechanism_version,
             self.opportunity_source_component,
@@ -1435,7 +1442,7 @@ class UniverseMember(BaseModel):
             if any(value is None for value in context_fields):
                 raise ValueError("Candidate Opportunity context is incomplete")
             try:
-                context = CandidateOpportunityContextV1.model_validate_json(
+                context = CandidateOpportunityContext.model_validate_json(
                     self.candidate_opportunity_context_json
                 )
             except ValueError as exc:
@@ -1485,11 +1492,18 @@ class CandidatePlanningGeneration(_Provenanced):
         "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
     ] | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
+        "legacy_total_score_v1", "candidate_selection_utility", "serenity_research_v1"
     ] | None = None
     candidate_selection_policy_epoch: str | None = None
     mechanism_version: str | None = None
     is_current: bool = True
+
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
     status: Literal["pending", "planning", "planned", "no_plan", "unavailable", "superseded"] = "pending"
     result_kind: Literal["entry_plan", "no_plan", "unavailable", "stale_result"] | None = None
     owner_token: str | None = None
@@ -1543,7 +1557,7 @@ class CandidatePlanningGeneration(_Provenanced):
             if any(value is None or not str(value).strip() for value in fields):
                 raise ValueError("mechanism planning identity is incomplete")
             if (
-                self.candidate_selection_policy == "candidate_selection_utility_v1"
+                self.candidate_selection_policy == "candidate_selection_utility"
                 and not str(self.candidate_selection_policy_epoch or "").strip()
             ):
                 raise ValueError("target mechanism planning epoch is missing")
@@ -1627,46 +1641,6 @@ class UniverseSetup(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
     valid_until: str
-
-
-class UniverseForwardOutcome(BaseModel):
-    id: str = Field(default_factory=new_id)
-    outcome_candidate_key: str | None = None
-    member_id: str
-    snapshot_id: str
-    symbol: str
-    venue: str | None = None
-    market_type: str = "spot"
-    scanner_family: str | None = None
-    # Trade direction the scanner family implied at selection ("long" | "short").
-    # None for legacy rows / members with no inferable direction; direction-aware
-    # win-rate calibration excludes those rows because their side is unknown.
-    direction: str | None = None
-    horizon: str  # "15m" | "1h" | "4h" | "24h"
-    entry_price_usd: float
-    entry_spread_bps: float | None = None
-    funding_rate_at_entry: float | None = None
-    entry_ts: str = Field(default_factory=_utcnow)
-    due_at: str
-    settled_at: str | None = None
-    exit_price_usd: float | None = None
-    # Legacy raw price move retained for compatibility. New consumers use the
-    # explicit gross/directional/net fields below.
-    forward_return_pct: float | None = None
-    gross_return_pct: float | None = None
-    directional_return_pct: float | None = None
-    estimated_fee_pct: float | None = None
-    estimated_spread_slippage_pct: float | None = None
-    estimated_funding_pct: float | None = None
-    net_return_pct: float | None = None
-    min_tradable_edge_pct: float | None = None
-    min_cost_covering_edge_pct: float | None = None
-    mfe_pct: float | None = None
-    mae_pct: float | None = None
-    settlement_price_source: str | None = None
-    settlement_lag_sec: float | None = None
-    cost_model_version: str | None = None
-    status: str = "pending"  # "pending" | "settled" | "failed"
 
 
 class UniversePolicy(BaseModel):

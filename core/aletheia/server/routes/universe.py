@@ -13,7 +13,7 @@ from typing_extensions import NotRequired, TypedDict
 
 
 def _hide_retired_candidate_scores(member: dict) -> None:
-    if member.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+    if member.get("candidate_selection_policy") in {"candidate_selection_utility", "candidate_selection_utility_v1"}:
         member.update(dict.fromkeys((
             "total_score", "opportunity_score", "tradability_score", "liquidity_score",
             "crowding_risk", "late_entry_penalty", "all_scores",
@@ -1056,15 +1056,6 @@ def get_calibration():
         "by_cohort_horizon": stats,
         "by_cohort": summaries,
     }
-
-
-@router.get("/members/{member_id}/outcomes")
-def get_member_outcomes(member_id: str):
-    """Forward outcomes for a specific universe member."""
-    outcomes = repo.list_forward_outcomes_by_member(member_id)
-    if not outcomes:
-        raise HTTPException(404, "No outcomes found for this member")
-    return outcomes
 
 
 @router.get("/registry/stats", responses={200: {"model": UniverseRegistryStats}})

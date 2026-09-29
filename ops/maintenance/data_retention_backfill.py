@@ -472,14 +472,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             predicate_sql="ended_at IS NOT NULL AND started_at < ?",
             predicate_params_factory=_basic_params("runtime_sessions_days"),
         ),
-        RetentionTarget(
-            table="backtest_runs",
-            prune_fn="prune_backtest_runs",
-            kwargs_factory=_basic("backtest_runs_days"),
-            predicate_sql="created_at < ?",
-            predicate_params_factory=_basic_params("backtest_runs_days"),
-            notes="cascade-deletes backtest_trades inside prune fn",
-        ),
     ]
 
     plan.fs_prunes = [
@@ -544,7 +536,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serenity-evidence-days", dest="serenity_evidence_days", type=int, default=60)
     parser.add_argument("--serenity-run-events-days", dest="serenity_run_events_days", type=int, default=60)
     parser.add_argument("--runtime-sessions-days", dest="runtime_sessions_days", type=int, default=30)
-    parser.add_argument("--backtest-runs-days", dest="backtest_runs_days", type=int, default=60)
     parser.add_argument("--market-ohlcv-1m-days", dest="market_ohlcv_1m_days", type=int, default=2)
     parser.add_argument("--market-ohlcv-5m-days", dest="market_ohlcv_5m_days", type=int, default=7)
     parser.add_argument("--market-ohlcv-15m-days", dest="market_ohlcv_15m_days", type=int, default=30)

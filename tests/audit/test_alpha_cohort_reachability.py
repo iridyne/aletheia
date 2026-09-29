@@ -77,7 +77,7 @@ class Cohort:
 
 
 _COHORTS: dict[str, Cohort] = {
-    "Universe Alpha": Cohort(anchor="universe_forward_outcomes"),
+    "Universe Alpha": Cohort(anchor="filter_candidate_outcomes"),
     "Ranker Alpha": Cohort(
         anchor="shadow_trades",
         joined=("filter_candidate_outcomes",),
@@ -109,7 +109,6 @@ _COHORTS: dict[str, Cohort] = {
 # Every table any cohort joins must appear here, so adding a join to an unregistered
 # table is itself a red gate.
 _RETENTION_DAYS: dict[str, int | None] = {
-    "universe_forward_outcomes": 30,
     "shadow_trades": 90,
     "filter_decisions": 45,
     "filter_candidate_outcomes": 45,

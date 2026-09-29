@@ -35,7 +35,7 @@ def _feature(**overrides):
 
 
 @spec_claim(SpecClaim(
-    "CSU-S01", _CONTRACT, "HardGateDecisionV1", "L2a",
+    "CSU-S01", _CONTRACT, "HardGateDecision", "L2a",
     "Missing physical facts fail closed while a missing action route remains eligible observation only.",
     status="implemented",
 ))
@@ -55,7 +55,7 @@ def test_hard_gate_separates_physical_truth_from_actionability():
 
 
 @spec_claim(SpecClaim(
-    "CSU-S02", _CONTRACT, "OpportunityEvidenceBundleV1", "L2a",
+    "CSU-S02", _CONTRACT, "OpportunityEvidenceBundle", "L2a",
     "Six legacy labels project into four bounded mechanisms plus orthogonal context without score summation.",
     status="implemented",
 ))
@@ -73,7 +73,7 @@ def test_opportunity_evidence_has_four_non_summed_mechanisms():
 
 
 @spec_claim(SpecClaim(
-    "CSU-S04", _CONTRACT, "CandidateSelectionUtilityV1", "L2a",
+    "CSU-S04", _CONTRACT, "CandidateSelectionUtility", "L2a",
     "Target runtime uses exact semantic identity without economic admission; legacy is historical only.",
     status="implemented",
 ))

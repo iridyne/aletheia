@@ -146,11 +146,11 @@ def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, mo
     context = json.loads(candidate.candidate_opportunity_context_json)
     assert candidate.regime_tag == context["context"]["regime"] == "bear"
     from aletheia.trading.entry_plan import candidate_planning_identity
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
     before_identity = candidate_planning_identity(candidate.model_dump())
     context["context"]["regime"] = "bull"
     context.pop("context_hash")
-    changed = CandidateOpportunityContextV1.model_validate(context)
+    changed = CandidateOpportunityContext.model_validate(context)
     after_identity = candidate_planning_identity({
         **candidate.model_dump(), "candidate_opportunity_context_json": changed.model_dump_json(),
     })
@@ -1120,7 +1120,7 @@ def test_candidate_selection_authority_projects_without_qualification():
     )
     projected = target_candidates_from_bundle(authority, legacy_scored)
     assert 0 < len(projected) <= 3
-    assert all(item["candidate_selection_policy"] == "candidate_selection_utility_v1" for item in projected)
+    assert all(item["candidate_selection_policy"] == "candidate_selection_utility" for item in projected)
     assert all(item["admission_basis"] in {"measured", "startup"} for item in projected)
     unavailable_population = [
         {**item, "spread_bps": None} for item in population

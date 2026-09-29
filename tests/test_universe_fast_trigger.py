@@ -559,7 +559,7 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
     from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
     from aletheia.universe.service import _ensure_planning_generations
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     now = datetime.now(timezone.utc)
     cfg = AletheiaConfig()
@@ -575,7 +575,7 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
         universe_size=2,
     )
     repo._insert("universe_snapshots", snapshot.model_dump())
-    opportunity = CandidateOpportunityContextV1(
+    opportunity = CandidateOpportunityContext(
         candidate_id="bitget-planning-candidate",
         candidate_selection={
             "policy": "candidate_selection_utility_v1",

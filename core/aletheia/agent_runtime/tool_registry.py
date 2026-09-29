@@ -8,7 +8,6 @@ OBSERVE_TOOLS = [
     "get_positions",
     "get_account_summary",
     "get_risk_boundaries",
-    "get_strategy_status",
     "get_recent_agent_runs",
     "create_research_note",
     "create_opportunity",

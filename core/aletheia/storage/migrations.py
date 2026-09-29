@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v90"
+SCHEMA_VERSION = "aletheia-sqlite-v94"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7752,12 +7752,38 @@ def _apply_entry_cancel_retry_v90(db: sqlite3.Connection) -> None:
     db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_retry_after TEXT")
 
 
-def _apply_entry_plan_financing_v91(db: sqlite3.Connection) -> None:
+def _apply_drop_backtest_tables_v91(db: sqlite3.Connection) -> None:
+    """Retire the Backtest product tables.
+
+    The Backtest product was removed and no code writes these tables.
+    DROP is safe because:
+    - No active writers (audit confirmed 2026-09-29, issue #3703)
+    - No unique readers (all analytical paths use paper trading data)
+    - Fedora rows: backtest_runs=0, backtest_trades=0 at census
+    """
+    db.execute("DROP TABLE IF EXISTS backtest_trades")
+    db.execute("DROP TABLE IF EXISTS backtest_runs")
+
+
+def _apply_drop_strategy_records_v92(db: sqlite3.Connection) -> None:
+    """Retire strategy_records — the Current Strategy product tables.
+
+    The Current Strategy product was removed and no code writes these tables.
+    DROP is safe because:
+    - No active writers (audit confirmed 2026-09-29, issue #3702)
+    - No unique readers — all read surfaces removed in this issue
+    - Fedora rows: strategy_records=0 at census
+    - PRAGMA foreign_keys=0 on Fedora — orphan strategy_id on positions is safe
+    """
+    db.execute("DROP TABLE IF EXISTS strategy_records")
+
+
+def _apply_entry_plan_financing_v95(db: sqlite3.Connection) -> None:
     """Additive margin-mode column on trade_proposals (#3729).
 
-    The Entry Plan's financing resolution declares the mode the venue receives.
-    Historical rows stay NULL, and the Proposal commit hash excludes a NULL
-    margin_mode, so existing stored hashes remain valid.
+    The Entry Plan's financing resolution declares the margin mode the venue
+    receives. Historical rows stay NULL, and the Proposal commit hash excludes a
+    NULL margin_mode, so existing stored hashes remain valid.
     """
     columns = {
         str(row[1]) for row in db.execute("PRAGMA table_info(trade_proposals)").fetchall()
@@ -8394,6 +8420,76 @@ def _apply_cost_covering_edge_backfill_v89(db: sqlite3.Connection) -> None:
         )
 
 
+def _apply_candidate_policy_name_convergence_v93(db: sqlite3.Connection) -> None:
+    """Rename candidate_selection_utility_v1 → candidate_selection_utility in stored rows.
+
+    Rebuilds candidate_planning_generations to add the canonical name to the CHECK constraint
+    (keeping v1 for backward compat), then backfills both tables.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'"
+    ).fetchone()
+    if row is not None:
+        sql = str(row[0])
+        old_in = "('legacy_total_score_v1','candidate_selection_utility_v1','serenity_research_v1')"
+        new_in = "('legacy_total_score_v1','candidate_selection_utility_v1','candidate_selection_utility','serenity_research_v1')"
+        old_neq = "candidate_selection_policy!='candidate_selection_utility_v1'"
+        new_neq = "candidate_selection_policy NOT IN ('candidate_selection_utility_v1','candidate_selection_utility')"
+        if old_in in sql:
+            new_sql = sql.replace(old_in, new_in).replace(old_neq, new_neq)
+            if '"candidate_planning_generations"' in new_sql:
+                new_sql = new_sql.replace('"candidate_planning_generations"', "candidate_planning_generations_v93", 1)
+            else:
+                new_sql = new_sql.replace("CREATE TABLE candidate_planning_generations", "CREATE TABLE candidate_planning_generations_v93", 1)
+            objects = db.execute(
+                "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND "
+                "(type='trigger' OR (type='index' AND tbl_name='candidate_planning_generations'))"
+            ).fetchall()
+            row_count = int(db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0])
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("SAVEPOINT candidate_policy_name_convergence_v93")
+            try:
+                for kind, name, _ in objects:
+                    if kind == "trigger":
+                        db.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+                db.execute(new_sql)
+                db.execute("INSERT INTO candidate_planning_generations_v93 SELECT * FROM candidate_planning_generations")
+                db.execute("DROP TABLE candidate_planning_generations")
+                db.execute("ALTER TABLE candidate_planning_generations_v93 RENAME TO candidate_planning_generations")
+                for _, _, statement in objects:
+                    db.execute(statement)
+                db.execute(
+                    "UPDATE candidate_planning_generations "
+                    "SET candidate_selection_policy='candidate_selection_utility' "
+                    "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
+                )
+                if db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise MigrationStateError("candidate_policy_name_convergence_foreign_key_invalid")
+                if int(db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0]) != row_count:
+                    raise MigrationStateError("candidate_policy_name_convergence_count_mismatch")
+                db.execute("RELEASE SAVEPOINT candidate_policy_name_convergence_v93")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT candidate_policy_name_convergence_v93")
+                db.execute("RELEASE SAVEPOINT candidate_policy_name_convergence_v93")
+                raise
+            finally:
+                db.execute("PRAGMA foreign_keys=ON")
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='universe_members'"
+    ).fetchone():
+        db.execute(
+            "UPDATE universe_members SET candidate_selection_policy='candidate_selection_utility' "
+            "WHERE candidate_selection_policy='candidate_selection_utility_v1'"
+        )
+    db.execute("PRAGMA optimize")
+
+
+def _apply_drop_universe_forward_outcomes_v94(db: sqlite3.Connection) -> None:
+    """Drop universe_forward_outcomes. All writers removed in #3701 Batch D."""
+    db.execute("DROP TABLE IF EXISTS universe_forward_outcomes")
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8930,12 +9026,36 @@ _MIGRATIONS = (
         apply=_apply_entry_cancel_retry_v90,
     ),
     MigrationStep(
-        migration_id="20260929_0090_entry_plan_financing_v91",
-        checksum=hashlib.sha256(
-            b"entry_plan_financing_v91:trade_proposals.margin_mode:nullable_no_backfill"
-        ).hexdigest(),
+        migration_id="20260929_0090_drop_backtest_tables_v91",
+        checksum=hashlib.sha256(b"drop_backtest_tables_v91:backtest_runs:backtest_trades:retired_product_no_writers").hexdigest(),
         schema_version="aletheia-sqlite-v91",
-        apply=_apply_entry_plan_financing_v91,
+        apply=_apply_drop_backtest_tables_v91,
+    ),
+    MigrationStep(
+        migration_id="20260929_0092_drop_strategy_records_v92",
+        checksum=hashlib.sha256(b"drop_strategy_records_v92:strategy_records:retired_product_no_writers").hexdigest(),
+        schema_version="aletheia-sqlite-v92",
+        apply=_apply_drop_strategy_records_v92,
+    ),
+    MigrationStep(
+        migration_id="20260929_0093_candidate_policy_name_convergence_v93",
+        checksum=hashlib.sha256(b"candidate_policy_name_convergence_v93:candidate_selection_utility_v1->candidate_selection_utility:backfill+constraint").hexdigest(),
+        schema_version="aletheia-sqlite-v93",
+        apply=_apply_candidate_policy_name_convergence_v93,
+    ),
+    MigrationStep(
+        migration_id="20260929_0094_drop_universe_forward_outcomes_v94",
+        checksum=hashlib.sha256(b"drop_universe_forward_outcomes_v94:retired_product_no_writers:drain_settled").hexdigest(),
+        schema_version="aletheia-sqlite-v94",
+        apply=_apply_drop_universe_forward_outcomes_v94,
+    ),
+    MigrationStep(
+        migration_id="20260930_0095_entry_plan_financing_v95",
+        checksum=hashlib.sha256(
+            b"entry_plan_financing_v95:trade_proposals.margin_mode:nullable_no_backfill"
+        ).hexdigest(),
+        schema_version="aletheia-sqlite-v95",
+        apply=_apply_entry_plan_financing_v95,
     ),
 )
 

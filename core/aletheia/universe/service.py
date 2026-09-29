@@ -628,7 +628,7 @@ class UniverseService:
         """
         from aletheia.universe.allocator import decorate_universe_candidates
         from aletheia.universe.features import collect_features
-        from aletheia.universe.outcome_recorder import build_pending, settle_due
+        from aletheia.universe.outcome_recorder import settle_due
         from aletheia.universe.registry import sync_registry
 
         from aletheia.universe.candidate_selection_authority import (
@@ -638,13 +638,8 @@ class UniverseService:
         recover_candidate_selection_authority_transition()
         cfg = load_config()
 
-        # Settle any overdue forward outcomes before producing new ones.
-        # Clean outlier rows first (idempotent — fast no-op after first pass).
+        # Settle any overdue filter candidate outcomes before producing new ones.
         try:
-            with repo.transaction():
-                cleaned = repo.mark_outlier_outcomes_failed()
-            if cleaned:
-                logger.info("Cleaned %d outlier forward outcome rows", cleaned)
             await settle_due()
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
@@ -761,7 +756,7 @@ class UniverseService:
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
-            if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+            if cfg.universe.candidate_selection_policy == "candidate_selection_utility":
                 from aletheia.universe.candidate_selection_authority import (
                     candidate_selection_authority_block_reason,
                 )
@@ -816,6 +811,12 @@ class UniverseService:
                     candidate_selection_authority_bundle,
                     features_list,
                 )
+                # #3701 Batch A: every selected Candidate must have an exact FCO outcome key.
+                for _item in allocated:
+                    if not _item.get("learning_candidate_key"):
+                        raise ValueError(
+                            f"selected_candidate_missing_outcome_key:{_item.get('symbol')}"
+                        )
                 decorate_universe_candidates(allocated, cfg.universe)
                 eligible_attention_identities = target_admitted_identity_keys(
                     candidate_selection_authority_bundle,
@@ -1077,7 +1078,6 @@ class UniverseService:
                         "expires_at": member_expires,
                     }
                 )
-            pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
             requalifications = _prepare_planning_requalifications(member_models)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
@@ -1093,6 +1093,13 @@ class UniverseService:
                     outcomes=candidate_selection_authority_bundle.outcomes,
                     min_interval_sec=0,
                 )
+                # #3701 Batch A: write selected-primary 15m/1h/24h FCO rows.
+                # These are separate from the 4h full-arm denominator in outcomes above.
+                if candidate_selection_authority_bundle.selected_primary_extra_outcomes:
+                    repo.insert_filter_candidate_outcomes_batch(
+                        list(candidate_selection_authority_bundle.selected_primary_extra_outcomes),
+                        db=repo.get_db(),
+                    )
                 repo.publish_candidate_snapshot(snap, member_models)
 
                 selected_generation_ids, new_generation_ids, planning_generations_created = (
@@ -1122,9 +1129,6 @@ class UniverseService:
                     new_generation_ids=new_generation_ids,
                     now=now,
                 )
-
-                # Register forward outcome tracking for all members with valid prices
-                repo.insert_forward_outcomes_batch(pending_outcomes)
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose

@@ -954,7 +954,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
                       SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                                THEN 1 ELSE 0 END),
                       AVG(net_return_pct)
-               FROM universe_forward_outcomes
+               FROM filter_candidate_outcomes
                WHERE status = 'settled'
                  AND horizon = '24h'
                  AND settled_at >= ?
@@ -1006,12 +1006,10 @@ def _probe_outcome_economics(report: Report) -> None:
             "SELECT COUNT(*) AS total, "
             f"SUM(CASE WHEN {complete_outcome_economics_sql()} "
             "  THEN 1 ELSE 0 END) AS complete, "
-            "SUM(CASE WHEN net_return_pct IS NULL "
-            "  AND market_type IN ('perp','futures','swap','usdt_futures') "
-            "  AND funding_rate_at_entry IS NULL THEN 1 ELSE 0 END) AS missing_funding, "
+            "0 AS missing_funding, "
             "SUM(CASE WHEN net_return_pct IS NULL "
             "  AND settlement_price_source = 'late_ticker' THEN 1 ELSE 0 END) AS late_price "
-            "FROM universe_forward_outcomes "
+            "FROM filter_candidate_outcomes "
             "WHERE status='settled' AND cost_model_version=?",
             (COST_MODEL_VERSION,),
         ).fetchone()

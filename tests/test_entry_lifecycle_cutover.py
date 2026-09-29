@@ -19,10 +19,10 @@ def _typed_candidate(
 
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     candidate_id = uuid4().hex[:12]
-    context = CandidateOpportunityContextV1(
+    context = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
             "policy": "candidate_selection_utility_v1",

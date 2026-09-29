@@ -12,7 +12,7 @@ from aletheia.storage.models import UniverseTwinShadowBatch, UniverseTwinShadowE
 from aletheia.universe.candidate_eligibility import canonical_fingerprint, evaluate_hard_gate
 from aletheia.universe.candidate_selection_utility import (
     CANDIDATE_SELECTION_UTILITY_VERSION,
-    CandidateSelectionUtilityV1,
+    CandidateSelectionUtility,
     build_candidate_selection_utility,
     select_admitted_candidates,
     candidate_selection_rank,
@@ -32,7 +32,7 @@ from aletheia.universe.opportunity_evidence import (
 from aletheia.universe.twin_persistence import TwinShadowBundle
 from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT
 
-CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v4"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v2"
 CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION = "candidate-selection-evidence-cadence/v2"
 CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC = 4 * 60 * 60
@@ -70,7 +70,7 @@ def _safe_feature(feature: Mapping[str, object]) -> dict[str, object]:
 
 
 def _compact_candidate_selection(
-    decision: CandidateSelectionUtilityV1,
+    decision: CandidateSelectionUtility,
 ) -> dict[str, object]:
     """Keep immutable decision evidence while moving shared/raw detail out of every row."""
 
@@ -247,6 +247,10 @@ def build_candidate_selection_shadow_bundle(
         )[:universe_config.max_candidates]
     }
     from aletheia.universe.candidate_funding import freeze_funding_proof
+    # Extra-horizon FCO rows (15m/1h/24h) for the selected primary direction.
+    # The 4h row is the canonical full-arm row; extras are added only for the
+    # selected primary Candidate so readers can resolve any horizon from FCO.
+    _selected_primary_extra_outcomes: list = []
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
         if gate.status != "eligible":
             continue
@@ -262,6 +266,10 @@ def build_candidate_selection_shadow_bundle(
             if not venue or not symbol or not isinstance(price, (int, float)) or float(price) <= 0:
                 continue
             key = _outcome_key(gate.candidate_key, direction)
+            is_selected_primary = (
+                decision.candidate_key in target_selected_keys
+                and decision.primary_direction == direction
+            )
             built = build_candidate_outcomes(
                 outcome_candidate_key=key,
                 venue=venue,
@@ -275,14 +283,15 @@ def build_candidate_selection_shadow_bundle(
                 funding_rate_at_entry=feature.get("funding_rate"),
                 funding_evidence_json=freeze_funding_proof(feature),
                 entry_ts=captured_at,
-                allocation_selected=(
-                    decision.candidate_key in target_selected_keys
-                    and decision.primary_direction == direction
-                ),
-                horizons=("4h",),
+                allocation_selected=is_selected_primary,
+                # Full-arm: 4h only.  Selected primary: all four horizons.
+                horizons=None if is_selected_primary else ("4h",),
             )
-            if len(built) == 1:
-                outcomes_by_key[key] = built[0]
+            four_h = next((r for r in built if r.horizon == "4h"), None)
+            if four_h:
+                outcomes_by_key[key] = four_h
+            if is_selected_primary:
+                _selected_primary_extra_outcomes.extend(r for r in built if r.horizon != "4h")
 
     available_source_fingerprints = sorted({
         estimate.source_outcome_fingerprint for decision in decisions for estimate in decision.economic_estimates
@@ -404,7 +413,7 @@ def build_candidate_selection_shadow_bundle(
             "minimum_interval_sec": CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
             "legacy_rollback": False,
             "authority_policy": (
-                "candidate_selection_utility_v1" if authority_applied else "legacy_total_score_v1"
+                "candidate_selection_utility" if authority_applied else "legacy_total_score_v1"
             ),
         }),
         candidate_count=len(evidence_rows),
@@ -413,7 +422,15 @@ def build_candidate_selection_shadow_bundle(
         batch_hash=canonical_fingerprint(batch_material),
         captured_at=captured_at,
     )
-    return TwinShadowBundle(batch, tuple(evidence_rows), tuple(outcomes_by_key[key] for key in sorted(outcomes_by_key)))
+    return TwinShadowBundle(
+        batch,
+        tuple(evidence_rows),
+        # Only the 4h full-arm denominator rows belong in outcomes
+        # (validated by _validate_universe_twin_prospective_bundle).
+        tuple(outcomes_by_key[key] for key in sorted(outcomes_by_key)),
+        # Selected-primary 15m/1h/24h extras written separately by the caller (#3701 Batch A).
+        tuple(_selected_primary_extra_outcomes),
+    )
 
 
 def candidate_selection_storage_projection(
@@ -563,15 +580,13 @@ def candidate_selection_training_cutoff(
     from aletheia.storage import repositories as repo
 
     epoch_clause = " AND b.policy_epoch_id=?" if policy_epoch_id is not None else ""
-    params: tuple[object, ...] = (
-        (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3", policy_epoch_id)
-        if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3")
-    )
+    params: tuple[object, ...] = (policy_epoch_id,) if policy_epoch_id is not None else ()
     rows = repo.get_db().execute(
         "SELECT b.captured_at, b.policy_json, r.compact_output_json "
         "FROM universe_twin_shadow_batches b "
         "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
-        "WHERE b.record_version IN (?,?) AND b.policy_epoch_id IS NOT NULL "
+        "WHERE b.record_version LIKE 'candidate-selection-utility-record%' "
+        "AND b.policy_epoch_id IS NOT NULL "
         f"{epoch_clause} "
         "ORDER BY b.captured_at, r.candidate_index",
         params,
@@ -679,13 +694,17 @@ def target_candidates_from_bundle(
             "startup_reason": decision.get("startup_reason"),
             "pessimistic_strength": mechanism.get("pessimistic_strength"),
             "candidate_selection_key": row.candidate_key,
-            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy": "candidate_selection_utility",
             "candidate_selection_policy_epoch": bundle.batch.policy_epoch_id,
             "opportunity_mechanism": decision["primary_mechanism"],
             "opportunity_mechanism_version": mechanism["mechanism_version"],
             "opportunity_source_component": family,
             "opportunity_source_cutoff_at": decision["opportunity_evidence"]["source_cutoff_at"],
             "opportunity_evidence_hash": decision["opportunity_evidence"]["mechanism_set_fingerprint"],
+            # Exact FCO base key for this selected Candidate (primary direction only).
+            # Used as universe_members.learning_candidate_key and as the FCO lookup key
+            # for all four horizons. Equals outcome_candidate_key in FCO. (#3701 Batch A)
+            "learning_candidate_key": row.outcome_candidate_key,
             "_candidate_opportunity_record": {
                 "decision": decision,
                 "source_record_hash": row.record_hash,

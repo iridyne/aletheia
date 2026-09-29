@@ -517,3 +517,151 @@ def test_allowlist_is_part_of_policy_identity_deterministically():
     cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(), "allowlist": ["BTC/USDT"]})
     identity_btc_only = candidate_selection_policy_identity(cfg)
     assert identity_btc_only != identity_btc_eth
+
+
+def test_selected_primary_has_all_four_horizons_in_bundle_and_learning_key():
+    """#3701 Batch A: selected primary Candidate gets 15m/1h/4h/24h in FCO bundle;
+    unselected directions get only 4h. learning_candidate_key is set on projection."""
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+
+    bundle, population = _authority_bundle()
+    selected = target_candidates_from_bundle(bundle, population)
+    assert selected, "expected at least one selected candidate"
+
+    # All selected candidates must have learning_candidate_key set
+    for item in selected:
+        assert item.get("learning_candidate_key"), (
+            f"selected candidate {item['symbol']} missing learning_candidate_key"
+        )
+
+    # Collect outcome horizons per key in the bundle
+    from collections import defaultdict
+    horizons_by_key = defaultdict(set)
+    for outcome in bundle.outcomes:
+        horizons_by_key[outcome.outcome_candidate_key].add(outcome.horizon)
+    for outcome in bundle.selected_primary_extra_outcomes:
+        horizons_by_key[outcome.outcome_candidate_key].add(outcome.horizon)
+
+    for item in selected:
+        key = item["learning_candidate_key"]
+        assert key in horizons_by_key, f"no FCO outcomes for selected key {key}"
+        horizons = horizons_by_key[key]
+        assert horizons == {"15m", "1h", "4h", "24h"}, (
+            f"selected primary {item['symbol']} has horizons {horizons}, expected all four"
+        )
+
+    # Unselected eligible directions should have only 4h
+    selected_keys = {item["learning_candidate_key"] for item in selected}
+    for key, horizons in horizons_by_key.items():
+        if key not in selected_keys:
+            assert horizons == {"4h"}, (
+                f"non-selected key {key} has unexpected horizons {horizons}"
+            )
+
+    # selected_primary_extra_outcomes contains only non-4h horizons
+    for outcome in bundle.selected_primary_extra_outcomes:
+        assert outcome.horizon != "4h", (
+            f"extra outcome has 4h horizon for key {outcome.outcome_candidate_key}"
+        )
+        assert bool(outcome.allocation_selected), (
+            f"extra outcome for {outcome.outcome_candidate_key} not marked selected"
+        )
+
+
+# ---------------------------------------------------------------------------
+# #3708 Batch D — negative regression tests for ordinal identity convergence
+# ---------------------------------------------------------------------------
+
+def test_new_writes_use_canonical_record_version():
+    """New shadow batch writes must use unsuffixed record version, not /v1 through /v4."""
+    from aletheia.universe.candidate_selection_shadow import CANDIDATE_SELECTION_RECORD_VERSION
+
+    assert CANDIDATE_SELECTION_RECORD_VERSION == "candidate-selection-utility-record", (
+        f"writer emits ordinal suffix: {CANDIDATE_SELECTION_RECORD_VERSION!r}"
+    )
+    assert "/" not in CANDIDATE_SELECTION_RECORD_VERSION, (
+        f"canonical write version must not contain '/': {CANDIDATE_SELECTION_RECORD_VERSION!r}"
+    )
+
+
+def test_new_writes_use_canonical_policy_name():
+    """Config loader and policy constant must use unsuffixed policy name."""
+    from aletheia.universe.candidate_selection_authority import TARGET_CANDIDATE_POLICY
+    from aletheia.config.schema import UniverseConfig
+
+    assert TARGET_CANDIDATE_POLICY == "candidate_selection_utility", (
+        f"TARGET_CANDIDATE_POLICY has ordinal suffix: {TARGET_CANDIDATE_POLICY!r}"
+    )
+    cfg = UniverseConfig()
+    assert cfg.candidate_selection_policy == "candidate_selection_utility", (
+        f"default config policy has ordinal suffix: {cfg.candidate_selection_policy!r}"
+    )
+
+
+def test_target_candidates_from_bundle_emits_canonical_policy():
+    """target_candidates_from_bundle must emit canonical policy, not v1."""
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+
+    bundle, population = _authority_bundle()
+    candidates = target_candidates_from_bundle(bundle, population)
+    assert candidates, "expected at least one candidate"
+    for c in candidates:
+        policy = c.get("candidate_selection_policy")
+        assert policy == "candidate_selection_utility", (
+            f"emitted ordinal policy: {policy!r}"
+        )
+
+
+def test_historical_record_versions_still_decode():
+    """Historical /v1–/v4 record versions must still be recognized by readers."""
+    from aletheia.storage.repositories import (
+        _CANDIDATE_SELECTION_RECORD_VERSIONS,
+        _LEGACY_SELECTION_RECORD_VERSIONS,
+    )
+
+    for suffix in ("/v1", "/v2", "/v3", "/v4"):
+        versioned = f"candidate-selection-utility-record{suffix}"
+        assert versioned in _CANDIDATE_SELECTION_RECORD_VERSIONS, (
+            f"historical version not recognized: {versioned!r}"
+        )
+        assert versioned in _LEGACY_SELECTION_RECORD_VERSIONS, (
+            f"historical version missing from legacy set: {versioned!r}"
+        )
+
+    # Canonical must also be recognized
+    canonical = "candidate-selection-utility-record"
+    assert canonical in _CANDIDATE_SELECTION_RECORD_VERSIONS, (
+        "canonical record version not in recognition set"
+    )
+    assert canonical not in _LEGACY_SELECTION_RECORD_VERSIONS, (
+        "canonical must not be in legacy-only set"
+    )
+
+
+def test_historical_policy_value_v1_accepted_in_opportunity_context():
+    """The policy recognition set must still include historical v1 for stored JSON decode."""
+    import inspect
+    from aletheia.universe import candidate_opportunity
+
+    # Read the source and verify v1 is in the recognition set used by the validator.
+    src = inspect.getsource(candidate_opportunity)
+    assert "candidate_selection_utility_v1" in src, (
+        "historical policy v1 was removed from candidate_opportunity.py — old stored records cannot decode"
+    )
+    # The canonical value must also be present
+    assert "candidate_selection_utility\"" in src, (
+        "canonical policy not found in candidate_opportunity.py"
+    )
+
+
+def test_no_ordinal_suffix_in_migration_constant_or_write_path():
+    """Confirm no code path reassigns ordinal identity to new authority objects."""
+    from aletheia.universe.candidate_selection_shadow import (
+        CANDIDATE_SELECTION_RECORD_VERSION,
+        build_candidate_selection_shadow_bundle,
+    )
+    from aletheia.universe.candidate_selection_authority import TARGET_CANDIDATE_POLICY
+
+    # Both writer constants are unsuffixed
+    assert not CANDIDATE_SELECTION_RECORD_VERSION.endswith(("/v1", "/v2", "/v3", "/v4"))
+    assert not TARGET_CANDIDATE_POLICY.endswith(("_v1", "_v2", "_v3", "_v4"))

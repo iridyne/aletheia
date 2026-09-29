@@ -1448,7 +1448,6 @@ class RetentionConfig(BaseModel):
     serenity_evidence_days: int = 60
     serenity_run_events_days: int = 60
     runtime_sessions_days: int = 90
-    backtest_runs_days: int = 60
 
     # market_ohlcv per-timeframe TTL. Newer, denser bars decay fastest;
     # daily bars persist for training-window use.
@@ -1783,12 +1782,19 @@ class UniverseConfig(BaseModel):
     # Utility is the runtime default; Legacy remains readable for historical records.
     # The config loader derives the operational epoch from full config semantics.
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
-    ] = "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility"
+    ] = "candidate_selection_utility"
     candidate_selection_policy_epoch: str | None = None
     # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
+
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
 
     @model_validator(mode="after")
     def _validate_candidate_selection_authority(self):

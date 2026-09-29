@@ -31,7 +31,6 @@ from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity,
-    list_strategies,
     upsert_prediction_event,
     upsert_prediction_market,
     insert_probability_snapshot,
@@ -41,7 +40,6 @@ from aletheia.storage.repositories import (
 )
 from aletheia.config.loader import load_config
 from extensions.data.polymarket_provider import fetch_active_markets, format_prediction_context
-from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
@@ -294,13 +292,6 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         output_data=context[:1200],
     )
 
-    # Find active strategy
-    linked_strategy_id = None
-    for s in list_strategies(limit=50):
-        if is_active_paper_strategy(s):
-            linked_strategy_id = s["id"]
-            break
-
     # Ask LLM to identify notable markets
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
@@ -399,7 +390,6 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             confidence=m_confidence,
             confidence_score=m_score,
             source_agent="prediction_observer",
-            linked_strategy_id=linked_strategy_id,
             asset_class="prediction",
             execution_eligible=False,
             scanner_family="prediction_market",
