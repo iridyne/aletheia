@@ -20,16 +20,28 @@ def apply_entry_financing(
     risk_intent_multiplier_source: str = "baseline",
     executable_notional_cap_usdt: float | None = None,
     instrument_min_notional_usdt: float | None = None,
+    capital_base_usdt: float | None = 5000.0,
+    available_balance_usdt: float | None = 5000.0,
+    equity_usdt: float | None = 5000.0,
+    open_pool_notional_usdt: float = 0.0,
+    symbol_projected_stop_risk_usdt: float = 0.0,
     cfg=None,
     seed_envelope: bool = True,
 ):
-    """Return `plan` with the financing fields a real compilation would freeze."""
+    """Return `plan` with the financing fields a real compilation would freeze.
+
+    The account/portfolio state is built here from explicit values instead of the
+    runtime account cache: a hand-built Plan is a fixture, and making it depend on
+    a cached exchange snapshot would silently couple every caller to database
+    setup. The venue envelope is still real fact data, so it is seeded (or
+    supplied) — the resolver must never invent a maintenance-margin rate.
+    """
     from aletheia.config.exchanges import is_live_execution_mode
     from aletheia.config.loader import load_config
     from aletheia.execution.margin_mode_policy import submission_margin_mode
-    from aletheia.risk.engine import account_sizing_state, sizing_policy_facts
+    from aletheia.risk.engine import sizing_policy_facts
     from aletheia.risk.policy import resolve_risk_policy
-    from aletheia.trading.entry_sizing import resolve_entry_sizing
+    from aletheia.trading.entry_sizing import AccountSizingState, resolve_entry_sizing
     from aletheia.trading.instruments import get_max_leverage
     from aletheia.trading.leverage_resolution import resolve_execution_financing
     from aletheia.trading.venue_margin import load_venue_margin_envelope
@@ -49,12 +61,16 @@ def apply_entry_financing(
         margin_mode=margin_mode or "isolated",
         cfg=cfg,
     )
-    account = account_sizing_state(
-        mode,
-        plan.symbol,
-        cfg=cfg,
+    account = AccountSizingState(
+        capital_base_usdt=capital_base_usdt,
+        available_balance_usdt=available_balance_usdt,
+        equity_usdt=equity_usdt,
+        open_pool_notional_usdt=open_pool_notional_usdt,
+        symbol_projected_stop_risk_usdt=symbol_projected_stop_risk_usdt,
         executable_notional_cap_usdt=executable_notional_cap_usdt,
         instrument_min_notional_usdt=instrument_min_notional_usdt,
+        instrument_max_notional_usdt=None,
+        snapshot_id="fixture-account",
     )
     worst_entry = float(plan.worst_price if plan.worst_price is not None else max(plan.entry_zone))
     sizing = resolve_entry_sizing(

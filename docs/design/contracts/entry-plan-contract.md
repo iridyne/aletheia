@@ -627,8 +627,9 @@ order-intent boundary refuses to start a new intent from it
 
 Quantity is derived from the financed exposure
 (`execution_notional_usdt / max(entry_zone)`), not from a policy ceiling, and
-`TradeProposal.leverage = EntryPlan.execution_leverage`; the Proposal also carries
-the Plan's `margin_mode`, which the venue receives. The authoritative semantics,
+`TradeProposal.leverage = EntryPlan.execution_leverage`. The Plan remains the one
+authority for the submission `margin_mode`: the Gateway reads it from the frozen
+Plan and puts it on the venue command, so a Proposal cannot carry a different one. The authoritative semantics,
 failure codes and the `policy_leverage_cap != execution_leverage` rule live in
 [Entry Sizing and Financing](entry_sizing_and_financing_contract.md); Risk's
 re-verification (drift, financed leverage/margin-mode match, per-symbol risk

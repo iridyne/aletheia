@@ -1489,6 +1489,32 @@ def _record_unresolved_execution(
     }
 
 
+def _entry_plan_submission_margin_mode(proposal) -> str | None:
+    """The Plan's declared margin mode, for the venue order of one Proposal.
+
+    The Plan is the financing authority (#3729): the Proposal mirrors its
+    leverage and quantity but does not carry the mode, so the submission path
+    reads the same frozen value the resolver proved safety against. A Proposal
+    without a Plan (legacy paths) returns None and keeps the venue default.
+    """
+    plan_id = getattr(proposal, "entry_plan_id", None)
+    if not plan_id:
+        return None
+    from aletheia.storage.repositories import get_entry_plan
+    from aletheia.trading.entry_compat import decode_entry_plan
+
+    row = get_entry_plan(plan_id)
+    if row is None:
+        return None
+    try:
+        return decode_entry_plan(str(row["plan_json"])).margin_mode
+    except Exception as exc:
+        # Without a decodable Plan the venue keeps its own default; the failure is
+        # reported rather than swallowed.
+        logger.warning("entry plan margin-mode probe failed: %s", type(exc).__name__)
+        return None
+
+
 def _execute_proposal(
     proposal: TradeProposal,
     *,
@@ -1701,7 +1727,7 @@ def _execute_proposal(
                     take_profit_price=execution_proposal.take_profit,
                     native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
                     leverage=execution_proposal.leverage,
-                    margin_mode=execution_proposal.margin_mode,
+                    margin_mode=_entry_plan_submission_margin_mode(execution_proposal),
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
@@ -1908,7 +1934,7 @@ def _execute_proposal(
                     take_profit_price=execution_proposal.take_profit,
                     native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
                     leverage=execution_proposal.leverage,
-                    margin_mode=execution_proposal.margin_mode,
+                    margin_mode=_entry_plan_submission_margin_mode(execution_proposal),
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )

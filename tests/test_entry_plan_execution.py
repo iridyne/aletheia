@@ -250,7 +250,14 @@ def _isolate_execution_contract(monkeypatch):
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_a, **_k: 5000.0)
 
 
-def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
+def _plan(
+    *,
+    mode="TRIGGERED",
+    tactic="OPPOSING_BBO_IOC",
+    account_mode="bitget_demo",
+    provenance=True,
+    executable_notional_cap_usdt=None,
+) -> EntryPlan:
     from aletheia.trading.entry_analysis import EntryAnchor, EntryHypothesis, fingerprint
     from aletheia.trading.risk_intent import RiskIntent
     from tests.helpers.entry_plan_financing_fixture import apply_entry_financing
@@ -375,7 +382,9 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         entry_profile_id=hypothesis.entry_profile_id,
         compiled_geometry_fingerprint=fingerprint(geometry),
     )
-    plan = apply_entry_financing(plan)
+    plan = apply_entry_financing(
+        plan, executable_notional_cap_usdt=executable_notional_cap_usdt
+    )
     if provenance:
         return plan
     return plan.model_copy(
@@ -924,6 +933,7 @@ def _persist_waiting_plan(
     plan_updates=None,
     candidate_id="candidate-1",
     candidate_family="momentum",
+    executable_notional_cap_usdt=None,
 ) -> EntryPlan:
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
@@ -1000,7 +1010,12 @@ def _persist_waiting_plan(
     repo._insert("universe_members", candidate.model_dump())
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
-    plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(
+    plan = _plan(
+        account_mode=account_mode,
+        mode=mode,
+        tactic=tactic,
+        executable_notional_cap_usdt=executable_notional_cap_usdt,
+    ).model_copy(
         update={
             "planning_generation_id": generation["id"],
             "candidate_id": candidate_id,

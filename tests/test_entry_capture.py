@@ -171,7 +171,9 @@ def test_compile_freezes_risk_intent_and_financing_into_the_plan(monkeypatch):
         source_observed_at=baseline.approved_at,
     )
     assert proposal.leverage == baseline.execution_leverage
-    assert proposal.margin_mode == baseline.margin_mode
+    # The Plan, not the Proposal, carries the submission margin mode (#3729):
+    # the gateway reads it from the frozen Plan for the venue command.
+    assert baseline.margin_mode == "isolated"
     assert proposal.quantity is not None
     assert float(proposal.quantity) * max(baseline.entry_zone) <= (
         float(baseline.execution_notional_usdt) + 1e-6
