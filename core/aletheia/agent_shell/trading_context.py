@@ -51,7 +51,7 @@ def _get_data_health_summary() -> dict[str, Any]:
             f"""SELECT COUNT(*),
                       SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                                THEN 1 ELSE 0 END)
-               FROM universe_forward_outcomes
+               FROM filter_candidate_outcomes
                WHERE status = 'settled' AND horizon = '24h'
                  AND settled_at >= ?
                  AND cost_model_version = ?

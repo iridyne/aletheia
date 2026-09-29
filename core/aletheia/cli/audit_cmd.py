@@ -81,7 +81,7 @@ def data(
                   SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
                            THEN 1 ELSE 0 END),
                   AVG(net_return_pct)
-           FROM universe_forward_outcomes
+           FROM filter_candidate_outcomes
            WHERE status = 'settled'
              AND horizon = '24h'
              AND settled_at >= ?

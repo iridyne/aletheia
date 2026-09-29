@@ -40,18 +40,18 @@ def _insert_outcome(
     except (TypeError, ValueError):
         cost_covering = None
     get_db().execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, venue, scanner_family, market_type, direction, "
-        "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, symbol, venue, scanner_family, market_type, direction, "
+        "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, min_cost_covering_edge_pct, cost_model_version, settlement_price_source, "
         "settlement_lag_sec, status) "
-        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'okx', 'momentum', ?, ?, "
-        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, ?, "
+        "VALUES (?, ?, 'BTC/USDT', 'okx', 'momentum', ?, ?, "
+        "'24h', 100, ?, ?, ?, ?, 0.1, ?, ?, ?, ?, ?, ?, ?, ?, "
         "'horizon_ohlcv', 0, 'settled')",
         (
-            outcome_id, f"member-{outcome_id}", market_type, direction,
+            outcome_id, f"key-{outcome_id}", market_type, direction,
             exit_price_usd, now, now, now,
             directional_return_pct, estimated_fee_pct,
             estimated_spread_slippage_pct, estimated_funding_pct,
@@ -145,7 +145,7 @@ def test_sql_and_python_accept_the_same_reconciled_large_returns():
     rows = get_db().execute(
         "SELECT *, "
         f"CASE WHEN {complete_outcome_economics_sql()} THEN 1 ELSE 0 END AS sql_eligible "
-        "FROM universe_forward_outcomes WHERE id LIKE 'large-%' ORDER BY id"
+        "FROM filter_candidate_outcomes WHERE id LIKE 'large-%' ORDER BY id"
     ).fetchall()
 
     assert len(rows) == len(values)
@@ -629,15 +629,33 @@ def test_public_shadow_diagnostics_sanitize_unauthorized_results():
     assert any(row["authority_status"] == "legacy_observation" for row in cli_rows)
 
 
+def _insert_ufo_outcome(outcome_id: str, *, directional_return_pct: float, net_return_pct: float) -> None:
+    """Insert a minimal UFO row for outlier-detection tests (mark_outlier_outcomes_failed reads UFO)."""
+    from aletheia.storage.sqlite import get_db
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    get_db().execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, member_id, snapshot_id, symbol, venue, scanner_family, market_type, direction, "
+        "horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+        "forward_return_pct, directional_return_pct, net_return_pct, status) "
+        "VALUES (?, ?, 'snap', 'BTC/USDT', 'okx', 'momentum', 'spot', 'long', "
+        "'24h', 100, ?, ?, ?, ?, ?, ?, 'settled')",
+        (outcome_id, f"member-{outcome_id}", now, now, now,
+         directional_return_pct, directional_return_pct, net_return_pct),
+    )
+
+
 def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome
     from aletheia.storage.sqlite import get_db
     from datetime import datetime, timezone
 
-    # UFO: outlier detection still marks physical outliers as failed in UFO.
-    _insert_outcome("large-valid", 0.05, directional_return_pct=200.0, net_return_pct=200.0)
-    _insert_outcome("physical-outlier", 0.05, directional_return_pct=1_000_001.0, net_return_pct=1_000_001.0)
+    # UFO: outlier detection marks physical outliers as failed in UFO.
+    _insert_ufo_outcome("large-valid", directional_return_pct=200.0, net_return_pct=200.0)
+    _insert_ufo_outcome("physical-outlier", directional_return_pct=1_000_001.0, net_return_pct=1_000_001.0)
     get_db().commit()
 
     assert repo.mark_outlier_outcomes_failed() == 1
