@@ -18,7 +18,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from aletheia.net import httpx_client
+from aletheia.net import close_ccxt, make_ccxt
 from aletheia.data.models import (
     FundingRateSnapshot,
     OpenInterestSnapshot,
@@ -33,10 +33,9 @@ logger = logging.getLogger("aletheia.data.collectors.derivatives")
 # would need a different symbol form; deliberately out of scope this batch.
 # Fed into OpenInterestSnapshot.long_short_ratio at write time; normalizer's
 # compute_leverage_state already consumes long_short_ratio into crowding_score.
-_BINANCE_LSR_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
-_BINANCE_TOP_POSITION_RATIO_URL = (
-    "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
-)
+# CCXT binanceusdm implicit methods:
+_BINANCE_LSR_METHOD = "fapiDataGetGlobalLongShortAccountRatio"
+_BINANCE_TOP_POSITION_METHOD = "fapiDataGetTopLongShortPositionRatio"
 # LSR enriches OI but is not allowed to consume the primary venue's live
 # Funding/OI budget.  A partial result is honest and remains useful.
 _LSR_BUDGET_SEC = 4.0
@@ -63,11 +62,15 @@ class DerivativesCollector:
         top_position_map: dict[str, dict] = {}
         try:
             if cfg.market_data.enable_long_short_ratio:
-                positioning_results = await asyncio.gather(
-                    _fetch_binance_ratio_batch(symbols, _BINANCE_LSR_URL),
-                    _fetch_binance_ratio_batch(symbols, _BINANCE_TOP_POSITION_RATIO_URL),
-                    return_exceptions=True,
-                )
+                lsr_exchange, lsr_session = make_ccxt("binanceusdm")
+                try:
+                    positioning_results = await asyncio.gather(
+                        _fetch_binance_ratio_batch(lsr_exchange, symbols, _BINANCE_LSR_METHOD),
+                        _fetch_binance_ratio_batch(lsr_exchange, symbols, _BINANCE_TOP_POSITION_METHOD),
+                        return_exceptions=True,
+                    )
+                finally:
+                    await close_ccxt(lsr_exchange, lsr_session)
                 for label, result in zip(
                     ("global_account_ratio", "top_position_ratio"),
                     positioning_results,
@@ -665,41 +668,43 @@ async def _maybe_backfill_oi_history(
     return n, False
 
 
-async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, dict]:
+async def _fetch_binance_ratio_batch(
+    exchange: Any, symbols: list[str], method_name: str
+) -> dict[str, dict]:
     results: dict[str, dict] = {}
     semaphore = asyncio.Semaphore(4)
-    # Four requests per stream, eight combined; CCXT remains sequential.
-    async with httpx_client(timeout=_LSR_BUDGET_SEC) as client:
-        async def fetch(sym: str) -> None:
-            async with semaphore:
-                try:
-                    resp = await client.get(
-                        url,
-                        params={"symbol": sym.replace("/", ""), "period": "1h", "limit": 1},
-                    )
-                    if resp.status_code != 200:
-                        return
-                    items = resp.json()
-                    if isinstance(items, list) and items:
-                        ratio = finite(items[0].get("longShortRatio"))
-                        if ratio is not None and ratio > 0:
-                            acquired = datetime.now(timezone.utc)
-                            source, status = derivatives_facts.provider_source_time(items[0], acquired)
-                            results[sym] = dict(value=ratio, source_observed_at=source,
-                                source_time_status=status, acquired_at=acquired.isoformat(),
-                                instrument=dict(canonical_symbol=sym, source_instrument_id=sym.replace('/', ''),
-                                    market_type='perp', base_asset=sym.split('/')[0],
-                                    quote_asset=sym.split('/')[-1], settle_asset='USDT', linear=sym.endswith('/USDT')))
-                except Exception as exc:
-                    logger.debug("Ratio fetch failed for %s: %s", sym, exc)
+    method = getattr(exchange, method_name, None)
+    if not callable(method):
+        return results
+    from typing import Any as _Any, Awaitable as _Aw, Callable as _Callable, cast as _cast
+    method_fn = _cast(_Callable[..., _Aw[_Any]], method)
 
-        tasks = [asyncio.create_task(fetch(sym)) for sym in dict.fromkeys(symbols)]
-        try:
-            if tasks:
-                await asyncio.wait(tasks, timeout=_LSR_BUDGET_SEC)
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+    async def fetch(sym: str) -> None:
+        async with semaphore:
+            try:
+                items = await method_fn(
+                    {"symbol": sym.replace("/", ""), "period": "1h", "limit": 1}
+                )
+                if isinstance(items, list) and items:
+                    ratio = finite(items[0].get("longShortRatio"))
+                    if ratio is not None and ratio > 0:
+                        acquired = datetime.now(timezone.utc)
+                        source, status = derivatives_facts.provider_source_time(items[0], acquired)
+                        results[sym] = dict(value=ratio, source_observed_at=source,
+                            source_time_status=status, acquired_at=acquired.isoformat(),
+                            instrument=dict(canonical_symbol=sym, source_instrument_id=sym.replace('/', ''),
+                                market_type='perp', base_asset=sym.split('/')[0],
+                                quote_asset=sym.split('/')[-1], settle_asset='USDT', linear=sym.endswith('/USDT')))
+            except Exception as exc:
+                logger.debug("Ratio fetch failed for %s: %s", sym, exc)
+
+    tasks = [asyncio.create_task(fetch(sym)) for sym in dict.fromkeys(symbols)]
+    try:
+        if tasks:
+            await asyncio.wait(tasks, timeout=_LSR_BUDGET_SEC)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     return results
