@@ -1,5 +1,38 @@
 # Architecture Decision Log
 
+## 2026-09-29 — FastMarketStream 不迁移至 CCXT Pro（#3699 Phase 8）
+
+### Context
+
+Issue #3699 Phase 8 要求对 FastMarketStream 进行迁移前资格认证：用 CCXT Pro 替换
+`fast_stream.py` 中原生 Bitget/Binance WebSocket 实现，条件是 12 个资格门全部通过。
+
+对 CCXT 4.5.84 的 `ccxt.pro.bitget` 和 `ccxt.pro.binance` 进行了 API 面分析，结论如下。
+
+### Decisions
+
+不迁移至 CCXT Pro。两个硬阻断门：
+
+**Gate 4（订阅 ACK 语义）**：CCXT Pro 没有公开的每通道订阅确认 API。
+`handle_subscription_status` 是内部 no-op，`subscriptions` 属性不存在。
+Phase 8 规范明令禁止用"首条数据到达"代替订阅 ACK。
+
+**Gate 5（事件序号标识）**：CCXT Pro 归一化 Ticker 不保留交易所原始 `seq`/`seqId`。
+Phase 8 规范要求在引入本地计数器前先在合同中证明其等效性；合同未更新，不等效。
+
+此外 Gate 9（Binance spot diff-depth book 连续性）无法在不做实时探测的情况下
+证明等效，标记为 UNCERTAIN。
+
+### Consequences
+
+- `fast_stream.py` 中的原生 WebSocket 实现继续作为 Fast Monitoring 传输层的唯一所有者。
+- 不引入实验性 CCXT Pro 并行路径。
+- 详细资格证据见
+  `docs/research/explorations/FAST_STREAM_CCXT_PRO_QUALIFICATION_2026-09-29.md`。
+- 重新评估条件：CCXT Pro 增加公开的订阅确认 API，**且** 合同明确允许本地单调计数器。
+
+---
+
 ## 2026-09-07 — measurement_unsupported 是路径固有状态，判定必须早于 Lab authority 探测
 
 ### Context
