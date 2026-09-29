@@ -1628,6 +1628,18 @@ class TradingConfig(BaseModel):
     vol_sizing_enabled: bool = True
     vol_target_risk_usdt: float = 25.0
     vol_target_pct: float = 1.5
+    # DRAFT (#3743, owner-requested, decision 2026-09-30): stop-floor measure.
+    # "vol_target_pct" (default) is the current approved semantics — the floor
+    # is a static `trading.vol_target_pct` percent of price, unchanged.
+    # "atr_multiple_draft" switches the floor to
+    # `stop_floor_atr_multiple_draft * <15m ATR%>`, falling back to the static
+    # floor whenever ATR is unavailable. Rollback: flip this back to
+    # "vol_target_pct". See docs/design/contracts/entry-plan-contract.md
+    # "DRAFT: ATR-relative stop-floor policy (decision issue #3743, ...)".
+    stop_floor_policy: Literal["vol_target_pct", "atr_multiple_draft"] = "vol_target_pct"
+    # DRAFT (#3743): the `k` in `k * ATR%`, consumed only by stop_floor_policy
+    # == "atr_multiple_draft". No effect under the default policy.
+    stop_floor_atr_multiple_draft: float = 1.0
     vol_kelly_cap_fraction: float = 0.25
     # Trailing stop / breakeven
     trail_enabled: bool = True

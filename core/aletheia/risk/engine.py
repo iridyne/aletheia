@@ -1201,11 +1201,38 @@ def _evaluate_proposal_locked(
                     violations.append(RISK_REWARD_OUTSIDE_ENVELOPE)
 
     if proposal.stop_price and proposal.price:
+        # DRAFT (#3743, owner-requested, decision 2026-09-30): under
+        # atr_multiple_draft, recheck the ATR-relative floor using the
+        # instrument's *current* measured 15m ATR% (not a value frozen into
+        # the Plan — freezing it into EntryPlan would move the schema
+        # fingerprint `entry_contract_fingerprints()` hashes, i.e. an
+        # identity cutover even while this policy defaults off; see the
+        # DRAFT subsection in entry-plan-contract.md). One extra DB read,
+        # gated on the draft policy only. Default policy takes no new read
+        # and is unchanged.
+        atr_pct_for_floor = None
+        if (
+            getattr(cfg.trading, "stop_floor_policy", "vol_target_pct") == "atr_multiple_draft"
+            and proposal.entry_plan_id
+        ):
+            plan_row = get_entry_plan(proposal.entry_plan_id)
+            if plan_row is not None:
+                from aletheia.trading.sizing import _lookup_atr_pct
+
+                try:
+                    atr_pct_for_floor = _lookup_atr_pct(
+                        str(plan_row["symbol"]),
+                        venue=str(plan_row["venue"]),
+                        market_type=str(plan_row["market_type"]),
+                    )
+                except Exception:
+                    atr_pct_for_floor = None
         tight_stop = stop_distance_below_min_floor(
             proposal.price,
             proposal.stop_price,
             execution_mode=proposal.execution_mode,
             cfg=cfg,
+            atr_pct=atr_pct_for_floor,
         )
         if tight_stop:
             violations.append(tight_stop)

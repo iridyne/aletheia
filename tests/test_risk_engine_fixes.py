@@ -219,3 +219,51 @@ def test_exchange_demo_rejects_stop_tighter_than_vol_target(tmp_path, monkeypatc
         v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
         for v in evaluate_proposal(p).violations
     )
+
+
+def test_atr_multiple_draft_floor_gates_on_the_current_measured_atr(tmp_path, monkeypatch):
+    """DRAFT (#3743, owner-requested, decision 2026-09-30): under
+    stop_floor_policy=atr_multiple_draft, Risk resolves the linked Plan's
+    instrument and rechecks the k*ATR floor against the instrument's
+    *current* measured 15m ATR% — accepting a stop that clears it and
+    rejecting one that does not."""
+    _prepare(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.risk import engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+    from aletheia.trading.entry_plan import STOP_DISTANCE_BELOW_VOL_TARGET
+
+    cfg = load_config()
+    cfg.trading.stop_floor_policy = "atr_multiple_draft"
+    cfg.trading.stop_floor_atr_multiple_draft = 1.0
+    save_config(cfg)
+
+    # Current measured ATR% = 0.5 -> floor = 1.0 * 0.5 = 0.5%.
+    monkeypatch.setattr(
+        engine, "get_entry_plan",
+        lambda _plan_id: {"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "status": "active"},
+    )
+    monkeypatch.setattr("aletheia.trading.sizing._lookup_atr_pct", lambda *a, **k: 0.5)
+
+    def _proposal(stop_price, plan_id):
+        p = TradeProposal(
+            symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+            execution_mode="bitget_demo", quantity=1.0, price=100.0,
+            order_type="limit", entry_plan_id=plan_id, entry_leg_index=0,
+            stop_price=stop_price, leverage=2,
+        )
+        repo.insert_trade_proposal(p)
+        return p
+
+    tight = _proposal(99.6, "fixture-plan-tight")  # distance 0.4% < floor 0.5% -> rejected
+    loose = _proposal(99.3, "fixture-plan-loose")  # distance 0.7% > floor 0.5% -> clears
+
+    assert any(
+        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
+        for v in engine.evaluate_proposal(tight).violations
+    )
+    assert not any(
+        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
+        for v in engine.evaluate_proposal(loose).violations
+    )
