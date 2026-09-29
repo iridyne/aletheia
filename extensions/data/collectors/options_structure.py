@@ -25,12 +25,11 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.net import httpx_client
+from aletheia.net import close_ccxt, make_ccxt
 from aletheia.data.models import OptionsMarketStructureSnapshot
 
 logger = logging.getLogger("aletheia.data.collectors.options_structure")
 
-_DERIBIT_BASE = "https://www.deribit.com/api/v2/public"
 _CURRENCIES = ("BTC", "ETH")
 _MIN_VALID_ENTRIES = 5  # fail closed below this threshold
 
@@ -43,30 +42,28 @@ class OptionsStructureCollector:
         volatility_snapshots = []
         errors: list[str] = []
 
-        for currency in _CURRENCIES:
-            try:
-                snap = await _collect_currency(currency, volatility_snapshots=volatility_snapshots)
-                if snap:
-                    snapshots.append(snap)
-            except Exception as exc:
-                errors.append(f"{currency}:{exc}")
-                logger.debug("options_structure: %s failed: %s", currency, exc)
+        exchange, session = make_ccxt("deribit")
+        try:
+            for currency in _CURRENCIES:
+                try:
+                    snap = await _collect_currency(exchange, currency, volatility_snapshots=volatility_snapshots)
+                    if snap:
+                        snapshots.append(snap)
+                except Exception as exc:
+                    errors.append(f"{currency}:{exc}")
+                    logger.debug("options_structure: %s failed: %s", currency, exc)
+        finally:
+            await close_ccxt(exchange, session)
 
         return {"snapshots": snapshots, "volatility_snapshots": volatility_snapshots, "errors": errors}
 
 
-async def _collect_currency(currency: str, *, volatility_snapshots: list | None = None) -> OptionsMarketStructureSnapshot | None:
+async def _collect_currency(exchange: Any, currency: str, *, volatility_snapshots: list | None = None) -> OptionsMarketStructureSnapshot | None:
     observed_at = datetime.now(timezone.utc).isoformat()
-
-    async with httpx_client(timeout=15) as client:
-        resp = await client.get(
-            f"{_DERIBIT_BASE}/get_book_summary_by_currency",
-            params={"currency": currency, "kind": "option"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    items = data.get("result") or []
+    data = await exchange.publicGetGetBookSummaryByCurrency(
+        {"currency": currency, "kind": "option"}
+    )
+    items = (data or {}).get("result") or []
     acquired_at = datetime.now(timezone.utc).isoformat()
     try:
         return _gex_from_items(currency, items, observed_at)
