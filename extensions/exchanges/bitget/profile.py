@@ -365,6 +365,11 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
     )
     closed_order_requests = open_order_requests
     fill_requests = open_order_requests
+    # UTA v3 financial-records endpoint: one request for USDT-FUTURES funding.
+    # The `uta=True` flag routes fetchLedger to /v3/account/financial-records.
+    ledger_requests: tuple[dict[str, object], ...] = (
+        {"uta": True, "productType": "USDT-FUTURES"},
+    )
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=True)
@@ -384,7 +389,58 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
             values["equity"] = usd_equity
         return values, normalized, None if saw_usd_value else _reason
 
-    funding_events = BitgetClassicV2Profile.funding_events
+    def funding_events(self, rows):
+        from aletheia.uta.funding import normalize_bitget_uta_funding_rows
+
+        return normalize_bitget_uta_funding_rows(
+            row.get("info", row) if isinstance(row, dict) else {} for row in rows
+        )
+
+    async def fetch_funding_rows(
+        self,
+        exchange,
+        since,
+        limit,
+        history_params_fn,
+        *,
+        request,
+        ledger_requests: tuple[dict[str, object], ...],
+        venue_symbol: str | None = None,
+    ):
+        """Bitget UTA v3 uses fetch_ledger with uta=True and productType.
+
+        Routes to /v3/account/financial-records which supports UTA perpetual
+        funding settlement rows.  The venue_symbol is passed as ``symbol``
+        when provided so the query is scoped to one instrument.
+        """
+        page_limit = min(limit, 100)
+        rows = []
+        history_bound_reached = False
+        failed_calls = 0
+        for params in ledger_requests:
+            call_params = dict(params)
+            if venue_symbol:
+                call_params["symbol"] = venue_symbol
+            try:
+                page = await request(exchange.fetch_ledger(
+                    "USDT",
+                    since,
+                    page_limit,
+                    history_params_fn(call_params),
+                ))
+                if not isinstance(page, list):
+                    raise ValueError("invalid CCXT ledger")
+                history_bound_reached = history_bound_reached or len(page) >= page_limit
+                rows.extend(item for item in page if isinstance(item, dict))
+            except (Exception, TimeoutError):
+                failed_calls += 1
+        if failed_calls == len(ledger_requests):
+            raise RuntimeError("private funding ledger unavailable")
+        reason = (
+            "funding_history_bound_reached" if history_bound_reached
+            else "funding_ledger_partial" if failed_calls else None
+        )
+        return rows, reason
 
 
 class BitgetClassicV2LiveProfile(BitgetClassicV2Profile):
