@@ -71,6 +71,7 @@ Core data/analytics 定义当前事实与完整性语义，Extensions 中同名�
 | news_analyze | 5min | 更新 news_items sentiment/relevance/status | Research Worker / 当前上下文消费者 | 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
 | owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted perp_structure_snapshots + source/batch hash + coverage/universe audit; no holder rows or identities; seeds perp_structure_shadow_outcomes | System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | optional observation; no automatic endpoint/scheduler; cost-aware unavailable; decision influence disabled |
 | `okx_demo_symbols` | 4h | `execution.venue_capabilities` 内存 capability 缓存 | Gateway 精确 market 的 symbol availability 检查 | ✅ 保留 sandbox 产品事实刷新；不是独立 broker 或当前交易准入 |
+| `venue_margin_facts` | 5min | settings(`venue_margin_envelope.<venue>.<symbol>.<market_type>`) | Entry Compiler 的确定性杠杆解析、Risk submit-time 复核（#3729） | ✅ 只维护 Planner 当前可认领队列读到的 instrument（`list_candidate_planning_demand`）；新鲜行跳过、缺失/过期才取公开 tier API；exact venue 是持仓场馆（`execution_mode_venue`），失败留 typed unavailable 且永不默认 MMR |
 
 ---
 

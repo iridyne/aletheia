@@ -318,3 +318,234 @@ def test_clear_helper_removes_the_fact_row(tmp_path, monkeypatch):
     assert vm.inspect_venue_margin_envelope(
         venue="bitget", symbol="BTC/USDT", market_type="perp"
     ) is None
+
+
+# --- Demand-driven maintenance (Issue #3741) ---------------------------------
+
+
+class _RecordingBitgetExchange:
+    """Bitget tier fake that records which instruments were actually fetched."""
+
+    def __init__(self, tiers, *, failing=()):
+        self._tiers = tiers
+        self._failing = {str(symbol) for symbol in failing}
+        self.fetched: list[str] = []
+
+    async def fetch_market_leverage_tiers(self, symbol):
+        self.fetched.append(symbol)
+        if symbol in self._failing:
+            raise RuntimeError("tier api unavailable")
+        return self._tiers
+
+
+async def test_demand_refresh_fetches_missing_and_skips_fresh(tmp_path, monkeypatch):
+    """A steady state costs nothing; only missing/stale instruments are fetched."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    now = 1_000_000_000_000
+    vm.store_venue_margin_envelope(_make_envelope(vm, fetched_at_ms=now))
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="bitget_demo",
+        pairs=[("BTC/USDT", "perp"), ("ETH/USDT", "perp")],
+        exchange=exchange,
+        now=now + 1_000,
+    )
+
+    assert exchange.fetched == ["ETH/USDT:USDT"]  # ccxt perp form, missing one only
+    assert (result["status"], result["venue"]) == ("ok", "bitget")
+    assert (result["considered"], result["refreshed"], result["fresh"]) == (2, 1, 1)
+    assert result["unavailable"] == []
+    assert vm.inspect_venue_margin_envelope(
+        venue="bitget", symbol="ETH/USDT", market_type="perp"
+    ) is not None
+
+
+async def test_demand_refresh_refetches_a_stale_row(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    stale_at = 1_000_000_000_000
+    vm.store_venue_margin_envelope(_make_envelope(vm, fetched_at_ms=stale_at))
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="bitget_demo",
+        pairs=[("BTC/USDT", "perp")],
+        exchange=exchange,
+        now=stale_at + vm._TTL_MS + 1,
+    )
+
+    assert exchange.fetched == ["BTC/USDT:USDT"]
+    assert (result["refreshed"], result["fresh"]) == (1, 0)
+
+
+async def test_demand_refresh_isolates_one_instrument_failure(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS, failing=("ETH/USDT:USDT",))
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="bitget_demo",
+        pairs=[("ETH/USDT", "perp"), ("SOL/USDT", "perp")],
+        exchange=exchange,
+        now=1_000_000_000_000,
+    )
+
+    assert result["refreshed"] == 1
+    assert result["unavailable"] == [
+        {"symbol": "ETH/USDT", "market_type": "perp", "reason": vm.REASON_TIERS_UNAVAILABLE}
+    ]
+    assert vm.inspect_venue_margin_envelope(
+        venue="bitget", symbol="SOL/USDT", market_type="perp"
+    ) is not None
+    assert vm.inspect_venue_margin_envelope(
+        venue="bitget", symbol="ETH/USDT", market_type="perp"
+    ) is None
+
+
+async def test_demand_refresh_is_not_applicable_without_a_registered_venue(tmp_path, monkeypatch):
+    """An internal/paper route holds no exchange position, so there is nothing to fetch."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="paper_internal",
+        pairs=[("BTC/USDT", "perp")],
+        exchange=exchange,
+    )
+
+    assert result["status"] == "not_applicable"
+    assert exchange.fetched == []
+
+
+async def test_demand_refresh_bounds_one_tick_and_ignores_spot(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    exchange = _RecordingBitgetExchange(_GOOD_BITGET_TIERS)
+    result = await vm.refresh_venue_margin_demand(
+        execution_mode="bitget_demo",
+        pairs=[
+            ("AAA/USDT", "perp"),
+            ("BBB/USDT", "perp"),
+            ("CCC/USDT", "perp"),
+            ("SPOT/USDT", "spot"),
+        ],
+        max_symbols=2,
+        exchange=exchange,
+        now=1_000_000_000_000,
+    )
+
+    assert len(exchange.fetched) == 2
+    assert (result["considered"], result["skipped_over_cap"]) == (2, 1)
+    assert result["skipped_market_type"] == 1
+
+
+def test_planning_demand_is_exactly_the_planners_claimable_queue(tmp_path, monkeypatch):
+    """The maintained set cannot drift from what the Planner will claim."""
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env as setup_entry_env
+    from tests.test_entry_planner import _typed_candidate
+
+    setup_entry_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.service import _ensure_planning_generations
+
+    now = datetime.now(timezone.utc)
+    candidate = _typed_candidate(
+        mechanism="continuation", family="momentum", source_at=now.isoformat()
+    )
+    _ensure_planning_generations(
+        [candidate], soft_lease_sec=900, max_attention_age_sec=3600, now=now
+    )
+
+    demand = repo.list_candidate_planning_demand(now=now)
+    assert demand == [(candidate.symbol, "perp")]
+    assert len(demand) == repo.count_pending_candidate_planning(now=now) == 1
+
+    # A stale lease drops it from the Planner's queue, so it must leave demand too.
+    assert repo.list_candidate_planning_demand(now=now + timedelta(hours=2)) == []
+    assert repo.count_pending_candidate_planning(now=now + timedelta(hours=2)) == 0
+
+    # An execution-ineligible Candidate is not financing demand either.
+    repo.execute_write(
+        "UPDATE universe_members SET execution_eligible=0 WHERE id=?", (candidate.id,)
+    )
+    assert repo.list_candidate_planning_demand(now=now) == []
+    assert repo.count_pending_candidate_planning(now=now) == 0
+
+
+def test_scheduler_job_maintains_facts_for_the_live_demand(monkeypatch):
+    """The job reads the Planner's demand and refreshes it on the executing venue."""
+    import asyncio
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import venue_margin as vm
+
+    recorded: dict = {}
+
+    class _Exchange:
+        paper_execution_mode = "bitget_demo"
+
+    class _Live:
+        state = "live_disabled"
+
+    class _Agent:
+        permission_mode = "Full"
+
+    class _Cfg:
+        exchange = _Exchange()
+        live = _Live()
+        agent = _Agent()
+
+    async def fake_refresh(**kwargs):
+        recorded.update(kwargs)
+        return {"venue": "bitget", "considered": 2, "refreshed": 1, "fresh": 1, "unavailable": []}
+
+    monkeypatch.setattr(scheduler, "load_config", lambda *a, **k: _Cfg())
+    monkeypatch.setattr(repo, "list_candidate_planning_demand", lambda: [("BTC/USDT", "perp")])
+    monkeypatch.setattr(vm, "refresh_venue_margin_demand", fake_refresh)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", lambda job_id, awaitable: asyncio.run(awaitable))
+    failures: list = []
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+
+    scheduler._run_venue_margin_facts()
+
+    assert failures == []
+    assert recorded == {"execution_mode": "bitget_demo", "pairs": [("BTC/USDT", "perp")]}
+
+
+def test_scheduler_job_skips_when_no_entry_route_is_configured(monkeypatch):
+    """No external entry route means no position to hold, so no fetch is attempted."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import venue_margin as vm
+
+    class _Exchange:
+        paper_execution_mode = "paper_internal"
+
+    class _Live:
+        state = "live_disabled"
+
+    class _Agent:
+        permission_mode = "Full"
+
+    class _Cfg:
+        exchange = _Exchange()
+        live = _Live()
+        agent = _Agent()
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("no fact refresh may run without an external entry route")
+
+    monkeypatch.setattr(scheduler, "load_config", lambda *a, **k: _Cfg())
+    monkeypatch.setattr(repo, "list_candidate_planning_demand", lambda: [("BTC/USDT", "perp")])
+    monkeypatch.setattr(vm, "refresh_venue_margin_demand", unexpected)
+
+    scheduler._run_venue_margin_facts()

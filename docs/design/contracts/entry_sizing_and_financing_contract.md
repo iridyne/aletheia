@@ -149,11 +149,14 @@ execution run on different venues, e.g. a binance-sourced universe executed on
 `bitget_demo`). The Plan's own `venue` still identifies the market data. Facts come from
 `VenueMarginEnvelope` (CCXT public market leverage tiers where
 the venue exposes them, persisted with fetch timestamp and provenance, read through a
-freshness TTL). The read path is synchronous and network-free; the fetch is explicit and
-out-of-band: `uv run aletheia data venue-margins --venue <venue> --symbol <symbol>` refreshes
-the row from the venue's public tier API (add `--show` to inspect the cached one). Until a
-fresh row exists for an instrument, its leveraged entry is unavailable — that is the
-fail-closed contract, not a defect to work around. An absent, stale, or incomplete envelope is a typed failure
+freshness TTL). The read path is synchronous and network-free; the fetch is out-of-band, and
+the runtime maintains it: the `venue_margin_facts` scheduler job refreshes exactly the
+instruments the Planner's current claimable queue reads (`list_candidate_planning_demand`),
+skipping rows that are already fresh, so a rolling universe costs one public tier fetch per
+newly demanded instrument. `uv run aletheia data venue-margins --venue <venue> --symbol
+<symbol>` remains the explicit single-instrument/ops entry point (add `--show` to inspect
+the cached row). Until a fresh row exists for an instrument, its leveraged entry is
+unavailable — that is the fail-closed contract, not a defect to work around. An absent, stale, or incomplete envelope is a typed failure
 (`VENUE_MARGIN_TIERS_UNAVAILABLE`, `VENUE_MARGIN_TIERS_STALE`); a static in-repo
 maintenance-margin default is never the authority.
 

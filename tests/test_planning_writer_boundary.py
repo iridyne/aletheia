@@ -12,6 +12,9 @@ _OWNERS = {
     "reconcile_candidate_attention": {"universe/service.py"},
     "candidate_attention_is_active": {"agent_shell/entry_planner.py"},
     "count_pending_candidate_planning": {"agent_shell/entry_planner.py", "agent_runtime/pi_daemon.py"},
+    # Read-only demand projection for the venue-margin fact refresh (#3741); it
+    # delegates to expire_candidate_attention so its callers stay bounded too.
+    "list_candidate_planning_demand": {"agent_runtime/scheduler.py"},
     "complete_candidate_planning_no_plan": {"agent_shell/entry_planner.py"},
     "block_candidate_planning": {"agent_shell/entry_planner.py"},
     "mark_candidate_planning_stage": {"agent_shell/entry_planner.py"},
@@ -32,6 +35,7 @@ _DELEGATIONS = {
     (caller, "expire_candidate_attention") for caller in (
         "candidate_attention_is_active", "reconcile_candidate_attention",
         "claim_next_candidate_planning", "count_pending_candidate_planning",
+        "list_candidate_planning_demand",
         "complete_candidate_planning_no_plan", "defer_candidate_planning",
         "complete_candidate_planning_with_plan",
     )

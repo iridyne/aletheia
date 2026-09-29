@@ -6,9 +6,11 @@ per-symbol default. This module is the one place that owns those facts:
 
 - ``load_venue_margin_envelope()``    synchronous cache read, no network I/O.
   Safe on the hot Compiler/Risk sizing path.
-- ``refresh_venue_margin_envelope()`` async CCXT fetch + persist. Runs on its
-  own schedule (or on demand); never called inline from sizing/leverage
-  resolution.
+- ``refresh_venue_margin_envelope()`` async CCXT fetch + persist for one key.
+- ``refresh_venue_margin_demand()``   async batch over the Planner's current
+  demand set (Issue #3741): fetches only what is missing or stale, on the venue
+  that will hold the position, so an operator never has to seed facts by hand
+  before a Candidate can be planned.
 
 Storage follows the ``exchange_sync.py`` cache pattern: one JSON blob per key
 in the existing ``settings`` table, keyed by venue/symbol/market_type.
@@ -25,6 +27,7 @@ import hashlib
 import json
 import logging
 import time
+from typing import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -344,3 +347,116 @@ async def refresh_venue_margin_envelope(
     )
     store_venue_margin_envelope(envelope)
     return envelope
+
+
+# One tick refreshes at most this many missing instruments. The demand set is
+# the Planner's current queue (tens of symbols at most), a fresh row is skipped,
+# so this only bounds the first pass after a universe roll or a deploy.
+VENUE_MARGIN_DEMAND_MAX_SYMBOLS = 8
+
+
+async def refresh_venue_margin_demand(
+    *,
+    execution_mode: str,
+    pairs: Sequence[tuple[str, str]],
+    margin_mode: MarginMode = "isolated",
+    max_symbols: int = VENUE_MARGIN_DEMAND_MAX_SYMBOLS,
+    exchange=None,
+    now: int | None = None,
+) -> dict:
+    """Maintain margin facts for the instruments the Entry path is about to read.
+
+    ``pairs`` is the Planner's live demand as ``(symbol, market_type)`` and the
+    venue is the one that will hold the position (``execution_mode_venue``), not
+    the venue that produced the market data (#3740). Existing non-stale rows are
+    skipped, so a steady state costs no fetch at all and a rolling universe costs
+    one fetch per newly demanded instrument; a single instrument's failure never
+    blocks another, and nothing is ever defaulted or guessed.
+
+    ``exchange`` is injectable for tests. When omitted, a CCXT Pro session is
+    built here -- inside the running loop, because the session binds to it -- and
+    closed in a ``finally``.
+    """
+
+    from aletheia.config.exchanges import execution_mode_venue
+
+    venue = execution_mode_venue(execution_mode)
+    summary: dict = {
+        "status": "not_applicable",
+        "venue": venue,
+        "considered": 0,
+        "refreshed": 0,
+        "fresh": 0,
+        "unavailable": [],
+        "skipped_market_type": 0,
+        "skipped_over_cap": 0,
+    }
+    if not venue:
+        return summary
+
+    demand = list(dict.fromkeys(pairs))
+    perps = [(symbol, market_type) for symbol, market_type in demand if market_type != MARKET_SPOT]
+    summary["skipped_market_type"] = len(demand) - len(perps)
+    considered = perps[: max(0, int(max_symbols))]
+    summary["skipped_over_cap"] = len(perps) - len(considered)
+    summary["considered"] = len(considered)
+    summary["status"] = "ok"
+    if not considered:
+        return summary
+
+    owns_exchange = exchange is None
+    session = None
+    close_ccxt = None
+    if owns_exchange:
+        from aletheia.net import close_ccxt as _close_ccxt
+        from aletheia.net import make_ccxt_pro
+
+        close_ccxt = _close_ccxt
+        exchange, session = make_ccxt_pro(venue)
+    try:
+        for symbol, market_type in considered:
+            try:
+                load_venue_margin_envelope(
+                    venue=venue,
+                    symbol=symbol,
+                    market_type=market_type,
+                    margin_mode=margin_mode,
+                    now=now,
+                )
+            except VenueMarginUnavailable:
+                # missing, stale, malformed, or mode-mismatched: refetch it below
+                logger.debug("venue_margin demand: refetching %s:%s", venue, symbol)
+            else:
+                summary["fresh"] += 1
+                continue
+            try:
+                await refresh_venue_margin_envelope(
+                    exchange,
+                    venue=venue,
+                    symbol=symbol,
+                    market_type=market_type,
+                    margin_mode=margin_mode,
+                    now=now,
+                )
+                summary["refreshed"] += 1
+            except VenueMarginUnavailable as exc:
+                summary["unavailable"].append(
+                    {"symbol": symbol, "market_type": market_type, "reason": exc.reason}
+                )
+            except Exception as exc:  # bound the reason; never fabricate facts
+                summary["unavailable"].append(
+                    {"symbol": symbol, "market_type": market_type, "reason": type(exc).__name__}
+                )
+    finally:
+        if owns_exchange and session is not None and close_ccxt is not None:
+            await close_ccxt(exchange, session)
+
+    logger.info(
+        "venue_margin demand refresh: venue=%s considered=%d refreshed=%d fresh=%d unavailable=%d",
+        venue,
+        summary["considered"],
+        summary["refreshed"],
+        summary["fresh"],
+        len(summary["unavailable"]),
+    )
+    return summary

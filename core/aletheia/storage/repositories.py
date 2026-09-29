@@ -4215,6 +4215,44 @@ def count_pending_candidate_planning(
     return int(row[0] or 0) if row else 0
 
 
+def list_candidate_planning_demand(
+    max_attempts: int = 3,
+    *,
+    now: datetime | None = None,
+    resume_only: bool = False,
+) -> list[tuple[str, str]]:
+    """Distinct ``(symbol, market_type)`` the Planner can still claim right now.
+
+    Mirrors ``count_pending_candidate_planning``'s predicate exactly, so the
+    instrument facts a caller maintains out-of-band (Issue #3741) are the same
+    set the Planner will read them for -- a second predicate here would let the
+    maintained demand drift from the claimed demand.
+    """
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
+    rows = (
+        get_db()
+        .execute(
+            "SELECT DISTINCT pg.symbol, pg.market_type FROM candidate_planning_generations pg "
+            "JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "WHERE pg.is_current=1 AND pg.attention_status='active' "
+            "AND pg.entry_behavior_fingerprint IS NOT NULL "
+            "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
+            "AND um.execution_eligible=1 "
+            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+            "AND pg.attempt_count<? AND (pg.status='pending' "
+            "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
+            "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
+            "ORDER BY pg.symbol",
+            (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
+        )
+        .fetchall()
+    )
+    return [(str(row[0]), str(row[1])) for row in rows]
+
+
 def complete_candidate_planning_no_plan(
     generation_id: str,
     owner_token: str,
