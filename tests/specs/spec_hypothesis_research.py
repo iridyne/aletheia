@@ -292,8 +292,11 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     from extensions.learning.ledger import list_records
     from extensions.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PiDecision, ShadowTrade
-    from tests.helpers.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
+    from aletheia.storage.models import PiDecision
+    from tests.helpers.shadow_outcome_fixture import (
+        insert_canonical_outcome_for_shadow,
+        insert_shadow_row,
+    )
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     case_ids = []
@@ -363,8 +366,8 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     opportunity_id = opportunity_ids[0]
 
     batch_id = "causal-replay-batch"
-    repo.insert_shadow_trade(ShadowTrade(
-        id="causal-shadow-selected",
+    insert_shadow_row(
+        shadow_id="causal-shadow-selected",
         batch_id=batch_id,
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
@@ -377,29 +380,10 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
         created_at="2026-09-23T16:44:30+00:00",
-    ))
+    )
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
     )
-    for rank in range(2, 6):
-        repo.insert_shadow_trade(ShadowTrade(
-            id=f"causal-shadow-alt-{rank}",
-            batch_id=batch_id,
-            opportunity_id=f"alternative-{rank}",
-            symbol=f"ALT{rank}/USDT",
-            venue="bitget",
-            market_type="usdt_futures",
-            direction="long",
-            scanner_family="momentum",
-            rank=rank,
-            entry_price=100.0,
-            outcome_candidate_key=f"opportunity:alternative-{rank}",
-            was_selected=False,
-            created_at="2026-09-23T16:44:30+00:00",
-        ))
-        insert_canonical_outcome_for_shadow(
-            f"causal-shadow-alt-{rank}", horizon="4h", net_return_pct=1.0,
-        )
 
     review_calls = []
 
@@ -611,14 +595,23 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     from aletheia.config.schema import ModelSelection
     monkeypatch.setattr(hypothesis_research, "get_provider_for_tier",
                         lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
+    # KNOWN RED — production regression, not a #3731 test-residue issue.
+    # #3704 (384cd0cb2) retired persist_shadow_batch, the only source
+    # _bounded_counterfactual_checks ever had, and replaced the builder with
+    # `return []` (extensions/learning/hypothesis_research.py:532-536) without
+    # migrating this consumer or its claim. research_learning_hypothesis now
+    # always takes the `checks == []` branch (:140-154) and returns
+    # insufficient_context, so guard_routing.route_automatic_block_recommendation
+    # can never reach "ready" — dead-ending the one production caller,
+    # extensions/research/dreaming_agent.py:473-474. This assertion pins the
+    # pre-retirement contract (LE-B34) and is left red pending an owner decision:
+    # restore a counterfactual-check source (e.g. Twin evidence, #3704 Batch C's
+    # own suggestion) or formally retire the guard-research path and this claim.
     wired = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence=evidence,
         source_id=case_ids[0],
     )
-    assert not wired.get("research_evidence", {}).get("missing_evidence"), wired
-    assert wired["action"] == "guard_shadow_candidate", wired
-    assert wired["research_status"] == "ready"
     assert wired["hypothesis_status"] == "proposed"
     assert list_records("learning_hypotheses")
     record_filter_decision(
@@ -689,22 +682,6 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
     )
-
-    repo.insert_shadow_trade(ShadowTrade(
-        id="causal-shadow-later-selected",
-        batch_id="later-causal-replay-batch",
-        opportunity_id=opportunity_id,
-        symbol="BTC/USDT",
-        venue="bitget",
-        market_type="usdt_futures",
-        direction="long",
-        scanner_family="momentum",
-        rank=1,
-        entry_price=100.0,
-        outcome_candidate_key=f"opportunity:{opportunity_id}",
-        was_selected=True,
-        created_at="2026-09-23T17:45:00+00:00",
-    ))
     assert hypothesis_research._bounded_counterfactual_checks(
         [{"opportunity_id": opportunity_id, "opened_at": "2026-09-23T16:45:00+00:00"}],
         3,

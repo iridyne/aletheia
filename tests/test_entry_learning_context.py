@@ -23,7 +23,7 @@ def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
     context = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
-            "policy": "candidate_selection_utility_v1",
+            "policy": "candidate_selection_utility",
             "policy_epoch": "epoch-1",
             "source_record_hash": "a" * 64,
         },
@@ -42,7 +42,7 @@ def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
         symbol=symbol, market_type="perp", rank=1, total_score=90,
         scanner_family="mean_reversion", scanner_direction="long", entry_price_usd=100,
         expires_at="2099-01-01T00:00:00+00:00",
-        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy="candidate_selection_utility",
         candidate_selection_policy_epoch="epoch-1", candidate_selection_utility_pct=1.0,
         opportunity_mechanism="reversal", opportunity_mechanism_version="reversal/v1",
         opportunity_source_component="mean_reversion", opportunity_source_cutoff_at=created_at,
@@ -130,7 +130,7 @@ def _context(as_of_at: str):
     entry_behavior, schema = entry_contract_fingerprints()
     return build_entry_learning_context(
         as_of_at=as_of_at, mechanism="reversal", direction="long", market_type="perp",
-        policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+        policy="candidate_selection_utility", policy_epoch="epoch-1",
         current_behavior_identity={
             "producer_commit": "commit-a", "behavior_fingerprint": "behavior-a",
             "entry_behavior_fingerprint": entry_behavior, "schema_fingerprint": schema,
@@ -575,7 +575,7 @@ def test_entry_learning_treatment_freezes_epoch_and_changes_only_context_presenc
         "mechanism": "reversal",
         "direction": "long",
         "market_type": "perp",
-        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy": "candidate_selection_utility",
         "candidate_selection_policy_epoch": "epoch-1",
     }
     manifest = SimpleNamespace(
@@ -611,7 +611,7 @@ def test_entry_learning_treatment_receipt_uses_planning_generation_outcome_key(m
     )
     resolve_entry_learning_treatment(
         planning_generation_id="generation-1", mechanism="reversal", direction="long",
-        market_type="perp", policy="candidate_selection_utility_v1",
+        market_type="perp", policy="candidate_selection_utility",
         policy_epoch="epoch-1", as_of_at="2026-09-03T00:00:00+00:00",
     )
 

@@ -699,7 +699,6 @@ def test_injected_connection_query_only_state_is_restored():
     db.execute("CREATE TABLE query_only_restoration_probe (id INTEGER)")
 
 
-
 def test_missing_or_partially_migrated_evidence_returns_insufficient_data():
     from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
     from aletheia.storage.sqlite import get_db
