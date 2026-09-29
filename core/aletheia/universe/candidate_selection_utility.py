@@ -7,26 +7,26 @@ from dataclasses import asdict, dataclass
 from typing import Literal, Sequence
 
 from aletheia.trading.entry_plan import entry_instrument_violation
-from aletheia.universe.candidate_eligibility import HardGateDecisionV1, canonical_fingerprint
+from aletheia.universe.candidate_eligibility import HardGateDecision, canonical_fingerprint
 from aletheia.universe.economic_utility import (
-    EconomicUtilityEstimateV2,
+    EconomicUtilityEstimate,
     reason_proves_evidence_absent,
 )
-from aletheia.universe.opportunity_evidence import OpportunityEvidenceBundleV1
+from aletheia.universe.opportunity_evidence import OpportunityEvidenceBundle
 
 
 CANDIDATE_SELECTION_UTILITY_VERSION = "candidate-selection-utility/v2"
 
 
 @dataclass(frozen=True)
-class CandidateSelectionUtilityV1:
+class CandidateSelectionUtility:
     version: Literal["candidate-selection-utility/v2"]
     candidate_key: str
-    hard_gate: HardGateDecisionV1
-    opportunity_evidence: OpportunityEvidenceBundleV1
+    hard_gate: HardGateDecision
+    opportunity_evidence: OpportunityEvidenceBundle
     primary_mechanism: str | None
     primary_direction: Literal["long", "short"] | None
-    economic_estimates: tuple[EconomicUtilityEstimateV2, ...]
+    economic_estimates: tuple[EconomicUtilityEstimate, ...]
     economic_utility_pct: float | None
     utility_floor_pct: float
     admission_status: Literal[
@@ -43,18 +43,18 @@ class CandidateSelectionUtilityV1:
 
 def build_candidate_selection_utility(
     *,
-    hard_gate: HardGateDecisionV1,
-    opportunity_evidence: OpportunityEvidenceBundleV1,
-    economic_estimates: Sequence[EconomicUtilityEstimateV2],
+    hard_gate: HardGateDecision,
+    opportunity_evidence: OpportunityEvidenceBundle,
+    economic_estimates: Sequence[EconomicUtilityEstimate],
     short_enabled: bool = True,
-) -> CandidateSelectionUtilityV1:
+) -> CandidateSelectionUtility:
     """Decide whether one Candidate earns a scarce planning slot.
 
     Pure: reads no storage, writes nothing, calls no model. Inputs are the
     already-fetched hard gate, the candidate's mechanism evidence and its
     economic estimates; the caller owns their freshness and identity.
 
-    Returns a ``CandidateSelectionUtilityV1`` whose ``admission_status`` is
+    Returns a ``CandidateSelectionUtility`` whose ``admission_status`` is
     ``admitted`` or an explicit alternative (``below_floor``, ``unavailable``,
     ``ineligible``, ``observe_only``, ``direction_conflict``). ``admission_basis``
     carries ``measured`` or ``startup`` only for an admitted result and is ``None``
@@ -172,7 +172,7 @@ def build_candidate_selection_utility(
         "admission_basis": basis,
         "startup_reason": startup_reason,
     }
-    return CandidateSelectionUtilityV1(
+    return CandidateSelectionUtility(
         CANDIDATE_SELECTION_UTILITY_VERSION,
         hard_gate.candidate_key,
         hard_gate,
@@ -200,16 +200,16 @@ def candidate_selection_rank(
     return (0 if measured else 1, -value if value is not None else math.inf, candidate_key)
 
 
-def decision_rank(item: CandidateSelectionUtilityV1) -> tuple[int, float, str]:
+def decision_rank(item: CandidateSelectionUtility) -> tuple[int, float, str]:
     strength = next((mechanism.pessimistic_strength for mechanism in item.opportunity_evidence.mechanisms
                      if mechanism.mechanism_id == item.primary_mechanism), None)
     return candidate_selection_rank(item.admission_basis, item.economic_utility_pct, strength, item.candidate_key)
 
 def select_admitted_candidates(
-    decisions: Sequence[CandidateSelectionUtilityV1],
+    decisions: Sequence[CandidateSelectionUtility],
     *,
     max_candidates: int,
-) -> tuple[CandidateSelectionUtilityV1, ...]:
+) -> tuple[CandidateSelectionUtility, ...]:
     """Return the top ``max_candidates`` admitted decisions, in planning order.
 
     Pure: no storage reads, no writes. ``decisions`` is one snapshot's already
@@ -228,7 +228,7 @@ def select_admitted_candidates(
 
 
 __all__ = [
-    "CANDIDATE_SELECTION_UTILITY_VERSION", "CandidateSelectionUtilityV1",
+    "CANDIDATE_SELECTION_UTILITY_VERSION", "CandidateSelectionUtility",
     "build_candidate_selection_utility", "select_admitted_candidates",
     "candidate_selection_rank", "decision_rank",
 ]

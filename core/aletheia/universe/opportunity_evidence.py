@@ -19,7 +19,7 @@ _FAMILY_TO_ROLE = {
 
 
 @dataclass(frozen=True)
-class MechanismEvidenceV1:
+class MechanismEvidence:
     mechanism_id: Literal["continuation", "reversal", "positioning_forced_flow", "information_catalyst"]
     mechanism_version: str
     source_component_id: str | None
@@ -35,13 +35,13 @@ class MechanismEvidenceV1:
 
 
 @dataclass(frozen=True)
-class OpportunityEvidenceBundleV1:
+class OpportunityEvidenceBundle:
     version: Literal["universe-opportunity-evidence/v2"]
     candidate_key: str
     feature_snapshot_id: str | None
     source_cutoff_at: str
     instrument: Mapping[str, str]
-    mechanisms: tuple[MechanismEvidenceV1, ...]
+    mechanisms: tuple[MechanismEvidence, ...]
     context: Mapping[str, object]
     mechanism_set_fingerprint: str
     source_fingerprint: str
@@ -50,7 +50,7 @@ class OpportunityEvidenceBundleV1:
         return asdict(self)
 
 
-def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> MechanismEvidenceV1:
+def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> MechanismEvidence:
     primary = (
         next((item for item in components if item.component_id == "momentum"), None)
         if mechanism_id == "continuation"
@@ -61,7 +61,7 @@ def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> Mechani
         usable = []
     if not usable:
         reasons = tuple(sorted({item.invalid_reason or "direction_unavailable" for item in components}))
-        return MechanismEvidenceV1(
+        return MechanismEvidence(
             mechanism_id, f"{mechanism_id}/v1", primary.component_id if primary else None,
             "unavailable", None, None, None, None,
             (), (), reasons, reasons,
@@ -76,7 +76,7 @@ def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> Mechani
         f"diagnostic_component:{item.component_id}:{item.direction}"
         for item in usable if item is not selected
     )
-    return MechanismEvidenceV1(
+    return MechanismEvidence(
         mechanism_id,
         f"{mechanism_id}/v1",
         selected.component_id,
@@ -100,7 +100,7 @@ def build_opportunity_evidence(
     *,
     candidate_key: str,
     source_cutoff_at: str,
-) -> OpportunityEvidenceBundleV1:
+) -> OpportunityEvidenceBundle:
     components = score_all_continuous_families(feature)
     by_id = {item.component_id: item for item in components}
     grouped = {
@@ -111,7 +111,7 @@ def build_opportunity_evidence(
         _project("continuation", grouped["continuation"]),
         _project("reversal", grouped["reversal"]),
         _project("positioning_forced_flow", grouped["positioning_forced_flow"]),
-        MechanismEvidenceV1(
+        MechanismEvidence(
             "information_catalyst", "information_catalyst/v1", None, "unavailable", None,
             None, None, None, (), (), ("external_event_provenance_unavailable",),
             ("external_event_provenance",),
@@ -143,7 +143,7 @@ def build_opportunity_evidence(
         "source_cutoff_at": source_cutoff_at,
         "instrument": instrument,
     }
-    return OpportunityEvidenceBundleV1(
+    return OpportunityEvidenceBundle(
         OPPORTUNITY_EVIDENCE_VERSION,
         candidate_key,
         str(feature.get("feature_snapshot_id")) if feature.get("feature_snapshot_id") else None,
@@ -157,10 +157,10 @@ def build_opportunity_evidence(
 
 
 def annotate_within_run_percentiles(
-    bundles: Sequence[OpportunityEvidenceBundleV1],
+    bundles: Sequence[OpportunityEvidenceBundle],
     *,
     minimum_bucket_size: int = 20,
-) -> tuple[OpportunityEvidenceBundleV1, ...]:
+) -> tuple[OpportunityEvidenceBundle, ...]:
     """Average-rank ties inside mechanism + direction + market buckets."""
 
     buckets: dict[tuple[str, str, str], list[tuple[int, int, float]]] = {}
@@ -196,6 +196,6 @@ def annotate_within_run_percentiles(
 
 
 __all__ = [
-    "OPPORTUNITY_EVIDENCE_VERSION", "MechanismEvidenceV1", "OpportunityEvidenceBundleV1",
+    "OPPORTUNITY_EVIDENCE_VERSION", "MechanismEvidence", "OpportunityEvidenceBundle",
     "annotate_within_run_percentiles", "build_opportunity_evidence",
 ]

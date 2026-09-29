@@ -94,10 +94,10 @@ def _typed_candidate(
 ):
     from uuid import uuid4
 
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     candidate_id = uuid4().hex[:12]
-    context = CandidateOpportunityContextV1(
+    context = CandidateOpportunityContext(
         candidate_id=candidate_id,
         candidate_selection={
             "policy": policy,

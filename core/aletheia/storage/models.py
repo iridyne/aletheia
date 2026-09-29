@@ -1396,7 +1396,7 @@ class UniverseMember(BaseModel):
 
     @model_validator(mode="after")
     def _validate_candidate_selection_evidence(self):
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
         target = self.candidate_selection_policy in {"candidate_selection_utility_v1", "serenity_research_v1"}
         mechanism_evidence = (
@@ -1431,7 +1431,7 @@ class UniverseMember(BaseModel):
             if any(value is None for value in context_fields):
                 raise ValueError("Candidate Opportunity context is incomplete")
             try:
-                context = CandidateOpportunityContextV1.model_validate_json(
+                context = CandidateOpportunityContext.model_validate_json(
                     self.candidate_opportunity_context_json
                 )
             except ValueError as exc:

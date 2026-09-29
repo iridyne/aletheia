@@ -3440,13 +3440,13 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
     from aletheia.trading.entry_analysis import entry_orderbook_available
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.trading.entry_plan import candidate_planning_identity
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     if get_db().in_transaction:
         raise ValueError("requalification_preparation_inside_transaction")
     if not candidate.get("execution_eligible") or not candidate.get("candidate_opportunity_context_json"):
         return None
-    context = CandidateOpportunityContextV1.model_validate_json(candidate["candidate_opportunity_context_json"])
+    context = CandidateOpportunityContext.model_validate_json(candidate["candidate_opportunity_context_json"])
     cutoff = _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
     behavior, schema = entry_contract_fingerprints()
     instrument = tuple(str(candidate[key]) for key in ("venue", "symbol", "market_type"))
@@ -3483,7 +3483,7 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
 
 def _candidate_planning_existing_state(candidate_id: str, candidate: dict, context, timestamp: str):
     """Read the current owner and requalification state inside the caller's transaction."""
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     existing_row = (
         get_db().execute(
@@ -3532,7 +3532,7 @@ def _candidate_planning_existing_state(candidate_id: str, candidate: dict, conte
         newer_requalification_cutoff = False
     try:
         existing_context = (
-            CandidateOpportunityContextV1.model_validate_json(
+            CandidateOpportunityContext.model_validate_json(
                 existing_candidate["candidate_opportunity_context_json"]
             )
             if existing_candidate and existing_candidate.get("candidate_opportunity_context_json")
@@ -3752,7 +3752,7 @@ def ensure_candidate_planning_generation(
 
     from aletheia.trading.entry_plan import candidate_planning_identity
     from aletheia.trading.entry_contract import entry_contract_fingerprints
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
     from aletheia.trading.entry_analysis import fingerprint, planning_structure_material
 
     if requalification is None and not get_db().in_transaction:
@@ -3771,7 +3771,7 @@ def ensure_candidate_planning_generation(
         if not bool(candidate.get("execution_eligible")):
             raise ValueError("candidate_execution_ineligible")
         context = (
-            CandidateOpportunityContextV1.model_validate_json(
+            CandidateOpportunityContext.model_validate_json(
                 candidate["candidate_opportunity_context_json"]
             )
             if candidate.get("candidate_opportunity_context_json") else None
@@ -4009,7 +4009,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
     """Read current Candidate debt in one snapshot, without evaluator or write paths."""
     from aletheia.config.loader import load_config
     from aletheia.trading.entry_profiles import compatible_entry_profiles
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
@@ -4103,7 +4103,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
         blockers = result["blocking_reason_counts"]
         for row in rows:
             try:
-                context = CandidateOpportunityContextV1.model_validate_json(row["context_json"] or "")
+                context = CandidateOpportunityContext.model_validate_json(row["context_json"] or "")
                 if (context.candidate_id != row["member_id"] or context.context_hash != row["context_hash"]
                     or any(row[field] != row["member_" + alias] for field, alias in
                            (("venue", "venue"), ("symbol", "symbol"), ("market_type", "market")))

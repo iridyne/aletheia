@@ -747,7 +747,7 @@ def get_universe_snapshot_created_at(snapshot_id: str) -> str | None:
 
 def _project_candidate_admission(row: dict) -> dict:
     """Expose only hash- and identity-validated admission evidence; never infer it."""
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     fields = ("admission_basis", "startup_reason", "pessimistic_strength")
     row.update(dict.fromkeys(fields))
@@ -755,7 +755,7 @@ def _project_candidate_admission(row: dict) -> dict:
     if not encoded:
         return row
     try:
-        context = CandidateOpportunityContextV1.model_validate_json(encoded)
+        context = CandidateOpportunityContext.model_validate_json(encoded)
     except ValueError:
         return row
     if (context.context_hash != row.get("candidate_opportunity_context_hash")

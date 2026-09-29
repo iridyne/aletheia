@@ -12,7 +12,7 @@ from aletheia.storage.models import UniverseTwinShadowBatch, UniverseTwinShadowE
 from aletheia.universe.candidate_eligibility import canonical_fingerprint, evaluate_hard_gate
 from aletheia.universe.candidate_selection_utility import (
     CANDIDATE_SELECTION_UTILITY_VERSION,
-    CandidateSelectionUtilityV1,
+    CandidateSelectionUtility,
     build_candidate_selection_utility,
     select_admitted_candidates,
     candidate_selection_rank,
@@ -70,7 +70,7 @@ def _safe_feature(feature: Mapping[str, object]) -> dict[str, object]:
 
 
 def _compact_candidate_selection(
-    decision: CandidateSelectionUtilityV1,
+    decision: CandidateSelectionUtility,
 ) -> dict[str, object]:
     """Keep immutable decision evidence while moving shared/raw detail out of every row."""
 

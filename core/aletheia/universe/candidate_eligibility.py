@@ -37,7 +37,7 @@ def _finite(value: object, *, positive: bool = False) -> float | None:
 
 
 @dataclass(frozen=True)
-class HardGateCheckV1:
+class HardGateCheck:
     check_id: str
     status: Literal["passed", "failed", "unavailable", "not_applicable"]
     observed_value: object = None
@@ -46,14 +46,14 @@ class HardGateCheckV1:
 
 
 @dataclass(frozen=True)
-class HardGateDecisionV1:
+class HardGateDecision:
     version: Literal["universe-hard-gate/v1"]
     candidate_key: str
     evaluated_at: str
     instrument: Mapping[str, str]
     status: Literal["eligible", "ineligible", "unavailable"]
     actionability: Literal["actionable", "observe_only", "none"]
-    checks: tuple[HardGateCheckV1, ...]
+    checks: tuple[HardGateCheck, ...]
     reason_codes: tuple[str, ...]
     input_fingerprint: str
     policy_fingerprint: str
@@ -69,7 +69,7 @@ def evaluate_hard_gate(
     candidate_key: str,
     evaluated_at: str,
     action_route_reason: str | None = None,
-) -> HardGateDecisionV1:
+) -> HardGateDecision:
     """Evaluate physical/data eligibility without assigning Alpha points."""
 
     venue = str(feature.get("venue") or "").strip().lower()
@@ -78,21 +78,21 @@ def evaluate_hard_gate(
     if market_type in {"swap", "futures", "usdt_futures"}:
         market_type = "perp"
     instrument = {"venue": venue, "symbol": symbol, "market_type": market_type}
-    checks: list[HardGateCheckV1] = []
+    checks: list[HardGateCheck] = []
 
     registry_status = feature.get("registry_status")
     if registry_status is None:
-        checks.append(HardGateCheckV1("market_active", "unavailable", reason_code="market_active_unavailable"))
+        checks.append(HardGateCheck("market_active", "unavailable", reason_code="market_active_unavailable"))
     elif str(registry_status) != "active":
-        checks.append(HardGateCheckV1("market_active", "failed", registry_status, "active", "market_inactive"))
+        checks.append(HardGateCheck("market_active", "failed", registry_status, "active", "market_inactive"))
     else:
-        checks.append(HardGateCheckV1("market_active", "passed", registry_status, "active", "market_active"))
+        checks.append(HardGateCheck("market_active", "passed", registry_status, "active", "market_active"))
 
     identity_complete = bool(
         venue and symbol and market_type in {"spot", "perp"}
         and feature.get("asset_id") and feature.get("feature_snapshot_id")
     )
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "identity", "passed" if identity_complete else "unavailable",
         instrument, reason_code="exact_identity_available" if identity_complete else "exact_identity_unavailable",
     ))
@@ -100,17 +100,17 @@ def evaluate_hard_gate(
     base, separator, quote = symbol.partition("/")
     supported_quote = separator == "/" and quote.split(":", 1)[0] == "USDT"
     if not supported_quote:
-        checks.append(HardGateCheckV1("stablecoin", "failed", symbol, "*/USDT", "unsupported_quote_or_symbol"))
+        checks.append(HardGateCheck("stablecoin", "failed", symbol, "*/USDT", "unsupported_quote_or_symbol"))
     elif base in _STABLECOINS:
-        checks.append(HardGateCheckV1("stablecoin", "failed", base, reason_code="stablecoin_base_excluded"))
+        checks.append(HardGateCheck("stablecoin", "failed", base, reason_code="stablecoin_base_excluded"))
     else:
-        checks.append(HardGateCheckV1("stablecoin", "passed", base, reason_code="non_stablecoin_base"))
+        checks.append(HardGateCheck("stablecoin", "passed", base, reason_code="non_stablecoin_base"))
 
     # An empty allowlist stays unrestricted. A configured one is the outer bound
     # of the tradable universe, so it is answered before the exclusion list.
     allowlist = {str(item).upper() for item in getattr(cfg, "allowlist", None) or ()}
     admitted_by_allowlist = not allowlist or symbol in allowlist
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "allowlist", "passed" if admitted_by_allowlist else "failed",
         admitted_by_allowlist, bool(allowlist),
         "allowlist_unrestricted" if not allowlist
@@ -118,14 +118,14 @@ def evaluate_hard_gate(
     ))
 
     blacklisted = symbol in {str(item).upper() for item in cfg.blacklist}
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "blacklist", "failed" if blacklisted else "passed", blacklisted, False,
         "configured_blacklist" if blacklisted else "not_blacklisted",
     ))
 
     price_raw = feature.get("last_price", feature.get("price"))
     price = _finite(price_raw, positive=True)
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "price", "passed" if price is not None else ("unavailable" if price_raw is None else "failed"),
         price_raw, 0.0, "price_available" if price is not None else ("price_unavailable" if price_raw is None else "price_invalid"),
     ))
@@ -144,7 +144,7 @@ def evaluate_hard_gate(
         and evaluation_time is not None
         and source_time <= evaluation_time
     )
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "provenance", "passed" if provenance_available else "unavailable", provenance,
         reason_code="source_provenance_available" if provenance_available else "source_provenance_unavailable",
     ))
@@ -160,14 +160,14 @@ def evaluate_hard_gate(
             status, reason = "failed", f"{check_id}_{'above_maximum' if maximum else 'below_minimum'}"
         else:
             status, reason = "passed", f"{check_id}_{'within_limit' if maximum else 'sufficient'}"
-        checks.append(HardGateCheckV1(check_id, status, raw, threshold, reason))
+        checks.append(HardGateCheck(check_id, status, raw, threshold, reason))
 
     numeric_check("volume", "quote_volume_24h", float(cfg.min_volume_24h_usdt))
     numeric_check("spread", "spread_bps", float(cfg.max_spread_bps) * 2.0, maximum=True)
     numeric_check("depth", "depth_10bps_usd", float(cfg.min_depth_10bps_usd) * 0.1)
     numeric_check("freshness", "data_freshness_sec", _MAX_FRESHNESS_SEC, maximum=True)
 
-    checks.append(HardGateCheckV1(
+    checks.append(HardGateCheck(
         "action_route", "passed" if action_route_reason is None else "unavailable",
         action_route_reason, None,
         "action_route_available" if action_route_reason is None else f"action_route_unavailable:{action_route_reason}",
@@ -192,7 +192,7 @@ def evaluate_hard_gate(
         "blacklist": sorted(str(item).upper() for item in cfg.blacklist),
         "allowlist": sorted(str(item).upper() for item in getattr(cfg, "allowlist", None) or ()),
     }
-    return HardGateDecisionV1(
+    return HardGateDecision(
         HARD_GATE_VERSION,
         candidate_key,
         evaluated_at,
@@ -207,6 +207,6 @@ def evaluate_hard_gate(
 
 
 __all__ = [
-    "HARD_GATE_VERSION", "HardGateCheckV1", "HardGateDecisionV1",
+    "HARD_GATE_VERSION", "HardGateCheck", "HardGateDecision",
     "canonical_fingerprint", "evaluate_hard_gate",
 ]

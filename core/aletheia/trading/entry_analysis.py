@@ -569,9 +569,9 @@ def build_entry_analysis_context(
     venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
     opportunity_context = None
     if generation.get("entry_behavior_fingerprint"):
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-        opportunity_context = CandidateOpportunityContextV1.model_validate(
+        opportunity_context = CandidateOpportunityContext.model_validate(
             json.loads(generation["requalification_source_json"])["candidate_opportunity_context"]
         )
         if (
