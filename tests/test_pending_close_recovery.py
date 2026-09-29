@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tests.helpers.position_fixture import force_update_position
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -42,8 +43,33 @@ def _skip_uta_history(monkeypatch):
     monkeypatch.setattr(pcr, "_uta_history_lookup", lambda order: None)
 
 
-def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch):
-    """Mimics the 2026-08-11 XRP take_profit close stuck in submitted."""
+def _terminal_unfilled_history(
+    *,
+    status: str = "canceled",
+    cancel_reason: str = "",
+    original_quantity: float = 9.0,
+) -> dict:
+    """The venue's positive report of one exact order: terminal and fully unfilled."""
+    return {
+        "orderStatus": status,
+        "status": status,
+        "cancelReason": cancel_reason,
+        "original_quantity": original_quantity,
+        "filled_quantity": 0.0,
+        "remaining_quantity": original_quantity,
+    }
+
+
+def test_xrp_stale_submitted_close_stays_unreleased_without_positive_evidence(
+    monkeypatch,
+):
+    """Mimics the 2026-08-11 XRP take_profit close stuck in submitted.
+
+    A complete read that does not find the order proves only that the read window
+    completed — never that the venue did not receive the order
+    (execution_contract §10.2.4). With no positive venue report this claim must
+    stay unresolved; the 24h terminal bound and the operator resolver own it.
+    """
     order = Order(
         id="71ae77205561",
         proposal_id="6ab3a1c50e22",
@@ -76,16 +102,12 @@ def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch)
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
 
     summary = pcr.recover_absent_stale_close_orders()
-    assert summary["released"] == 1
-    assert summary["released_position_ids"] == ["0da931113c25"]
+    assert summary["released"] == 0
+    assert _order_row("71ae77205561")["status"] == "submitted"
 
-    stored_order = repo.get_order("71ae77205561")
-    assert stored_order["status"] == "cancelled"
-    assert stored_order["error_reason"] == "stale_close_order_absent_unfilled"
-
-    stored_position = repo._select_one("positions", "0da931113c25")
-    assert stored_position["pending_close_order_id"] is None
-    assert stored_position["pending_close_status"] is None
+    stored_position = _position_row("0da931113c25")
+    assert stored_position["pending_close_order_id"] == "71ae77205561"
+    assert stored_position["pending_close_status"] == "submitted"
 
 
 def test_uni_entry_limit_on_exchange_is_not_released(monkeypatch):
@@ -150,6 +172,9 @@ def test_recent_close_claim_is_not_released(monkeypatch):
     )
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 0
@@ -157,7 +182,7 @@ def test_recent_close_claim_is_not_released(monkeypatch):
 
 
 def test_absent_unfilled_close_released_after_ack_lag(monkeypatch):
-    """XRP r9 class: order gone, no fills, position still open — do not wait 4h."""
+    """XRP r9 class: venue reports the close terminal and unfilled — do not wait 4h."""
     _seed_order(
         Order(
             id="close-ack-lost",
@@ -187,6 +212,9 @@ def test_absent_unfilled_close_released_after_ack_lag(monkeypatch):
     )
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 1
@@ -240,8 +268,8 @@ def test_exact_nonterminal_close_state_keeps_claim(monkeypatch, history_status):
     summary = pcr.recover_absent_stale_close_orders()
 
     assert summary["released"] == 0
-    assert repo.get_order(order_id)["status"] == "submitted"
-    stored_position = repo.get_position(position_id)
+    assert _order_row(order_id)["status"] == "submitted"
+    stored_position = _position_row(position_id)
     assert stored_position["pending_close_order_id"] == order_id
     assert stored_position["pending_close_status"] == "submitted"
 
@@ -279,9 +307,7 @@ def test_exact_terminal_close_state_can_release(monkeypatch):
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
     monkeypatch.setattr(
-        pcr,
-        "_uta_history_lookup",
-        lambda order: {"orderStatus": "canceled", "cancelReason": ""},
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
     )
 
     summary = pcr.recover_absent_stale_close_orders()
@@ -289,6 +315,60 @@ def test_exact_terminal_close_state_can_release(monkeypatch):
     assert summary["released"] == 1
     assert repo.get_order(order_id)["status"] == "cancelled"
     assert repo.get_position(position_id)["pending_close_order_id"] is None
+
+
+def test_terminal_close_without_reported_quantities_is_not_released(monkeypatch):
+    """A terminal state alone is not proof of zero fill.
+
+    The typed adapter maps an absent payload field to ``0``, so a venue that
+    never reported a filled quantity reads exactly like a reported zero. The
+    release requires the venue to also report the full original quantity still
+    remaining; anything less stays unresolved.
+    """
+    order_id = "close-terminal-no-quantity"
+    position_id = "pos-terminal-no-quantity"
+    _seed_order(
+        Order(
+            id=order_id,
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="ex-terminal-no-quantity",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id=position_id,
+            pending_close_order_id=order_id,
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        lambda order: {"orderStatus": "canceled", "cancelReason": ""},
+    )
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert _order_row(order_id)["status"] == "submitted"
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == order_id
+    assert stored_position["pending_close_status"] == "submitted"
 
 
 def test_absent_recovery_collects_exchange_evidence_outside_writer_lock(monkeypatch):
@@ -331,6 +411,9 @@ def test_absent_recovery_collects_exchange_evidence_outside_writer_lock(monkeypa
         pcr,
         "_exchange_fill_rows",
         lambda order: (lock_states.append(write_lock_held_by_current_thread()), [])[1],
+    )
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
     )
 
     summary = pcr.recover_absent_stale_close_orders()
@@ -375,6 +458,9 @@ def test_absent_recovery_refuses_changed_local_claim_after_evidence(monkeypatch)
         return []
 
     monkeypatch.setattr(pcr, "_exchange_fill_rows", mutate_claim)
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 0
@@ -415,9 +501,58 @@ def test_close_with_local_fill_is_not_released(monkeypatch):
     )
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 0
+
+
+@pytest.mark.parametrize("read", ["open_orders", "fills"])
+def test_incomplete_venue_read_logs_the_typed_reason(read, caplog, monkeypatch):
+    """INV-EX-1: a partial/unsupported venue read must be attributable, not silent.
+
+    The newly production-reachable recovery reads three UTA surfaces; a
+    structural PARTIAL on any of them leaves the claim unresolved, so the venue's
+    own reason code has to reach ``errors.log`` instead of only changing a return
+    value. (Exercised through the two readers the suite's autouse fixture does not
+    replace; the exact-order read shares the same warning helper.)
+    """
+    from types import SimpleNamespace
+
+    import aletheia.uta.manager as uta_manager
+    from aletheia.uta.models import ReadCompleteness
+    from tests.helpers.fill_reports import DEFAULT_IDENTITY
+
+    order = {
+        "id": "close-unavailable",
+        "client_order_id": "close-pos-unavailable",
+        "execution_mode": "bitget_demo",
+        "symbol": "XRP/USDT",
+        "market_type": "usdt_futures",
+        "created_at": _iso(1),
+        "uta_account_identity_json": DEFAULT_IDENTITY.model_dump_json(),
+    }
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.PARTIAL,
+        reason_code="private_order_history_start_required",
+    )
+
+    async def _incomplete(*_args, **_kwargs):
+        return report
+
+    monkeypatch.setattr(uta_manager, "query_uta", _incomplete)
+    reader = (
+        pcr._exchange_open_order_ids if read == "open_orders"
+        else pcr._exchange_fill_rows
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aletheia.pending_close_recovery"):
+        assert reader(order) is None
+
+    assert "private_order_history_start_required" in caplog.text
+    assert "partial" in caplog.text
 
 
 def test_submission_rejected_claim_released_after_soft_window():
@@ -966,72 +1101,6 @@ def test_rate_limited_park_is_not_released_after_four_hour_floor():
 # ── #3719: the 40725 park is a close claim, not an unclaimed position ───────
 
 
-def _seed_parked_claim(*, position_id="pos-parked-40725", age_hours=22.5):
-    from tests.helpers.execution_authority import seed_order_authority
-    from tests.helpers.fill_reports import DEFAULT_IDENTITY
-
-    proposal, decision = seed_order_authority(
-        proposal_id=f"prop-{position_id}",
-        risk_decision_id=f"risk-{position_id}",
-        symbol="XRP/USDT",
-        market_type="usdt_futures",
-        direction="short",
-        order_type="market",
-        quantity=9.0,
-        price=1.1219,
-        execution_mode="bitget_demo",
-    )
-    entry = Order(
-        proposal_id=proposal.id, risk_decision_id=decision.id,
-        client_order_id=proposal.id, symbol="XRP/USDT", market_type="usdt_futures",
-        direction="short", order_type="market", quantity=9.0, price=1.1219,
-        execution_mode="bitget_demo", status="filled",
-        uta_account_identity_json=DEFAULT_IDENTITY.model_dump_json(),
-    )
-    repo.insert_order(entry)
-    repo.insert_position(
-        _position(
-            id=position_id,
-            order_id=entry.id,
-            proposal_id=proposal.id,
-            pending_close_order_id=f"close-{position_id}",
-            pending_close_status=pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
-            pending_close_requested_at=_iso(age_hours),
-        )
-    )
-    repo.insert_order(
-        Order(
-            id=f"close-{position_id}",
-            client_order_id=f"close-{position_id}",
-            position_id=position_id,
-            proposal_id=proposal.id,
-            close_reason="stop_loss",
-            symbol="XRP/USDT",
-            market_type="usdt_futures",
-            direction="short",
-            order_type="market",
-            quantity=9.0,
-            price=1.1219,
-            execution_mode="bitget_demo",
-            status="cancelled",
-            source="native",
-            exchange_order_id="1471627178020290560",
-            error_reason=pcr.TRADE_RATE_LIMIT_CANCEL_REASON,
-            created_at=_iso(age_hours),
-        )
-    )
-
-
-def _orders_for_position(position_id: str) -> list[dict]:
-    return [
-        dict(row)
-        for row in repo.get_db().execute(
-            "SELECT id, status, error_reason FROM orders WHERE position_id = ?",
-            (position_id,),
-        ).fetchall()
-    ]
-
-
 def test_parked_claim_holds_the_close_fence_without_immediate_reconciliation():
     from aletheia.execution.close_convergence import (
         CLOSE_CLAIM_STATES,
@@ -1075,21 +1144,108 @@ def test_parked_claim_view_names_the_owner_unlock_at_any_age(age_hours, escalate
 
 def test_repeated_close_on_parked_claim_returns_already_pending():
     """#3719: the second close must return the parked claim, never claim an Order."""
-    _seed_parked_claim()
+    _seed_parked_40725()
 
     from aletheia.execution.coordinator import close_position
 
-    result = close_position("pos-parked-40725", reason="stop_loss")
+    result = close_position("pos-parked", reason="stop_loss")
 
     assert result["already_pending"] is True
     assert result["closed"] is False
-    assert result["order_id"] == "close-pos-parked-40725"
+    assert result["order_id"] == "close-pos-parked"
     assert result["status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
 
-    orders = _orders_for_position("pos-parked-40725")
-    assert [order["id"] for order in orders] == ["close-pos-parked-40725"]
+    orders = _close_orders_for("pos-parked")
+    assert [order["id"] for order in orders] == ["close-pos-parked"]
     assert orders[0]["status"] == "cancelled"
     assert orders[0]["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
+
+
+def test_reconcile_is_the_production_entry_to_absent_close_recovery(monkeypatch):
+    """#3719: the recovery is runtime-reachable through the reconcile job."""
+    _seed_order(
+        Order(
+            id="close-ack-lost",
+            client_order_id="close-pos-ack-lost",
+            position_id="pos-ack-lost",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-ack-lost",
+            pending_close_order_id="close-ack-lost",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
+
+    from aletheia.execution.reconciliation import reconcile
+
+    summary = reconcile()
+
+    assert summary["pending_close_released"] == 1
+    assert summary["pending_close_released_ids"] == ["pos-ack-lost"]
+    stored = repo.get_position("pos-ack-lost")
+    assert stored is not None
+    assert stored["pending_close_order_id"] is None
+    assert stored["pending_close_status"] is None
+
+
+def test_reconcile_parks_a_40725_close_claim_without_releasing_it(monkeypatch):
+    """The production path must park 40725 and never free the claim for a retry.
+
+    The candidate Order is in a *recoverable* local state, so it really is
+    selected by the recovery's own query — the outcome depends on the park
+    guard, not on the fixture being invisible to the decision.
+    """
+    position_id = _seed_unacked_close("close-40725-live", status="submitted")
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        lambda order: {
+            "orderStatus": "cancelled",
+            "cancelReason": "trade_too_many_times_cancel",
+        },
+    )
+
+    from aletheia.execution.reconciliation import reconcile
+
+    summary = reconcile()
+
+    assert summary["pending_close_released"] == 0
+    assert summary["pending_close_parked"] == 1
+    stored_order = _order_row("close-40725-live")
+    assert stored_order["status"] == "cancelled"
+    assert stored_order["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
+    stored = _position_row(position_id)
+    assert stored["pending_close_order_id"] == "close-40725-live"
+    assert stored["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+    # A parked claim is never a release candidate: a second pass must leave the
+    # owner-unlock-only park exactly where it is.
+    second = reconcile()
+    assert second["pending_close_released"] == 0
+    resumed = _position_row(position_id)
+    assert resumed["pending_close_order_id"] == "close-40725-live"
+    assert resumed["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
 
 
 def test_legacy_submission_rejected_40725_is_still_not_released():
@@ -1306,11 +1462,16 @@ def test_v3a_accepted_response_loss_is_never_released(monkeypatch, venue_evidenc
     assert len(_close_orders_for(position_id)) == 1
 
 
-def test_v3b_proven_absence_releases_exactly_once_and_advances_retry_identity(monkeypatch):
-    """V3 Case B: complete venue evidence proves absence; release happens once."""
+def test_v3b_proven_terminal_unfilled_release_happens_once_and_advances_retry_identity(
+    monkeypatch,
+):
+    """V3 Case B: the venue reports the close terminal and unfilled; release once."""
     position_id = _seed_unacked_close("close-pos-absent")
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
     monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
 
     first = pcr.recover_absent_stale_close_orders()
     assert first["released"] == 1
@@ -1326,6 +1487,65 @@ def test_v3b_proven_absence_releases_exactly_once_and_advances_retry_identity(mo
     second = pcr.recover_absent_stale_close_orders()
     assert second["released"] == 0
     assert pcr.next_close_client_oid(position_id) == f"close-{position_id}-r1"
+
+
+def test_v3b_silent_venue_never_releases_and_stays_fail_closed(monkeypatch):
+    """V3 Case B': a complete read that finds no order authorizes nothing."""
+    position_id = _seed_unacked_close("close-pos-silent")
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert summary["parked"] == 0
+    assert _order_row("close-pos-silent")["status"] == "pending"
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == "close-pos-silent"
+    assert stored_position["pending_close_status"] == "pending"
+
+
+def test_v3b_manual_reconciliation_pending_is_never_a_recovery_candidate(
+    monkeypatch,
+):
+    """A human-owned terminal claim is excluded from every automatic release.
+
+    The fixture is the worst case on purpose: the order is in a recoverable local
+    state and the venue positively reports it terminal and unfilled, so only the
+    claim-state exclusion keeps it human-owned. Both layers are asserted — the
+    candidate query (so a human-owned claim costs no private reads) and the
+    decision itself (so any other caller fails closed too).
+    """
+    position_id = _seed_unacked_close(
+        "close-pos-manual", status="submission_unknown"
+    )
+    force_update_position(
+        position_id,
+        pending_close_status=pcr.MANUAL_RECONCILIATION_PENDING_STATUS,
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr, "_uta_history_lookup", lambda order: _terminal_unfilled_history()
+    )
+
+    order_row, position_row = (
+        _order_row("close-pos-manual"),
+        _position_row(position_id),
+    )
+    assert pcr._eligible_absent_close_recovery(order_row, position_row) is None
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert summary["parked"] == 0
+    assert _order_row("close-pos-manual")["status"] == "submission_unknown"
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == "close-pos-manual"
+    assert (
+        stored_position["pending_close_status"]
+        == pcr.MANUAL_RECONCILIATION_PENDING_STATUS
+    )
 
 
 @pytest.mark.parametrize(
@@ -1386,7 +1606,8 @@ def test_v4_claim_committed_before_send_stays_pending_without_a_releaser():
     assert has_unresolved_close_claim(stored_position) is True
 
     # reconciliation reads the Order, but its only claim-clearing helper covers
-    # already-closed Positions only.
+    # already-closed Positions only; the absent-close release needs positive
+    # venue evidence and there is none here.
     from aletheia.execution.reconciliation import (
         _clear_verified_closed_pending,
         _list_unresolved_core_orders,
@@ -1399,7 +1620,10 @@ def test_v4_claim_committed_before_send_stays_pending_without_a_releaser():
     assert _position_row(position_id)["pending_close_order_id"] == close_order.id
 
     # Every later protective trigger short-circuits on the same claim, so the
-    # Position never reaches the venue again until something releases it.
+    # Position never reaches the venue again until something releases it —
+    # the reconcile job releases it once the venue reports the order terminal
+    # and unfilled (pinned by the reconcile tests above), or the 24h bound hands
+    # it to the operator resolver.
     from aletheia.execution.coordinator import close_position
 
     retry = close_position(position_id, "stop_loss")

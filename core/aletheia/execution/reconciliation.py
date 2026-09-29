@@ -22,6 +22,9 @@ from aletheia.data.symbols import to_bitget
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
 from aletheia.execution.errors import IncompleteReadError
+from aletheia.execution.pending_close_recovery import (
+    recover_absent_stale_close_orders,
+)
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     durable_private_fill_id,
@@ -1928,7 +1931,13 @@ def _materialize_native_order(
 
 
 def reconcile() -> dict:
-    """Reconcile unresolved exchange Orders and materialize proven fills."""
+    """Reconcile unresolved exchange Orders and materialize proven fills.
+
+    Also the single production entry to the conservative absent-close recovery
+    (``pending_close_recovery.recover_absent_stale_close_orders``): an open
+    Position whose close Order is proven absent, unfilled and terminal on the
+    venue gets its stale claim released so the protective exit may retry.
+    """
     all_orders = _list_unresolved_core_orders()
     filled_gap_orders = _list_bitget_demo_filled_entry_gaps()
     pending_close_cleared_ids = _clear_verified_closed_pending()
@@ -2036,6 +2045,17 @@ def reconcile() -> dict:
             filled += legacy_filled
             inconclusive += legacy_inconclusive
 
+    # The single production entry to the conservative absent-close recovery. It
+    # re-proves the whole evidence set itself (complete open-order view, exact
+    # empty fill history, typed order history, unchanged local claim) and runs
+    # last so a fill materialized above is already local and its zero-local-fill
+    # guard skips the claim. This call site grants the existing path a cadence;
+    # it does not relax the decision.
+    close_recovery = recover_absent_stale_close_orders()
+    errors.extend(
+        f"pending_close_recovery:{reason}" for reason in close_recovery["errors"]
+    )
+
     return {
         "checked": checked,
         "filled": filled,
@@ -2047,6 +2067,9 @@ def reconcile() -> dict:
         "filled_gap_inconclusive": filled_gap_inconclusive,
         "pending_close_cleared": len(pending_close_cleared_ids),
         "pending_close_cleared_ids": pending_close_cleared_ids,
+        "pending_close_released": close_recovery["released"],
+        "pending_close_released_ids": close_recovery["released_position_ids"],
+        "pending_close_parked": close_recovery["parked"],
         "errors": errors,
         "unreconciled_live": 0,
     }
