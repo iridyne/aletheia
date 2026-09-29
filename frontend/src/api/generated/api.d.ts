@@ -695,26 +695,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/shadow-trades": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Shadow Trades
-         * @description List authority-aware shadow trade diagnostics for counterfactual analysis.
-         */
-        get: operations["get_shadow_trades_api_analytics_shadow_trades_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/strategy-kpis": {
         parameters: {
             query?: never;
@@ -5789,26 +5769,6 @@ export interface paths {
          * @description Get a Candidate with its current Entry Plan and compatibility history.
          */
         get: operations["get_member_api_universe_members__member_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/universe/members/{member_id}/outcomes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Member Outcomes
-         * @description Forward outcomes for a specific universe member.
-         */
-        get: operations["get_member_outcomes_api_universe_members__member_id__outcomes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11492,6 +11452,11 @@ export interface components {
              * @default 0.25
              */
             max_single_trade_risk_pct: number;
+            /**
+             * Reduced Risk Multiplier
+             * @default 0.5
+             */
+            reduced_risk_multiplier: number;
         };
         /** RiskMarginPolicy */
         RiskMarginPolicy: {
@@ -13030,10 +12995,10 @@ export interface components {
             candidate_max_continuous_age_sec: number;
             /**
              * Candidate Selection Policy
-             * @default candidate_selection_utility_v1
+             * @default candidate_selection_utility
              * @enum {string}
              */
-            candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
+            candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility";
             /** Candidate Selection Policy Epoch */
             candidate_selection_policy_epoch?: string | null;
             /**
@@ -14206,40 +14171,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_shadow_trades_api_analytics_shadow_trades_get: {
-        parameters: {
-            query?: {
-                batch_id?: string | null;
-                scanner_family?: string | null;
-                resolved?: boolean | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -22391,37 +22322,6 @@ export interface operations {
         };
     };
     get_member_api_universe_members__member_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                member_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_member_outcomes_api_universe_members__member_id__outcomes_get: {
         parameters: {
             query?: never;
             header?: never;
