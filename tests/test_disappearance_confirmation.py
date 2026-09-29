@@ -257,3 +257,29 @@ def test_live_disappearance_records_evidence_but_remains_alert_only(tmp_path, mo
     assert result["adopted"] == []
     assert result["disappearance"]["created"] == 1
     assert repo.list_positions(status="open")[0]["status"] == "open"
+
+
+def test_endpoint_family_creates_distinct_fingerprints(tmp_path, monkeypatch):
+    """classic_v2 and uta_v3 views do not share identity_key (Gap-a regression)."""
+    from aletheia.portfolio.disappearance_confirmation import build_view_evidence
+
+    base_kwargs = dict(
+        broker_id="bitget_demo",
+        account_environment="demo",
+        execution_mode="bitget_demo",
+        complete=True,
+    )
+    snapshot = {"fetched_at": "2026-09-29T02:45:00+00:00", "positions": []}
+    ev_classic = build_view_evidence(snapshot, **base_kwargs, endpoint_family="classic_v2")
+    ev_uta = build_view_evidence(snapshot, **base_kwargs, endpoint_family="uta_v3")
+    ev_none = build_view_evidence(snapshot, **base_kwargs)
+
+    assert ev_classic["account_fingerprint"] != ev_uta["account_fingerprint"], (
+        "classic_v2 and uta_v3 must produce different fingerprints"
+    )
+    assert ev_classic["view_identity"] != ev_uta["view_identity"], (
+        "view identities must differ when endpoint_family differs"
+    )
+    # No endpoint_family should not raise and is deterministic.
+    ev_none2 = build_view_evidence(snapshot, **base_kwargs)
+    assert ev_none["account_fingerprint"] == ev_none2["account_fingerprint"]

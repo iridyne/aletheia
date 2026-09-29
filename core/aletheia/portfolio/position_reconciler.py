@@ -306,12 +306,20 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     result.sync_status = sync_status
     if target_execution_mode:
         from aletheia.portfolio.disappearance_confirmation import build_view_evidence
+        # Extract the API face (endpoint_family) from the unified accounts so
+        # that classic_v2 and uta_v3 produce distinct disappearance identity keys.
+        _endpoint_family: str | None = None
+        for _acct in ((unified or {}).get("accounts") or []):
+            if _acct.get("broker_id") == target_execution_mode:
+                _endpoint_family = (_acct.get("identity") or {}).get("profile") or None
+                break
         result.view_evidence = build_view_evidence(
             cached,
             broker_id=target_execution_mode,
             account_environment=_account_environment(target_execution_mode),
             execution_mode=target_execution_mode,
             complete=(cached is not None and sync_status == "ok"),
+            endpoint_family=_endpoint_family,
         )
 
     # Without a usable exchange view we cannot classify externals/orphans honestly.

@@ -476,6 +476,33 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     from aletheia.data.symbols import to_canonical
     from aletheia.data import price_feed as _pf
 
+    if positions and exc_upnl_index == {}:
+        # Index is empty while we have local positions. Common cause: exchange
+        # profile mismatch (e.g. uta_v3 config but positions on classic_v2).
+        # Log once so the operator can diagnose without inspecting the DB.
+        try:
+            from aletheia.portfolio import exchange_sync as _es
+            _cached = _es.get_unified_cached_state()
+            _exchange_count = len((_cached or {}).get("positions") or []) if _cached else 0
+            _profile = next(
+                (
+                    (a.get("identity") or {}).get("profile")
+                    for a in ((_cached or {}).get("accounts") or [])
+                    if a.get("broker_id") == (positions[0].get("execution_mode") or "")
+                ),
+                None,
+            )
+        except Exception:
+            _exchange_count, _profile = None, None
+        logger.warning(
+            "pnl: exchange uPnL index empty but %d local position(s) need marking "
+            "(exchange view positions=%s, active profile=%s); "
+            "check exchange.bitget_profile matches the account face holding positions",
+            len(positions),
+            _exchange_count,
+            _profile,
+        )
+
     # A venue Position is an aggregate exposure. Without a direct broker
     # Position identity, one aggregate uPnL cannot be allocated independently to
     # multiple local Position rows that share the same current match key.
