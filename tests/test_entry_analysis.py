@@ -330,7 +330,7 @@ def test_v2_schema_represents_every_mechanism_without_fabricating_a_plan(mechani
 
 def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
     from aletheia.trading.entry_analysis import build_entry_analysis_context
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
     bar_ms = 15 * 60 * 1000
     cutoff_ms = 96 * bar_ms
@@ -351,7 +351,7 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
         "opportunity_mechanism": "continuation", "candidate_selection_policy": "candidate_selection_utility_v1",
         "candidate_selection_policy_epoch": "epoch-1", "mechanism_version": "continuation/v1",
     }
-    opportunity = CandidateOpportunityContextV1(
+    opportunity = CandidateOpportunityContext(
         candidate_id="c1",
         candidate_selection={"policy": "candidate_selection_utility_v1", "policy_epoch": "epoch-1", "source_record_hash": "a" * 64},
         source={"detected_at": instant(2), "source_cutoff_at": instant(2), "feature_snapshot_id": "f1"},

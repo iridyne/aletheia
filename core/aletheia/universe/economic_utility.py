@@ -348,7 +348,7 @@ def build_economic_utility_cohort_index(
 
 
 @dataclass(frozen=True)
-class TailEvidenceV1:
+class TailEvidence:
     min_net_return_pct: float | None
     cvar_05_pct: float | None
     mae_p95_pct: float | None
@@ -356,7 +356,7 @@ class TailEvidenceV1:
 
 
 @dataclass(frozen=True)
-class EconomicUtilityEstimateV2:
+class EconomicUtilityEstimate:
     version: Literal["universe-economic-utility/v2"]
     candidate_key: str
     mechanism_id: str
@@ -372,7 +372,7 @@ class EconomicUtilityEstimateV2:
     uncertainty_penalty_pct: float | None
     economic_utility_pct: float | None
     min_tradable_edge_pct: float | None
-    tail_evidence: TailEvidenceV1
+    tail_evidence: TailEvidence
     cohort_identity: str
     source_outcome_fingerprint: str | None
     estimator_fingerprint: str
@@ -398,7 +398,7 @@ def estimate_economic_utility(
     source_cutoff_at: str | None = None,
     cost_assumptions: Mapping[str, object] | None = None,
     cohort_index: EconomicUtilityCohortIndex | None = None,
-) -> EconomicUtilityEstimateV2:
+) -> EconomicUtilityEstimate:
     if strength_percentile is not None and (
         not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1
     ):
@@ -437,14 +437,14 @@ def estimate_economic_utility(
     if child_values and len(child_mae) == len(child_values):
         worst_count = max(1, math.ceil(len(child_values) * 0.05))
         raw_min = summary.child_raw_min.get(quintile) if summary else None
-        tail = TailEvidenceV1(
+        tail = TailEvidence(
             raw_min,
             mean(sorted(child_values)[:worst_count]),
             _percentile(child_mae, 0.95),
             "harm" if raw_min is not None and raw_min < _TAIL_HARM_FLOOR_PCT else "clear",
         )
     else:
-        tail = TailEvidenceV1(None, None, None, "unavailable")
+        tail = TailEvidence(None, None, None, "unavailable")
     if status == "available" and tail.status == "unavailable":
         status = "unavailable"
     expected = standard_error = utility = None
@@ -501,7 +501,7 @@ def estimate_economic_utility(
         "minimum_coverage": 0.80,
         "tail_harm_floor_pct": _TAIL_HARM_FLOOR_PCT,
     }
-    return EconomicUtilityEstimateV2(
+    return EconomicUtilityEstimate(
         ECONOMIC_UTILITY_VERSION,
         candidate_key,
         mechanism_id,
@@ -536,8 +536,8 @@ __all__ = [
     "INDEPENDENT_UNIT_INTERVAL",
     "INDEPENDENT_UNIT_VERSION",
     "EconomicUtilityCohortIndex",
-    "EconomicUtilityEstimateV2",
-    "TailEvidenceV1",
+    "EconomicUtilityEstimate",
+    "TailEvidence",
     "build_economic_utility_cohort_index",
     "estimate_economic_utility",
     "select_non_overlapping_t0_clusters",

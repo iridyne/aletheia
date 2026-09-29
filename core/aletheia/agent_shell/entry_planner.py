@@ -73,9 +73,9 @@ def _intent_validation_code(exc: BaseException) -> str:
 
 
 def _parse_candidate_opportunity(candidate: dict) -> tuple:
-    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-    opportunity = CandidateOpportunityContextV1.model_validate_json(
+    opportunity = CandidateOpportunityContext.model_validate_json(
         candidate.get("candidate_opportunity_context_json") or ""
     )
     if (opportunity.candidate_id != candidate["id"]
