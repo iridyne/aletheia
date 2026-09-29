@@ -248,6 +248,34 @@ def _invalidate_pre_order_entry_plan(
     return terminal_status
 
 
+_DETERMINISTIC_SUBMISSION_FAILURES = frozenset({
+    # Codes the execution boundary raises when the Plan cannot be submitted at
+    # all: its running contract drifted, its provenance is incomplete, or its
+    # financing cannot be resolved. Re-dispatching them at event rate cannot
+    # change the outcome (#3747).
+    "ai_entry_running_contract_mismatch",
+    "ai_entry_generation_contract_mismatch",
+    "ai_entry_plan_provenance_required",
+    "ai_entry_context_invalid",
+    "ai_entry_context_identity_mismatch",
+    "entry_plan_submission_leverage_unavailable",
+    "entry_plan_financing_incomplete",
+    "entry_plan_financing_unresolved",
+    "entry_plan_runtime_authority_revoked",
+})
+
+
+def _deterministic_submission_failure(exc: BaseException) -> str | None:
+    """The bounded code when re-attempting this submission changes nothing.
+
+    The classification is the boundary's own vocabulary; the caller uses it to
+    stop dispatching one Plan for the rest of the loop instead of re-asking a
+    question whose answer is already known.
+    """
+    code = str(exc)[:120]
+    return code if code in _DETERMINISTIC_SUBMISSION_FAILURES else None
+
+
 async def _terminalize_entry_plan(
     row: dict,
     *,
@@ -685,6 +713,7 @@ async def _submit_entry_plan(plan, event, *, activation=None, depth=None, curren
 async def _watch_loop(cfg) -> None:
     global _status
     backoff = 1.0
+    submission_failures: dict[str, str] = {}
     stop = _stop_event
     if stop is None:
         return
@@ -710,6 +739,10 @@ async def _watch_loop(cfg) -> None:
         stream = fast_market_stream_for_config(cfg)
         event_task: asyncio.Task | None = None
         execution_tasks: dict[str, asyncio.Task] = {}
+        # One Plan, one deterministic refusal per loop iteration: keep asking
+        # rather than re-dispatching at event rate (#3747). Declared once outside
+        # the loop so the dispatch closure is not a loop-variable capture.
+        submission_failures.clear()
         latest_quotes = {}
         latest_depth = {}
 
@@ -717,6 +750,8 @@ async def _watch_loop(cfg) -> None:
             return latest_quotes.get(instrument), stream.monitoring_state(instrument, ("quote",))
 
         def dispatch(plan_id, operation, *args, **kwargs):
+            if plan_id in submission_failures:
+                return
             task = execution_tasks.get(plan_id)
             if task is not None and not task.done():
                 return
@@ -731,6 +766,8 @@ async def _watch_loop(cfg) -> None:
                         type(exc).__name__,
                         f":{str(exc)[:120]}" if str(exc) else "",
                     )
+                    if _deterministic_submission_failure(exc):
+                        submission_failures[plan_id] = str(exc)[:120]
             execution_tasks[plan_id] = asyncio.create_task(run())
         try:
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
@@ -791,6 +828,11 @@ async def _watch_loop(cfg) -> None:
                         # rolling quote/trade/depth window; re-warm from empty.
                         fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg)
                     plans, plan_engines = fresh_plans, fresh_plan_engines
+                    # A plan that left the watched set (retired, filled, expired)
+                    # is re-evaluated if it ever returns. Mutated in place so the
+                    # dispatch closure keeps referring to one object.
+                    for stale in [key for key in submission_failures if key not in plans]:
+                        submission_failures.pop(stale, None)
                     _confirm_ready_engines(stream, plan_engines, plans)
                     _status["watched_setups"] = len(plans)
                     _status["watched_entry_plan_ids"] = list(plans.keys())
