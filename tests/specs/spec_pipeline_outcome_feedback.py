@@ -79,7 +79,7 @@ def test_external_close_reaches_attribution_and_feedback(tmp_path, monkeypatch):
         "§2 unverified exchange exclusion",
         "L2c",
         "An exchange Position closed without private fill evidence keeps an explicit current "
-        "semantics exclusion and cannot trigger outcome-only shadow or serenity feedback.",
+        "semantics exclusion and cannot trigger outcome-only or serenity feedback.",
         status="implemented",
     )
 )
@@ -347,7 +347,6 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
         assess_reportable_outcome,
         raw_account_events,
     )
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio.pnl import close_position
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
@@ -384,9 +383,8 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
     ))
     hook_calls = []
     monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: hook_calls.append(row["id"]),
+        "aletheia.portfolio.pnl._run_outcome_hooks",
+        lambda row, *_args: hook_calls.append(row["id"]),
     )
 
     result = close_position(
@@ -434,7 +432,12 @@ def test_concurrent_verified_close_claims_position_once(tmp_path, monkeypatch):
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # claim asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     evidence = _verified_result(position)
     pre_read_barrier = threading.Barrier(2)
@@ -493,26 +496,25 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # claim asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     calls = []
 
-    def flaky_shadow_hook(row):
+    def flaky_hook(_hook_type, row):
         calls.append(row["id"])
         if len(calls) == 1:
             raise RuntimeError("forced post-commit hook failure")
-        return 1
 
-    monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        flaky_shadow_hook,
-    )
+    monkeypatch.setattr(outcome_hooks, "_feedback_executor", flaky_hook)
 
     closed = outcome_closure.close_position_verified(
         position.id,
@@ -552,12 +554,16 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
 )
 def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # claim asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
@@ -568,9 +574,9 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
     )
     calls = []
     monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: calls.append(row["id"]),
+        outcome_hooks,
+        "_feedback_executor",
+        lambda _hook_type, row: calls.append(row["id"]),
     )
 
     replayed = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
@@ -604,12 +610,16 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
         AttributionReadError,
         assess_position_closure,
     )
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # claim asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
 
     # Simulate a transient attribution read failure without blocking DB writes.
@@ -652,9 +662,9 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: delivered.append(row["id"]),
+        _oh_module,
+        "_feedback_executor",
+        lambda _hook_type, row: delivered.append(row["id"]),
     )
     replayed = outcome_hooks.process_outcome_hook_jobs(
         position_id=position.id,
@@ -691,21 +701,25 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
     _setup_db(tmp_path, monkeypatch)
     import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics.outcome_integrity import AttributionReadError
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # claim asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
 
     hook_calls = []
     monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: hook_calls.append(row["id"]),
+        outcome_hooks,
+        "_feedback_executor",
+        lambda _hook_type, row: hook_calls.append(row["id"]),
     )
     real_attribution = _oh_module.attribution_chain_complete
     monkeypatch.setattr(
@@ -739,12 +753,16 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
 
 def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the durable job this
+    # case asserts requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
@@ -752,9 +770,9 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
 
     hook_calls = []
     monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: hook_calls.append(row["id"]),
+        outcome_hooks,
+        "_feedback_executor",
+        lambda _hook_type, row: hook_calls.append(row["id"]),
     )
 
     first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
@@ -788,12 +806,16 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
     _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
-    position = _position(execution_mode="bitget_demo")
+    # `serenity_post_mortem` is the only hook kind the surviving pipeline
+    # enqueues (#3704 retired the `shadow_trades` hook), so the claimable job
+    # this case leases requires a Serenity close.
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"trade_school": "serenity"}
+    )
     repo.insert_position(position)
     monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
@@ -802,17 +824,12 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
     release = threading.Event()
     calls = []
 
-    def blocking_hook(row):
+    def blocking_hook(_hook_type, row):
         calls.append(row["id"])
         entered.set()
         assert release.wait(timeout=10)
-        return 1
 
-    monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        blocking_hook,
-    )
+    monkeypatch.setattr(outcome_hooks, "_feedback_executor", blocking_hook)
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(
             outcome_hooks.process_outcome_hook_jobs,
@@ -923,7 +940,9 @@ def test_serenity_replay_after_completion_gap_is_durably_idempotent(
         position_id=position.id,
         hook_type=outcome_hooks.SERENITY_POST_MORTEM_HOOK,
     )
-    assert len(list_outcome_hook_jobs(position_id=position.id)) == 2
+    # #3704 retired the `shadow_trades` hook job, so the Serenity post-mortem is
+    # the Position's only durable hook intent.
+    assert len(list_outcome_hook_jobs(position_id=position.id)) == 1
     assert post_mortem["position_id"] == position.id
     assert serenity_jobs[0]["status"] == "processing"
 
@@ -979,141 +998,6 @@ def test_scheduler_registers_outcome_hook_replay_as_essential_io_work():
     assert "minutes=1" in registration
     assert 'executor="io"' in registration
     assert "max_instances=1" in registration
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-OF-17",
-        "pipeline_outcome_feedback",
-        "§17 partial shadow replay recovery",
-        "L2c",
-        "A shadow hook with a missing price or partial row failure stays retryable; "
-        "a later replay resumes the unresolved rows without losing the batch anchor.",
-        status="implemented",
-    )
-)
-def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
-    tmp_path, monkeypatch,
-):
-    _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual import trades as shadow_trades
-    from aletheia.portfolio import outcome_closure, outcome_hooks
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import ShadowTrade
-    from tests.test_outcome_closure import _position, _verified_result
-
-    position = _position(execution_mode="bitget_demo")
-    repo.insert_position(position)
-    batch_id = "partial-shadow-batch"
-    counterfactual = ShadowTrade(
-        id="shadow-counterfactual",
-        batch_id=batch_id,
-        opportunity_id="counterfactual-opportunity",
-        symbol="ETH/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        entry_price=100.0,
-        was_selected=False,
-    )
-    selected = ShadowTrade(
-        id="shadow-selected",
-        batch_id=batch_id,
-        opportunity_id=position.opportunity_id,
-        symbol=position.symbol,
-        market_type=position.market_type,
-        direction=position.direction,
-        entry_price=position.entry_price,
-        was_selected=True,
-    )
-    repo.insert_shadow_trade(counterfactual)
-    repo.insert_shadow_trade(selected)
-    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
-    outcome_closure.close_position_verified(position.id, _verified_result(position))
-
-    monkeypatch.setattr(
-        shadow_trades,
-        "_current_price",
-        lambda symbol, *_args, **_kwargs: 110.0 if symbol == position.symbol else None,
-    )
-    first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
-
-    [failed_job] = list_outcome_hook_jobs(position_id=position.id)
-    first_rows = {row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)}
-    assert first["failed"] == 1
-    assert failed_job["status"] == "failed"
-    assert first_rows[selected.id]["resolved_at"] is not None
-    assert first_rows[counterfactual.id]["resolved_at"] is None
-
-    monkeypatch.setattr(
-        shadow_trades,
-        "_current_price",
-        lambda _symbol, *_args, **_kwargs: 120.0,
-    )
-    replayed = outcome_hooks.process_outcome_hook_jobs(
-        position_id=position.id,
-        now="2100-01-01T00:00:00+00:00",
-    )
-
-    [completed_job] = list_outcome_hook_jobs(position_id=position.id)
-    final_rows = {row["id"]: row for row in repo.list_shadow_trades(batch_id=batch_id)}
-    assert replayed["completed"] == 1
-    assert completed_job["status"] == "completed"
-    assert completed_job["attempts"] == 2
-    assert final_rows[selected.id]["resolved_at"] == first_rows[selected.id]["resolved_at"]
-    assert final_rows[counterfactual.id]["resolved_at"] is not None
-
-
-def test_legacy_position_close_does_not_resolve_keyed_batch_sibling(
-    tmp_path, monkeypatch,
-):
-    _setup_db(tmp_path, monkeypatch)
-    from extensions.counterfactual.trades import resolve_shadow_trades_for_position
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import ShadowTrade
-
-    batch_id = "mixed-authority-shadow-batch"
-    selected = ShadowTrade(
-        id="legacy-selected-shadow",
-        batch_id=batch_id,
-        opportunity_id="legacy-selected-opportunity",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        entry_price=100.0,
-        was_selected=True,
-    )
-    keyed = ShadowTrade(
-        id="keyed-sibling-shadow",
-        batch_id=batch_id,
-        opportunity_id="keyed-sibling-opportunity",
-        symbol="ETH/USDT",
-        venue="bitget",
-        market_type="spot",
-        direction="long",
-        entry_price=100.0,
-        outcome_candidate_key="opportunity:keyed-sibling-opportunity",
-    )
-    repo.insert_shadow_trade(selected)
-    repo.insert_shadow_trade(keyed)
-    monkeypatch.setattr(
-        "extensions.counterfactual.trades._current_price",
-        lambda *_args, **_kwargs: 110.0,
-    )
-
-    updated = resolve_shadow_trades_for_position({
-        "opportunity_id": selected.opportunity_id,
-        "symbol": selected.symbol,
-        "market_type": selected.market_type,
-        "current_price": 110.0,
-        "closed_at": "2026-08-23T00:00:00+00:00",
-    })
-
-    assert updated == 1
-    assert repo._select_one("shadow_trades", selected.id)["resolved_at"] is not None
-    keyed_row = repo._select_one("shadow_trades", keyed.id)
-    assert keyed_row["exit_price"] is None
-    assert keyed_row["pnl_pct"] is None
-    assert keyed_row["resolved_at"] is None
 
 
 @spec_claim(
