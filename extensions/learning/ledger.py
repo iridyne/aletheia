@@ -362,16 +362,6 @@ def linked_settled_exposure_counts(
         "e.exposed_at AS linked_exposed_at "
     )
     rows = db.execute(
-        f"SELECT {selected}FROM universe_forward_outcomes o "
-        "JOIN learning_exposures e "
-        "ON e.outcome_candidate_key=o.outcome_candidate_key "
-        "WHERE o.status='settled' AND o.entry_ts>=? "
-        f"AND {complete_outcome_economics_sql('o')} "
-        "AND o.cost_model_version=? AND e.experiment_id=? "
-        "AND (? IS NULL OR e.concurrent_policy_epoch=?)",
-        (cutoff, cost_model_version, experiment_id, policy_epoch, policy_epoch),
-    ).fetchall()
-    rows += db.execute(
         f"SELECT {selected}FROM filter_candidate_outcomes o "
         "JOIN learning_exposures e "
         "ON e.outcome_candidate_key=o.outcome_candidate_key || ':' || o.horizon "
