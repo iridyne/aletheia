@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from aletheia.storage import repositories as repo
 from aletheia.storage.sqlite import get_db
 
 _HORIZON_HOURS = {"15m": 0.25, "1h": 1.0, "4h": 4.0, "24h": 24.0}
@@ -97,26 +96,3 @@ def insert_canonical_outcome_for_shadow(
         "settlement_lag_sec": 0.0,
         "cost_model_version": "shadow-test-v1",
     }
-
-
-def settle_pending_keyed_shadows(net_return_pct: float) -> None:
-    db = get_db()
-    rows = db.execute(
-        "SELECT * FROM shadow_trades WHERE outcome_candidate_key IS NOT NULL "
-        "AND net_pnl_pct IS NULL "
-        "ORDER BY outcome_candidate_key, datetime(created_at), id"
-    ).fetchall()
-    settled_keys: set[str] = set()
-    for raw in rows:
-        row = dict(raw)
-        key = str(row["outcome_candidate_key"])
-        if key in settled_keys:
-            continue
-        settled_keys.add(key)
-        insert_canonical_outcome_for_shadow(
-            str(row["id"]),
-            horizon="24h",
-            net_return_pct=net_return_pct,
-        )
-        repo.settle_linked_shadow_outcomes(key)
-    db.commit()

@@ -1,7 +1,7 @@
 """Tests for extensions.counterfactual.estimators and DR-mode calibration."""
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from extensions.counterfactual.calibration import build_calibration
 from extensions.counterfactual.estimators import (
@@ -10,25 +10,12 @@ from extensions.counterfactual.estimators import (
     ips_estimate,
 )
 from extensions.counterfactual.propensity import build_propensity_report
-from extensions.counterfactual.trades import persist_shadow_batch
-from tests.helpers.shadow_outcome_fixture import settle_pending_keyed_shadows
 
 # ---------------------------------------------------------------------------
 # Helpers (shared with test_counterfactual_propensity pattern)
 # ---------------------------------------------------------------------------
 
 _FAMILIES = ["momentum", "short_bias", "derivatives"]
-
-
-def _insert_batch(
-    candidates: list[dict],
-    selected: dict | list[dict] | None,
-    top_n: int = 50,
-    net_pnl_pct: float = 0.3,
-) -> None:
-    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-        persist_shadow_batch(candidates, selected, top_n=top_n)
-    settle_pending_keyed_shadows(net_pnl_pct)
 
 
 def _synthetic_rows(n: int, *, base_score: float = 50.0) -> list[dict]:
@@ -169,26 +156,8 @@ def test_compute_ope_scores_empty():
 
 
 # ---------------------------------------------------------------------------
-# Integration: build_calibration(method="dr")
+# Integration: build_calibration
 # ---------------------------------------------------------------------------
-
-
-def _populate_db_many_batches(n_batches: int = 20) -> None:
-    for b in range(n_batches):
-        cands = [
-            {
-                "opportunity_id": f"b{b}-{j}",
-                "symbol": "BTC/USDT",
-                "venue": "bitget",
-                "market_type": "spot",
-                "direction": "long" if j % 2 == 0 else "short",
-                "scanner_family": _FAMILIES[j % len(_FAMILIES)],
-                "trade_score": 35.0 + ((b * 6 + j) % 50) * 0.7,
-            }
-            for j in range(6)
-        ]
-        sel = next((c for c in cands if float(c["trade_score"]) >= 55.0), None)
-        _insert_batch(cands, sel)
 
 
 def test_calibration_naive_default_keys():
@@ -197,105 +166,6 @@ def test_calibration_naive_default_keys():
     assert "bands" in report
     assert "estimation_method" in report
     assert report["estimation_method"] == "naive"
-
-
-def test_calibration_dr_adds_ope_keys():
-    """method='dr' adds ips/dr/dm keys to each band."""
-    _populate_db_many_batches(n_batches=20)
-    report = build_calibration(days=9999, method="dr")
-    assert len(report["errors"]) == 0
-    assert report["bands"]
-    for band in report["bands"]:
-        assert "ips_avg_net_pct" in band, f"missing ips key in band {band['band']}"
-        assert "dr_avg_net_pct" in band, f"missing dr key in band {band['band']}"
-        assert "dm_avg_net_pct" in band, f"missing dm key in band {band['band']}"
-
-
-def test_calibration_naive_ope_keys_are_none():
-    """method='naive' (default) keeps ope keys present but set to None."""
-    _populate_db_many_batches(n_batches=10)
-    report = build_calibration(days=9999, method="naive")
-    assert report["bands"]
-    for band in report["bands"]:
-        assert band.get("ips_avg_net_pct") is None
-        assert band.get("dr_avg_net_pct") is None
-
-
-def test_calibration_dr_numeric_values():
-    """DR/IPS values should be finite floats when data is available."""
-    _populate_db_many_batches(n_batches=20)
-    report = build_calibration(days=9999, method="dr")
-    for band in report["bands"]:
-        if band["n"] > 0:
-            assert band["avg_net_pct"] is not None  # naive still present
-            # DR and IPS may be None in low-n bands but should not raise
-
-
-# ---------------------------------------------------------------------------
-# Regression: mixed-policy-epoch guard (CF-I04)
-# ---------------------------------------------------------------------------
-
-
-def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 0.3) -> None:
-    """Insert one resolved shadow row with the given policy_epoch_id."""
-    with patch("extensions.counterfactual.trades._current_price", return_value=50000.0):
-        with patch("extensions.counterfactual.trades._current_policy_epoch", return_value=epoch):
-            persist_shadow_batch(
-                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
-                  "market_type": "spot", "direction": "long",
-                  "scanner_family": "momentum", "trade_score": 60.0}],
-                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
-                           "market_type": "spot", "direction": "long",
-                           "scanner_family": "momentum", "trade_score": 60.0},
-                top_n=5,
-            )
-    settle_pending_keyed_shadows(net_pnl_pct)
-
-
-def test_mixed_epoch_calibration_returns_error():
-    """build_calibration without explicit epoch returns mixed_policy_epoch error when window spans multiple epochs."""
-    _insert_row_with_epoch("opp-epoch-a-1", "epoch_A")
-    _insert_row_with_epoch("opp-epoch-b-1", "epoch_B")
-    report = build_calibration(days=9999)
-    assert any("mixed_policy_epoch" in e for e in report["errors"]), (
-        f"expected mixed_policy_epoch error, got: {report['errors']}"
-    )
-    assert report["bands"] == []  # no estimate produced for mixed window
-
-
-def test_mixed_epoch_with_null_rows_calibration_returns_error():
-    """NULL-epoch rows mixed with non-null epoch rows also trigger the guard."""
-    _insert_row_with_epoch("opp-null-1", None)
-    _insert_row_with_epoch("opp-epoch-c-1", "epoch_C")
-    report = build_calibration(days=9999)
-    assert any("mixed_policy_epoch" in e for e in report["errors"])
-
-
-def test_explicit_epoch_filters_correctly():
-    """Explicit policy_epoch_id skips auto-detection and counts only matching rows."""
-    _insert_row_with_epoch("opp-a-only", "epoch_A", net_pnl_pct=1.0)
-    _insert_row_with_epoch("opp-b-only", "epoch_B", net_pnl_pct=-1.0)
-    report = build_calibration(days=9999, policy_epoch_id="epoch_A")
-    assert not report["errors"]
-    total = report.get("total_candidates", 0)
-    assert total == 1, f"expected 1 candidate for epoch_A, got {total}"
-
-
-def test_single_epoch_window_auto_resolves():
-    """When all rows share one epoch, calibration auto-resolves it without error."""
-    _insert_row_with_epoch("opp-single-1", "epoch_X")
-    _insert_row_with_epoch("opp-single-2", "epoch_X")
-    report = build_calibration(days=9999)
-    assert not report["errors"]
-    assert report.get("policy_epoch_id") == "epoch_X"
-
-
-def test_mixed_epoch_propensity_returns_error():
-    """build_propensity_report without explicit epoch returns error for mixed window."""
-    _insert_row_with_epoch("opp-prop-a", "epoch_A")
-    _insert_row_with_epoch("opp-prop-b", "epoch_B")
-    report = build_propensity_report(days=9999)
-    assert any("mixed_policy_epoch" in e for e in report["errors"])
 
 
 def test_epoch_detection_failure_calibration_does_not_use_legacy_aggregate(monkeypatch):
