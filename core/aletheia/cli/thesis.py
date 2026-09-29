@@ -141,7 +141,7 @@ def _snapshot_row(path: Path) -> dict:
     pi = raw.get("pi_decisions") or {}
     proposals = raw.get("trade_proposals") or {}
     shadows = raw.get("shadow_trades") or {}
-    forwards = raw.get("universe_forward_outcomes") or {}
+    forwards = raw.get("filter_candidate_outcomes") or {}
     return {
         "file": path.name,
         "generated_at": payload.get("generated_at"),

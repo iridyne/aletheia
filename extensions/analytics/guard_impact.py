@@ -255,30 +255,35 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
                 "rank": d.get("rank"),
             }
     member_id = opp.get("universe_member_id")
-    if member_id and _table_exists(db, "universe_forward_outcomes"):
-        for horizon in _HORIZONS:
-            row = db.execute(
-                "SELECT * FROM universe_forward_outcomes "
-                "WHERE member_id = ? AND horizon = ? AND status = 'settled' "
-                "AND forward_return_pct IS NOT NULL "
-                "ORDER BY datetime(settled_at) DESC LIMIT 1",
-                (member_id, horizon),
-            ).fetchone()
-            if not row:
-                continue
-            d = dict(row)
-            values = outcome_values(d, direction)
-            outcomes["forward"][horizon] = {
-                "forward_return_pct": _round(values["gross_return_pct"]),
-                "gross_return_pct": _round(values["gross_return_pct"]),
-                "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
-                "directional_return_pct": _round(values["directional_return_pct"]),
-                "net_return_pct": _round(values["net_return_pct"]),
-                "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
-                "verdict": classify_outcome_row(d, direction),
-                "settled_at": d.get("settled_at"),
-                "status": d.get("status"),
-            }
+    if member_id and _table_exists(db, "filter_candidate_outcomes"):
+        member_row = db.execute(
+            "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member_id,)
+        ).fetchone()
+        candidate_key = member_row["learning_candidate_key"] if member_row else None
+        if candidate_key:
+            for horizon in _HORIZONS:
+                row = db.execute(
+                    "SELECT * FROM filter_candidate_outcomes "
+                    "WHERE outcome_candidate_key = ? AND horizon = ? AND status = 'settled' "
+                    "AND gross_return_pct IS NOT NULL "
+                    "ORDER BY datetime(settled_at) DESC LIMIT 1",
+                    (candidate_key, horizon),
+                ).fetchone()
+                if not row:
+                    continue
+                d = dict(row)
+                values = outcome_values(d, direction)
+                outcomes["forward"][horizon] = {
+                    "forward_return_pct": _round(values["gross_return_pct"]),
+                    "gross_return_pct": _round(values["gross_return_pct"]),
+                    "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
+                    "directional_return_pct": _round(values["directional_return_pct"]),
+                    "net_return_pct": _round(values["net_return_pct"]),
+                    "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
+                    "verdict": classify_outcome_row(d, direction),
+                    "settled_at": d.get("settled_at"),
+                    "status": d.get("status"),
+                }
     return outcomes
 
 

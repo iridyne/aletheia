@@ -332,7 +332,7 @@ def _resolve_cost_model(
     sources: list[dict[str, Any]] = []
     malformed_count = 0
     source_error = False
-    for table in ("filter_candidate_outcomes", "universe_forward_outcomes"):
+    for table in ("filter_candidate_outcomes",):
         columns = _columns(db, table)
         required = {"cost_model_version", "status", "entry_ts", "due_at", "settled_at"}
         # Exploratory shadow rows and rows without a terminal status are not a

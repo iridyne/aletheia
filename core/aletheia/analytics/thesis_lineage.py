@@ -40,7 +40,7 @@ _OPTIONAL_TABLES = (
     "positions",
     "shadow_trades",
     "universe_members",
-    "universe_forward_outcomes",
+    "filter_candidate_outcomes",
 )
 
 
@@ -266,8 +266,8 @@ def compact_thesis_lineage_summary(report: dict) -> dict:
             "trade_proposals_missing_decision_meta": (raw.get("trade_proposals") or {}).get("missing_decision_meta_in_agent_rationale"),
             "shadow_trades_missing_pnl_pct": (raw.get("shadow_trades") or {}).get("missing_pnl_pct"),
             "shadow_trades_stale_missing_pnl_pct": (raw.get("shadow_trades") or {}).get("stale_missing_pnl_pct"),
-            "forward_outcomes_missing_forward_return_pct": (raw.get("universe_forward_outcomes") or {}).get("missing_forward_return_pct"),
-            "forward_outcomes_overdue_pending": (raw.get("universe_forward_outcomes") or {}).get("overdue_pending"),
+            "forward_outcomes_missing_forward_return_pct": (raw.get("filter_candidate_outcomes") or {}).get("missing_gross_return_pct"),
+            "forward_outcomes_overdue_pending": (raw.get("filter_candidate_outcomes") or {}).get("overdue_pending"),
         },
         "main_finding": report.get("main_finding"),
         "next_action": report.get("next_action"),
@@ -446,17 +446,30 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
             for row in rows:
                 m = dict(row)
                 ctx["universe_members"][m["id"]] = m
-    if member_ids and _table_exists(db, "universe_forward_outcomes"):
-        for rows in _select_in(
-            db,
-            "SELECT * FROM universe_forward_outcomes WHERE member_id IN ({}) "
-            "AND status = 'settled' AND forward_return_pct IS NOT NULL",
-            member_ids,
-        ):
-            for row in rows:
-                f = dict(row)
-                if _forward_better(f, ctx["forward_by_member"].get(f.get("member_id"))):
-                    ctx["forward_by_member"][f.get("member_id")] = f
+    if member_ids and _table_exists(db, "filter_candidate_outcomes"):
+        member_key_map = {
+            m["id"]: m["learning_candidate_key"]
+            for m in ctx["universe_members"].values()
+            if m.get("learning_candidate_key")
+        }
+        candidate_keys = list(member_key_map.values())
+        if candidate_keys:
+            key_to_member = {v: k for k, v in member_key_map.items()}
+            for rows in _select_in(
+                db,
+                "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key IN ({}) "
+                "AND status = 'settled' AND gross_return_pct IS NOT NULL",
+                candidate_keys,
+            ):
+                for row in rows:
+                    f = dict(row)
+                    candidate_key = f.get("outcome_candidate_key")
+                    member_id = key_to_member.get(candidate_key)
+                    if not member_id:
+                        continue
+                    f["member_id"] = member_id
+                    if _forward_better(f, ctx["forward_by_member"].get(member_id)):
+                        ctx["forward_by_member"][member_id] = f
     return ctx
 
 
@@ -852,26 +865,22 @@ def _raw_table_completeness(db, cutoff: str) -> dict:
                 "pnl_pct IS NULL AND datetime(created_at) < datetime('now','-25 hours')",
             ),
         }
-    if _table_exists(db, "universe_forward_outcomes"):
-        rows["universe_forward_outcomes"] = {
-            "total": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff),
-            "missing_member_id": _count_rows_by_time(
-                db, "universe_forward_outcomes", "entry_ts", cutoff, "(member_id IS NULL OR member_id = '')"
-            ),
-            "missing_forward_return_pct": _count_rows_by_time(
+    if _table_exists(db, "filter_candidate_outcomes"):
+        rows["filter_candidate_outcomes"] = {
+            "total": _count_rows_by_time(db, "filter_candidate_outcomes", "entry_ts", cutoff),
+            "missing_gross_return_pct": _count_rows_by_time(
                 db,
-                "universe_forward_outcomes",
+                "filter_candidate_outcomes",
                 "entry_ts",
                 cutoff,
-                "status = 'settled' AND forward_return_pct IS NULL",
+                "status = 'settled' AND gross_return_pct IS NULL",
             ),
-            "settled": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'settled'"),
-            "pending": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'pending'"),
-            "cancelled": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'cancelled'"),
-            "failed": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'failed'"),
+            "settled": _count_rows_by_time(db, "filter_candidate_outcomes", "entry_ts", cutoff, "status = 'settled'"),
+            "pending": _count_rows_by_time(db, "filter_candidate_outcomes", "entry_ts", cutoff, "status = 'pending'"),
+            "failed": _count_rows_by_time(db, "filter_candidate_outcomes", "entry_ts", cutoff, "status = 'failed'"),
             "overdue_pending": _count_rows_by_time(
                 db,
-                "universe_forward_outcomes",
+                "filter_candidate_outcomes",
                 "entry_ts",
                 cutoff,
                 "status = 'pending' AND datetime(due_at) <= datetime('now')",
