@@ -1365,7 +1365,25 @@ class HealthConfig(BaseModel):
     startup_gate_recheck_interval_sec: int = Field(default=60, ge=5, le=3600)
 
 
+# Retention windows retired together with their product. A deployed config still
+# carries them (extra="forbid" would otherwise take the whole runtime down at
+# startup), and the value has nothing left to govern — the tables it bounded no
+# longer exist (#3703).
+_RETIRED_RETENTION_KEYS = ("backtest_runs_days",)
+
+
 class RetentionConfig(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def drop_retired_keys(cls, value):
+        """Drop retired retention windows before validation, never raise on them."""
+        if isinstance(value, dict):
+            return {
+                key: item for key, item in value.items()
+                if key not in _RETIRED_RETENTION_KEYS
+            }
+        return value
+
     @field_validator("*")
     @classmethod
     def reject_nonpositive_values(cls, value: int | float) -> int | float:
