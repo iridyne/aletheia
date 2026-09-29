@@ -76,7 +76,7 @@ def _typed_candidate(
     mechanism: str,
     family: str,
     direction: str = "long",
-    policy: str = "candidate_selection_utility_v1",
+    policy: str = "candidate_selection_utility",
     policy_epoch: str | None = "epoch-1",
     mechanism_version: str | None = None,
     rank: int = 1,
@@ -117,7 +117,7 @@ def _typed_candidate(
             "source_component_id": family,
             "direction": direction,
             "horizon": "4h",
-            "economic_utility_pct": 1.0 if policy == "candidate_selection_utility_v1" else None,
+            "economic_utility_pct": 1.0 if policy == "candidate_selection_utility" else None,
             "capability_status": capability,
             "capability_gaps": (),
             "primary_evidence_refs": (primary_ref,),
@@ -145,7 +145,7 @@ def _typed_candidate(
         expires_at="2099-01-01T00:00:00+00:00",
         candidate_selection_policy=policy,
         candidate_selection_policy_epoch=policy_epoch,
-        candidate_selection_utility_pct=(1.0 if policy == "candidate_selection_utility_v1" else None),
+        candidate_selection_utility_pct=(1.0 if policy == "candidate_selection_utility" else None),
         opportunity_mechanism=mechanism,
         opportunity_mechanism_version=mechanism_version or f"{mechanism}/v1",
         opportunity_source_component=family,
@@ -390,7 +390,7 @@ def test_typed_target_candidate_uses_mechanism_aware_grounded_planner(mechanism,
     assert created is True
     assert len(generation["entry_behavior_fingerprint"]) == 64
     assert generation["opportunity_mechanism"] == mechanism
-    assert generation["candidate_selection_policy"] == "candidate_selection_utility_v1"
+    assert generation["candidate_selection_policy"] == "candidate_selection_utility"
     assert generation["candidate_selection_policy_epoch"] == "epoch-1"
 
 
@@ -855,7 +855,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         entry_profiles=({"id": profile},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-03T00:00:00+00:00", mechanism="reversal", direction="long",
-            market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+            market_type="perp", policy="candidate_selection_utility", policy_epoch="epoch-1",
         ),
     )
     hypothesis = EntryHypothesis(
