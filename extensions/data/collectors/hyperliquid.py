@@ -23,12 +23,10 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.net import httpx_client
+from aletheia.net import close_ccxt, make_ccxt
 from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
 
 logger = logging.getLogger("aletheia.data.collectors.hyperliquid")
-
-_HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
 # Hyperliquid uses 1-hour funding intervals → ×24×365 for annualized rate.
 
@@ -54,74 +52,72 @@ class HyperliquidCollector:
         prices: list[dict] = []
         errors: list[str] = []
 
-        # Step 1: fetch market context (OI + current funding)
-        meta_ctxs: list | None = None
+        exchange, session = make_ccxt("hyperliquid")
         try:
-            async with httpx_client(timeout=15) as client:
-                resp = await client.post(
-                    _HL_INFO_URL,
-                    json={"type": "metaAndAssetCtxs"},
-                )
-                resp.raise_for_status()
-                meta_ctxs = resp.json()
-        except Exception as e:
-            errors.append(f"metaAndAssetCtxs: {e}")
-            logger.warning("Hyperliquid metaAndAssetCtxs failed: %s", e)
+            # Step 1: fetch market context (OI + current funding)
+            meta_ctxs: list | None = None
+            try:
+                meta_ctxs = await exchange.publicPostInfo({"type": "metaAndAssetCtxs"})
+            except Exception as e:
+                errors.append(f"metaAndAssetCtxs: {e}")
+                logger.warning("Hyperliquid metaAndAssetCtxs failed: %s", e)
 
-        now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(timezone.utc).isoformat()
 
-        if (
-            meta_ctxs
-            and isinstance(meta_ctxs, list)
-            and len(meta_ctxs) >= 2
-            and isinstance(meta_ctxs[0], dict)
-            and isinstance(meta_ctxs[1], list)
-        ):
-            universe = meta_ctxs[0].get("universe", [])
-            ctxs = meta_ctxs[1]
+            if (
+                meta_ctxs
+                and isinstance(meta_ctxs, list)
+                and len(meta_ctxs) >= 2
+                and isinstance(meta_ctxs[0], dict)
+                and isinstance(meta_ctxs[1], list)
+            ):
+                universe = meta_ctxs[0].get("universe", [])
+                ctxs = meta_ctxs[1]
 
-            # symbols filter set — canonical BTC/USDT, ETH/USDT, …
-            symbol_filter: set[str] | None = None
-            if symbols:
-                symbol_filter = {s.upper() for s in symbols}
+                # symbols filter set — canonical BTC/USDT, ETH/USDT, …
+                symbol_filter: set[str] | None = None
+                if symbols:
+                    symbol_filter = {s.upper() for s in symbols}
 
-            for asset_meta, ctx in zip(universe, ctxs):
-                if not isinstance(asset_meta, dict) or not isinstance(ctx, dict):
-                    continue
-                asset_name = asset_meta.get("name", "")
-                if not asset_name:
-                    continue
+                for asset_meta, ctx in zip(universe, ctxs, strict=False):
+                    if not isinstance(asset_meta, dict) or not isinstance(ctx, dict):
+                        continue
+                    asset_name = asset_meta.get("name", "")
+                    if not asset_name:
+                        continue
 
-                canonical = f"{asset_name}/USDT"
-                if symbol_filter and canonical.upper() not in symbol_filter:
-                    continue
+                    canonical = f"{asset_name}/USDT"
+                    if symbol_filter and canonical.upper() not in symbol_filter:
+                        continue
 
-                physical = hyperliquid_instrument(canonical)
-                price = price_snapshot(canonical, 'hyperliquid',
-                    {'markPrice': ctx.get('markPx'), 'indexPrice': ctx.get('oraclePx')},
-                    instrument=physical, acquired_at=datetime.fromisoformat(now),
-                    provider='hyperliquid_public', reference_kind='oracle')
-                if price:
-                    prices.append(price)
+                    physical = hyperliquid_instrument(canonical)
+                    price = price_snapshot(canonical, 'hyperliquid',
+                        {'markPrice': ctx.get('markPx'), 'indexPrice': ctx.get('oraclePx')},
+                        instrument=physical, acquired_at=datetime.fromisoformat(now),
+                        provider='hyperliquid_public', reference_kind='oracle')
+                    if price:
+                        prices.append(price)
 
-                fr_snap = _parse_funding(canonical, ctx, now)
-                if fr_snap:
-                    fr_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now)
-                    funding.append(fr_snap)
+                    fr_snap = _parse_funding(canonical, ctx, now)
+                    if fr_snap:
+                        fr_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now)
+                        funding.append(fr_snap)
 
-                oi_snap = _parse_oi(canonical, ctx, now)
-                if oi_snap:
-                    oi_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now, oi=True)
-                    oi.append(oi_snap)
+                    oi_snap = _parse_oi(canonical, ctx, now)
+                    if oi_snap:
+                        oi_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now, oi=True)
+                        oi.append(oi_snap)
 
-        # Step 2: predicted fundings (best-effort; does not block Step 1 writes)
-        try:
-            predicted = await _fetch_predicted_fundings(symbols, now)
-            # Extend funding list with predicted entries (exchange tag differs)
-            funding.extend(predicted)
-        except Exception as e:
-            errors.append(f"predictedFundings: {e}")
-            logger.debug("Hyperliquid predictedFundings failed: %s", e)
+            # Step 2: predicted fundings (best-effort; does not block Step 1 writes)
+            try:
+                predicted = await _fetch_predicted_fundings(exchange, symbols, now)
+                # Extend funding list with predicted entries (exchange tag differs)
+                funding.extend(predicted)
+            except Exception as e:
+                errors.append(f"predictedFundings: {e}")
+                logger.debug("Hyperliquid predictedFundings failed: %s", e)
+        finally:
+            await close_ccxt(exchange, session)
 
         logger.info(
             "Hyperliquid collected: %d funding, %d OI, %d errors",
@@ -185,7 +181,7 @@ def _parse_oi(
 
 
 async def _fetch_predicted_fundings(
-    symbols: list[str] | None, observed_at: str
+    exchange: Any, symbols: list[str] | None, observed_at: str
 ) -> list[FundingRateSnapshot]:
     """Fetch predicted funding rates from Hyperliquid.
 
@@ -198,13 +194,7 @@ async def _fetch_predicted_fundings(
     if symbols:
         symbol_filter = {s.upper() for s in symbols}
 
-    async with httpx_client(timeout=15) as client:
-        resp = await client.post(
-            _HL_INFO_URL,
-            json={"type": "predictedFundings"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    data = await exchange.publicPostInfo({"type": "predictedFundings"})
 
     if not isinstance(data, list):
         return results

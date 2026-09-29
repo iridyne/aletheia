@@ -16,8 +16,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from extensions.data.collectors.hyperliquid import _HL_INFO_URL
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -57,10 +57,10 @@ def test_hyperliquid_collector_exists():
 @spec_claim(
     SpecClaim(
         "HL-S02", _CONTRACT, "§hyperliquid collector", "L2a",
-        "_HL_INFO_URL module-level constant defined in hyperliquid.py",
+        "hyperliquid.py uses CCXT transport (make_ccxt imported, no _HL_INFO_URL constant)",
     ),
 )
-def test_hl_info_url_constant_defined():
+def test_hl_ccxt_transport_used():
     tree = ast.parse(_HL.read_text(encoding="utf-8"))
     assigned: set[str] = set()
     for node in ast.walk(tree):
@@ -70,9 +70,11 @@ def test_hl_info_url_constant_defined():
                     assigned.add(tgt.id)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             assigned.add(node.target.id)
-    assert "_HL_INFO_URL" in assigned, (
-        f"hyperliquid.py must define _HL_INFO_URL constant; found: {sorted(assigned)[:20]}"
+    assert "_HL_INFO_URL" not in assigned, (
+        "hyperliquid.py must not define _HL_INFO_URL (CCXT owns transport now)"
     )
+    src = _HL.read_text(encoding="utf-8")
+    assert "make_ccxt" in src, "hyperliquid.py must import make_ccxt for CCXT transport"
 
 
 # ---------------------------------------------------------------------------
@@ -202,23 +204,16 @@ def test_hyperliquid_oi_usd_equals_coin_times_mark():
 )
 def test_hyperliquid_http_failure_does_not_raise():
     import extensions.data.collectors.hyperliquid as mod
-    original = mod.httpx_client
 
-    class _FailCtx:
-        async def __aenter__(self):
-            raise RuntimeError("simulated network down")
+    exchange = MagicMock()
+    exchange.publicPostInfo = AsyncMock(side_effect=RuntimeError("simulated network down"))
+    session = MagicMock()
 
-        async def __aexit__(self, *a):
-            return False
-
-    def _fail_client(*args, **kwargs):
-        return _FailCtx()
-
-    mod.httpx_client = _fail_client
-    try:
+    with (
+        patch.object(mod, "make_ccxt", return_value=(exchange, session)),
+        patch.object(mod, "close_ccxt", new_callable=AsyncMock),
+    ):
         result = asyncio.run(mod.HyperliquidCollector().collect())
-    finally:
-        mod.httpx_client = original
 
     assert isinstance(result, dict)
     assert result["funding"] == []
@@ -252,41 +247,25 @@ def test_hyperliquid_db_write(tmp_path, monkeypatch):
 
     import extensions.data.collectors.hyperliquid as mod
 
-    # Mock both HTTP calls: return meta fixture for metaAndAssetCtxs,
-    # return pred fixture for predictedFundings.
     pred_raw = json.loads(_FIXTURE_PRED.read_text(encoding="utf-8"))
 
-    class _MockResp:
-        def __init__(self, data):
-            self._data = data
-            self.status_code = 200
-        def raise_for_status(self):
-            pass
-        def json(self):
-            return self._data
+    async def _post_info(params):
+        t = (params or {}).get("type")
+        if t == "metaAndAssetCtxs":
+            return raw_meta
+        if t == "predictedFundings":
+            return pred_raw
+        return {}
 
-    class _MockCtx:
-        def __init__(self, payload):
-            self._payload = payload
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            return False
-        async def post(self, url, **kwargs):
-            body = kwargs.get("json", {})
-            if body.get("type") == "metaAndAssetCtxs":
-                return _MockResp(raw_meta)
-            return _MockResp(pred_raw)
+    exchange = MagicMock()
+    exchange.publicPostInfo = AsyncMock(side_effect=_post_info)
+    session = MagicMock()
 
-    def _mock_client(*args, **kwargs):
-        return _MockCtx(raw_meta)
-
-    original = mod.httpx_client
-    mod.httpx_client = _mock_client
-    try:
+    with (
+        patch.object(mod, "make_ccxt", return_value=(exchange, session)),
+        patch.object(mod, "close_ccxt", new_callable=AsyncMock),
+    ):
         result = asyncio.run(mod.HyperliquidCollector().collect())
-    finally:
-        mod.httpx_client = original
 
     assert len(result["funding"]) > 0, "At least one funding rate snapshot expected"
     assert len(result["open_interest"]) > 0, "At least one OI snapshot expected"
@@ -348,7 +327,7 @@ async def test_hyperliquid_live_e2e(tmp_path, monkeypatch):
     try:
         async with _httpx.AsyncClient(timeout=5) as _c:
             _r = await _c.post(
-                _HL_INFO_URL,
+                "https://api.hyperliquid.xyz/info",
                 json={"type": "metaAndAssetCtxs"},
             )
             _r.raise_for_status()

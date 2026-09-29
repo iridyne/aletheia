@@ -181,32 +181,15 @@ def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
 async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
     import extensions.data.collectors.hyperliquid as mod
 
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        @staticmethod
-        def json():
-            return [
-                ["BTC", [["HlPerp", {"fundingRate": "nan", "fundingIntervalHours": 1}]]],
-                ["ETH", [["HlPerp", {"fundingRate": "0.001", "fundingIntervalHours": 0}]]],
-                ["SOL", [["HlPerp", {"fundingRate": "0.002", "fundingIntervalHours": 2}]]],
-            ]
-
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return Response()
-
-    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    exchange = MagicMock()
+    exchange.publicPostInfo = AsyncMock(return_value=[
+        ["BTC", [["HlPerp", {"fundingRate": "nan", "fundingIntervalHours": 1}]]],
+        ["ETH", [["HlPerp", {"fundingRate": "0.001", "fundingIntervalHours": 0}]]],
+        ["SOL", [["HlPerp", {"fundingRate": "0.002", "fundingIntervalHours": 2}]]],
+    ])
 
     rows = await mod._fetch_predicted_fundings(
-        None, datetime.now(timezone.utc).isoformat()
+        exchange, None, datetime.now(timezone.utc).isoformat()
     )
 
     assert [row.symbol for row in rows] == ["SOL/USDT"]
