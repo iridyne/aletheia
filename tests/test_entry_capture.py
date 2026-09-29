@@ -196,3 +196,29 @@ def test_compile_chooses_the_lowest_sufficient_leverage(monkeypatch):
     margin_budget = plan.sizing_resolution.margin_budget_usdt
     assert margin_budget
     assert plan.execution_leverage == int(-(-plan.target_notional_usdt // margin_budget))
+
+
+def test_compile_takes_financing_facts_from_the_execution_venue(monkeypatch):
+    """A cross-venue setup must not ask the data venue for margin facts.
+
+    The position (and therefore its leverage tiers and maintenance margin) lives on
+    the execution route's venue; the Plan's own `venue` only identifies the market
+    data it came from. Here the market data is binance and nothing is cached for it,
+    while the executing venue (bitget) has facts — the compile must still succeed.
+    """
+    from aletheia.trading.venue_margin import clear_venue_margin_envelope
+
+    generation, context, hypothesis, cfg = capture_input(
+        monkeypatch, "grounded-anchor-direct", "MAKER_PREFERRED"
+    )
+    generation = {**generation, "venue": "binance"}
+    context = context.model_copy(update={
+        "instrument": {**context.instrument, "venue": "binance"},
+    })
+    clear_venue_margin_envelope(venue="binance", symbol=generation["symbol"], market_type="perp")
+
+    plan = compile_entry_plan(generation, context, hypothesis, cfg)
+
+    assert plan.venue == "binance"  # identity still names the data venue
+    assert plan.execution_account_mode == "bitget_demo"
+    assert plan.margin_mode == "isolated"

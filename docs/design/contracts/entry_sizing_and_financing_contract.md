@@ -143,7 +143,11 @@ actually submits, and both the resolver and the submission path read the same de
 - A route with no declared mode fails closed with `MARGIN_MODE_UNAVAILABLE`.
 - Spot is structurally 1x with no liquidation solver (`not_applicable`).
 
-Venue tier facts come from `VenueMarginEnvelope` (CCXT public market leverage tiers where
+Venue tier facts come from the venue that will **hold the position** — the execution
+route's venue, not the candidate's market-data venue (they differ whenever analysis and
+execution run on different venues, e.g. a binance-sourced universe executed on
+`bitget_demo`). The Plan's own `venue` still identifies the market data. Facts come from
+`VenueMarginEnvelope` (CCXT public market leverage tiers where
 the venue exposes them, persisted with fetch timestamp and provenance, read through a
 freshness TTL). The read path is synchronous and network-free; the fetch is explicit and
 out-of-band: `uv run aletheia data venue-margins --venue <venue> --symbol <symbol>` refreshes

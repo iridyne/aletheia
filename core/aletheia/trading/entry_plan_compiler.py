@@ -388,8 +388,15 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     if market_type == "perp" and margin_mode is None:
         raise PlanIntentError("MARGIN_MODE_UNAVAILABLE")
     try:
+        # Financing facts belong to the venue that will HOLD the position, which is
+        # the execution route's venue — the candidate's venue only identifies the
+        # market data (they differ whenever analysis and execution run on different
+        # venues, e.g. a binance-sourced universe executed on bitget_demo).
+        from aletheia.config.exchanges import execution_mode_venue
+
+        position_venue = execution_mode_venue(authority.execution_route) or generation["venue"]
         envelope = None if market_type == "spot" else load_venue_margin_envelope(
-            venue=generation["venue"],
+            venue=position_venue,
             symbol=generation["symbol"],
             market_type=market_type,
             margin_mode=margin_mode or "isolated",
