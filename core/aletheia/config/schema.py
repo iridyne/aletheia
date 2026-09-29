@@ -1783,6 +1783,13 @@ class UniverseConfig(BaseModel):
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
 
+    @field_validator("candidate_selection_policy", mode="before")
+    @classmethod
+    def _normalize_candidate_policy(cls, v: object) -> object:
+        if v == "candidate_selection_utility_v1":
+            return "candidate_selection_utility"
+        return v
+
     @model_validator(mode="after")
     def _validate_candidate_selection_authority(self):
         if (
