@@ -41,17 +41,17 @@
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 686,
+      "line": 707,
       "reason": "5s stop.wait() timeout is the watch loop poll tick"
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 755,
+      "line": 782,
       "reason": "StopAsyncIteration is the stream task normal terminal state"
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 902,
+      "line": 929,
       "reason": "backoff stop.wait() timeout is the loop poll tick"
     },
     {

@@ -47,11 +47,9 @@ def optional_evidence_jobs(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.analytics import family_scorecard
     from extensions.analytics import filter_controller, guard_promotion
-    from extensions.counterfactual import trades
     from extensions.counterfactual import family_scorecard as shadows
     from extensions.learning import control
 
-    monkeypatch.setattr(scheduler, "_resolve_stale_shadows", lambda: trades.resolve_stale_shadows())
     monkeypatch.setattr(scheduler, "_expire_learned_guards", lambda: guard_promotion._deprecate_expired_learned_guards())
     monkeypatch.setattr(scheduler, "_observe_filter_controller", lambda **kwargs: filter_controller.run_controller_observe(**kwargs))
     monkeypatch.setattr(scheduler, "_learning_daily_catchup_due", lambda job_id: control.daily_catchup_due(job_id))
