@@ -6,17 +6,10 @@ logger = logging.getLogger("aletheia.extensions.learning.outcome_feedback")
 
 from datetime import datetime, timezone
 
-from aletheia.portfolio.outcome_hooks import SHADOW_TRADES_HOOK, SERENITY_POST_MORTEM_HOOK
+from aletheia.portfolio.outcome_hooks import SERENITY_POST_MORTEM_HOOK
 
 
 def execute_outcome_feedback(hook_type: str, position: dict) -> None:
-    if hook_type == SHADOW_TRADES_HOOK:
-        from extensions.counterfactual.trades import (
-            resolve_shadow_trades_for_position,
-        )
-
-        resolve_shadow_trades_for_position(position)
-        return
     if hook_type == SERENITY_POST_MORTEM_HOOK:
         realized = position.get("realized_pnl")
         if realized is None:

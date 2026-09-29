@@ -3078,22 +3078,3 @@ def get_family_scorecard():
 
     scorecard = compute_family_scorecard_with_epoch()
     return {**scorecard, **build_outcome_cohort_summary()}
-
-
-@router.get("/analytics/shadow-trades")
-def get_shadow_trades(
-    batch_id: str | None = None,
-    scanner_family: str | None = None,
-    resolved: bool | None = None,
-    limit: int = 100,
-):
-    """List authority-aware shadow trade diagnostics for counterfactual analysis."""
-    _ensure_db()
-    from extensions.counterfactual.trades import list_shadow_trade_diagnostics
-
-    return list_shadow_trade_diagnostics(
-        batch_id=batch_id,
-        scanner_family=scanner_family,
-        resolved=resolved,
-        limit=limit,
-    )
