@@ -12,9 +12,33 @@ from aletheia.config.schema import (
     HistoricalDataConfig,
     NewsConfig,
     PiDaemonConfig,
+    RetentionConfig,
     TradingConfig,
     UniverseConfig,
 )
+
+
+def test_persisted_config_carrying_a_retired_retention_window_still_loads():
+    """A deployed config still holding `backtest_runs_days` must load (#3703).
+
+    The retention model is extra="forbid", so leaving the retired window in place
+    would raise at validation time and take the whole runtime down at startup —
+    which is exactly what blocked a Fedora update. The backtest tables are gone,
+    so the value has nothing left to govern.
+    """
+    retention = RetentionConfig.model_validate({
+        "backtest_runs_days": 60,
+        "agent_runs_days": 45,
+        "app_db_capacity_mb": 4096,
+    })
+
+    assert not hasattr(retention, "backtest_runs_days")
+    # Every other persisted window on the same object survives untouched.
+    assert retention.agent_runs_days == 45
+    assert retention.app_db_capacity_mb == 4096
+    # The remaining validators still apply to what is kept.
+    with pytest.raises(ValidationError):
+        RetentionConfig.model_validate({"agent_runs_days": 0})
 
 
 @pytest.mark.parametrize(
