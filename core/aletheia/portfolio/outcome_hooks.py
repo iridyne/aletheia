@@ -17,9 +17,8 @@ from aletheia.storage.models import AuditEvent
 
 logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
 
-SHADOW_TRADES_HOOK = "shadow_trades"
 SERENITY_POST_MORTEM_HOOK = "serenity_post_mortem"
-_INVALIDATION_FENCED_HOOKS = {SHADOW_TRADES_HOOK, SERENITY_POST_MORTEM_HOOK}
+_INVALIDATION_FENCED_HOOKS = {SERENITY_POST_MORTEM_HOOK}
 
 _feedback_executor: Callable[[str, dict], None] | None = None
 
@@ -34,9 +33,7 @@ def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
     """Persist every applicable hook intent inside the caller's close transaction."""
     if position.get("execution_mode") == "paper_internal":
         return []
-    jobs = [
-        repo.enqueue_outcome_hook_job(str(position["id"]), SHADOW_TRADES_HOOK),
-    ]
+    jobs: list[dict] = []
     if position.get("trade_school") == "serenity" and position.get("opportunity_id"):
         jobs.append(repo.enqueue_outcome_hook_job(
             str(position["id"]),
@@ -237,8 +234,6 @@ def _load_eligible_position(position_id: str) -> tuple[dict | None, str]:
 
 
 def _hook_applicability_reason(hook_type: str, position: dict) -> str | None:
-    if hook_type == SHADOW_TRADES_HOOK:
-        return None
     if hook_type == SERENITY_POST_MORTEM_HOOK:
         if (
             position.get("trade_school") != "serenity"

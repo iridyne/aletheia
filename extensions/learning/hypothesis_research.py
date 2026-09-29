@@ -532,75 +532,8 @@ def _recorded_case_context(
 def _bounded_counterfactual_checks(
     cases: list[dict[str, Any]], max_checks: int, target_horizon: str,
 ) -> list[HypothesisCounterfactualCheckV1]:
-    from aletheia.storage import repositories as repo
-
-    if max_checks == 0:
-        return []
-    checks: list[HypothesisCounterfactualCheckV1] = []
-    # ponytail: inspect at most three exact batches; add broader replay only if
-    # runtime evidence shows this screen misses a material failure class.
-    for case in cases[:3]:
-        opportunity_id = str(case.get("opportunity_id") or "")
-        with repo.transaction():
-            selected_rows = repo.list_shadow_trades(
-                opportunity_id=opportunity_id,
-                was_selected=True,
-                limit=2,
-            )
-            if len(selected_rows) != 1:
-                continue
-            selected = repo.get_decision_grade_shadow_outcome(
-                str(selected_rows[0].get("id") or ""),
-                str(target_horizon).strip().lower(),
-            )
-            if (
-                selected is None
-                or not selected.get("shadow_batch_id")
-                or not selected.get("shadow_was_selected")
-                or selected.get("shadow_opportunity_id") != opportunity_id
-                or not _at_or_before(
-                    selected.get("shadow_created_at"), case.get("opened_at")
-                )
-            ):
-                continue
-            batch = repo.list_shadow_trades(
-                batch_id=str(selected["shadow_batch_id"]), limit=10,
-            )
-            alternatives = []
-            for row in batch:
-                if row.get("id") == selected.get("shadow_id") or row.get("was_selected"):
-                    continue
-                outcome = repo.get_decision_grade_shadow_outcome(
-                    str(row.get("id") or ""),
-                    str(target_horizon).strip().lower(),
-                )
-                if outcome is not None:
-                    alternatives.append(outcome)
-        alternatives.sort(
-            key=lambda row: (
-                int(row.get("shadow_rank") or 10_000),
-                str(row.get("shadow_id") or ""),
-            ),
-        )
-        for alternative in alternatives:
-            checks.append(HypothesisCounterfactualCheckV1(
-                check_type="selected_vs_exact_shadow_alternative",
-                source_identity=f"filter_candidate_outcome:{selected['id']}",
-                comparison_identity=f"filter_candidate_outcome:{alternative['id']}",
-                evidence={
-                    "batch_id": selected["shadow_batch_id"],
-                    "selected_opportunity_id": opportunity_id,
-                    "selected_net_pnl_pct": selected["net_return_pct"],
-                    "alternative_opportunity_id": alternative.get(
-                        "shadow_opportunity_id"
-                    ),
-                    "alternative_net_pnl_pct": alternative.get("net_return_pct"),
-                    "alternative_rank": alternative.get("shadow_rank"),
-                },
-            ))
-            if len(checks) >= max_checks:
-                return checks
-    return checks
+    # shadow_trades table retired (migration v93). No shadow alternatives available.
+    return []
 
 
 def _insufficient_evidence(
