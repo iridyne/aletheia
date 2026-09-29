@@ -1906,7 +1906,10 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
             old.setattr(migrations, "_MIGRATIONS", current_steps[:v77_end])
             old.setattr(migrations, "SCHEMA_VERSION", "aletheia-sqlite-v77")
             db = _setup_db(tmp_path, monkeypatch)
-        payload = _plan().model_dump(mode="json")
+        # A v77-era payload: historical shape, so no canonical financing (#3729)
+        # — that contract postdates this database, and resolving it would read
+        # tables this schema does not have.
+        payload = _plan(financing=False).model_dump(mode="json")
         payload.update(version="entry-plan/v1", trigger_spec_version="v1",
                        trigger_spec_id="momentum-retrace-reclaim", thesis="历史 payload — preserve whitespace")
         raw_plan = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -1937,13 +1940,25 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
             "AND name NOT LIKE 'sqlite_%' AND name != 'aletheia_schema_migrations' ORDER BY name")]
         columns = {table: [row[1] for row in db.execute(f'PRAGMA table_info("{table}")')] for table in tables}
 
+        # Product retirements drop their tables on upgrade (#3703, #3701):
+        # those tables are gone by design, so the "every existing value survives"
+        # comparison covers the surviving tables and the retirement is asserted
+        # explicitly instead of reading a table that no longer exists.
+        retired_tables = {
+            "backtest_runs", "backtest_trades", "strategy_records", "universe_forward_outcomes",
+        }
+
         def snapshot(connection):
             return {table: sorted([tuple(row) for row in connection.execute(
                 'SELECT ' + ','.join(f'"{col}"' for col in names) + f' FROM "{table}"')], key=repr)
-                for table, names in columns.items()}
+                for table, names in columns.items() if table not in retired_tables}
 
         before = snapshot(db)
         assert migrations.run_migrations() is True
+        for table in sorted(retired_tables):
+            assert db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone() is None
         assert snapshot(db) == before
         for table in ('funding_rate_snapshots', 'open_interest_snapshots'):
             assert db.execute(f'SELECT derivatives_metadata_json FROM {table}').fetchone()[0] is None

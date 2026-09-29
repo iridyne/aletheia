@@ -250,7 +250,20 @@ def _isolate_execution_contract(monkeypatch):
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_a, **_k: 5000.0)
 
 
-def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
+def _plan(
+    *,
+    mode="TRIGGERED",
+    tactic="OPPOSING_BBO_IOC",
+    account_mode="bitget_demo",
+    provenance=True,
+    financing=True,
+) -> EntryPlan:
+    """One fixture Plan.
+
+    `financing=False` returns the historical shape (no financing fields), which
+    is what a pre-#3729 Plan looks like — a test that only needs such a payload
+    must not depend on the canonical sizer reading modern tables.
+    """
     from aletheia.trading.entry_analysis import EntryAnchor, EntryHypothesis, fingerprint
     from aletheia.trading.risk_intent import RiskIntent
     from tests.helpers.entry_plan_financing_fixture import apply_entry_financing
@@ -375,7 +388,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         entry_profile_id=hypothesis.entry_profile_id,
         compiled_geometry_fingerprint=fingerprint(geometry),
     )
-    plan = apply_entry_financing(plan)
+    plan = apply_entry_financing(plan) if financing else plan
     if provenance:
         return plan
     return plan.model_copy(
