@@ -963,6 +963,128 @@ def test_rate_limited_park_is_not_released_after_four_hour_floor():
     assert stored["pending_close_status"] == "venue_trade_rate_limited"
 
 
+# ── #3719: the 40725 park is a close claim, not an unclaimed position ───────
+
+
+def _seed_parked_claim(*, position_id="pos-parked-40725", age_hours=22.5):
+    from tests.helpers.execution_authority import seed_order_authority
+    from tests.helpers.fill_reports import DEFAULT_IDENTITY
+
+    proposal, decision = seed_order_authority(
+        proposal_id=f"prop-{position_id}",
+        risk_decision_id=f"risk-{position_id}",
+        symbol="XRP/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        order_type="market",
+        quantity=9.0,
+        price=1.1219,
+        execution_mode="bitget_demo",
+    )
+    entry = Order(
+        proposal_id=proposal.id, risk_decision_id=decision.id,
+        client_order_id=proposal.id, symbol="XRP/USDT", market_type="usdt_futures",
+        direction="short", order_type="market", quantity=9.0, price=1.1219,
+        execution_mode="bitget_demo", status="filled",
+        uta_account_identity_json=DEFAULT_IDENTITY.model_dump_json(),
+    )
+    repo.insert_order(entry)
+    repo.insert_position(
+        _position(
+            id=position_id,
+            order_id=entry.id,
+            proposal_id=proposal.id,
+            pending_close_order_id=f"close-{position_id}",
+            pending_close_status=pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+            pending_close_requested_at=_iso(age_hours),
+        )
+    )
+    repo.insert_order(
+        Order(
+            id=f"close-{position_id}",
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            proposal_id=proposal.id,
+            close_reason="stop_loss",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.1219,
+            execution_mode="bitget_demo",
+            status="cancelled",
+            source="native",
+            exchange_order_id="1471627178020290560",
+            error_reason=pcr.TRADE_RATE_LIMIT_CANCEL_REASON,
+            created_at=_iso(age_hours),
+        )
+    )
+
+
+def _orders_for_position(position_id: str) -> list[dict]:
+    return [
+        dict(row)
+        for row in repo.get_db().execute(
+            "SELECT id, status, error_reason FROM orders WHERE position_id = ?",
+            (position_id,),
+        ).fetchall()
+    ]
+
+
+def test_parked_claim_holds_the_close_fence_without_immediate_reconciliation():
+    from aletheia.execution.close_convergence import (
+        CLOSE_CLAIM_STATES,
+        IMMEDIATE_RECONCILIATION_STATES,
+        has_unresolved_close_claim,
+    )
+
+    assert pcr.VENUE_TRADE_RATE_LIMITED_STATUS in CLOSE_CLAIM_STATES
+    assert pcr.VENUE_TRADE_RATE_LIMITED_STATUS not in IMMEDIATE_RECONCILIATION_STATES
+    assert has_unresolved_close_claim({
+        "pending_close_order_id": "close-pos-parked-40725",
+        "pending_close_status": pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+    }) is True
+
+
+def test_parked_claim_view_names_the_owner_unlock_at_any_age():
+    from aletheia.execution.close_convergence import close_convergence_view
+
+    view = close_convergence_view({
+        "status": "open",
+        "pending_close_order_id": "close-pos-parked-40725",
+        "pending_close_status": pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+        "pending_close_requested_at": _iso(22.5),
+    })
+
+    assert view["pending_close"] is True
+    assert view["close_convergence_state"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+    assert view["close_convergence_owner_status"] == (
+        "venue rate limited; owner unlock required"
+    )
+    assert view["close_convergence_requires_reconciliation"] is True
+    assert view["close_convergence_escalated"] is True
+
+
+def test_repeated_close_on_parked_claim_returns_already_pending():
+    """#3719: the second close must return the parked claim, never claim an Order."""
+    _seed_parked_claim()
+
+    from aletheia.execution.coordinator import close_position
+
+    result = close_position("pos-parked-40725", reason="stop_loss")
+
+    assert result["already_pending"] is True
+    assert result["closed"] is False
+    assert result["order_id"] == "close-pos-parked-40725"
+    assert result["status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+    orders = _orders_for_position("pos-parked-40725")
+    assert [order["id"] for order in orders] == ["close-pos-parked-40725"]
+    assert orders[0]["status"] == "cancelled"
+    assert orders[0]["error_reason"] == pcr.TRADE_RATE_LIMIT_CANCEL_REASON
+
+
 def test_legacy_submission_rejected_40725_is_still_not_released():
     """Pre-normalization rows must remain parked even on submission_rejected."""
     _seed_order(
