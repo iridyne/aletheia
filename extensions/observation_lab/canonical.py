@@ -1013,7 +1013,6 @@ def compact_finalized_generations(
                     for claim in claims:
                         table = {
                             "filter_candidate_outcomes": "filter_candidate_outcomes",
-                            "universe_forward_outcomes": "universe_forward_outcomes",
                         }.get(str(claim["claim_domain"]))
                         source = None
                         if table is not None:

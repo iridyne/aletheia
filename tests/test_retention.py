@@ -204,104 +204,6 @@ def test_prune_market_snapshots(tmp_path, monkeypatch):
     assert repo.prune_market_snapshots(days=30) == 1
 
 
-def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
-    """Unreferenced labels prune at 30d; active-experiment fallbacks are guarded."""
-    conn = setup_env(tmp_path, monkeypatch)
-    cols = ("(id, member_id, snapshot_id, symbol, horizon, "
-            "entry_price_usd, entry_ts, due_at, status)")
-    conn.execute(f"INSERT INTO universe_forward_outcomes {cols} VALUES (?,?,?,?,?,?,?,?,?)",
-                 ("o", "m1", "s1", "BTC/USDT", "1d", 1.0, _old(60), _old(59), "settled"))
-    conn.execute(f"INSERT INTO universe_forward_outcomes {cols} VALUES (?,?,?,?,?,?,?,?,?)",
-                 ("n", "m1", "s2", "BTC/USDT", "1d", 1.0, _recent(), _recent(), "pending"))
-    conn.commit()
-    assert repo.prune_universe_forward_outcomes(days=30) == 1
-    remaining = {r["id"] for r in conn.execute("SELECT id FROM universe_forward_outcomes").fetchall()}
-    assert remaining == {"n"}, "prune must drop only outcomes older than the window"
-
-
-def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path, monkeypatch):
-    conn = setup_env(tmp_path, monkeypatch)
-    conn.execute("UPDATE observation_authority_state SET authority_source='legacy'")
-    from extensions.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
-
-    hypothesis = LearningHypothesis(
-        hypothesis_id="retention-hypothesis",
-        fingerprint="retention-hypothesis",
-        cohort_id="test",
-        path_id="universe_family_calibration",
-        overlap_group="universe",
-        source_type="test",
-        scope_json="{}",
-        action_json="{}",
-        consumer="universe_allocator",
-        target_horizon="4h",
-    )
-    experiment = LearningExperiment(
-        experiment_id="retention-experiment",
-        hypothesis_id=hypothesis.hypothesis_id,
-        assignment_salt="test", status="active",
-    )
-    exposure = LearningExposure(
-        dedup_key="retention-exposure",
-        experiment_id=experiment.experiment_id,
-        hypothesis_id=hypothesis.hypothesis_id,
-        assignment="control",
-        consumer="universe_allocator",
-        consumer_stage="opportunity_score",
-        path_id=hypothesis.path_id,
-        overlap_group="universe",
-        assignment_unit_key="run-1",
-        candidate_key="candidate-1",
-        outcome_candidate_key="candidate-1:4h",
-        outcome_source="fixed_horizon_candidate",
-        concurrent_policy_epoch="epoch-a",
-        exposed_at=_old(70),
-    )
-    for table, record in (("learning_hypotheses", hypothesis), ("learning_experiments", experiment), ("learning_exposures", exposure)):
-        values = record.model_dump()
-        conn.execute(
-            f"INSERT INTO {table} ({','.join(values)}) VALUES ({','.join('?' for _ in values)})",
-            tuple(values.values()),
-        )
-    conn.execute(
-        "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
-        ("asset-1", "test", "BTC/USDT", "perp"),
-    )
-    conn.execute(
-        "INSERT INTO universe_snapshots (id, created_at, market_type, status) "
-        "VALUES (?,?,?,?)",
-        ("s1", _old(60), "crypto", "expired"),
-    )
-    conn.execute(
-        "INSERT INTO universe_members "
-        "(id, snapshot_id, asset_id, symbol, rank, total_score, expires_at) "
-        "VALUES (?,?,?,?,?,?,?)",
-        ("m1", "s1", "asset-1", "BTC/USDT", 1, 1.0, _old(59)),
-    )
-    columns = (
-        "(id, member_id, snapshot_id, symbol, horizon, outcome_candidate_key, "
-        "entry_price_usd, entry_ts, due_at, status)"
-    )
-    conn.execute(
-        f"INSERT INTO universe_forward_outcomes {columns} VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (
-            "fallback", "m1", "s1", "BTC/USDT", "4h", "candidate-1:4h",
-            1.0, _old(60), _old(59), "settled",
-        ),
-    )
-    conn.commit()
-
-    assert repo.prune_universe_forward_outcomes(days=30) == 0
-    assert prune_universe_members(days=30) == 0
-    assert repo.prune_universe_snapshots(days=30) == 0
-    assert conn.execute(
-        "SELECT 1 FROM universe_forward_outcomes WHERE id='fallback'"
-    ).fetchone() is not None
-    assert conn.execute(
-        "SELECT 1 FROM universe_snapshots WHERE id='s1'"
-    ).fetchone() is not None
-
-
 def _seed_experiment_guarded_retention_rows(conn):
     from aletheia.storage.models import FilterCandidateOutcome
 
@@ -334,15 +236,6 @@ def _seed_experiment_guarded_retention_rows(conn):
             1, 1.0, _old(59),
         ),
     )
-    conn.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, horizon, entry_price_usd, entry_ts, due_at, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (
-            "guarded-universe-outcome", "guarded-member", "guarded-snapshot",
-            "BTC/USDT", "1d", 1.0, _old(60), _old(59), "settled",
-        ),
-    )
     conn.commit()
 
 
@@ -357,7 +250,6 @@ def test_explicit_no_experiment_floor_prunes_real_rows_without_reread(tmp_path, 
     monkeypatch.setattr(repo, "_observation_retention_floor", lambda _domain: None)
 
     assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=None) == 1
-    assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=None) == 1
     assert repo.prune_universe_snapshots(30, min_experiment_started_at=None) == 1
     assert conn.execute("SELECT 1 FROM universe_members").fetchone() is None
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -375,11 +267,9 @@ def test_explicit_experiment_floor_protects_real_rows_without_reread(tmp_path, m
     floor = _old(70)
 
     assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=floor) == 0
-    assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=floor) == 0
     assert prune_universe_members(30, min_experiment_started_at=floor) == 0
     assert repo.prune_universe_snapshots(30, min_experiment_started_at=floor) == 0
     assert conn.execute("SELECT 1 FROM filter_candidate_outcomes").fetchone() is not None
-    assert conn.execute("SELECT 1 FROM universe_forward_outcomes").fetchone() is not None
     assert conn.execute("SELECT 1 FROM universe_members").fetchone() is not None
     assert conn.execute("SELECT 1 FROM universe_snapshots").fetchone() is not None
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

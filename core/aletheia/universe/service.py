@@ -638,13 +638,8 @@ class UniverseService:
         recover_candidate_selection_authority_transition()
         cfg = load_config()
 
-        # Settle any overdue forward outcomes before producing new ones.
-        # Clean outlier rows first (idempotent — fast no-op after first pass).
+        # Settle any overdue filter candidate outcomes before producing new ones.
         try:
-            with repo.transaction():
-                cleaned = repo.mark_outlier_outcomes_failed()
-            if cleaned:
-                logger.info("Cleaned %d outlier forward outcome rows", cleaned)
             await settle_due()
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)

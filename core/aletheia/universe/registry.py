@@ -80,18 +80,9 @@ async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset[str] | No
 
 
 def _invalidate_stale_pipeline_data() -> None:
-    """Flush stale universe pipeline data after a venue/strategy change.
-
-    Expires active snapshots and cancels all pending forward outcomes so
-    downstream jobs (data_collectors, outcome_recorder) don't operate on
-    symbols that no longer exist on the active exchange.
-    """
+    """Flush stale universe pipeline data after a venue/strategy change."""
     repo.expire_universe_snapshots(market_type="crypto")
-    cancelled = repo.cancel_all_pending_forward_outcomes()
-    logger.info(
-        "Pipeline invalidated: snapshots superseded, %d pending outcomes cancelled",
-        cancelled,
-    )
+    logger.info("Pipeline invalidated: snapshots superseded")
 
 
 async def sync_registry(cfg: AletheiaConfig) -> int:

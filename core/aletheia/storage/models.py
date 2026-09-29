@@ -1639,46 +1639,6 @@ class UniverseSetup(_Provenanced):
     valid_until: str
 
 
-class UniverseForwardOutcome(BaseModel):
-    id: str = Field(default_factory=new_id)
-    outcome_candidate_key: str | None = None
-    member_id: str
-    snapshot_id: str
-    symbol: str
-    venue: str | None = None
-    market_type: str = "spot"
-    scanner_family: str | None = None
-    # Trade direction the scanner family implied at selection ("long" | "short").
-    # None for legacy rows / members with no inferable direction; direction-aware
-    # win-rate calibration excludes those rows because their side is unknown.
-    direction: str | None = None
-    horizon: str  # "15m" | "1h" | "4h" | "24h"
-    entry_price_usd: float
-    entry_spread_bps: float | None = None
-    funding_rate_at_entry: float | None = None
-    entry_ts: str = Field(default_factory=_utcnow)
-    due_at: str
-    settled_at: str | None = None
-    exit_price_usd: float | None = None
-    # Legacy raw price move retained for compatibility. New consumers use the
-    # explicit gross/directional/net fields below.
-    forward_return_pct: float | None = None
-    gross_return_pct: float | None = None
-    directional_return_pct: float | None = None
-    estimated_fee_pct: float | None = None
-    estimated_spread_slippage_pct: float | None = None
-    estimated_funding_pct: float | None = None
-    net_return_pct: float | None = None
-    min_tradable_edge_pct: float | None = None
-    min_cost_covering_edge_pct: float | None = None
-    mfe_pct: float | None = None
-    mae_pct: float | None = None
-    settlement_price_source: str | None = None
-    settlement_lag_sec: float | None = None
-    cost_model_version: str | None = None
-    status: str = "pending"  # "pending" | "settled" | "failed"
-
-
 class UniversePolicy(BaseModel):
     id: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=_utcnow)

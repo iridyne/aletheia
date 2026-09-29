@@ -5,7 +5,6 @@ private-fill reconciliation, and exchange_order_id, plus gateway routing for a
 fully-approved live proposal while live-disabled remains blocked.
 """
 
-from tests.helpers.repo_test_helpers import insert_forward_outcome
 
 import sqlite3
 
@@ -202,17 +201,16 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     # fresh market data so the data-freshness check passes
     from datetime import datetime, timezone
 
-    from aletheia.storage.models import MarketSnapshot, Opportunity, UniverseForwardOutcome
+    from aletheia.storage.models import FilterCandidateOutcome, MarketSnapshot, Opportunity
 
     # #14 scanner-family evidence gate (Position C 2026-07-02): a LIVE order is
     # live-eligible only if its scanner_family has a proven clean-window edge. Seed
     # 30 winning settled outcomes for (momentum, long) + an opportunity carrying that
     # family so the proposal passes gate #14 and routes to the broker.
     now = datetime.now(timezone.utc).isoformat()
-    for i in range(30):
-        insert_forward_outcome(UniverseForwardOutcome(
-            member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
-            venue="bitget",
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key=f"key-{i}", symbol="BTC/USDT", venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
             exit_price_usd=105.0, forward_return_pct=5.0,
@@ -221,8 +219,10 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
             estimated_funding_pct=0.0, net_return_pct=4.73,
             min_tradable_edge_pct=0.05, min_cost_covering_edge_pct=0.32, cost_model_version="v1",
             settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
-            market_type="spot", status="settled",
-        ))
+            market_type="spot", status="settled", allocation_selected=1,
+        )
+        for i in range(30)
+    ])
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")
     repo.insert_opportunity(opp)
     repo.insert_market_snapshot(MarketSnapshot(

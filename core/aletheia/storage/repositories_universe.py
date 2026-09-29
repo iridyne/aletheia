@@ -21,14 +21,11 @@ from aletheia.storage.models import (
 )
 
 __all__ = [
-    "cancel_all_pending_forward_outcomes",
     "candidate_selection_cost_assumptions",
     "close_pending_filter_outcomes_for_inactive_benchmarks",
     "count_pending_filter_candidate_outcomes_missing_venue",
     "count_pending_filter_candidate_outcomes_unreachable_benchmark",
-    "count_pending_forward_outcomes_missing_venue",
     "fail_filter_candidate_outcome",
-    "fail_forward_outcome",
     "fail_perp_structure_shadow_outcome",
     "filter_outcome_unreachable_predicate",
     "filter_pressure_stats",
@@ -54,11 +51,9 @@ __all__ = [
     "list_due_perp_structure_shadow_outcomes",
     "list_entry_workbench_candidates",
     "list_exit_breakeven_shadow_report_rows",
-    "list_forward_outcomes_by_member",
     "list_open_universe_twin_outcome_candidate_keys",
     "list_pending_filter_candidate_outcomes",
     "list_pending_filter_candidate_outcomes_for_keys",
-    "list_pending_forward_outcomes",
     "list_pending_universe_discovery_outcomes",
     "list_universe_assets",
     "list_universe_discovery_batches",
@@ -67,12 +62,10 @@ __all__ = [
     "list_universe_members",
     "list_universe_snapshots",
     "list_universe_twin_shadow_records",
-    "mark_outlier_outcomes_failed",
     "prune_perp_structure_shadow_outcomes",
     "prune_universe_scanner_runs",
     "prune_universe_twin_shadow_evidence",
     "settle_filter_candidate_outcome",
-    "settle_forward_outcome",
     "settle_perp_structure_shadow_outcome",
     "sync_universe_assets",
     "upsert_universe_asset",
@@ -189,38 +182,6 @@ def _candidate_selection_retention_state() -> tuple[bool, str | None]:
         else None
     )
     return True, epoch
-
-
-def _protected_universe_outcome_ids(
-    db,
-    refs: tuple[str, ...],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Resolve exact Lab claim refs to outcome/member/snapshot identities."""
-    if not refs:
-        return (), ()
-    # SQLite's bound-variable limit is commonly 999. A claim set larger than
-    # that is unusual; retaining this cleanup batch is safer than truncating
-    # protection and deleting a claimed source underneath an active window.
-    if len(refs) > 900:
-        return ("__claim_set_too_large__",), ("__claim_set_too_large__",)
-    placeholders = ",".join("?" for _ in refs)
-    rows = db.execute(
-        "SELECT id, member_id, snapshot_id, outcome_candidate_key FROM universe_forward_outcomes "
-        f"WHERE id IN ({placeholders}) OR outcome_candidate_key IN ({placeholders})",
-        (*refs, *refs),
-    ).fetchall()
-    matched = {
-        str(value)
-        for row in rows
-        for value in (row[0], row[3])
-        if value
-    }
-    if any(ref not in matched for ref in refs):
-        return ("__claim_source_unavailable__",), ("__claim_source_unavailable__",)
-    return (
-        tuple(str(row[1]) for row in rows if row[1]),
-        tuple(str(row[2]) for row in rows if row[2]),
-    )
 
 
 def upsert_universe_asset(asset: UniverseAsset) -> None:
@@ -1122,16 +1083,6 @@ def valid_keyed_shadow_projection_sql(
     )
 
 
-def _forward_outcome_insert_payload(outcome) -> dict:
-    data = outcome.model_dump()
-    if str(data.get("status") or "").lower() == "pending":
-        venue = data.get("venue")
-        if not isinstance(venue, str) or not venue.strip():
-            raise ValueError("pending forward outcome requires a nonblank venue")
-        data["venue"] = venue.strip()
-    return data
-
-
 def _filter_outcome_insert_payload(outcome) -> dict:
     from aletheia.storage.repositories import logger
 
@@ -1156,140 +1107,6 @@ def _filter_outcome_insert_payload(outcome) -> dict:
         if data.get(field) is None:
             data[field] = provenance.get(source_field)
     return data
-
-
-def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
-    from aletheia.storage.repositories import (
-        SQLITE_PYTHON_STRIP_CHARS_SQL,
-        _select_all,
-    )
-
-    return _select_all(
-        "universe_forward_outcomes",
-        where=(
-            "status = 'pending' AND due_at <= ? "
-            "AND typeof(venue) = 'text' "
-            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
-        ),
-        params=(before_ts,),
-        order="due_at ASC",
-        limit=limit,
-    )
-
-
-def count_pending_forward_outcomes_missing_venue(before_ts: str) -> int:
-    from aletheia.storage.repositories import (
-        SQLITE_PYTHON_STRIP_CHARS_SQL,
-        get_db,
-    )
-
-    db = get_db()
-    row = db.execute(
-        "SELECT COUNT(*) AS n FROM universe_forward_outcomes "
-        "WHERE status = 'pending' AND due_at <= ? AND ("
-        "typeof(venue) <> 'text' "
-        f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
-        (before_ts,),
-    ).fetchone()
-    return int(row["n"] or 0)
-
-
-def settle_forward_outcome(
-    outcome_id: str,
-    exit_price: float,
-    forward_return: float,
-    settled_at: str,
-    *,
-    economics: dict | None = None,
-    settlement_price_source: str | None = None,
-    settlement_lag_sec: float | None = None,
-) -> bool:
-    from aletheia.storage.repositories import _settle_outcome_with_exact_venue
-
-    updates = {
-        "exit_price_usd": exit_price,
-        "forward_return_pct": forward_return,
-        "settled_at": settled_at,
-        "status": "settled",
-    }
-    if economics:
-        updates.update(economics)
-    if settlement_price_source is not None:
-        updates["settlement_price_source"] = settlement_price_source
-    if settlement_lag_sec is not None:
-        updates["settlement_lag_sec"] = settlement_lag_sec
-    return _settle_outcome_with_exact_venue(
-        "universe_forward_outcomes",
-        outcome_id,
-        updates,
-        kind="forward",
-    )
-
-
-def fail_forward_outcome(
-    outcome_id: str,
-    settled_at: str,
-    *,
-    exit_price: float | None = None,
-    settlement_price_source: str | None = None,
-) -> bool:
-    """Record a terminal "not measurable" verdict for one forward row.
-
-    Pass ``exit_price``/``settlement_price_source`` whenever the venue DID answer
-    and the answer was rejected — a >10x deviation from entry, which is how
-    cross-symbol contamination presents. Recording the rejected observation makes
-    the row say what was seen, and leaves NULL meaning exactly one thing: no
-    observation was ever taken.
-
-    ``maintenance.settlement_requeue`` depends on that distinction to separate
-    evidence destroyed by an unreachable venue from a genuine verdict, so never
-    fail a row with a price in hand without passing it. Neither column is read by
-    any consumer of a failed row: those all gate on ``net_return_pct IS NOT NULL``
-    (outcome contract §8), which a failed row never has.
-    """
-    from aletheia.storage.repositories import (
-        _update_pending,
-        transaction,
-    )
-
-    updates: dict[str, object] = {
-        "settled_at": settled_at,
-        "status": "failed",
-    }
-    if exit_price is not None:
-        updates["exit_price_usd"] = exit_price
-    if settlement_price_source is not None:
-        updates["settlement_price_source"] = settlement_price_source
-    with transaction(immediate=True):
-        return _update_pending("universe_forward_outcomes", outcome_id, updates)
-
-
-def cancel_all_pending_forward_outcomes() -> int:
-    """Batch-cancel all pending forward outcomes (used on venue/strategy switch)."""
-    from aletheia.storage.repositories import (
-        execute_write,
-        get_db,
-    )
-
-    db = get_db()
-    was_in_tx = db.in_transaction
-    result = execute_write(
-        "UPDATE universe_forward_outcomes SET status = 'cancelled' WHERE status = 'pending'",
-    )
-    if not was_in_tx:
-        db.commit()
-    return result.rowcount
-
-
-def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
-    from aletheia.storage.repositories import _select_all
-
-    return _select_all(
-        "universe_forward_outcomes",
-        where="member_id = ?",
-        params=(member_id,),
-        order="horizon ASC",
-    )
 
 
 def insert_filter_decision(decision) -> bool:
@@ -1841,29 +1658,6 @@ def fail_filter_candidate_outcome(
         updates,
         kind="filter",
     )
-
-
-def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
-    """Mark settled rows with physically impossible returns as failed.
-
-    Catches cross-symbol price contamination (e.g. BTC's price applied to PEPE
-    when ccxt returns wrong data without raising). Idempotent — safe to call on
-    every refresh; after the first pass it finds 0 rows and returns immediately.
-    """
-    from aletheia.storage.repositories import (
-        execute_write,
-        get_db,
-    )
-
-    db = get_db()
-    result = execute_write(
-        "UPDATE universe_forward_outcomes "
-        "SET status = 'failed' "
-        "WHERE status = 'settled' "
-        "AND (ABS(forward_return_pct) > ? OR ABS(net_return_pct) > ?)",
-        (max_abs_return_pct, max_abs_return_pct),
-    )
-    return result.rowcount
 
 
 def filter_pressure_stats(

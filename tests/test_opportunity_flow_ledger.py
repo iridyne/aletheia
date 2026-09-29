@@ -99,19 +99,37 @@ def _insert_forward(
 ) -> None:
     directional = -ret if direction == "short" else ret
     net = directional - 0.2
+    candidate_key = f"candidate-{member_id}"
+    # Insert universe FK chain so production code can resolve learning_candidate_key.
     db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
-        "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
+        "INSERT OR IGNORE INTO universe_registry (id, venue, market_type, symbol, status) "
+        "VALUES (?, 'bitget', 'spot', 'BTC/USDT', 'active')",
+        (f"asset-{member_id}",),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO universe_snapshots (id, market_type, expires_at) "
+        "VALUES (?, 'crypto', datetime('now', '+1 hour'))",
+        (f"snap-{member_id}",),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO universe_members "
+        "(id, snapshot_id, asset_id, symbol, rank, total_score, expires_at, learning_candidate_key) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 1, 80, datetime('now', '+1 hour'), ?)",
+        (member_id, f"snap-{member_id}", f"asset-{member_id}", candidate_key),
+    )
+    db.execute(
+        "INSERT OR REPLACE INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
+        "entry_ts, due_at, settled_at, exit_price_usd, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, "
         "settlement_price_source, settlement_lag_sec, cost_model_version, status) "
-        "VALUES (?, ?, ?, 'bitget', 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
+        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
         "'horizon_ohlcv', 0, 'v1', 'settled')",
         (
-            f"fwd-flow-{member_id}-{snapshot_id}-{horizon}", member_id,
-            snapshot_id, direction, horizon, ret, ret, directional, net,
+            f"fwd-flow-{member_id}-{horizon}", candidate_key,
+            direction, horizon, ret, directional, net,
         ),
     )
 
@@ -542,7 +560,12 @@ def test_opportunity_flow_does_not_mislabel_snapshot_supersede_as_ttl_expiry():
     assert not any(event["stage"] == "ttl_expired" for event in trace["timeline"])
 
 
-def test_opportunity_flow_counterfactual_uses_opportunity_snapshot_not_latest_member_result():
+def test_opportunity_flow_counterfactual_uses_opportunity_member_not_other_member_result():
+    """Counterfactual looks up the opportunity's own member, not another member's result.
+
+    FCO rows are keyed by learning_candidate_key (from universe_members), not by snapshot.
+    Two opportunities with different member_ids must see different FCO rows.
+    """
     from aletheia.analytics.opportunity_flow import trace_opportunity_flow
     from aletheia.storage.sqlite import get_db
 
@@ -550,17 +573,17 @@ def test_opportunity_flow_counterfactual_uses_opportunity_snapshot_not_latest_me
     _insert_opp(
         db,
         opp_id="opp-snapshot-a",
-        member_id="member-reused",
+        member_id="member-a",
         snapshot_id="snap-a",
     )
     _insert_opp(
         db,
         opp_id="opp-snapshot-b",
-        member_id="member-reused",
+        member_id="member-b",
         snapshot_id="snap-b",
     )
-    _insert_forward(db, member_id="member-reused", snapshot_id="snap-a", ret=-1.0)
-    _insert_forward(db, member_id="member-reused", snapshot_id="snap-b", ret=2.0)
+    _insert_forward(db, member_id="member-a", ret=-1.0)
+    _insert_forward(db, member_id="member-b", ret=2.0)
     db.commit()
 
     trace = trace_opportunity_flow("opp-snapshot-a")

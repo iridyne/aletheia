@@ -145,19 +145,19 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     for i in range(10):
         ret = 2.0 if i < 3 else -2.0
         db.execute(
-            "INSERT INTO universe_forward_outcomes "
-                "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
-                " market_type, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+            "INSERT INTO filter_candidate_outcomes "
+                "(id, outcome_candidate_key, symbol, venue, scanner_family, direction, horizon, "
+                " market_type, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
                 " settlement_price_source, settlement_lag_sec, "
                 " gross_return_pct, directional_return_pct, net_return_pct, "
                 " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 " min_tradable_edge_pct, cost_model_version, status) "
-                "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
+                "VALUES (?, ?, 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
                 " 'spot', 100.0, ?, ?, ?, ?, "
-                " ?, 'horizon_ohlcv', 0, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
+                " 'horizon_ohlcv', 0, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
                 (f"fo-{i}", f"candidate-fo-{i}", 100.0 * (1.0 + ret / 100.0),
                  entry_at, due_at, settled_at,
-                 ret, ret, ret, ret - 0.2),
+                 ret, ret, ret - 0.2),
         )
     db.commit()
 
@@ -185,11 +185,11 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
     )
     db = sq.get_db()
     db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, status) "
-        "VALUES ('gross-only', 'm', 's', 'BTC/USDT', 'momentum', 'long', '24h', 100, "
-        "datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), 9, 'settled')"
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, symbol, venue, market_type, scanner_family, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, status) "
+        "VALUES ('gross-only', 'gross-only', 'BTC/USDT', 'bitget', 'spot', 'momentum', 'long', '24h', 100, "
+        "datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), 'settled')"
     )
     db.commit()
 
@@ -229,13 +229,13 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     )
     db = sq.get_db()
     db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
-        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, symbol, venue, scanner_family, direction, horizon, "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         "net_return_pct, min_tradable_edge_pct, cost_model_version, settlement_price_source, settlement_lag_sec, status) "
-        "VALUES ('temporal', 'candidate-temporal', 'm', 's', 'BTC/USDT', 'bitget', 'momentum', 'long', "
-        "'24h', 100, 101, ?, ?, ?, 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
+        "VALUES ('temporal', 'candidate-temporal', 'BTC/USDT', 'bitget', 'momentum', 'long', "
+        "'24h', 100, 101, ?, ?, ?, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
         (
             (_ANCHOR + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
             (_ANCHOR + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
@@ -253,13 +253,13 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     )
     for row_id, entry_at, due_at, settled_at in rows:
         db.execute(
-            "INSERT INTO universe_forward_outcomes "
-            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
-            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+            "INSERT INTO filter_candidate_outcomes "
+            "(id, outcome_candidate_key, symbol, venue, scanner_family, direction, horizon, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, gross_return_pct, "
             "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
             "net_return_pct, min_tradable_edge_pct, cost_model_version, settlement_price_source, settlement_lag_sec, status) "
-            "VALUES (?, ?, 'm', 's', 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
-            "100, 101, ?, ?, ?, 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
+            "VALUES (?, ?, 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
+            "100, 101, ?, ?, ?, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
             (
                 row_id,
                 f"candidate-{row_id}",

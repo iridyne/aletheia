@@ -73,9 +73,7 @@ from aletheia.storage.repositories_universe import (
     _effective_candidate_attention as _effective_candidate_attention,
     _filter_outcome_insert_payload as _filter_outcome_insert_payload,
     _filter_outcome_loss_event as _filter_outcome_loss_event,
-    _forward_outcome_insert_payload as _forward_outcome_insert_payload,
     _project_candidate_admission as _project_candidate_admission,
-    _protected_universe_outcome_ids as _protected_universe_outcome_ids,
     _universe_twin_shadow_capture_due_from_latest as _universe_twin_shadow_capture_due_from_latest,
     _validate_universe_twin_prospective_bundle as _validate_universe_twin_prospective_bundle,
     get_candidate_planning_generation as get_candidate_planning_generation,
@@ -5049,16 +5047,6 @@ def _settle_outcome_with_exact_venue(
             return _update_pending(table, outcome_id, updates)
 
 
-def insert_forward_outcomes_batch(outcomes: list) -> None:
-    if not outcomes:
-        return
-    with transaction():
-        _insert_many(
-            "universe_forward_outcomes",
-            [_forward_outcome_insert_payload(outcome) for outcome in outcomes],
-        )
-
-
 # ---------------------------------------------------------------------------
 # Opportunity filter evidence
 # ---------------------------------------------------------------------------
@@ -5663,6 +5651,12 @@ def prune_prediction_probability_snapshots(days: int = 90) -> int:
     return _delete_by_rowid_batches("prediction_probability_snapshots", "ts < ?", (cutoff,))
 
 
+def prune_shadow_trades(days: int = 90) -> int:
+    """Prune shadow_trades older than `days`. Write path retired in #3704; reads remain."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches("shadow_trades", "created_at < ?", (cutoff,))
+
+
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return _delete_by_rowid_batches("liquidation_events", "observed_at < ?", (cutoff,))
@@ -5724,46 +5718,6 @@ def prune_universe_feature_snapshots(days: int = 14) -> int:
     return _delete_by_rowid_batches(
         "universe_feature_snapshots",
         "ts < ?",
-        (cutoff,),
-    )
-
-
-def prune_universe_forward_outcomes(
-    days: int = 30,
-    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
-) -> int:
-    """Prune selected-member outcomes without deleting open-experiment fallback evidence."""
-    protected_refs: tuple[str, ...] = ()
-    try:
-        lab_authority = _canonical_lab_authority()
-    except ExperimentStateReadError:
-        return 0
-    if lab_authority:
-        try:
-            protected_refs = _active_observation_claim_refs("universe_forward_outcomes")
-        except ExperimentStateReadError:
-            return 0
-        cutoff = _effective_cutoff(days, None)
-    else:
-        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-        cutoff = _effective_cutoff(days, min_experiment_started_at)
-    if lab_authority and protected_refs:
-        # Keep the exact outcome identity; no global Experiment date floor is
-        # consulted after Lab cutover.
-        if len(protected_refs) > 900:
-            # ponytail: keep this bounded and fail closed; a future bulk
-            # cleanup can use a temporary claim table instead of widening SQL.
-            return 0
-        placeholders = ",".join("?" for _ in protected_refs)
-        return _delete_by_rowid_batches(
-            "universe_forward_outcomes",
-            f"entry_ts < ? AND id NOT IN ({placeholders}) "
-            f"AND (outcome_candidate_key IS NULL OR outcome_candidate_key NOT IN ({placeholders}))",
-            (cutoff, *protected_refs, *protected_refs),
-        )
-    return _delete_by_rowid_batches(
-        "universe_forward_outcomes",
-        "entry_ts < ?",
         (cutoff,),
     )
 
@@ -6015,62 +5969,27 @@ def prune_universe_snapshots(
     """Prune universe_snapshots older than ``days`` + cascade-delete universe_members.
 
     FK universe_members.snapshot_id has no ON DELETE CASCADE; children must be
-    removed first in the same transaction. universe_forward_outcomes references
-    universe_members. Snapshots with fallback outcomes protected by an active
-    experiment remain until those outcomes leave their guarded window.
+    removed first in the same transaction.
     """
     try:
         lab_authority = _canonical_lab_authority()
     except ExperimentStateReadError:
         return 0
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    protected_snapshots: tuple[str, ...] = ()
-    if lab_authority:
-        try:
-            refs = _active_observation_claim_refs("universe_forward_outcomes")
-            _, protected_snapshots = _protected_universe_outcome_ids(get_db(), refs)
-        except (ExperimentStateReadError, sqlite3.Error):
-            return 0
-        if protected_snapshots in {
-            ("__claim_set_too_large__",),
-            ("__claim_source_unavailable__",),
-        }:
-            return 0
-        outcome_cutoff = _effective_cutoff(days, None)
-    else:
+    if not lab_authority:
         min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-        outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
+    cutoff = _effective_cutoff(days, min_experiment_started_at if not lab_authority else None)
     db = get_db()
-    protected_clause = ""
-    protected_params: tuple[str, ...] = ()
-    if protected_snapshots:
-        placeholders = ",".join("?" for _ in protected_snapshots)
-        protected_clause = f" AND s.id NOT IN ({placeholders})"
-        protected_params = protected_snapshots
     snap_ids = [
         row[0]
         for row in db.execute(
-            "SELECT s.id FROM universe_snapshots s WHERE s.created_at < ? "
-            "AND NOT EXISTS ("
-            "  SELECT 1 FROM universe_members m "
-            "  JOIN universe_forward_outcomes o ON o.member_id=m.id "
-            "  WHERE m.snapshot_id=s.id AND o.entry_ts>=?"
-            ")" + protected_clause,
-            (cutoff, outcome_cutoff, *protected_params),
+            "SELECT s.id FROM universe_snapshots s WHERE s.created_at < ?",
+            (cutoff,),
         ).fetchall()
     ]
     if not snap_ids:
         return 0
     placeholders = ",".join("?" * len(snap_ids))
     with transaction():
-        # universe_forward_outcomes references universe_members. Delete those
-        # forward-outcome rows first to avoid FK IntegrityError.
-        execute_write(
-            f"DELETE FROM universe_forward_outcomes WHERE member_id IN ("
-            f"  SELECT id FROM universe_members WHERE snapshot_id IN ({placeholders})"
-            f")",
-            snap_ids,
-        )
         execute_write(
             f"DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})",
             snap_ids,

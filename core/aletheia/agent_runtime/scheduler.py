@@ -2971,10 +2971,6 @@ def _run_cleanup():
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
-            "universe_forward_outcomes": (
-                repo.prune_universe_forward_outcomes(30, min_experiment_started_at=min_open_exp_at)
-                if experiment_floor_read_ok else 0
-            ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
             "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),

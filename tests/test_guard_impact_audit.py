@@ -53,9 +53,10 @@ def _insert_member(db: sqlite3.Connection, *, member_id: str = "member-1", symbo
     db.execute(
         "INSERT INTO universe_members "
         "(id, snapshot_id, asset_id, symbol, rank, total_score, opportunity_score, tradability_score, "
-        "liquidity_score, estimated_cost, crowding_risk, late_entry_penalty, scanner_family, expires_at, risk_flags) "
-        "VALUES (?, 'snap-guard-impact', ?, ?, 1, 80, 70, 90, 90, 1, 0, 5, 'momentum', datetime('now','+1 hour'), '[]')",
-        (member_id, f"asset-{member_id}", symbol),
+        "liquidity_score, estimated_cost, crowding_risk, late_entry_penalty, scanner_family, expires_at, risk_flags, "
+        "learning_candidate_key) "
+        "VALUES (?, 'snap-guard-impact', ?, ?, 1, 80, 70, 90, 90, 1, 0, 5, 'momentum', datetime('now','+1 hour'), '[]', ?)",
+        (member_id, f"asset-{member_id}", symbol, f"candidate-{member_id}"),
     )
 
 
@@ -99,18 +100,18 @@ def _insert_forward(
     net = directional - 0.2
     exit_price = 100.0 * (1.0 + ret / 100.0)
     db.execute(
-        "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
-        "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
+        "entry_ts, due_at, settled_at, exit_price_usd, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, settlement_price_source, "
         "settlement_lag_sec, cost_model_version, status) "
-        "VALUES (?, ?, 'snap-guard-impact', 'bitget', ?, 'momentum', ?, ?, 100, datetime('now','-5 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), ?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
+        "VALUES (?, ?, 'bitget', ?, 'momentum', ?, ?, 100, datetime('now','-5 hours'), "
+        "datetime('now','-1 hour'), datetime('now'), ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
         "'horizon_ohlcv', 0, 'v1', 'settled')",
         (
-            f"fwd-{member_id}-{horizon}", member_id, symbol, direction,
-            horizon, exit_price, ret, ret, directional, net,
+            f"fwd-{member_id}-{horizon}", f"candidate-{member_id}", symbol, direction,
+            horizon, exit_price, ret, directional, net,
         ),
     )
 
