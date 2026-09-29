@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -193,58 +194,35 @@ def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
-    """Monkeypatch httpx_client so every client.get() raises — assert the function
-    returns an empty dict and does not propagate (the per-symbol try/except inside
-    the loop swallows each failure).
-
-    Pattern mirrors spec_macro_signals.py::test_coingecko_top_degraded_does_not_raise.
+def test_fetch_binance_ratio_batch_returns_empty_on_http_error():
+    """CCXT method raises for every symbol — assert the function returns an empty dict
+    and does not propagate (the per-symbol try/except inside the loop swallows each failure).
     """
     import extensions.data.collectors.derivatives as mod
 
-    class FailingClient:
-        async def get(self, *args, **kwargs):
-            raise RuntimeError("simulated HTTP failure")
+    exchange = MagicMock()
+    exchange.fapiDataGetGlobalLongShortAccountRatio = AsyncMock(
+        side_effect=RuntimeError("simulated HTTP failure")
+    )
 
-    class FakeCtx:
-        async def __aenter__(self):
-            return FailingClient()
-
-        async def __aexit__(self, *a):
-            return False
-
-    def fake_client(*args, **kwargs):
-        return FakeCtx()
-
-    monkeypatch.setattr(mod, "httpx_client", fake_client)
-
-    result = asyncio.run(mod._fetch_binance_ratio_batch(["BTC/USDT", "ETH/USDT"], mod._BINANCE_LSR_URL))
+    result = asyncio.run(
+        mod._fetch_binance_ratio_batch(exchange, ["BTC/USDT", "ETH/USDT"], "fapiDataGetGlobalLongShortAccountRatio")
+    )
     assert result == {}, f"expected empty dict on HTTP failure; got: {result!r}"
 
 
-def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
+def test_fetch_top_position_ratio_uses_public_binance_endpoint():
     import extensions.data.collectors.derivatives as mod
 
-    class Client:
-        async def get(self, url, *, params):
-            assert url.endswith("topLongShortPositionRatio")
-            assert params["symbol"] == "BTCUSDT"
-            return type(
-                "Response",
-                (),
-                {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]},
-            )()
+    async def _get_top_pos(params):
+        assert params["symbol"] == "BTCUSDT"
+        return [{"longShortRatio": "1.42"}]
 
-    class Context:
-        async def __aenter__(self):
-            return Client()
+    exchange = MagicMock()
+    exchange.fapiDataGetTopLongShortPositionRatio = AsyncMock(side_effect=_get_top_pos)
 
-        async def __aexit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(mod, "httpx_client", lambda **_kwargs: Context())
     result = asyncio.run(
-        mod._fetch_binance_ratio_batch(["BTC/USDT"], mod._BINANCE_TOP_POSITION_RATIO_URL)
+        mod._fetch_binance_ratio_batch(exchange, ["BTC/USDT"], "fapiDataGetTopLongShortPositionRatio")
     )
     assert {symbol: row['value'] for symbol, row in result.items()} == {"BTC/USDT": 1.42}
     assert result['BTC/USDT']['source_observed_at'] is None
@@ -269,7 +247,7 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
 
         async def fetch_open_interest(self, symbol):
             assert symbol == "BTC/USDT:USDT"
-            return {"openInterestValue": 123.0, "info":{"oiUsd":123}}
+            return {"openInterestValue": 123.0, "info": {"oiUsd": 123}}
 
     class _Provider:
         _primary_name = "okx"
@@ -282,22 +260,28 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
 
     cancelled = []
 
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def get(self, url, *, params):
-            if url == mod._BINANCE_LSR_URL and params["symbol"] == "BTCUSDT":
-                return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
+    class _LsrExchange:
+        async def fapiDataGetGlobalLongShortAccountRatio(self, params):
+            sym = params.get("symbol", "")
+            if sym == "BTCUSDT":
+                return [{"longShortRatio": "1.42"}]
             if failure == "http_error":
-                return type("Response", (), {"status_code": 503})()
+                raise RuntimeError("503")
             try:
                 await asyncio.Event().wait()
             finally:
-                cancelled.append((url, params["symbol"]))
+                cancelled.append(("global_account_ratio", sym))
+
+        async def fapiDataGetTopLongShortPositionRatio(self, params):
+            sym = params.get("symbol", "")
+            if failure == "http_error":
+                raise RuntimeError("503")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(("top_position_ratio", sym))
+
+    lsr_exchange = _LsrExchange()
 
     cfg = type(
         "Cfg", (), {"market_data": type("MD", (), {
@@ -307,7 +291,8 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
     )()
     monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
     monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr(mod, "make_ccxt", lambda name: (lsr_exchange, MagicMock()))
+    monkeypatch.setattr(mod, "close_ccxt", AsyncMock())
     monkeypatch.setattr(mod, "_LSR_BUDGET_SEC", 0.01)
 
     result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT", "ETH/USDT"]))
@@ -842,30 +827,27 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
     sq.close_db()
 
 
-def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch):
+def test_ratio_batch_covers_unique_targets_with_bounded_concurrency():
     import extensions.data.collectors.derivatives as mod
     active = peak = 0
     calls = []
 
-    class Client:
-        async def __aenter__(self):
-            return self
+    async def _method(params):
+        nonlocal active, peak
+        calls.append(params["symbol"])
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return [{"longShortRatio": "1.42"}]
 
-        async def __aexit__(self, *_args):
-            assert active == 0
+    exchange = MagicMock()
+    exchange.fapiDataGetGlobalLongShortAccountRatio = AsyncMock(side_effect=_method)
 
-        async def get(self, url, *, params):
-            nonlocal active, peak
-            calls.append(params["symbol"])
-            active += 1
-            peak = max(peak, active)
-            await asyncio.sleep(0)
-            active -= 1
-            return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
-
-    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
     symbols = [f"T{i}/USDT" for i in range(23)]
-    result = asyncio.run(mod._fetch_binance_ratio_batch(symbols + symbols[:2], mod._BINANCE_LSR_URL))
+    result = asyncio.run(
+        mod._fetch_binance_ratio_batch(exchange, symbols + symbols[:2], mod._BINANCE_LSR_METHOD)
+    )
     assert {symbol: row['value'] for symbol, row in result.items()} == dict.fromkeys(symbols, 1.42)
     assert len(calls) == 23
     assert 1 < peak <= 4

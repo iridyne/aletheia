@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -133,8 +134,19 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     monkeypatch.setattr(
         macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None
     )
-    monkeypatch.setattr(deriv_mod, "httpx_client", _fake_httpx_client)
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
+
+    # Derivatives LSR uses CCXT binanceusdm implicit methods (Phase 6)
+    async def _fake_global_lsr(params):
+        return [{"symbol": "BTCUSDT", "longShortRatio": "2.09",
+                 "longAccount": "0.677", "shortAccount": "0.323",
+                 "timestamp": 1782539364000}]
+
+    _lsr_exchange = MagicMock()
+    _lsr_exchange.fapiDataGetGlobalLongShortAccountRatio = AsyncMock(side_effect=_fake_global_lsr)
+    _lsr_exchange.fapiDataGetTopLongShortPositionRatio = AsyncMock(return_value=[])
+    monkeypatch.setattr(deriv_mod, "make_ccxt", lambda name: (_lsr_exchange, MagicMock()))
+    monkeypatch.setattr(deriv_mod, "close_ccxt", AsyncMock())
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
     from extensions.data.collectors.derivatives import DerivativesCollector
