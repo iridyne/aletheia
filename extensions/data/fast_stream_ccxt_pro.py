@@ -34,6 +34,31 @@ _CHANNELS = ("ticker", "trades", "orderbook", "ohlcv")
 _CHANNEL_TO_EVENT = {"ticker": "quote", "trades": "trade", "orderbook": "depth", "ohlcv": "candle"}
 
 
+def _source_ms(value) -> int | None:
+    """CCXT-provided source time in milliseconds, or None when unusable.
+
+    Receive time is NEVER substituted for exchange time. Entry activation trusts
+    ``exchange_timestamp_ms`` as the exchange's own clock, so inventing it from
+    the local clock would turn an unproven fact into a fresh one.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        milliseconds = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return milliseconds if milliseconds > 0 else None
+
+
+def _drop_without_source_time(instrument: InstrumentId, channel: str) -> None:
+    logger.debug(
+        "fast_stream_ccxt_pro: %s %s has no source timestamp — dropped, "
+        "exchange time not invented from local clock",
+        instrument.symbol,
+        channel,
+    )
+
+
 def _ccxt_symbol(instrument: InstrumentId) -> str:
     """Map InstrumentId to CCXT unified symbol."""
     base = instrument.symbol  # e.g. "BTC/USDT"
@@ -236,11 +261,14 @@ class CcxtProFastMarketStream:
         ask = ticker.get("ask")
         if bid is None or ask is None:
             return None
-        ts = ticker.get("timestamp") or self._ts_now()
+        source_ms = _source_ms(ticker.get("timestamp"))
+        if source_ms is None:
+            _drop_without_source_time(instrument, "ticker")
+            return None
         return FastMarketEvent(
             event_type="quote",
             instrument=instrument,
-            exchange_timestamp_ms=int(ts),
+            exchange_timestamp_ms=source_ms,
             received_timestamp_ms=self._ts_now(),
             sequence=self._next_seq(instrument, "quote"),
             bid=float(bid),
@@ -254,11 +282,14 @@ class CcxtProFastMarketStream:
             return None
         side_raw = str(trade.get("side") or "").lower()
         side = "buy" if side_raw == "buy" else "sell" if side_raw == "sell" else None
-        ts = trade.get("timestamp") or self._ts_now()
+        source_ms = _source_ms(trade.get("timestamp"))
+        if source_ms is None:
+            _drop_without_source_time(instrument, "trades")
+            return None
         return FastMarketEvent(
             event_type="trade",
             instrument=instrument,
-            exchange_timestamp_ms=int(ts),
+            exchange_timestamp_ms=source_ms,
             received_timestamp_ms=self._ts_now(),
             sequence=self._next_seq(instrument, "trade"),
             price=float(price),
@@ -273,11 +304,14 @@ class CcxtProFastMarketStream:
             return None
         bids = tuple((float(p), float(s)) for p, s in bids_raw[:5])
         asks = tuple((float(p), float(s)) for p, s in asks_raw[:5])
-        ts = ob.get("timestamp") or self._ts_now()
+        source_ms = _source_ms(ob.get("timestamp"))
+        if source_ms is None:
+            _drop_without_source_time(instrument, "orderbook")
+            return None
         return FastMarketEvent(
             event_type="depth",
             instrument=instrument,
-            exchange_timestamp_ms=int(ts),
+            exchange_timestamp_ms=source_ms,
             received_timestamp_ms=self._ts_now(),
             sequence=self._next_seq(instrument, "depth"),
             bids=bids,
@@ -288,12 +322,15 @@ class CcxtProFastMarketStream:
         # bar = [timestamp_ms, open, high, low, close, volume]
         if not bar or len(bar) < 6:
             return None
-        ts = bar[0]
+        source_ms = _source_ms(bar[0])
+        if source_ms is None:
+            _drop_without_source_time(instrument, "ohlcv")
+            return None
         o, h, l, c, v = float(bar[1]), float(bar[2]), float(bar[3]), float(bar[4]), float(bar[5])
         return FastMarketEvent(
             event_type="candle",
             instrument=instrument,
-            exchange_timestamp_ms=int(ts),
+            exchange_timestamp_ms=source_ms,
             received_timestamp_ms=self._ts_now(),
             sequence=self._next_seq(instrument, "candle"),
             candle=(o, h, l, c, v),
