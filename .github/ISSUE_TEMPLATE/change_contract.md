@@ -100,8 +100,11 @@ List canonical authority documents that may need review or update:
 ### Runtime / Economic Verification
 
 <!--
-Only fill if runtime or economic qualification is required.
+Only fill if runtime or economic qualification is required. This section records
+an evidence obligation already implied by the accepted claim; it does not create one.
 If not: "Not required — repository-level conformance change only."
+Do not deploy, restart, open/reset a Qualification/Observation window, or run an
+experiment merely to populate this section.
 
 Examples: paper observation, genuine outcome, restart/recovery, production consumer wiring,
 realized PnL integrity, execution lifecycle, economic completeness, policy epoch qualification.

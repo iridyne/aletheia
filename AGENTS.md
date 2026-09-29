@@ -71,6 +71,13 @@ Before changing code, classify each change by semantic nature:
 - Live trading is off by default. Agents cannot expand tool, credential, Risk, Gateway, or live-unlock authority.
 - Never read, reveal, log, prompt, or commit credentials. Never invent healthy UI or runtime state; use `not available` or `not configured`.
 - Keep changes and verification proportional: one root cause and the smallest focused regression, with fail-closed handling at trust boundaries.
+- Runtime/economic evidence obligations are **claim-driven, not template-driven**. A PR/Issue
+  `Runtime evidence` field records evidence status; it does not create a deployment,
+  Observation/qualification-window, or economic-experiment obligation. A D0 repair
+  defaults to reproduction plus focused deterministic regression unless the accepted
+  claim inherently depends on deployed runtime or economic behavior. Use an explicit
+  `Not applicable` reason when repository-level proof is sufficient; never deploy,
+  restart, open/reset a window, or run an experiment merely to satisfy a template field.
 
 ### Read the authority that answers the question
 

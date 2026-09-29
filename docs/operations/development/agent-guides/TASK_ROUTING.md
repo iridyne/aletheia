@@ -38,6 +38,14 @@ for the full rule.
 - **C — defer:** new agents/assets/pages, self-evolution, strategy features, or
   broad abstractions while stability work remains.
 
+Classify from the change's semantic effect, not from evidence paperwork. The
+presence of a PR/Issue `Runtime evidence` field, the word `qualification`, or an
+existing pinned Qualification Runtime does **not** turn an A-class/D0 repair into
+B-class work. An A-class repair remains a repair unless it changes approved future
+behavior. If deploying that repair would disturb an existing qualification window,
+handle that deployment/window consequence under the Qualification protocol; do not
+create a new experiment merely to complete the source change or fill a template.
+
 Use the full [bug triage protocol](../../../governance/protocols/BUG_TRIAGE_PROTOCOL.md)
 for non-obvious cases.
 

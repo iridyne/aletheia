@@ -34,6 +34,9 @@ For D0, the canonical Contract / SpecClaim rows are normally not applicable.
 - [ ] D2: The gates that hold the new structure exist and are named above.
 - [ ] Product Capability Ground Truth updated — only if a production capability
       genuinely changed (test-level conformance alone does not qualify).
+<!-- Runtime evidence is a status declaration, not a requirement to manufacture runtime proof.
+Choose Not applicable when the accepted claim is fully established at repository level; do not
+deploy, restart, open/reset a Qualification/Observation window, or run an experiment just to fill this row. -->
 - [ ] Runtime evidence — pick exactly one; an empty answer is not acceptable:
       - [ ] Observed: _Fedora cycle / order id / Outcome — the actual observation._
       - [ ] Not applicable because: _why this change cannot produce runtime evidence._
