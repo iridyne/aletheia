@@ -10,7 +10,7 @@ import pytest
 
 from aletheia.execution import pending_close_recovery as pcr
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Order, Position
+from aletheia.storage.models import Fill, Order, OrderStatus, Position
 
 
 def _iso(hours_ago: float) -> str:
@@ -998,3 +998,320 @@ def test_legacy_submission_rejected_40725_is_still_not_released():
     stored = repo._select_one("positions", "pos-40725-legacy")
     assert stored["pending_close_order_id"] == "close-40725-legacy"
     assert stored["pending_close_status"] == "submission_rejected"
+
+
+# ---------------------------------------------------------------------------
+# Issue #3719 validation checkpoint (2026-09-29).
+#
+# V2 pins the CURRENT source contract, not a desired one: the 40725 park is
+# invisible to `has_unresolved_close_claim`. That test must be inverted (or
+# deleted) when the parked-claim vocabulary is fixed.
+# V3/V4 pin the recovery semantics that must survive any wiring work.
+# ---------------------------------------------------------------------------
+
+
+def _bound_entry_order(position: Position) -> Order:
+    """Entry Order carrying the UTA identity `coordinator._position_account` reads."""
+    from aletheia.uta.models import UTAAccountIdentity
+
+    identity = UTAAccountIdentity(
+        account_id=position.execution_mode,
+        execution_mode=position.execution_mode,
+        venue="bitget",
+        environment="demo",
+        profile=position.execution_mode,
+        credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+    )
+    order = Order(
+        proposal_id=position.proposal_id,
+        symbol=position.symbol,
+        market_type=position.market_type,
+        direction=position.direction,
+        order_type="market",
+        quantity=position.quantity,
+        price=position.entry_price,
+        execution_mode=position.execution_mode,
+        status="filled",
+        source="adopted",
+        uta_account_identity_json=identity.model_dump_json(),
+    )
+    _seed_order(order)
+    return order
+
+
+def _insert_open_position_with_entry(position_id: str, **claim_fields) -> Position:
+    """Insert an open native Position bound to its entry Order (authority source)."""
+    position = _position(id=position_id, status="open", **claim_fields)
+    entry = _bound_entry_order(position)
+    position.order_id = entry.id
+    repo.insert_position(position)
+    return position
+
+
+def _seed_parked_40725(position_id: str = "pos-parked", *, hours_ago: float = 6.0) -> None:
+    """Seed the exact parked state `_apply_park_rate_limited_close` commits."""
+    close_order_id = f"close-{position_id}"
+    _seed_order(
+        Order(
+            id=close_order_id,
+            client_order_id=close_order_id,
+            position_id=position_id,
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="cancelled",
+            source="native",
+            error_reason=pcr.TRADE_RATE_LIMIT_CANCEL_REASON,
+            created_at=_iso(hours_ago),
+        )
+    )
+    _insert_open_position_with_entry(
+        position_id,
+        pending_close_order_id=close_order_id,
+        pending_close_status=pcr.VENUE_TRADE_RATE_LIMITED_STATUS,
+        pending_close_requested_at=_iso(hours_ago),
+    )
+
+
+def _seed_unacked_close(
+    order_id: str,
+    *,
+    client_order_id: str | None = None,
+    status: OrderStatus = "pending",
+    hours_ago: float = 0.3,
+) -> str:
+    """Seed a close Order committed locally whose venue acknowledgement is missing."""
+    position_id = order_id.removeprefix("close-")
+    _seed_order(
+        Order(
+            id=order_id,
+            client_order_id=client_order_id or f"close-{position_id}",
+            position_id=position_id,
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status=status,
+            source="native",
+            created_at=_iso(hours_ago),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id=position_id,
+            pending_close_order_id=order_id,
+            pending_close_status=status,
+            pending_close_requested_at=_iso(hours_ago),
+        )
+    )
+    return position_id
+
+
+def _order_row(order_id: str) -> dict:
+    """Read one Order row, failing loudly when it is missing."""
+    order = repo.get_order(order_id)
+    assert order is not None, order_id
+    return order
+
+
+def _position_row(position_id: str) -> dict:
+    """Read one Position row, failing loudly when it is missing."""
+    position = repo.get_position(position_id)
+    assert position is not None, position_id
+    return position
+
+
+def _close_orders_for(position_id: str) -> list[dict]:
+    return [
+        dict(row)
+        for row in repo.get_db()
+        .execute("SELECT * FROM orders WHERE position_id=?", (position_id,))
+        .fetchall()
+    ]
+
+
+def test_v2_venue_trade_rate_limited_does_not_hold_the_close_claim(monkeypatch):
+    """V2 (#3719): a parked 40725 claim is not reported as an unresolved claim.
+
+    `venue_trade_rate_limited` is absent from `CLOSE_CLAIM_STATES`, so the
+    coordinator and `position_manager.evaluate_open_positions` both read the
+    parked Position as claim-free and start another close attempt.
+    """
+    _seed_parked_40725()
+
+    from aletheia.execution.close_convergence import (
+        close_convergence_view,
+        has_unresolved_close_claim,
+    )
+
+    stored = _position_row("pos-parked")
+    assert has_unresolved_close_claim(stored) is False
+
+    view = close_convergence_view(stored)
+    assert view["pending_close"] is False
+    assert view["close_convergence_state"] == "still_open"
+    assert view["close_convergence_requires_reconciliation"] is False
+
+    # Consequence: the coordinator tries to claim a second close for the same
+    # Position. The CAS in `claim_position_close` still refuses the fork, so the
+    # attempt fails loudly instead of reaching the venue.
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage.repositories import PositionClaimConflict
+
+    with pytest.raises(PositionClaimConflict) as conflict:
+        close_position("pos-parked", "take_profit")
+    assert "position_close_claim_conflict:pos-parked" in str(conflict.value)
+    assert [order["id"] for order in _close_orders_for("pos-parked")] == [
+        "close-pos-parked"
+    ]
+
+    assert _order_row("close-pos-parked")["status"] == "cancelled"
+    fresh = _position_row("pos-parked")
+    assert fresh["pending_close_order_id"] == "close-pos-parked"
+    assert fresh["pending_close_status"] == pcr.VENUE_TRADE_RATE_LIMITED_STATUS
+
+
+@pytest.mark.parametrize("venue_evidence", ["open_order", "exact_fill"])
+def test_v3a_accepted_response_loss_is_never_released(monkeypatch, venue_evidence):
+    """V3 Case A: the venue accepted the close; only the local response was lost."""
+    position_id = _seed_unacked_close("close-pos-ack-lost")
+    if venue_evidence == "open_order":
+        # The venue still shows the exact order, matched by the stable clientOid.
+        monkeypatch.setattr(
+            pcr, "_exchange_open_order_ids", lambda order: {"close-pos-ack-lost"}
+        )
+        monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    else:
+        # The order already filled and left the open book; only the fill proves it.
+        monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+        monkeypatch.setattr(
+            pcr,
+            "_exchange_fill_rows",
+            lambda order: [{"fillId": "f-1", "quantity": 9.0}],
+        )
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert summary["parked"] == 0
+    stored_order = _order_row("close-pos-ack-lost")
+    assert stored_order["status"] == "pending"
+    assert stored_order["error_reason"] is None
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == "close-pos-ack-lost"
+    assert stored_position["pending_close_status"] == "pending"
+    assert len(_close_orders_for(position_id)) == 1
+
+
+def test_v3b_proven_absence_releases_exactly_once_and_advances_retry_identity(monkeypatch):
+    """V3 Case B: complete venue evidence proves absence; release happens once."""
+    position_id = _seed_unacked_close("close-pos-absent")
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+
+    first = pcr.recover_absent_stale_close_orders()
+    assert first["released"] == 1
+    assert first["released_position_ids"] == [position_id]
+
+    stored_order = _order_row("close-pos-absent")
+    assert stored_order["status"] == "cancelled"
+    assert stored_order["error_reason"] == "stale_close_order_absent_unfilled"
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] is None
+    assert stored_position["pending_close_status"] is None
+
+    second = pcr.recover_absent_stale_close_orders()
+    assert second["released"] == 0
+    assert pcr.next_close_client_oid(position_id) == f"close-{position_id}-r1"
+
+
+@pytest.mark.parametrize(
+    ("open_ids", "fill_rows"),
+    [(None, None), (set(), None), (None, [])],
+)
+def test_v3c_partial_or_unavailable_evidence_keeps_claim(
+    monkeypatch, open_ids, fill_rows
+):
+    """V3 Case C: unavailable/partial remote evidence stays fail-closed."""
+    position_id = _seed_unacked_close("close-pos-partial")
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: open_ids)
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: fill_rows)
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert summary["parked"] == 0
+    stored_order = _order_row("close-pos-partial")
+    assert stored_order["status"] == "pending"
+    assert stored_order["error_reason"] is None
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == "close-pos-partial"
+    assert stored_position["pending_close_status"] == "pending"
+
+
+def test_v4_claim_committed_before_send_stays_pending_without_a_releaser():
+    """V4 (#3719): reproduce the reported `pending` class from its durable state.
+
+    `coordinator._claim_close` commits the close Order and the Position claim as
+    `pending` in one writer transaction; the venue acknowledgement is written
+    afterwards, in a separate transaction, with no guard for the case where that
+    write never happens. Nothing in the scheduled lifecycle releases the claim
+    that is left behind.
+    """
+    position_id = "pos-v4"
+    _insert_open_position_with_entry(position_id)
+
+    from aletheia.execution.coordinator import _claim_close
+
+    _, close_order = _claim_close(position_id, "take_profit", None)
+    assert close_order is not None
+    assert close_order.status == "pending"
+
+    stored_order = _order_row(close_order.id)
+    assert stored_order["status"] == "pending"
+    assert stored_order["exchange_order_id"] is None
+    assert stored_order["execution_attempt_id"] is None
+    assert stored_order["execution_receipt_hash"] is None
+
+    stored_position = _position_row(position_id)
+    assert stored_position["pending_close_order_id"] == close_order.id
+    assert stored_position["pending_close_status"] == "pending"
+
+    # position_manager's guard sees the claim: it waits and escalates, never releases.
+    from aletheia.execution.close_convergence import has_unresolved_close_claim
+
+    assert has_unresolved_close_claim(stored_position) is True
+
+    # reconciliation reads the Order, but its only claim-clearing helper covers
+    # already-closed Positions only.
+    from aletheia.execution.reconciliation import (
+        _clear_verified_closed_pending,
+        _list_unresolved_core_orders,
+    )
+
+    assert any(
+        order["id"] == close_order.id for order in _list_unresolved_core_orders()
+    )
+    assert _clear_verified_closed_pending() == []
+    assert _position_row(position_id)["pending_close_order_id"] == close_order.id
+
+    # Every later protective trigger short-circuits on the same claim, so the
+    # Position never reaches the venue again until something releases it.
+    from aletheia.execution.coordinator import close_position
+
+    retry = close_position(position_id, "stop_loss")
+    assert retry["already_pending"] is True
+    assert retry["order_id"] == close_order.id
+    assert retry["status"] == "pending"
+    assert [order["id"] for order in _close_orders_for(position_id)] == [close_order.id]
