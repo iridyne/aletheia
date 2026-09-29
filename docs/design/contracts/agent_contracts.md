@@ -317,9 +317,9 @@ order identity is recovered by Gateway, not by reviving Setup execution.
 The rules engine (`strategy_designer` + `backtest_orchestrator`) was **deleted**.
 Strategy generation / DSL / backtesting no longer exist. The historical replacement
 was `evaluate_trading_opportunity`; that entry evaluator is now also retired.
-Current entry is Candidate → PlanningGeneration → Planner/Compiler → EntryPlan. Legacy
-`strategy_records` / `backtest_runs` / `backtest_trades` tables are kept read-only
-for historical attribution (not written to). The deterministic `guard_promotion`
+Current entry is Candidate → PlanningGeneration → Planner/Compiler → EntryPlan. Legacy `strategy_records` table is kept read-only for historical attribution (not
+written to). `backtest_runs` and `backtest_trades` were dropped in schema v91
+(issue #3703, 2026-09-29) — they had zero rows on Fedora at retirement audit. The deterministic `guard_promotion`
 job was re-homed from the deleted daily backtest cycle. Its retained schedule now
 only performs learned-guard TTL expiry; candidate promotion is explicit owner review
 (see scheduler_contract §job table).

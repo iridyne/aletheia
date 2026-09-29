@@ -3046,7 +3046,6 @@ def _run_cleanup():
             "serenity_evidence": repo.prune_serenity_evidence(r.serenity_evidence_days),
             "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
             "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
-            "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
             # Twin Shadow evidence is a logical child of scanner runs (no FK so
             # retention remains safe across legacy databases). It is not
             # experiment evidence, so its fixed retention must not be extended

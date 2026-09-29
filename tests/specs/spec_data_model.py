@@ -80,7 +80,7 @@ def test_prunable_whitelist_bounded():
         "agent_shell_heartbeats", "agent_shell_messages", "agent_shell_artifacts",
         "universe_snapshots", "universe_scanner_runs", "universe_feature_snapshots",
         "market_regimes", "serenity_evidence", "serenity_run_events",
-        "runtime_sessions", "backtest_runs", "filter_shadow_experiments",
+        "runtime_sessions", "filter_shadow_experiments",
     }
     assert set(_PRUNABLE) <= reviewed_telemetry, (
         f"Unreviewed table entered _PRUNABLE: {set(_PRUNABLE) - reviewed_telemetry}"
