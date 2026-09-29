@@ -1,3 +1,4 @@
+import re
 from aletheia.trading.serenity_publication import publish_serenity_candidates
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -81,8 +82,14 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     cfg.trading.vol_target_pct = 6.0
     from aletheia.trading.entry_plan import stop_distance_below_min_floor
     assert stop_distance_below_min_floor(100, 94.9, execution_mode="bitget_demo", cfg=cfg)
-    with pytest.raises(ValueError, match="stop_distance_below_vol_target"):
+    with pytest.raises(ValueError, match="stop_distance_below_vol_target") as exc_info:
         compile_entry_plan(generation, context, hypothesis, cfg)
+    # The floor token already carries its code, so the rejection detail is the
+    # measurement alone: a doubled code would persist a corrupt `detail` field
+    # (#3743 follow-up).
+    rejection = str(exc_info.value)
+    assert rejection.count("stop_distance_below_vol_target") == 1, rejection
+    assert re.fullmatch(r"stop_distance_below_vol_target:\d+\.\d+<\d+\.\d+", rejection), rejection
     cfg.trading.vol_target_pct = old_target
     now = datetime.fromisoformat(plan.approved_at)
     proposal = build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
