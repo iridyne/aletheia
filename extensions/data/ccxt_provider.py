@@ -741,6 +741,7 @@ class CCXTProvider:
         *,
         sandbox: bool = False,
         extra_options: dict | None = None,
+        exchange_name: str | None = None,
     ) -> dict[str, frozenset[str]]:
         """Read active USDT spot/perp symbols without fallback or persistence.
 
@@ -749,11 +750,13 @@ class CCXTProvider:
         ``extra_options`` merges into the CCXT client options (e.g. a profile's
         ``listing_options`` selecting an API category) so the listing read
         matches the exact profile that will submit orders.
+        ``exchange_name`` overrides the primary venue name when the execution
+        profile uses a different CCXT class (e.g. ``binanceusdm`` for testnet).
         """
         from aletheia.net import close_ccxt, make_ccxt
 
         exchange, session = make_ccxt(
-            self._primary_name,
+            exchange_name or self._primary_name,
             options={"defaultType": "swap", **(extra_options or {})},
         )
         try:

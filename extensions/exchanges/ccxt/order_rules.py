@@ -83,8 +83,8 @@ def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]
     raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue")
 
 
-def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object]]:
-    """The sandbox flag and extra options that define this mode's listing set.
+def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object], str]:
+    """The sandbox flag, extra options, and CCXT exchange name for this mode's listing.
 
     Resolved from the same profile class that submits the order, so pre-trade
     validation reads the venue the order will actually meet. Profile resolution
@@ -96,8 +96,10 @@ def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object]]:
         from extensions.exchanges.composition import _profile_spec
 
         *_rest, profile_type = _profile_spec(load_config(), execution_mode)
-        return bool(getattr(profile_type, "sandbox", False)), dict(
-            getattr(profile_type, "listing_options", {}) or {}
+        return (
+            bool(getattr(profile_type, "sandbox", False)),
+            dict(getattr(profile_type, "listing_options", {}) or {}),
+            str(getattr(profile_type, "exchange_name", "") or ""),
         )
     except Exception as exc:
         raise ConstraintUnavailable(
@@ -111,13 +113,13 @@ async def read_order_constraints(
 ) -> OrderConstraints:
     from aletheia.net import make_ccxt
 
-    exchange_id = "binanceusdm" if venue == "binance" else venue
     default_type = "spot" if market_type == "spot" else "swap"
     # A demo venue lists a different symbol set than its live counterpart. Reading
     # the live listing for a demo order let RENDER pass validation and then fail
     # at submission with contract_size_unavailable, because the demo market map
     # had no entry for it at all.
-    sandbox, extra = _listing_view(execution_mode)
+    sandbox, extra, exchange_name = _listing_view(execution_mode)
+    exchange_id = exchange_name or venue
     exchange, session = make_ccxt(
         exchange_id, options={"defaultType": default_type, **extra}
     )

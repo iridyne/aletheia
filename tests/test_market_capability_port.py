@@ -42,8 +42,8 @@ def test_gateway_uses_exact_provider_and_preserves_known_empty(
     result = gateway._check_symbol_availability("BTC/USDT", "okx_demo", market_type)
     assert (result is None) is bool(symbols)
     assert calls == [("okx", {"exact_venue": True, "fallback_venue": None})]
-    # extra_options={} because OKX demo has no listing_options.
-    read.assert_awaited_once_with(sandbox=True, extra_options={})
+    # OKX demo: no listing_options, exchange_name="okx".
+    read.assert_awaited_once_with(sandbox=True, extra_options={}, exchange_name="okx")
     provider.close.assert_awaited_once()
 
 
@@ -105,8 +105,8 @@ async def test_bitget_demo_capability_uses_profile_listing_options(
 
     read_calls: list[dict] = []
 
-    async def _fake_capabilities(*, sandbox, extra_options):
-        read_calls.append({"sandbox": sandbox, "extra_options": extra_options})
+    async def _fake_capabilities(*, sandbox, extra_options, exchange_name=None):
+        read_calls.append({"sandbox": sandbox, "extra_options": extra_options, "exchange_name": exchange_name})
         return {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset()}
 
     provider = SimpleNamespace(
@@ -120,3 +120,5 @@ async def test_bitget_demo_capability_uses_profile_listing_options(
     assert read_calls[0]["sandbox"] is True
     # BitgetClassicV2Profile.listing_options = {"uta": False}
     assert "uta" in read_calls[0]["extra_options"]
+    # Profile exchange_name is passed so the capability read uses the exact CCXT class.
+    assert read_calls[0]["exchange_name"] == "bitget"
