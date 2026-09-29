@@ -42,10 +42,12 @@ uv run aletheia data migrate
 # 只读查看容量、最大对象和最近 30 次夜间样本
 uv run aletheia data capacity --deep --history 30
 
-# 刷新 Entry 路径读取的 venue 保证金档位事实（#3729）；缺失时杠杆入场 fail-closed
+# 刷新 Entry 路径读取的 venue 保证金档位事实（#3729/#3741）；缺失时杠杆入场 fail-closed
 uv run aletheia data venue-margins --venue bitget --symbol BTC/USDT
 uv run aletheia data venue-margins --venue bitget --symbol BTC/USDT --show
 ```
+> 这些事实由 `venue_margin_facts` 调度任务按 Planner 的当前需求自动维护（5min tick，已新鲜的行跳过），
+> 上面的命令只用于人工检查或补单个 instrument；它不是入场的前置人工步骤。
 
 ## Fedora 运行实例：自动部署与恢复 SOP
 

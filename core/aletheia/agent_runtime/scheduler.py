@@ -167,6 +167,11 @@ _ESSENTIAL_JOBS: set[str] = {
 MARKET_DATA_INTERVAL_MINUTES = 5
 PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES = 10
 PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS = 15 * 60
+# The Universe publishes a new Candidate set every 10 minutes and the Entry
+# Planner claims from it shortly after, so a 5-minute fact refresh gets two
+# chances to place the margin tiers a Candidate will be financed with. Each tick
+# skips every row that is already fresh, so the cadence costs nothing at rest.
+VENUE_MARGIN_REFRESH_INTERVAL_MINUTES = 5
 
 _EQUITY_MARKET_TZ = "America/New_York"
 
@@ -234,6 +239,9 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
     # starve other io-executor jobs. 45s cap matches other network-bound polls.
     "tpsl_fill_check": 45.0,
+    # #3741: bounded at 8 missing instruments per tick; one public tier fetch
+    # each, so the batch is network-bound rather than compute-bound.
+    "venue_margin_facts": 60.0,
 }
 
 
@@ -1651,6 +1659,17 @@ def init_scheduler() -> BackgroundScheduler | None:
         "interval", hours=4,
         id="bitget_demo_capabilities", misfire_grace_time=600, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=75),
+    )
+    # #3741: the margin-tier facts the Entry path reads are venue facts, not an
+    # operator chore. A fresh row is skipped, so a steady state costs no fetch
+    # and a rolling universe costs one fetch per newly demanded instrument.
+    _scheduler.add_job(
+        _guarded("venue_margin_facts", _run_venue_margin_facts),
+        "interval", minutes=VENUE_MARGIN_REFRESH_INTERVAL_MINUTES,
+        id="venue_margin_facts", misfire_grace_time=120,
+        max_instances=1, coalesce=True,
+        next_run_time=datetime.now() + timedelta(seconds=60),
+        executor="io",
     )
     # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
     _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
@@ -3859,6 +3878,55 @@ def _run_bitget_demo_capabilities() -> None:
         _record_job_failure("bitget_demo_capabilities", str(e))
         return
     logger.info("bitget_demo capabilities refreshed: %d symbols", count)
+
+
+def _run_venue_margin_facts() -> None:
+    """Maintain venue margin-tier facts for the Planner's live demand (#3741).
+
+    The venue is the one that will hold the position (``execution_mode_venue``
+    through the same entry authority the Compiler and Risk read), not the venue
+    that produced the market data. No entry route means no facts to maintain; a
+    fetch failure is recorded and the instrument stays unavailable -- never
+    replaced by a static default.
+    """
+
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_authority import resolve_entry_runtime_authority
+    from aletheia.trading.venue_margin import refresh_venue_margin_demand
+
+    cfg = load_config()
+    authority = resolve_entry_runtime_authority(cfg)
+    if not authority.allowed:
+        return
+    demand = repo.list_candidate_planning_demand()
+    if not demand:
+        return
+    try:
+        result = _run_async_with_timeout(
+            "venue_margin_facts",
+            refresh_venue_margin_demand(
+                execution_mode=authority.execution_route, pairs=demand
+            ),
+        )
+    except TimeoutError:
+        logger.warning(
+            "venue_margin_facts timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["venue_margin_facts"],
+        )
+        _record_job_failure("venue_margin_facts", "timeout")
+        return
+    except Exception as e:
+        logger.warning("venue_margin_facts failed: %s", e)
+        _record_job_failure("venue_margin_facts", str(e)[:200])
+        return
+    logger.info(
+        "venue_margin_facts: venue=%s considered=%d refreshed=%d fresh=%d unavailable=%d",
+        result.get("venue"),
+        result.get("considered", 0),
+        result.get("refreshed", 0),
+        result.get("fresh", 0),
+        len(result.get("unavailable") or []),
+    )
 
 
 async def _async_universe_refresh():
