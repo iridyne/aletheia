@@ -199,3 +199,160 @@ def test_profit_gradient_command_fails_closed_on_empty_compiled_evidence(tmp_pat
     assert payload["automatic_behavior_change_authorized"] is False
     assert payload["evidence_provenance"]["content_hash"]
     assert payload["evidence_provenance"]["inputs"]["evidence_epoch_id"] == "missing-epoch"
+
+
+# ---------------------------------------------------------------------------
+# `inspect lifecycle` — Candidate-first lifecycle inspector (#3281 Batch D)
+# ---------------------------------------------------------------------------
+
+def test_inspect_lifecycle_requires_exactly_one_anchor():
+    """`inspect lifecycle` refuses zero or two anchors with exit code 2."""
+    # Zero anchors
+    zero = runner.invoke(inspect_app, ["lifecycle", "--json"])
+    assert zero.exit_code == 2, zero.stdout
+    # Two anchors — mutually exclusive
+    two = runner.invoke(
+        inspect_app, ["lifecycle", "--position-id", "a", "--entry-plan-id", "b", "--json"],
+    )
+    assert two.exit_code == 2, two.stdout
+
+
+def test_inspect_lifecycle_all_anchors_return_universe_diagnosis(tmp_path, monkeypatch):
+    """All six anchors emit lifecycle_diagnosis/v1 with source.kind=universe."""
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain(position_id="cli-uni-pos-1")
+
+    anchor_flag_map = {
+        "--candidate-id":   ids["candidate_id"],
+        "--generation-id":  ids["generation_id"],
+        "--entry-plan-id":  ids["entry_plan_id"],
+        "--proposal-id":    ids["proposal_id"],
+        "--order-id":       ids["entry_order_id"],
+        "--position-id":    ids["position_id"],
+    }
+
+    for flag, value in anchor_flag_map.items():
+        result = runner.invoke(inspect_app, ["lifecycle", flag, value, "--json"])
+        assert result.exit_code == 0, f"{flag}: {result.stdout}"
+        payload = json.loads(result.stdout)
+        assert payload["contract_version"] == "lifecycle_diagnosis/v1", flag
+        assert payload["source"]["kind"] == "universe", (
+            f"{flag}: expected universe, got {payload['source']['kind']!r}"
+        )
+        assert payload["source"]["ids"]["candidate_id"] == ids["candidate_id"], flag
+        assert payload["first_break"] is None, (
+            f"{flag}: unexpected first_break={payload['first_break']}"
+        )
+        assert payload["coverage"]["gaps"] == [], (
+            f"{flag}: unexpected gaps={payload['coverage']['gaps']}"
+        )
+
+
+def test_inspect_lifecycle_broken_plan_json_surfaces_identity_conflict(
+    tmp_path, monkeypatch,
+):
+    """A corrupted plan_json.$.source_id must produce first_break.stage='identity'."""
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain(position_id="cli-corrupt-pos-1")
+
+    db = get_db()
+    ep_row = repo.get_entry_plan(ids["entry_plan_id"])
+    assert ep_row is not None
+    plan = json.loads(ep_row["plan_json"])
+    plan["source_id"] = "definitely-not-the-real-candidate-id"
+    trg_sql_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE name='trg_entry_plan_facts_immutable'"
+    ).fetchone()
+    trigger_sql = trg_sql_row["sql"]
+    repo.execute_write("DROP TRIGGER trg_entry_plan_facts_immutable", ())
+    repo.execute_write(
+        "UPDATE entry_plans SET plan_json=? WHERE id=?",
+        (json.dumps(plan, sort_keys=True), ids["entry_plan_id"]),
+    )
+    repo.execute_write(trigger_sql, ())
+
+    result = runner.invoke(
+        inspect_app, ["lifecycle", "--position-id", ids["position_id"], "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["source"]["kind"] == "universe"
+    fb = payload["first_break"]
+    assert fb is not None and fb["stage"] == "identity", payload
+    assert payload["coverage"]["identity_conflicts"], payload
+    assert payload["attention_state"] == "breakpoint"
+
+
+def test_inspect_lifecycle_as_of_before_entry_plan_hides_the_chain(
+    tmp_path, monkeypatch,
+):
+    """`--as-of` before the plan's created_at must produce an evidence_gap."""
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain(position_id="cli-cutoff-pos-1")
+
+    result = runner.invoke(
+        inspect_app,
+        [
+            "lifecycle",
+            "--position-id", ids["position_id"],
+            "--as-of", "1970-01-01T00:00:00+00:00",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["source"]["kind"] == "unknown", payload
+    gaps = payload["coverage"]["gaps"]
+    assert gaps and any("not_" in g for g in gaps), payload
+
+
+def test_inspect_lifecycle_stages_expand_per_leg_and_execution(tmp_path, monkeypatch):
+    """The upgraded inspector must emit per-leg execution stages, not just ancestry.
+
+    Universe fixture has one entry leg → expect stages including
+    proposal/risk_decision/order/fill/position/exit each tagged with leg=0,
+    plus ancestry stages tagged leg=None. attention_state=='ended_ok' because
+    the fixture's position is closed. economics.position_fact.availability
+    should be 'available' because build_position_replay succeeds for the
+    fixture.
+    """
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_universe_lifecycle_regression import _build_universe_lifecycle_chain
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain(position_id="cli-perleg-pos-1")
+
+    result = runner.invoke(
+        inspect_app, ["lifecycle", "--position-id", ids["position_id"], "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+
+    stages = payload["stages"]
+    stage_names = {s["stage"] for s in stages}
+    assert {"proposal", "risk_decision", "order", "fill", "position", "exit"} <= stage_names, (
+        f"missing execution stages, got {sorted(stage_names)}"
+    )
+
+    leg_stages = [s for s in stages if s.get("leg") is not None]
+    assert leg_stages, "no per-leg stages emitted"
+    leg_indices = {s["leg"] for s in leg_stages}
+    assert leg_indices == {0}, f"expected only leg=0, got {leg_indices}"
+
+    assert payload["attention_state"] == "ended_ok", payload
+    assert payload["current_stage"] == "exit", payload
+
+    econ = payload["economics"]["position_fact"]
+    assert econ["availability"] == "available", econ
+    assert "profit_loop_fact" in econ

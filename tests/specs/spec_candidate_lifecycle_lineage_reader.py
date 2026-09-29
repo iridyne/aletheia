@@ -1,19 +1,15 @@
 """Spec: Candidate-first lifecycle lineage reader (#3281).
 
 LC-S01 — Universe lineage reader resolves the same ancestry as _ATTRIBUTION_SQL.
-  When a Universe chain satisfies outcome_integrity.attribution_chain_complete,
-  for_entry_plan / for_proposal / for_position must all return source_kind='universe'
-  with a non-None candidate, generation, universe_member, and snapshot.
-  No identity_conflicts, no evidence_gaps.
-
 LC-S02 — All anchor types resolve to the same lineage for the same chain.
-  for_candidate / for_generation / for_order / for_entry_plan / for_proposal /
-  for_position all return the same source_kind and candidate.id for an
-  identical underlying chain.
-
 LC-S03 — Missing entry_plan produces evidence_gap, not a crash.
-  for_position with a position whose proposal has no entry_plan_id returns
-  source_kind='unknown' and 'entry_plan_not_found' in evidence_gaps.
+LC-S04 — SQL equivalence: the reader identifies the same
+         (candidate_id, generation_id, snapshot_id) triple that
+         outcome_integrity._ATTRIBUTION_SQL's Universe branch joins on.
+LC-S05 — Cutoff visibility: rows created after `cutoff` are dropped with an
+         `_not_yet_visible` evidence_gap, not silently included.
+LC-S06 — Broken plan_json (source_id != universe_member.id) produces
+         identity_conflicts, without silent cross-branch fallback.
 """
 
 from __future__ import annotations
@@ -44,6 +40,21 @@ _LC_S03 = SpecClaim(
     "for_position with a proposal that has no entry_plan_id returns "
     "source_kind='unknown' and 'entry_plan_not_found' in evidence_gaps without "
     "raising an exception.",
+)
+_LC_S04 = SpecClaim(
+    "LC-S04", "candidate_lifecycle_contract", "§sql-equivalence", "L2a",
+    "The reader identifies the same (candidate_id, generation_id, snapshot_id) "
+    "triple that outcome_integrity._ATTRIBUTION_SQL's Universe JOIN resolves.",
+)
+_LC_S05 = SpecClaim(
+    "LC-S05", "candidate_lifecycle_contract", "§cutoff-visibility", "L2a",
+    "Rows created strictly after `cutoff` are excluded and produce an "
+    "`_not_yet_visible` evidence_gap, not a silent inclusion.",
+)
+_LC_S06 = SpecClaim(
+    "LC-S06", "candidate_lifecycle_contract", "§identity-conflicts", "L2a",
+    "When plan_json.$.source_id disagrees with ep.candidate_id, "
+    "identity_conflicts is non-empty and no cross-branch fallback occurs.",
 )
 
 
@@ -146,7 +157,6 @@ def test_missing_entry_plan_yields_evidence_gap(tmp_path, monkeypatch):
 
     _setup_db(tmp_path, monkeypatch)
     db = get_db()
-    cutoff = datetime.now(timezone.utc)
 
     # Insert a minimal position with a proposal that has no entry_plan_id
     proposal = TradeProposal(
@@ -213,6 +223,8 @@ def test_missing_entry_plan_yields_evidence_gap(tmp_path, monkeypatch):
     )
     repo.insert_position(position)
 
+    # cutoff must be AFTER the inserts or `_visible` will hide the position row.
+    cutoff = datetime.now(timezone.utc)
     lin = for_position("orphan-position", cutoff, db)
 
     assert lin.source_kind == "unknown"
@@ -220,3 +232,137 @@ def test_missing_entry_plan_yields_evidence_gap(tmp_path, monkeypatch):
         f"expected 'entry_plan_not_found' in evidence_gaps, got {lin.evidence_gaps}"
     )
     assert lin.candidate is None
+
+
+@spec_claim(_LC_S04)
+def test_reader_sql_equivalent_to_attribution_sql(tmp_path, monkeypatch):
+    """LC-S04: reader resolves the same (candidate_id, generation_id, snapshot_id)
+    triple as outcome_integrity._ATTRIBUTION_SQL's Universe JOIN.
+
+    Runs the exact Universe join from _ATTRIBUTION_SQL and compares with what
+    lineage_reader returns for the same position — the two are not allowed to
+    drift.
+    """
+    from aletheia.analytics.candidate_lifecycle import for_position
+    from aletheia.storage.sqlite import get_db
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain()
+    db = get_db()
+    cutoff = datetime.now(timezone.utc)
+
+    # Byte-equivalent copy of the Universe branch inside _ATTRIBUTION_SQL,
+    # projected to (candidate_id, generation_id, snapshot_id) for one position.
+    sql = """
+    SELECT um.id AS candidate_id,
+           pg.id AS generation_id,
+           us.id AS snapshot_id
+      FROM positions p
+      JOIN trade_proposals tp ON tp.id = p.proposal_id
+      JOIN entry_plans ep ON ep.id = tp.entry_plan_id
+      JOIN candidate_planning_generations pg ON pg.id = ep.planning_generation_id
+      JOIN universe_members um ON um.id = ep.candidate_id
+      JOIN universe_snapshots us ON us.id = um.snapshot_id
+      WHERE p.id = ?
+        AND p.opportunity_id IS NULL
+        AND tp.opportunity_id IS NULL
+        AND pg.entry_plan_id = ep.id
+        AND pg.last_candidate_id = um.id
+        AND us.source_kind = 'universe'
+        AND json_extract(ep.plan_json, '$.source_kind') = 'universe'
+        AND json_extract(ep.plan_json, '$.source_id') = um.id
+        AND json_extract(ep.plan_json, '$.candidate_id') = um.id
+        AND json_extract(ep.plan_json, '$.planning_generation_id') = pg.id
+    """
+    row = db.execute(sql, (ids["position_id"],)).fetchone()
+    assert row is not None, (
+        "outcome_integrity Universe JOIN returned zero rows for the fixture — "
+        "the fixture is not a valid Universe chain."
+    )
+
+    lin = for_position(ids["position_id"], cutoff, db)
+
+    assert lin.source_kind == "universe"
+    assert lin.candidate is not None and lin.generation is not None and lin.snapshot is not None
+    assert str(lin.candidate["id"]) == str(row["candidate_id"]), (
+        f"candidate mismatch: reader={lin.candidate['id']!r} vs OI SQL={row['candidate_id']!r}"
+    )
+    assert str(lin.generation["id"]) == str(row["generation_id"]), (
+        f"generation mismatch: reader={lin.generation['id']!r} vs OI SQL={row['generation_id']!r}"
+    )
+    assert str(lin.snapshot["id"]) == str(row["snapshot_id"]), (
+        f"snapshot mismatch: reader={lin.snapshot['id']!r} vs OI SQL={row['snapshot_id']!r}"
+    )
+
+
+@spec_claim(_LC_S05)
+def test_cutoff_hides_future_rows(tmp_path, monkeypatch):
+    """LC-S05: a cutoff before entry_plan.created_at must hide the plan.
+
+    Build a normal Universe chain, then read it with cutoff=1970-01-01. The
+    reader must report an `_not_yet_visible` evidence_gap and NOT silently
+    return the row.
+    """
+    from aletheia.analytics.candidate_lifecycle import for_entry_plan, for_position
+    from aletheia.storage.sqlite import get_db
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain()
+    db = get_db()
+    ancient = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # for_entry_plan directly: the plan itself must be gated.
+    lin_ep = for_entry_plan(ids["entry_plan_id"], ancient, db)
+    assert lin_ep.source_kind == "unknown"
+    assert any("not_yet_visible" in g for g in lin_ep.evidence_gaps), (
+        f"expected an *_not_yet_visible gap, got {lin_ep.evidence_gaps}"
+    )
+    assert lin_ep.entry_plan is None
+
+    # for_position: proposal is invisible, so entry_plan is unfindable.
+    lin_pos = for_position(ids["position_id"], ancient, db)
+    assert lin_pos.source_kind == "unknown"
+    assert lin_pos.evidence_gaps, "expected a non-empty gap list"
+
+
+@spec_claim(_LC_S06)
+def test_broken_plan_json_yields_identity_conflict(tmp_path, monkeypatch):
+    """LC-S06: plan_json.$.source_id != ep.candidate_id → identity_conflicts."""
+    from aletheia.analytics.candidate_lifecycle import for_entry_plan
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage import repositories as repo
+    import json
+
+    _setup_db(tmp_path, monkeypatch)
+    ids = _build_universe_lifecycle_chain()
+    db = get_db()
+    cutoff = datetime.now(timezone.utc)
+
+    # Corrupt plan_json.$.source_id in-place. `entry_plans` has a
+    # BEFORE UPDATE trigger asserting plan_json immutability; drop it around
+    # this one write (production runtime cannot do this; the test is
+    # deliberately fabricating a broken row to exercise the identity_conflicts
+    # code path in the reader).
+    ep_row = repo.get_entry_plan(ids["entry_plan_id"])
+    assert ep_row is not None
+    plan = json.loads(ep_row["plan_json"])
+    plan["source_id"] = "definitely-not-the-real-candidate-id"
+    trg_sql_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE name='trg_entry_plan_facts_immutable'"
+    ).fetchone()
+    assert trg_sql_row is not None
+    trigger_sql = trg_sql_row["sql"]
+    repo.execute_write("DROP TRIGGER trg_entry_plan_facts_immutable", ())
+    repo.execute_write(
+        "UPDATE entry_plans SET plan_json=? WHERE id=?",
+        (json.dumps(plan, sort_keys=True), ids["entry_plan_id"]),
+    )
+    repo.execute_write(trigger_sql, ())
+
+    lin = for_entry_plan(ids["entry_plan_id"], cutoff, db)
+
+    assert lin.source_kind == "universe"
+    assert lin.identity_conflicts, (
+        f"expected non-empty identity_conflicts, got {lin.identity_conflicts}"
+    )
+    assert any("source_id" in c for c in lin.identity_conflicts)
