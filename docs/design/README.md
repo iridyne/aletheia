@@ -37,6 +37,8 @@ remaining read models and stored source labels do not make it an active producer
 | Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then any accepted learning proposal under `proposals/` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |
+| What the supervised TypeScript Operator process is and does | `architecture/OPERATOR_SHELL.md`, then `contracts/agent_contracts.md` |
+| What the status panel's headline means, and how a backend change reaches it | `contracts/status_surface_contract.md` |
 
 ## Agent Rule
 

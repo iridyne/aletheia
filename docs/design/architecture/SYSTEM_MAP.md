@@ -97,6 +97,7 @@ Market Observer 不再注册为调度任务；历史归因与读取不代表活�
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果与未来首次样本 | controller_recommendations + filter_shadow_experiments/evaluations | CLI/API 诊断；只登记和评估 shadow，不写 config | ✅ 只读 |
 | Historical Python Operator assessments | retired under #3134 | persisted history only | operator_assessment / audit records | read-only inspection; no scheduler or fallback writer | archived |
+| Current Operator runtime (`operator-shell/`) | Gateway-supervised subprocess, no scheduler row | agent_shell_heartbeats / tasks / sessions / messages / events / artifacts | 状态面板（经 `/api/operator/status` 派生）、operator 自身的任务与 recommendation | 仅经 least-privilege operator surface 读写；不跑自己的模型循环；见 [The Operator runtime](../architecture/OPERATOR_SHELL.md) 与 [Status Surface Contract](../contracts/status_surface_contract.md) | ✅ 由 `OperatorShellMonitor` 守护 |
 
 Learning 行为生产任务受 `agent.autonomous_learning` 控制；结果结算、funding、durable outcome replay 与 Observation Lab 保留各自独立边界。旧 contribution evaluator、measurement catch-up 和 lifecycle controller/reconciler 已退役，历史任务记录不代表当前调度或晋级权限；见 [Agent Contracts](../contracts/agent_contracts.md#1-scheduler-job-overview)。
 

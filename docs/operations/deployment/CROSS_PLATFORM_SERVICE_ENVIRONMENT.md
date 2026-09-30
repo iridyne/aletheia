@@ -34,6 +34,9 @@ can run the same command.
 This is a scheme-B layout compatibility knob: when set, gateway supervision starts the
 TS operator process from that directory instead of `<repo>/operator-shell`.
 
+What that process is, what it may read and write, and how to diagnose it:
+[The Operator runtime](../../design/architecture/OPERATOR_SHELL.md).
+
 The macOS fallback deliberately uses fnm's `aliases/default` path, not a
 `fnm_multishells` path created for one terminal session.
 

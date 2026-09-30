@@ -7,6 +7,11 @@ successful empty read from loading, an unavailable initial read, or a failed
 refresh with retained data. It applies to the shared `DataTable` only through
 that production consumer. It does not define backend business states.
 
+It is about **table data state**, not about the system status headline: that
+derivation, the backend inputs it consults and the coupling rule that keeps a
+backend change from silently changing what the panel says are owned by the
+[Status Surface Contract](status_surface_contract.md).
+
 ## Entry points
 
 - `frontend/src/components/DataState.tsx` defines the presentation vocabulary.
