@@ -689,6 +689,7 @@ def _universe_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dic
         "SELECT symbol, direction, horizon, entry_ts, directional_return_pct "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
+        "AND allocation_selected = 1 "
         f"AND {complete_outcome_economics_sql()} "
         "AND horizon IN ('1h', '4h', '24h') "
         "AND ABS(directional_return_pct) <= 100 "

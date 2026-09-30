@@ -544,12 +544,12 @@ def test_universe_alpha_uses_canonical_directional_outcomes_against_deterministi
         db.execute(
             "INSERT INTO filter_candidate_outcomes "
             "(id, outcome_candidate_key, symbol, venue, market_type, scanner_family, "
-            "direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+            "direction, horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, "
             "settlement_price_source, settlement_lag_sec, "
             "exit_price_usd, directional_return_pct, gross_return_pct, "
             "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
             "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?, ?, ?, ?, 'spot', 'momentum', ?, '1h', 100, ?, ?, ?, "
+            "VALUES (?, ?, ?, ?, 'spot', 'momentum', ?, '1h', 1, 100, ?, ?, ?, "
             "?, ?, ?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
             (
                 f"ufo-{i}", f"candidate-ufo-{i}", f"SEL{i}/USDT", venue, direction, entry,
