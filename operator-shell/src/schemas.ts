@@ -309,20 +309,6 @@ export interface ReviewSummary {
   recent_closed_positions: Array<Record<string, unknown>>
   recent_post_trade_reviews: Array<Record<string, unknown>>
   recent_post_trade_reviewer_runs: Array<Record<string, unknown>>
-  missing_review_strategy_ids: string[]
-}
-
-export interface StrategySummary {
-  active_paper_strategies: Array<Record<string, unknown>>
-  under_review_strategies: Array<Record<string, unknown>>
-  paused_paper_strategies: Array<Record<string, unknown>>
-  live_candidate_strategies: Array<Record<string, unknown>>
-  recent_strategy_evaluations: Array<Record<string, unknown>>
-  needs_operator_evaluation_strategy_ids: string[]
-  recent_strategy_promotion_proposals: Array<Record<string, unknown>>
-  needs_operator_promotion_proposal_strategy_ids: string[]
-  recent_live_limited_enablement_proposals?: Array<Record<string, unknown>>
-  needs_operator_live_limited_enablement_strategy_ids?: string[]
 }
 
 export interface RiskBoundaryProposalCandidate {
@@ -440,7 +426,6 @@ export interface BackendGatewayClient {
   createArtifact(payload: OperatorArtifactCreate): Promise<PersistedOperatorArtifact>
   getDreamingSummary(): Promise<DreamingSummary>
   getReviewSummary(): Promise<ReviewSummary>
-  getStrategySummary(): Promise<StrategySummary>
   getRiskSummary(): Promise<RiskSummary>
   getPortfolioSummary(): Promise<PortfolioSummary>
   getPortfolioHistory(limit?: number): Promise<PortfolioSnapshotRecord[]>

@@ -30,7 +30,6 @@ import type {
   RiskSummary,
   PortfolioSnapshotRecord,
   PortfolioSummary,
-  StrategySummary,
   OperatorTaskCreate,
   OperatorTaskUpdate,
 } from '../src/schemas.js'
@@ -124,7 +123,6 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
     healthReads: 0,
     dreamingSummaryReads: 0,
     reviewSummaryReads: 0,
-    strategySummaryReads: 0,
     riskSummaryReads: 0,
     portfolioSummaryReads: 0,
     portfolioHistoryReads: 0,
@@ -254,21 +252,7 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
         recent_closed_positions: [],
         recent_post_trade_reviews: [],
         recent_post_trade_reviewer_runs: [],
-        missing_review_strategy_ids: [],
       }
-    },
-    async getStrategySummary() {
-      calls.strategySummaryReads += 1
-      return {
-        active_paper_strategies: [],
-        under_review_strategies: [],
-        paused_paper_strategies: [],
-        live_candidate_strategies: [],
-        recent_strategy_evaluations: [],
-        needs_operator_evaluation_strategy_ids: [],
-        recent_strategy_promotion_proposals: [],
-        needs_operator_promotion_proposal_strategy_ids: [],
-      } satisfies StrategySummary
     },
     async getRiskSummary() {
       calls.riskSummaryReads += 1
@@ -641,38 +625,12 @@ test('recommendation engine marks dreaming as due when no recent dreaming activi
   assert.equal(dreaming?.taskType, 'run_dreaming')
 })
 
-test('recommendation engine marks post-trade review as due when closed strategies lack review coverage', () => {
-  const engine = new RecommendationEngine()
-
-  const recommendations = engine.list(
-    makeSnapshot(),
-    {
-      recent_research_notes: [],
-      recent_strategy_hypotheses: [],
-      deprecated_memories: [],
-      recent_dreaming_logs: [{ id: 'dream-log-1' }],
-      recent_dreaming_runs: [{ id: 'dream-run-1' }],
-    },
-    {
-      recent_closed_positions: [{ id: 'pos-1', strategy_id: 'strat-1' }],
-      recent_post_trade_reviews: [],
-      recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: ['strat-1'],
-    },
-  )
-
-  const review = recommendations.find(item => item.kind === 'review_due')
-  assert.ok(review)
-  assert.equal(review?.taskType, 'generate_review')
-})
-
 test('recommendation engine surfaces failed and stuck operator tasks from backend truth', () => {
   const engine = new RecommendationEngine()
   const fortyFiveMinutesAgo = new Date(Date.now() - 45 * 60 * 1000).toISOString()
 
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined,
     undefined,
     undefined,
     undefined,
@@ -717,7 +675,6 @@ test('recommendation engine keeps historical task failures as audit history, not
     undefined,
     undefined,
     undefined,
-    undefined,
     [
       makeTask({
         id: 'historical-failure',
@@ -737,7 +694,6 @@ test('recommendation engine surfaces queued operator task backlog from backend t
 
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined,
     undefined,
     undefined,
     undefined,
@@ -775,7 +731,6 @@ test('recommendation engine escalates aged queued backlog into queue review reco
     undefined,
     undefined,
     undefined,
-    undefined,
     [
       makeTask({
         id: 'task-queued-review-1',
@@ -800,7 +755,6 @@ test('recommendation engine marks queue review attention stage when backlog firs
 
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined,
     undefined,
     undefined,
     undefined,
@@ -849,17 +803,6 @@ test('recommendation engine marks portfolio snapshot refresh as due when open po
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -921,17 +864,6 @@ test('recommendation engine marks failed agent rerun as due when one recent sche
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -994,17 +926,6 @@ test('recommendation engine marks daily review refresh as due when today has act
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1124,17 +1045,6 @@ test('recommendation engine marks trade review report refresh as due when closed
       recent_closed_positions: [{ id: 'position-1', strategy_id: 'review-strategy-1' }],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: ['review-strategy-1'],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [],
   )
@@ -1164,17 +1074,6 @@ test('recommendation engine marks agent performance report refresh as due when r
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1219,17 +1118,6 @@ test('recommendation engine marks risk review report refresh as due when recent 
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [],
     [],
@@ -1263,17 +1151,6 @@ test('recommendation engine marks prompt change as due when one agent keeps fail
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1319,17 +1196,6 @@ test('recommendation engine suppresses prompt change due when a recent proposal 
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1387,17 +1253,6 @@ test('recommendation engine marks schedule change as due when one agent keeps ne
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1444,17 +1299,6 @@ test('recommendation engine suppresses schedule change due when a recent proposa
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [
       {
@@ -1513,17 +1357,6 @@ test('recommendation engine surfaces risk boundary change proposals from backend
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [],
     [],
@@ -1592,17 +1425,6 @@ test('recommendation engine marks Command Center behavior change as due after re
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [],
     [],
@@ -1667,17 +1489,6 @@ test('recommendation engine suppresses Command Center behavior change due when a
       recent_closed_positions: [],
       recent_post_trade_reviews: [],
       recent_post_trade_reviewer_runs: [],
-      missing_review_strategy_ids: [],
-    },
-    {
-      active_paper_strategies: [],
-      under_review_strategies: [],
-      paused_paper_strategies: [],
-      live_candidate_strategies: [],
-      recent_strategy_evaluations: [],
-      needs_operator_evaluation_strategy_ids: [],
-      recent_strategy_promotion_proposals: [],
-      needs_operator_promotion_proposal_strategy_ids: [],
     },
     [],
     [
@@ -2209,7 +2020,6 @@ test('operator loop throttles subsystem review scans to a 5 minute cadence', asy
     assert.equal(calls.healthReads, 4)
     assert.equal(calls.dreamingSummaryReads, 2)
     assert.equal(calls.reviewSummaryReads, 2)
-    assert.equal(calls.strategySummaryReads, 2)
     assert.equal(calls.riskSummaryReads, 2)
     assert.equal(calls.agentRunReads, 2)
   } finally {
@@ -5294,56 +5104,6 @@ test('operator loop fails the delegation task when the agent-run start request f
   )
 })
 
-test('operator loop delegates review tasks to post_trade_reviewer and closes the task', async () => {
-  const snapshot = makeSnapshot()
-  const { backend, calls } = makeFakeBackend(snapshot)
-  backend.getReviewSummary = async () => ({
-    recent_closed_positions: [{ id: 'pos-1', strategy_id: 'strat-1' }],
-    recent_post_trade_reviews: [],
-    recent_post_trade_reviewer_runs: [],
-    missing_review_strategy_ids: ['strat-1'],
-  })
-
-  const loop = new OperatorLoop(
-    {
-      gatewayBaseUrl: 'http://127.0.0.1:8787',
-      heartbeatIntervalSec: 10,
-      permissionMode: 'ReadOnly',
-      mainSessionId: 'operator-main',
-      modelProvider: 'pi-shell',
-      once: true,
-    },
-    {
-      backendClient: backend,
-      sessionRuntime: new SessionRuntime('operator-main'),
-      taskRuntime: new TaskRuntime(backend),
-      eventRouter: new EventRouter(backend),
-      repairEngine: new RepairEngine(),
-      recommendationEngine: new RecommendationEngine(),
-    },
-  )
-
-  const ok = await loop.runOnce()
-
-  assert.equal(ok, true)
-  assert.equal(calls.createdTasks.length, 1)
-  assert.equal(calls.createdTasks[0].task_type, 'generate_review')
-  assert.equal(calls.createdTasks[0].assigned_to, 'post_trade_reviewer')
-  assert.deepEqual(calls.startedAgents, ['post_trade_reviewer'])
-  assert.equal(calls.createdSessions.length, 1)
-  assert.equal(calls.createdSessions[0].kind, 'review_session')
-  assert.equal(calls.createdSessions[0].parent_session_id, 'operator-main')
-  assert.equal(calls.createdMessages.length, 3)
-  assert.equal(calls.requestedContexts.length, 1)
-  assert.equal(calls.createdMessages[0].message_type, 'context')
-  const eventTypes = calls.createdEvents.map(item => item.event_type)
-  assert.ok(eventTypes.includes('review_started'))
-  assert.ok(eventTypes.includes('review_completed'))
-  assert.equal(calls.updatedTasks.length, 1)
-  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
-  assert.equal(calls.updatedTasks[0].payload.output_data.run_status, 'queued')
-})
-
 test('operator loop delegates risk critique tasks to risk_critic and closes the task', async () => {
   const snapshot = makeSnapshot()
   const { backend, calls } = makeFakeBackend(snapshot)
@@ -6207,7 +5967,7 @@ test('recommendation engine surfaces scheduler failure cluster when two or more 
   ]
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined, undefined, undefined,
+    undefined, undefined,
     recentAgentRuns,
   )
   const cluster = recommendations.find(item => item.kind === 'scheduler_failure_cluster')
@@ -6227,7 +5987,7 @@ test('recommendation engine does not surface scheduler failure cluster when only
   ]
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined, undefined, undefined,
+    undefined, undefined,
     recentAgentRuns,
   )
   assert.equal(
@@ -6258,7 +6018,7 @@ test('recommendation engine surfaces open position rate spike when current count
   ]
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     undefined, portfolioHistory,
   )
   const spike = recommendations.find(item => item.kind === 'open_position_rate_spike')
@@ -6277,7 +6037,7 @@ test('recommendation engine does not surface open position spike with insufficie
   ]
   const recommendations = engine.list(
     makeSnapshot(),
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     undefined, portfolioHistory,
   )
   assert.equal(
