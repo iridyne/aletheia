@@ -110,10 +110,10 @@ class CCXTProfile:
     open_order_requests: tuple[dict[str, object], ...] = ({},)
     closed_order_requests: tuple[dict[str, object], ...] = ({},)
     fill_requests: tuple[dict[str, object], ...] = ({},)
-    # Venue page-size ceilings, measured per venue: Bitget rejects its private fill
-    # reads with `40020 Parameter limit error` when asked for more than 100 rows, so
-    # the request must clamp to the venue's own maximum instead of the caller's
-    # page budget (#3564).
+    # Venue per-request page ceiling for private fills. Bitget rejects a fill request
+    # for more than 100 rows with `40020 Parameter limit error` (#3564). With CCXT's
+    # `paginate`, the per-request size is `maxEntriesPerRequest`, not `limit` (which
+    # only trims the aggregated result), so the ceiling is passed there.
     fill_page_limit: int | None = None
     # Whether this profile's fill surface can be read *without* a symbol. CCXT's
     # bitget endpoints require one, so an account-wide fill read fails every request
@@ -205,7 +205,10 @@ class CCXTProfile:
         )
         return rows, reason
     async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
-        rows = await exchange.fetch_my_trades(symbol, since, limit, {**params, "paginate": True, "paginationCalls": 10})
+        paging = {"paginate": True, "paginationCalls": 10}
+        if self.fill_page_limit:
+            paging["maxEntriesPerRequest"] = self.fill_page_limit
+        rows = await exchange.fetch_my_trades(symbol, since, limit, {**params, **paging})
         if not isinstance(rows, list):
             raise ValueError("invalid CCXT fills")
         return rows, len(rows) >= limit

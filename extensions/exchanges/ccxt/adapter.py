@@ -666,10 +666,7 @@ class CCXTUTAAdapter:
             failed_calls = 0
             failure_reasons: list[str] = []
             history_bound_reached = False
-            page_limit = min(
-                query.scope.limit or 1000,
-                self._profile.fill_page_limit or 1000,
-            )
+            page_limit = query.scope.limit or 1000
             for params in self._profile.fill_requests:
                 try:
                     page, bound_reached = await self._request(
