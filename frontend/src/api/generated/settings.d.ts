@@ -2206,6 +2206,17 @@ export interface components {
              */
             slippage_bps: number;
             /**
+             * Stop Floor Atr Multiple Draft
+             * @default 1
+             */
+            stop_floor_atr_multiple_draft: number;
+            /**
+             * Stop Floor Policy
+             * @default vol_target_pct
+             * @enum {string}
+             */
+            stop_floor_policy: "vol_target_pct" | "atr_multiple_draft";
+            /**
              * Thesis Auto Close
              * @default true
              */
