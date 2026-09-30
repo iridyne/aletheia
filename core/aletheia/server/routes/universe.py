@@ -724,7 +724,7 @@ def _entry_plan_lineage(row: dict) -> dict:
 @router.get("/workbench", responses={200: {"model": EntryWorkbenchResponse}})
 def get_entry_workbench(
     limit: int = Query(default=100, ge=1, le=200),
-    plan_status: Annotated[str, Query(pattern="^(active|expired|all)$")] = "active",
+    plan_status: Annotated[str, Query(pattern="^(active|filled|failed|cancelled|invalidated|expired|all)$")] = "active",
 ):
     """Bounded direct-ledger projection; section failures remain explicit."""
     response = {

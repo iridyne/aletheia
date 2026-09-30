@@ -17,7 +17,7 @@ import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
 import Tabs from '../components/Tabs'
 import { Badge, Button, Card, SymbolLink } from '../components/ui'
-import { fmtNum, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
+import { fmtNum, fmtSymbol, fmtTimestamp, humanize, isoToEpochSeconds } from '../lib/format'
 
 const planCol = createColumnHelper<EntryPlan>()
 const candidateCol = createColumnHelper<CandidateAttention>()
@@ -104,6 +104,21 @@ function lifecycleLabel(row: Pick<CandidateWorkbenchRow, 'lifecycle_state' | 'cu
   return `${humanize(row.lifecycle_state.toLowerCase())}${cycle}${expired}${reason}`
 }
 
+// Every status entry_plans.status can hold (core/aletheia/storage/repositories.py
+// _ACTIVE_ENTRY_PLAN_STATUSES + the terminal set in transition_entry_plan), plus 'all'.
+// One click reaches any of them — no state is hidden behind the three-way active/expired/all split (#3764).
+const PLAN_STATUSES = ['active', 'filled', 'failed', 'cancelled', 'invalidated', 'expired', 'all'] as const
+type PlanStatus = typeof PLAN_STATUSES[number]
+const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
+  active: '🟢 Active',
+  filled: '🟢 Filled',
+  failed: '🔴 Failed',
+  cancelled: '⚪ Cancelled',
+  invalidated: '🟠 Invalidated',
+  expired: '🟡 Expired',
+  all: 'All',
+}
+
 // Calibration compatibility: by_cohort_horizon rows remain isolated by
 // row.direction and row.market_type across the owner-facing projection.
 const planColumns = [
@@ -130,6 +145,10 @@ const planColumns = [
       const tone = s === 'expired' ? 'muted' : s === 'rejected' || s === 'cancelled' ? 'red' : ['triggered', 'ordered', 'partially_filled'].includes(s) ? 'green' : 'yellow'
       return <Badge tone={tone}>{humanize(s)}</Badge>
     },
+  }),
+  planCol.accessor('terminal_reason', {
+    header: 'Reason',
+    cell: info => info.getValue() ? humanize(info.getValue()!) : 'Not applicable',
   }),
   planCol.accessor(row => expiryLabel(row.plan?.expires_at), { id: 'expires_at', header: 'Expiry / countdown' }),
 ]
@@ -218,7 +237,7 @@ export default function Universe() {
   const [search, setSearch] = useSearchParams()
   const [historyBefore, setHistoryBefore] = useState<string | null>(null)
   const [candidateFilter, setCandidateFilter] = useState('needs_planning')
-  const [planStatus, setPlanStatus] = useState<'active' | 'expired' | 'all'>('active')
+  const [planStatus, setPlanStatus] = useState<PlanStatus>('active')
   const tab = search.get('tab') || 'current'
   const selectedPlanId = search.get('plan_id')
   const selectedCandidateId = search.get('candidate_id')
@@ -247,6 +266,9 @@ export default function Universe() {
   const workbenchUnavailable = workbench.isError && !data
   const summary = data?.summary
   const plans = data?.entry_plans
+  const sortedPlans = useMemo(() => [...(plans ?? [])].sort((a, b) =>
+    (isoToEpochSeconds(b.terminal_at ?? b.created_at) ?? 0) - (isoToEpochSeconds(a.terminal_at ?? a.created_at) ?? 0)
+  ), [plans])
   const currentCandidates = data?.current_candidates
   const candidates = data?.candidate_attention
   const stageCounts = useMemo(() => {
@@ -331,7 +353,7 @@ export default function Universe() {
       render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.entry_plans?.available} loading={workbench.isPending} label="Entry Plans">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-muted text-xs font-mono">Plan status:</span>
-          {(['active', 'expired', 'all'] as const).map(s => (
+          {PLAN_STATUSES.map(s => (
             <Button
               key={s}
               variant={planStatus === s ? 'secondary' : 'ghost'}
@@ -339,11 +361,11 @@ export default function Universe() {
               onClick={() => setPlanStatus(s)}
               className={planStatus === s ? 'font-semibold' : ''}
             >
-              {s === 'active' ? '🟢 Active' : s === 'expired' ? '🟡 Expired' : 'All'}
+              {PLAN_STATUS_LABELS[s]}
             </Button>
           ))}
         </div>
-        <DataTable columns={planColumns} data={plans ?? []} onRowClick={openPlan} emptyMessage={planStatus === 'expired' ? 'No expired Entry Plans.' : planStatus === 'all' ? 'No Entry Plans found.' : 'No active Entry Plans.'} tableId="entry-workbench-plans" />
+        <DataTable columns={planColumns} data={sortedPlans} onRowClick={openPlan} emptyMessage={planStatus === 'all' ? 'No Entry Plans found.' : `No ${humanize(planStatus).toLowerCase()} Entry Plans.`} tableId="entry-workbench-plans" />
       </ReadSection>,
     },
     {

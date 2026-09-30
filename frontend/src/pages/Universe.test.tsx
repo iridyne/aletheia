@@ -305,8 +305,34 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Plan status:')
     expect(html).toContain('Active')
     expect(html).toContain('Expired')
+    expect(html).toContain('Failed')
+    expect(html).toContain('Cancelled')
+    expect(html).toContain('Invalidated')
+    expect(html).toContain('Filled')
     expect(html).toContain('All')
     expect(html).toContain('AVAXUSDT')
     expect(html).toContain('Waiting')
+  })
+
+  it('reaches a terminal status in one click and shows its reason, newest first (#3764)', async () => {
+    window.history.replaceState(null, '', '/universe?tab=plans')
+    const base = workbench.entry_plans![0]
+    const older = { ...base, id: 'plan-old', status: 'failed', terminal_reason: 'demo_order_failed', terminal_at: '2026-08-27T00:00:00Z', created_at: '2026-08-26T00:00:00Z' }
+    const newer = { ...base, id: 'plan-new', status: 'failed', terminal_reason: 'canonical_risk_rejected', terminal_at: '2026-08-29T00:00:00Z', created_at: '2026-08-28T00:00:00Z' }
+    const client = new QueryClient({ defaultOptions: { queries: { enabled: false } } })
+    client.setQueryData(['entry-workbench'], workbench)
+    client.setQueryData(['entry-workbench', 'failed'], { ...workbench, entry_plans: [older, newer] })
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(<BrowserRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></BrowserRouter>)
+    })
+    const failedButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('Failed'))!
+    await act(async () => { failedButton.click() })
+    expect(host.textContent).toContain('Demo Order Failed')
+    expect(host.textContent).toContain('Canonical Risk Rejected')
+    expect(host.textContent!.indexOf('Canonical Risk Rejected')).toBeLessThan(host.textContent!.indexOf('Demo Order Failed'))
+    client.clear()
   })
 })

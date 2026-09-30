@@ -445,6 +445,32 @@ def test_workbench_supports_plan_status_filter(client, enabled_cfg):
     assert plans[0]["status"] == "expired"
 
 
+@pytest.mark.parametrize("status", ["failed", "cancelled", "invalidated", "filled"])
+def test_workbench_plan_status_filter_accepts_every_terminal_status(client, enabled_cfg, status):
+    """#3764: the route must reach every status entry_plans.status can hold, not just active/expired/all."""
+    plan = {
+        "id": f"{status}-plan-1",
+        "planning_generation_id": "gen-1",
+        "candidate_id": "c-1",
+        "status": status,
+        "plan_json": json.dumps({"thesis": "test", "expires_at": "2026-01-01T00:00:00Z"}),
+        "plan_hash": "a" * 64,
+        "contract_valid": True,
+        "terminal_reason": "demo_order_failed",
+    }
+    with patch("aletheia.server.routes.universe.load_config", return_value=enabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=None), \
+         patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
+         patch("aletheia.server.routes.universe.repo.list_entry_plans", return_value=[plan]), \
+         patch("aletheia.server.routes.universe.repo.list_current_candidate_workbench", return_value=[]), \
+         patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
+        resp = client.get(f"/api/universe/workbench?plan_status={status}")
+    assert resp.status_code == 200
+    plans = resp.json()["entry_plans"]
+    assert len(plans) == 1
+    assert plans[0]["status"] == status
+
+
 def test_universe_openapi_preserves_repository_projection_json(client, monkeypatch):
     """Read schemas must retain SQLite nulls, numeric flags and nested ledger facts."""
     from pydantic import TypeAdapter
