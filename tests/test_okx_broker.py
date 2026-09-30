@@ -73,14 +73,14 @@ class TestSymbolFilter:
             with pytest.raises(RuntimeError, match="market load unavailable"):
                 mod.load_venue_capabilities("okx_demo")
 
-        assert "okx_demo" not in mod._demo_capabilities_cache
+        assert mod._capability_cache_key("okx_demo") not in mod._demo_capabilities_cache
 
     def test_filter_with_populated_set_blocks_unsupported(self):
         """Symbols not in usdt_futures frozenset are blocked for perp orders."""
         import time
         import aletheia.execution.venue_capabilities as mod
 
-        mod._demo_capabilities_cache["okx_demo"] = (
+        mod._demo_capabilities_cache[mod._capability_cache_key("okx_demo")] = (
             {
                 "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"}),
                 "spot": frozenset({"BTC/USDT", "ETH/USDT", "DOGE/USDT"}),
@@ -99,7 +99,7 @@ class TestSymbolFilter:
         import time
         import aletheia.execution.venue_capabilities as mod
 
-        mod._demo_capabilities_cache["okx_demo"] = (
+        mod._demo_capabilities_cache[mod._capability_cache_key("okx_demo")] = (
             {"usdt_futures": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}), "spot": frozenset({"BTC/USDT"})},
             time.time(),
         )
@@ -120,7 +120,37 @@ class TestSymbolFilter:
             count = mod.refresh_okx_demo_symbols()
 
         assert count == 5  # 3 usdt_futures + 2 spot
-        assert mod._demo_capabilities_cache["okx_demo"][0] == fake_result
+        assert mod._demo_capabilities_cache[mod._capability_cache_key("okx_demo")][0] == fake_result
+
+    def test_capability_cache_identity_follows_the_active_bitget_profile(self, monkeypatch):
+        """#3475: switching the Bitget profile must not reuse the old listing.
+
+        The demo-capability cache used to be keyed by `execution_mode` alone, so a
+        `classic_v2` <-> `uta_v3` switch (different listings, deliberately advanced
+        profile generations) kept serving the previous profile's symbols until the
+        4h TTL expired. The identity now carries the profile class the order path
+        resolves, and must stay *stable* for an unchanged profile — a key that moved
+        per call would silently disable caching instead.
+        """
+        import aletheia.config.loader as loader
+        import aletheia.execution.venue_capabilities as mod
+
+        real_load = loader.load_config
+
+        def key_with_profile(profile: str) -> str:
+            def _load(*_args, **_kwargs):
+                cfg = real_load()
+                cfg.exchange.bitget_profile = profile
+                return cfg
+            monkeypatch.setattr(loader, "load_config", _load)
+            return mod._capability_cache_key("bitget_demo")
+
+        classic = key_with_profile("classic_v2")
+        uta = key_with_profile("uta_v3")
+
+        assert classic != uta, "a profile switch must produce a different cache identity"
+        assert classic == key_with_profile("classic_v2"), "an unchanged profile must keep its key"
+        assert classic.startswith("bitget_demo"), classic
 
     def test_contended_refresh_reuses_newly_fresh_cache(self):
         import aletheia.execution.venue_capabilities as mod
