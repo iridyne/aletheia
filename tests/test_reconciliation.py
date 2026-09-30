@@ -514,3 +514,92 @@ async def test_client_oid_detail_lookup_passes_a_window_start(monkeypatch):
         "without a window start the venue returns private_order_history_start_required "
         "forever (#3564)"
     )
+
+
+def _patch_symbol_only_fill_venue(monkeypatch, *, symbol_rows, symbol_read_fails=False):
+    """A venue whose adapter answers account-wide fill reads UNSUPPORTED (#3564)."""
+    from aletheia.execution import reconciliation as recon
+    from aletheia.execution.errors import IncompleteReadError
+    from aletheia.uta.models import ReadCompleteness
+    from tests.helpers.fill_reports import reports
+
+    calls = []
+
+    async def fake_open_orders(self, market_type="spot"):
+        return []
+
+    async def fake_fills(self, symbol=None, market_type="spot", start_at=None):
+        calls.append(symbol)
+        if symbol is None:
+            raise IncompleteReadError(
+                "private_fill_symbol_required", "get_fills", self.execution_mode,
+                market_type, completeness=ReadCompleteness.UNSUPPORTED,
+            )
+        if symbol_read_fails:
+            raise IncompleteReadError(
+                "private_fills_unavailable", "get_fills", self.execution_mode,
+                market_type, symbol, completeness=ReadCompleteness.UNAVAILABLE,
+            )
+        rows = [
+            {"tradeId": f"t-{i}", "fillPrice": "60000", "fee": "0", "feeCoin": "USDT",
+             "cTime": "1789171200000", **row}
+            for i, row in enumerate(symbol_rows)
+        ]
+        return reports(rows, identity=ACCOUNT, market_type=market_type)
+
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_open_orders", fake_open_orders)
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", fake_fills)
+    return calls
+
+
+def _materialized_filled_order():
+    order = Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-SYM", status="submitted",)
+    repo.insert_order(order)
+    repo.insert_fill(Fill(order_id=order.id, fill_price=60000, fill_quantity=0.001, fee=0.036))
+    repo.insert_position(Position(
+        proposal_id=order.proposal_id, order_id=order.id, symbol=order.symbol,
+        market_type=order.market_type, direction=order.direction, quantity=order.quantity,
+        entry_price=order.price, current_price=order.price, execution_mode=order.execution_mode,
+    ))
+    return order
+
+
+def test_unsupported_account_wide_fills_resolve_through_symbol_read_quietly(
+    tmp_path, monkeypatch, caplog,
+):
+    """#3564: a venue that cannot read fills account-wide (Bitget) is not a failing
+    read; the order is proven by its own symbol-scoped read, with no per-pass warning."""
+    import logging
+
+    setup_env(tmp_path, monkeypatch)
+    calls = _patch_symbol_only_fill_venue(
+        monkeypatch, symbol_rows=[{"orderId": "EX-SYM", "fillQuantity": "0.001"}],
+    )
+    order = _materialized_filled_order()
+
+    from aletheia.execution.reconciliation import reconcile
+    with caplog.at_level(logging.WARNING, logger="aletheia.reconciliation"):
+        result = reconcile()
+
+    assert calls[0] is None and calls[1:] == ["BTCUSDT"]
+    assert result["filled"] == 1
+    assert repo.get_order(order.id)["status"] == "filled"
+    assert not [r for r in caplog.records if "default private fills failed" in r.getMessage()]
+
+
+def test_unsupported_account_wide_fills_with_failed_symbol_read_stay_unresolved(
+    tmp_path, monkeypatch,
+):
+    """Skipping the unsupported read never turns 'not read' into 'no fills'."""
+    setup_env(tmp_path, monkeypatch)
+    _patch_symbol_only_fill_venue(monkeypatch, symbol_rows=[], symbol_read_fails=True)
+    order = _materialized_filled_order()
+
+    from aletheia.execution.reconciliation import reconcile
+    result = reconcile()
+
+    assert result["filled"] == 0
+    assert result["inconclusive"] == 1
+    assert repo.get_order(order.id)["status"] == "submitted"

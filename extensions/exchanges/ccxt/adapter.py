@@ -632,12 +632,7 @@ class CCXTUTAAdapter:
                 reason_code="private_fill_history_retention_expired",
                 profile_version=self._profile_version,
             )
-        # getattr: profiles without the declaration (e.g. Binance, whose fill
-        # surface is account-wide capable) keep their pre-#3475 behaviour —
-        # only an explicit False retires the account-wide read (#3475).
-        if query.scope.instrument is None and not getattr(
-            self._profile, "account_wide_fills_supported", True
-        ):
+        if query.scope.instrument is None and not self._profile.account_wide_fills_supported:
             # Structural: this venue's fill surface cannot be read without a symbol,
             # so an account-wide read would fail every request variant. Answer
             # UNSUPPORTED with a typed reason instead of a generic unavailable that
