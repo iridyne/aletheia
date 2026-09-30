@@ -1,8 +1,16 @@
 # Aletheia Trading OS — System Operator Layer Design
 
-> **#3134 retirement (2026-09-23):** Python `pi_operator_loop` and its configuration
+> #3134 retirement (2026-09-23): Python `pi_operator_loop` and its configuration
 > writer/fallback controls are removed. Older Python-loop examples below are
 > historical design only. Current authority is [Agent Contracts](../contracts/agent_contracts.md).
+>
+> **Current implementation fact:** what the supervised TypeScript process is,
+> what it may read and write, how it is kept alive and how to diagnose it is
+> documented as current architecture in
+> [The Operator runtime](../architecture/OPERATOR_SHELL.md), and the way its
+> state reaches the UI's status headline in the
+> [Status Surface Contract](../contracts/status_surface_contract.md). This
+> document remains concept/history and must not be read as implementation status.
 
 > **命名说明（2026-07-01）**：本文档历史文件名 / 原标题含"Pi Agent"，现统一更名为
 > "System Operator"。代码层文件名（`pi_daemon.py`、`pi_runtime_adapter.ts`）因触 trust

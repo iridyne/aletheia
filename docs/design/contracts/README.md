@@ -98,6 +98,13 @@ Learning Knowledge empty, stale, and unavailable presentation semantics are
 owned by the
 [Dashboard Data Presentation Contract](dashboard_data_presentation_contract.md).
 
+The system status **headline** — which backend facts the operator UI derives it
+from, in which order, and the rule that a change to one of those inputs must update
+every declared consumer in the same change — is owned by the
+[Status Surface Contract](status_surface_contract.md). Its producer side (the
+supervised TypeScript operator process) is described in
+[The Operator runtime](../architecture/OPERATOR_SHELL.md).
+
 The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
 owns the current non-authoritative continuous-score evidence, allocation replay,
 identity, persistence, and retention boundary.
