@@ -439,7 +439,13 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
         shutil.rmtree(worktree, ignore_errors=True)
         raise AutoUpdateError("candidate_worktree_failed", added.stderr[-500:])
     try:
-        with tempfile.TemporaryDirectory(prefix="aletheia-auto-preflight-") as temporary_data_root:
+        # The restored backup is multi-GB (app.db alone ~3 GB); Fedora's /tmp is a
+        # quota-limited tmpfs that cannot hold it (`[Errno 122] Disk quota
+        # exceeded`, #3719). /var/tmp is the FHS large-temp location and stays
+        # outside both the checkout and the runtime data dir, which the smoke's
+        # pytest data-root guard requires.
+        large_temp = "/var/tmp" if Path("/var/tmp").is_dir() else None
+        with tempfile.TemporaryDirectory(prefix="aletheia-auto-preflight-", dir=large_temp) as temporary_data_root:
             data_copy = Path(temporary_data_root)
             restored = RestoreService().restore(backup, data_copy)
             if not restored.success:

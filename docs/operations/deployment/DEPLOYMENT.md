@@ -172,7 +172,7 @@ fast-forward 的 `master`。已观测 Tag 被移动、checkout ahead/diverged、
 GitHub API。
 
 候选会先以临时 worktree 在 WAL-safe Backup 的恢复副本上执行 migration/SQLite validation；
-数据副本位于 checkout 和稳定运行目录之外的独立系统临时目录，预检成功或失败后均清理。
+数据副本位于 checkout 和稳定运行目录之外的 `/var/tmp`（多 GB 的恢复副本放不进 tmpfs 型 `/tmp`，#3719），预检成功或失败后均清理。
 Smoke 的 pytest 数据根门禁保持 fail-closed，不为候选 worktree 增加例外。
 Post-pull Smoke 保留 import gate 的目标上下文，但 pytest 子进程另用自动清理的临时
 数据根，不继承实际 Runtime 或候选恢复副本的 `ALETHEIA_DATA_DIR`。
