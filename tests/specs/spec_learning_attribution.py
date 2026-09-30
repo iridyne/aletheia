@@ -59,9 +59,8 @@ def _ready_research(*source_ids: str, symbol: str = "BTCUSDT") -> dict:
 ))
 def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     from aletheia.agent_shell import reflection
-    from aletheia.storage.models import ShadowTrade
-    from aletheia.storage.repositories import insert_shadow_trade
     from aletheia.storage.sqlite import get_db
+    from tests.helpers.shadow_outcome_fixture import insert_shadow_row
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     position = _insert_closed_position_via_producer(
@@ -92,14 +91,15 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     assert "unavailable" in reflection._compute_missed_opportunity(
         None, "market_observer", "long", "2026-09-23T16:50:00+00:00"
     ).lower()
-    insert_shadow_trade(ShadowTrade(
-        id="orphan-keyed-reflection",
+    insert_shadow_row(
+        shadow_id="orphan-keyed-reflection",
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
+        venue="bitget",
         direction="long",
         entry_price=100.0,
         outcome_candidate_key="orphan-keyed-reflection",
-    ))
+    )
     get_db().execute(
         "UPDATE shadow_trades SET exit_price=101,pnl_pct=1,gross_return_pct=1,"
         "net_pnl_pct=1,estimated_fee_pct=0,estimated_spread_slippage_pct=0,"

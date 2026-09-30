@@ -61,7 +61,7 @@ def test_missing_control_blocks_every_learning_job(monkeypatch, missing_learning
     assert scheduler._consecutive_failures[job_id] == 1
 
 
-@pytest.mark.parametrize("job_id", ["core_health_probe", "outcome_settler", "shadow_resolver"])
+@pytest.mark.parametrize("job_id", ["core_health_probe", "outcome_settler"])
 def test_missing_control_preserves_core_and_measurement_jobs(missing_learning_control, job_id):
     from aletheia.agent_runtime import scheduler
 

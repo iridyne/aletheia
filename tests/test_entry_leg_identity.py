@@ -60,7 +60,7 @@ def test_v86_upgrade_preserves_history_and_enforces_new_leg_identity(tmp_path, m
     storage.reset_db()
     try:
         migrations.apply_migrations()
-        plan = _persist_waiting_plan()
+        plan = _persist_waiting_plan(historical_policy_v1=True)
         old = proposal(None).model_copy(update={"entry_plan_id": plan.plan_id})
         old.commit_hash = repo._compute_proposal_hash(old)
         repo._insert("trade_proposals", old.model_dump(exclude={"entry_leg_index"}))
@@ -84,7 +84,10 @@ def test_v86_upgrade_preserves_history_and_enforces_new_leg_identity(tmp_path, m
         assert repo.get_entry_plan(plan.plan_id) == before_plan
         after = repo.get_trade_proposal(old.id)
         assert after.pop("entry_leg_index") is None
-        assert after == before_proposal
+        # Later additive migrations add columns (v95 trade_proposals.margin_mode);
+        # history is preserved when every pre-upgrade column keeps its value.
+        assert {key: after[key] for key in before_proposal} == before_proposal
+        assert set(after) > set(before_proposal)
         assert repo.validate_trade_proposal_commit_hash(repo.get_trade_proposal(old.id)) == old.commit_hash
         assert not storage.get_db().execute("PRAGMA foreign_key_check").fetchall()
         assert not migrations.apply_migrations()

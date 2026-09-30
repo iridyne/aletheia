@@ -1,6 +1,5 @@
-"""Tests for Edge Lab features: shadow trades, BTC benchmark and family scorecard."""
+"""Tests for Edge Lab features: BTC benchmark and family scorecard."""
 
-import json
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
