@@ -241,9 +241,6 @@ def _assert_candidate_writer_boundary(root):
         ("storage/repositories.py", "refresh_active_snapshot_ttls"): {
             "UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)",
         },
-        ("storage/migrations.py", "_apply_candidate_policy_name_convergence_v93"): {
-            "UPDATE universe_members SET candidate_selection_policy='candidate_selection_utility' WHERE candidate_selection_policy='candidate_selection_utility_v1'",
-        },
     }
     expression_writes = {
         # Pin complete SQL expression ASTs, not an independently allowed prefix.
