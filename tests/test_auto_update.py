@@ -572,6 +572,8 @@ def test_candidate_preflight_cleans_external_data_on_success_and_failure(tmp_pat
         assert data.is_dir()
         assert not data.is_relative_to(Path(kwargs["cwd"]))
         assert not data.is_relative_to(root)
+        # A multi-GB restore must not land on a tmpfs /tmp (#3719).
+        assert data.parent == Path("/var/tmp")
         observed_data.append(data)
         return SimpleNamespace(returncode=returncode, stdout="", stderr="synthetic smoke failure")
 
