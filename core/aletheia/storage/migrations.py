@@ -7774,8 +7774,36 @@ def _apply_drop_strategy_records_v92(db: sqlite3.Connection) -> None:
     - No unique readers — all read surfaces removed in this issue
     - Fedora rows: strategy_records=0 at census
     - PRAGMA foreign_keys=0 on Fedora — orphan strategy_id on positions is safe
+
+    An existing store that still carries a populated `strategy_experiments` row
+    (its own FK parent is this table) has not necessarily run the Lab legacy-
+    experiment cutover first — `retire_legacy_experiment_tables` only runs
+    automatically on a brand-new install (`fresh_lab_install`) or when a caller
+    explicitly opts in (`retire_legacy_experiment_schema=True`); reproduced: a
+    database migrated only through the pre-Lab-cutover steps, carrying one
+    linked strategy_records/strategy_experiments row, raised `FOREIGN KEY
+    constraint failed` here under FK enforcement before this fix. Disable it
+    for this one DROP, matching every sibling table-retiring migration in this
+    module (v70/v71/v75/v76/v77 and `retire_legacy_experiment_tables` itself).
+
+    This migration does not also drop `strategy_experiments`: that table's
+    retirement is #2737's own audited process (`apply_legacy_learning_
+    migration` / `retire_legacy_experiment_tables`), which records an
+    invalidated observation window and a rejected nomination with a snapshot
+    for every row it retires — an unconditional `DROP TABLE` here would
+    silently discard that audit trail. An existing store that reaches this
+    migration with real, un-migrated `strategy_experiments` rows must run that
+    cutover first; `PRAGMA foreign_key_check` in a later migration (v93) will
+    still name the resulting dangling reference if it does not.
     """
-    db.execute("DROP TABLE IF EXISTS strategy_records")
+    foreign_keys_enabled = bool(db.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled:
+        db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        db.execute("DROP TABLE IF EXISTS strategy_records")
+    finally:
+        if foreign_keys_enabled:
+            db.execute("PRAGMA foreign_keys=ON")
 
 
 def _apply_entry_plan_financing_v95(db: sqlite3.Connection) -> None:
