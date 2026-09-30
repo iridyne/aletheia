@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -1771,19 +1772,17 @@ def _execute_proposal(
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
                     _fail_entry_plan(proposal, failure_reason)
-                # The venue's own bounded code is the only thing that separates "the
-                # UTA adapter was unavailable" from "the venue rejected the command";
-                # the exception *type* cannot, and `orders.error_reason` (the other
-                # place these codes land) does not exist for a failure this early
-                # (#3757). Both attributes are this codebase's own vocabulary, so the
-                # no-raw-text rule below is unaffected.
-                # Bounded code only, and only when the exception carries one of OUR
-                # vocabulary codes (`reason_code`, e.g.
-                # `uta_adapter_unavailable_before_submission`). Never the raw
-                # exception text: CCXT errors can carry request URLs and partial
-                # headers (#8's no-leak rule, pinned by
-                # `test_private_read_failure_logs_only_safe_diagnostics`).
-                failure_code = getattr(e, "reason_code", None)
+                # Record the failure's bounded code, never raw exception text: CCXT
+                # errors can carry request URLs and partial headers (#8's no-leak
+                # rule). The code is either the exception's own `reason_code`, or its
+                # message when that message *is* one of this codebase's reason codes —
+                # the entry boundary raises `ValueError("ai_entry_generation_contract_mismatch")`
+                # and friends, and without this the audit read only "(ValueError)" (#3757).
+                # The token pattern is the one every UTA reason code satisfies; venue
+                # text (spaces, punctuation, upper case) can never match it.
+                failure_code = getattr(e, "reason_code", None) or (
+                    str(e) if re.fullmatch(r"[a-z][a-z0-9_]{0,127}", str(e)) else None
+                )
                 msg = f"{failure_reason}: execution stopped ({type(e).__name__})"
                 if failure_code:
                     msg += f":{str(failure_code)[:120]}"
