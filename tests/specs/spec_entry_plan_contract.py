@@ -443,7 +443,7 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
 
 @spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
     "Entry preparation waits without external effects; only a fenced final market check starts submission.", status="implemented"))
-@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback", "invalidated", "dependency_timeout", "adapter_timeout"])
+@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback", "boundary_reason_message", "boundary_venue_text", "invalidated", "dependency_timeout", "adapter_timeout"])
 def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -541,6 +541,17 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
             failure.reason_code = "injected_boundary_failure_code"  # type: ignore[attr-defined]
             raise failure
         monkeypatch.setattr(coordinator, "insert_order", interrupted_insert)
+    if scenario == "boundary_reason_message":
+        def refused_insert(order):
+            # The entry boundary's own refusals carry no `reason_code` attribute:
+            # their bounded code IS the message (`ValueError("ai_entry_…")`). The
+            # runtime recorded 21 of these as a bare "(ValueError)" (#3757).
+            raise ValueError("ai_entry_generation_contract_mismatch")
+        monkeypatch.setattr(coordinator, "insert_order", refused_insert)
+    if scenario == "boundary_venue_text":
+        def leaky_insert(order):
+            raise RuntimeError('bitget {"code":"40020","msg":"Parameter limit error"}')
+        monkeypatch.setattr(coordinator, "insert_order", leaky_insert)
 
     def market():
         if scenario == "expired":
@@ -589,7 +600,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert result["reason_code"] == "entry_plan_price_invalidated"
         assert terminal_plan["status"] == "invalidated"
         assert terminal_plan["terminal_reason"] == "entry_plan_price_invalidated"
-    elif scenario in {"expired", "owner_lost", "boundary_rollback"}:
+    elif scenario in {"expired", "owner_lost", "boundary_rollback", "boundary_reason_message", "boundary_venue_text"}:
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         assert result["status"] == ("already_claimed" if scenario == "owner_lost" else "error")
     else:
@@ -613,10 +624,16 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
             or event.get("event_type") == "execution_unresolved"]
         assert terminal_audits
         assert all(event["before"]["status"] == "executing" for event in terminal_audits)
-    elif scenario == "boundary_rollback":
+    elif scenario.startswith("boundary_"):
         errors = [event for event in audits if event.get("event_type") == "demo_order_error"]
         assert len(errors) == 1 and errors[0]["before"]["status"] == "pending"
-        assert "injected_boundary_failure_code" in errors[0]["message"], errors[0]
+        expected = {
+            "boundary_rollback": "demo_order_failed: execution stopped (RuntimeError):injected_boundary_failure_code",
+            "boundary_reason_message": "demo_order_failed: execution stopped (ValueError):ai_entry_generation_contract_mismatch",
+            # Venue text is not a bounded code: only the type is recorded.
+            "boundary_venue_text": "demo_order_failed: execution stopped (RuntimeError)",
+        }[scenario]
+        assert errors[0]["message"] == expected, errors[0]
 
     if scenario == "slow":
         from aletheia.storage.models import TradeProposal
