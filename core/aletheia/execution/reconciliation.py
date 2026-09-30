@@ -1511,6 +1511,13 @@ def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> 
             )
         except Exception as exc:
             fill_rows[market_type] = []
+            if getattr(exc, "completeness", None) is ReadCompleteness.UNSUPPORTED:
+                # Structural, not a failure: this venue cannot answer an account-wide
+                # fill read at all (Bitget requires a symbol on every request variant,
+                # #3564), so every pass would fail identically. Empty rows reference no
+                # order, so each order is proven through its own symbol-scoped read
+                # below — and a failure there still leaves it unresolved.
+                continue
             failed_default_fill_markets.add(market_type)
             logger.warning(
                 "reconcile: default private fills failed for %s/%s (%s: %s)",
