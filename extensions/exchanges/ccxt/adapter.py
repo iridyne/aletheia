@@ -632,6 +632,24 @@ class CCXTUTAAdapter:
                 reason_code="private_fill_history_retention_expired",
                 profile_version=self._profile_version,
             )
+        # getattr: profiles without the declaration (e.g. Binance, whose fill
+        # surface is account-wide capable) keep their pre-#3475 behaviour —
+        # only an explicit False retires the account-wide read (#3475).
+        if query.scope.instrument is None and not getattr(
+            self._profile, "account_wide_fills_supported", True
+        ):
+            # Structural: this venue's fill surface cannot be read without a symbol,
+            # so an account-wide read would fail every request variant. Answer
+            # UNSUPPORTED with a typed reason instead of a generic unavailable that
+            # floods the breaker (#3564, the venue-side half).
+            return FillListReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.UNSUPPORTED,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_fill_symbol_required",
+                profile_version=self._profile_version,
+            )
         matched_order_id = query.venue_order_id
         client_order_id = query.client_order_id
         if client_order_id and self._profile.client_order_lookup_param:
@@ -646,8 +664,12 @@ class CCXTUTAAdapter:
             since = int(query.scope.start_at.timestamp() * 1000) if query.scope.start_at else None
             rows: list[dict[str, object]] = []
             failed_calls = 0
+            failure_reasons: list[str] = []
             history_bound_reached = False
-            page_limit = query.scope.limit or 1000
+            page_limit = min(
+                query.scope.limit or 1000,
+                self._profile.fill_page_limit or 1000,
+            )
             for params in self._profile.fill_requests:
                 try:
                     page, bound_reached = await self._request(
@@ -656,10 +678,15 @@ class CCXTUTAAdapter:
                     )
                     history_bound_reached = history_bound_reached or bound_reached
                     rows.extend(item for item in page if isinstance(item, dict))
-                except (Exception, TimeoutError):
+                except (Exception, TimeoutError) as exc:
                     failed_calls += 1
+                    # The counter alone cannot be diagnosed (#3564): record the
+                    # exception *kind* (our own name, never the venue's payload
+                    # text) so an all-surfaces failure names which surfaces failed.
+                    failure_reasons.append(type(exc).__name__)
             if failed_calls == len(self._profile.fill_requests):
-                raise RuntimeError("all private fill surfaces unavailable")
+                kinds = ",".join(sorted(set(failure_reasons)))
+                raise RuntimeError(f"all private fill surfaces unavailable [{kinds}]")
             fills: dict[str, FillReport] = {}
             failed_records = False
             for raw in rows:
@@ -699,9 +726,16 @@ class CCXTUTAAdapter:
             if exc.code is UTAErrorCode.CONFIG:
                 raise
         except (Exception, TimeoutError) as exc:
+            # The exception type alone cannot separate "this demo profile has no fill
+            # surface" from "every request failed for another reason" (#3564). Log the
+            # sanitized bounded message; the API-facing reason stays the class code
+            # (`private_fills_unavailable`), so the no-raw-text rule is unaffected.
+            from aletheia.execution.broker_utils import clean_error_message
+
             logger.warning(
-                "ccxt_adapter: fill read failed (%s); report marked unavailable",
+                "ccxt_adapter: fill read failed (%s: %s); report marked unavailable",
                 type(exc).__name__,
+                clean_error_message(str(exc))[:200],
             )
         return FillListReport(
             identity=self.identity,

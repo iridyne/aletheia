@@ -110,6 +110,16 @@ class CCXTProfile:
     open_order_requests: tuple[dict[str, object], ...] = ({},)
     closed_order_requests: tuple[dict[str, object], ...] = ({},)
     fill_requests: tuple[dict[str, object], ...] = ({},)
+    # Venue page-size ceilings, measured per venue: Bitget rejects its private fill
+    # reads with `40020 Parameter limit error` when asked for more than 100 rows, so
+    # the request must clamp to the venue's own maximum instead of the caller's
+    # page budget (#3564).
+    fill_page_limit: int | None = None
+    # Whether this profile's fill surface can be read *without* a symbol. CCXT's
+    # bitget endpoints require one, so an account-wide fill read fails every request
+    # variant there; declaring it lets the adapter answer structurally instead of
+    # raising a generic unavailable and flooding the breaker (#3564).
+    account_wide_fills_supported: bool = True
     client_order_lookup_param: str | None = None
     ledger_requests: tuple[dict[str, object], ...] = ({},)
     supported_market_types: tuple[str, ...] = ("usdt_futures",)

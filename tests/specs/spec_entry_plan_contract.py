@@ -134,28 +134,68 @@ def test_entry_plan_execution_reuses_canonical_gateway():
         "§4 DL-INV-37 Candidate planning priority",
         "L2b",
         "Entry Planner claims the current exact Candidate rank first and falls back "
-        "deterministically, then plans a bounded 3-15 generation batch concurrently "
-        "without changing planning identity or single-owner CAS.",
+        "deterministically to generation created_at then id; an empty queue reports "
+        "idle with zero planning attempts. Does not exercise the 3-15 "
+        "concurrent-worker batch claiming/planning itself, or NULL-rank ordering "
+        "(`universe_members.rank` is NOT NULL, so it cannot occur).",
         status="implemented",
     )
 )
-def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
+def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback(tmp_path, monkeypatch):
+    """Claims in exact rank order, falling back to created_at then id on ties.
+
+    Row-id order (P, S, R, Q), generation created_at order (R, Q, P, S), and the
+    correct claim order (Q, P, S, R) are all mutually distinct, so neither a
+    naive "insertion order" nor a naive "oldest first" claim implementation can
+    pass by coincidence. Ranks: P=1, Q=1 (tie, broken by created_at — the
+    "stable fallback" half of the claim), S=5, R=10 (worst, but created first —
+    defeats naive oldest-first). A NULL rank is not included: the
+    `CASE WHEN um.rank IS NULL` ordering branch is unreachable dead code given
+    `universe_members.rank INTEGER NOT NULL` (verified: a direct
+    `UPDATE ... SET rank=NULL` raises `sqlite3.IntegrityError` against this
+    schema), so this test does not claim to exercise it.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+    from tests.test_entry_planner import _typed_candidate
+
+    setup_env(tmp_path, monkeypatch)
+
     from aletheia.agent_shell.entry_planner import (
         ENTRY_PLANNER_MAX_CONCURRENCY,
         ENTRY_PLANNER_MIN_CONCURRENCY,
         run_entry_planner_batch,
     )
-    from aletheia.storage.repositories import claim_next_candidate_planning
+    from aletheia.storage import repositories as repo
 
-    claim_source = inspect.getsource(claim_next_candidate_planning)
-    batch_source = inspect.getsource(run_entry_planner_batch)
-    assert "um.id=pg.last_candidate_id" in claim_source
-    assert "CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC" in claim_source
-    assert "pg.created_at ASC, pg.id ASC" in claim_source
     assert ENTRY_PLANNER_MIN_CONCURRENCY == 3
     assert ENTRY_PLANNER_MAX_CONCURRENCY == 15
-    assert "asyncio.TaskGroup" in batch_source
-    assert "group.create_task" in batch_source
+
+    base = datetime.now(timezone.utc)
+    candidate_p = _typed_candidate(mechanism="continuation", family="momentum", symbol="BTC/USDT", asset_id="asset-p", rank=1)
+    candidate_s = _typed_candidate(mechanism="continuation", family="momentum", symbol="ETH/USDT", asset_id="asset-s", rank=5)
+    candidate_r = _typed_candidate(mechanism="continuation", family="momentum", symbol="SOL/USDT", asset_id="asset-r", rank=10)
+    candidate_q = _typed_candidate(mechanism="continuation", family="momentum", symbol="XRP/USDT", asset_id="asset-q", rank=1)
+
+    repo.ensure_candidate_planning_generation(candidate_p.id, now=base + timedelta(seconds=2))
+    repo.ensure_candidate_planning_generation(candidate_s.id, now=base + timedelta(seconds=3))
+    repo.ensure_candidate_planning_generation(candidate_r.id, now=base)
+    repo.ensure_candidate_planning_generation(candidate_q.id, now=base + timedelta(seconds=1))
+
+    claim_at = base + timedelta(seconds=10)
+    claimed_ids: list[str] = []
+    for index in range(4):
+        claimed = repo.claim_next_candidate_planning(f"owner-{index}", now=claim_at)
+        assert claimed is not None
+        claimed_ids.append(claimed["last_candidate_id"])
+    assert claimed_ids == [candidate_q.id, candidate_p.id, candidate_s.id, candidate_r.id]
+
+    import asyncio
+
+    idle_empty = asyncio.run(run_entry_planner_batch())
+    assert idle_empty["status"] == "idle"
+    assert idle_empty["planning_attempts"] == 0
 
 
 @spec_claim(
@@ -494,7 +534,12 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         insert = coordinator.insert_order
         def interrupted_insert(order):
             insert(order)
-            raise RuntimeError("injected_order_insert_failure")
+            failure = RuntimeError("injected_order_insert_failure")
+            # A real venue failure carries one of its own bounded codes; the audit
+            # record must keep it, because the exception type alone cannot separate
+            # "adapter unavailable" from "venue rejected the command" (#3757).
+            failure.reason_code = "injected_boundary_failure_code"  # type: ignore[attr-defined]
+            raise failure
         monkeypatch.setattr(coordinator, "insert_order", interrupted_insert)
 
     def market():
@@ -571,6 +616,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     elif scenario == "boundary_rollback":
         errors = [event for event in audits if event.get("event_type") == "demo_order_error"]
         assert len(errors) == 1 and errors[0]["before"]["status"] == "pending"
+        assert "injected_boundary_failure_code" in errors[0]["message"], errors[0]
 
     if scenario == "slow":
         from aletheia.storage.models import TradeProposal
