@@ -13,47 +13,45 @@ from extensions.exchanges.bitget import client as bg
 from extensions.exchanges.bitget.client import BitgetClient
 
 
-class _Resp:
-    def __init__(self, payload):
-        self._payload = payload
+class _FakeStrategyExchange:
+    """CCXT transport double: records params, replays canned strategy-child pages."""
 
-    def json(self):
-        return self._payload
+    def __init__(self, pages):
+        self._pages = list(pages)
+        self.calls: list[dict] = []
+
+    def set_sandbox_mode(self, enabled):
+        return None
+
+    async def privateUtaGetV3TradeStrategySubOrders(self, params):
+        """Bitget /api/v3/trade/strategy-sub-orders, the UTA-v3 child endpoint."""
+        self.calls.append(dict(params))
+        return self._pages.pop(0)
 
 
-class _FakeHttp:
-    """Capture native GET paths and return canned responses."""
+class _FakeSession:
+    async def close(self):
+        return None
 
-    def __init__(self, get_payload=None):
-        self.get_paths = []
-        self._get_payload = get_payload
 
-    def __call__(self, **kwargs):
-        return self
+async def _close_ccxt(exchange, session):
+    return True
 
-    async def __aenter__(self):
-        return self
 
-    async def __aexit__(self, *a):
-        return False
-
-    async def get(self, url, headers=None):
-        self.get_paths.append(url)
-        if self._get_payload is not None:
-            return _Resp(self._get_payload)
-        # default: order-detail follow-up reports no fill rows
-        return _Resp({"code": "00000", "data": {"list": []}})
+def _install_ccxt(monkeypatch, exchange) -> None:
+    """Point BitgetClient at a fake CCXT transport (the current read seam, #3697)."""
+    monkeypatch.setattr(bg, "get_secret", lambda key: "synthetic")
+    monkeypatch.setattr(bg, "make_ccxt", lambda *a, **k: (exchange, _FakeSession()))
+    monkeypatch.setattr(bg, "close_ccxt", _close_ccxt)
 
 
 def _client(profile="uta_v3") -> BitgetClient:
-    c = BitgetClient(mode="demo", profile=profile)
-    c._headers = lambda *a, **k: {}
-    return c
+    return BitgetClient(mode="demo", profile=profile)
 
 
 def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
-    http = _FakeHttp(
-        get_payload={
+    exchange = _FakeStrategyExchange([
+        {
             "code": "00000",
             "data": {
                 "list": [
@@ -66,19 +64,16 @@ def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
                 "cursor": "ignored-on-short-page",
             },
         }
-    )
-    monkeypatch.setattr(bg, "httpx_client", http)
+    ])
+    _install_ccxt(monkeypatch, exchange)
     result = asyncio.run(
         _client("uta_v3").get_plan_order_history(
             symbol="BTCUSDT", order_id="PLAN-7"
         )
     )
 
-    assert http.get_paths[-1].startswith(
-        "https://api.bitget.com/api/v3/trade/strategy-sub-orders?"
-    )
-    assert "orderId=PLAN-7" in http.get_paths[-1]
-    assert "limit=100" in http.get_paths[-1]
+    # the child endpoint is keyed by the parent plan id; a short page ends pagination
+    assert exchange.calls == [{"orderId": "PLAN-7", "limit": "100"}]
     assert result[0]["orderId"] == "PLAN-7"
     assert result[0]["executeOrderId"] == "SUB-7"
     assert result[0]["planStatus"] == "executed"
@@ -90,37 +85,22 @@ def test_get_plan_order_history_uta_v3_requires_parent_order_id():
 
 
 def test_get_plan_order_history_uta_v3_paginates_strategy_children(monkeypatch):
-    class _PagedHttp(_FakeHttp):
-        def __init__(self):
-            super().__init__()
-            self.page = 0
-
-        async def get(self, url, headers=None):
-            self.get_paths.append(url)
-            self.page += 1
-            if self.page == 1:
-                children = [
-                    {"subOrderId": f"SUB-{index}", "status": "cancelled"}
-                    for index in range(100)
-                ]
-                return _Resp({
-                    "code": "00000",
-                    "data": {"list": children, "cursor": "SUB-99"},
-                })
-            return _Resp({
-                "code": "00000",
-                "data": {"list": [{"subOrderId": "SUB-100", "status": "filled"}]},
-            })
-
-    http = _PagedHttp()
-    monkeypatch.setattr(bg, "httpx_client", http)
+    children = [
+        {"subOrderId": f"SUB-{index}", "status": "cancelled"}
+        for index in range(100)
+    ]
+    exchange = _FakeStrategyExchange([
+        {"code": "00000", "data": {"list": children, "cursor": "SUB-99"}},
+        {"code": "00000", "data": {"list": [{"subOrderId": "SUB-100", "status": "filled"}]}},
+    ])
+    _install_ccxt(monkeypatch, exchange)
     result = asyncio.run(
         _client("uta_v3").get_plan_order_history(order_id="PLAN-PAGED")
     )
 
     assert len(result) == 101
     assert result[-1]["executeOrderId"] == "SUB-100"
-    assert "cursor=SUB-99" in http.get_paths[-1]
+    assert exchange.calls[-1] == {"orderId": "PLAN-PAGED", "limit": "100", "cursor": "SUB-99"}
 
 
 def _use_profile(tmp_path, monkeypatch, profile):

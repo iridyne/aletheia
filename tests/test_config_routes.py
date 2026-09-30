@@ -2190,19 +2190,26 @@ async def test_model_test_candidate_invalid_provider(client):
 @pytest.mark.anyio
 async def test_bitget_test_candidate_pass(client, monkeypatch):
     """Reachable candidate creds return connected=true, echo no creds, persist nothing."""
-    import httpx
+    import aletheia.net as net
 
-    class FakeResp:
-        def json(self):
+    calls = []
+
+    class FakeExchange:
+        def set_sandbox_mode(self, enabled):
+            calls.append(("sandbox", enabled))
+
+        async def privateSpotGetV2SpotAccountInfo(self, params):
+            calls.append(("account_info", params))
             return {"code": "00000", "data": {}}
 
-    class FakeAsyncClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, *a, **k): return FakeResp()
+        async def close(self):
+            calls.append(("exchange_closed", True))
 
-    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    class FakeSession:
+        async def close(self):
+            calls.append(("session_closed", True))
+
+    monkeypatch.setattr(net, "make_ccxt", lambda *a, **k: (FakeExchange(), FakeSession()))
 
     secret = "bg-candidate-secret-5555"
     resp = await client.post("/api/bitget/test-candidate", json={
@@ -2215,6 +2222,8 @@ async def test_bitget_test_candidate_pass(client, monkeypatch):
     body = resp.json()
     assert body["connected"] is True
     assert body["profile"] == "demo"
+    # connected=true is the private account-info probe, not a bare construction
+    assert ("account_info", {}) in calls
     assert secret not in resp.text
     # nothing persisted: demo creds still unconfigured
     cs = await client.get("/api/bitget/credentials-status")
@@ -2224,21 +2233,28 @@ async def test_bitget_test_candidate_pass(client, monkeypatch):
 @pytest.mark.anyio
 async def test_bitget_test_candidate_fail(client, monkeypatch):
     """Rejected candidate creds never echo an upstream message or candidate secret."""
-    import httpx
+    import ccxt
+    import aletheia.net as net
 
     upstream_secret = "bitget-upstream-secret-CAFEBABE"
 
-    class FakeResp:
-        def json(self):
-            return {"code": "40012", "msg": f"apikey does not match secret={upstream_secret}"}
+    class FakeExchange:
+        def set_sandbox_mode(self, enabled):
+            return None
 
-    class FakeAsyncClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, *a, **k): return FakeResp()
+        async def privateSpotGetV2SpotAccountInfo(self, params):
+            # the venue rejects the candidate api_key; CCXT surfaces that as an
+            # AuthenticationError carrying the upstream response body in its text
+            raise ccxt.AuthenticationError(f"apikey does not match secret={upstream_secret}")
 
-    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+        async def close(self):
+            return None
+
+    class FakeSession:
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(net, "make_ccxt", lambda *a, **k: (FakeExchange(), FakeSession()))
 
     resp = await client.post("/api/bitget/test-candidate", json={
         "profile": "demo",
@@ -2247,7 +2263,8 @@ async def test_bitget_test_candidate_fail(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["connected"] is False
-    assert body["error"] == "credential_probe_rejected"
+    # a rejected probe is classified by exception type, never by raw upstream text
+    assert body["error"] == "AuthenticationError"
     assert upstream_secret not in resp.text
     cs = await client.get("/api/bitget/credentials-status")
     assert cs.json()["demo"]["api_key"]["configured"] is False
