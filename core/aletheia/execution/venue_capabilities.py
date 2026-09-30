@@ -119,6 +119,29 @@ _demo_capabilities_cache: dict[str, tuple[dict, float]] = {}
 _demo_capabilities_lock = threading.Lock()
 
 
+def _capability_cache_key(execution_mode: str) -> str:
+    """Cache identity: the execution mode **and** the profile that lists its symbols.
+
+    ``exchange.bitget_profile`` (``classic_v2`` | ``uta_v3``) exposes different
+    listings and can change while the process runs, so keying on ``execution_mode``
+    alone kept serving the previous profile's symbols until the TTL expired (#3475).
+    The profile class is resolved through the same ``_profile_spec`` the order path
+    uses, so the key cannot drift from the venue an order will actually meet; a mode
+    whose profile cannot be resolved keeps its bare-mode identity (those modes have
+    no restricted listing to confuse).
+    """
+    mode = str(execution_mode or "").strip().lower()
+    try:
+        from aletheia.config.loader import load_config
+        from extensions.exchanges.composition import _profile_spec
+
+        profile_type = _profile_spec(load_config(), mode)[-1]
+        identity = f"{getattr(profile_type, '__name__', '')}:{getattr(profile_type, 'profile_version', '')}"
+    except Exception:
+        return mode
+    return f"{mode}|{identity}"
+
+
 def refresh_demo_capabilities(execution_mode: str) -> int:
     """Refresh the demo capability cache for *execution_mode*.
 
@@ -129,8 +152,9 @@ def refresh_demo_capabilities(execution_mode: str) -> int:
     async def _load() -> dict | None:
         return await fetch_venue_capabilities(execution_mode)
 
+    cache_key = _capability_cache_key(execution_mode)
     with _demo_capabilities_lock:
-        entry = _demo_capabilities_cache.get(execution_mode)
+        entry = _demo_capabilities_cache.get(cache_key)
         if entry is not None and (time.time() - entry[1]) < _DEMO_CAPABILITIES_TTL:
             return sum(len(v) for v in entry[0].values())
 
@@ -145,7 +169,7 @@ def refresh_demo_capabilities(execution_mode: str) -> int:
         len(result.get("spot", frozenset())),
     )
     with _demo_capabilities_lock:
-        _demo_capabilities_cache[execution_mode] = (result, time.time())
+        _demo_capabilities_cache[cache_key] = (result, time.time())
     return total
 
 
@@ -199,8 +223,9 @@ def load_venue_capabilities(execution_mode: str) -> dict | None:
     ``read_order_constraints`` is independently fail-closed on the same
     resolution.
     """
+    cache_key = _capability_cache_key(execution_mode)
     with _demo_capabilities_lock:
-        entry = _demo_capabilities_cache.get(execution_mode)
+        entry = _demo_capabilities_cache.get(cache_key)
         if entry is not None and (time.time() - entry[1]) < _DEMO_CAPABILITIES_TTL:
             return entry[0]
 
@@ -219,7 +244,7 @@ def load_venue_capabilities(execution_mode: str) -> dict | None:
     if sandbox_mode:
         refresh_demo_capabilities(execution_mode)
         with _demo_capabilities_lock:
-            entry = _demo_capabilities_cache.get(execution_mode)
+            entry = _demo_capabilities_cache.get(cache_key)
         if entry is None:
             raise RuntimeError(f"{execution_mode}_demo_symbol_refresh_unavailable")
         return entry[0]
