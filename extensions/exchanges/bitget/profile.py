@@ -48,6 +48,12 @@ class _BitgetDemoProfile(CCXTProfile):
     protection_replace = True
     protection_cancel = True
     integer_leverage = True
+    # Measured on the live demo venue (2026-09-30, #3564), both classic_v2 and uta_v3:
+    # a fill request for more than 100 rows answers `40020 Parameter limit error`.
+    fill_page_limit = 100
+    # CCXT's bitget fetchMyTrades raises ArgumentsRequired for an account-wide
+    # (symbol-less) read on both faces (measured against the pinned ccxt 4.5.84).
+    account_wide_fills_supported = False
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str, uta: bool) -> None:
         self._uta = uta
@@ -285,12 +291,6 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
     )
     closed_order_requests = open_order_requests
     fill_requests = open_order_requests
-    # Measured on the live demo venue (2026-09-30, #3564): a private fill read asked
-    # for 1000 rows answers `40020 Parameter limit error`; the venue caps at 100.
-    fill_page_limit = 100
-    # CCXT's bitget fill endpoints require a symbol, so an account-wide fill read
-    # fails every request variant there.
-    account_wide_fills_supported = False
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=False)
