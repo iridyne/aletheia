@@ -2068,3 +2068,38 @@ async def test_private_read_failure_logs_only_safe_diagnostics(monkeypatch, capl
         assert any("RuntimeError" in record.getMessage() for record in records)
     finally:
         await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_bitget_classic_fill_pages_respect_venue_row_cap():
+    """Bitget answers `40020 Parameter limit error` above 100 rows per fill request
+    (#3564). CCXT's `paginate` sizes each request from `maxEntriesPerRequest`, not
+    `limit`, so the real outgoing request is what must carry the cap."""
+    import ccxt.async_support as ccxt_async
+
+    exchange = ccxt_async.bitget({"apiKey": "k", "secret": "s", "password": "p", "options": {"uta": False}})
+    sent: list[str] = []
+
+    async def transport(url, method="GET", headers=None, body=None):
+        sent.append(url)
+        return {"code": "00000", "data": {"fillList": [], "endId": None}}
+
+    exchange.fetch = transport
+    exchange.set_markets([{
+        "id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT",
+        "baseId": "BTC", "quoteId": "USDT", "settleId": "USDT", "type": "swap", "spot": False,
+        "swap": True, "future": False, "option": False, "contract": True, "linear": True,
+        "inverse": False, "active": True, "precision": {"amount": 0.001, "price": 0.1},
+        "limits": {}, "info": {},
+    }])
+    profile = BitgetClassicV2Profile(api_key="k", secret="s", passphrase="p")
+    now_ms = int(time.time() * 1000)
+    try:
+        await profile.fetch_fills(
+            exchange, "BTC/USDT:USDT", now_ms - 3_600_000, 1000, dict(profile.fill_requests[0]), now_ms
+        )
+    finally:
+        await exchange.close()
+    fill_requests = [url for url in sent if "/mix/order/fills" in url]
+    assert fill_requests
+    assert all("limit=100&" in url or url.endswith("limit=100") for url in fill_requests), fill_requests

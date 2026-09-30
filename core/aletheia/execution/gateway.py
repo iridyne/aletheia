@@ -1771,7 +1771,22 @@ def _execute_proposal(
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
                     _fail_entry_plan(proposal, failure_reason)
+                # The venue's own bounded code is the only thing that separates "the
+                # UTA adapter was unavailable" from "the venue rejected the command";
+                # the exception *type* cannot, and `orders.error_reason` (the other
+                # place these codes land) does not exist for a failure this early
+                # (#3757). Both attributes are this codebase's own vocabulary, so the
+                # no-raw-text rule below is unaffected.
+                # Bounded code only, and only when the exception carries one of OUR
+                # vocabulary codes (`reason_code`, e.g.
+                # `uta_adapter_unavailable_before_submission`). Never the raw
+                # exception text: CCXT errors can carry request URLs and partial
+                # headers (#8's no-leak rule, pinned by
+                # `test_private_read_failure_logs_only_safe_diagnostics`).
+                failure_code = getattr(e, "reason_code", None)
                 msg = f"{failure_reason}: execution stopped ({type(e).__name__})"
+                if failure_code:
+                    msg += f":{str(failure_code)[:120]}"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
                 write_audit(
