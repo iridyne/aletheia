@@ -29,7 +29,6 @@ import type {
   PersistedOperatorTask,
   RiskSummary,
   ReviewSummary,
-  StrategySummary,
 } from './schemas.js'
 import { gatewayRequestFailure } from './gateway_errors.js'
 import { applyOperatorServiceHeader } from './service_auth.js'
@@ -149,10 +148,6 @@ export class BackendClient implements BackendGatewayClient {
 
   async getReviewSummary(): Promise<ReviewSummary> {
     return fetchJson<ReviewSummary>(`${this.baseUrl}/api/reviews/summary`)
-  }
-
-  async getStrategySummary(): Promise<StrategySummary> {
-    return fetchJson<StrategySummary>(`${this.baseUrl}/api/strategies/summary`)
   }
 
   async getRiskSummary(): Promise<RiskSummary> {

@@ -11,7 +11,6 @@ import type {
   OperatorSnapshot,
   RiskSummary,
   ReviewSummary,
-  StrategySummary,
 } from './schemas.js'
 
 export class RecommendationEngine {
@@ -249,7 +248,6 @@ export class RecommendationEngine {
     snapshot: OperatorSnapshot,
     dreamingSummary?: DreamingSummary,
     reviewSummary?: ReviewSummary,
-    strategySummary?: StrategySummary,
     recentAgentRuns?: AgentRunSummary[],
     recentArtifacts?: PersistedOperatorArtifact[],
     riskSummary?: RiskSummary,
@@ -615,25 +613,6 @@ export class RecommendationEngine {
       })
     }
 
-    const missingReviewStrategyIds = reviewSummary?.missing_review_strategy_ids || []
-    const reviewRecentlyAttempted = (reviewSummary?.recent_post_trade_reviewer_runs.length || 0) > 0
-    if (!snapshot.status.paused && missingReviewStrategyIds.length > 0 && !reviewRecentlyAttempted) {
-      recommendations.push({
-        id: 'review-due',
-        kind: 'review_due',
-        severity: 'medium',
-        summary:
-          missingReviewStrategyIds.length === 1
-            ? `Closed strategy ${missingReviewStrategyIds[0]} still lacks a recent post-trade review.`
-            : `${missingReviewStrategyIds.length} closed strategies still lack recent post-trade reviews.`,
-        taskType: 'generate_review',
-        metadata: {
-          missing_review_strategy_ids: missingReviewStrategyIds,
-          closed_position_count: reviewSummary?.recent_closed_positions.length || 0,
-        },
-      })
-    }
-
     const failedRunsByAgent = new Map<string, AgentRunSummary[]>()
     for (const run of recentAgentRuns || []) {
       if (run.status !== 'failed') {
@@ -784,7 +763,6 @@ export class RecommendationEngine {
           report_type: 'trade_review',
           title: 'Trade Review Report',
           closed_position_count: reviewSummary.recent_closed_positions.length,
-          missing_review_strategy_ids: reviewSummary.missing_review_strategy_ids,
           refresh_window_minutes: 360,
         },
       })

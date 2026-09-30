@@ -85,7 +85,6 @@ export class OperatorLoop {
   private cachedSubsystemReview: {
     dreamingSummary: Awaited<ReturnType<BackendGatewayClient['getDreamingSummary']>>
     reviewSummary: Awaited<ReturnType<BackendGatewayClient['getReviewSummary']>>
-    strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
@@ -552,7 +551,6 @@ export class OperatorLoop {
     snapshot: OperatorSnapshot
     recommendations: OperatorRecommendation[]
     reviewSummary: Awaited<ReturnType<BackendGatewayClient['getReviewSummary']>>
-    strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
   }): string {
@@ -593,12 +591,7 @@ export class OperatorLoop {
       }).length}`,
       '',
       '## Review Coverage',
-      `- Closed strategies missing post-trade review: ${params.reviewSummary.missing_review_strategy_ids.length}`,
       `- Recent closed positions (24h): ${params.reviewSummary.recent_closed_positions.length}`,
-      '',
-      '## Strategy Governance',
-      `- Strategies needing operator evaluation: ${params.strategySummary.needs_operator_evaluation_strategy_ids.length}`,
-      `- Strategies ready for promotion proposal: ${params.strategySummary.needs_operator_promotion_proposal_strategy_ids.length}`,
       '',
       '## Risk And Follow-Up',
       `- Risk boundary proposals due: ${params.riskSummary.needs_operator_risk_boundary_proposals.length}`,
@@ -686,17 +679,12 @@ export class OperatorLoop {
     reviewSummary: Awaited<ReturnType<BackendGatewayClient['getReviewSummary']>>
   }): string {
     const recentClosed = params.reviewSummary.recent_closed_positions || []
-    const missing = params.reviewSummary.missing_review_strategy_ids || []
 
     return [
       `# Trade Review Report ${new Date().toISOString().slice(0, 10)}`,
       '',
       '## Closed Positions',
       `- Recent closed positions (24h): ${recentClosed.length}`,
-      '',
-      '## Review Coverage',
-      `- Missing post-trade review strategy ids: ${missing.length}`,
-      ...(missing.length > 0 ? missing.slice(0, 10).map(item => `- ${item}`) : ['- none']),
     ].join('\n')
   }
 
@@ -932,7 +920,6 @@ export class OperatorLoop {
   private async loadSubsystemReviewData(): Promise<{
     dreamingSummary: Awaited<ReturnType<BackendGatewayClient['getDreamingSummary']>>
     reviewSummary: Awaited<ReturnType<BackendGatewayClient['getReviewSummary']>>
-    strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
@@ -952,7 +939,6 @@ export class OperatorLoop {
     const [
       dreamingSummary,
       reviewSummary,
-      strategySummary,
       recentAgentRuns,
       riskSummary,
       portfolioSummary,
@@ -962,7 +948,6 @@ export class OperatorLoop {
       await Promise.all([
         this.backendClient.getDreamingSummary(),
         this.backendClient.getReviewSummary(),
-        this.backendClient.getStrategySummary(),
         this.backendClient.getAgentRuns(),
         this.backendClient.getRiskSummary(),
         this.backendClient.getPortfolioSummary(),
@@ -973,7 +958,6 @@ export class OperatorLoop {
     this.cachedSubsystemReview = {
       dreamingSummary,
       reviewSummary,
-      strategySummary,
       recentAgentRuns,
       riskSummary,
       portfolioSummary,
@@ -1442,7 +1426,6 @@ export class OperatorLoop {
     snapshot: OperatorSnapshot
     recommendations: OperatorRecommendation[]
     reviewSummary: Awaited<ReturnType<BackendGatewayClient['getReviewSummary']>>
-    strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
   }): Promise<boolean> {
@@ -2497,7 +2480,6 @@ export class OperatorLoop {
       const {
         dreamingSummary,
         reviewSummary,
-        strategySummary,
       recentAgentRuns,
       riskSummary,
       portfolioSummary,
@@ -2513,7 +2495,6 @@ export class OperatorLoop {
         snapshot,
         dreamingSummary,
         reviewSummary,
-        strategySummary,
         recentAgentRuns,
         sessionDetail?.artifacts || [],
         riskSummary,
@@ -2560,7 +2541,6 @@ export class OperatorLoop {
         snapshot,
         recommendations,
         reviewSummary,
-        strategySummary,
         riskSummary,
         recentAgentRuns,
       })
