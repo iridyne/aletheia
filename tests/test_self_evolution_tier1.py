@@ -212,3 +212,61 @@ def test_multiple_rows_separate_candidates():
         _maybe_generate_guard_candidates(rows)
 
         assert mock_create.call_count == 2
+
+
+def test_settle_due_filter_outcomes_wires_settled_losses_into_guard_generation():
+    """End-to-end: a real 4h FCO loss settled through the current production
+    settlement path (settle_due_filter_outcomes) must still reach
+    _maybe_generate_guard_candidates.
+
+    #3701 Batch E removed the retired universe_forward_outcomes settlement loop,
+    which was the only caller that collected settled rows and fed them into Tier
+    1 guard generation; the replacement filter_candidate_outcomes-only path did
+    not carry that wiring over, so a qualifying loss settled without ever
+    generating a guard candidate.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    entry = datetime.now(timezone.utc) - timedelta(hours=5)
+    outcome = FilterCandidateOutcome(
+        outcome_candidate_key="guard-wiring-loss",
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        horizon="4h",
+        entry_price_usd=100.0,
+        entry_spread_bps=10.0,
+        entry_ts=entry.isoformat(),
+        due_at=(entry + timedelta(hours=4)).isoformat(),
+    )
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    async def losing_observation(rows, *, now):
+        return {
+            row["id"]: {
+                "exit_price": 90.0,  # -10% gross, past the -3% net guard threshold
+                "range_high": 100.0,
+                "range_low": 89.0,
+                "price_source": "horizon_ohlcv",
+                "price_quality_ok": True,
+                "settlement_lag_sec": 30.0,
+            }
+            for row in rows
+        }
+
+    with patch(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        losing_observation,
+    ), patch("extensions.knowledge.manager.create_guard_candidate") as mock_create:
+        settled = asyncio.run(settle_due_filter_outcomes(max_rows=1))
+
+    assert settled == 1
+    mock_create.assert_called_once()
+    assert "BTC/USDT" in mock_create.call_args.kwargs["title"]
