@@ -1,15 +1,25 @@
 """Compiler capture semantics remain bounded by supplied evidence and Plan geometry."""
 import pytest
 
+from aletheia.agent_shell.entry_planner import PlanIntentError
 from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, validate_hypothesis_references
 from aletheia.trading.entry_capture import CAPTURE_POLICIES
 from aletheia.trading.entry_contract import entry_contract_fingerprints
 from aletheia.trading.entry_plan_compiler import compile_entry_plan
-from tests.test_entry_analysis import _anchor, _context_v2, _risk_intent
+from tests.test_entry_analysis import _anchor, _context_v2, _plan_anchors, _risk_intent
 from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
 
 
-def capture_input(monkeypatch, profile, priority, direction="long"):
+def capture_input(
+    monkeypatch,
+    profile,
+    priority,
+    direction="long",
+    *,
+    anchors=None,
+    atr14=2,
+    extra_structure=None,
+):
     from aletheia.config.loader import load_config
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *a: 5000.)
     # The per-symbol ceiling seam reads equity through _account_equity
@@ -26,9 +36,11 @@ def capture_input(monkeypatch, profile, priority, direction="long"):
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
-    primary = _anchor("confirmed_swing", 100, "swing:p")
-    invalidation = _anchor("confirmed_swing", 95 if direction == "long" else 105, "swing:i")
-    data = _context_v2((primary, invalidation)).model_dump(exclude={"context_fingerprint"})
+    # The supplied set's first two anchors are the entry and the invalidation; any
+    # further anchors are opposing structure the Compiler may target (#3777).
+    anchor_set = tuple(anchors) if anchors is not None else _plan_anchors(direction)
+    primary, invalidation = anchor_set[0], anchor_set[1]
+    data = _context_v2(anchor_set).model_dump(exclude={"context_fingerprint"})
     behavior, schema = entry_contract_fingerprints()
     generation = {"id": "g1", "last_candidate_id": "c1", "candidate_family": "mean_reversion",
         "venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": direction,
@@ -37,7 +49,9 @@ def capture_input(monkeypatch, profile, priority, direction="long"):
     data["planning_generation"].update(entry_behavior_fingerprint=behavior, schema_fingerprint=schema)
     data["candidate"]["candidate_price"] = 100
     data["candidate_opportunity_context"]["source"] = {"kind": "universe", "id": "c1", "trade_school": "short_term"}
-    data["market_structure"]["15m"].update(atr14=2, break_tolerance=.1)
+    data["market_structure"]["15m"].update(atr14=atr14, break_tolerance=.1)
+    for timeframe, section in (extra_structure or {}).items():
+        data["market_structure"][timeframe] = section
     data["execution_context"].update(bid=99.9, ask=100.1, spread_bps=2, depth_10bps_usd=100000, estimated_costs=.1)
     data["instrument"]["direction"] = direction
     data["candidate_opportunity_context"]["opportunity"]["direction"] = direction
@@ -222,3 +236,93 @@ def test_compile_takes_financing_facts_from_the_execution_venue(monkeypatch):
     assert plan.venue == "binance"  # identity still names the data venue
     assert plan.execution_account_mode == "bitget_demo"
     assert plan.margin_mode == "isolated"
+
+
+# ── Structural S/R geometry (#3777) ─────────────────────────────────────────
+# The regression cover for the three new compiler behaviours. Each asserts the
+# compiled prices (or the typed no-plan), never the geometry helpers' internals.
+
+
+def _structural_anchors(*opposing):
+    """A long fixture whose invalidation band and derived floor are both known.
+
+    The 1h invalidation sits 0.1 away from the entry, so its own timeframe's noise
+    (0.05 buffer) leaves a 0.2% structural stop: tighter than the 2.2% cost-derived
+    floor, which is therefore the stop that decides the risk.
+    """
+    return (
+        _anchor("confirmed_swing", 100.0, "swing:p", role="entry_candidate"),
+        _anchor("confirmed_swing", 99.9, "swing:i", zone=0.05, role="invalidation_candidate",
+                timeframe="1h"),
+        *opposing,
+    )
+
+
+def test_structural_target_is_the_near_edge_of_the_nearest_admissible_zone(monkeypatch):
+    """#3777: the target is the *near* edge of the nearest opposing zone whose
+    reward:risk is admissible. A zone inside ``0.5 x ATR15m`` of the entry is the
+    entry's own band, not opposing structure, and is never selected."""
+    inside = _anchor("broken_structure_level", 103.0, "level:inside")   # near edge 102.5: 2.5 away
+    near = _anchor("broken_structure_level", 104.0, "level:near")       # near edge 103.5: 3.5 away
+    far = _anchor("broken_structure_level", 106.0, "level:far")         # near edge 105.5: 5.5 away
+    args = capture_input(
+        monkeypatch, "grounded-anchor-direct", "PRICE_FIRST",
+        anchors=_structural_anchors(inside, near, far), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    plan = compile_entry_plan(*args)
+
+    # stop = the derived floor (2.2% of entry); ATR15m noise (6.0) makes the
+    # exclusion radius 3.0, so the 102.5 zone is skipped although its RR (1.14)
+    # is admissible, and the 103.5 edge is the nearest admissible structure.
+    assert plan.stop_price == pytest.approx(97.8)
+    assert plan.entry_zone == (100.0, 100.0)
+    assert plan.target_price == pytest.approx(103.5)
+
+    # The same fixture without the admissible zones proves the 2.5-away zone was
+    # skipped by the exclusion radius and not by its reward:risk.
+    stripped = capture_input(
+        monkeypatch, "grounded-anchor-direct", "PRICE_FIRST",
+        anchors=_structural_anchors(inside), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    with pytest.raises(PlanIntentError, match="COMPILER_NO_EXECUTABLE_TARGET"):
+        compile_entry_plan(*stripped)
+
+
+def test_no_admissible_target_is_a_typed_no_plan(monkeypatch):
+    """#3777: an entry with no room to its opposing structure is not a bet worth
+    making — the Compiler refuses with a typed code rather than inventing a target."""
+    outside_envelope = _anchor("broken_structure_level", 140.0, "level:beyond")  # RR 18.6 > 10
+    args = capture_input(
+        monkeypatch, "grounded-anchor-direct", "PRICE_FIRST",
+        anchors=_structural_anchors(outside_envelope), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    with pytest.raises(PlanIntentError, match="COMPILER_NO_EXECUTABLE_TARGET"):
+        compile_entry_plan(*args)
+
+    none_at_all = capture_input(
+        monkeypatch, "grounded-anchor-direct", "PRICE_FIRST",
+        anchors=_structural_anchors(), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    with pytest.raises(PlanIntentError, match="COMPILER_NO_EXECUTABLE_TARGET"):
+        compile_entry_plan(*none_at_all)
+    assert none_at_all[1].anchors  # the fixture really did supply a registry
+
+
+def test_the_floor_widens_a_tight_structural_stop_and_never_tightens_a_wide_one(monkeypatch):
+    """#3777: the derived floor only ever widens. A structurally-correct tight stop
+    becomes the floor; a stop already beyond it is left exactly where structure put
+    it (sizing, not rejection, absorbs the difference)."""
+    tight = capture_input(
+        monkeypatch, "grounded-anchor-direct", "PRICE_FIRST",
+        anchors=_structural_anchors(_anchor("broken_structure_level", 104.0, "level:t")), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    assert compile_entry_plan(*tight).stop_price == pytest.approx(97.8)
+
+    wide = capture_input(monkeypatch, "grounded-anchor-direct", "PRICE_FIRST")
+    # The invalidation zone's outer edge (94.5) cleared by 0.5 x ATR15m (1.0).
+    assert compile_entry_plan(*wide).stop_price == pytest.approx(93.5)

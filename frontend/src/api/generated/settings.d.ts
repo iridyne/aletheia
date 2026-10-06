@@ -2136,6 +2136,11 @@ export interface components {
              */
             default_take_profit_pct: number;
             /**
+             * Entry Stop Cost Share
+             * @default 0.1
+             */
+            entry_stop_cost_share: number;
+            /**
              * Exchange Tpsl Enabled
              * @default false
              */
@@ -2205,17 +2210,6 @@ export interface components {
              * @default 5
              */
             slippage_bps: number;
-            /**
-             * Stop Floor Atr Multiple Draft
-             * @default 1
-             */
-            stop_floor_atr_multiple_draft: number;
-            /**
-             * Stop Floor Policy
-             * @default vol_target_pct
-             * @enum {string}
-             */
-            stop_floor_policy: "vol_target_pct" | "atr_multiple_draft";
             /**
              * Thesis Auto Close
              * @default true

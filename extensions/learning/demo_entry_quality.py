@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-POLICY_EPOCH_LABEL = "demo_entry_quality/v4"
+POLICY_EPOCH_LABEL = "demo_entry_quality/v5"
 _EPOCH_KIND = "demo_entry_quality"
 _EFFECTIVE_VALUES = {
     "version": "v4",
@@ -17,7 +17,8 @@ _EFFECTIVE_VALUES = {
     "insufficient_family_evidence_fail_open": True,
     "authority_read_failure_fail_closed": True,
     "reverse_after_stop_hours": 24,
-    "sideways_stop_mult": 2.0,
+    # `sideways_stop_mult` was removed with the fixed stop floor it described
+    # (#3777): the demo entry-quality brake no longer scales a stop distance.
 }
 _AFFECTED_PATHS = (
     "paper_ranker_demo_entry_quality",

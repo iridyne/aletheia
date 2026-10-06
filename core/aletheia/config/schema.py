@@ -1628,19 +1628,16 @@ class TradingConfig(BaseModel):
     vol_sizing_enabled: bool = True
     vol_target_risk_usdt: float = 25.0
     vol_target_pct: float = 1.5
-    # DRAFT (#3743, owner-requested, decision 2026-09-30): stop-floor measure.
-    # "vol_target_pct" (default) is the current approved semantics — the floor
-    # is a static `trading.vol_target_pct` percent of price, unchanged.
-    # "atr_multiple_draft" switches the floor to
-    # `stop_floor_atr_multiple_draft * <15m ATR%>`, falling back to the static
-    # floor whenever ATR is unavailable. Rollback: flip this back to
-    # "vol_target_pct". See docs/design/contracts/entry-plan-contract.md
-    # "DRAFT: ATR-relative stop-floor policy (decision issue #3743, ...)".
-    stop_floor_policy: Literal["vol_target_pct", "atr_multiple_draft"] = "vol_target_pct"
-    # DRAFT (#3743): the `k` in `k * ATR%`, consumed only by stop_floor_policy
-    # == "atr_multiple_draft". No effect under the default policy.
-    stop_floor_atr_multiple_draft: float = 1.0
     vol_kelly_cap_fraction: float = 0.25
+    # The single owner knob for the derived minimum stop distance (#3777):
+    # ``(2 x execution_fee_pct + 2 x slippage_bps/100) / entry_stop_cost_share``,
+    # i.e. one round trip may cost at most this share of the money at risk. The
+    # floor only ever WIDENS a stop; position size shrinks instead of the plan
+    # being rejected. At the default cost inputs (fee 0.06/side, slippage 5 bps)
+    # 0.10 yields ~2.2%. Note ``slippage_bps`` is the paper-fill parameter and
+    # understates the measured stop-exit slippage (mean 23 bps); raising it
+    # toward the measurement raises this floor automatically.
+    entry_stop_cost_share: FiniteFloat = Field(default=0.10, gt=0, le=1.0)
     # Trailing stop / breakeven
     trail_enabled: bool = True
     trail_atr_mult: float = 1.5

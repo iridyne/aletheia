@@ -192,78 +192,51 @@ def test_exchange_drawdown_requires_fresh_snapshot_time(
     assert _portfolio_drawdown_assessment("okx_demo") == (1.0, available)
 
 
-def test_exchange_demo_rejects_stop_tighter_than_vol_target(tmp_path, monkeypatch):
-    """DOGE 0.14% noise stops cannot pass Risk on bitget_demo."""
+def test_execution_rechecks_the_cost_derived_stop_floor(tmp_path, monkeypatch):
+    """#3777: Risk re-derives the stop floor from the *current* cost config at the
+    execution boundary (the Compiler widens a stop to it rather than rejecting), so
+    a Plan whose frozen stop no longer clears it must not be submitted."""
     _prepare(tmp_path, monkeypatch)
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
+    from aletheia.config.loader import load_config
     from aletheia.risk.engine import evaluate_proposal
-    from aletheia.trading.entry_plan import STOP_DISTANCE_BELOW_VOL_TARGET
-
-    p = TradeProposal(
-        symbol="DOGE/USDT",
-        market_type="usdt_futures",
-        direction="short",
-        execution_mode="bitget_demo",
-        quantity=100.0,
-        price=0.06998,
-        order_type="limit",
-        source="native",
-        leverage=2,
-        stop_price=0.07008,
-        take_profit=0.06800,
-        risk_reward=1.98,
-    )
-    repo.insert_trade_proposal(p)
-    assert any(
-        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
-        for v in evaluate_proposal(p).violations
-    )
-
-
-def test_atr_multiple_draft_floor_gates_on_the_current_measured_atr(tmp_path, monkeypatch):
-    """DRAFT (#3743, owner-requested, decision 2026-09-30): under
-    stop_floor_policy=atr_multiple_draft, Risk resolves the linked Plan's
-    instrument and rechecks the k*ATR floor against the instrument's
-    *current* measured 15m ATR% — accepting a stop that clears it and
-    rejecting one that does not."""
-    _prepare(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.risk import engine
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import TradeProposal
-    from aletheia.trading.entry_plan import STOP_DISTANCE_BELOW_VOL_TARGET
-
-    cfg = load_config()
-    cfg.trading.stop_floor_policy = "atr_multiple_draft"
-    cfg.trading.stop_floor_atr_multiple_draft = 1.0
-    save_config(cfg)
-
-    # Current measured ATR% = 0.5 -> floor = 1.0 * 0.5 = 0.5%.
-    monkeypatch.setattr(
-        engine, "get_entry_plan",
-        lambda _plan_id: {"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "status": "active"},
+    from aletheia.trading.entry_plan import (
+        STOP_DISTANCE_BELOW_COST_FLOOR,
+        min_stop_distance_pct,
     )
-    monkeypatch.setattr("aletheia.trading.sizing._lookup_atr_pct", lambda *a, **k: 0.5)
 
-    def _proposal(stop_price, plan_id):
+    # (2 x 0.06 fee + 2 x 5bps) / 0.10 owner share == 2.2% minimum distance.
+    assert min_stop_distance_pct(cfg=load_config()) == pytest.approx(2.2)
+
+    def _proposal(stop_price, take_profit, risk_reward):
         p = TradeProposal(
-            symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-            execution_mode="bitget_demo", quantity=1.0, price=100.0,
-            order_type="limit", entry_plan_id=plan_id, entry_leg_index=0,
-            stop_price=stop_price, leverage=2,
+            symbol="DOGE/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            execution_mode="bitget_demo",
+            quantity=100.0,
+            price=0.06998,
+            order_type="limit",
+            source="native",
+            leverage=2,
+            stop_price=stop_price,
+            take_profit=take_profit,
+            risk_reward=risk_reward,
         )
         repo.insert_trade_proposal(p)
         return p
 
-    tight = _proposal(99.6, "fixture-plan-tight")  # distance 0.4% < floor 0.5% -> rejected
-    loose = _proposal(99.3, "fixture-plan-loose")  # distance 0.7% > floor 0.5% -> clears
-
+    # DOGE's 0.14% noise stop is tighter than the floor -> blocked.
+    tight = _proposal(0.07008, 0.06800, 1.98)
     assert any(
-        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
-        for v in engine.evaluate_proposal(tight).violations
+        v.startswith(STOP_DISTANCE_BELOW_COST_FLOOR)
+        for v in evaluate_proposal(tight).violations
     )
+
+    # A 2.31% stop clears the same floor -> no floor violation.
+    loose = _proposal(0.07160, 0.06674, 2.0)
     assert not any(
-        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
-        for v in engine.evaluate_proposal(loose).violations
+        v.startswith(STOP_DISTANCE_BELOW_COST_FLOOR)
+        for v in evaluate_proposal(loose).violations
     )

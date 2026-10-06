@@ -786,14 +786,14 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-direct", "grounded-anchor-retrace-reclaim"])
-@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH", "stop_distance_below_vol_target:0.0125<0.0150"])
+@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH", "stop_distance_below_cost_floor:0.0125<0.0220"])
 def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
     from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
-        EntryAnalysisContext, EntryAnchor, EntryHypothesis,
+        EntryAnalysisContext, EntryHypothesis,
         canonical_json, fingerprint,
     )
     from aletheia.trading.entry_contract import entry_prompt_fingerprint
@@ -823,18 +823,12 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
     monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_a, **_k: 100_000.0)
     from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
+    from tests.test_entry_analysis import _plan_anchors
     seed_venue_margin_envelope()
-    primary = EntryAnchor(
-        venue="bitget", symbol="BTC/USDT", market_type="perp",
-        kind="candidate_reference" if profile == "grounded-anchor-direct" else "confirmed_swing",
-        price=100, directional_role="entry_candidate", known_at_ms=1,
-        source_fact_refs=("candidate:c1",), source_fingerprint="candidate",
-    )
-    invalidation = EntryAnchor(
-        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing",
-        price=95, directional_role="invalidation_candidate", known_at_ms=1,
-        source_fact_refs=("swing:s1",), source_fingerprint="swing",
-    )
+    # Structural S/R geometry (#3777): a compilable Plan needs a target-bearing
+    # opposing zone, so the fixture supplies the shared structural triple rather
+    # than a bare entry/invalidation pair.
+    primary, invalidation, _target = _plan_anchors("long")
     opportunity = json.loads(candidate.candidate_opportunity_context_json)
     context = EntryAnalysisContext(
         analysis_cutoff_at="2026-09-03T00:00:00+00:00",
@@ -857,7 +851,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         quant_context={"values": {"atr_pct": 2.0}, "fact_refs": []},
         portfolio_context={"availability": "available", "fact_refs": []},
         execution_context={"availability": "available", "bid": 99.9, "ask": 100.1, "spread_bps": 2, "depth_10bps_usd": 100_000, "estimated_costs": 0.1, "fact_refs": []},
-        anchors=(primary, invalidation),
+        anchors=(primary, invalidation, _target),
         entry_profiles=({"id": profile},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-03T00:00:00+00:00", mechanism="reversal", direction="long",
@@ -955,11 +949,14 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
             assert stored["outcome_reason"] == f"ENTRY_PLAN_ACTIVATION_INVALID:{expected_activation}"
         if ":" in str(compiler_error):
             # A rejection that measured something must keep the measurement: the
-            # typed reason stays the code consumers match on (#3743).
+            # typed reason stays the code consumers match on. The stop floor's own
+            # measurement is now the derived cost floor, rechecked at the execution
+            # boundary rather than at compile time (#3777).
             measured = json.loads(stored["result_json"])
-            assert stored["outcome_reason"] == "ENTRY_PLAN_COMPILE_INVALID:stop_distance_below_vol_target"
+            assert stored is not None
+            assert stored["outcome_reason"] == "ENTRY_PLAN_COMPILE_INVALID:stop_distance_below_cost_floor"
             assert measured["reason"] == stored["outcome_reason"]
-            assert measured["detail"] == "0.0125<0.0150"
+            assert measured["detail"] == "0.0125<0.0220"
         if compiler_error == "COMPILER_RETRY_EXHAUSTED":
             for attempt in (2, 3):
                 repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
@@ -1063,7 +1060,7 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     from aletheia.config.loader import load_config
     from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
     from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint
-    from tests.test_entry_analysis import _anchor, _context_v2
+    from tests.test_entry_analysis import _anchor, _context_v2, _plan_anchors
 
     cfg = load_config()
     monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", lambda *_args: 5000.0)
@@ -1074,9 +1071,8 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.execute_write("UPDATE candidate_planning_generations SET producer_commit='controlled-passive-test' WHERE id=?",
                        (generation["id"],))
-    primary = _anchor("candidate_reference", 100, f"candidate:{candidate.id}")
-    invalidation = _anchor("confirmed_swing", 95, "swing:1")
-    data = _context_v2((primary, invalidation)).model_dump(mode="json", exclude={"context_fingerprint"})
+    primary, invalidation, target = _plan_anchors("long")
+    data = _context_v2((primary, invalidation, target)).model_dump(mode="json", exclude={"context_fingerprint"})
     data["planning_generation"] = {"id": generation["id"], "candidate_id": candidate.id,
         "candidate_family": "mean_reversion", "cycle_number": 1,
         "entry_behavior_fingerprint": generation["entry_behavior_fingerprint"],
