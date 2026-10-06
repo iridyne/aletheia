@@ -498,12 +498,18 @@ The 0.05×15m-ATR `break_tolerance` no longer sets the stop distance; it keeps i
 separate meaning for structure-event detection in `market_structure`.
 
 **Target.** The near edge of the nearest opposing zone: for a long, the `low` of
-the nearest zone above entry whose band clears `ZONE_MIN_DISTANCE_ATR × ATR(15m)`;
-for a short, the mirror. The compiler walks outward to the first such zone whose
-implied reward:risk is within the existing Plan envelope
-(`ENTRY_PLAN_MIN_RISK_REWARD`..`ENTRY_PLAN_MAX_RISK_REWARD`); a Plan with no such
-target is a typed no-plan (`COMPILER_NO_EXECUTABLE_TARGET`). The reward:risk
-*multipliers* (`_RISK_REWARD_TARGET`) no longer place the target; they survive
+the nearest zone above entry whose band clears `ZONE_MIN_DISTANCE_ATR × ATR(15m)`
+from the *best* permitted entry; for a short, the mirror. The compiler walks
+outward to the first such zone whose implied reward:risk holds **at both ends of
+the frozen entry zone** — `ratio(worst_entry) >= ENTRY_PLAN_MIN_RISK_REWARD` and
+`ratio(best_entry) <= ENTRY_PLAN_MAX_RISK_REWARD`. Both ends are required because
+`EntryPlan`'s own coherence validator measures the ratio at the maker `limit_price`
+and Risk measures it at the submitted price, and every executable price lies
+between the two entries; reward:risk is monotone in the entry price, so those two
+endpoints bound them all. A zone admissible only at the worst entry is skipped, not
+admitted. A Plan with no admissible target is a typed no-plan
+(`COMPILER_NO_EXECUTABLE_TARGET`). The reward:risk *multipliers*
+(`_RISK_REWARD_TARGET`) no longer place the target; they survive
 only as the bounded fallback geometry of the pre-anchor envelope path.
 
 **Cost-derived minimum stop distance.** The fixed `trading.vol_target_pct` floor
@@ -525,7 +531,10 @@ to manufacture an entry, and a stop is never *tightened*.
 **Scope.** This geometry and its floor apply to every entry Plan regardless of
 execution mode. The former Demo-only scope (`applies_to_execution_mode`) is
 removed: one capability keeps one implementation, and Live previously ran entry
-plans with no stop floor at all.
+plans with no stop floor at all. Risk evaluates the derived floor for any proposal
+that carries both a price and a stop — including proposals that no Plan compiled,
+such as the Gateway's native path — so those are held to the same minimum distance
+even though the Compiler never widened them.
 
 **ATR timeframe.** Every consumer reads the ATR of the timeframe whose structure
 it is measuring. The draft's `quant_context.values.atr_pct` (1h) vs

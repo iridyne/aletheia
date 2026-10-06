@@ -51,6 +51,7 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
     'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
+    'trading.entry_stop_cost_share',
     'trading.persona_sizing_enabled', 'trading.active_persona', 'trading.personas',
     'trading.persona_learning_enabled', 'trading.persona_learning_min_samples',
     'trading.persona_progressive_unlock_enabled', 'trading.persona_unlock_step_samples',

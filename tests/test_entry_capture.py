@@ -312,6 +312,53 @@ def test_no_admissible_target_is_a_typed_no_plan(monkeypatch):
     assert none_at_all[1].anchors  # the fixture really did supply a registry
 
 
+def test_the_two_entry_rule_keeps_the_target_inside_the_envelope_where_it_executes(monkeypatch):
+    """#3777: the envelope must hold at every price the frozen zone permits.
+
+    The first fix measured reward:risk at the zone's *worst* price only, while
+    `EntryPlan`'s validator measures it at the maker limit and Risk at the
+    submitted price — both at the *better* end of the zone. A band crossing the cap
+    therefore compiled into an untyped pydantic error for maker tactics (and, for
+    FILL_FIRST, into a Plan whose frozen IOC price Risk rejected forever). The
+    retrace profile is the only one where the two entries differ, so it is the only
+    shape that can catch a regression to the one-entry rule.
+    """
+    # Retrace-reclaim enters over (primary.price, primary.price + 0.25 x ATR15m)
+    # = (100, 101.5). The 1h invalidation band is only 0.2% away, so the derived
+    # floor binds and the stop is 97.8: risk 2.2 at the best entry, 3.7 at the
+    # worst, so the envelope's ceiling admits near edges up to 122.0.
+    crossing = _anchor("broken_structure_level", 123.0, "level:crossing")   # near edge 122.5:
+    # 21.0/3.7 = 5.68 at the worst entry (admissible) but 22.5/2.2 = 10.23 at the
+    # executable one (outside the envelope), so it must be refused, not admitted.
+    inside = _anchor("broken_structure_level", 110.5, "level:inside")       # near edge 110.0:
+    # 8.5/3.7 = 2.30 worst, 10.0/2.2 = 4.55 executable — admissible at both.
+    args = capture_input(
+        monkeypatch, "grounded-anchor-retrace-reclaim", "PRICE_FIRST",
+        anchors=_structural_anchors(crossing), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    with pytest.raises(PlanIntentError, match="COMPILER_NO_EXECUTABLE_TARGET"):
+        compile_entry_plan(*args)
+
+    admitted = capture_input(
+        monkeypatch, "grounded-anchor-retrace-reclaim", "PRICE_FIRST",
+        anchors=_structural_anchors(inside), atr14=6,
+        extra_structure={"1h": {"availability": "available", "atr14": 0.1}},
+    )
+    plan = compile_entry_plan(*admitted)
+    # The Plan's own geometry: the executed ratio holds at the maker limit, at the
+    # frozen zone's worst price, and at the IOC price (which lies between them).
+    assert plan.entry_zone == (100.0, 101.5)
+    assert plan.stop_price == pytest.approx(97.8)
+    assert plan.target_price == pytest.approx(110.0)
+    from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
+
+    assert plan.limit_price is not None
+    for entry in (plan.limit_price, 101.5, plan.worst_price):
+        ratio = calculate_entry_plan_risk_reward(entry, plan.stop_price, plan.target_price)
+        assert 1.0 <= ratio <= 10.0, (entry, ratio)
+
+
 def test_the_floor_widens_a_tight_structural_stop_and_never_tightens_a_wide_one(monkeypatch):
     """#3777: the derived floor only ever widens. A structurally-correct tight stop
     becomes the floor; a stop already beyond it is left exactly where structure put
