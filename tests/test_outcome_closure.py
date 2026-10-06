@@ -1299,16 +1299,22 @@ def test_ready_candidate_uses_independent_account_presence(monkeypatch, presence
         PositionListReport, PositionStatusReport, QueryScope, ReadCompleteness,
         VerifiedExitReport, VerifiedExitState,
     )
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
     from tests.uta.test_execution_coordinator import _identity
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": "account-scope-1"})
+    # The entry Order identity carries the logical account fingerprint; the
+    # candidate records the same value when the view has no endpoint family.
+    fingerprint = logical_account_fingerprint(
+        broker_id="bitget_demo", account_environment="demo", execution_mode="bitget_demo",
+    )
+    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": fingerprint})
     repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
     candidate = PositionDisappearanceCandidate(
         id="candidate-ready", position_id=position.id, identity_key="identity-ready",
         broker_id="bitget_demo", account_environment="demo",
-        account_fingerprint="account-scope-1", execution_mode="bitget_demo",
+        account_fingerprint=fingerprint, execution_mode="bitget_demo",
         symbol=position.symbol, market_type=position.market_type,
         direction=position.direction, first_observed_at=position.opened_at,
         last_observed_at=position.opened_at, confirmation_count=2,
@@ -1354,16 +1360,136 @@ def test_ready_candidate_uses_independent_account_presence(monkeypatch, presence
         assert stored_candidate["status"] == "pending"
 
 
+def test_ready_candidate_settles_across_view_qualified_account_fingerprint(monkeypatch):
+    """A view-qualified candidate scope must not block a verified settlement.
+
+    The disappearance view records an endpoint-qualified account fingerprint for
+    candidate dedup across API faces; settling a verified exit matches the entry
+    Order's logical account identity, so the two fingerprints agreeing is not a
+    precondition (in production the profile is always present and they never do).
+    """
+    from aletheia.portfolio import disappearance_settlement
+    from aletheia.portfolio.disappearance_confirmation import (
+        build_view_evidence,
+        logical_account_fingerprint,
+    )
+    from aletheia.storage.models import PositionDisappearanceCandidate
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import (
+        PositionListReport, QueryScope, ReadCompleteness, VerifiedExitReport,
+        VerifiedExitState,
+    )
+    from tests.uta.test_execution_coordinator import _identity
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": logical_account_fingerprint(
+        broker_id="bitget_demo", account_environment="demo", execution_mode="bitget_demo",
+    )})
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
+    view = build_view_evidence(
+        {"positions": [], "fetched_at": "2026-08-08T10:00:00+00:00"},
+        broker_id="bitget_demo", account_environment="demo", execution_mode="bitget_demo",
+        complete=True, endpoint_family=identity.profile,
+    )
+    assert view["account_fingerprint"] != identity.account_fingerprint
+    candidate = PositionDisappearanceCandidate(
+        id="candidate-qualified", position_id=position.id, identity_key="identity-qualified",
+        broker_id="bitget_demo", account_environment="demo",
+        account_fingerprint=view["account_fingerprint"], execution_mode="bitget_demo",
+        symbol=position.symbol, market_type=position.market_type,
+        direction=position.direction, first_observed_at=position.opened_at,
+        last_observed_at=position.opened_at, confirmation_count=2,
+        semantics_version="oi-v1",
+    )
+    repo.insert_position_disappearance_candidate(candidate)
+    instrument = instrument_from_local(position.symbol, position.market_type)
+    queried: list[str] = []
+
+    async def query_account(mode, method, query, *, expected_account):
+        assert expected_account == identity
+        if method == "verify_position_exit":
+            queried.append(query.local_position_id)
+            return VerifiedExitReport(
+                identity=identity, completeness=ReadCompleteness.COMPLETE,
+                scope=QueryScope(instrument=instrument), received_at=datetime.now(timezone.utc),
+                profile_version="1", local_position_id=position.id,
+                state=VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL,
+            )
+        assert method == "get_positions"
+        return PositionListReport(
+            identity=identity, completeness=ReadCompleteness.COMPLETE,
+            scope=query.scope, received_at=datetime.now(timezone.utc), profile_version="1",
+        )
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query_account)
+    result = disappearance_settlement.settle_ready_disappearance_candidate(candidate.id)
+
+    assert queried == [position.id]
+    assert result["closure_type"] == "administrative"
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "closed"
+    assert json.loads(stored["reconciliation_identity"])["account_scope"] == (
+        identity.account_fingerprint
+    )
+    assert repo.list_position_disappearance_candidates(limit=10)[0]["status"] == (
+        "settled_administrative"
+    )
+
+
+def test_ready_candidate_refuses_a_foreign_account_identity(monkeypatch):
+    """A candidate recorded for another account still fails closed."""
+    from aletheia.portfolio import disappearance_settlement
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+    from aletheia.storage.models import PositionDisappearanceCandidate
+    from tests.uta.test_execution_coordinator import _identity
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": logical_account_fingerprint(
+        broker_id="bitget_demo", account_environment="live", execution_mode="bitget_demo",
+    )})
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
+    candidate = PositionDisappearanceCandidate(
+        id="candidate-foreign", position_id=position.id, identity_key="identity-foreign",
+        broker_id="bitget_demo", account_environment="demo",
+        account_fingerprint="sha256:someone-elses-account", execution_mode="bitget_demo",
+        symbol=position.symbol, market_type=position.market_type,
+        direction=position.direction, first_observed_at=position.opened_at,
+        last_observed_at=position.opened_at, confirmation_count=2,
+        semantics_version="oi-v1",
+    )
+    repo.insert_position_disappearance_candidate(candidate)
+
+    async def query_account(mode, method, query, *, expected_account):
+        raise AssertionError("a foreign account identity must not reach the venue")
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query_account)
+    result = disappearance_settlement.settle_ready_disappearance_candidate(candidate.id)
+
+    assert result["closed"] is False
+    assert result["reason"] == "verified_exit_query_failed"
+    assert result["error_type"] == "ValueError"
+    assert repo.get_position(position.id)["status"] == "open"
+    assert repo.list_position_disappearance_candidates(limit=10)[0]["status"] == "pending"
+
+
 def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monkeypatch):
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
 
     position = _position(execution_mode="bitget_live_limited")
     repo.insert_position(position)
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+
+    fingerprint = logical_account_fingerprint(
+        broker_id="bitget_live_limited", account_environment="live",
+        execution_mode="bitget_live_limited",
+    )
     candidate = PositionDisappearanceCandidate(
         id="candidate-live", position_id=position.id, identity_key="identity-live",
         broker_id="bitget_live_limited", account_environment="live",
-        account_fingerprint="account-scope-live", execution_mode="bitget_live_limited",
+        account_fingerprint=fingerprint, execution_mode="bitget_live_limited",
         symbol=position.symbol, market_type=position.market_type,
         direction=position.direction, first_observed_at=position.opened_at,
         last_observed_at=position.opened_at, confirmation_count=2,
@@ -1374,7 +1500,7 @@ def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monk
 
     from tests.uta.test_execution_coordinator import _identity
     from aletheia.uta.models import VerifiedExitReport, VerifiedExitState, ReadCompleteness, QueryScope
-    identity = _identity("bitget_live_limited").model_copy(update={"account_fingerprint": "account-scope-live"})
+    identity = _identity("bitget_live_limited").model_copy(update={"account_fingerprint": fingerprint})
     repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
 
     async def query_account(mode, method, query, *, expected_account):

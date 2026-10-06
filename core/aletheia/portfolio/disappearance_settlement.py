@@ -14,6 +14,7 @@ from aletheia.execution.verified_exit import (
 from aletheia.portfolio.disappearance_confirmation import (
     DIRECT_CONFIRMED_ABSENT,
     disappearance_ready,
+    logical_account_fingerprint,
 )
 from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
 from aletheia.storage import repositories as repo
@@ -195,7 +196,16 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
     request = VerifiedExitRequest(
         broker_id=str(candidate["broker_id"]),
         account_environment=str(candidate["account_environment"]),
-        account_scope=str(candidate["account_fingerprint"]),
+        # The candidate's stored fingerprint is the disappearance view's
+        # endpoint-qualified digest, which exists for candidate dedup only.  The
+        # verified-exit identity contract is the entry Order's logical account
+        # identity, so claim that here: the query then verifies the claim against
+        # the Order's own identity and a different account still fails closed.
+        account_scope=logical_account_fingerprint(
+            broker_id=str(candidate["broker_id"]),
+            account_environment=str(candidate["account_environment"]),
+            execution_mode=execution_mode,
+        ),
         execution_mode=execution_mode,
         position_id=str(position["id"]),
         symbol=str(position["symbol"]),
