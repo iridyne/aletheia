@@ -32,9 +32,6 @@ _LOCAL_FUNDING = _ROOT / "core" / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "core" / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "extensions" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "extensions" / "data" / "position_x.py"
-_DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
-_RELATIVE_RANK = _ROOT / "core" / "aletheia" / "universe" / "relative_rank_shadow.py"
-_UNIVERSE_FEATURES = _ROOT / "core" / "aletheia" / "universe" / "features.py"
 _MARKET_DATA = _ROOT / "core" / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
@@ -111,17 +108,67 @@ def test_derivatives_comparison_is_observation_only(monkeypatch):
         _CONTRACT,
         "§3 Binance public fast-market facts",
         "L2a",
-        "Binance Spot and USD-M public fast-market facts feed only Fast Monitoring memory and never credentials, persistence, or order routing.",
+        "Binance USD-M public fast-market facts reach only the Fast Monitoring "
+        "in-memory consumer through the venue-neutral CCXT Pro adapter: no "
+        "credentials, no persistence, no order routing; a channel without an "
+        "observed fact stays unavailable, and the retired native Binance "
+        "Spot/Bitget WebSocket transports have not returned.",
         status="implemented",
     ),
 )
-def test_binance_public_fast_market_facts_are_registered_to_fast_monitoring_only():
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    stream = (_ROOT / "core" / "aletheia" / "universe" / "fast_stream.py").read_text(encoding="utf-8")
+async def test_binance_public_fast_market_facts_are_registered_to_fast_monitoring_only(
+    monkeypatch,
+):
+    """DU-S28: behaviour of the venue-neutral adapter that replaced the native
+    Binance Spot/USD-M WebSocket classes (fdd11a7a3, #3699 Phase 8).
 
-    assert "DU-S28" in doc and "Binance public fast-market" in doc
-    assert "class BinanceFastMarketStream" in stream
-    assert "_BINANCE_SPOT_DEPTH" in stream and "@depth@100ms" in stream
+    The retired-transport check is a single-module absence scan: it proves the
+    native implementations are not re-declared in the venue-neutral owner, not
+    that no other module re-implements a Binance WebSocket client.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import fast_market_stream_for_execution_mode
+    from extensions.data import fast_stream_ccxt_pro as adapter
+
+    builder_calls: list[tuple[tuple, dict]] = []
+
+    def _make_ccxt_pro(*args, **kwargs):
+        builder_calls.append((args, kwargs))
+        return MagicMock(), MagicMock()
+
+    monkeypatch.setattr(adapter, "make_ccxt_pro", _make_ccxt_pro)
+    monkeypatch.setattr(adapter, "close_ccxt", AsyncMock())
+
+    stream = fast_market_stream_for_execution_mode("binance_testnet")
+    assert isinstance(stream, adapter.CcxtProFastMarketStream)
+
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    assert stream.monitoring_state(instrument, ("quote", "depth"))["state"] == "unavailable"
+
+    await stream.connect()
+    # Public transport only: the factory gets the venue name and nothing else —
+    # no credentials and no account stream.
+    assert builder_calls == [(("binanceusdm",), {})]
+    connected = stream.monitoring_state(instrument, ("quote", "depth"))
+    assert connected["state"] == "warming", (
+        "readiness must come from an observed public fact, never from the connection"
+    )
+    assert {channel["state"] for channel in connected["channels"].values()} == {"warming"}
+    # Fast Monitoring only: the stream exposes no order-routing or persistence entry point.
+    for forbidden in ("place_order", "create_order", "execute_order", "persist", "save"):
+        assert not hasattr(stream, forbidden), f"fast stream grew an {forbidden} path"
+    await stream.close()
+
+    owner = (
+        _ROOT / "core" / "aletheia" / "universe" / "fast_stream.py"
+    ).read_text(encoding="utf-8")
+    for retired in ("BinanceFastMarketStream", "BitgetFastMarketStream", "_SpotBook", "@depth@100ms"):
+        assert retired not in owner, f"retired native transport returned: {retired}"
+
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    assert "DU-S28" in doc
     assert "不持久化" in doc and "不读取凭证" in doc and "不进入订单路由" in doc
 
 
@@ -164,20 +211,97 @@ def test_litellm_pricing_source_is_registered_and_estimated_only():
         _CONTRACT,
         "§3 public derivatives positioning in Relative Rank Shadow",
         "L2c",
-        "Global account and top-trader position ratios remain distinct, persist "
-        "through the Universe feature snapshot, and fail closed for perp ranking.",
+        "Global account and top-trader position ratios stay distinct public facts "
+        "acquired through the Binance CCXT fapiData transport, persist on the Open "
+        "Interest and Universe feature snapshots, and a perp candidate missing "
+        "either fails closed for Relative Rank Shadow eligibility.",
         status="implemented",
     ),
 )
-def test_public_positioning_ratios_reach_relative_rank_shadow():
-    derivatives = _DERIVATIVES.read_text(encoding="utf-8")
-    features = _UNIVERSE_FEATURES.read_text(encoding="utf-8")
-    ranker = _RELATIVE_RANK.read_text(encoding="utf-8")
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+async def test_public_positioning_ratios_reach_relative_rank_shadow(monkeypatch):
+    """DU-S26: behaviour of the current public transport (59c159ba3 replaced the
+    raw Binance URL constants with CCXT fapiData implicit methods) and of its
+    existing consumers, not the retired URL strings.
+    """
+    from unittest.mock import AsyncMock, MagicMock
 
-    assert "topLongShortPositionRatio" in derivatives
-    for field in ("long_short_ratio", "top_trader_position_ratio"):
-        assert field in derivatives and field in features and field in ranker
+    import extensions.data.collectors.derivatives as derivatives
+    from aletheia.config import loader as cfg_loader
+    from extensions.data import ccxt_provider as provider_mod
+
+    class _PrimaryExchange:
+        def __init__(self):
+            self.markets = {
+                "BTC/USDT:USDT": {
+                    "id": "BTC/USDT:USDT", "symbol": "BTC/USDT:USDT", "base": "BTC",
+                    "quote": "USDT", "settle": "USDT", "type": "swap", "swap": True,
+                    "linear": True, "contractSize": 1,
+                }
+            }
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_funding_rate(self, _symbol):
+            return {"fundingRate": 0.0001}
+
+        async def fetch_open_interest(self, _symbol):
+            return {"openInterestValue": 100.0, "info": {"oiUsd": 100}}
+
+    class _Provider:
+        _primary_name = "okx"
+
+        def _ensure_primary(self):
+            return _PrimaryExchange()
+
+        async def close(self):
+            return None
+
+    lsr_exchange = MagicMock()
+    lsr_exchange.fapiDataGetGlobalLongShortAccountRatio = AsyncMock(
+        return_value=[{"longShortRatio": "1.35"}]
+    )
+    lsr_exchange.fapiDataGetTopLongShortPositionRatio = AsyncMock(
+        return_value=[{"longShortRatio": "1.42"}]
+    )
+    cfg = type(
+        "Cfg",
+        (),
+        {"market_data": type("MD", (), {
+            "enable_long_short_ratio": True, "derivatives_history_hours": 0,
+        })()},
+    )()
+
+    monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
+    monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(derivatives, "make_ccxt", lambda _name: (lsr_exchange, MagicMock()))
+    monkeypatch.setattr(derivatives, "close_ccxt", AsyncMock())
+
+    result = await derivatives.DerivativesCollector().collect(["BTC/USDT"])
+
+    # Both public ratio batches ran, through the CCXT implicit methods, and the
+    # two ratios stay distinct on the persisted Open Interest snapshot.
+    lsr_exchange.fapiDataGetGlobalLongShortAccountRatio.assert_awaited()
+    lsr_exchange.fapiDataGetTopLongShortPositionRatio.assert_awaited()
+    snapshot = result["open_interest"][0]
+    assert snapshot.long_short_ratio == pytest.approx(1.35)
+    assert snapshot.top_trader_position_ratio == pytest.approx(1.42)
+
+    # The Universe feature snapshot is the persistence hop into Relative Rank.
+    from aletheia.storage.models import UniverseFeatureSnapshot
+
+    assert {"long_short_ratio", "top_trader_position_ratio"} <= set(
+        UniverseFeatureSnapshot.model_fields
+    )
+
+    # A perp candidate missing either ratio is ineligible, not silently ranked.
+    from tests.test_universe_relative_rank_shadow import (
+        test_perp_requires_public_positioning_inputs,
+    )
+
+    test_perp_requires_public_positioning_inputs()
+
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     assert "DU-S26" in doc
 
 
