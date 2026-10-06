@@ -135,13 +135,27 @@ def _widen_to_min_stop(closest_entry: float, stop: float, *, direction: str, cfg
 
 
 def _structural_target(
-    *, direction: str, entry_reference: float, stop: float, context, atr15: float
+    *,
+    direction: str,
+    worst_entry: float,
+    best_entry: float,
+    stop: float,
+    context,
+    atr15: float,
 ) -> float:
     """The near edge of the nearest opposing zone inside the Plan's RR envelope.
 
-    Walks outward from the entry and takes the first zone whose implied
-    reward:risk is admissible. No admissible target is a typed no-plan: an entry
-    with no room to its opposing structure is not a bet worth making (#3777).
+    The envelope must hold at the *executable* entry, not only at the frozen
+    zone's worst price: `EntryPlan`'s own coherence validator measures the ratio at
+    the maker `limit_price` and Risk measures it at the submitted price, both of
+    which sit between `best_entry` and `worst_entry`. Admitting a candidate on the
+    worst-entry ratio alone would let a target near the cap compile into a Plan
+    whose validator (or Risk) rejects the ratio it actually trades at. For either
+    direction the worst-entry ratio is the smaller one, so requiring
+    ``ratio(worst_entry) >= MIN`` and ``ratio(best_entry) <= MAX`` bounds both.
+
+    No admissible target is a typed no-plan: an entry with no room to its opposing
+    structure is not a bet worth making (#3777).
     """
     from aletheia.agent_shell.entry_planner import PlanIntentError
     from aletheia.trading.entry_plan import (
@@ -149,24 +163,25 @@ def _structural_target(
         ENTRY_PLAN_MIN_RISK_REWARD,
     )
 
-    risk = abs(entry_reference - stop)
-    if not math.isfinite(risk) or risk <= 0:
+    risk_worst = abs(worst_entry - stop)
+    risk_best = abs(best_entry - stop)
+    if not all(math.isfinite(value) and value > 0 for value in (risk_worst, risk_best)):
         raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")
     min_gap = _GEOMETRY["zone_min_distance_atr"] * atr15
-    candidates: list[tuple[float, float]] = []
+    edges: list[float] = []
     for anchor in context.anchors:
         zone = getattr(anchor, "zone", None)
         if zone is None or anchor.directional_role not in {"entry_candidate", "both"}:
             continue
         # The *near* edge of the opposing band is where price first meets it.
         edge = zone.low if direction == "long" else zone.high
-        distance = edge - entry_reference if direction == "long" else entry_reference - edge
-        if distance <= min_gap:
+        if (edge - best_entry if direction == "long" else best_entry - edge) <= min_gap:
             continue
-        candidates.append((distance, edge))
-    for distance, edge in sorted(candidates):
-        ratio = distance / risk
-        if ENTRY_PLAN_MIN_RISK_REWARD <= ratio <= ENTRY_PLAN_MAX_RISK_REWARD:
+        edges.append(edge)
+    for edge in sorted(edges, key=lambda value: abs(value - best_entry)):
+        ratio_worst = abs(edge - worst_entry) / risk_worst
+        ratio_best = abs(edge - best_entry) / risk_best
+        if ratio_worst >= ENTRY_PLAN_MIN_RISK_REWARD and ratio_best <= ENTRY_PLAN_MAX_RISK_REWARD:
             return edge
     raise PlanIntentError("COMPILER_NO_EXECUTABLE_TARGET")
 
@@ -403,7 +418,8 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     quant_values = context.quant_context.get("values") or {}
     atr_pct = quant_values.get("atr_pct") or (atr / float(context.candidate["candidate_price"]) * 100.0)
     target = _structural_target(
-        direction=direction, entry_reference=worst_entry, stop=stop, context=context, atr15=atr
+        direction=direction, worst_entry=worst_entry, best_entry=closest_entry,
+        stop=stop, context=context, atr15=atr,
     )
     if target <= 0:
         raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")

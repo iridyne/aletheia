@@ -5,7 +5,7 @@ from __future__ import annotations
 POLICY_EPOCH_LABEL = "demo_entry_quality/v5"
 _EPOCH_KIND = "demo_entry_quality"
 _EFFECTIVE_VALUES = {
-    "version": "v4",
+    "version": "v5",
     "applies_to": ["bitget_demo", "okx_demo", "binance_testnet"],
     "live_family_gate_unchanged": True,
     "open_positions_unchanged": True,

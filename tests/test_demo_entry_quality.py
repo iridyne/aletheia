@@ -592,5 +592,5 @@ def test_retired_scope_rotates_epoch_without_rewriting_history():
     assert rows[legacy_id]["ended_at"] is not None
     assert rows[current_id]["ended_at"] is None
     current_values = json.loads(rows[current_id]["effective_values_json"])
-    assert current_values["version"] == "v4"
+    assert current_values["version"] == "v5"
     assert "paper_internal_unchanged" not in current_values

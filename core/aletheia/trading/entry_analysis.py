@@ -177,6 +177,9 @@ logger = logging.getLogger("aletheia.trading.entry_analysis")
 # construction and a recency cap would evict exactly the levels this exists for.
 _ZONE_MERGE_ATR = 0.5
 _MAX_ANCHORS = 26
+# System-derived anchors a Plan always needs to compile: the Candidate's own price
+# reference and the compiled breakout level. They must not be evicted by proximity.
+_PINNED_ANCHOR_KINDS = frozenset({"candidate_reference", "causal_breakout"})
 
 
 class EntryHypothesis(BaseModel):
@@ -542,13 +545,14 @@ def _select_anchors(anchors: list[EntryAnchor], price: float) -> tuple[EntryAnch
 
     Geometry needs the levels that can hold price as support or resistance, and
     higher-timeframe levels are older by construction, so a pure recency cap would
-    evict exactly the levels this change exists to expose. The candidate reference
-    is always kept.
+    evict exactly the levels this change exists to expose. The system-derived
+    anchors (the candidate reference and the compiled breakout level) are always
+    kept; the structural anchors compete for the remaining places by proximity.
     """
-    pinned = [anchor for anchor in anchors if anchor.kind == "candidate_reference"]
-    rest = [anchor for anchor in anchors if anchor.kind != "candidate_reference"]
+    pinned = [anchor for anchor in anchors if anchor.kind in _PINNED_ANCHOR_KINDS]
+    rest = [anchor for anchor in anchors if anchor.kind not in _PINNED_ANCHOR_KINDS]
     rest.sort(key=lambda anchor: (abs(anchor.price - price), -anchor.known_at_ms, anchor.anchor_id))
-    return tuple(pinned + rest[: _MAX_ANCHORS - len(pinned)])
+    return tuple(pinned + rest[: max(0, _MAX_ANCHORS - len(pinned))])
 
 
 def entry_causal_windows(

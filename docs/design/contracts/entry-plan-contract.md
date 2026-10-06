@@ -464,7 +464,8 @@ substitution occurs. Compiler derives entry/stop/target geometry per
 [Structural Support/Resistance geometry](#structural-supportresistance-geometry-3777)
 below and applies the derived minimum stop distance to it before issuing an
 immutable Plan; Risk rechecks that same derived floor against its *current* cost
-and volatility facts at execution. Neither entry/stop geometry nor Risk limits
+configuration at execution, and rejects a Plan whose stop no longer clears it.
+Neither entry/stop geometry nor Risk limits
 are widened to manufacture a Plan: a Plan that cannot satisfy the geometry is a
 typed no-plan, not a widened one.
 
@@ -481,10 +482,12 @@ become anchors, and anchors of one timeframe whose prices are within
 **zone**: a band `(low, high)` carrying its timeframe, its touch count and that
 timeframe's `ATR14`. Anchors stay the model-selectable objects; the zone band is
 carried on the anchor, so the model still selects only anchor IDs and never a
-price. Per timeframe the Planner exposes the `_ZONE_SELECTION_PER_SIDE = 4`
-nearest zones below price and above price, plus the existing
-`candidate_reference` and `causal_breakout` anchors; the total anchor registry
-stays bounded (`_MAX_ANCHORS = 26`).
+price. The registry is bounded by proximity to price (`_MAX_ANCHORS = 26`): the
+system-derived `candidate_reference` and `causal_breakout` anchors are always
+kept, and the structural anchors compete for the remaining places by distance from
+the Candidate's price, ties broken by recency. Proximity rather than recency is
+deliberate — higher-timeframe levels are older by construction, so a recency cap
+would evict exactly the levels this design exists to expose.
 
 **Stop.** The invalidation zone's *outer* edge minus (long) or plus (short)
 `STOP_BUFFER_ATR × ATR(zone timeframe)` (`STOP_BUFFER_ATR = 0.5`). The buffer is
