@@ -95,7 +95,7 @@ class FakeExchange:
                 "inverse": False,
             },
         }
-        self.create_response = None
+        self.create_response: dict | Exception | None = None
         self.edit_response = None
         self.cancel_response = None
         self.leverage_response = None
@@ -1344,8 +1344,8 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(
         "clientOrderId": "bitget-client-1",
         "hedged": True,
         "marginMode": "cross",
-        "stopLoss": {"triggerPrice": Decimal("49000")},
-        "takeProfit": {"triggerPrice": Decimal("62000")},
+        "stopLoss": {"triggerPrice": "49000"},
+        "takeProfit": {"triggerPrice": "62000"},
         "uta": expected_uta,
     }
     await adapter.close()
@@ -1518,7 +1518,7 @@ async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
         "hedged": True,
         "marginMode": "cross",
         "reduceOnly": True,
-        "stopLossPrice": Decimal("49000"),
+        "stopLossPrice": "49000",
         "uta": expected_uta,
     }
     edit = next(event for event in exchange.events if event[0] == "edit_order")
@@ -1662,8 +1662,8 @@ async def test_okx_entry_preserves_native_attached_protection(monkeypatch):
 
     assert report.evidence is CommandEvidence.ACKNOWLEDGED
     create = next(event for event in exchange.events if event[0] == "create_order")
-    assert create[1][5]["stopLoss"] == {"triggerPrice": Decimal("49000")}
-    assert create[1][5]["takeProfit"] == {"triggerPrice": Decimal("62000")}
+    assert create[1][5]["stopLoss"] == {"triggerPrice": "49000"}
+    assert create[1][5]["takeProfit"] == {"triggerPrice": "62000"}
 
 
 @pytest.mark.asyncio
@@ -1687,7 +1687,7 @@ async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
 
     assert report.evidence is CommandEvidence.ACKNOWLEDGED
     create = next(event for event in exchange.events if event[0] == "create_order")
-    assert create[1][5]["stopLossPrice"] == Decimal("50000")
+    assert create[1][5]["stopLossPrice"] == "50000"
     assert adapter.capabilities.native_tpsl.value == "supported"
 
     live = OKXLiveProfile(api_key="key", secret="secret", passphrase="passphrase")
@@ -1697,6 +1697,52 @@ async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
     live_adapter = CCXTUTAAdapter(live_identity, live)
     assert live_adapter.capabilities.market_order.value == "supported"
     assert live_adapter.capabilities.native_tpsl.value == "supported"
+
+
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3", "okx"])
+@pytest.mark.asyncio
+async def test_native_trigger_prices_reach_ccxt_as_safe_string_values(monkeypatch, kind):
+    """A Decimal trigger price reaches CCXT as a value ``safe_string`` accepts.
+
+    CCXT >= 4.5.7x reads the unified trigger params with ``safe_string``, which
+    accepts only str/float/int. A Decimal reads as None, so Bitget built a body
+    with ``stopLoss: None`` and acknowledged it — a live entry whose approved
+    protection never reached the venue (#3777). The profile owns the request
+    body, so the serialization is asserted at the params it hands to CCXT.
+    """
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "trigger-1", "symbol": "BTC/USDT:USDT", "side": "buy",
+        "type": "market", "amount": "2", "filled": "0", "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    command = _okx_command if kind == "okx" else _bitget_command
+
+    entry = await adapter.submit_order(
+        command(
+            identity, leverage=None,
+            stop_loss_price="59000.25", take_profit_price="62000.75",
+        )
+    )
+    stop = await adapter.submit_order(
+        command(
+            identity, leverage=None, purpose="protective_stop", side="sell",
+            reduce_only=True, trigger_price="50000.25",
+        )
+    )
+    await adapter.close()
+
+    assert entry.evidence is CommandEvidence.ACKNOWLEDGED
+    assert stop.evidence is CommandEvidence.ACKNOWLEDGED
+    submitted = [event[1][5] for event in exchange.events if event[0] == "create_order"]
+    assert len(submitted) == 2
+    for key, expected in (("stopLoss", "59000.25"), ("takeProfit", "62000.75")):
+        assert ccxt.Exchange.safe_string(submitted[0][key], "triggerPrice") == expected
+    assert ccxt.Exchange.safe_string(submitted[1], "stopLossPrice") == "50000.25"
 
 
 def _binance_command(identity, **updates):
