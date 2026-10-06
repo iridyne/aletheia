@@ -3,6 +3,7 @@ import asyncio
 import json
 
 from datetime import datetime, timezone
+from typing import Literal
 
 import pytest
 
@@ -18,11 +19,52 @@ from aletheia.trading.entry_analysis import (
 from aletheia.trading.risk_intent import RiskIntent
 
 
-def _anchor(kind: str, price: float, source: str) -> EntryAnchor:
+def _anchor(
+    kind: str,
+    price: float,
+    source: str,
+    *,
+    zone: float = 0.5,
+    role: Literal["entry_candidate", "invalidation_candidate", "both"] = "both",
+    timeframe: Literal["15m", "1h", "4h"] = "15m",
+    known_at_ms: int = 1_700_000_000_000,
+) -> EntryAnchor:
+    """A structural anchor with the support/resistance band every level has (#3777).
+
+    Price Action levels cluster, so the Compiler reads the zone's outer edge; a band
+    of ``+/- 0.5`` around the level keeps the fixture arithmetic readable while
+    still exercising the band edge rather than the raw price.
+    """
+    from aletheia.trading.entry_analysis import AnchorZone
+
     return EntryAnchor(
         venue="bitget", symbol="BTC/USDT", market_type="perp", kind=kind,
-        price=price, directional_role="both", known_at_ms=1_700_000_000_000,
-        source_fact_refs=(source,), source_fingerprint=source,
+        price=price, directional_role=role, known_at_ms=known_at_ms,
+        source_fact_refs=(source,), source_fingerprint=source, timeframe=timeframe,
+        zone=AnchorZone(low=price - zone, high=price + zone, touches=2),
+    )
+
+
+def _plan_anchors(direction: str = "long") -> tuple[EntryAnchor, EntryAnchor, EntryAnchor]:
+    """The minimum structural set a Plan needs: entry, invalidation, and a target.
+
+    The Compiler takes its target from the nearest opposing zone whose implied
+    reward:risk is admissible, so a context without one has no executable objective
+    and must fail closed (#3777). The opposing zone sits well beyond the widest stop
+    either profile can derive from the invalidation band, including the
+    ``grounded-anchor-retrace-reclaim`` worst entry at the far edge of the pullback
+    band.
+    """
+    if direction == "long":
+        return (
+            _anchor("confirmed_swing", 100.0, "swing:p", role="entry_candidate"),
+            _anchor("confirmed_swing", 95.0, "swing:i", role="invalidation_candidate"),
+            _anchor("broken_structure_level", 120.0, "level:t"),
+        )
+    return (
+        _anchor("confirmed_swing", 100.0, "swing:p", role="entry_candidate"),
+        _anchor("confirmed_swing", 105.0, "swing:i", role="invalidation_candidate"),
+        _anchor("broken_structure_level", 80.0, "level:t"),
     )
 
 
@@ -398,3 +440,74 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
         candidate_detected_at=instant(2), positions=[],
     )
     assert future.quant_context["availability"] == "unavailable"
+
+
+def test_same_timeframe_levels_merge_into_one_band_per_class():
+    """#3777: clustered levels of one timeframe and one class are ONE S/R zone.
+
+    The model still selects a single anchor ID while the Compiler clears the whole
+    band; levels further apart than ``0.5 x ATR(timeframe)`` stay separate facts.
+    """
+    from aletheia.trading.entry_analysis import _zone_anchors
+
+    levels: list[tuple[float, int, str, tuple[str, ...], str | None]] = [
+        (100.0, 5, "fact:a", ("swing:a",), "geometry"),
+        (100.9, 7, "fact:b", ("swing:b",), "geometry"),
+        (103.0, 9, "fact:c", ("swing:c",), "geometry"),
+    ]
+    invalidation_side = _zone_anchors(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", direction="long",
+        timeframe="1h", levels=levels, atr=2.0,
+        kind="confirmed_swing", invalidation_role_kind="low",
+    )
+
+    def band(anchor: EntryAnchor) -> tuple[float, float, int]:
+        assert anchor.zone is not None
+        return anchor.zone.low, anchor.zone.high, anchor.zone.touches
+
+    assert [band(a) for a in invalidation_side] == [
+        (100.0, 100.9, 2), (103.0, 103.0, 1),
+    ]
+    assert [a.timeframe for a in invalidation_side] == ["1h", "1h"]
+    # The invalidation side carries the band's *outer* edge as its price: the worst
+    # price the level actually reached, not the newest touch.
+    assert [a.price for a in invalidation_side] == [100.0, 103.0]
+    # The newest level of a merged band owns its provenance identity.
+    assert invalidation_side[0].known_at_ms == 7
+    assert invalidation_side[0].source_fingerprint == "fact:b"
+    assert invalidation_side[0].source_fact_refs == ("swing:b",)
+    assert "support_resistance_1h" in invalidation_side[0].aliases
+
+    entry_side = _zone_anchors(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", direction="long",
+        timeframe="1h", levels=levels, atr=2.0,
+        kind="confirmed_swing", invalidation_role_kind="high",
+    )
+    assert [a.directional_role for a in entry_side] == ["entry_candidate", "entry_candidate"]
+    assert [a.price for a in entry_side] == [100.9, 103.0]
+
+
+def test_anchor_registry_is_bounded_by_proximity_to_price_not_recency():
+    """#3777: higher-timeframe levels are older by construction, so a recency cap
+    would evict exactly the levels the geometry exists for."""
+    from aletheia.trading.entry_analysis import _MAX_ANCHORS, _select_anchors
+
+    reference = _anchor("candidate_reference", 100.0, "candidate:c1")
+    nearest = [
+        _anchor("broken_structure_level", 100.0 + step, f"near:{step}", known_at_ms=1)
+        for step in range(1, _MAX_ANCHORS)
+    ]
+    farther = [
+        _anchor("broken_structure_level", 200.0 + step, f"far:{step}", known_at_ms=9_000)
+        for step in range(5)
+    ]
+
+    kept = _select_anchors([reference, *nearest, *farther], 100.0)
+
+    assert len(kept) == _MAX_ANCHORS
+    assert kept[0] is reference
+    assert {anchor.source_fingerprint for anchor in kept[1:]} == {
+        anchor.source_fingerprint for anchor in nearest
+    }
+    with pytest.raises(ValueError, match="anchor_registry_too_large"):
+        _context(tuple([reference, *nearest, *farther]))

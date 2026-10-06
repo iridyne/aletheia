@@ -98,7 +98,7 @@ def test_same_plan_fills_and_unresolved_remainder_share_caps(monkeypatch, state,
     # A superseded generation can never become current again, so retrying it
     # would only spin until expiry.
     (["entry_plan_generation_superseded"], "REJECT"),
-    (["stop_distance_below_vol_target:0.2532<1.5000"], "REJECT"),
+    (["stop_distance_below_cost_floor:0.2532<2.2000"], "REJECT"),
     # Durable row corruption shares the first segment with the transient
     # :internal_failure variant, so the whole prefix stays terminal.
     (["account_leverage_check_error:invalid_position_exposure:position=p:field=quantity"], "REJECT"),
