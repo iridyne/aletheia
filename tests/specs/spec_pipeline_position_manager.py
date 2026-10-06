@@ -414,6 +414,34 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
     )
     _insert_snapshot(conn, "BTC/USDT", price=62000.0)
 
+    # unrealized_pnl has exactly one source: the exchange's own mark (with
+    # funding and mark-price basis). The local (price - entry) * qty estimate is
+    # not used, so publish the venue view the same way the runtime cache does.
+    from aletheia.portfolio import exchange_sync
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry",
+        lambda: SimpleNamespace(
+            configured_identities=lambda: (
+                SimpleNamespace(execution_mode="bitget_demo"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 1.0,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "positions": [
+            {
+                "broker_id": "bitget_demo",
+                "symbol": "BTC/USDT",
+                "market_type": "spot",
+                "side": "long",
+                # 2.0 local estimate minus 0.25 funding: the venue value is the
+                # fact, and the assertion below fails if the local maths returns.
+                "unrealized_pnl": 1.75,
+            }
+        ],
+    })
+
     from aletheia.portfolio.pnl import mark_positions_to_market
     mark_positions_to_market(persist=True)
     from aletheia.portfolio.position_manager import evaluate_open_positions
@@ -426,7 +454,8 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
     assert result["checked"] >= 1, "No positions were checked"
 
     pos_row = conn.execute(
-        "SELECT status, current_price, unrealized_pnl FROM positions WHERE id = ?", (pos_id,)
+        "SELECT status, current_price, unrealized_pnl, unrealized_pnl_source "
+        "FROM positions WHERE id = ?", (pos_id,)
     ).fetchone()
     assert pos_row is not None
     assert pos_row["status"] == "open", (
@@ -434,7 +463,8 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
         f"status={pos_row['status']!r}"
     )
     assert pos_row["current_price"] == 62000.0
-    assert pos_row["unrealized_pnl"] == pytest.approx(2.0)
+    assert pos_row["unrealized_pnl"] == pytest.approx(1.75)
+    assert pos_row["unrealized_pnl_source"] == "exchange_exact"
 
 
 # ---------------------------------------------------------------------------
