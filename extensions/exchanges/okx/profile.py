@@ -102,11 +102,13 @@ class OKXDemoProfile(CCXTProfile):
             params["timeInForce"] = command.time_in_force
         if command.post_only:
             params["postOnly"] = True
-        # CCXT reads these unified trigger params with `safe_string`, which accepts
-        # only str/float/int: a Decimal is read as None and the venue is handed an
-        # order with the protection silently missing (#3777). The approved price is
-        # serialized here, at the boundary that owns the request body, so the built
-        # body carries exactly the approved value.
+        # The approved price is serialized here, at the boundary that owns the
+        # request body, so the built body carries exactly the approved value and no
+        # accessor's accepted types decide it (#3777). OKX's own accessors
+        # (`safe_value_2`/`safe_value_n`) do read a Decimal, so this face was not
+        # visibly broken when ccxt 4.5.84 tightened `safe_string` — it is serialized
+        # for uniformity with Bitget, where a Decimal is read as None and the venue
+        # is handed an order with the protection silently missing.
         if command.stop_loss_price is not None:
             params["stopLoss"] = {"triggerPrice": str(command.stop_loss_price)}
         if command.take_profit_price is not None:
