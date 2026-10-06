@@ -484,8 +484,8 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
             order_type="market",
             quantity=1.0,
             price=100.0,
-            stop_price=98.0,
-            take_profit=104.0,
+            stop_price=97.0,
+            take_profit=106.0,
             risk_reward=2.0,
             execution_mode="bitget_demo",
         )
