@@ -102,15 +102,22 @@ class OKXDemoProfile(CCXTProfile):
             params["timeInForce"] = command.time_in_force
         if command.post_only:
             params["postOnly"] = True
+        # The approved price is serialized here, at the boundary that owns the
+        # request body, so the built body carries exactly the approved value and no
+        # accessor's accepted types decide it (#3777). OKX's own accessors
+        # (`safe_value_2`/`safe_value_n`) do read a Decimal, so this face was not
+        # visibly broken when ccxt 4.5.84 tightened `safe_string` — it is serialized
+        # for uniformity with Bitget, where a Decimal is read as None and the venue
+        # is handed an order with the protection silently missing.
         if command.stop_loss_price is not None:
-            params["stopLoss"] = {"triggerPrice": command.stop_loss_price}
+            params["stopLoss"] = {"triggerPrice": str(command.stop_loss_price)}
         if command.take_profit_price is not None:
-            params["takeProfit"] = {"triggerPrice": command.take_profit_price}
+            params["takeProfit"] = {"triggerPrice": str(command.take_profit_price)}
         if command.trigger_price is not None:
             if command.purpose == "protective_stop":
-                params["stopLossPrice"] = command.trigger_price
+                params["stopLossPrice"] = str(command.trigger_price)
             elif command.purpose == "take_profit":
-                params["takeProfitPrice"] = command.trigger_price
+                params["takeProfitPrice"] = str(command.trigger_price)
             else:
                 raise UTAError(
                     UTAErrorCode.NOT_SUPPORTED,
