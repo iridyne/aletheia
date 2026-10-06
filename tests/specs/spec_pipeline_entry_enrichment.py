@@ -165,7 +165,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
         direction="long",
         quantity=0.01,
         price=1551.57,
-        stop_price=round(1551.57 * 0.98, 8),
+        stop_price=round(1551.57 * 0.97, 8),
         execution_mode="okx_demo",
         agent_rationale=rationale,
         leverage=5,
