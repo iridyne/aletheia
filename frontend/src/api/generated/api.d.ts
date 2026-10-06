@@ -12765,6 +12765,11 @@ export interface components {
              */
             default_take_profit_pct: number;
             /**
+             * Entry Stop Cost Share
+             * @default 0.1
+             */
+            entry_stop_cost_share: number;
+            /**
              * Exchange Tpsl Enabled
              * @default false
              */
@@ -12900,6 +12905,8 @@ export interface components {
             default_stop_loss_pct?: number | null;
             /** Default Take Profit Pct */
             default_take_profit_pct?: number | null;
+            /** Entry Stop Cost Share */
+            entry_stop_cost_share?: number | null;
             /** Exchange Tpsl Enabled */
             exchange_tpsl_enabled?: boolean | null;
             /** Execution Fee Pct */

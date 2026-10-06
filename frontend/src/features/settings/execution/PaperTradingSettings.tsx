@@ -171,6 +171,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
   const [defaultNotional, setDefaultNotional] = useState('25')
   const [volRiskUsdt, setVolRiskUsdt] = useState('25')
   const [volTargetPct, setVolTargetPct] = useState('1.5')
+  const [entryStopCostShare, setEntryStopCostShare] = useState('0.1')
   const [volKellyCap, setVolKellyCap] = useState('0.25')
   const [maeEnabled, setMaeEnabled] = useState(false)
   const [maeUrgentScore, setMaeUrgentScore] = useState('80')
@@ -205,6 +206,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       default_notional_usdt: parseFloat(defaultNotional),
       vol_target_risk_usdt: parseFloat(volRiskUsdt),
       vol_target_pct: parseFloat(volTargetPct),
+      entry_stop_cost_share: parseFloat(entryStopCostShare),
       vol_kelly_cap_fraction: parseFloat(volKellyCap),
       persona_sizing_enabled: personaEnabled,
       active_persona: activePersona,
@@ -243,6 +245,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
     || defaultNotional !== String(trading.default_notional_usdt ?? 25)
     || volRiskUsdt !== String(trading.vol_target_risk_usdt ?? 25)
     || volTargetPct !== String(trading.vol_target_pct ?? 1.5)
+    || entryStopCostShare !== String(trading.entry_stop_cost_share ?? 0.1)
     || volKellyCap !== String(trading.vol_kelly_cap_fraction ?? 0.25)
     || personaEnabled !== !!trading.persona_sizing_enabled
     || activePersona !== (trading.active_persona ?? 'conservative')
@@ -286,6 +289,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       setDefaultNotional(String(trading.default_notional_usdt ?? 25))
       setVolRiskUsdt(String(trading.vol_target_risk_usdt ?? 25))
       setVolTargetPct(String(trading.vol_target_pct ?? 1.5))
+      setEntryStopCostShare(String(trading.entry_stop_cost_share ?? 0.1))
       setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
       setPersonaEnabled(!!trading.persona_sizing_enabled)
       setActivePersona(trading.active_persona ?? 'conservative')
@@ -414,7 +418,16 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
                 onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
             </label>
           </>)}
+          <label>
+            <span>Entry stop cost share</span>
+            <input type="number" min={0.01} max={1} step={0.01} value={entryStopCostShare}
+              onChange={e => { setEntryStopCostShare(e.target.value); setMsg(null) }} className="mono" />
+          </label>
         </div>
+        <p className="hint mt-1">
+          Minimum entry stop distance = estimated round-trip cost ÷ this share: a smaller share widens the stop
+          and shrinks the position for the same risk budget.
+        </p>
         <p className="hint mt-1">
           Compatibility note: ATR target is not consumed by the current sizing formula, and the
           legacy sizing scale is a bounded multiplier—not a calibrated Kelly fraction.

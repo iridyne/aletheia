@@ -1628,6 +1628,13 @@ class TradingConfig(BaseModel):
     vol_sizing_enabled: bool = True
     vol_target_risk_usdt: float = 25.0
     vol_target_pct: float = 1.5
+    # Owner knob (#3777): the single tunable for the minimum stop distance.
+    # `min_stop_pct = (2.0 * execution_fee_pct + 2.0 * slippage_bps / 100.0)
+    # / entry_stop_cost_share` — the share of the money at risk a round trip
+    # may cost, derived from config only so the Compiler (compile time) and
+    # Risk (execution time) compute the same floor from the same authority.
+    # A smaller share widens the floor. Owner decision 2026-09-30, issue #3777.
+    entry_stop_cost_share: FiniteFloat = Field(default=0.10, gt=0, le=1.0)
     # DRAFT (#3743, owner-requested, decision 2026-09-30): stop-floor measure.
     # "vol_target_pct" (default) is the current approved semantics — the floor
     # is a static `trading.vol_target_pct` percent of price, unchanged.

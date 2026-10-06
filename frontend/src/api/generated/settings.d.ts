@@ -2136,6 +2136,11 @@ export interface components {
              */
             default_take_profit_pct: number;
             /**
+             * Entry Stop Cost Share
+             * @default 0.1
+             */
+            entry_stop_cost_share: number;
+            /**
              * Exchange Tpsl Enabled
              * @default false
              */

@@ -197,6 +197,8 @@ def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeyp
         ("default_notional_usdt", 0),
         ("vol_target_risk_usdt", -1),
         ("vol_target_pct", 0),
+        ("entry_stop_cost_share", 0),
+        ("entry_stop_cost_share", 1.5),
         ("vol_kelly_cap_fraction", 0.75),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -204,6 +206,11 @@ def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeyp
                 settings_routes.TradingConfigUpdate(**{field: value})
             ))
         assert exc.value.status_code == 400
+
+    result = asyncio.run(settings_routes.update_trading_config(
+        settings_routes.TradingConfigUpdate(entry_stop_cost_share=0.1)
+    ))
+    assert result["trading"]["entry_stop_cost_share"] == 0.1
 
 
 
