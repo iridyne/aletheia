@@ -18,8 +18,11 @@ trust_boundaries:
       - uv run pytest tests/specs/spec_execution.py -q
       - uv run pytest tests/e2e/test_pipeline_exchange_entry_to_position.py tests/specs/spec_pipeline_exchange_materialization.py -q
   - id: bitget_auth
+    # Retargeted after #3697: CCXT owns the Bitget signing/transport that
+    # auth.py held, and the candidate-credential probe moved to the scoped
+    # credential ingress. The boundary stays; only its file moved.
     paths:
-      - extensions/exchanges/bitget/auth.py
+      - extensions/exchanges/credential_routes.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: bitget_client

@@ -539,10 +539,15 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.execution.venue_capabilities as capabilities
 
+    # The demo cache is keyed by execution_mode *and* the profile that listed
+    # the symbols (#3475), so a literal "okx_demo" key would silently miss and
+    # read the live venue listing instead of this fixture.
+    cache_key = capabilities._capability_cache_key("okx_demo")
+
     # Structure: {"usdt_futures": frozenset, "spot": frozenset}
     # WLD/USDT is spot-only on OKX demo — absent from usdt_futures, present in spot.
     monkeypatch.setattr(capabilities, "_demo_capabilities_cache", {
-        "okx_demo": (
+        cache_key: (
             {
                 "usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"}),
                 "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
@@ -565,7 +570,7 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     # Loaded cache contains only "usdt_futures" key — spot requests must be
     # rejected (issue #1222). A missing key in a loaded dict is frozenset(), not None.
     monkeypatch.setattr(capabilities, "_demo_capabilities_cache", {
-        "okx_demo": (
+        cache_key: (
             {"usdt_futures": frozenset({"BTC/USDT", "ETH/USDT"})},
             time.time(),
         )
