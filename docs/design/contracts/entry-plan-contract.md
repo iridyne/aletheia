@@ -218,7 +218,8 @@ market acquisition and inference.
 ## Contract identity and planning cycles
 
 `entry_behavior_fingerprint` and `schema_fingerprint` are derived from the
-canonical schemas, prompt, profile registry, execution-route permissions, and
+canonical schemas, prompt, the closed-bar window size per timeframe
+(`ENTRY_WINDOW_BARS`), profile registry, execution-route permissions, and
 explicit compiler/trigger contract material. Compiler material contains the
 consumed risk-envelope tables, horizons, geometry fractions and tactic bounds;
 TriggerSpec material contains channels, freshness, parameter keys, geometry

@@ -42,7 +42,7 @@ def test_equivalent_callable_refactors_preserve_plan_permission(monkeypatch, com
     assert entry_contract.entry_contract_fingerprints() == baseline
 
 
-@pytest.mark.parametrize("material", ["compiler", "trigger", "prompt", "schema", "route", "profile"])
+@pytest.mark.parametrize("material", ["compiler", "trigger", "prompt", "schema", "route", "profile", "windows"])
 def test_semantic_material_changes_invalidate_old_identity(monkeypatch, material):
     from aletheia.execution import venue_capabilities
     from aletheia.trading import entry_plan_compiler, entry_profiles, trigger_specs
@@ -61,6 +61,12 @@ def test_semantic_material_changes_invalidate_old_identity(monkeypatch, material
         monkeypatch.setattr(EntryPlan, "model_json_schema", lambda: schema)
     elif material == "route":
         monkeypatch.setattr(venue_capabilities, "ENTRY_EXECUTION_MINIMUM_PERMISSION", {})
+    elif material == "windows":
+        # The frozen planner input must have exactly these closed-bar windows, so a
+        # change to them is a change of contract, not an in-place edit.
+        from aletheia.trading import entry_analysis
+
+        monkeypatch.setitem(entry_analysis.ENTRY_WINDOW_BARS, "4h", entry_analysis.ENTRY_WINDOW_BARS["4h"] + 1)
     else:
         profiles = entry_profiles.registered_entry_profiles()
         monkeypatch.setattr(entry_profiles, "_REGISTRY", (*profiles[:-1], replace(profiles[-1], trigger_freshness_ms=1000)))
