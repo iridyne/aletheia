@@ -30,16 +30,80 @@ def sma(values: list[float], period: int) -> float | None:
     return mean(win) if win else None
 
 
+def _ema_series(values: list[float], period: int) -> list[float]:
+    """EMA for every bar from index `period - 1` on; SMA seed. Empty if too short."""
+    if len(values) < period:
+        return []
+    k = 2 / (period + 1)
+    out = [mean(values[:period])]
+    for v in values[period:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
 def ema(values: list[float], period: int) -> float | None:
     """Exponential moving average. Bootstrapped with SMA on the first `period`."""
-    if len(values) < period:
+    series = _ema_series(values, period)
+    return series[-1] if series else None
+
+
+def macd(values: list[float], fast: int = 12, slow: int = 26, signal: int = 9
+         ) -> list[tuple[float, float, float]]:
+    """MACD as (line, signal, histogram) for every bar where the signal exists.
+
+    line = EMA(fast) - EMA(slow); signal = EMA(signal) of the line; histogram =
+    line - signal. Each EMA uses the same SMA seed as `ema`, so the first point
+    needs `slow + signal - 1` closes (34 for 12/26/9). Empty if too short.
+    """
+    slow_series = _ema_series(values, slow)
+    fast_series = _ema_series(values, fast)[slow - fast:]
+    line = [f - s for f, s in zip(fast_series, slow_series, strict=True)]
+    signal_series = _ema_series(line, signal)
+    line = line[signal - 1:]
+    return [(m, s, m - s) for m, s in zip(line, signal_series, strict=True)]
+
+
+def adx(highs: list[float], lows: list[float], closes: list[float],
+        period: int = 14) -> tuple[float, float, float] | None:
+    """Wilder ADX with directional indicators: (adx, +DI, -DI), all 0..100.
+
+    +DM/-DM and True Range are Wilder-smoothed like `atr` (mean seed of the
+    first `period` values); DX = 100*|+DI - -DI| / (+DI + -DI); ADX is the
+    Wilder smoothing of DX. Needs `2 * period` bars (28 for 14). None when too
+    short or when a ratio is 0/0 (a flat series has no direction to measure).
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n < 2 * period:
         return None
-    k = 2 / (period + 1)
-    seed = mean(values[:period])
-    out = seed
-    for v in values[period:]:
-        out = v * k + out * (1 - k)
-    return out
+    trs: list[float] = []
+    plus_dm: list[float] = []
+    minus_dm: list[float] = []
+    for i in range(1, n):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+        trs.append(max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
+                       abs(lows[i] - closes[i - 1])))
+    tr_s = sum(trs[:period]) / period
+    plus_s = sum(plus_dm[:period]) / period
+    minus_s = sum(minus_dm[:period]) / period
+    dxs: list[float] = []
+    for i in range(period, len(trs) + 1):
+        if i > period:
+            tr_s = (tr_s * (period - 1) + trs[i - 1]) / period
+            plus_s = (plus_s * (period - 1) + plus_dm[i - 1]) / period
+            minus_s = (minus_s * (period - 1) + minus_dm[i - 1]) / period
+        if tr_s <= 0:
+            return None
+        plus_di, minus_di = 100 * plus_s / tr_s, 100 * minus_s / tr_s
+        if plus_di + minus_di == 0:
+            return None
+        dxs.append(100 * abs(plus_di - minus_di) / (plus_di + minus_di))
+    out = sum(dxs[:period]) / period
+    for dx in dxs[period:]:
+        out = (out * (period - 1) + dx) / period
+    return out, plus_di, minus_di
 
 
 def rsi(values: list[float], period: int = 14) -> float | None:
