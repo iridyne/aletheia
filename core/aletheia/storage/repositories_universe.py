@@ -1672,11 +1672,8 @@ def filter_pressure_stats(
     scanner_family is populated. Returns per-family miss rates: how often do this
     family's rejected candidates produce positive net returns?
     """
-    from aletheia.storage.repositories import (
-        _COMPLETE_OUTCOME_ECONOMICS_SQL,
-        _OUTCOME_MARKET_SQL,
-        get_db,
-    )
+    from aletheia.analytics.candidate_outcome_projection import _MARKET_SQL
+    from aletheia.storage.repositories import complete_outcome_economics_sql, get_db
 
     from aletheia.analytics.learning_window import clean_window_cutoff
 
@@ -1685,7 +1682,7 @@ def filter_pressure_stats(
     settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
     rows = db.execute(
         "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        f"{_MARKET_SQL} AS market_type, horizon, "
         "cost_model_version, "
         "COUNT(*) AS n, "
         "AVG(net_return_pct) AS avg_net, "
@@ -1697,11 +1694,11 @@ def filter_pressure_stats(
         "WHERE status = 'settled' "
         "AND cost_model_version = ? "
         "AND scanner_family IS NOT NULL "
-        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
+        f"AND {complete_outcome_economics_sql()} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
         f"{settled_clause}"
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        f"GROUP BY scanner_family, direction, {_MARKET_SQL}, horizon, "
         "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
         (
