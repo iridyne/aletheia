@@ -234,7 +234,11 @@ def test_scoped_cutover_keeps_spot_and_current_incomplete_denominator():
     index = build_economic_utility_cohort_index(
         loaded, source_cutoff_at=(T0 + timedelta(hours=5)).isoformat(), cost_assumptions=loaded[0]["cost_assumptions"]
     )
-    assert any(v.failure_reason == "history_economics_incomplete" for k, v in index.cohorts.items() if k[-1] == "perp")
+    # The row with an unknown funding cost is excluded from the sample but stays in
+    # the denominator: the perp cohort is not voided, its coverage drops.
+    perp = [v for k, v in index.cohorts.items() if k[-1] == "perp"]
+    assert perp and all(v.failure_reason is None for v in perp)
+    assert any(v.coverage < 1.0 for v in perp)
     complete_rows = [r for r in loaded if r["symbol"] == new_symbol]
     healthy = build_economic_utility_cohort_index(
         complete_rows,

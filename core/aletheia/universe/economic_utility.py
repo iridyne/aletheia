@@ -70,6 +70,22 @@ def reason_proves_evidence_absent(reason: object) -> bool:
     return reason in EVIDENCE_ABSENT_REASONS
 
 
+_REQUIRED_ECONOMICS = (
+    "net_return_pct", "mae_pct", "min_tradable_edge_pct",
+    "estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct",
+)
+
+
+def _economics_complete(row: Mapping[str, object]) -> bool:
+    """One Outcome row is usable evidence only with every cost and risk field known."""
+
+    return (
+        row.get("cost_assumptions") is not None
+        and row.get("cost_model_version") == COST_MODEL_VERSION
+        and all(_finite(row.get(field)) is not None for field in _REQUIRED_ECONOMICS)
+    )
+
+
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, Real):
         return None
@@ -246,12 +262,7 @@ def build_economic_utility_cohort_index(
             failures.setdefault(key, set()).add("history_time_invalid")
         elif not row.get("scanner_run_id") or not row.get("symbol"):
             invalid.add(key)
-        elif row.get("cost_assumptions") is None or any(_finite(row.get(field)) is None for field in (
-            "net_return_pct", "mae_pct", "min_tradable_edge_pct",
-            "estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct",
-        )) or row.get("cost_model_version") != COST_MODEL_VERSION:
-            failures.setdefault(key, set()).add("history_economics_incomplete")
-        elif float(row["net_return_pct"]) < _TAIL_HARM_FLOOR_PCT:
+        elif (net := _finite(row.get("net_return_pct"))) is not None and net < _TAIL_HARM_FLOOR_PCT:
             failures.setdefault(key, set()).add("tail_harm")
         identity = str(row.get("outcome_candidate_key") or "")
         if not identity:
@@ -272,12 +283,14 @@ def build_economic_utility_cohort_index(
     summaries: dict[tuple[str, str, str, str], _CohortSummary] = {}
     for key, identified in by_cohort.items():
         parent_rows = list(identified.values())
+        # A row with any unknown cost or risk field is left out of the sample but
+        # stays in `parent_rows`, so it lowers `coverage` instead of voiding the
+        # cohort; systematic gaps are still refused by the 80% coverage floor.
         complete = [
             row
             for row in parent_rows
             if row.get("status") == "settled"
-            and _finite(row.get("net_return_pct")) is not None
-            and row.get("cost_model_version") == COST_MODEL_VERSION
+            and _economics_complete(row)
             and row.get("scanner_run_id")
         ]
         parent_values, _, parent_clusters = _independent_values(complete)

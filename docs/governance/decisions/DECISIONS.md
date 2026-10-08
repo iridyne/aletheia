@@ -1124,3 +1124,23 @@ docs-only PR 无 review 秒合。人工合是唯一让 owner 保持决定权的�
 **Guardrail:**
 - 规格测试 CSU-S07b 要求这个身份是字面常量，且不等于文件哈希。
 - 改变特征计算语义的 PR 必须同时改这个常量。漏改时可以按 `producer_commit` 事后排除，不重写任何记录。
+
+## 2026-10-08 — 历史里一行成本不全，只剔除这一行，不作废整个同类组
+
+**Decision:** 估算器（`economic_utility.build_economic_utility_cohort_index`）遇到成本或风险字段
+未知的历史行时，把这一行从样本里剔除，但仍计入覆盖率分母；不再把整个同类组标成
+`history_economics_incomplete`。样本太薄、覆盖率低于 80% 时仍然拒绝该组。已结算且亏损低于
+尾部阈值的行，即使别的字段未知，仍然标记该组为 `tail_harm`。同时确认
+`history_economics_incomplete` 与 `settlement_overdue` 属于"尚未测到"，可以走冷启动
+（契约原文禁止，代码自 717bbb679 起允许，现在契约改成与代码一致）。owner 在
+2026-10-08 批准，攒数据期间保留 Demo 下单。
+
+**Reason:** Fedora 当前窗口 16,097 行里只有 173 行（1.07%）缺资金费率，却让 6 个永续同类组
+全部作废，永远停在冷启动。"不得把未知当作乐观的零"这条原则保持不变：缺失的行不补 0，
+只是不参与平均。
+
+**Guardrail:**
+- 覆盖率门槛（80%）是防止系统性缺口被平均掉的保护，不得放宽。
+- 测试：`test_one_incomplete_row_does_not_void_a_mature_cohort`、
+  `test_widespread_incomplete_rows_still_refuse_the_cohort`、
+  `test_an_incomplete_row_with_a_tail_loss_still_flags_the_cohort`。
