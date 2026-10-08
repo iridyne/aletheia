@@ -460,47 +460,112 @@ so old bound inputs remain historical through the normal identity cutover.
 
 Planner blocks `spot_short_not_allowed` before market acquisition or inference;
 Compiler and canonical Risk use the same instrument predicate. No market or venue
-substitution occurs. Compiler applies `stop_distance_below_min_floor()` to the
-closest permitted entry and structural stop before issuing an immutable Plan.
-The existing configuration and published-regime semantics are unchanged; Risk
-rechecks its current floor at execution. Neither entry/stop geometry nor Risk
-limits are widened to manufacture a Plan.
+substitution occurs. Compiler derives entry/stop/target geometry per
+[Structural Support/Resistance geometry](#structural-supportresistance-geometry-3777)
+below and applies the derived minimum stop distance to it before issuing an
+immutable Plan; Risk rechecks that same derived floor against its *current* cost
+configuration at execution, and rejects a Plan whose stop no longer clears it.
+Neither entry/stop geometry nor Risk limits
+are widened to manufacture a Plan: a Plan that cannot satisfy the geometry is a
+typed no-plan, not a widened one.
 
-### DRAFT: ATR-relative stop-floor policy (decision issue #3743, owner-requested, 2026-09-30)
+### Structural Support/Resistance geometry (#3777, owner-approved 2026-09-30)
 
-A prior investigation replayed 164 real planning attempts through the compiler's
-own arithmetic: the effective floor (`trading.vol_target_pct` = 1.5% of price)
-is ~4.1x the median 15m ATR (0.097–1.233% of price, median 0.365%), and every
-rejected/accepted attempt separated perfectly at the 1.5% line. Modelled
-plan-rate under a `k x ATR` floor: k=0.5 -> 91%, k=1.0 -> 77%, k=1.5 -> 62%,
-k=2.0 -> 46%, k=3.0 -> 26%, k=4.0 -> 9%, versus 16% today.
+The entry geometry is built from the Price Action / SMC support and resistance the
+system already computes for 4h, 1h and 15m
+(`aletheia.trading.entry_analysis.entry_causal_windows`), instead of a
+15m-anchor-plus-0.05×ATR stop and a fixed percentage floor.
 
-The owner accepted, as a **draft**, a config switch
-`trading.stop_floor_policy` (`"vol_target_pct"` default | `"atr_multiple_draft"`)
-with `trading.stop_floor_atr_multiple_draft` (default `1.0`) as the `k`
-multiplier. The default preserves today's approved semantics exactly — same
-floor, same rejection strings, same rechecked-at-execution behavior described
-above. Under the draft policy the floor becomes `k * <15m ATR%>`, falling back
-to the static `vol_target_pct` floor whenever ATR is unavailable, non-finite,
-or non-positive; the floor never loosens without a measurement. The
-published-sideways doubling still applies to the resulting draft floor.
+**Resolution.** Each timeframe's confirmed swings and broken structure levels
+become anchors, and anchors of one timeframe whose prices are within
+`ZONE_MERGE_ATR × ATR(timeframe)` (`ZONE_MERGE_ATR = 0.5`) merge into one
+**zone**: a band `(low, high)` carrying its timeframe, its touch count and that
+timeframe's `ATR14`. Anchors stay the model-selectable objects; the zone band is
+carried on the anchor, so the model still selects only anchor IDs and never a
+price. The registry is bounded by proximity to price (`_MAX_ANCHORS = 26`): the
+system-derived `candidate_reference` and `causal_breakout` anchors are always
+kept, and the structural anchors compete for the remaining places by distance from
+the Candidate's price, ties broken by recency. Proximity rather than recency is
+deliberate — higher-timeframe levels are older by construction, so a recency cap
+would evict exactly the levels this design exists to expose.
 
-Risk rechecks the draft floor at execution against the instrument's *current*
-measured 15m ATR% (`aletheia.trading.sizing._lookup_atr_pct`, the same
-`universe_feature_snapshots` table the Compiler's `quant_context.atr_pct`
-reads, keyed by the Plan's frozen venue/symbol/market_type) — consistent with
-the unchanged sentence above that Risk rechecks its *current* floor at
-execution, not a value frozen at compile time. An earlier version of this
-draft instead froze the evaluated ATR% into a new `EntryPlan.stop_floor_atr_pct`
-field; that was rejected because `EntryPlan.model_json_schema()` is part of
-the material `entry_contract_fingerprints()` hashes into the entry behavior
-and schema fingerprints, so adding any field to `EntryPlan` moves both
-fingerprints for every outstanding plan/generation on deploy — an identity
-cutover this draft must not cause while its policy defaults off.
+**Stop.** The invalidation zone's *outer* edge minus (long) or plus (short)
+`STOP_BUFFER_ATR × ATR(zone timeframe)` (`STOP_BUFFER_ATR = 0.5`). The buffer is
+measured on the zone's own timeframe, because a 1h or 4h level is invalidated
+over 1h or 4h noise. `invalidation_price` remains the structural level the model
+selected; `stop_price` is the buffered per-side stop, so the two differ by design.
+The 0.05×15m-ATR `break_tolerance` no longer sets the stop distance; it keeps its
+separate meaning for structure-event detection in `market_structure`.
 
-**Rollback:** flip `trading.stop_floor_policy` back to
-`"vol_target_pct"` (no deploy or code change needed); or `git revert` the DRAFT
-commit whose SHA is recorded on decision issue #3743.
+**Target.** The near edge of the nearest opposing zone: for a long, the `low` of
+the nearest zone above entry whose band clears `ZONE_MIN_DISTANCE_ATR × ATR(15m)`
+from the *best* permitted entry; for a short, the mirror. The compiler walks
+outward to the first such zone whose implied reward:risk holds **at both ends of
+the frozen entry zone** — `ratio(worst_entry) >= ENTRY_PLAN_MIN_RISK_REWARD` and
+`ratio(best_entry) <= ENTRY_PLAN_MAX_RISK_REWARD`. Both ends are required because
+`EntryPlan`'s own coherence validator measures the ratio at the maker `limit_price`
+and Risk measures it at the submitted price, and every executable price lies
+between the two entries; reward:risk is monotone in the entry price, so those two
+endpoints bound them all. A zone admissible only at the worst entry is skipped, not
+admitted. A Plan with no admissible target is a typed no-plan
+(`COMPILER_NO_EXECUTABLE_TARGET`). The reward:risk *multipliers*
+(`_RISK_REWARD_TARGET`) no longer place the target; they survive
+only as the bounded fallback geometry of the pre-anchor envelope path.
+
+**Cost-derived minimum stop distance.** The fixed `trading.vol_target_pct` floor
+and the published-sideways doubling no longer apply to entry geometry. The
+minimum stop distance is derived from the cost the system configures for a round
+trip: `min_stop_pct = (2 × execution_fee_pct + 2 × slippage_bps/100) /
+trading.entry_stop_cost_share` (`entry_stop_cost_share` default `0.10`, i.e. one
+round trip may cost at most 10% of the money at risk). At the current cost inputs
+this is 2.2%. It is deliberately **config-only**: the Compiler (compile time) and
+Risk (execution time) must evaluate the same floor from the same authority, and
+Risk has no per-Candidate spread, so the Candidate's `estimated_costs` must not
+enter it. It follows that raising `slippage_bps` toward the measured stop-exit
+slippage (mean 23 bps against the configured 5) raises the floor — the floor has
+exactly one cost authority. Unlike the floor it replaces, it never rejects: the
+compiler **pushes the stop out** to the minimum and the existing loss-budget
+sizing then derives a correspondingly smaller notional. A Plan is never widened
+to manufacture an entry, and a stop is never *tightened*.
+
+**Scope.** This geometry and its floor apply to every entry Plan regardless of
+execution mode. The former Demo-only scope (`applies_to_execution_mode`) is
+removed: one capability keeps one implementation, and Live previously ran entry
+plans with no stop floor at all. Risk evaluates the derived floor for any proposal
+that carries both a price and a stop — including proposals that no Plan compiled,
+such as the Gateway's native path — so those are held to the same minimum distance
+even though the Compiler never widened them.
+
+**ATR timeframe.** Every consumer reads the ATR of the timeframe whose structure
+it is measuring. The draft's `quant_context.values.atr_pct` (1h) vs
+`atr_15m_pct` (15m) mix-up is resolved by naming the timeframe at each use site;
+`atr_pct` is the 1h ATR% and `atr_15m_pct` the 15m ATR%, as
+`aletheia.universe.features` writes them.
+
+**Removed.** `trading.stop_floor_policy` and
+`trading.stop_floor_atr_multiple_draft` (the #3743 draft) are deleted in this
+cutover rather than left beside the new floor, and
+`STOP_DISTANCE_BELOW_VOL_TARGET` is replaced by
+`STOP_DISTANCE_BELOW_COST_FLOOR`, whose only consumer is Risk's execution-time
+recheck. `SIDEWAYS_STOP_MULT` is deleted with the doubling it expressed. This
+section supersedes the draft subsection that recorded them.
+
+**Identity.** Widening `EntryAnchor.timeframe`, adding the zone band and
+rewriting the Planner prompt moves the entry schema and behavior fingerprints, so
+every outstanding Generation and Plan becomes historical on deploy — the normal
+identity cutover, accepted with this decision (issue #3777).
+
+**Out of scope.** Volume Profile / TPO POC and value area are not modelled: they
+require trade-level or bracketed observations, and candle-derived estimates must
+not be labelled authoritative POC
+([02_profile_support_and_resistance.md](../../research/trading-theory/02_profile_support_and_resistance.md)).
+
+**Evidence.** Replay of 743 planner-chosen filled plans with measured costs: the
+as-compiled stop gives −0.69R per trade with 42% stopped out; the geometry above
+gives −0.10R with 9% stopped out. Of plans stopped at the old stop, 33% later
+reached their target and the sweep went a median 0.63 × 15m ATR beyond the
+invalidation anchor. Gross R is ≈0 in every variant (confidence interval
+contains zero), so this design reduces cost bleed; it does not create edge.
 
 
 Candidate refresh associates the new Candidate with its existing cycle; it never

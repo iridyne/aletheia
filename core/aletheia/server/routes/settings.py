@@ -2200,6 +2200,7 @@ class TradingConfigUpdate(SettingsRequest):
     vol_sizing_enabled: Optional[bool] = None
     vol_target_risk_usdt: Optional[float] = None
     vol_target_pct: Optional[float] = None
+    entry_stop_cost_share: Optional[float] = None
     vol_kelly_cap_fraction: Optional[float] = None
     exchange_tpsl_enabled: Optional[bool] = None
     persona_sizing_enabled: Optional[bool] = None
@@ -2223,6 +2224,7 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "default_notional_usdt": (0.01, 100_000.0),
     "vol_target_risk_usdt": (0.01, 100_000.0),
     "vol_target_pct": (0.1, 100.0),
+    "entry_stop_cost_share": (0.01, 1.0),
     "vol_kelly_cap_fraction": (0.01, 0.5),
     "persona_learning_min_samples": (3, 500),
     "persona_unlock_step_samples": (1, 1000),

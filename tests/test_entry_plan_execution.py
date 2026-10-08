@@ -32,7 +32,7 @@ from aletheia.trading.entry_activation import require_entry_trigger_activation a
     ("universe", "short_term", "c1", 24),
 ])
 def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, school, source_id, holding):
-    from tests.test_entry_analysis import _anchor, _context_v2, _risk_intent
+    from tests.test_entry_analysis import _context_v2, _plan_anchors, _risk_intent
     from tests.helpers.venue_margin_fixture import seed_venue_margin_envelope
     from aletheia.config.loader import load_config
     from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis
@@ -53,9 +53,8 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.serenity.max_hold_days = 90
-    primary = _anchor("candidate_reference", 100, "candidate:c1")
-    invalidation = _anchor("confirmed_swing", 95, "swing:s1")
-    data = _context_v2((primary, invalidation)).model_dump(exclude={"context_fingerprint"})
+    primary, invalidation, target = _plan_anchors("long")
+    data = _context_v2((primary, invalidation, target)).model_dump(exclude={"context_fingerprint"})
     behavior, schema = entry_contract_fingerprints()
     generation = {"id": "g1", "last_candidate_id": "c1", "candidate_family": "mean_reversion",
         "venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long",
@@ -76,21 +75,28 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     assert plan.holding_horizon_hours == holding
     assert datetime.fromisoformat(plan.expires_at) - datetime.fromisoformat(plan.approved_at) == timedelta(hours=4)
     assert (plan.source_kind, plan.source_id, plan.trade_school) == (kind, source_id, school)
-    assert plan.stop_price == pytest.approx(94.9)
-    # The same supplied geometry becomes impossible under the existing Risk floor.
-    old_target = cfg.trading.vol_target_pct
-    cfg.trading.vol_target_pct = 6.0
-    from aletheia.trading.entry_plan import stop_distance_below_min_floor
-    assert stop_distance_below_min_floor(100, 94.9, execution_mode="bitget_demo", cfg=cfg)
-    with pytest.raises(ValueError, match="stop_distance_below_vol_target") as exc_info:
-        compile_entry_plan(generation, context, hypothesis, cfg)
-    # The floor token already carries its code, so the rejection detail is the
-    # measurement alone: a doubled code would persist a corrupt `detail` field
-    # (#3743 follow-up).
-    rejection = str(exc_info.value)
-    assert rejection.count("stop_distance_below_vol_target") == 1, rejection
-    assert re.fullmatch(r"stop_distance_below_vol_target:\d+\.\d+<\d+\.\d+", rejection), rejection
-    cfg.trading.vol_target_pct = old_target
+    # Structural S/R geometry (#3777): the invalidation band's outer edge (94.5)
+    # cleared by 0.5 x ATR15m (1.0), and the near edge of the opposing band.
+    assert plan.stop_price == pytest.approx(93.5)
+    assert plan.target_price == pytest.approx(119.5)
+    # The derived floor is the single stop-distance authority, evaluated from the
+    # same config by the Compiler (which widens to it) and by Risk (which rechecks
+    # it at execution). The compiled stop clears today's floor...
+    from aletheia.trading.entry_plan import (
+        STOP_DISTANCE_BELOW_COST_FLOOR,
+        stop_distance_below_min_floor,
+    )
+    assert stop_distance_below_min_floor(100.0, plan.stop_price, cfg=cfg) is None
+    # ...and a cost change that lifts the floor above the Plan's frozen stop is
+    # flagged for the execution boundary instead of being silently submitted. The
+    # token already carries its code, so the detail is the measurement alone: a
+    # doubled code would persist a corrupt `detail` field.
+    old_share = cfg.trading.entry_stop_cost_share
+    cfg.trading.entry_stop_cost_share = 0.01
+    token = stop_distance_below_min_floor(100.0, plan.stop_price, cfg=cfg)
+    cfg.trading.entry_stop_cost_share = old_share
+    assert token is not None and token.count(STOP_DISTANCE_BELOW_COST_FLOOR) == 1, token
+    assert re.fullmatch(r"stop_distance_below_cost_floor:6\.5000<22\.0000", token), token
     now = datetime.fromisoformat(plan.approved_at)
     proposal = build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
         observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
@@ -192,7 +198,12 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     end = int(now.timestamp() * 1000) // interval * interval
     candles = []
     for i in range(96):
-        price = 100 + 2 * math.sin(i * math.pi / 6)
+        # Two scales: a fast swing (+/- 1.0) around price and a slow 3.0 envelope.
+        # The structural geometry (#3777) needs an opposing band *beyond* the
+        # invalidation band's stop distance, which a single symmetric sine cannot
+        # provide — its two levels are equidistant from the entry, so the implied
+        # reward:risk is always below the admissible minimum.
+        price = 100 + 1.0 * math.sin(i * math.pi / 6) + 3.0 * math.sin(i * math.pi / 24)
         candles.append(Candle(end - (96 - i) * interval, price, price + .5, price - .5, price, 1000))
     repo.upsert_ohlcv_candles(symbol, "15m", candles, exchange="bitget", market_type=market_type)
     book = _parse_orderbook(symbol, "bitget", {"bids": [[99.99, 10000]], "asks": [[100.01, 10000]]}, 0, market_type=market_type)

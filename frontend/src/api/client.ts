@@ -1637,6 +1637,7 @@ export const api = {
 			vol_sizing_enabled: boolean;
 			vol_target_risk_usdt: number;
 			vol_target_pct: number;
+			entry_stop_cost_share: number;
 			vol_kelly_cap_fraction: number;
 			persona_sizing_enabled: boolean;
 			active_persona: string;

@@ -13,7 +13,11 @@ from reference_contract.citable_fact_refs. ENTRY_PLAN must cite at least one sup
 reference_contract.current_market_fact_refs. Nested source_fact_refs are provenance, not automatically
 citable facts. Learning refs come only from learning_context.evidence_refs; Learning alone cannot
 authorize entry. If evidence is insufficient return identity-correct NO_PLAN, never invent refs.
-Horizon is INTRADAY or SWING entry timing, not the holding period. Do not emit prices, sizes, leverage, notional,
+Horizon is INTRADAY or SWING entry timing, not the holding period. Anchors carry the
+timeframe and support/resistance band of the structure they came from: prefer the
+higher-timeframe level that actually explains the setup as the invalidation anchor,
+because the entry geometry clears that band and takes its target from the nearest
+opposing band. Do not emit prices, sizes, leverage, notional,
 margin amounts, risk multipliers, stop distance, targets, slippage, Trigger parameters, Risk overrides, or hidden reasoning.
 Choose capture_priority: PRICE_FIRST accepts non-fill to preserve passive price;
 MAKER_PREFERRED prefers Maker but values completion enough for one bounded fallback;

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
-from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
+from aletheia.trading.entry_plan import EntryPlan
 from aletheia.trading.instruments import get_max_leverage
 from aletheia.trading.trigger_specs import ANCHOR_GEOMETRY_VERSION
 
@@ -20,7 +20,17 @@ _RISK_REWARD_TARGET = {"LOW": 1.5, "MEDIUM": 2.5}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
 
-_GEOMETRY = {"band_vol_fraction": 0.5, "fallback_tolerance_atr": 0.05, "zone_atr": 0.25}
+_GEOMETRY = {
+    "band_vol_fraction": 0.5,
+    "fallback_tolerance_atr": 0.05,
+    "zone_atr": 0.25,
+    # Structural stop and target geometry (#3777): the stop clears the
+    # invalidation zone's outer edge by this multiple of the zone's OWN timeframe
+    # ATR, and a target zone must clear the entry by this multiple of 15m ATR to
+    # count as opposing structure rather than the entry's own band.
+    "stop_buffer_atr": 0.5,
+    "zone_min_distance_atr": 0.5,
+}
 _TACTIC = {"maker_wait_sec": 60, "max_requotes": 0, "urgent_slippage_bps": 20.0}
 
 
@@ -29,7 +39,6 @@ def compiler_contract_material() -> dict:
         "risk_reward_target": _RISK_REWARD_TARGET,
         "horizon_hours": _HORIZON_HOURS,
         "lifetime_minutes": _HORIZON_LIFETIME_MINUTES,
-        "sideways_stop_mult": SIDEWAYS_STOP_MULT,
         "geometry": _GEOMETRY, "tactic": _TACTIC,
         "planning_market_quality": "exact-envelope-before-input-bind/v1",
         "static_risk_feasibility": "shared-instrument-and-stop-floor/v1",
@@ -75,6 +84,108 @@ def _stop_reference(feature: dict, cfg) -> tuple[float, float]:
     return atr_pct, vol_target_pct
 
 
+def _timeframe_atr(context, timeframe: str) -> float:
+    """The frozen ATR14 of one structure timeframe, as a price distance."""
+    section = context.market_structure.get(timeframe) or {}
+    from aletheia.agent_shell.entry_planner import PlanIntentError
+
+    try:
+        atr = float(section.get("atr14"))
+    except (TypeError, ValueError) as exc:
+        raise PlanIntentError("ATR_UNAVAILABLE") from exc
+    if not math.isfinite(atr) or atr <= 0:
+        raise PlanIntentError("ATR_UNAVAILABLE")
+    return atr
+
+
+def _structural_stop(
+    invalidation, *, direction: str, context, fallback_tolerance: float
+) -> float:
+    """The invalidation zone's outer edge, cleared by its own timeframe's noise.
+
+    Noise is measured on the timeframe the level lives on: a 1h or 4h level is
+    invalidated over 1h or 4h range, not over 15m range (#3777). An anchor with no
+    band (the candidate reference) keeps the legacy narrow tolerance.
+    """
+    zone = getattr(invalidation, "zone", None)
+    if zone is None:
+        return (
+            invalidation.price - fallback_tolerance
+            if direction == "long" else invalidation.price + fallback_tolerance
+        )
+    buffer = _GEOMETRY["stop_buffer_atr"] * _timeframe_atr(context, invalidation.timeframe)
+    return zone.low - buffer if direction == "long" else zone.high + buffer
+
+
+def _widen_to_min_stop(closest_entry: float, stop: float, *, direction: str, cfg) -> float:
+    """Push a stop out to the derived minimum distance. It never tightens one.
+
+    The Compiler does not reject a structurally-correct but tight stop; the
+    existing loss-budget sizing then derives a correspondingly smaller notional
+    from the wider stop (#3777).
+    """
+    from aletheia.trading.entry_plan import min_stop_distance_pct, stop_distance_pct
+
+    floor = min_stop_distance_pct(cfg=cfg)
+    distance = stop_distance_pct(closest_entry, stop)
+    if floor is None or distance is None or distance >= floor:
+        return stop
+    offset = closest_entry * floor / 100.0
+    return closest_entry - offset if direction == "long" else closest_entry + offset
+
+
+def _structural_target(
+    *,
+    direction: str,
+    worst_entry: float,
+    best_entry: float,
+    stop: float,
+    context,
+    atr15: float,
+) -> float:
+    """The near edge of the nearest opposing zone inside the Plan's RR envelope.
+
+    The envelope must hold at the *executable* entry, not only at the frozen
+    zone's worst price: `EntryPlan`'s own coherence validator measures the ratio at
+    the maker `limit_price` and Risk measures it at the submitted price, both of
+    which sit between `best_entry` and `worst_entry`. Admitting a candidate on the
+    worst-entry ratio alone would let a target near the cap compile into a Plan
+    whose validator (or Risk) rejects the ratio it actually trades at. For either
+    direction the worst-entry ratio is the smaller one, so requiring
+    ``ratio(worst_entry) >= MIN`` and ``ratio(best_entry) <= MAX`` bounds both.
+
+    No admissible target is a typed no-plan: an entry with no room to its opposing
+    structure is not a bet worth making (#3777).
+    """
+    from aletheia.agent_shell.entry_planner import PlanIntentError
+    from aletheia.trading.entry_plan import (
+        ENTRY_PLAN_MAX_RISK_REWARD,
+        ENTRY_PLAN_MIN_RISK_REWARD,
+    )
+
+    risk_worst = abs(worst_entry - stop)
+    risk_best = abs(best_entry - stop)
+    if not all(math.isfinite(value) and value > 0 for value in (risk_worst, risk_best)):
+        raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")
+    min_gap = _GEOMETRY["zone_min_distance_atr"] * atr15
+    edges: list[float] = []
+    for anchor in context.anchors:
+        zone = getattr(anchor, "zone", None)
+        if zone is None or anchor.directional_role not in {"entry_candidate", "both"}:
+            continue
+        # The *near* edge of the opposing band is where price first meets it.
+        edge = zone.low if direction == "long" else zone.high
+        if (edge - best_entry if direction == "long" else best_entry - edge) <= min_gap:
+            continue
+        edges.append(edge)
+    for edge in sorted(edges, key=lambda value: abs(value - best_entry)):
+        ratio_worst = abs(edge - worst_entry) / risk_worst
+        ratio_best = abs(edge - best_entry) / risk_best
+        if ratio_worst >= ENTRY_PLAN_MIN_RISK_REWARD and ratio_best <= ENTRY_PLAN_MAX_RISK_REWARD:
+            return edge
+    raise PlanIntentError("COMPILER_NO_EXECUTABLE_TARGET")
+
+
 def _compile_bounded_risk_envelope(
     generation: dict,
     candidate: dict,
@@ -115,7 +226,12 @@ def _compile_bounded_risk_envelope(
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[hypothesis.horizon])
         atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
-        stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
+        # The bounded envelope's own geometry is a carrier: `compile_entry_plan`
+        # always replaces entry/stop/target with the structural geometry (#3777).
+        # It carries the same derived floor so the two can never disagree.
+        from aletheia.trading.entry_plan import min_stop_distance_pct
+
+        stop_distance_pct = min_stop_distance_pct(cfg=cfg) or max(vol_target_pct, atr_pct)
         if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
             raise PlanIntentError("NO_STOP_REFERENCE")
         if direction == "long":
@@ -255,9 +371,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     authority = require_entry_runtime_authority(cfg)
 
     from aletheia.trading.entry_plan import (
-        STOP_DISTANCE_BELOW_VOL_TARGET,
         entry_instrument_violation,
-        stop_distance_below_min_floor,
     )
 
     instrument_violation = entry_instrument_violation(generation["market_type"], generation["direction"])
@@ -281,8 +395,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     if not math.isfinite(atr) or atr <= 0:
         raise PlanIntentError("ATR_UNAVAILABLE")
     tolerance = float(structure.get("break_tolerance") or _GEOMETRY["fallback_tolerance_atr"] * atr)
-    stop = invalidation.price - tolerance if direction == "long" else invalidation.price + tolerance
-    rr = _RISK_REWARD_TARGET[hypothesis.risk_tier]
+    # Structural Support/Resistance geometry (#3777): the stop clears the
+    # invalidation zone's outer edge, and the floor only ever widens it.
+    stop = _structural_stop(
+        invalidation, direction=direction, context=context, fallback_tolerance=tolerance
+    )
     retrace = hypothesis.entry_profile_id == "grounded-anchor-retrace-reclaim"
     quarter = _GEOMETRY["zone_atr"] * atr
     if retrace:
@@ -294,26 +411,15 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     else:
         zone = (primary.price, primary.price)
         worst_entry = primary.price
-    # A fixed structural stop must clear the same floor Risk will recheck.
-    # Check the closest permitted entry: all prices in the frozen zone must fit.
+    # All prices in the frozen zone must sit beyond the floor, so the closest
+    # permitted entry is the one that decides it.
     closest_entry = zone[0] if direction == "long" else zone[1]
-    # DRAFT (#3743): the same 15m ATR% the compiler already carries below
-    # (into `frozen_feature`) — never a second derivation — feeds the floor
-    # gate. Risk rechecks the draft floor against the instrument's current
-    # measured ATR% at execution time, not a value frozen into the Plan.
+    stop = _widen_to_min_stop(closest_entry, stop, direction=direction, cfg=cfg)
     quant_values = context.quant_context.get("values") or {}
     atr_pct = quant_values.get("atr_pct") or (atr / float(context.candidate["candidate_price"]) * 100.0)
-    tight_stop = stop_distance_below_min_floor(
-        closest_entry, stop, execution_mode=authority.execution_route, cfg=cfg, atr_pct=atr_pct,
-    )
-    if tight_stop:
-        # The token already carries its own code; the rejection detail is the
-        # measurement alone, so the persisted reason never doubles the code.
-        _, _, measured = tight_stop.partition(":")
-        raise PlanIntentError(STOP_DISTANCE_BELOW_VOL_TARGET, measured)
-    target = (
-        worst_entry + rr * (worst_entry - stop)
-        if direction == "long" else worst_entry - rr * (stop - worst_entry)
+    target = _structural_target(
+        direction=direction, worst_entry=worst_entry, best_entry=closest_entry,
+        stop=stop, context=context, atr15=atr,
     )
     if target <= 0:
         raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")

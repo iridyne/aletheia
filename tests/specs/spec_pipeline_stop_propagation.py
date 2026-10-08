@@ -348,7 +348,7 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
     from aletheia.storage.repositories import insert_market_snapshot
 
     entry = 1551.57
-    stop = round(entry * 1.02, 8)  # short stop ~2% above entry
+    stop = round(entry * 1.03, 8)  # short stop ~3% above entry
     take_profit = round(entry * 0.96, 8)
 
     # Demo path enforces a < 1800s market-snapshot freshness check (CR-RE).
@@ -413,8 +413,8 @@ def test_no_open_position_silently_loses_proposal_stop(tmp_path, monkeypatch):
 
     # Drive a few demo proposals, each carrying a protective stop.
     for i, (sym, direction, stop) in enumerate([
-        ("BTC/USDT", "short", 102.0),
-        ("SOL/USDT", "long", 98.0),
+        ("BTC/USDT", "short", 103.0),
+        ("SOL/USDT", "long", 97.0),
         ("XRP/USDT", "short", 103.0),
     ]):
         # Demo path enforces market-snapshot freshness (< 1800s).

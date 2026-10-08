@@ -20,9 +20,9 @@ ENTRY_PLAN_MAX_RISK_REWARD = 10.0
 
 OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE = "invalid_operator_entry_plan_risk_reward:outside_envelope"
 RISK_REWARD_OUTSIDE_ENVELOPE = "entry_plan_risk_reward_outside_envelope"
-STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
-# Published-sideways demo floor: 1.5% vol_target sits inside a >2% daily range.
-SIDEWAYS_STOP_MULT = 2.0
+# The one derived minimum stop distance (#3777). Risk owns the *rejection* at
+# execution time; the Compiler only ever *widens* a stop up to this floor.
+STOP_DISTANCE_BELOW_COST_FLOOR = "stop_distance_below_cost_floor"
 
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
@@ -86,60 +86,37 @@ def stop_distance_pct(entry_price: float | None, stop_price: float | None) -> fl
     return (distance / entry) * 100.0
 
 
-def min_stop_distance_pct(*, execution_mode: str | None, cfg, atr_pct: float | None = None) -> float | None:
-    """Exchange-demo floor: stop must be at least ``trading.vol_target_pct``.
+def min_stop_distance_pct(*, cfg) -> float | None:
+    """The derived minimum stop distance for every entry Plan (#3777).
 
-    That field is the existing ATR vol-target percent used for sizing, not a
-    new magic number. In a published sideways regime the floor is
-    ``vol_target_pct * SIDEWAYS_STOP_MULT`` (never tighter than the base
-    floor). This floor applies only to external Demo modes. ``0`` disables.
-    Unpublished regime is fail-open to the base floor.
+    ``(2 x execution_fee_pct + 2 x slippage_bps/100) / entry_stop_cost_share``:
+    one round trip may cost at most ``trading.entry_stop_cost_share`` of the money
+    at risk. Config-only by construction, so the Compiler (compile time) and Risk
+    (execution time) evaluate the *same* floor from the *same* authority; a
+    per-candidate spread must not enter it, because Risk has no candidate spread.
 
-    DRAFT (#3743, owner-requested, decision 2026-09-30): when
-    ``cfg.trading.stop_floor_policy == "atr_multiple_draft"``, the floor is
-    instead ``cfg.trading.stop_floor_atr_multiple_draft * atr_pct`` (the
-    caller's measured 15m ATR%, frozen at compile time). A missing,
-    non-finite or non-positive ``atr_pct`` falls back to the static
-    ``vol_target_pct`` floor above — the draft policy never loosens the
-    floor without a measurement. The published-sideways doubling still
-    applies to the resulting draft floor (kept simple and conservative,
-    not skipped for the draft policy).
+    Replaces the fixed ``trading.vol_target_pct`` Demo-only floor and its
+    published-sideways doubling. ``None`` when a configured input is unusable:
+    the Compiler then keeps the structural stop, and Risk rechecks the next
+    submission, so a misconfiguration never silently authorizes a tighter stop.
     """
-    from aletheia.risk.demo_entry_quality import (
-        applies_to_execution_mode,
-        load_published_regime,
-    )
-
-    if not applies_to_execution_mode(execution_mode):
-        return None
     trading_cfg = getattr(cfg, "trading", None)
+    if trading_cfg is None:
+        return None
     try:
-        base_floor = float(getattr(trading_cfg, "vol_target_pct", 0.0) or 0.0)
+        fee_pct = float(getattr(trading_cfg, "execution_fee_pct", 0.0) or 0.0)
+        slippage_bps = float(getattr(trading_cfg, "slippage_bps", 0.0) or 0.0)
+        cost_share = float(getattr(trading_cfg, "entry_stop_cost_share", 0.0) or 0.0)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(base_floor) or base_floor <= 0:
+    if not all(math.isfinite(value) for value in (fee_pct, slippage_bps, cost_share)):
         return None
-    floor = base_floor
-    if str(getattr(trading_cfg, "stop_floor_policy", "vol_target_pct") or "vol_target_pct") == "atr_multiple_draft":
-        try:
-            atr_value = float(atr_pct) if atr_pct is not None else None
-        except (TypeError, ValueError):
-            atr_value = None
-        if atr_value is not None and math.isfinite(atr_value) and atr_value > 0:
-            try:
-                k = float(getattr(trading_cfg, "stop_floor_atr_multiple_draft", 1.0) or 0.0)
-            except (TypeError, ValueError):
-                k = 0.0
-            if math.isfinite(k) and k > 0:
-                floor = k * atr_value
-    try:
-        state, _confidence = load_published_regime()
-    except Exception:
-        state = None
-    if str(state or "").lower() == "sideways":
-        widened = floor * SIDEWAYS_STOP_MULT
-        if math.isfinite(widened) and widened > floor:
-            floor = widened
+    if fee_pct < 0 or slippage_bps < 0 or cost_share <= 0:
+        return None
+    round_trip_pct = 2.0 * fee_pct + 2.0 * slippage_bps / 100.0
+    floor = round_trip_pct / cost_share
+    if not math.isfinite(floor) or floor <= 0:
+        return None
     return floor
 
 
@@ -147,17 +124,21 @@ def stop_distance_below_min_floor(
     entry_price: float | None,
     stop_price: float | None,
     *,
-    execution_mode: str | None,
     cfg,
-    atr_pct: float | None = None,
 ) -> str | None:
-    """Return a violation token when the stop is tighter than the demo floor."""
-    floor = min_stop_distance_pct(execution_mode=execution_mode, cfg=cfg, atr_pct=atr_pct)
+    """Return a violation token when the stop is tighter than the derived floor.
+
+    Risk is the only caller that rejects with this token: the Compiler widens the
+    stop to the floor instead (``stop_distance_below_min_floor`` is fail-closed at
+    the execution boundary, where a Plan whose stop no longer clears the *current*
+    cost must not be submitted).
+    """
+    floor = min_stop_distance_pct(cfg=cfg)
     distance = stop_distance_pct(entry_price, stop_price)
     if floor is None or distance is None:
         return None
     if distance + 1e-12 < floor:
-        return f"{STOP_DISTANCE_BELOW_VOL_TARGET}:{distance:.4f}<{floor:.4f}"
+        return f"{STOP_DISTANCE_BELOW_COST_FLOOR}:{distance:.4f}<{floor:.4f}"
     return None
 
 
