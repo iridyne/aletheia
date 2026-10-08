@@ -112,6 +112,11 @@ def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
     Some OKX responses can include a market entry with `id=None`. CCXT then
     builds `markets_by_id` with mixed `None` and `str` keys and Python raises
     while sorting them. One bad row should not stop the entire market feed.
+
+    ``set_markets()`` is the only place CCXT replaces ``exchange.markets``;
+    ``load_markets()`` serves its cached result without calling it again. So
+    this is also where the snapshot gets its acquisition time, stored with the
+    snapshot so a reader never pairs one snapshot with another's time (#3786).
     """
     if getattr(exchange, "_aletheia_market_id_guard", False):
         return exchange
@@ -134,7 +139,12 @@ def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
                 exchange_name,
                 dropped,
             )
-        return original_set_markets(markets, currencies)
+        result = original_set_markets(markets, currencies)
+        exchange._candidate_markets_snapshot = (
+            getattr(exchange, "markets", None) or {},
+            datetime.now(timezone.utc).isoformat(),
+        )
+        return result
 
     exchange.set_markets = guarded_set_markets
     exchange._aletheia_market_id_guard = True
@@ -463,7 +473,10 @@ class CCXTProvider:
         exchange = self._ensure_primary("perp")
         exchange_id = getattr(exchange, "id", self._primary_name)
         perp_symbol = to_ccxt_perp(symbol)
-        market = (getattr(exchange, "markets", {}) or {}).get(perp_symbol) or {}
+        markets, markets_acquired_at = getattr(exchange, "_candidate_markets_snapshot", None) or (
+            getattr(exchange, "markets", {}) or {}, None,
+        )
+        market = markets.get(perp_symbol) or {}
         if exchange_id == "bitget":
             info = (ticker or {}).get("info") or {}
             raw = {
@@ -503,8 +516,7 @@ class CCXTProvider:
             "interval_source": interval_source,
             "interval_raw": interval_raw.get("interval"),
             "interval_acquired_at": (
-                getattr(exchange, "_candidate_markets_acquired_at", None)
-                if exchange_id == "bitget" else received_at.isoformat()
+                markets_acquired_at if exchange_id == "bitget" else received_at.isoformat()
             ),
         }
 
@@ -598,8 +610,6 @@ class CCXTProvider:
         )
         with self._market_type_context(exchange, requested_market_type or "spot"):
             await exchange.load_markets()
-            if requested_market_type == "perp":
-                exchange._candidate_markets_acquired_at = datetime.now(timezone.utc).isoformat()
         result = []
         for symbol_key, info in exchange.markets.items():
             if not info.get("active", True) or info.get("option") or info.get("future"):
