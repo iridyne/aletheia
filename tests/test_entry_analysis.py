@@ -3,6 +3,7 @@ import asyncio
 import json
 
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -452,7 +453,7 @@ def test_model_view_exposes_technical_labels_and_imbalance_when_inputs_suffice()
         ENTRY_WINDOW_BARS, imbalance=0.25,
         feature_extra={"rsi_14": 72.0, "rsi_15m": 30.0, "rsi_4h": 50.0, "return_1h": 1.0, "oi_delta_1h": -2.0},
     )
-    view = entry_model_view(context)
+    view: dict[str, Any] = entry_model_view(context)
     quant = view["quant_context"]
 
     assert quant["values"]["rsi_14"] == 72.0
@@ -484,7 +485,7 @@ def test_insufficient_bars_and_missing_book_imbalance_are_listed_not_defaulted()
     from aletheia.trading.entry_analysis import technical_fields
 
     context = _technical_context({"15m": 96}, imbalance=None, feature_extra={"rsi_15m": 50.0})
-    view = entry_model_view(context)
+    view: dict[str, Any] = entry_model_view(context)
     quant = view["quant_context"]
 
     for timeframe in ("1h", "4h"):

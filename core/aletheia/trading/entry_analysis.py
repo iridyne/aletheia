@@ -705,7 +705,8 @@ def technical_section(timeframe: str, window: dict) -> dict[str, Any]:
                 values["vwap_dev_pct"] = (close - vwap_20) / vwap_20 * 100.0
             # Both technical_analysis fallbacks (0.5 for a zero-width band, 0.0
             # for zero volume) are readings of nothing, so they stay unavailable.
-            if snapshot["bb_upper"] is not None and snapshot["bb_upper"] > snapshot["bb_lower"]:
+            upper, lower = snapshot["bb_upper"], snapshot["bb_lower"]
+            if upper is not None and lower is not None and upper > lower:
                 values["bb_pct_b"] = snapshot["bb_pct_b"]
             if any(float(bar["volume"]) > 0 for bar in bars):
                 values["obv_normalized"] = snapshot["obv_normalized"]
@@ -849,7 +850,7 @@ def build_entry_analysis_context(
     # (extensions/data/collectors/microstructure.py) and stored with the book.
     imbalance = (
         {"imbalance_ratio": float(orderbook["imbalance_ratio"])}
-        if orderbook_available and orderbook.get("imbalance_ratio") is not None else {}
+        if orderbook and orderbook_available and orderbook.get("imbalance_ratio") is not None else {}
     )
     estimated_cost = candidate.get("estimated_cost")
     quant_fields = (
