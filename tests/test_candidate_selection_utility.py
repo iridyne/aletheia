@@ -921,6 +921,44 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     )
 
 
+def test_training_history_includes_records_persisted_under_the_suffixed_kind():
+    """#3708 renamed the record kind; history written as `/v4` must still train."""
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+        load_candidate_selection_outcomes,
+    )
+
+    population = [_feature(index, return_24h=5.0 + index) for index in range(20)]
+    bundle = build_candidate_selection_shadow_bundle(
+        population, scanner_run_id="candidate-selection-pre-rename",
+        captured_at="2026-09-02T00:00:00+00:00",
+        universe_config=UniverseConfig(max_candidates=3),
+        action_route_reasons={
+            (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
+            for item in population
+        },
+        historical_outcomes=(),
+    )
+    repo.insert_universe_twin_shadow_bundle(
+        bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
+    )
+    policy = candidate_selection_policy_identity(UniverseConfig())
+    current = load_candidate_selection_outcomes(selection_policy=policy)
+    assert current
+    repo.get_db().execute(
+        "UPDATE universe_twin_shadow_batches SET record_version=? WHERE scanner_run_id=?",
+        ("candidate-selection-utility-record/v4", "candidate-selection-pre-rename"),
+    )
+    repo.get_db().commit()
+
+    assert load_candidate_selection_outcomes(selection_policy=policy) == current
+    assert load_candidate_selection_outcomes(
+        selection_policy=policy, settled_through="2026-09-03T00:00:00+00:00",
+    )
+
+
 def test_unavailable_target_has_no_outcome_from_legacy_selection():
     import json
 

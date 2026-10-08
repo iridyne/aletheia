@@ -474,14 +474,17 @@ def load_candidate_selection_outcomes(
         raise ValueError("candidate_selection_training_cutoff_invalid")
     cutoff_clause = " AND b.captured_at < ?" if cutoff else ""
     limit_clause = "" if cutoff else " LIMIT ?"
+    # Every persisted kind of this record (unsuffixed and the historical /vN
+    # suffixes, #3708) is the same evidence; matching only the current kind
+    # would discard all history written before the rename.
     params: tuple[object, ...] = (
-        (CANDIDATE_SELECTION_RECORD_VERSION, cutoff.isoformat())
-        if cutoff else (CANDIDATE_SELECTION_RECORD_VERSION, int(limit_batches) * 1000)
+        (f"{CANDIDATE_SELECTION_RECORD_VERSION}%", cutoff.isoformat())
+        if cutoff else (f"{CANDIDATE_SELECTION_RECORD_VERSION}%", int(limit_batches) * 1000)
     )
     records = db.execute(
         "SELECT r.scanner_run_id, r.compact_output_json FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
-        f"WHERE b.record_version=?{cutoff_clause} "
+        f"WHERE b.record_version LIKE ?{cutoff_clause} "
         f"ORDER BY b.captured_at DESC, r.candidate_index{limit_clause}",
         params,
     ).fetchall()
@@ -615,9 +618,9 @@ def candidate_selection_frozen_family_spread_control(
     expected = json.loads(_json(selection_policy))
     for row in repo.get_db().execute(
         "SELECT policy_json FROM universe_twin_shadow_batches "
-        "WHERE record_version=? AND policy_epoch_id IS NOT NULL "
+        "WHERE record_version LIKE ? AND policy_epoch_id IS NOT NULL "
         "ORDER BY captured_at, scanner_run_id",
-        (CANDIDATE_SELECTION_RECORD_VERSION,),
+        (f"{CANDIDATE_SELECTION_RECORD_VERSION}%",),
     ).fetchall():
         try:
             frozen = json.loads(row["policy_json"])["selection_policy"]
