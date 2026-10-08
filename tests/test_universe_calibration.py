@@ -257,3 +257,22 @@ def test_horizon_separated_counts(tmp_path):
     assert row["distinct_symbols"] == 2
     assert row["distinct_days"] == 1
     reset_db()
+
+
+def test_filter_pressure_stats_reads_complete_settled_rows_by_family(tmp_path):
+    """Every import in the read must resolve; this was broken by a constant that moved (#3701)."""
+    setup_test_db(tmp_path)
+    repo.insert_filter_candidate_outcomes_batch([
+        _settled("AAA/USDT", "long", 5.0, family="momentum"),
+        _settled("BBB/USDT", "long", -2.0, family="momentum"),
+        _settled("CCC/USDT", "short", -3.0, family="mean_reversion"),
+    ])
+
+    rows = repo.filter_pressure_stats(cost_model_version="test-v1")
+
+    by_key = {(r["scanner_family"], r["direction"]): r for r in rows}
+    assert set(by_key) == {("momentum", "long"), ("mean_reversion", "short")}
+    assert by_key[("momentum", "long")]["n"] == 2
+    assert by_key[("momentum", "long")]["market_type"] == "spot"
+    assert repo.filter_pressure_stats(cost_model_version="absent-version") == []
+    reset_db()
