@@ -89,8 +89,10 @@ def test_universe_close_reaches_shared_outcome_and_consumers(universe_position, 
     assert attribution["planning_generation_id"] == plan.planning_generation_id
     assert attribution["universe_member_id"] == plan.candidate_id
     assert attribution["opportunity_id"] is None
-    jobs = list_outcome_hook_jobs(position_id=position["id"])
-    assert jobs and all(job["status"] == "completed" for job in jobs)
+    # #3704 retired the `shadow_trades` hook; the surviving producer enqueues
+    # `serenity_post_mortem` only, and a Universe Candidate close is not one.
+    assert position["trade_school"] != "serenity"
+    assert list_outcome_hook_jobs(position_id=position["id"]) == []
     assert outcome_hooks.process_outcome_hook_jobs(position_id=position["id"])["claimed"] == 0
 
 

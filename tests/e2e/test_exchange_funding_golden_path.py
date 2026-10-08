@@ -36,14 +36,6 @@ _PROCESS_REPLAY = textwrap.dedent(
 
     bind_uta_provider()
 
-    # Outcome hooks reach Learning through a second composition seam. Unbound, the
-    # shadow_trades hook fails with outcome_feedback_unavailable, which the test
-    # reads as a restart-convergence regression rather than as missing bootstrap.
-    from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
-    from extensions.learning.outcome_feedback import execute_outcome_feedback
-
-    configure_outcome_feedback(execute_outcome_feedback)
-
     from aletheia.storage import repositories as repo
 
     # Derived from the clean-window anchor, not pinned to a date. Outcome
@@ -463,8 +455,6 @@ def test_exchange_funding_survives_private_fill_replay_and_process_restart(
     assert verified["close_fill_count"] == 3
     assert verified["settlement_audit_count"] == 3
     assert verified["paper_cash_event_count"] == 0
-    assert len(verified["hooks"]) == 3
-    assert {
-        (job["status"], job["attempts"], job["hook_type"])
-        for job in verified["hooks"]
-    } == {("completed", 1, "shadow_trades")}
+    # #3704 retired the `shadow_trades` hook. The surviving producer enqueues
+    # `serenity_post_mortem` only, and none of these positions is a Serenity close.
+    assert verified["hooks"] == []
