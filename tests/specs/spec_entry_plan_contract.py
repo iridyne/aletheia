@@ -783,3 +783,25 @@ def test_entry_cancel_reattempt_reuses_the_client_order_identity(monkeypatch):
     assert identities == {(order.exchange_order_id, order.client_order_id)}, (
         "the re-attempt must keep the same venue/client order identity, so the venue cannot see two cancels"
     )
+
+
+@spec_claim(SpecClaim("EP-B18", "entry_plan_contract", "Model-visible quantitative fields (#3785)", "L2a",
+    "Entry-path technical fields are present and citable when the closed window suffices, and absent plus listed "
+    "in unavailable_fields (never defaulted) when the window or book input is missing.", status="implemented"))
+def test_entry_quant_fields_are_present_or_listed_never_defaulted():
+    from typing import Any
+
+    from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, entry_model_view, technical_fields
+    from tests.test_entry_analysis import _technical_context
+
+    full: dict[str, Any] = entry_model_view(_technical_context(ENTRY_WINDOW_BARS, imbalance=0.1, feature_extra={}))
+    short: dict[str, Any] = entry_model_view(_technical_context({"15m": 96}, imbalance=None, feature_extra={}))
+    for timeframe in ENTRY_WINDOW_BARS:
+        assert set(full["quant_context"]["technical"][timeframe]["values"]) == set(technical_fields(timeframe))
+        assert set(full["quant_context"]["technical"][timeframe]["fact_refs"]) <= set(
+            full["reference_contract"]["current_market_fact_refs"])
+    for timeframe in ("1h", "4h"):
+        section = short["quant_context"]["technical"][timeframe]
+        assert section["values"] == {} and section["unavailable_fields"] == sorted(technical_fields(timeframe))
+    assert "imbalance_ratio" not in short["execution_context"]
+    assert short["execution_context"]["unavailable_fields"] == ["imbalance_ratio"]
