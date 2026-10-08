@@ -98,7 +98,7 @@ def _maximal_context() -> EntryAnalysisContext:
     data = _context_v2((primary, invalidation)).model_dump(
         mode="json", exclude={"context_fingerprint"}
     )
-    for timeframe, size in (("4h", 30), ("1h", 48), ("15m", 96)):
+    for timeframe, size in (("4h", 35), ("1h", 50), ("15m", 96)):
         data["candle_windows"][timeframe] = {
             "availability": "available",
             "source_fingerprint": f"candles:{timeframe}",
@@ -335,22 +335,9 @@ def test_v2_schema_represents_every_mechanism_without_fabricating_a_plan(mechani
         EntryHypothesis.model_validate({**hypothesis.model_dump(), "entry_price": 100.0})
 
 
-def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
-    from aletheia.trading.entry_analysis import build_entry_analysis_context
+def _planner_inputs(instant) -> tuple[dict, dict]:
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
 
-    bar_ms = 15 * 60 * 1000
-    cutoff_ms = 96 * bar_ms
-    instant = lambda value: datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
-    bars = []
-    for index in range(96):
-        breakout = index == 95
-        bars.append({
-            "ts": index * bar_ms, "open": 99.0, "high": 102.0 if breakout else 100.0,
-            "low": 98.0, "close": 101.0 if breakout else 99.0, "volume": 10.0,
-            "provider": "fixture", "exchange": "bitget", "market_type": "perp",
-            "first_persisted_at": instant(0), "last_mutated_at": instant(0),
-        })
     generation = {
         "id": "g1", "last_candidate_id": "c1", "venue": "bitget", "symbol": "BTC/USDT",
         "market_type": "perp", "candidate_family": "momentum", "direction": "long",
@@ -374,6 +361,26 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
         "candidate_opportunity_context_json": opportunity.model_dump_json(),
         "candidate_opportunity_context_hash": opportunity.context_hash,
     }
+    return generation, candidate
+
+
+def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
+    from aletheia.trading.entry_analysis import build_entry_analysis_context
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContext
+
+    bar_ms = 15 * 60 * 1000
+    cutoff_ms = 96 * bar_ms
+    instant = lambda value: datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+    bars = []
+    for index in range(96):
+        breakout = index == 95
+        bars.append({
+            "ts": index * bar_ms, "open": 99.0, "high": 102.0 if breakout else 100.0,
+            "low": 98.0, "close": 101.0 if breakout else 99.0, "volume": 10.0,
+            "provider": "fixture", "exchange": "bitget", "market_type": "perp",
+            "first_persisted_at": instant(0), "last_mutated_at": instant(0),
+        })
+    generation, candidate = _planner_inputs(instant)
     feature = {
         "id": "f1", "asset_id": "asset-btc", "ts": instant(95 * bar_ms),
         "atr_pct": 2.0, "raw": "must-not-leak", "technical_snapshot_manifest": "{}",
@@ -398,3 +405,138 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
         candidate_detected_at=instant(2), positions=[],
     )
     assert future.quant_context["availability"] == "unavailable"
+
+
+def _trend_bars(count: int, interval_ms: int, cutoff_ms: int, instant) -> list[dict]:
+    """Closed, contiguous, persisted-before-cutoff bars on a wavy uptrend."""
+    bars = []
+    for index in range(count):
+        close = 100.0 + 0.5 * index + (1.5 if index % 3 == 0 else -0.5)
+        bars.append({
+            "ts": cutoff_ms - (count - index) * interval_ms, "open": close - 0.25,
+            "high": close + 1.0, "low": close - 1.0, "close": close, "volume": 10.0 + index % 4,
+            "provider": "fixture", "exchange": "bitget", "market_type": "perp",
+            "first_persisted_at": instant(0), "last_mutated_at": instant(0),
+        })
+    return bars
+
+
+def _technical_context(windows: dict, *, imbalance: float | None, feature_extra: dict):
+    from aletheia.trading.entry_analysis import build_entry_analysis_context
+
+    cutoff_ms = 1_000 * 4 * 3600 * 1000
+    instant = lambda value: datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+    cutoff = datetime.fromtimestamp(cutoff_ms / 1000, tz=timezone.utc)
+    interval = {"4h": 4 * 3600 * 1000, "1h": 3600 * 1000, "15m": 15 * 60 * 1000}
+    generation, candidate = _planner_inputs(instant)
+    feature = {
+        "id": "f1", "asset_id": "asset-btc", "ts": instant(cutoff_ms - 1000),
+        "technical_snapshot_manifest": "{}", **feature_extra,
+    }
+    orderbook = {
+        "id": "ob1", "bid_price": 100.0, "ask_price": 100.1, "spread_bps": 10.0,
+        "total_depth_10bps_usd": 50_000.0, "observed_at": instant(cutoff_ms - 500),
+        "imbalance_ratio": imbalance,
+    }
+    return build_entry_analysis_context(
+        generation, candidate, feature,
+        {tf: _trend_bars(count, interval[tf], cutoff_ms, instant) for tf, count in windows.items()},
+        cutoff_at=cutoff, candidate_detected_at=instant(2), positions=[], orderbook=orderbook,
+    )
+
+
+def test_model_view_exposes_technical_labels_and_imbalance_when_inputs_suffice():
+    from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, technical_fields
+
+    context = _technical_context(
+        ENTRY_WINDOW_BARS, imbalance=0.25,
+        feature_extra={"rsi_14": 72.0, "rsi_15m": 30.0, "rsi_4h": 50.0, "return_1h": 1.0, "oi_delta_1h": -2.0},
+    )
+    view = entry_model_view(context)
+    quant = view["quant_context"]
+
+    assert quant["values"]["rsi_14"] == 72.0
+    assert {key: quant["values"][key] for key in ("rsi_zone_15m", "rsi_zone_1h", "rsi_zone_4h", "oi_price_quadrant")} == {
+        "rsi_zone_15m": "oversold", "rsi_zone_1h": "overbought", "rsi_zone_4h": "neutral",
+        "oi_price_quadrant": "price_up_oi_down",
+    }
+    for timeframe in ("15m", "1h", "4h"):
+        section = quant["technical"][timeframe]
+        assert set(section["values"]) == set(technical_fields(timeframe)), timeframe
+        assert section["unavailable_fields"] == []
+        ref = f"technical:{timeframe}:{context.candle_windows[timeframe]['source_fingerprint']}"
+        assert section["fact_refs"] == [ref]
+        assert ref in view["reference_contract"]["current_market_fact_refs"]
+    assert "ema_50" not in technical_fields("4h") and "trend_regime" in technical_fields("1h")
+    one_hour = quant["technical"]["1h"]["values"]
+    assert one_hour["ma_alignment"] == "bullish"
+    assert one_hour["macd_line"] > 0 and one_hour["trend_regime"] == "trend_up"
+    assert one_hour["plus_di_14"] > one_hour["minus_di_14"]
+    assert view["execution_context"]["imbalance_ratio"] == 0.25
+    assert view["execution_context"]["unavailable_fields"] == []
+
+
+def test_insufficient_bars_and_missing_book_imbalance_are_listed_not_defaulted():
+    from aletheia.trading.entry_analysis import technical_fields
+
+    context = _technical_context({"15m": 96}, imbalance=None, feature_extra={"rsi_15m": 50.0})
+    view = entry_model_view(context)
+    quant = view["quant_context"]
+
+    for timeframe in ("1h", "4h"):
+        section = quant["technical"][timeframe]
+        assert section["values"] == {} and section["fact_refs"] == []
+        assert section["unavailable_fields"] == sorted(technical_fields(timeframe))
+    assert {"rsi_14", "rsi_zone_1h", "rsi_zone_4h", "oi_price_quadrant"} <= set(quant["unavailable_fields"])
+    assert not {"rsi_zone_1h", "oi_price_quadrant"} & set(quant["values"])
+    assert quant["values"]["rsi_zone_15m"] == "neutral"
+    assert "imbalance_ratio" not in view["execution_context"]
+    assert view["execution_context"]["unavailable_fields"] == ["imbalance_ratio"]
+
+
+def test_technical_section_marks_flat_window_unavailable_instead_of_neutral():
+    from aletheia.trading.entry_analysis import technical_section
+
+    bars = [{"ts": i, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 0.0} for i in range(96)]
+    section = technical_section("15m", {"availability": "available", "bars": bars, "source_fingerprint": "x"})
+    # Zero-width band, zero volume, 0/0 DI and a zero histogram carry no reading.
+    for field in ("bb_pct_b", "obv_normalized", "vwap_dev_pct", "adx_14", "macd_state", "trend_regime"):
+        assert field in section["unavailable_fields"], field
+        assert field not in section["values"]
+
+
+@pytest.mark.parametrize(("value", "zone"), [
+    (30.0, "oversold"), (30.01, "neutral"), (69.99, "neutral"), (70.0, "overbought"), (None, None),
+])
+def test_rsi_zone_thresholds(value, zone):
+    from aletheia.trading.entry_analysis import rsi_zone
+
+    assert rsi_zone(value) == zone
+
+
+@pytest.mark.parametrize(("ret", "oi", "label"), [
+    (0.2, 0.5, "price_up_oi_up"), (0.19, 5.0, "flat"), (5.0, -0.49, "flat"),
+    (-0.2, 0.5, "price_down_oi_up"), (0.3, -0.6, "price_up_oi_down"), (-0.3, -0.6, "price_down_oi_down"),
+    (None, 1.0, None),
+])
+def test_oi_price_quadrant_thresholds(ret, oi, label):
+    from aletheia.trading.entry_analysis import oi_price_quadrant
+
+    assert oi_price_quadrant(ret, oi) == label
+
+
+def test_macd_ma_and_trend_labels_at_their_boundaries():
+    from aletheia.trading.entry_analysis import ma_alignment, macd_state, trend_regime
+
+    assert [macd_state(*args) for args in ((1, 0.1), (1, 0), (-1, -0.1), (-1, 0), (0, 1))] == [
+        "bull_expanding", "bull_contracting", "bear_expanding", "bear_contracting", None,
+    ]
+    assert [ma_alignment(*args) for args in ((3, 2, 1), (1, 2, 3), (2, 3, 1), (2, 2, 1))] == [
+        "bullish", "bearish", "mixed", "mixed",
+    ]
+    assert trend_regime(25, 30, 10, "bullish") == "trend_up"
+    assert trend_regime(24.99, 30, 10, "bullish") == "transition"
+    assert trend_regime(25, 10, 30, "bearish") == "trend_down"
+    assert trend_regime(30, 30, 10, "mixed") == "transition"
+    assert trend_regime(19.99, 30, 10, "bullish") == "range"
+    assert trend_regime(20, 10, 30, "bullish") == "transition"

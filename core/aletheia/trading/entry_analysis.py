@@ -28,6 +28,11 @@ def fingerprint(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+# Exact closed-bar window per timeframe. 4h=35 is the MACD(12,26,9) minimum
+# with one prior histogram; 1h=50 is the EMA50/SMA50 minimum (#3785).
+ENTRY_WINDOW_BARS = {"4h": 35, "1h": 50, "15m": 96}
+
+
 def _candidate_opportunity_evidence_refs(opportunity: dict[str, Any]) -> tuple[str, ...]:
     refs = list(opportunity.get("primary_evidence_refs") or ())
     for mechanism in opportunity.get("secondary_mechanisms") or ():
@@ -101,7 +106,7 @@ class EntryAnalysisContext(BaseModel):
     @model_validator(mode="after")
     def _bounded_and_canonical(self) -> "EntryAnalysisContext":
         cutoff = _aware_utc(self.analysis_cutoff_at)
-        for timeframe, limit in {"4h": 30, "1h": 48, "15m": 96}.items():
+        for timeframe, limit in ENTRY_WINDOW_BARS.items():
             window = self.candle_windows.get(timeframe)
             if not isinstance(window, dict):
                 raise ValueError(f"candle_window_{timeframe}_missing")
@@ -453,7 +458,7 @@ def entry_causal_windows(
     anchors: list[EntryAnchor] = []
     fact_refs: list[str] = []
     instrument_id = InstrumentId.from_parts(venue, symbol, market_type)
-    for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96)):
+    for timeframe, limit in ENTRY_WINDOW_BARS.items():
         interval = timeframe_ms(timeframe)
         rows = tuple(candle_windows.get(timeframe, ())[-limit:])
         valid = len(rows) == limit
@@ -619,6 +624,119 @@ def planning_structure_material(structures: dict) -> dict | None:
 
 
 
+_TECHNICAL_FIELDS = (
+    "vwap_dev_pct", "obv_normalized", "ema_20", "sma_20", "bb_pct_b",
+    "macd_line", "macd_signal", "macd_hist", "macd_hist_delta", "macd_hist_atr", "macd_state",
+    "adx_14", "plus_di_14", "minus_di_14",
+)
+# Defined only where the window holds the 50 bars EMA50/SMA50 need (not 4h).
+_MA50_FIELDS = ("ema_50", "sma_50", "ma_alignment", "trend_regime")
+
+
+def technical_fields(timeframe: str) -> tuple[str, ...]:
+    return _TECHNICAL_FIELDS + (_MA50_FIELDS if ENTRY_WINDOW_BARS[timeframe] >= 50 else ())
+
+
+def rsi_zone(value: float | None) -> str | None:
+    """RSI14 <= 30 oversold, >= 70 overbought, otherwise neutral."""
+    if value is None:
+        return None
+    return "oversold" if value <= 30 else "overbought" if value >= 70 else "neutral"
+
+
+def oi_price_quadrant(return_1h: float | None, oi_delta_1h: float | None) -> str | None:
+    """1h price/OI quadrant; `flat` when |return_1h| < 0.2% or |oi_delta_1h| < 0.5%."""
+    if return_1h is None or oi_delta_1h is None:
+        return None
+    if abs(return_1h) < 0.2 or abs(oi_delta_1h) < 0.5:
+        return "flat"
+    return f"price_{'up' if return_1h > 0 else 'down'}_oi_{'up' if oi_delta_1h > 0 else 'down'}"
+
+
+def macd_state(hist: float, hist_delta: float) -> str | None:
+    """Histogram sign gives bull/bear; |histogram| growing gives expanding."""
+    if hist == 0:
+        return None
+    if hist > 0:
+        return "bull_expanding" if hist_delta > 0 else "bull_contracting"
+    return "bear_expanding" if hist_delta < 0 else "bear_contracting"
+
+
+def ma_alignment(close: float, ema_20: float, ema_50: float) -> str:
+    """close > EMA20 > EMA50 bullish, close < EMA20 < EMA50 bearish, else mixed."""
+    if close > ema_20 > ema_50:
+        return "bullish"
+    if close < ema_20 < ema_50:
+        return "bearish"
+    return "mixed"
+
+
+def trend_regime(adx_14: float, plus_di: float, minus_di: float, alignment: str) -> str:
+    """ADX >= 25 with agreeing DI and MA alignment trends; ADX < 20 ranges."""
+    if adx_14 >= 25 and plus_di > minus_di and alignment == "bullish":
+        return "trend_up"
+    if adx_14 >= 25 and minus_di > plus_di and alignment == "bearish":
+        return "trend_down"
+    return "range" if adx_14 < 20 else "transition"
+
+
+def technical_section(timeframe: str, window: dict) -> dict[str, Any]:
+    """Indicators of one admitted closed-bar window, as of the analysis cutoff."""
+    from aletheia.trading.indicators import adx, macd
+    from aletheia.trading.technical_analysis import BatchTechnicalAnalyzer
+
+    fields = technical_fields(timeframe)
+    values: dict[str, Any] = {}
+    bars = window.get("bars") or ()
+    if window.get("availability") == "available":
+        try:
+            snapshot = BatchTechnicalAnalyzer().compute(
+                bars, exchange="", symbol="", market_type="", timeframe=timeframe,
+            ).values
+        except (KeyError, TypeError, ValueError):
+            snapshot = None
+        if snapshot is not None:
+            closes = [float(bar["close"]) for bar in bars]
+            highs = [float(bar["high"]) for bar in bars]
+            lows = [float(bar["low"]) for bar in bars]
+            close, atr_14, vwap_20 = closes[-1], snapshot["atr_14"], snapshot["vwap_20"]
+            values.update({key: snapshot[key] for key in ("ema_20", "sma_20", "ema_50", "sma_50") if key in fields})
+            if vwap_20:
+                values["vwap_dev_pct"] = (close - vwap_20) / vwap_20 * 100.0
+            # Both technical_analysis fallbacks (0.5 for a zero-width band, 0.0
+            # for zero volume) are readings of nothing, so they stay unavailable.
+            if snapshot["bb_upper"] is not None and snapshot["bb_upper"] > snapshot["bb_lower"]:
+                values["bb_pct_b"] = snapshot["bb_pct_b"]
+            if any(float(bar["volume"]) > 0 for bar in bars):
+                values["obv_normalized"] = snapshot["obv_normalized"]
+            series = macd(closes)
+            if len(series) >= 2:
+                line, signal, hist = series[-1]
+                delta = hist - series[-2][2]
+                values.update(macd_line=line, macd_signal=signal, macd_hist=hist, macd_hist_delta=delta,
+                              macd_state=macd_state(hist, delta))
+                if atr_14:
+                    values["macd_hist_atr"] = hist / atr_14
+            directional = adx(highs, lows, closes)
+            if directional is not None:
+                values.update(adx_14=directional[0], plus_di_14=directional[1], minus_di_14=directional[2])
+            if "ma_alignment" in fields and values.get("ema_20") is not None and values.get("ema_50") is not None:
+                values["ma_alignment"] = ma_alignment(close, values["ema_20"], values["ema_50"])
+                if "adx_14" in values:
+                    values["trend_regime"] = trend_regime(
+                        values["adx_14"], values["plus_di_14"], values["minus_di_14"], values["ma_alignment"],
+                    )
+    values = {
+        key: value for key, value in values.items()
+        if value is not None and (isinstance(value, str) or math.isfinite(value))
+    }
+    return {
+        "values": values,
+        "unavailable_fields": sorted(set(fields) - set(values)),
+        "fact_refs": [f"technical:{timeframe}:{window['source_fingerprint']}"] if values else [],
+    }
+
+
 def build_entry_analysis_context(
     generation: dict,
     candidate: dict,
@@ -727,10 +845,17 @@ def build_entry_analysis_context(
     unique = {item.anchor_id: item for item in anchors if item.known_at_ms <= cutoff_ms}
     selected = tuple(sorted(unique.values(), key=lambda item: (item.known_at_ms, item.anchor_id), reverse=True)[:12])
     orderbook_available = entry_orderbook_available(orderbook, cutoff)
+    # Top-10-level signed size share computed once by the orderbook parser
+    # (extensions/data/collectors/microstructure.py) and stored with the book.
+    imbalance = (
+        {"imbalance_ratio": float(orderbook["imbalance_ratio"])}
+        if orderbook_available and orderbook.get("imbalance_ratio") is not None else {}
+    )
     estimated_cost = candidate.get("estimated_cost")
     quant_fields = (
         "atr_pct",
         "rsi_15m",
+        "rsi_14",
         "atr_15m_pct",
         "return_15m",
         "return_1h",
@@ -766,7 +891,15 @@ def build_entry_analysis_context(
     quant_values = (
         {key: feature.get(key) for key in quant_fields if feature.get(key) is not None} if feature_valid else {}
     )
+    derived_labels = {
+        "rsi_zone_15m": rsi_zone(quant_values.get("rsi_15m")),
+        "rsi_zone_1h": rsi_zone(quant_values.get("rsi_14")),
+        "rsi_zone_4h": rsi_zone(quant_values.get("rsi_4h")),
+        "oi_price_quadrant": oi_price_quadrant(quant_values.get("return_1h"), quant_values.get("oi_delta_1h")),
+    }
+    quant_values.update({key: value for key, value in derived_labels.items() if value is not None})
     feature_ref = f"feature:{feature.get('id')}" if feature_valid else None
+    technical = {timeframe: technical_section(timeframe, window) for timeframe, window in serialized.items()}
     admitted_positions = []
     for position in positions or ():
         try:
@@ -852,8 +985,12 @@ def build_entry_analysis_context(
                 fingerprint(feature.get("technical_snapshot_manifest") or "{}") if feature_valid else None
             ),
             "values": quant_values,
-            "unavailable_fields": sorted(set(quant_fields) - set(quant_values)),
-            "fact_refs": [feature_ref] if feature_ref else [],
+            "unavailable_fields": sorted((set(quant_fields) | set(derived_labels)) - set(quant_values)),
+            "technical": technical,
+            "fact_refs": [
+                *([feature_ref] if feature_ref else []),
+                *(ref for section in technical.values() for ref in section["fact_refs"]),
+            ],
         },
         portfolio_context=portfolio,
         execution_context={
@@ -863,6 +1000,8 @@ def build_entry_analysis_context(
             "spread_bps": orderbook.get("spread_bps") if orderbook else None,
             "depth_10bps_usd": orderbook.get("total_depth_10bps_usd") if orderbook else None,
             "observed_at": orderbook.get("observed_at") if orderbook else None,
+            **imbalance,
+            "unavailable_fields": [] if imbalance else ["imbalance_ratio"],
             "estimated_costs": estimated_cost,
             "fact_refs": [f"orderbook:{orderbook.get('id')}"] if orderbook and orderbook.get("id") else [],
         },
