@@ -48,7 +48,7 @@ def entry_prompt_fingerprint() -> str:
 @lru_cache(maxsize=1)
 def entry_contract_fingerprints() -> tuple[str, str]:
     from aletheia.execution.venue_capabilities import ENTRY_EXECUTION_MINIMUM_PERMISSION
-    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis
+    from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, EntryAnalysisContext, EntryHypothesis
     from aletheia.trading.entry_plan import EntryPlan
     from aletheia.trading.entry_activation import EntryTriggerActivationV1
     from aletheia.trading.entry_plan_compiler import compiler_contract_material
@@ -68,6 +68,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
     behavior_material = {
         "schema_fingerprint": schema,
         "prompt_fingerprint": entry_prompt_fingerprint(),
+        "candle_windows": ENTRY_WINDOW_BARS,
         "compiler": compiler_contract_material(),
         "capture_policies": {key: value._asdict() for key, value in CAPTURE_POLICIES.items()},
         "triggers": [trigger_contract_material(spec) for spec in registered_trigger_specs()],
