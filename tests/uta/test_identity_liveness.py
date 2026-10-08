@@ -152,6 +152,18 @@ def _venue_adapter(current, *, known_orders, position_ids=(), close_calls=None):
                 received_at=datetime.now(timezone.utc), profile_version="1", found=found,
             )
 
+        async def connect(self):
+            pass
+
+        async def get_mass_status(self, query):
+            from aletheia.uta.models import ExecutionMassStatus
+
+            # Complete, and the venue holds none of the queried ids.
+            return ExecutionMassStatus(
+                identity=current, completeness=ReadCompleteness.COMPLETE, scope=query.scope,
+                received_at=datetime.now(timezone.utc), profile_version="1",
+            )
+
         async def get_positions(self, query=None):
             return PositionListReport(
                 identity=current, completeness=ReadCompleteness.COMPLETE, scope=QueryScope(),

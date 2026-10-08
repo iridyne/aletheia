@@ -31,10 +31,10 @@ import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 
 from aletheia.execution.reconciliation import (
-    _OPEN_LOCAL_STATES,
     _filled_quantity_by_order,
     resolve_orders_missing_from_exchange,
 )
+from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 from tests.helpers.fill_reports import reports
 
 
@@ -136,7 +136,7 @@ def test_filled_quantity_rejects_malformed_inputs() -> None:
 # Invariant 2: CR-EX-01 monotonicity (no look-ahead)
 # --------------------------------------------------------------------------- #
 
-_open_state = st.sampled_from(_OPEN_LOCAL_STATES)
+_open_state = st.sampled_from(NON_TERMINAL_ORDER_STATES)
 _closed_state = st.sampled_from(
     ("filled", "cancelled", "rejected", "closed_verified")
 )
@@ -199,7 +199,7 @@ def test_every_resolved_id_is_backed_by_a_qualifying_order(
     for eid in resolved:
         assert any(
             order["execution_mode"] in modes
-            and order["status"] in _OPEN_LOCAL_STATES
+            and order["status"] in NON_TERMINAL_ORDER_STATES
             and order.get("exchange_order_id") == eid
             and eid not in open_ids
             for order in orders

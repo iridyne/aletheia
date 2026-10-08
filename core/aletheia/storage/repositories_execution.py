@@ -499,13 +499,14 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     """
     from aletheia.storage.repositories import (
         NATIVE_ENTRY_ORDER_SQL,
-        UNRESOLVED_NATIVE_ENTRY_STATES,
         _RISK_DECISION_PROJECTION,
         _RISK_PROPOSAL_PROJECTION,
         get_db,
     )
 
-    placeholders = ",".join("?" for _ in UNRESOLVED_NATIVE_ENTRY_STATES)
+    from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
+
+    placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
     rows = (
         get_db()
         .execute(
@@ -614,7 +615,7 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         GROUP BY o.id
         ORDER BY o.created_at ASC, o.rowid ASC
         """,
-            UNRESOLVED_NATIVE_ENTRY_STATES,
+            NON_TERMINAL_ORDER_STATES,
         )
         .fetchall()
     )
