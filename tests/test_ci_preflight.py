@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
+import shutil
+import subprocess
+
+import pytest
 
 import scripts.ci.ci_preflight as preflight
 
@@ -36,45 +39,34 @@ def test_preflight_keeps_docs_only_exemption_from_canonical_checker() -> None:
     assert not preflight.run_preflight("", ["docs/ci/guide.md"])
 
 
-def test_changed_files_vs_base_uses_merge_base_not_current_base_tip(monkeypatch) -> None:
-    calls: list[list[str]] = []
+@pytest.mark.skipif(shutil.which("jj") is None, reason="changed_files_vs_base reads the diff through jj")
+def test_changed_files_vs_base_diffs_from_the_fork_point_not_the_base_tip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(preflight.vcs, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("JJ_USER", "Test")
+    monkeypatch.setenv("JJ_EMAIL", "test@example.invalid")
 
-    def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
-        calls.append(args)
-        assert kwargs == {"check": True, "capture_output": True, "text": True}
-        if args == ["git", "merge-base", "HEAD", "origin/master"]:
-            return SimpleNamespace(stdout="merge-base-123\n")
-        if args == ["git", "diff", "--name-only", "merge-base-123...HEAD", "--"]:
-            return SimpleNamespace(stdout="docs/ci/guide.md\naletheia/ci.py\n")
-        raise AssertionError(f"unexpected git invocation: {args}")
+    def jj(*args: str) -> None:
+        subprocess.run(["jj", *args], cwd=tmp_path, check=True, capture_output=True)
 
-    monkeypatch.setattr(preflight.subprocess, "run", fake_run)
+    jj("git", "init")
+    (tmp_path / "shared.txt").write_text("base\n")
+    jj("commit", "-m", "base")
+    jj("bookmark", "create", "base", "-r", "@-")
+    jj("new", "base", "-m", "base advances")
+    (tmp_path / "shared.txt").write_text("advanced\n")
+    jj("bookmark", "create", "tip", "-r", "@")
+    jj("new", "base", "-m", "feature")
+    (tmp_path / "feature.txt").write_text("feature\n")
 
-    assert preflight.changed_files_vs_base("origin/master") == [
-        "docs/ci/guide.md",
-        "aletheia/ci.py",
-    ]
-    assert calls == [
-        ["git", "merge-base", "HEAD", "origin/master"],
-        ["git", "diff", "--name-only", "merge-base-123...HEAD", "--"],
-    ]
+    assert preflight.changed_files_vs_base("tip") == ["feature.txt"]
 
 
-def test_default_base_ignores_feature_branch_upstream(monkeypatch) -> None:
-    calls: list[list[str]] = []
+@pytest.mark.skipif(shutil.which("jj") is None, reason="changed_files_vs_base reads the diff through jj")
+def test_unresolvable_base_is_reported_not_swallowed(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(preflight.vcs, "REPO_ROOT", tmp_path)
 
-    def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
-        calls.append(args)
-        if args == ["git", "merge-base", "HEAD", "origin/master"]:
-            return SimpleNamespace(stdout="base-123\n")
-        if args == ["git", "diff", "--name-only", "base-123...HEAD", "--"]:
-            return SimpleNamespace(stdout="docs/ci/guide.md\n")
-        raise AssertionError(f"unexpected git invocation: {args}")
-
-    monkeypatch.setattr(preflight.subprocess, "run", fake_run)
-
-    assert preflight.changed_files_vs_base() == ["docs/ci/guide.md"]
-    assert all("@{upstream}" not in call for call in calls)
+    with pytest.raises(RuntimeError, match="unable to resolve a base"):
+        preflight.changed_files_vs_base("no-such-revset-xyz")
 
 
 def test_main_reports_bounded_json_and_nonzero_for_invalid_metadata(tmp_path, capsys) -> None:

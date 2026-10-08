@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import vcs
 
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_PROPOSAL_STATUSES = {
@@ -89,25 +91,9 @@ CURRENT_DOC_FILES = {
 
 def repository_markdown_files() -> list[Path]:
     """Return repository Markdown, including new files, but not ignored files."""
-    result = subprocess.run(
-        [
-            "git",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            "*.md",
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-    )
     paths = []
-    for raw in result.stdout.split(b"\0"):
-        if not raw:
-            continue
-        path = Path(raw.decode("utf-8"))
+    for raw in vcs.file_list("glob:**/*.md"):
+        path = Path(raw)
         if path.parts[:2] == ("docs", "monitoring"):
             continue
         paths.append(path)

@@ -58,17 +58,28 @@ _GATEWAY_RESTART_EVENT_TYPES = {
 
 
 def _probe_code_sync(report: Report) -> None:
-    from aletheia.update import git_ops
-    if not git_ops.is_repo():
+    from aletheia.update import git_ops, jj_ops
+    # Developer checkouts are driven by jj (git HEAD is detached there); Fedora and
+    # tarball runtimes carry no jj and keep the git view the updater uses.
+    if jj_ops.is_jj_repo():
+        backend, fetch_cmd = jj_ops, "jj git fetch"
+        behind_hint = "this machine is behind — `jj git fetch` then `jj rebase -d master@origin` before working"
+        dirty_hint = "uncommitted changes present — `jj describe` and `jj new` before switching machines"
+        branch = jj_ops.current_bookmark() or "master"
+    elif git_ops.is_repo():
+        backend, fetch_cmd = git_ops, "git fetch"
+        behind_hint = "this machine is behind — `git pull --ff-only` before working"
+        dirty_hint = "uncommitted changes present — commit or stash before switching machines"
+        branch = git_ops.current_branch() or "master"
+    else:
         report.add("code.sync", "info", "not a git repo (or git unavailable)")
         return
-    branch = git_ops.current_branch() or "master"
-    head = git_ops.current_commit()
-    dirty = git_ops.is_worktree_dirty()
+    head = backend.current_commit()
+    dirty = backend.is_dirty() if backend is jj_ops else backend.is_worktree_dirty()
     # ahead/behind are vs the LAST fetched origin; we do not fetch here (read-only,
     # offline-safe). doctor --fix may fetch. Note that fact in the detail.
-    ahead = git_ops.ahead_count(branch)
-    behind = git_ops.behind_count(branch)
+    ahead = backend.ahead_count(branch)
+    behind = backend.behind_count(branch)
 
     bits = [f"branch={branch}", f"HEAD={head[:7] or '?'}"]
     if ahead > 0:
@@ -77,14 +88,12 @@ def _probe_code_sync(report: Report) -> None:
         bits.append(f"{behind} behind origin")
     if dirty:
         bits.append("dirty worktree")
-    detail = ", ".join(bits) + "  (vs last fetch; run `git fetch` for live)"
+    detail = ", ".join(bits) + f"  (vs last fetch; run `{fetch_cmd}` for live)"
 
     if behind > 0:
-        report.add("code.sync", "warn", detail,
-                   "this machine is behind — `git pull --ff-only` before working")
+        report.add("code.sync", "warn", detail, behind_hint)
     elif dirty:
-        report.add("code.sync", "info", detail,
-                   "uncommitted changes present — commit or stash before switching machines")
+        report.add("code.sync", "info", detail, dirty_hint)
     else:
         report.add("code.sync", "ok", detail)
 

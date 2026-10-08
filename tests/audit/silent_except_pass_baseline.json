@@ -106,7 +106,7 @@
     },
     {
       "file": "core/aletheia/diagnostics/probes/environment.py",
-      "line": 681,
+      "line": 690,
       "reason": "RuntimeError means no loop on this thread; the probe drives one deliberately"
     },
     {

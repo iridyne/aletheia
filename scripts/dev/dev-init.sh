@@ -3,8 +3,8 @@
 #
 # Purpose: prepare the local checkout to run the gateway as a plain background
 # binary on 8787 backed by ~/.aletheia/, WITHOUT any OS-level autostart binding
-# (no LaunchAgent respawn), and install the pre-commit cheap gate. Run this once
-# per fresh checkout / whenever autostart gets re-enabled by an external command.
+# (no LaunchAgent respawn). Run this once per fresh checkout / whenever autostart
+# gets re-enabled by an external command.
 
 set -euo pipefail
 
@@ -44,18 +44,7 @@ else
   log "     Present."
 fi
 
-log "4/5  Installing the pre-commit cheap gate (scripts/hooks/pre-commit)."
-if [[ -f "$REPO_ROOT/.git/hooks/pre-commit" ]] && ! cmp -s "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"; then
-  warn "An existing .git/hooks/pre-commit differs and was NOT overwritten."
-  warn "  .git/hooks is SHARED by every worktree of this repository, so copying this"
-  warn "  worktree's copy can downgrade the hook for all of them (an older checkout"
-  warn "  carries an older hook). Inspect the difference and copy from the MAIN"
-  warn "  checkout instead: cp <main>/scripts/hooks/pre-commit .git/hooks/pre-commit"
-else
-  cp "$REPO_ROOT/scripts/hooks/pre-commit" "$REPO_ROOT/.git/hooks/pre-commit"
-  chmod +x "$REPO_ROOT/.git/hooks/pre-commit"
-  log "     Installed. Full changed-file gate: uv run python scripts/ci/dev_check.py"
-fi
+log "4/5  VCS: jj runs no git hooks. The cheap gate is: uv run python scripts/ci/dev_check.py"
 
 log "5/5  Current gateway state:"
 uv run aletheia gateway status 2>&1 | sed 's/^/    /' || true
