@@ -803,10 +803,10 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         assert feature["depth_10bps_usd"] == (40000 if market == "perp" else 20000)
         row = repo.latest_orderbook("ETH/USDT", exchange="okx", market_type=market)
         assert row["total_depth_10bps_usd"] == feature["depth_10bps_usd"]
-        from aletheia.trading.entry_analysis import entry_causal_windows
+        from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, entry_causal_windows
         cutoff = datetime.now(timezone.utc)
         windows = {tf: repo.get_ohlcv_candles("ETH/USDT", tf, n, "okx", market, include_provenance=True)
-                   for tf, n in (("15m", 96), ("1h", 48), ("4h", 30))}
+                   for tf, n in ENTRY_WINDOW_BARS.items()}
         admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", windows, cutoff)
         assert all(window["availability"] == "available" for window in admitted.values())
         repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=NULL, last_mutated_at=NULL WHERE exchange=? AND symbol=? AND market_type=?",

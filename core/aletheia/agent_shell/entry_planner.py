@@ -15,6 +15,7 @@ from aletheia.config.schema import ModelSelection
 
 from aletheia.storage import repositories as repo
 from aletheia.trading.entry_analysis import (
+    ENTRY_WINDOW_BARS,
     EntryAnalysisContext,
     EntryHypothesis,
     build_entry_analysis_context,
@@ -182,7 +183,7 @@ def _build_fresh_entry_context(
             generation["market_type"], cutoff_ms - timeframe_ms(timeframe) + 1,
             include_provenance=True,
         )
-        for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96))
+        for timeframe, limit in ENTRY_WINDOW_BARS.items()
     }
     context_model = build_entry_analysis_context(
         generation, candidate, feature, windows, cutoff_at=cutoff,
