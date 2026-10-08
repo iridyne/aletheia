@@ -249,15 +249,10 @@ class _FilterAdapter:
             [dict[str, Any], dict[str, Any]],
             tuple[dict[str, Any], dict[str, Any]] | None,
         ],
-        rebuild: Callable[
-            [dict[str, Any], str],
-            tuple[dict[str, Any] | None, dict[str, Any] | None],
-        ],
     ) -> None:
         self.ready_marker = ready_marker
         self.select = select
         self.check = check
-        self.rebuild = rebuild
 
 
 def _family_ttl_select(alternatives: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -281,34 +276,6 @@ def _family_ttl_check(
     return {"ttl_sec": control_ttl}, {"ttl_sec": treatment_ttl}
 
 
-def _family_ttl_rebuild(
-    experiment: dict[str, Any],
-    *,
-    as_of_at: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    control_param = _json_dict(experiment["control_parameter"])
-    treatment_param = _json_dict(experiment["treatment_parameter"])
-    try:
-        control_ttl = int(control_param["ttl_sec"])
-        treatment_ttl = int(treatment_param["ttl_sec"])
-    except (KeyError, TypeError, ValueError):
-        return None, None
-    replay = build_family_ttl_replay(
-        filter_version=experiment["filter_version"],
-        stage=experiment["stage"],
-        scanner_family=experiment["scanner_family"],
-        direction=experiment["direction"],
-        market_type=experiment["market_type"],
-        horizon=experiment["horizon"],
-        current_ttl_sec=control_ttl,
-        alternative_ttls=[treatment_ttl],
-        evaluated_after=experiment["started_at"],
-        as_of_at=as_of_at,
-        min_samples=int(experiment["min_samples"]),
-    )
-    if not replay.get("alternatives"):
-        return None, None
-    return replay["current_pass"], replay["alternatives"][0]
 
 
 def _observer_select(alternatives: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -349,48 +316,6 @@ def _observer_check(
     )
 
 
-def _observer_rebuild(
-    experiment: dict[str, Any],
-    *,
-    as_of_at: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    treatment_param = _json_dict(experiment["treatment_parameter"])
-    try:
-        treatment_rsi = float(treatment_param["rsi_deviation"])
-        treatment_atr = float(treatment_param["atr_pct"])
-    except (KeyError, TypeError, ValueError):
-        return None, None
-    replay = build_observer_pre_filter_replay(
-        filter_version=experiment["filter_version"],
-        scanner_family=experiment["scanner_family"],
-        direction=experiment["direction"],
-        market_type=experiment["market_type"],
-        evaluated_since=experiment["started_at"],
-        as_of_at=as_of_at,
-        min_samples=int(experiment["min_samples"]),
-    )
-    match: dict[str, Any] | None = None
-    for alt in replay.get("alternatives") or []:
-        try:
-            alt_rsi = float(alt["rsi_deviation"])
-            alt_atr = float(alt["atr_pct"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if alt_rsi == treatment_rsi and alt_atr == treatment_atr:
-            match = alt
-            break
-    if match is None:
-        return None, None
-    # Project observer horizon_metrics into the flat shape expected by the
-    # evaluator. Use the 24h horizon as the primary evidence horizon (matching
-    # readiness definition in filter_replay); compare treatment_union against
-    # control since the union is what would be observed if the filter loosened.
-    primary = match.get("horizon_metrics", {}).get("24h") or {}
-    control = primary.get("control") or {}
-    treatment = primary.get("treatment_union") or {}
-    if not control or not treatment:
-        return None, None
-    return control, treatment
 
 
 _CONFIDENCE_LADDER = ("speculative", "medium", "high")
@@ -420,53 +345,6 @@ def _ranker_check(
     return {"minimum_confidence": control}, {"minimum_confidence": treatment}
 
 
-def _ranker_rebuild(
-    experiment: dict[str, Any],
-    *,
-    as_of_at: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    control = str(
-        _json_dict(experiment["control_parameter"]).get("minimum_confidence") or ""
-    )
-    treatment = str(
-        _json_dict(experiment["treatment_parameter"]).get("minimum_confidence") or ""
-    )
-    # Prefer Observation Lab frozen units when they exist: unrelated production
-    # ``filter_version`` bumps then don't retroactively change the input snapshot
-    # the evaluator sees. Falls back to the live replay on the first cycle
-    # (before any unit has been captured).
-    if lab_units.count_frozen_units(experiment["id"]) > 0:
-        frozen = build_ranker_confidence_replay_from_frozen(
-            experiment_id=experiment["id"],
-            horizon=experiment["horizon"],
-            current_minimum_confidence=control,
-            treatment_minimum=treatment,
-            min_samples=int(experiment["min_samples"]),
-            as_of_at=as_of_at,
-        )
-        if frozen is not None:
-            match = next((
-                alt for alt in frozen.get("alternatives") or []
-                if alt.get("minimum_confidence") == treatment
-            ), None)
-            return (frozen["current_pass"], match) if match is not None else (None, None)
-    replay = build_ranker_confidence_replay(
-        filter_version=experiment["filter_version"],
-        stage=experiment["stage"],
-        scanner_family=experiment["scanner_family"],
-        direction=experiment["direction"],
-        market_type=experiment["market_type"],
-        horizon=experiment["horizon"],
-        evaluated_after=experiment["started_at"],
-        as_of_at=as_of_at,
-        current_minimum_confidence=control,
-        min_samples=int(experiment["min_samples"]),
-    )
-    match = next((
-        alt for alt in replay.get("alternatives") or []
-        if alt.get("minimum_confidence") == treatment
-    ), None)
-    return (replay["current_pass"], match) if match is not None else (None, None)
 
 
 _ADAPTERS: dict[str, _FilterAdapter] = {
@@ -474,19 +352,16 @@ _ADAPTERS: dict[str, _FilterAdapter] = {
         ready_marker="ready_for_controlled_experiment",
         select=_family_ttl_select,
         check=_family_ttl_check,
-        rebuild=_family_ttl_rebuild,
     ),
     "observer_pre_filter": _FilterAdapter(
         ready_marker="ready_for_prospective_shadow",
         select=_observer_select,
         check=_observer_check,
-        rebuild=_observer_rebuild,
     ),
     "ranker_confidence_gate": _FilterAdapter(
         ready_marker="ready_for_controlled_experiment",
         select=_ranker_select,
         check=_ranker_check,
-        rebuild=_ranker_rebuild,
     ),
 }
 

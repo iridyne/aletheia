@@ -535,16 +535,6 @@ def _watch_and_revoke_session_token(proc, token: str) -> None:
     threading.Thread(target=_watcher, daemon=True, name="operator-session-token-watcher").start()
 
 
-def spawn_shadow_operator_shell(cfg, runtime_id: str):
-    return spawn_operator_shell(
-        cfg,
-        runtime_id=runtime_id,
-        runtime_mode="shadow",
-        runtime_state="shadowing",
-        once=True,
-    )
-
-
 def _default_record_event(kind: str, payload: dict) -> None:
     try:
         from aletheia.files.jsonl import write_audit, write_error
