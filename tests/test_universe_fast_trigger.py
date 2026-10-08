@@ -1171,6 +1171,7 @@ async def test_risk_deferral_is_not_re_dispatched_at_quote_rate(monkeypatch, res
                     received_timestamp_ms=sequence, sequence=sequence, bid=100.0, ask=100.1,
                 )
                 await asyncio.sleep(0.02)  # let the dispatched task finish before the next quote
+            assert watch._stop_event is not None
             watch._stop_event.set()
 
         def events(self):

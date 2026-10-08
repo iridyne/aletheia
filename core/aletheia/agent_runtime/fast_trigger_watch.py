@@ -680,7 +680,7 @@ async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
         after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
 
 
-async def _submit_entry_plan(plan, event, *, activation=None, depth=None, current_market=None) -> None:
+async def _submit_entry_plan(plan, event, *, activation=None, depth=None, current_market=None) -> dict | None:
     """Reuse the earned proof while both it and the exact market facts are fresh."""
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
