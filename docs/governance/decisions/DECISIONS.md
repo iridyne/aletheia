@@ -1166,3 +1166,22 @@ account_fingerprint` 是出处,不参与相等。入场闸门在"只有在途订
 - `DIFFERENT` 账户永不重标;证明读取不完整(`PARTIAL`/`UNAVAILABLE`)等同于没有证明。
 - 回归测试 `tests/uta/test_identity_liveness.py` 对 bitget_demo / okx_demo / binance_testnet
   参数化;变异验证:撤销任一处修复,对应测试在三个模式上同时变红。
+
+## 2026-10-08 — 入场侧 `submission_unknown` 由 stale cleanup 有界终止,并带动 Proposal 与 Entry Plan 一并终结
+
+**Decision:** 入场订单满 48 小时、无本地经济痕迹、且在 §3.0b 的身份关系下完整精确读取证明
+"无成交且无订单/订单已终态"后,`stale_order_cleanup` 在同一事务内把 Order→`cancelled`、
+`submission_unknown`/`executing` 的 Proposal→`error`、以该订单为最新一条腿的非终态 Entry Plan→
+`failed`(`terminal_reason=venue_confirmed_absence`)。对账器对同一原因的 inconclusive 结论只在
+原因变化时写审计。契约 §6 防伪行改为"不得从 open-list 缺失推断",新增 §6.1。
+取代 #3565(其"不改订单状态"的设计解不开死锁)。(owner 2026-10-08 批准修复。)
+
+**Reason:** 清理此前只取消 Order:Proposal 停在 `submission_unknown`,Entry Plan 停在 `ordered`
+11 天,并经 `idx_entry_plans_active_key` 占住 `planning_key`。契约 §6 写"不得推断 cancelled"而
+代码在完整读取为空时写 `cancelled`,二者自相矛盾。入场侧终止的代价有界(放弃一个未发生的开仓),
+与平仓侧(§10.2.4,错误终止会让仓位失去保护,归 owner)不同。
+
+**Guardrail:**
+- 读取未完成/不可用、身份连续性无法证明、有 Fill 或开放 Position:一律不终止。
+- 不新增阈值,复用 48 小时与 `_has_real_economics`。
+- 平仓侧 Order 不走这条级联(只有 `kind="cancel"` 的入场路径)。

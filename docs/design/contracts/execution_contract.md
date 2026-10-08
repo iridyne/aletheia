@@ -267,7 +267,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 |----|------|------|
 | 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`extensions/exchanges/ccxt/adapter.py` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
-| 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
+| 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得从 open-list 缺失推断 filled/cancelled；入场侧的有界终止见 §6.1 | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
 | 未决平仓 claim 的自动收敛 | `reconcile()` 是对账 job 内**唯一**的自动入口：先按既有顺序完成逐单收敛，再调用 `pending_close_recovery.recover_absent_stale_close_orders()`。释放要求：完整 open-order 视图证明该 close Order 缺席、精确 fill 历史为空，且 **venue 对该精确订单给出肯定报告——终态且未成交**（`filled_quantity == 0`，并由 `remaining_quantity == original_quantity` 作数量见证；任一数量字段缺失或矛盾一律 fail closed）。**不得**从“读到了但没有该单”推断未发送：COMPLETE 读取未命中只证明读取窗口完成，而 typed adapter 会把缺失的 payload 字段折叠为 0，因此单独的 `filled_quantity == 0` 不是证据。满足后再对本地 claim（Order status/clientOid/exchange id、Position claim 字段、零本地 Fill）做 CAS 复验，未变才释放，让保护性平仓以全新 `close-{id}-rN` clientOid 重试。`manual_reconciliation_pending` 这类 human-owned claim 既不在候选集内、也不被判定函数放行，`venue_trade_rate_limited` 停泊永不被释放。释放与停泊都只改本地 Order/Position 状态，绝不下单或撤单 | `execution/reconciliation.py`、`execution/pending_close_recovery.py` |
 
 UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
@@ -332,6 +332,22 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 真实退出证据与经济分流前，scheduler 不会把 ready candidate 本地平仓。对应 `OI-B01`。
 
 ---
+
+### 6.1 入场侧未决订单的有界终止(2026-10-08, #3798)
+
+每个非终态都必须有一个有界出口;出口所需的证据不得只能通过该状态自己关着的闸门取得(§3.0b)。
+平仓侧的 `submission_unknown` 由 §10.2.4 归 owner 处理,因为错误终止平仓会让仓位失去保护;
+入场侧不同:订单未到达交易所时,终止它只是放弃一个尚未发生的开仓,代价有界,而不终止会永久占用
+风控槽位与 `planning_key`。因此入场侧由 `stale_order_cleanup` 自动终止,且必须**同时**满足:
+
+1. 订单年龄不低于 48 小时(`_STALE_ORDER_SOFT_HOURS`);
+2. 本地无 Fill、无关联开放 Position、无在途平仓(`_has_real_economics`);
+3. 在 §3.0b 的身份关系下,按 `client_order_id`/`venue_order_id` 做**完整**的精确读取(`ReadCompleteness.COMPLETE`,带 `start_at`),结果为无成交,且无订单或订单已是明确终态(canceled/expired/rejected)。"读到了但没有该单"在此处是证据,因为 1–3 已一起排除了"读取窗口截断"之外的所有已知解释;读取未完成、不可用、账户身份无法证明连续时一律保持未决。
+
+满足后,**同一事务**内:Order→`cancelled`;仍处 `submission_unknown`/`executing` 的 Proposal→`error`;
+以该 Order 为最新一条腿的 Entry Plan(非终态)→`failed`,`terminal_reason=venue_confirmed_absence`;
+写一条 `order_stale_cancelled` 审计,`after_state` 列出一并终止的 proposal/plan。
+对账器对**同一原因**的 inconclusive 结论只在原因变化时记一行,不再每个 2 分钟周期重复写入。
 
 ## 7. 审计要求
 

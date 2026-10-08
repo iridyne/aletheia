@@ -313,3 +313,27 @@ def test_a_library_upgrade_alone_does_not_turn_every_stored_identity_into_a_mism
     result = _execute_for("bitget_demo", "p-up", "r-up")
     assert result["order_status"] == "submitted"
     assert adapter.reads == []  # same account: no re-bind, no venue proof needed
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_an_unchanged_inconclusive_verdict_is_recorded_once(tmp_path, monkeypatch, mode):
+    """A stuck Order used to accrue one identical audit row per 2-minute pass."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation as recon
+    from aletheia.storage import repositories as repo
+
+    stuck = _stuck_entry(mode, _identity(mode))
+    row = _order_row(stuck.id)
+
+    def rows() -> int:
+        return repo.get_db().execute(
+            "SELECT COUNT(*) c FROM audit_events WHERE entity_id=? AND event_type='order_reconciliation_inconclusive'",
+            (stuck.id,),
+        ).fetchone()["c"]
+
+    for _ in range(3):
+        recon._write_reconcile_event(row, state="submission_unknown", reason="same_reason")
+    assert rows() == 1
+    recon._write_reconcile_event(row, state="submission_unknown", reason="another_reason")
+    recon._write_reconcile_event(row, state="submission_unknown", reason="same_reason")
+    assert rows() == 3
