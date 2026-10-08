@@ -98,7 +98,7 @@ def test_protocol_classification_requires_absence_complete_history_and_full_quan
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance", "okx_live", "binance_live"])
+@pytest.mark.parametrize("venue", ["uta_v3", "okx", "binance", "okx_live", "binance_live"])
 @pytest.mark.parametrize("case", ["complete", "known_entry", "unknown_entry", "empty", "partial_quantity", "network_error", "full_unpageable", "expired", "wrong_account"])
 async def test_uta_verified_exit_preserves_private_evidence_boundary(monkeypatch, venue, case):
     from datetime import datetime, timedelta, timezone

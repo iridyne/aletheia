@@ -307,7 +307,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     if target_execution_mode:
         from aletheia.portfolio.disappearance_confirmation import build_view_evidence
         # Extract the API face (endpoint_family) from the unified accounts so
-        # that classic_v2 and uta_v3 produce distinct disappearance identity keys.
+        # that distinct API faces produce distinct disappearance identity keys.
         _endpoint_family: str | None = None
         for _acct in ((unified or {}).get("accounts") or []):
             if _acct.get("broker_id") == target_execution_mode:

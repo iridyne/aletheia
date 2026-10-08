@@ -69,8 +69,8 @@ def build_view_evidence(
 ) -> dict:
     """Build a stable identity; re-reading one cache cannot count twice.
 
-    endpoint_family (e.g. "classic_v2", "uta_v3") is included when known so
-    that switching API faces does not accumulate evidence on the same identity.
+    endpoint_family (e.g. "uta_v3") is included when known so that a different
+    API face does not accumulate evidence on the same identity.
     """
     snapshot = snapshot or {}
     fetched_at = str(snapshot.get("fetched_at") or "")
@@ -79,7 +79,7 @@ def build_view_evidence(
         account_environment=account_environment,
         execution_mode=execution_mode,
     )
-    # Qualify by API face so classic_v2 and uta_v3 cannot share candidates.
+    # Qualify by API face so two faces cannot share candidates.
     account_fingerprint = (
         _digest({"base": base_fingerprint, "endpoint_family": endpoint_family})
         if endpoint_family

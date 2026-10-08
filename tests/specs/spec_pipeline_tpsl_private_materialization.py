@@ -889,7 +889,7 @@ def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypat
     )
     entry_identity = _identity("bitget_demo")
     # Same physical account, later credential generation: a credential rotation,
-    # an account config generation bump, a classic_v2/uta_v3 profile switch or a
+    # an account config generation bump, a Bitget profile change or a
     # plain ccxt upgrade each produce exactly this.
     rotated_identity = entry_identity.model_copy(
         update={"credential_generation": 7}

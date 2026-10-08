@@ -1835,7 +1835,7 @@ def test_universe_allowlist_hard_gate_admits_canonical_member_and_excludes_non_m
 
 
 @pytest.mark.anyio
-async def test_uta_profile_change_advances_account_generation(client):
+async def test_exchange_markets_save_leaves_account_generation_unchanged(client):
     from aletheia.config.loader import load_config
 
     before = load_config().exchange
@@ -1847,26 +1847,22 @@ async def test_uta_profile_change_advances_account_generation(client):
             "spot": True,
             "usdt_futures": True,
             "paper_execution_mode": "bitget_demo",
-            "bitget_profile": "uta_v3",
             "confirm_exchange_divergence": True,
         },
     )
 
     assert response.status_code == 200
     current = load_config().exchange
-    assert current.uta_account_config_generation_for("bitget_demo") == 1
-    assert current.uta_account_config_generation_for("bitget_live_limited") == 1
+    assert current.uta_account_config_generation_for("bitget_demo") == 0
+    assert current.uta_account_config_generation_for("bitget_live_limited") == 0
 
 
 @pytest.mark.anyio
-async def test_retired_uta_selector_is_rejected(client):
+@pytest.mark.parametrize("retired", [{"uta_read_boundary": "uta_v1"}, {"bitget_profile": "uta_v3"}])
+async def test_retired_uta_selector_is_rejected(client, retired):
     response = await client.post(
         "/api/settings/exchange-markets",
-        json={
-            "spot": True,
-            "usdt_futures": True,
-            "uta_read_boundary": "uta_v1",
-        },
+        json={"spot": True, "usdt_futures": True, **retired},
     )
 
     assert response.status_code == 422

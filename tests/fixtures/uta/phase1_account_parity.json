@@ -29,24 +29,6 @@
     "expected_equity": "12.50",
     "expected_completeness": "complete"
   },
-  "classic_v2": {
-    "balances": [
-      {
-        "total": {"USDT": "2"},
-        "free": {"USDT": "2"},
-        "used": {"USDT": "0"},
-        "info": []
-      },
-      {
-        "total": {"USDT": "10"},
-        "free": {"USDT": "8"},
-        "used": {"USDT": "2"},
-        "info": [{"usdtEquity": "10", "unrealizedPL": "0.5"}]
-      }
-    ],
-    "expected_equity": "12",
-    "expected_completeness": "complete"
-  },
   "uta_v3": {
     "balances": [
       {

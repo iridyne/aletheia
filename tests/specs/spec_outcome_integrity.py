@@ -160,7 +160,7 @@ def test_reconciler_declares_durable_disappearance_candidates():
         status="implemented",
     )
 )
-@pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance"])
+@pytest.mark.parametrize("venue", ["uta_v3", "okx", "binance"])
 @pytest.mark.parametrize("case", ["complete", "empty", "network_error", "full_unpageable"])
 async def test_all_broker_clients_implement_verified_position_exit(monkeypatch, venue, case):
     from datetime import datetime, timezone

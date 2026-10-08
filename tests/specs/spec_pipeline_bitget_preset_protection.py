@@ -20,25 +20,19 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         status="implemented",
     )
 )
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
-async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch, kind):
+async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch):
     from aletheia.uta.models import CommandEvidence
     from tests.test_bitget_adapter import _bitget_adapter
     from tests.uta.test_ccxt_adapter import _bitget_command
 
-    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    adapter, exchange = _bitget_adapter(monkeypatch)
     exchange.markets["BTC/USDT:USDT"]["precision"]["price"] = 0.01
     requests = []
-
-    async def classic(request):
-        requests.append(("classic_v2", request))
-        return {"code": "00000", "data": {"orderId": "EX-PRESET-1"}}
 
     async def uta(request):
         requests.append(("uta_v3", request))
         return {"code": "00000", "data": {"orderId": "EX-PRESET-1"}}
 
-    exchange.privateMixPostV2MixOrderPlaceOrder = classic
     exchange.privateUtaPostV3TradePlaceOrder = uta
     try:
         report = await adapter.submit_order(_bitget_command(
@@ -49,15 +43,13 @@ async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypa
         assert report.evidence is CommandEvidence.ACKNOWLEDGED
         assert len(requests) == 1
         family, body = requests[0]
-        assert family == kind
+        assert family == "uta_v3"
         assert body["symbol"] == "BTCUSDT"
         assert body["side"] == "buy"
         assert body["orderType"] == "market"
         assert body["clientOid"] == "preset-spec"
-        stop_key = "presetStopLossPrice" if kind == "classic_v2" else "stopLoss"
-        take_key = "presetStopSurplusPrice" if kind == "classic_v2" else "takeProfit"
-        assert body[stop_key] == "59000.25"
-        assert body[take_key] == "62000.75"
+        assert body["stopLoss"] == "59000.25"
+        assert body["takeProfit"] == "62000.75"
     finally:
         await adapter.close()
 
@@ -74,7 +66,7 @@ async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypa
         status="implemented",
     )
 )
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 @pytest.mark.parametrize("market", ["spot", "usdt_futures"])
 @pytest.mark.parametrize("purpose", ["entry", "exit"])
 async def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch, kind, market, purpose):
@@ -102,7 +94,7 @@ def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, val
 
     _session, calls = _install(monkeypatch, FakeExchange())
     with pytest.raises(ValueError):
-        _bitget_command(_identity(_profile("classic_v2")), **{field: value})
+        _bitget_command(_identity(_profile("uta_v3")), **{field: value})
     assert calls == []
 
 

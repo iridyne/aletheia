@@ -15,8 +15,8 @@ import pytest
 PROFILE_IDENTITY_TABLE = [
     # OKX demo sandbox
     ("okx_demo", "okx", True, {}),
-    # Bitget demo — classic v2 profile (default config)
-    ("bitget_demo", "bitget", True, {"uta": False}),
+    # Bitget demo — the single UTA v3 profile
+    ("bitget_demo", "bitget", True, {"uta": True}),
     # Binance testnet — the regression case: must use "binanceusdm", not "binance"
     ("binance_testnet", "binanceusdm", True, {}),
 ]
@@ -29,8 +29,6 @@ def _stub_config(monkeypatch):
     from extensions.exchanges import composition
 
     cfg = AletheiaConfig()
-    # bitget_demo needs bitget_profile set; use classic_v2 (the default demo profile).
-    cfg.exchange.bitget_profile = "classic_v2"
     monkeypatch.setattr(composition, "load_config", lambda: cfg)
 
 

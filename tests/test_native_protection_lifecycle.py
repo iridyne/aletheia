@@ -1,6 +1,5 @@
 """The real native reader owns no transport beyond each HTTP request."""
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,30 +10,25 @@ from extensions.exchanges.bitget.native_protection import BitgetNativeProtection
 from tests.uta.test_ccxt_adapter import _identity, _profile
 
 
-@pytest.mark.parametrize("profile", ["classic_v2", "uta_v3"])
 @pytest.mark.parametrize("request_fails", [False, True])
 async def test_real_native_reader_releases_request_before_idempotent_close(
-    monkeypatch, profile, request_fails,
+    monkeypatch, request_fails,
 ):
     events = []
-    response = SimpleNamespace(json=lambda: {
-        "code": "00000", "data": {"entrustedList": [], "list": []},
-    })
-    get = AsyncMock(return_value=response)
+    get = AsyncMock(return_value={"code": "00000", "data": {"list": []}})
     if request_fails:
         get.side_effect = TimeoutError("synthetic request timeout")
 
-    @asynccontextmanager
-    async def transport(**_kwargs):
+    def make_exchange(_self):
         events.append("acquire")
-        try:
-            yield SimpleNamespace(get=get)
-        finally:
-            events.append("release")
+        return SimpleNamespace(privateUtaGetV3TradeStrategySubOrders=get), "session"
 
-    monkeypatch.setattr(native_client, "httpx_client", transport)
-    monkeypatch.setattr(native_client.BitgetClient, "_headers", lambda *_a, **_kw: {})
-    reader = BitgetNativeProtectionReader(_identity(_profile("bitget")), profile=profile)
+    async def close_ccxt(_exchange, _session):
+        events.append("release")
+
+    monkeypatch.setattr(native_client.BitgetClient, "_make_exchange", make_exchange)
+    monkeypatch.setattr(native_client, "close_ccxt", close_ccxt)
+    reader = BitgetNativeProtectionReader(_identity(_profile("bitget")))
     if request_fails:
         with pytest.raises(TimeoutError, match="synthetic request timeout"):
             await reader.get_plan_order_history(order_id="plan")

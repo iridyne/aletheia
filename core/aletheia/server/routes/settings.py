@@ -537,7 +537,6 @@ class ExchangeMarketsRequest(SettingsRequest):
     spot: bool
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
-    bitget_profile: Optional[str] = None
     confirm_exchange_divergence: bool = False
 
 
@@ -573,8 +572,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
     if req.paper_execution_mode is not None and req.paper_execution_mode not in DEMO_EXECUTION_MODES:
         allowed = ", ".join(sorted(DEMO_EXECUTION_MODES))
         raise HTTPException(400, f"paper_execution_mode must be one of: {allowed}")
-    if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
-        raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
     # Pre-validate outside the mutation lock to fail fast
     cfg_check = load_config()
     next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
@@ -600,19 +597,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
         if req.paper_execution_mode is not None:
             cfg.exchange.paper_execution_mode = req.paper_execution_mode
-        if req.bitget_profile is not None:
-            if req.bitget_profile != cfg.exchange.bitget_profile:
-                generations = dict(cfg.exchange.uta_account_config_generations)
-                # The profile is shared by both registered Bitget account
-                # identities. Advance each generation so cached UTA evidence
-                # for demo and live cannot survive a profile change.
-                from aletheia.config.exchanges import EXECUTION_MODE_VENUES
-
-                for execution_mode, venue in EXECUTION_MODE_VENUES.items():
-                    if venue == "bitget":
-                        generations[execution_mode] = generations.get(execution_mode, 0) + 1
-                cfg.exchange.uta_account_config_generations = generations
-            cfg.exchange.bitget_profile = req.bitget_profile
         return True
 
     _mutate_config_with_candidate_publication_permit(mutator)

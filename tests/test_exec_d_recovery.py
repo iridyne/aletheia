@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 @pytest.mark.parametrize("case", ["found", "missing", "partial"])
 async def test_bitget_recovers_exact_client_order_identity(monkeypatch, kind, case):
     from aletheia.uta.models import OrderQuery, ReadCompleteness

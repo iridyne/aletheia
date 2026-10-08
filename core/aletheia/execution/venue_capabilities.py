@@ -122,9 +122,9 @@ _demo_capabilities_lock = threading.Lock()
 def _capability_cache_key(execution_mode: str) -> str:
     """Cache identity: the execution mode **and** the profile that lists its symbols.
 
-    ``exchange.bitget_profile`` (``classic_v2`` | ``uta_v3``) exposes different
-    listings and can change while the process runs, so keying on ``execution_mode``
-    alone kept serving the previous profile's symbols until the TTL expired (#3475).
+    A venue's profile determines which listing it exposes, so keying on
+    ``execution_mode`` alone could serve another profile's symbols until the TTL
+    expired (#3475).
     The profile class is resolved through the same ``_profile_spec`` the order path
     uses, so the key cannot drift from the venue an order will actually meet; a mode
     whose profile cannot be resolved keeps its bare-mode identity (those modes have

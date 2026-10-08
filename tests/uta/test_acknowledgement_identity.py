@@ -12,7 +12,7 @@ from tests.uta.test_ccxt_adapter import (
 )
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 @pytest.mark.parametrize("external_id", [[], {}, True])
 async def test_bitget_sdk_coercion_does_not_acknowledge_invalid_native_id(monkeypatch, kind, external_id):
     exchange = ccxt.bitget()
@@ -41,7 +41,7 @@ async def test_bitget_sdk_coercion_does_not_acknowledge_invalid_native_id(monkey
 
 
 @pytest.mark.parametrize("operation", ["submit", "modify", "cancel"])
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3", "okx", "binance"])
+@pytest.mark.parametrize("kind", ["uta_v3", "okx", "binance"])
 @pytest.mark.parametrize("external_id", [[], {}, True, 1.5, "", "valid-order"])
 async def test_all_mutations_require_scalar_stable_normalized_identity(
     monkeypatch, kind, operation, external_id,

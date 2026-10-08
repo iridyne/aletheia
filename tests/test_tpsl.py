@@ -1,8 +1,7 @@
 """Native Bitget protocol and nonfatal qualified UTA protection failures."""
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlparse
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,248 +9,86 @@ import pytest
 # Native plan history and exact fills remain; protection mutations use UTA.
 
 
-def _make_client():
-    """Return a BitgetClient with mocked _headers (no real credentials needed).
+class _FakeUTAExchange:
+    def __init__(self, *, fills=None, sub_orders=None):
+        self.fills = fills
+        self.sub_orders = sub_orders
+        self.requests = []
 
-    classic_v2 profile: exercises the /api/v2/ mix TPSL endpoints directly.
-    """
+    async def privateUtaGetV3TradeFills(self, params):
+        self.requests.append(("fills", params))
+        return self.fills
+
+    async def privateUtaGetV3TradeStrategySubOrders(self, params):
+        self.requests.append(("sub_orders", params))
+        return self.sub_orders
+
+
+def _make_client(exchange):
+    """Return a BitgetClient whose UTA CCXT exchange is the given fake."""
     from extensions.exchanges.bitget.client import BitgetClient
-    c = BitgetClient.__new__(BitgetClient)
-    c._base = "https://api.bitget.com"
-    c._headers = lambda method, path, body="": {}
-    c.profile = "classic_v2"
-    c.mode = "demo"
-    c.demo = True
+    c = BitgetClient(mode="demo")
+    c._make_exchange = lambda: (exchange, MagicMock())  # type: ignore[method-assign]
     return c
 
 
+@pytest.fixture(autouse=True)
+def _no_ccxt_close(monkeypatch):
+    monkeypatch.setattr("extensions.exchanges.bitget.client.close_ccxt", AsyncMock())
+
+
 @pytest.mark.asyncio
-async def test_get_plan_order_history_requests_profit_loss_and_exact_plan_id():
-    """The history reader must query the TPSL family and exact plan identity."""
-    client = _make_client()
-    captured = {}
+async def test_get_plan_order_history_maps_uta_strategy_sub_orders_to_exact_plan_id():
+    """The history reader must query the exact parent plan and expose the executed child."""
+    exchange = _FakeUTAExchange(sub_orders={
+        "code": "00000",
+        "data": {"list": [{"subOrderId": "exec-456", "status": "filled"}]},
+    })
+    result = await _make_client(exchange).get_plan_order_history(order_id="plan-123")
 
-    async def mock_get(url, headers):
-        captured["url"] = url
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {
-                "entrustedList": [
-                    {
-                        "orderId": "plan-123",
-                        "planStatus": "executed",
-                        "executeOrderId": "exec-456",
-                    }
-                ]
-            },
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_plan_order_history(order_id="plan-123")
-
-    query = parse_qs(urlparse(captured["url"]).query)
-    assert query == {
-        "productType": ["USDT-FUTURES"],
-        "planType": ["profit_loss"],
-        "orderId": ["plan-123"],
-    }
+    assert exchange.requests == [("sub_orders", {"orderId": "plan-123", "limit": "100"})]
+    assert result[0]["orderId"] == "plan-123"
     assert result[0]["planStatus"] == "executed"
     assert result[0]["executeOrderId"] == "exec-456"
 
 
 @pytest.mark.asyncio
-async def test_get_order_fills_queries_exact_order_and_paginates_completely():
-    """Exact private fill history must preserve every page and its cursor."""
-    client = _make_client()
-    captured_urls = []
-    first_page = [
-        {
-            "orderId": "exec-456",
-            "tradeId": f"trade-{index}",
-            "fillPrice": "101",
-            "fillQuantity": "0.01",
-        }
-        for index in range(100)
-    ]
-    payloads = [
-        {
-            "code": "00000",
-            "data": {"fillList": first_page, "endId": "cursor-100"},
-        },
-        {
-            "code": "00000",
-            "data": {
-                "fillList": [
-                    {
-                        "orderId": "exec-456",
-                        "tradeId": "trade-100",
-                        "fillPrice": "102",
-                        "fillQuantity": "0.01",
-                    }
-                ],
-                "endId": "cursor-101",
-            },
-        },
-    ]
-
-    async def mock_get(url, headers):
-        captured_urls.append(url)
-        resp = MagicMock()
-        resp.json.return_value = payloads.pop(0)
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_order_fills(
-            order_id="exec-456",
-            symbol="BTCUSDT",
-            market_type="usdt_futures",
-        )
-
-    first_query = parse_qs(urlparse(captured_urls[0]).query)
-    second_query = parse_qs(urlparse(captured_urls[1]).query)
-    assert first_query == {
-        "productType": ["USDT-FUTURES"],
-        "symbol": ["BTCUSDT"],
-        "orderId": ["exec-456"],
-        "limit": ["100"],
-    }
-    assert second_query["idLessThan"] == ["cursor-100"]
-    assert len(result) == 101
-    assert result[-1]["tradeId"] == "trade-100"
-
-
-@pytest.mark.asyncio
-async def test_get_order_fills_rejects_full_page_without_next_cursor():
-    """A truncated private history page is not complete fill evidence."""
-    client = _make_client()
-
-    async def mock_get(url, headers):
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {
-                "fillList": [
-                    {"orderId": "exec-456", "tradeId": f"trade-{index}"}
-                    for index in range(100)
-                ]
-            },
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        with pytest.raises(RuntimeError, match="pagination incomplete"):
-            await client.get_order_fills(
-                order_id="exec-456",
-                symbol="BTCUSDT",
-                market_type="usdt_futures",
-            )
-
-
-@pytest.mark.asyncio
-async def test_get_order_fills_rejects_rows_for_another_order():
-    """An exact-order endpoint response cannot silently mix another Order."""
-    client = _make_client()
-
-    async def mock_get(url, headers):
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {
-                "fillList": [
-                    {"orderId": "another-order", "tradeId": "wrong-trade"}
-                ]
-            },
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_order_fills(
-            order_id="exec-456",
-            symbol="BTCUSDT",
-            market_type="usdt_futures",
-        )
-    assert result == []
-
-
-@pytest.mark.asyncio
 async def test_get_order_fills_uses_uta_v3_when_unified():
-    client = _make_client()
-    client.profile = "uta_v3"
-    captured = {}
+    exchange = _FakeUTAExchange(fills={
+        "code": "00000",
+        "data": {
+            "list": [
+                {"orderId": "uta-1", "execId": "fill-1", "fillPx": "1.12"},
+                {"orderId": "other", "execId": "fill-x", "fillPx": "9"},
+            ]
+        },
+    })
+    result = await _make_client(exchange).get_order_fills(
+        order_id="uta-1",
+        symbol="XRPUSDT",
+        market_type="usdt_futures",
+    )
 
-    async def mock_get(url, headers):
-        captured["url"] = url
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {
-                "list": [
-                    {"orderId": "uta-1", "execId": "fill-1", "fillPx": "1.12"},
-                    {"orderId": "other", "execId": "fill-x", "fillPx": "9"},
-                ]
-            },
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_order_fills(
-            order_id="uta-1",
-            symbol="XRPUSDT",
-            market_type="usdt_futures",
-        )
-
-    assert "/api/v3/trade/fills" in captured["url"]
-    query = parse_qs(urlparse(captured["url"]).query)
-    assert query["category"] == ["USDT-FUTURES"]
-    assert query["orderId"] == ["uta-1"]
+    assert exchange.requests == [("fills", {
+        "category": "USDT-FUTURES",
+        "symbol": "XRPUSDT",
+        "orderId": "uta-1",
+        "limit": "100",
+    })]
     assert [row["execId"] for row in result] == ["fill-1"]
 
 
 @pytest.mark.asyncio
 async def test_get_order_fills_uta_treats_null_list_as_empty():
-    client = _make_client()
-    client.profile = "uta_v3"
-
-    async def mock_get(url, headers):
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {"cursor": None, "list": None},
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_order_fills(
-            order_id="uta-empty",
-            symbol="XRPUSDT",
-            market_type="usdt_futures",
-        )
+    exchange = _FakeUTAExchange(fills={
+        "code": "00000",
+        "data": {"cursor": None, "list": None},
+    })
+    result = await _make_client(exchange).get_order_fills(
+        order_id="uta-empty",
+        symbol="XRPUSDT",
+        market_type="usdt_futures",
+    )
     assert result == []
 
 

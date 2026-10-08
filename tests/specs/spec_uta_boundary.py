@@ -120,8 +120,6 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
     from extensions.exchanges.binance.profile import BinanceLiveProfile
     from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
     from extensions.exchanges.bitget.profile import (
-        BitgetClassicV2LiveProfile,
-        BitgetClassicV2Profile,
         BitgetUTAV3LiveProfile,
         BitgetUTAV3Profile,
     )
@@ -168,7 +166,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
         OKXLiveProfile.mutation_post_only,
         OKXLiveProfile.mutation_client_order_id,
     ))
-    for profile in (BitgetClassicV2Profile, BitgetUTAV3Profile):
+    for profile in (BitgetUTAV3Profile,):
         assert all((
             profile.mutation_market_order,
             profile.mutation_limit_order,
@@ -183,7 +181,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
             profile.protection_replace,
             profile.protection_cancel,
         ))
-    for profile in (BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile):
+    for profile in (BitgetUTAV3LiveProfile,):
         assert all((
             profile.mutation_market_order,
             profile.mutation_limit_order,

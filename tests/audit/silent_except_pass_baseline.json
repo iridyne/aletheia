@@ -71,7 +71,7 @@
     },
     {
       "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
-      "line": 845,
+      "line": 822,
       "reason": "CancelledError/InvalidStateError while awaiting the shutdown recheck task is expected control flow"
     },
     {

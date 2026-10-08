@@ -23,9 +23,8 @@ from tests.uta.test_ccxt_adapter import (
 )
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
-async def test_get_positions_preserves_exchange_identity_and_open_time(monkeypatch, kind):
-    profile = _profile(kind)
+async def test_get_positions_preserves_exchange_identity_and_open_time(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     exchange.positions = [{
         "symbol": "BTC/USDT:USDT", "side": "long", "contracts": "50",
@@ -52,7 +51,7 @@ async def test_get_positions_preserves_exchange_identity_and_open_time(monkeypat
         await adapter.close()
 
 
-def _bitget_adapter(monkeypatch, kind):
+def _bitget_adapter(monkeypatch):
     """Actual CCXT codec, with local markets and no credential lookup."""
     exchange = ccxt.bitget()
     exchange.set_markets([{
@@ -67,30 +66,24 @@ def _bitget_adapter(monkeypatch, kind):
 
     exchange.load_markets = load
     _install(monkeypatch, exchange)
-    profile = _profile(kind)
+    profile = _profile("uta_v3")
     return CCXTUTAAdapter(_identity(profile), profile), exchange
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
 @pytest.mark.parametrize("position_side", ["long", "short"])
 @pytest.mark.parametrize("purpose", ["entry", "exit"])
 @pytest.mark.parametrize("post_only", [False, True])
 async def test_bitget_order_wire_preserves_entry_and_hedge_close_direction(
-    monkeypatch, kind, position_side, purpose, post_only
+    monkeypatch, position_side, purpose, post_only
 ):
-    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    adapter, exchange = _bitget_adapter(monkeypatch)
     identity = adapter.identity
     requests = []
 
-    async def classic(request):
-        requests.append(("classic_v2", request))
-        return {"code": "00000", "data": {"orderId": "wire-order-1"}}
-
     async def uta(request):
-        requests.append(("uta_v3", request))
+        requests.append(request)
         return {"code": "00000", "data": {"orderId": "wire-order-1"}}
 
-    exchange.privateMixPostV2MixOrderPlaceOrder = classic
     exchange.privateUtaPostV3TradePlaceOrder = uta
     opening_side = "buy" if position_side == "long" else "sell"
     closing_side = "sell" if position_side == "long" else "buy"
@@ -105,18 +98,11 @@ async def test_bitget_order_wire_preserves_entry_and_hedge_close_direction(
         ))
         assert report.evidence is CommandEvidence.ACKNOWLEDGED
         assert len(requests) == 1
-        family, body = requests[0]
-        assert family == kind
+        body = requests[0]
         assert body["symbol"] == "BTCUSDT"
         if post_only:
-            assert body["force" if kind == "classic_v2" else "timeInForce"] == "post_only"
-        if kind == "classic_v2":
-            assert body["marginCoin"] == "USDT"
-            assert body["productType"] == "USDT-FUTURES"
-            assert body["side"] == opening_side
-            assert body["tradeSide"] == ("Close" if purpose == "exit" else "Open")
-        else:
-            assert body["side"] == (closing_side if purpose == "exit" else opening_side)
-            assert body["posSide"] == position_side
+            assert body["timeInForce"] == "post_only"
+        assert body["side"] == (closing_side if purpose == "exit" else opening_side)
+        assert body["posSide"] == position_side
     finally:
         await adapter.close()

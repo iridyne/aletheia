@@ -176,7 +176,7 @@ class CCXTProfile:
     ) -> tuple[list[dict], str | None]:
         """Execute the window-aware ledger plan; return rows and any incomplete reason.
 
-        Profiles that cannot use fetch_ledger (e.g. Bitget classic_v2) override
+        Profiles that cannot use fetch_ledger override
         this method to use the appropriate exchange API instead.
         venue_symbol is passed for profiles that need a per-symbol endpoint.
         """

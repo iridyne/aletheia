@@ -537,7 +537,7 @@ def test_exchange_source_divergence_is_guarded_and_visible():
         "consumed through the fail-closed UTA VerifiedExitReport contract.",
     ),
 )
-@pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance"])
+@pytest.mark.parametrize("venue", ["uta_v3", "okx", "binance"])
 @pytest.mark.parametrize("case", ["complete", "network_error", "full_unpageable", "expired", "wrong_account"])
 async def test_verified_exit_private_history_is_registered_and_bounded(monkeypatch, venue, case):
     from tests.test_verified_exit import test_uta_verified_exit_preserves_private_evidence_boundary

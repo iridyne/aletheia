@@ -133,7 +133,8 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
    venue order id,带起始时间)一个**同一旧代次、本地已成交**的 Order。被怀疑的 Order 自己"没找到"
    **不是**证明——换成另一个物理账户,同一个 client order id 也查不到。
 
-没有证明、`DIFFERENT`、身份未绑定或格式错误一律 fail closed:不 relabel、不提交。证明读取依赖
+没有证明、`DIFFERENT`、身份未绑定或格式错误一律 fail closed:不 relabel、不提交。
+同一 venue 的账户 profile 在运行时**不可切换**(#3806):账户事实里的 `profile` 对 Bitget 恒为 `uta_v3`;历史行里的 `classic_v2` 只是已落库的事实,按 `DIFFERENT` 处理,不重标。证明读取依赖
 各 venue profile 声明的精确读取能力(`client_order_lookup_param` / 历史扫描与
 `private_history_retention_days`);profile 不能给出完整的精确读取时证明不可得,系统保持 fail
 closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 profile 中声明这些能力。
@@ -145,7 +146,7 @@ closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 p
 | Adapter | 支持 market_type | 路由要点 | 来源 |
 |---------|-----------------|----------|------|
 | okx | `spot` + `usdt_futures` | UTA profile 处理精确 contract-size、client-id 与 spot/perp 参数；实际可用性仍由 venue facts 与资格约束 | `extensions/exchanges/okx/profile.py` |
-| bitget | profile 声明 `spot` + `usdt_futures` | Classic v2 / UTA v3 明确隔离；声明能力不代表 demo 标的或凭据已合格 | `extensions/exchanges/bitget/profile.py` |
+| bitget | profile 声明 `spot` + `usdt_futures` | 只有 UTA v3 一个账户 profile(#3806 删除了 Classic v2 与运行时切换);声明能力不代表 demo 标的或凭据已合格 | `extensions/exchanges/bitget/profile.py` |
 
 > **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
 > 当前 market_type 来自 canonical Candidate/EntryPlan 的 exact instrument；不存在旧 PI fallback 类型选择。
@@ -236,7 +237,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 ```
 位置：`execution/coordinator.py`。提交前持久化 exact `uta_account_identity_json`；历史 NULL 不按当前配置补造身份。
 
-`SubmitOrderCommand.reference_price` 只携带已批准的数量/价格对应的参考价格，不是市价单的 limit price。仅 Classic v2 futures entry 在同一已验证账户内按 `quantity × reference_price / leverage` 准备钱包保证金；缺少参考价格不得推测转账金额，UTA v3 不走 Classic 钱包转账。准备失败必须为 `NOT_SENT`，不得留下未知提交或伪造成交。
+`SubmitOrderCommand.reference_price` 只携带已批准的数量/价格对应的参考价格，不是市价单的 limit price。UTA v3 不做钱包划转，`reference_price` 缺失不得推测任何金额。准备失败必须为 `NOT_SENT`，不得留下未知提交或伪造成交。
 
 第 1 步的 `pending` 不是“还没发生所以可忽略”。它代表真实提交是否发生仍未知，必须一直留在 Risk
 工作集中：在对应 live/demo 池占用入场槽位和同符号权利，并把尚未由 open Position 表示的数量加入
@@ -832,7 +833,7 @@ state。每轮仍有明确 scan/I/O 上限，不能以扩大 `LIMIT` 代替公�
 ## 12. Unified Trading Account V1 migration boundary
 
 Issue #2299 及已批准的唯一主线切换保留 Gateway、Risk 与本地存储权威。六种外部
-execution_mode 仅使用 CCXTUTAAdapter；Bitget Classic v2 与 UTA v3 保留明确 profile 隔离。
+execution_mode 仅使用 CCXTUTAAdapter；Bitget 只有 UTA v3 一个 profile。
 按 owner 接受的 #3035，Demo/Testnet mutation 不要求 SHA-bound 本地资格证书。
 账户配置不证明运行或经济资格；执行权限由现有 authoritative Risk、Gateway、exact UTA
 账户绑定与 durable command/reconciliation 规则共同决定。Live 仍独立受既有 Live Trust

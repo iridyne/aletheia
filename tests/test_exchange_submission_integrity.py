@@ -574,7 +574,6 @@ async def test_ccxt_bad_response_from_uta_remains_ambiguous(monkeypatch, venue):
         await adapter.close()
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
 @pytest.mark.parametrize("payload", [
     {"code": "00000", "data": {"clientOid": "proposal-1"}},
     {"code": "00000", "data": []},
@@ -585,12 +584,12 @@ async def test_ccxt_bad_response_from_uta_remains_ambiguous(monkeypatch, venue):
     ccxt.BadResponse("synthetic unreadable acknowledgement"),
 ])
 async def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
-    monkeypatch, kind, payload,
+    monkeypatch, payload,
 ):
     from tests.test_bitget_adapter import _bitget_adapter
     from tests.uta.test_ccxt_adapter import _bitget_command
 
-    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    adapter, exchange = _bitget_adapter(monkeypatch)
     calls = []
 
     async def response(request):
@@ -599,7 +598,6 @@ async def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
             raise payload
         return payload
 
-    exchange.privateMixPostV2MixOrderPlaceOrder = response
     exchange.privateUtaPostV3TradePlaceOrder = response
     try:
         report = await adapter.submit_order(_bitget_command(adapter.identity, leverage=None, quantity="1"))
@@ -611,15 +609,14 @@ async def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
         await adapter.close()
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
 @pytest.mark.parametrize("code,purpose", [
     ("40017", "entry"), ("22002", "exit"), ("25227", "exit"),
 ])
-async def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch, kind, code, purpose):
+async def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch, code, purpose):
     from tests.test_bitget_adapter import _bitget_adapter
     from tests.uta.test_ccxt_adapter import _bitget_command
 
-    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    adapter, exchange = _bitget_adapter(monkeypatch)
 
     async def rejected(request):
         response = {"code": code, "msg": "synthetic rejection", "data": None}
@@ -627,7 +624,6 @@ async def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch,
                                json.dumps(response), response, {}, None)
         raise AssertionError("expected CCXT rejection")
 
-    exchange.privateMixPostV2MixOrderPlaceOrder = rejected
     exchange.privateUtaPostV3TradePlaceOrder = rejected
     try:
         report = await adapter.submit_order(_bitget_command(

@@ -1,4 +1,4 @@
-"""Native UTA-v3 protection-history reads and configured profile plumbing.
+"""Native UTA-v3 protection-history reads.
 
 Trading, account, funding and verified-exit behavior belongs to UTA. Its tests
 exercise current profile semantics rather than the retired native client API.
@@ -45,8 +45,8 @@ def _install_ccxt(monkeypatch, exchange) -> None:
     monkeypatch.setattr(bg, "close_ccxt", _close_ccxt)
 
 
-def _client(profile="uta_v3") -> BitgetClient:
-    return BitgetClient(mode="demo", profile=profile)
+def _client() -> BitgetClient:
+    return BitgetClient(mode="demo")
 
 
 def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
@@ -67,7 +67,7 @@ def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
     ])
     _install_ccxt(monkeypatch, exchange)
     result = asyncio.run(
-        _client("uta_v3").get_plan_order_history(
+        _client().get_plan_order_history(
             symbol="BTCUSDT", order_id="PLAN-7"
         )
     )
@@ -81,7 +81,7 @@ def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
 
 def test_get_plan_order_history_uta_v3_requires_parent_order_id():
     with pytest.raises(ValueError, match="requires order_id"):
-        asyncio.run(_client("uta_v3").get_plan_order_history())
+        asyncio.run(_client().get_plan_order_history())
 
 
 def test_get_plan_order_history_uta_v3_paginates_strategy_children(monkeypatch):
@@ -95,7 +95,7 @@ def test_get_plan_order_history_uta_v3_paginates_strategy_children(monkeypatch):
     ])
     _install_ccxt(monkeypatch, exchange)
     result = asyncio.run(
-        _client("uta_v3").get_plan_order_history(order_id="PLAN-PAGED")
+        _client().get_plan_order_history(order_id="PLAN-PAGED")
     )
 
     assert len(result) == 101
@@ -103,25 +103,17 @@ def test_get_plan_order_history_uta_v3_paginates_strategy_children(monkeypatch):
     assert exchange.calls[-1] == {"orderId": "PLAN-PAGED", "limit": "100", "cursor": "SUB-99"}
 
 
-def _use_profile(tmp_path, monkeypatch, profile):
-    """Point config at tmp_path and set the requested bitget_profile."""
+def test_stale_bitget_profile_key_is_dropped_on_load(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import load_config
+    from aletheia.config.schema import ExchangeConfig
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "config.yaml").write_text("exchange:\n  bitget_profile: classic_v2\n")
     cfg = load_config()
-    cfg.exchange.bitget_profile = profile
-    save_config(cfg)
-
-
-def test_configured_profile_helper_reads_config(tmp_path, monkeypatch):
-    from extensions.exchanges.bitget.profile_config import configured_bitget_profile
-
-    _use_profile(tmp_path, monkeypatch, "uta_v3")
-    assert configured_bitget_profile() == "uta_v3"
-    _use_profile(tmp_path, monkeypatch, "classic_v2")
-    assert configured_bitget_profile() == "classic_v2"
+    assert "bitget_profile" not in ExchangeConfig.model_fields
+    assert not hasattr(cfg.exchange, "bitget_profile")
 
 
 def test_funding_recovery_has_no_venue_client_compatibility_layer():

@@ -312,6 +312,26 @@ def test_removed_entry_keys_are_persisted_once_when_requested(tmp_path):
     assert persisted["exchange"]["uta_account_config_generations"] == {"bitget_demo": 7}
     assert not {"runtime_continuity_enabled", "runtime_continuity_lock_ttl_sec", "runtime_continuity_shadow_port_offset"}.intersection(persisted["runtime"])
 
+def test_removed_bitget_profile_key_is_dropped_once(tmp_path):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["exchange"]["bitget_profile"] = "uta_v3"
+    config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
+        loader, "CONFIG_PATH", config_file
+    ), patch.object(loader, "_config_cache", None):
+        loader.load_config()
+        persisted = config_file.read_text(encoding="utf-8")
+        assert "bitget_profile" not in yaml.safe_load(persisted)["exchange"]
+
+        with patch.object(loader, "_config_cache", None):
+            loader.load_config()
+        assert config_file.read_text(encoding="utf-8") == persisted
+
+
 def test_strict_config_load_preserves_dynamic_mappings(tmp_path):
     config_file = tmp_path / "config.yaml"
     data = AletheiaConfig().model_dump(mode="json")

@@ -383,6 +383,11 @@ def load_config(
         removed_uta_boundary = isinstance(exchange, dict) and "uta_read_boundaries" in exchange
         if removed_uta_boundary:
             del exchange["uta_read_boundaries"]
+        # Bitget has one account profile (uta_v3); the switch that selected between
+        # two was removed (#3806). The key must be dropped, not assumed ignorable.
+        removed_bitget_profile = isinstance(exchange, dict) and "bitget_profile" in exchange
+        if isinstance(exchange, dict):
+            exchange.pop("bitget_profile", None)
         runtime = raw.get("runtime")
         retired_runtime_keys = {"runtime_continuity_enabled", "runtime_continuity_lock_ttl_sec", "runtime_continuity_shadow_port_offset"}
         removed_runtime_keys = retired_runtime_keys.intersection(runtime) if isinstance(runtime, dict) else set()
@@ -438,7 +443,7 @@ def load_config(
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
         changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
                    or removed_serenity_stop or removed_strategy_factory
-                   or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated
+                   or removed_uta_boundary or removed_bitget_profile or removed_runtime_keys or candidate_selection_migrated
                    or removed_operator_loop)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.

@@ -10,6 +10,7 @@ from time import monotonic
 import time
 
 import ccxt
+from typing import cast
 import pytest
 
 from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
@@ -33,8 +34,6 @@ from aletheia.uta.models import (
 from extensions.exchanges.binance.profile import BinanceLiveProfile, BinanceTestnetProfile
 from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
 from extensions.exchanges.bitget.profile import (
-    BitgetClassicV2LiveProfile,
-    BitgetClassicV2Profile,
     BitgetUTAV3LiveProfile,
     BitgetUTAV3Profile,
 )
@@ -186,8 +185,6 @@ def _profile(kind):
     credentials["passphrase"] = "passphrase"
     if kind == "okx":
         return OKXDemoProfile(**credentials)
-    if kind == "classic_v2":
-        return BitgetClassicV2Profile(**credentials)
     return BitgetUTAV3Profile(**credentials)
 
 
@@ -219,8 +216,7 @@ def _install(monkeypatch, exchange):
 
 
 @pytest.mark.parametrize("profile_cls,supported", [
-    (BitgetClassicV2Profile, True), (BitgetUTAV3Profile, True),
-    (BitgetClassicV2LiveProfile, True), (BitgetUTAV3LiveProfile, True),
+    (BitgetUTAV3Profile, True), (BitgetUTAV3LiveProfile, True),
     (BinanceTestnetProfile, False), (BinanceLiveProfile, False),
     (OKXDemoProfile, False), (OKXLiveProfile, False),
 ])
@@ -240,7 +236,7 @@ def test_match_cap_close_fallback_is_explicit_profile_capability(profile_cls, su
     assert UTACapabilities(source="undeclared").match_cap_close_fallback is CapabilitySupport.UNKNOWN
 
 
-@pytest.mark.parametrize("kind", ["binance", "okx", "classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["binance", "okx", "uta_v3"])
 @pytest.mark.asyncio
 async def test_profiles_construct_on_active_loop_and_enable_demo_before_first_request(
     monkeypatch, kind
@@ -363,71 +359,40 @@ async def test_open_orders_keep_spot_and_perp_identity_distinct(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bitget_profiles_never_mix_v2_and_v3_request_families(monkeypatch):
-    for kind, expected_uta in (("classic_v2", False), ("uta_v3", True)):
-        profile = _profile(kind)
-        exchange = FakeExchange()
-        exchange.balance_responses = [
-            {"total": {"USDT": "0"}, "free": {"USDT": "0"}, "used": {"USDT": "0"}, "info": []}
-            for _ in profile.balance_requests
-        ]
-        exchange.positions = []
-        exchange.order_responses = [[] for _ in profile.open_order_requests]
-        _install(monkeypatch, exchange)
-        adapter = CCXTUTAAdapter(_identity(profile), profile)
-
-        await adapter.get_account()
-        await adapter.get_positions()
-        await adapter.get_open_orders()
-
-        all_params = exchange.balance_params + exchange.position_calls + exchange.order_params
-        assert all(bool(params.get("uta", False)) is expected_uta for params in all_params)
-        assert profile.client_options()["options"]["uta"] is expected_uta
-        await adapter.close()
-
-
-@pytest.mark.asyncio
-async def test_multi_surface_failure_is_partial_not_empty_complete(monkeypatch):
-    profile = _profile("classic_v2")
+async def test_bitget_profile_only_uses_v3_request_family(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     exchange.balance_responses = [
-        {"total": {"USDT": "0"}, "free": {"USDT": "0"}, "used": {"USDT": "0"}, "info": []},
-        TimeoutError(),
+        {"total": {"USDT": "0"}, "free": {"USDT": "0"}, "used": {"USDT": "0"}, "info": []}
+        for _ in profile.balance_requests
     ]
-    exchange.order_responses = [[], TimeoutError()]
+    exchange.positions = []
+    exchange.order_responses = [[] for _ in profile.open_order_requests]
     _install(monkeypatch, exchange)
     adapter = CCXTUTAAdapter(_identity(profile), profile)
 
-    account = await adapter.get_account()
-    orders = await adapter.get_open_orders()
+    await adapter.get_account()
+    await adapter.get_positions()
+    await adapter.get_open_orders()
 
-    assert account.completeness is ReadCompleteness.PARTIAL
-    assert account.reason_code == "account_surface_partial"
-    assert orders.completeness is ReadCompleteness.PARTIAL
-    assert orders.reason_code == "open_order_surface_partial"
+    all_params = exchange.balance_params + exchange.position_calls + exchange.order_params
+    assert all(params.get("uta") is True for params in all_params)
+    assert cast(dict, profile.client_options()["options"])["uta"] is True
     await adapter.close()
 
 
 @pytest.mark.asyncio
-async def test_classic_mix_only_partial_does_not_double_count_as_spot(monkeypatch):
-    profile = _profile("classic_v2")
+async def test_multi_surface_failure_is_partial_not_empty_complete(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
-    exchange.balance_responses = [
-        TimeoutError(),
-        {
-            "total": {"USDT": "10"},
-            "free": {"USDT": "8"},
-            "used": {"USDT": "2"},
-            "info": [{"usdtEquity": "10"}],
-        },
-    ]
+    exchange.order_responses = [[], TimeoutError()]
     _install(monkeypatch, exchange)
     adapter = CCXTUTAAdapter(_identity(profile), profile)
 
-    report = await adapter.get_account()
+    orders = await adapter.get_open_orders()
 
-    assert report.completeness is ReadCompleteness.PARTIAL
-    assert report.equity == Decimal("10")
+    assert orders.completeness is ReadCompleteness.PARTIAL
+    assert orders.reason_code == "open_order_surface_partial"
     await adapter.close()
 
 
@@ -490,9 +455,8 @@ async def test_private_request_timeout_is_cooperative_and_unavailable(monkeypatc
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ("okx", "classic_v2"))
-async def test_funding_private_request_uses_adapter_deadline(monkeypatch, kind):
-    profile = _profile(kind)
+async def test_funding_private_request_uses_adapter_deadline(monkeypatch):
+    profile = _profile("okx")
     exchange = FakeExchange()
     cancelled = False
 
@@ -505,8 +469,7 @@ async def test_funding_private_request_uses_adapter_deadline(monkeypatch, kind):
             raise
         return []
 
-    method = "fetch_funding_history" if kind == "classic_v2" else "fetch_ledger"
-    monkeypatch.setattr(exchange, method, stalled_read, raising=False)
+    monkeypatch.setattr(exchange, "fetch_ledger", stalled_read, raising=False)
     _install(monkeypatch, exchange)
     adapter = CCXTUTAAdapter(_identity(profile), profile, request_timeout=0.001)
     try:
@@ -818,47 +781,6 @@ async def test_okx_recent_funding_window_uses_only_recent_surface(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("limit", "row_count", "page_limit", "partial"), (
-    (1, 1, 1, True),
-    (10, 1, 10, False),
-    (None, 1, 100, False),
-    (1000, 1, 100, False),
-    (1000, 100, 100, True),
-))
-async def test_classic_funding_keeps_symbol_bound_read_and_completeness(
-    monkeypatch, limit, row_count, page_limit, partial,
-):
-    profile = _profile("classic_v2")
-    exchange = FakeExchange()
-    now = datetime.now(timezone.utc)
-    scope = _funding_scope(now, age_days=2).model_copy(update={"limit": limit})
-    calls = []
-
-    async def funding_history(symbol, since, requested_limit):
-        calls.append((symbol, since, requested_limit))
-        return [{"info": {
-            "billId": f"funding-{i:03}", "symbol": "BTCUSDT", "amount": "-0.02",
-            "coin": "USDT", "businessType": "contract_settle_fee",
-            "cTime": int((now - timedelta(days=1)).timestamp() * 1000),
-        }} for i in range(row_count)]
-
-    monkeypatch.setattr(exchange, "fetch_funding_history", funding_history, raising=False)
-    _install(monkeypatch, exchange)
-    adapter = CCXTUTAAdapter(_identity(profile), profile)
-    try:
-        report = await adapter.get_funding_ledger(FundingLedgerQuery(scope=scope))
-    finally:
-        await adapter.close()
-    assert calls == [("BTC/USDT:USDT", int(scope.start_at.timestamp() * 1000), page_limit)]
-    assert [(entry.venue_ledger_id, entry.amount) for entry in report.entries] == [
-        (f"funding-{i:03}", Decimal("-0.02")) for i in range(row_count)
-    ]
-    assert report.completeness is (ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE)
-    assert report.reason_code == ("funding_history_bound_reached" if partial else None)
-
-
-
-@pytest.mark.asyncio
 async def test_funding_window_before_profile_retention_is_typed_partial(
     monkeypatch,
 ):
@@ -1074,7 +996,7 @@ async def test_bitget_hedge_close_normalizes_same_side_leg(
     monkeypatch, direction, fill_side, trade_side, position_mode,
     expected_state, expected_leg,
 ):
-    profile = _profile("classic_v2")
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     now = datetime.now(timezone.utc)
     info = {"tradeSide": trade_side}
@@ -1245,12 +1167,9 @@ def _bitget_command(identity, **updates):
     return SubmitOrderCommand(**values)
 
 
-@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
 @pytest.mark.asyncio
-async def test_bitget_mutations_keep_contract_units_and_endpoint_family(
-    monkeypatch, kind, expected_uta
-):
-    profile = _profile(kind)
+async def test_bitget_mutations_keep_contract_units_and_endpoint_family(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     exchange.create_response = {
         "id": "bitget-order-1",
@@ -1291,18 +1210,15 @@ async def test_bitget_mutations_keep_contract_units_and_endpoint_family(
         "hedged": True,
         "marginMode": "cross",
         "reduceOnly": True,
-        "uta": expected_uta,
+        "uta": True,
     }
     assert not any(event[0] == "set_leverage" for event in exchange.events)
     await adapter.close()
 
 
-@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
 @pytest.mark.asyncio
-async def test_bitget_entry_sets_profile_bound_leverage_before_send(
-    monkeypatch, kind, expected_uta
-):
-    profile = _profile(kind)
+async def test_bitget_entry_sets_profile_bound_leverage_before_send(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     exchange.create_response = {
         "id": "bitget-entry-1",
@@ -1338,7 +1254,7 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(
         "set_leverage",
         3,
         "BTC/USDT:USDT",
-        {"uta": expected_uta},
+        {"uta": True},
     )
     assert exchange.events[3][1][5] == {
         "clientOrderId": "bitget-client-1",
@@ -1346,7 +1262,7 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(
         "marginMode": "cross",
         "stopLoss": {"triggerPrice": "49000"},
         "takeProfit": {"triggerPrice": "62000"},
-        "uta": expected_uta,
+        "uta": True,
     }
     await adapter.close()
 
@@ -1442,12 +1358,9 @@ async def test_bitget_still_rejects_off_grid_quantity_on_unit_contract_market(mo
     await adapter.close()
 
 
-@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
 @pytest.mark.asyncio
-async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
-    monkeypatch, kind, expected_uta
-):
-    profile = _profile(kind)
+async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(monkeypatch):
+    profile = _profile("uta_v3")
     exchange = FakeExchange()
     exchange.create_response = {
         "id": "bitget-stop-1",
@@ -1519,25 +1432,22 @@ async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
         "marginMode": "cross",
         "reduceOnly": True,
         "stopLossPrice": "49000",
-        "uta": expected_uta,
+        "uta": True,
     }
     edit = next(event for event in exchange.events if event[0] == "edit_order")
-    assert edit[1][4:7] == (Decimal("3"), Decimal("51000"), {"uta": expected_uta})
+    assert edit[1][4:7] == (Decimal("3"), Decimal("51000"), {"uta": True})
     cancel = next(event for event in exchange.events if event[0] == "cancel_order")
     assert cancel[1] == (
         "bitget-order-1",
         "BTC/USDT:USDT",
-        {"trigger": True, "uta": expected_uta},
+        {"trigger": True, "uta": True},
     )
     await adapter.close()
 
 
-@pytest.mark.parametrize(
-    "profile_type", [BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile]
-)
 @pytest.mark.asyncio
-async def test_bitget_live_profiles_expose_phase_seven_mutations(profile_type, monkeypatch):
-    profile = profile_type(api_key="key", secret="secret", passphrase="passphrase")
+async def test_bitget_live_profiles_expose_phase_seven_mutations(monkeypatch):
+    profile = BitgetUTAV3LiveProfile(api_key="key", secret="secret", passphrase="passphrase")
     exchange = FakeExchange()
     exchange.create_response = {
         "id": "bitget-live-1",
@@ -1699,7 +1609,7 @@ async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
     assert live_adapter.capabilities.native_tpsl.value == "supported"
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3", "okx"])
+@pytest.mark.parametrize("kind", ["uta_v3", "okx"])
 @pytest.mark.asyncio
 async def test_native_trigger_prices_reach_ccxt_as_safe_string_values(monkeypatch, kind):
     """A Decimal trigger price reaches CCXT as a value ``safe_string`` accepts.
@@ -1984,65 +1894,7 @@ def test_profile_rejects_execution_mode_identity_mismatch():
         CCXTUTAAdapter(wrong, profile)
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["funded", "topup", "missing_balance", "transfer_rejected", "no_reference", "uta_v3"])
-async def test_classic_margin_preparation_uses_only_proven_account_local_funds(monkeypatch, case):
-    import ccxt.async_support as ccxt
-    from aletheia.uta.compat import instrument_from_local
-    from aletheia.uta.models import SubmitOrderCommand
-    exchange = ccxt.bitget()
-    exchange.set_markets([{"id":"BTCUSDT", "symbol":"BTC/USDT:USDT", "base":"BTC", "quote":"USDT", "settle":"USDT", "type":"swap", "spot":False, "swap":True, "future":False, "option":False, "contract":True, "linear":True, "inverse":False, "contractSize":1}])
-    events = []
-    async def load(*args, **kwargs):
-        return exchange.markets
-    async def balance(params):
-        events.append(("balance", params))
-        return {"code":"00000", "data": [] if case == "missing_balance" else [{"marginCoin":"USDT", "available":"20" if case == "funded" else "2", "accountEquity":"20", "locked":"0"}]}
-    async def transfer(params):
-        events.append(("transfer", params))
-        if case == "transfer_rejected":
-            raise ccxt.InsufficientFunds("isolated transfer denied")
-        return {"code":"00000", "data":{"transferId":"same-account-transfer"}}
-    async def leverage(params):
-        events.append(("leverage", params))
-        return {"code":"00000", "data":{}}
-    async def create(symbol, order_type, side, quantity, price, params):
-        events.append(("order", {"type":order_type, "price":price}))
-        return {"id":"entry-1", "symbol":symbol, "status":"open", "type":order_type, "side":side, "amount":quantity, "filled":0}
-    exchange.load_markets = load
-    exchange.privateMixGetV2MixAccountAccounts = balance
-    exchange.privateSpotPostV2SpotWalletTransfer = transfer
-    exchange.privateMixPostV2MixAccountSetLeverage = leverage
-    exchange.privateUtaPostV3AccountSetLeverage = leverage
-    exchange.create_order = create
-    _install(monkeypatch, exchange)
-    profile = _profile("uta_v3" if case == "uta_v3" else "classic_v2")
-    identity = _identity(profile)
-    adapter = CCXTUTAAdapter(identity, profile)
-    try:
-        report = await adapter.submit_order(SubmitOrderCommand(command_id="margin-entry", expected_account=identity, instrument=instrument_from_local("BTC/USDT", "usdt_futures"), purpose="entry", side="buy", quantity="1", order_type="market", reference_price=None if case == "no_reference" else "100", leverage="10"))
-        names = [name for name, _ in events]
-        if case in {"missing_balance", "transfer_rejected"}:
-            assert report.evidence is CommandEvidence.NOT_SENT
-            assert "order" not in names
-            if case == "missing_balance":
-                assert report.reason_code == "classic_margin_balance_unavailable"
-                assert "transfer" not in names
-        else:
-            assert report.evidence is CommandEvidence.ACKNOWLEDGED
-            assert events[-1] == ("order", {"type":"market", "price":None})
-        if case in {"topup", "transfer_rejected"}:
-            request = next(params for name, params in events if name == "transfer")
-            assert request == {"fromType":"spot", "toType":"usdt_futures", "amount":"8.00", "coin":"USDT"}
-        else:
-            assert "transfer" not in names
-        if case in {"no_reference", "uta_v3"}:
-            assert "balance" not in names
-    finally:
-        await adapter.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind,code,purpose,absent", [("classic_v2","22002","exit",True), ("classic_v2","45110","exit",False), ("uta_v3","45110","exit",True), ("uta_v3","22002","entry",False)])
+@pytest.mark.parametrize("kind,code,purpose,absent", [("uta_v3","45110","exit",True), ("uta_v3","22002","entry",False)])
 async def test_bitget_exact_close_absence_codes_preserve_profile_and_purpose(monkeypatch, kind, code, purpose, absent):
     import ccxt
     import json
@@ -2117,15 +1969,14 @@ async def test_private_read_failure_logs_only_safe_diagnostics(monkeypatch, capl
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("profile_type,uta", [(BitgetClassicV2Profile, False), (BitgetUTAV3Profile, True)])
-async def test_bitget_fill_pages_respect_venue_row_cap(profile_type, uta):
+async def test_bitget_fill_pages_respect_venue_row_cap():
     """Bitget answers `40020 Parameter limit error` above 100 rows per fill request on
     both faces (#3564; the Fedora runtime runs uta_v3). CCXT's `paginate` sizes each
     request from `maxEntriesPerRequest`, not `limit`, so the real outgoing request is
     what must carry the cap."""
     import ccxt.async_support as ccxt_async
 
-    exchange = ccxt_async.bitget({"apiKey": "k", "secret": "s", "password": "p", "options": {"uta": uta}})
+    exchange = ccxt_async.bitget({"apiKey": "k", "secret": "s", "password": "p", "options": {"uta": True}})
     sent: list[str] = []
 
     async def transport(url, method="GET", headers=None, body=None):
@@ -2140,7 +1991,7 @@ async def test_bitget_fill_pages_respect_venue_row_cap(profile_type, uta):
         "inverse": False, "active": True, "precision": {"amount": 0.001, "price": 0.1},
         "limits": {}, "info": {},
     }])
-    profile = profile_type(api_key="k", secret="s", passphrase="p")
+    profile = BitgetUTAV3Profile(api_key="k", secret="s", passphrase="p")
     now_ms = int(time.time() * 1000)
     try:
         await profile.fetch_fills(

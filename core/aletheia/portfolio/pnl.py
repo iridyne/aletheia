@@ -477,8 +477,8 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     from aletheia.data import price_feed as _pf
 
     if positions and exc_upnl_index == {}:
-        # Index is empty while we have local positions. Common cause: exchange
-        # profile mismatch (e.g. uta_v3 config but positions on classic_v2).
+        # Index is empty while we have local positions. Common cause: the exchange
+        # view is unavailable or does not hold the account's positions.
         # Log once so the operator can diagnose without inspecting the DB.
         try:
             from aletheia.portfolio import exchange_sync as _es
@@ -497,7 +497,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         logger.warning(
             "pnl: exchange uPnL index empty but %d local position(s) need marking "
             "(exchange view positions=%s, active profile=%s); "
-            "check exchange.bitget_profile matches the account face holding positions",
+            "check the exchange view holds the account the positions belong to",
             len(positions),
             _exchange_count,
             _profile,

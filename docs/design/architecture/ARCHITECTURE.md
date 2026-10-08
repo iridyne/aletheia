@@ -93,7 +93,7 @@ flowchart TD
 [`unified_trading_account.md`](../proposals/unified_trading_account.md) 已接受
 完整 UTA 设计，取代“UTA 仅只读”这一旧决策。UTA 是六个现有外部执行模式的唯一
 私有账户读路径；Gateway 的授权变更通过通用 Coordinator 和 `CCXTUTAAdapter`，
-本地 storage 保留事实与 CAS。Binance、OKX、Bitget Classic-v2 与 UTA-v3 的差异
+本地 storage 保留事实与 CAS。Binance、OKX 与 Bitget UTA-v3 的差异
 限制在 `extensions/exchanges/{venue}/profile.py` 与 venue-native exception，返回 Core 可消费的规范化 DTO；
 不存在 legacy/shadow selector 或私有 broker fallback。
 

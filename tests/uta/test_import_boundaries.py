@@ -42,7 +42,7 @@ def test_exchange_compartment_has_no_core_forwarding_path(current, retired):
     ("extensions.exchanges.composition", ("extensions.exchanges.bitget",),
      "from aletheia.config.schema import ExchangeConfig\ncfg = SimpleNamespace(exchange=ExchangeConfig())\nassert module.build_uta_registry(cfg, execution_modes=('bitget_demo',)).configured_identities() == ()"),
     ("extensions.exchanges.composition", ("extensions.exchanges.binance.profile", "extensions.exchanges.okx.profile"),
-     "assert module.funding_history_retention_contract('bitget_demo', cfg=SimpleNamespace(exchange=SimpleNamespace(bitget_profile='classic_v2'))) == (90, '1')"),
+     "assert module.funding_history_retention_contract('bitget_demo', cfg=SimpleNamespace(exchange=SimpleNamespace())) == (90, '1')"),
 ])
 def test_uta_import_does_not_require_unselected_implementations(target, blocked, action):
     script = f"""
@@ -78,7 +78,7 @@ def test_venue_profile_has_one_extension_implementation(venue):
         importlib.import_module(f"aletheia.uta.profiles.{venue}")
 
 
-@pytest.mark.parametrize("name", ["client", "native_protection", "profile_config"])
+@pytest.mark.parametrize("name", ["client", "native_protection"])
 def test_native_bitget_has_one_extension_implementation(name):
     import importlib
 
