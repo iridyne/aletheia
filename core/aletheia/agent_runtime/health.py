@@ -432,6 +432,21 @@ def compute_health() -> dict:
         )
         initializing.append("broker_funding_recovery_unknown")
 
+    try:
+        from aletheia.execution.liveness import (
+            identity_blocked_modes, overdue_orders, retry_storm_proposals,
+        )
+
+        if overdue := overdue_orders():
+            issues.append(f"execution_orders_overdue:{len(overdue)}")
+        if blocked := identity_blocked_modes():
+            issues.append(f"execution_identity_gate_blocked:{','.join(blocked)}")
+        if storm := retry_storm_proposals():
+            issues.append(f"execution_retry_storm:{len(storm)}")
+    except Exception as exc:
+        logger.warning("execution liveness health probe failed: %s", type(exc).__name__)
+        initializing.append("execution_liveness_unknown")
+
     if not issues and not initializing:
         status = "healthy"
     elif not issues:

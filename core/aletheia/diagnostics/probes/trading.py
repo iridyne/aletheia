@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 __all__ = [
     "_probe_candidate_planning",
     "_probe_concentration",
+    "_probe_execution_liveness",
     "_probe_filter_evidence",
     "_probe_health",
     "_probe_knowledge_flood",
@@ -595,6 +596,45 @@ def _probe_persona_rollout(report: Report) -> None:
             report.add("loop.persona_rollout", "info", detail)
     except Exception as e:
         report.add("loop.persona_rollout", "info", f"probe error: {e}")
+
+
+def _probe_execution_liveness(report: Report) -> None:
+    """Can an entry still get through; is any Order stuck; does the funnel produce fills."""
+    try:
+        from aletheia.execution.liveness import (
+            OVERDUE_HOURS, entry_funnel, funnel_is_dead, identity_blocked_modes,
+            overdue_orders, retry_storm_proposals,
+        )
+
+        overdue = overdue_orders()
+        blocked = identity_blocked_modes()
+        storm = retry_storm_proposals()
+        funnel = entry_funnel()
+        problems = []
+        if overdue:
+            problems.append(
+                f"{len(overdue)} Order(s) non-terminal beyond {OVERDUE_HOURS}h: "
+                + ", ".join(f"{o['id']}({o['status']},{o['age_hours']}h)" for o in overdue[:5])
+            )
+        if blocked:
+            problems.append(f"identity gate refuses new entries on: {', '.join(blocked)}")
+        if storm:
+            problems.append(f"{len(storm)} proposal(s) with an error-order retry storm")
+        if funnel_is_dead(funnel):
+            problems.append(
+                f"{funnel['plans']} Entry Plans in {funnel['window_days']}d, "
+                f"{funnel['ordered']} reached an Order, 0 filled"
+            )
+        detail = (f"plans_{funnel['window_days']}d={funnel['plans']} ordered={funnel['ordered']} "
+                  f"filled={funnel['filled']}")
+        if problems:
+            report.add("loop.execution_liveness", "warn", "; ".join(problems) + f"; {detail}",
+                       "see execution_contract §3.0b/§6.1: re-anchor or end stuck Orders; "
+                       "never loosen the identity comparison")
+        else:
+            report.add("loop.execution_liveness", "ok", detail)
+    except Exception as e:
+        report.add("loop.execution_liveness", "info", f"probe error: {e}")
 
 
 def _probe_reconcile_thrash(report: Report) -> None:

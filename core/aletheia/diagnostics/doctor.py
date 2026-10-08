@@ -475,6 +475,7 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_outcome_history_integrity,  # noqa: F405
         _probe_reconciled_ratio,  # noqa: F405
         _probe_reconcile_thrash,  # noqa: F405
+        _probe_execution_liveness,  # noqa: F405
         _probe_sizing_policy,  # noqa: F405
         _probe_persona_rollout,  # noqa: F405
         _probe_concentration,  # noqa: F405
