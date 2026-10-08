@@ -634,6 +634,14 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
             "boundary_venue_text": "demo_order_failed: execution stopped (RuntimeError)",
         }[scenario]
         assert errors[0]["message"] == expected, errors[0]
+        # The Plan records the same bounded code, so failures can be counted by cause.
+        failed_plan = repo.get_entry_plan(plan.plan_id)
+        assert failed_plan is not None
+        assert failed_plan["terminal_reason"] == {
+            "boundary_rollback": "demo_order_failed:injected_boundary_failure_code",
+            "boundary_reason_message": "demo_order_failed:ai_entry_generation_contract_mismatch",
+            "boundary_venue_text": "demo_order_failed:unclassified",
+        }[scenario]
 
     if scenario == "slow":
         from aletheia.storage.models import TradeProposal

@@ -1,6 +1,7 @@
 """Regression coverage for exchange-side order size rules."""
 
 from decimal import Decimal
+import re
 import time
 
 import pytest
@@ -303,7 +304,7 @@ async def test_gateway_quantity_rules_use_exact_perpetual_identity(monkeypatch, 
         assert error is None
     else:
         assert error is not None
-        assert "No order was sent" in error
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", error)
 
 
 def test_rules_lookup_keeps_spot_distinct_from_same_pair_perpetual():

@@ -251,6 +251,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 **失败语义([trust §1.3](../../governance/policies/trust_and_change_control.md)):**
 - 失败必须留下可检查状态,**不得删除部分创建的行来掩盖失败**。
 - live 执行失败:保留 proposal 设 `error`,**除非交易所确认否则不推断 fill**。
+- Entry Plan 的 `terminal_reason` 必须是有界、可计数的代码(`token` 或 `token:token`,小写字母/数字/下划线):场所拒绝文本、整句说明、符号名一律不落库(落库前不合规的值会被记为 `entry_failure_code_invalid`,使其可见)。场所规则不可用细分为 `ConstraintUnavailable.reason_code`(如 `order_quantity_below_exchange_minimum`、`symbol_not_active_on_venue`、`exchange_rules_refresh_failed`),下单异常记为 `demo_order_failed:<code>`(无可用代码时 `unclassified`)。可执行检查:`tests/test_entry_failure_codes.py`。
 - broker 返回 accepted result 且对应 native Order 已持久化后，交易所边界已经跨过；后续本地读取、
   Proposal 状态同步或审计故障都不得再把 Proposal/API 改成 `error`。网关优先从 identity-linked
   durable Order 恢复 `submitted`/`partially_filled`；只有 `status=filled` 的同一 Order 同时拥有唯一、
