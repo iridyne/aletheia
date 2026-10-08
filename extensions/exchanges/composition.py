@@ -66,34 +66,26 @@ def _profile_spec(cfg, execution_mode: str):
             OKXLiveProfile,
         )
     if execution_mode == "bitget_demo":
-        from extensions.exchanges.bitget.profile import BitgetClassicV2Profile, BitgetUTAV3Profile
+        from extensions.exchanges.bitget.profile import BitgetUTAV3Profile
 
-        profile = cfg.exchange.bitget_profile
-        profile_type = BitgetUTAV3Profile if profile == "uta_v3" else BitgetClassicV2Profile
         return (
             "bitget.demo",
-            profile,
+            BitgetUTAV3Profile.expected_profile,
             "bitget",
             "demo",
             ("api_key", "api_secret", "passphrase"),
-            profile_type,
+            BitgetUTAV3Profile,
         )
     if execution_mode == "bitget_live_limited":
-        from extensions.exchanges.bitget.profile import BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile
+        from extensions.exchanges.bitget.profile import BitgetUTAV3LiveProfile
 
-        profile = cfg.exchange.bitget_profile
-        profile_type = (
-            BitgetUTAV3LiveProfile
-            if profile == "uta_v3"
-            else BitgetClassicV2LiveProfile
-        )
         return (
             "bitget.live",
-            profile,
+            BitgetUTAV3LiveProfile.expected_profile,
             "bitget",
             "live",
             ("api_key", "api_secret", "passphrase"),
-            profile_type,
+            BitgetUTAV3LiveProfile,
         )
     raise KeyError(execution_mode)
 
@@ -147,7 +139,7 @@ def funding_history_retention_contract(
 def _account_generation(cfg, execution_mode: str, scope: str, profile: str) -> int:
     secret_generation = get_credential_generation(scope)
     config_generation = cfg.exchange.uta_account_config_generation_for(execution_mode)
-    profile_generation = {"classic_v2": 1, "uta_v3": 2}.get(profile, 0)
+    profile_generation = {"uta_v3": 2}.get(profile, 0)
     secret_and_config = (
         (secret_generation + config_generation)
         * (secret_generation + config_generation + 1)
@@ -221,11 +213,10 @@ NATIVE_PROTECTION_EXECUTION_MODES = ("bitget_demo", "bitget_live_limited")
 
 def create_native_protection_reader(execution_mode: str, *, expected_account: UTAAccountIdentity):
     from extensions.exchanges.bitget.native_protection import BitgetNativeProtectionReader
-    from extensions.exchanges.bitget.profile_config import configured_bitget_profile
 
     if execution_mode not in NATIVE_PROTECTION_EXECUTION_MODES or expected_account.execution_mode != execution_mode:
         raise ValueError("native_protection_account_unsupported")
-    return BitgetNativeProtectionReader(expected_account, profile=configured_bitget_profile())
+    return BitgetNativeProtectionReader(expected_account)
 
 
 def bind_uta_provider() -> None:

@@ -8064,11 +8064,6 @@ export interface components {
         };
         /** ExchangeConfig */
         ExchangeConfig: {
-            /**
-             * Bitget Profile
-             * @default classic_v2
-             */
-            bitget_profile: string;
             /** Enabled Markets */
             enabled_markets?: {
                 [key: string]: boolean;
@@ -8120,8 +8115,6 @@ export interface components {
         };
         /** ExchangeMarketsRequest */
         ExchangeMarketsRequest: {
-            /** Bitget Profile */
-            bitget_profile?: string | null;
             /**
              * Confirm Exchange Divergence
              * @default false

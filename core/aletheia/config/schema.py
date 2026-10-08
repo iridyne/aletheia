@@ -17,13 +17,6 @@ from aletheia.config.execution_costs import (
 
 _logger = logging.getLogger("aletheia.config")
 
-# The recognized Bitget endpoint-family identities. Declared here because the
-# set of VALID profile names is a configuration fact, not a venue-client fact:
-# `bitget_profile` is validated on load, and asking "is this a known profile?"
-# must not require importing a concrete exchange client. `exchanges/bitget/`
-# reads this rather than keeping a parallel copy.
-KNOWN_BITGET_PROFILES = frozenset({"classic_v2", "uta_v3"})
-
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
@@ -310,23 +303,9 @@ class ExchangeConfig(BaseModel):
     paper_execution_mode: str = ""
     # Futures position mode: "hedge" (long/short separate) or "one_way".
     position_mode: str = "hedge"
-    # Bitget broker capability profile.
-    #   "classic_v2" → /api/v2/ endpoint family (marginCoin, marginMode, size, idLessThan).
-    #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
-    #                  Experimental: Demo qualification required before any live use.
-    bitget_profile: str = "classic_v2"
     # Non-secret configuration component of the exact account generation.
     # Credential mutations carry a separate durable counter in secrets.enc.
     uta_account_config_generations: dict[str, UTAGeneration] = Field(default_factory=dict)
-
-    @field_validator("bitget_profile")
-    @classmethod
-    def _validate_bitget_profile(cls, v: str) -> str:
-        if v not in KNOWN_BITGET_PROFILES:
-            raise ValueError(
-                f"bitget_profile must be one of {sorted(KNOWN_BITGET_PROFILES)}, got {v!r}"
-            )
-        return v
 
     @field_validator("uta_account_config_generations")
     @classmethod

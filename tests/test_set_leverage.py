@@ -15,7 +15,7 @@ from tests.uta.test_ccxt_adapter import (
 )
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 @pytest.mark.parametrize("failure", ["rejected", "timeout"])
 async def test_bitget_set_leverage_fail_closed(monkeypatch, kind, failure):
     profile = _profile(kind)

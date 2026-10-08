@@ -95,7 +95,7 @@ async def test_bitget_demo_capability_uses_profile_listing_options(
 ):
     """bitget_demo must pass its profile's listing_options as extra_options.
 
-    Bitget exposes two market views (Classic / UTA) under different API options.
+    Bitget lists its UTA market view under profile-specific API options.
     The capability check and the order constraint check must see the same listing,
     so fetch_venue_capabilities passes the profile's listing_options to the
     provider exactly as read_order_constraints does via _listing_view.
@@ -118,7 +118,7 @@ async def test_bitget_demo_capability_uses_profile_listing_options(
     assert result == {"usdt_futures": frozenset({"BTC/USDT"}), "spot": frozenset()}
     assert len(read_calls) == 1
     assert read_calls[0]["sandbox"] is True
-    # BitgetClassicV2Profile.listing_options = {"uta": False}
+    # BitgetUTAV3Profile.listing_options carries the "uta" view option
     assert "uta" in read_calls[0]["extra_options"]
     # Profile exchange_name is passed so the capability read uses the exact CCXT class.
     assert read_calls[0]["exchange_name"] == "bitget"

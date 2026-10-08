@@ -416,9 +416,9 @@ async def test_listing_view_profile_resolution_failure_is_fail_closed(monkeypatc
     assert markets_loaded == [], "market load must not be attempted when profile is unresolvable"
 
 
-def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, monkeypatch):
-    """#3445: constraints acquired under bitget Classic must not be served after
-    a switch to UTA (or vice versa), even when cached within TTL."""
+def test_order_constraints_cache_invalidates_on_account_generation_change(tmp_path, monkeypatch):
+    """#3445: constraints cached under one account-config generation must not be
+    served after the generation advances, even when cached within TTL."""
     import aletheia.config.loader as loader
     from aletheia.config.schema import AletheiaConfig, ExchangeConfig
     from aletheia.execution import order_constraints as rules
@@ -431,7 +431,6 @@ def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, 
     cfg.exchange = ExchangeConfig.model_validate({
         **cfg.exchange.model_dump(),
         "paper_execution_mode": "bitget_demo",
-        "bitget_profile": "classic_v2",
     })
     loader.save_config(cfg)
 
@@ -453,7 +452,7 @@ def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, 
     assert len(calls) == 1, "constraints should be cached, no second refresh"
 
     cfg = loader.load_config()
-    # mimic settings route logic: bump uta_account_config_generations when bitget_profile changes
+    # bump uta_account_config_generations for the bitget account
     generations = dict(cfg.exchange.uta_account_config_generations)
     from aletheia.config.exchanges import EXECUTION_MODE_VENUES
     for execution_mode, venue in EXECUTION_MODE_VENUES.items():
@@ -461,13 +460,12 @@ def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, 
             generations[execution_mode] = generations.get(execution_mode, 0) + 1
     cfg.exchange = ExchangeConfig.model_validate({
         **cfg.exchange.model_dump(),
-        "bitget_profile": "uta_v3",
         "uta_account_config_generations": generations,
     })
     loader.save_config(cfg)
 
     rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
-    assert len(calls) == 2, "profile switch must invalidate cache (new generation key)"
+    assert len(calls) == 2, "generation change must invalidate cache (new generation key)"
 
     cfg = loader.load_config()
     generations = dict(cfg.exchange.uta_account_config_generations)
@@ -476,13 +474,12 @@ def test_order_constraints_cache_invalidates_on_bitget_profile_switch(tmp_path, 
             generations[execution_mode] = generations.get(execution_mode, 0) + 1
     cfg.exchange = ExchangeConfig.model_validate({
         **cfg.exchange.model_dump(),
-        "bitget_profile": "classic_v2",
         "uta_account_config_generations": generations,
     })
     loader.save_config(cfg)
 
     rules.get_order_constraints("bitget_demo", "BTC/USDT", "usdt_futures")
-    assert len(calls) == 3, "UTA→Classic must also invalidate cache"
+    assert len(calls) == 3, "each further generation change must invalidate the cache again"
 
 
 def test_order_constraints_cache_survives_unrelated_config_changes(tmp_path, monkeypatch):

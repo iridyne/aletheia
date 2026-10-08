@@ -125,9 +125,8 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     # different symbols, so one shared entry would serve live rules to a demo
     # order (that is how RENDER passed validation and then died at submission
     # with contract_size_unavailable).
-    # Also keyed by UTA account generation: Bitget profiles (classic_v2 vs uta_v3)
-    # expose different listings under the same execution_mode, so a profile switch
-    # must invalidate the cache (#3445).
+    # Also keyed by UTA account generation, so a credential or account-config
+    # change invalidates the cache (#3445).
     generation = load_config().exchange.uta_account_config_generation_for(execution_mode)
     key = (execution_mode, generation, symbol.upper(), market_type)
     now = time.monotonic()

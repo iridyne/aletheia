@@ -77,7 +77,7 @@ def _demo_capabilities():
         # `source` is required and names where the surface came from. Saying
         # "double" rather than copying the real profile's string keeps the
         # provenance honest if this ever shows up in an assertion or a log.
-        source="bitget_classic_v2_profile_v1_double",
+        source="bitget_uta_v3_profile_v1_double",
     )
 
 

@@ -5,13 +5,13 @@ from aletheia.uta.models import FillReport, NativeProtectionHistory, UTAAccountI
 
 
 class BitgetNativeProtectionReader:
-    def __init__(self, identity: UTAAccountIdentity, *, profile: str):
+    def __init__(self, identity: UTAAccountIdentity):
         from extensions.exchanges.bitget.client import BitgetClient
 
         if identity.venue != "bitget" or identity.environment not in {"demo", "live"}:
             raise ValueError("native_protection_account_unsupported")
         self.identity = identity
-        self._client = BitgetClient(mode=identity.environment, profile=profile)
+        self._client = BitgetClient(mode=identity.environment)
 
     async def get_plan_order_history(self, *, order_id: str) -> NativeProtectionHistory:
         history = await self._client.get_plan_order_history(order_id=order_id)

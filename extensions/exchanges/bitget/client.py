@@ -7,7 +7,6 @@ from typing import Iterable
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.models import FillReport, UTAAccountIdentity
 from aletheia.net import close_ccxt, make_ccxt
-from extensions.exchanges.bitget.profile_config import _KNOWN_PROFILES
 from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_canonical
 
@@ -131,13 +130,9 @@ def normalize_private_fill_reports(
 class BitgetClient:
     """Native read-only escape hatch; all trading mutations use the UTA adapter."""
 
-    def __init__(self, mode: str = "demo", profile: str = "classic_v2"):
-        if profile not in _KNOWN_PROFILES:
-            raise ValueError(f"unknown Bitget profile {profile!r}; expected one of {sorted(_KNOWN_PROFILES)}")
+    def __init__(self, mode: str = "demo"):
         self.mode = mode
-        self.profile = profile
         self.demo = mode == "demo"
-        self._uta = profile == "uta_v3"
 
     def _make_exchange(self):
         prefix = f"bitget.{self.mode}"
@@ -153,7 +148,7 @@ class BitgetClient:
             apiKey=api_key,
             secret=api_secret,
             password=passphrase,
-            options={"uta": self._uta},
+            options={"uta": True},
         )
         if self.demo:
             exchange.set_sandbox_mode(True)
@@ -223,42 +218,7 @@ class BitgetClient:
         symbol = str(symbol or "").strip()
         if not order_id or not symbol:
             raise ValueError("exact Bitget fill query requires order_id and symbol")
-        if self.profile == "uta_v3":
-            return await self._get_order_fills_uta_v3(order_id=order_id, symbol=symbol)
-
-        exchange, session = self._make_exchange()
-        try:
-            cursor: str | None = None
-            fills: list[dict] = []
-            for _ in range(100):
-                params: dict[str, object] = {
-                    "productType": "USDT-FUTURES",
-                    "symbol": symbol,
-                    "orderId": order_id,
-                    "limit": "100",
-                }
-                if cursor:
-                    params["idLessThan"] = cursor
-                payload = await exchange.privateMixGetV2MixOrderFills(params)
-                if payload.get("code") != "00000":
-                    raise RuntimeError("Bitget exact private fill history rejected")
-                data = payload.get("data")
-                if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
-                    raise ValueError("Bitget exact private fill history malformed")
-                page = [
-                    row for row in data["fillList"]
-                    if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
-                ]
-                fills.extend(page)
-                if len(data["fillList"]) < 100:
-                    return fills
-                next_cursor = str(data.get("endId") or "")
-                if not next_cursor or next_cursor == cursor:
-                    raise RuntimeError("Bitget exact private fill pagination incomplete")
-                cursor = next_cursor
-            raise RuntimeError("Bitget exact private fill history incomplete")
-        finally:
-            await close_ccxt(exchange, session)
+        return await self._get_order_fills_uta_v3(order_id=order_id, symbol=symbol)
 
     async def get_order_fill_reports(
         self,
@@ -309,18 +269,4 @@ class BitgetClient:
         Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
         prices are trigger metadata, not private Fill economics.
         """
-        if self.profile == "uta_v3":
-            return await self._uta_plan_history(symbol=symbol, order_id=order_id)
-        params: dict[str, object] = {"productType": "USDT-FUTURES", "planType": "profit_loss"}
-        if symbol:
-            params["symbol"] = symbol
-        if order_id:
-            params["orderId"] = order_id
-        exchange, session = self._make_exchange()
-        try:
-            data = await exchange.privateMixGetV2MixOrderOrdersPlanHistory(params)
-        finally:
-            await close_ccxt(exchange, session)
-        if data.get("code") != "00000":
-            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
-        return data.get("data", {}).get("entrustedList", []) or []
+        return await self._uta_plan_history(symbol=symbol, order_id=order_id)

@@ -8,27 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # BitgetClient._make_exchange — uta flag and sandbox mode
 # ---------------------------------------------------------------------------
 
-def test_bitget_client_classic_v2_sets_uta_false():
-    """classic_v2 profile sets uta=False in CCXT options."""
-    from extensions.exchanges.bitget.client import BitgetClient
-
-    client = BitgetClient(mode="demo", profile="classic_v2")
-    assert client._uta is False
-
-
-def test_bitget_client_uta_v3_sets_uta_true():
-    """uta_v3 profile sets uta=True in CCXT options."""
-    from extensions.exchanges.bitget.client import BitgetClient
-
-    client = BitgetClient(mode="demo", profile="uta_v3")
-    assert client._uta is True
-
-
 def test_bitget_client_make_exchange_passes_uta_option():
-    """_make_exchange passes uta=True into make_ccxt options for uta_v3."""
+    """_make_exchange passes uta=True into make_ccxt options."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="uta_v3")
+    client = BitgetClient(mode="demo")
     fake_exchange = MagicMock()
     fake_session = MagicMock()
 
@@ -46,7 +30,7 @@ def test_bitget_client_make_exchange_enables_sandbox_for_demo():
     """_make_exchange calls set_sandbox_mode(True) when mode is demo."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="classic_v2")
+    client = BitgetClient(mode="demo")
     fake_exchange = MagicMock()
     fake_session = MagicMock()
 
@@ -63,7 +47,7 @@ def test_bitget_client_make_exchange_no_sandbox_for_live():
     """_make_exchange does NOT call set_sandbox_mode when mode is live."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="live", profile="classic_v2")
+    client = BitgetClient(mode="live")
     fake_exchange = MagicMock()
     fake_session = MagicMock()
 
@@ -80,7 +64,7 @@ def test_bitget_client_make_exchange_raises_on_missing_creds():
     """_make_exchange raises RuntimeError when credentials are not configured."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="classic_v2")
+    client = BitgetClient(mode="demo")
 
     with patch("extensions.exchanges.bitget.client.get_secret", return_value=None):
         with pytest.raises(RuntimeError, match="credentials not configured"):
@@ -92,39 +76,11 @@ def test_bitget_client_make_exchange_raises_on_missing_creds():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_plan_order_history_classic_uses_ccxt():
-    """get_plan_order_history for classic_v2 calls the correct CCXT method."""
-    from extensions.exchanges.bitget.client import BitgetClient
-
-    client = BitgetClient(mode="demo", profile="classic_v2")
-    fake_exchange = MagicMock()
-    fake_exchange.privateMixGetV2MixOrderOrdersPlanHistory = AsyncMock(
-        return_value={"code": "00000", "data": {"entrustedList": [{"planStatus": "executed"}]}}
-    )
-    fake_session = MagicMock()
-
-    with (
-        patch("extensions.exchanges.bitget.client.get_secret", return_value="val"),
-        patch("extensions.exchanges.bitget.client.make_ccxt", return_value=(fake_exchange, fake_session)),
-        patch("extensions.exchanges.bitget.client.close_ccxt", AsyncMock(return_value=True)),
-    ):
-        result = await client.get_plan_order_history(symbol="BTCUSDT", order_id="abc123")
-
-    assert result == [{"planStatus": "executed"}]
-    fake_exchange.privateMixGetV2MixOrderOrdersPlanHistory.assert_called_once()
-    called_params = fake_exchange.privateMixGetV2MixOrderOrdersPlanHistory.call_args[0][0]
-    assert called_params["productType"] == "USDT-FUTURES"
-    assert called_params["planType"] == "profit_loss"
-    assert called_params["symbol"] == "BTCUSDT"
-    assert called_params["orderId"] == "abc123"
-
-
-@pytest.mark.asyncio
 async def test_get_plan_order_history_uta_v3_uses_ccxt():
-    """get_plan_order_history for uta_v3 calls privateUtaGetV3TradeStrategySubOrders."""
+    """get_plan_order_history calls privateUtaGetV3TradeStrategySubOrders."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="uta_v3")
+    client = BitgetClient(mode="demo")
     fake_exchange = MagicMock()
     fake_exchange.privateUtaGetV3TradeStrategySubOrders = AsyncMock(
         return_value={
@@ -155,43 +111,11 @@ async def test_get_plan_order_history_uta_v3_uses_ccxt():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_order_fills_classic_uses_ccxt():
-    """get_order_fills for classic_v2 calls privateMixGetV2MixOrderFills."""
-    from extensions.exchanges.bitget.client import BitgetClient
-
-    client = BitgetClient(mode="demo", profile="classic_v2")
-    fake_exchange = MagicMock()
-    fake_exchange.privateMixGetV2MixOrderFills = AsyncMock(
-        return_value={
-            "code": "00000",
-            "data": {
-                "fillList": [{"orderId": "ord1", "tradeId": "fill1", "side": "buy"}],
-            },
-        }
-    )
-    fake_session = MagicMock()
-
-    with (
-        patch("extensions.exchanges.bitget.client.get_secret", return_value="val"),
-        patch("extensions.exchanges.bitget.client.make_ccxt", return_value=(fake_exchange, fake_session)),
-        patch("extensions.exchanges.bitget.client.close_ccxt", AsyncMock(return_value=True)),
-    ):
-        result = await client.get_order_fills(order_id="ord1", symbol="BTCUSDT")
-
-    assert result == [{"orderId": "ord1", "tradeId": "fill1", "side": "buy"}]
-    fake_exchange.privateMixGetV2MixOrderFills.assert_called_once()
-    called_params = fake_exchange.privateMixGetV2MixOrderFills.call_args[0][0]
-    assert called_params["productType"] == "USDT-FUTURES"
-    assert called_params["symbol"] == "BTCUSDT"
-    assert called_params["orderId"] == "ord1"
-
-
-@pytest.mark.asyncio
 async def test_get_order_fills_uta_v3_uses_ccxt():
-    """get_order_fills for uta_v3 calls privateUtaGetV3TradeFills."""
+    """get_order_fills calls privateUtaGetV3TradeFills."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="uta_v3")
+    client = BitgetClient(mode="demo")
     fake_exchange = MagicMock()
     fake_exchange.privateUtaGetV3TradeFills = AsyncMock(
         return_value={
@@ -225,9 +149,9 @@ async def test_exchange_closed_on_plan_history_error():
     """close_ccxt is called even when the CCXT call raises an exception."""
     from extensions.exchanges.bitget.client import BitgetClient
 
-    client = BitgetClient(mode="demo", profile="classic_v2")
+    client = BitgetClient(mode="demo")
     fake_exchange = MagicMock()
-    fake_exchange.privateMixGetV2MixOrderOrdersPlanHistory = AsyncMock(side_effect=RuntimeError("boom"))
+    fake_exchange.privateUtaGetV3TradeStrategySubOrders = AsyncMock(side_effect=RuntimeError("boom"))
     fake_session = MagicMock()
     close_mock = AsyncMock(return_value=True)
 
@@ -237,7 +161,7 @@ async def test_exchange_closed_on_plan_history_error():
         patch("extensions.exchanges.bitget.client.close_ccxt", close_mock),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await client.get_plan_order_history()
+            await client.get_plan_order_history(order_id="plan123")
 
     close_mock.assert_called_once_with(fake_exchange, fake_session)
 

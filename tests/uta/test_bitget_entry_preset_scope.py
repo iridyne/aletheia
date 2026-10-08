@@ -7,7 +7,7 @@ from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
 from tests.uta.test_ccxt_adapter import FakeExchange, _bitget_command, _identity, _install, _profile
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 @pytest.mark.parametrize("market", ["spot", "usdt_futures"])
 @pytest.mark.parametrize("purpose", ["entry", "exit"])
 async def test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, market, purpose):
@@ -41,7 +41,7 @@ async def test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, ma
         await adapter.close()
 
 
-@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("kind", ["uta_v3"])
 def test_approved_spot_proposal_keeps_local_stop_without_venue_entry_presets(
     tmp_path, monkeypatch, kind,
 ):

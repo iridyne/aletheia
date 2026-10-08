@@ -30,7 +30,6 @@ def _account_result(*, uid="account-1", environment="live", permissions=("trade"
 
 
 @pytest.mark.parametrize("broker,profile,generation,revision,config_revision", [
-    ("bitget", "classic_v2", 2, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "62abe39f52570e304fd81a7d75e01642eb2c4b3edb8da40103be8db3b8ee262c"),
     ("bitget", "uta_v3", 5, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "e36dc17008c5a8bb79a513ca416db0a706be3494b4e9fbb8b27f7499a740b46b"),
     ("okx", "okx_live", 0, "a672a19babf643410474e084618f6b92839b0e4cce3df8d3f0b16b72068aff76", "a8de0f070a66658dae23156f110f460f8ff390f0b852b663d36d538b16aea693"),
     ("binance", "binance_live", 0, "c3373675b3aec36cecc8ea26e7c020eca214023cce91c9af2385918cbfd2cc60", "2113bd513e61e0fee2f1678f6baec045e52225886107b6850da5d200536527b2"),
@@ -39,8 +38,6 @@ def test_live_identity_preserves_pre_extraction_hashes(monkeypatch, broker, prof
     """Synthetic golden identities measured on a6ed49f74 before extraction."""
     cfg, trust = _config(monkeypatch, broker)
     cfg.exchange.paper_execution_mode = ""
-    if broker == "bitget":
-        cfg.exchange.bitget_profile = profile
     fields = ("api_key", "api_secret") if broker == "binance" else ("api_key", "api_secret", "passphrase")
     assert trust.resolve_live_execution_identity(cfg) == {
         "broker": broker,
@@ -99,7 +96,7 @@ async def test_credential_revision_failure_never_echoes_secret_store_error(monke
 
 
 @pytest.mark.parametrize("broker,profile", [
-    ("bitget", "classic_v2"), ("bitget", "uta_v3"),
+    ("bitget", "uta_v3"),
     ("okx", "okx_live"), ("binance", "binance_live"),
 ])
 def test_live_identity_uses_scoped_uta_metadata_without_client(monkeypatch, broker, profile):
@@ -107,8 +104,6 @@ def test_live_identity_uses_scoped_uta_metadata_without_client(monkeypatch, brok
     from aletheia.uta import manager
 
     cfg, trust = _config(monkeypatch, broker)
-    if broker == "bitget":
-        cfg.exchange.bitget_profile = profile
     mode = f"{broker}_live_limited"
     calls = []
 

@@ -117,8 +117,8 @@ def _query_exchange_fill(
       turns into "evidence unavailable, repair unchanged" — the fail-closed
       behaviour this function documents. A partial page previously looked like a
       short-but-valid fill list.
-    * it is profile-aware. Bitget's classic_v2 (``/api/v2/``) and uta_v3
-      (``/api/v3/``) surfaces are selected by the UTA profile, not routed by hand.
+    * it is profile-aware: the API surface is selected by the UTA profile, not
+      routed by hand.
     """
     try:
         from aletheia.async_utils import run_coro_from_sync

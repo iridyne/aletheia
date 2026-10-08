@@ -92,16 +92,15 @@ def test_reconciliation_partitions_follow_registered_uta_identities():
 @pytest.mark.parametrize("mode", ["bitget_demo", "bitget_live_limited"])
 def test_bitget_tpsl_recovery_uses_registered_account_environment(monkeypatch, mode):
     from extensions.exchanges import composition
-    from extensions.exchanges.bitget import client, profile_config
+    from extensions.exchanges.bitget import client
     from tests.specs.uta_private_history import _identity
 
     calls = []
     monkeypatch.setattr(client, "BitgetClient", lambda **kwargs: calls.append(kwargs))
-    monkeypatch.setattr(profile_config, "configured_bitget_profile", lambda: "classic_v2")
     identity = _identity(mode)
     reader = composition.create_native_protection_reader(mode, expected_account=identity)
     assert reader.identity == identity
-    assert calls == [{"mode": execution_mode_environment(mode), "profile": "classic_v2"}]
+    assert calls == [{"mode": execution_mode_environment(mode)}]
     with pytest.raises(ValueError, match="native_protection_account_unsupported"):
         composition.create_native_protection_reader(
             mode, expected_account=identity.model_copy(update={"environment": "testnet"}),

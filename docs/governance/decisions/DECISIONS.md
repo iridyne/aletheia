@@ -1,5 +1,25 @@
 # Architecture Decision Log
 
+## 2026-10-09 — Bitget 只保留 UTA v3 一个账户 profile,删除 classic_v2 与运行时切换(#3806,D2)
+
+**Decision:** 删除 `BitgetClassicV2Profile` / `BitgetClassicV2LiveProfile`、`exchange.bitget_profile` 配置项与
+`KNOWN_BITGET_PROFILES`、dashboard `POST /exchange-markets` 的 `bitget_profile` 字段与随之的代次递增、
+`profile_config` 模块、`BitgetClient` / `BitgetNativeProtectionReader` 的 `profile` 参数、启动闸门的
+`bitget_profile` 检查,以及 profile 基类里只服务 classic 的分支(钱包划转、现货市价买入拒绝等)。
+配置加载器把已持久化的 `exchange.bitget_profile` 当作"已移除键"丢弃(与 `uta_read_boundaries` 同一模式)。
+历史行里的 `profile: classic_v2` 保持原样可解析(数据层只增不改);它们对当前身份是 `DIFFERENT`。
+不保留别名、兼容层或软弃用。(owner 2026-10-09 要求彻底废弃多余路径、避免双主线。)
+
+**Reason:** 2026-09-29 dashboard 把 Fedora 的 profile 从 classic_v2 切到 uta_v3,此后每个新订单的身份
+(`profile`、`credential_generation`)都变了,切换前的所有非终态订单永久无法读取、无法重标,入场闸门
+永久关闭——切换后到 10-09 没有一个订单带 uta_v3 身份(#3798)。同一能力两个实现且可在运行时互换,
+正是仓库"一能力一实现"规则要消灭的双主线。
+
+**Guardrail:**
+- 删除后验收要求在 Bitget Demo 上真实走通一单 uta_v3 的提交、成交或撤单、对账、平仓(uta_v3 此前从未在 Fedora 下过单)。
+- `profile` 字段是否随之从 `UTAAccountIdentity` 删除是后续问题,不在本次范围(涉及历史行)。
+- `credential_generation` 的计算公式不变(profile 权重 `{"uta_v3": 2}`),已有 uta_v3 身份不会因本次部署漂移。
+
 ## 2026-09-29 — FastMarketStream 迁移至 CCXT Pro（#3699 Phase 8，修订）
 
 ### Context

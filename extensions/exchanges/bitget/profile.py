@@ -1,4 +1,4 @@
-"""Bitget Extension profiles with independent Classic-v2 and UTA-v3 behavior."""
+"""Bitget Extension profile: the Unified Trading Account (uta_v3) face, demo and live."""
 
 import json
 from datetime import datetime
@@ -48,20 +48,19 @@ class _BitgetDemoProfile(CCXTProfile):
     protection_replace = True
     protection_cancel = True
     integer_leverage = True
-    # Measured on the live demo venue (2026-09-30, #3564), both classic_v2 and uta_v3:
+    # Measured on the live demo venue (2026-09-30, #3564):
     # a fill request for more than 100 rows answers `40020 Parameter limit error`.
     fill_page_limit = 100
     # CCXT's bitget fetchMyTrades raises ArgumentsRequired for an account-wide
-    # (symbol-less) read on both faces (measured against the pinned ccxt 4.5.84).
+    # (symbol-less) read (measured against the pinned ccxt 4.5.84).
     account_wide_fills_supported = False
 
-    def __init__(self, *, api_key: str, secret: str, passphrase: str, uta: bool) -> None:
-        self._uta = uta
+    def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(
             apiKey=api_key,
             secret=secret,
             password=passphrase,
-            options={"defaultType": "swap", "uta": uta},
+            options={"defaultType": "swap", "uta": True},
         )
 
     def _response_code(self, error: BaseException) -> str | None:
@@ -75,8 +74,7 @@ class _BitgetDemoProfile(CCXTProfile):
         return str(response["code"])
 
     def close_position_absent(self, error: BaseException) -> bool:
-        codes = {"22002", "25227", "45110"} if self._uta else {"22002", "25227"}
-        return self._response_code(error) in codes
+        return self._response_code(error) in {"22002", "25227", "45110"}
 
     def venue_rejection_code(self, error: BaseException) -> str | None:
         code = self._response_code(error)
@@ -128,34 +126,15 @@ class _BitgetDemoProfile(CCXTProfile):
             and prepared.leverage is not None
             and not prepared.reduce_only
         ):
-            if not self._uta and prepared.purpose == "entry" and prepared.reference_price is not None:
-                balance = await exchange.fetch_balance({"type": "swap", "productType": "USDT-FUTURES", "uta": False})
-                available = decimal_value((balance.get("USDT") or {}).get("free"))
-                if available is None:
-                    raise UTAError(UTAErrorCode.INCOMPLETE_READ, "classic_margin_balance_unavailable", command_evidence=CommandEvidence.NOT_SENT)
-                need = prepared.quantity * prepared.reference_price / prepared.leverage - available
-                if need > 1:
-                    await exchange.transfer("USDT", format(need, ".2f"), "spot", "swap")
             await exchange.set_leverage(
                 int(prepared.leverage),
                 prepared.instrument.venue_symbol,
-                {"uta": self._uta, **({"marginMode": prepared.margin_mode} if prepared.margin_mode else {})},
+                {"uta": True, **({"marginMode": prepared.margin_mode} if prepared.margin_mode else {})},
             )
         return prepared
 
     def submit_request(self, command):
-        if (
-            not self._uta
-            and command.instrument.market_type == "spot"
-            and command.order_type == "market"
-            and command.side == "buy"
-        ):
-            raise UTAError(
-                UTAErrorCode.NOT_SUPPORTED,
-                "classic_spot_market_buy_base_quantity_unsupported",
-                command_evidence=CommandEvidence.NOT_SENT,
-            )
-        params: dict[str, object] = {"uta": self._uta}
+        params: dict[str, object] = {"uta": True}
         if command.client_order_id:
             params["clientOrderId"] = command.client_order_id
         if command.instrument.market_type != "spot":
@@ -214,7 +193,7 @@ class _BitgetDemoProfile(CCXTProfile):
                 command_evidence=CommandEvidence.NOT_SENT,
             )
         order_id = command.target_venue_order_id or command.target_client_order_id
-        params: dict[str, object] = {"uta": self._uta}
+        params: dict[str, object] = {"uta": True}
         if not command.target_venue_order_id and command.target_client_order_id:
             params["clientOrderId"] = command.target_client_order_id
         # Populate the current instrument with the same quantity_precision fact
@@ -244,7 +223,7 @@ class _BitgetDemoProfile(CCXTProfile):
 
     def cancel_request(self, command):
         order_id = command.target_venue_order_id or command.target_client_order_id
-        params: dict[str, object] = {"uta": self._uta}
+        params: dict[str, object] = {"uta": True}
         if not command.target_venue_order_id and command.target_client_order_id:
             params["clientOrderId"] = command.target_client_order_id
         if command.purpose in {"protective_stop", "take_profit", "protection_child"}:
@@ -270,7 +249,7 @@ class _BitgetDemoProfile(CCXTProfile):
             and trade_intent in {"close", "exit", "reduce", "decrease"}
             and report.side.lower() in {"buy", "sell"}
         ):
-            # Bitget Classic hedge fills keep the opening side on a close.  The
+            # Bitget hedge-mode fills keep the opening side on a close.  The
             # explicit close intent plus hedge mode makes this a canonical leg,
             # without weakening ambiguous or opening activity.
             return report.model_copy(update={
@@ -279,88 +258,6 @@ class _BitgetDemoProfile(CCXTProfile):
                 ),
             })
         return report
-
-
-class BitgetClassicV2Profile(_BitgetDemoProfile):
-    expected_profile = "classic_v2"
-    listing_options = {"uta": False}
-    balance_requests = (
-        {"type": "spot"},
-        {"type": "swap", "productType": "USDT-FUTURES"},
-    )
-    position_params = {"productType": "USDT-FUTURES"}
-    open_order_requests = (
-        {"type": "spot"},
-        {"type": "swap", "productType": "USDT-FUTURES"},
-    )
-    closed_order_requests = open_order_requests
-    fill_requests = open_order_requests
-
-    def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
-        super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=False)
-
-    def account_values(self, balances):
-        values, normalized, reason = super().account_values(balances)
-        mix_equity = Decimal(0)
-        unrealized = Decimal(0)
-        saw_mix = False
-        for raw in balances:
-            info = raw.get("info") or []
-            for account in info if isinstance(info, list) else []:
-                equity = decimal_value(account.get("usdtEquity") or account.get("accountEquity"))
-                if equity is not None:
-                    mix_equity += equity
-                    saw_mix = True
-                unrealized += decimal_value(
-                    account.get("unrealizedPL") or account.get("crossedUnrealizedPL")
-                ) or Decimal(0)
-        if saw_mix:
-            spot_usdt = Decimal(0)
-            if balances:
-                spot_usdt = decimal_value((balances[0].get("total") or {}).get("USDT")) or Decimal(0)
-            values["equity"] = mix_equity + spot_usdt
-            values["unrealized_pnl"] = unrealized
-        return values, normalized, reason
-
-    def funding_events(self, rows):
-        from aletheia.uta.funding import normalize_bitget_funding_rows
-
-        return normalize_bitget_funding_rows(
-            row.get("info", row) if isinstance(row, dict) else {} for row in rows
-        )
-
-    async def fetch_funding_rows(
-        self,
-        exchange,
-        since,
-        limit,
-        history_params_fn,
-        *,
-        request,
-        ledger_requests: tuple[dict[str, object], ...],
-        venue_symbol: str | None = None,
-    ):
-        """Bitget classic_v2 uses fetch_funding_history per symbol.
-
-        fetch_ledger("USDT", ...) always raises code 40020 on classic_v2 accounts;
-        fetch_funding_history returns billId/businessType/coin/amount rows that
-        normalize_bitget_funding_rows already handles.
-        venue_symbol is required by the Bitget CCXT adapter.
-        """
-        if not venue_symbol:
-            raise RuntimeError("private funding ledger unavailable")
-        page_limit = min(limit, 100)  # Classic v2 account/bill permits at most 100 rows.
-        rows = []
-        history_bound_reached = False
-        try:
-            page = await request(exchange.fetch_funding_history(venue_symbol, since, page_limit))
-            if not isinstance(page, list):
-                raise ValueError("invalid CCXT funding history")
-            history_bound_reached = len(page) >= page_limit
-            rows.extend(item for item in page if isinstance(item, dict))
-        except (Exception, TimeoutError):
-            raise RuntimeError("private funding ledger unavailable")
-        return rows, "funding_history_bound_reached" if history_bound_reached else None
 
 
 class BitgetUTAV3Profile(_BitgetDemoProfile):
@@ -380,9 +277,6 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
     ledger_requests: tuple[dict[str, object], ...] = (
         {"uta": True, "productType": "USDT-FUTURES"},
     )
-
-    def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
-        super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=True)
 
     def account_values(self, balances):
         values, normalized, _reason = super().account_values(balances)
@@ -451,12 +345,6 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
             else "funding_ledger_partial" if failed_calls else None
         )
         return rows, reason
-
-
-class BitgetClassicV2LiveProfile(BitgetClassicV2Profile):
-    expected_execution_mode = "bitget_live_limited"
-    expected_environment = "live"
-    sandbox = False
 
 
 class BitgetUTAV3LiveProfile(BitgetUTAV3Profile):

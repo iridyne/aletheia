@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from tests.helpers.position_fixture import force_update_position
 
 import importlib
@@ -260,24 +261,24 @@ def test_live_disappearance_records_evidence_but_remains_alert_only(tmp_path, mo
 
 
 def test_endpoint_family_creates_distinct_fingerprints(tmp_path, monkeypatch):
-    """classic_v2 and uta_v3 views do not share identity_key (Gap-a regression)."""
+    """uta_v3 and other-face views do not share identity_key (Gap-a regression)."""
     from aletheia.portfolio.disappearance_confirmation import build_view_evidence
 
-    base_kwargs = dict(
+    base_kwargs: dict[str, Any] = dict(
         broker_id="bitget_demo",
         account_environment="demo",
         execution_mode="bitget_demo",
         complete=True,
     )
     snapshot = {"fetched_at": "2026-09-29T02:45:00+00:00", "positions": []}
-    ev_classic = build_view_evidence(snapshot, **base_kwargs, endpoint_family="classic_v2")
+    ev_other = build_view_evidence(snapshot, **base_kwargs, endpoint_family="other_face")
     ev_uta = build_view_evidence(snapshot, **base_kwargs, endpoint_family="uta_v3")
     ev_none = build_view_evidence(snapshot, **base_kwargs)
 
-    assert ev_classic["account_fingerprint"] != ev_uta["account_fingerprint"], (
-        "classic_v2 and uta_v3 must produce different fingerprints"
+    assert ev_other["account_fingerprint"] != ev_uta["account_fingerprint"], (
+        "uta_v3 and other_face must produce different fingerprints"
     )
-    assert ev_classic["view_identity"] != ev_uta["view_identity"], (
+    assert ev_other["view_identity"] != ev_uta["view_identity"], (
         "view identities must differ when endpoint_family differs"
     )
     # No endpoint_family should not raise and is deterministic.
