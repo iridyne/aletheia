@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import math
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from pathlib import Path
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
@@ -29,11 +27,15 @@ from aletheia.utils.dt import parse_utc
 
 logger = logging.getLogger("aletheia.universe.features")
 
-# ponytail: hash this acquisition owner once at import, not the whole build.
-# Any edit here conservatively rotates evidence; unrelated files do not.
-CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT = hashlib.sha256(
-    Path(__file__).read_bytes()
-).hexdigest()
+# Candidate measurement acquisition identity. Change this value by hand only when
+# a change alters a computed feature value; comments, logging and refactors keep it,
+# so accumulated training history survives them. Frozen at the SHA-256 of this file
+# as deployed on 2026-09-27 so that existing evidence keeps matching.
+# Every outcome row also records `producer_commit`, so a missed bump can still be
+# split out afterwards.
+CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT = (
+    "5c0692756228107b3d549e4c07db170d0397bcc1c8f90c69fe89f47eca928774"
+)
 
 # Phase 3 retention (2026-07-17): change-suppression on universe_feature_snapshots.
 # Feature collection runs every ~10 min per asset. When the values are
