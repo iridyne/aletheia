@@ -106,7 +106,6 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
     class Exchange:
         id = "bitget"
         markets = {"BTC/USDT:USDT": MARKET}
-        _candidate_markets_acquired_at = now.isoformat()
 
         async def fetch_ohlcv(self, *a, **kw):
             return [[int((now - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
