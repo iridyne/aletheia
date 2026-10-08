@@ -1276,8 +1276,9 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
 
     with transaction():
         from aletheia.storage.repositories import (
-            get_db, NATIVE_ENTRY_ORDER_SQL, UNRESOLVED_NATIVE_ENTRY_STATES,
+            get_db, NATIVE_ENTRY_ORDER_SQL,
         )
+        from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 
         # Classification predates this write transaction. A native submission
         # may already own this exposure while its private Fill is still pending.
@@ -1287,7 +1288,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             "SELECT 1 FROM positions WHERE symbol=? AND market_type=? AND direction=? "
             "AND execution_mode=? AND status='open' LIMIT 1", identity,
         ).fetchone()
-        states = ",".join("?" for _ in UNRESOLVED_NATIVE_ENTRY_STATES)
+        states = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
         pending = db.execute(
             "SELECT 1 FROM orders o WHERE o.symbol=? AND o.market_type=? AND o.direction=? "
             f"AND o.execution_mode=? AND ({NATIVE_ENTRY_ORDER_SQL}) AND ("
@@ -1297,7 +1298,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             "WHERE (represented.id=o.position_id OR represented.order_id=o.id) "
             "AND represented.symbol=o.symbol AND represented.market_type=o.market_type "
             "AND represented.direction=o.direction AND represented.execution_mode=o.execution_mode))) LIMIT 1",
-            (*identity, *UNRESOLVED_NATIVE_ENTRY_STATES),
+            (*identity, *NON_TERMINAL_ORDER_STATES),
         ).fetchone()
         if existing is not None or pending is not None:
             raise PositionAdoptionIntegrityError(

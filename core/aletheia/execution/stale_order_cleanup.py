@@ -31,18 +31,11 @@ from aletheia.storage import repositories as repo
 from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage.models import AuditEvent
+from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 
 logger = logging.getLogger("aletheia.stale_order_cleanup")
-
-# Kept in lockstep with reconciliation._OPEN_LOCAL_STATES: the states a genuinely
-# unresolved Order can sit in.  A local copy avoids importing a private name from
-# the trust-boundary module.
-_OPEN_LOCAL_STATES = (
-    "submitted", "pending", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing",
-)
 
 # An Order younger than the soft window is still normal in-flight work.  Past it,
 # we may verify against the exchange and cancel a *provably* absent Order.  Only
@@ -260,7 +253,7 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
         fresh = repo.get_order(oid)
         if fresh is None:
             return None
-        if fresh.get("status") not in _OPEN_LOCAL_STATES:
+        if fresh.get("status") not in NON_TERMINAL_ORDER_STATES:
             return None  # already resolved by another path
         if _has_real_economics(fresh):
             return None  # a fill/position appeared under the lock
@@ -338,11 +331,11 @@ def cleanup_stale_orphan_orders() -> dict:
     Safe to run repeatedly (idempotent: only acts on still-open-local Orders past
     the age thresholds, and re-verifies every guard under the writer slot).
     """
-    placeholders = ",".join("?" for _ in _OPEN_LOCAL_STATES)
+    placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
     rows = get_db().execute(
         f"SELECT * FROM orders WHERE status IN ({placeholders}) "
         f"ORDER BY created_at ASC, rowid ASC",
-        _OPEN_LOCAL_STATES,
+        NON_TERMINAL_ORDER_STATES,
     ).fetchall()
 
     cancelled: list[str] = []

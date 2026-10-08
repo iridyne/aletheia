@@ -29,6 +29,7 @@ from aletheia.storage.repositories import (
     transition_order,
     update_order_metadata,
 )
+from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 from aletheia.storage.sqlite import get_db
 from aletheia.uta.compat import instrument_from_local, scope_from_local
 from aletheia.uta.identity import IdentityRelation, identity_relation
@@ -45,16 +46,6 @@ from aletheia.uta.models import (
     ReadCompleteness,
     SubmitOrderCommand,
     UTAAccountIdentity,
-)
-
-
-_RETRY_SUPPRESSING_ORDER_STATES = (
-    "pending",
-    "submitted",
-    "partial",
-    "partially_filled",
-    "submission_unknown",
-    "materialization_missing",
 )
 
 
@@ -408,7 +399,7 @@ def record_entry_cancel_state(
 
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
-    placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
+    placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
     row = (
         get_db()
         .execute(
@@ -417,7 +408,7 @@ def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
         WHERE proposal_id=? AND execution_mode=? AND status IN ({placeholders})
         ORDER BY rowid LIMIT 1
         """,
-            (proposal_id, execution_mode, *_RETRY_SUPPRESSING_ORDER_STATES),
+            (proposal_id, execution_mode, *NON_TERMINAL_ORDER_STATES),
         )
         .fetchone()
     )
@@ -575,14 +566,14 @@ def execute_order(
                 error_reason="uta_adapter_unavailable_before_submission")
         raise
     try:
-        placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
+        placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
         rows = get_db().execute(
             f"SELECT id, NULL AS order_id, uta_account_identity_json, 'order' AS source_kind, NULL AS symbol, NULL AS market_type, NULL AS direction, NULL AS quantity "
             f"FROM orders WHERE execution_mode=? AND id<>? AND status IN ({placeholders}) "
             "UNION ALL SELECT p.id, p.order_id, o.uta_account_identity_json, 'position' AS source_kind, p.symbol, p.market_type, p.direction, p.quantity "
             "FROM positions p LEFT JOIN orders o ON o.id=p.order_id "
             "WHERE p.execution_mode=? AND p.status='open'",
-            (execution_mode, order.id, *_RETRY_SUPPRESSING_ORDER_STATES, execution_mode),
+            (execution_mode, order.id, *NON_TERMINAL_ORDER_STATES, execution_mode),
         ).fetchall()
         if not _all_rows_match_current_identity(rows, adapter.identity):
             if not run_coro_from_sync(_reanchor_generation_drift_rows(execution_mode, adapter, rows)):

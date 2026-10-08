@@ -1543,10 +1543,6 @@ def finalize_exchange_acknowledgement(
 
 
 # Shared Order ownership definition. SQL predicates use the caller's `o` alias.
-UNRESOLVED_NATIVE_ENTRY_STATES = (
-    "open", "pending", "submitted", "partial", "partially_filled",
-    "submission_unknown", "materialization_missing",
-)
 NATIVE_ENTRY_ORDER_SQL = """
     o.source = 'native' AND TRIM(COALESCE(o.close_reason, '')) = ''
     AND NOT EXISTS (

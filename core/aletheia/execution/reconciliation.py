@@ -37,6 +37,7 @@ from aletheia.infra.events import mark_resolved_from_durable, upsert_critical_un
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.repositories import transition_order, update_order_metadata
+from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 from aletheia.uta.compat import instrument_from_local, scope_from_local
@@ -96,12 +97,6 @@ _MULTIBROKER_ACCOUNT_MODES = tuple(
         if execution_mode_venue(mode) not in {None, "bitget"}
     )
 )
-# ``partial`` is retained only for rows written by older builds.  Brokers now
-# persist the exchange-normalized ``partially_filled`` spelling.
-_OPEN_LOCAL_STATES = (
-    "submitted", "pending", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing",
-)
 
 
 def _list_unresolved_core_orders() -> list[dict]:
@@ -115,7 +110,7 @@ def _list_unresolved_core_orders() -> list[dict]:
     so a fill arriving after the bound is still materialized once an operator
     resolves the claim (PR4).
     """
-    placeholders = ",".join("?" for _ in _OPEN_LOCAL_STATES)
+    placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
     rows = get_db().execute(
         f"""
         SELECT orders.*
@@ -128,7 +123,7 @@ def _list_unresolved_core_orders() -> list[dict]:
           )
         ORDER BY orders.created_at ASC, orders.rowid ASC
         """,
-        _OPEN_LOCAL_STATES,
+        NON_TERMINAL_ORDER_STATES,
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -220,7 +215,7 @@ def _list_bitget_demo_filled_entry_gaps() -> list[dict]:
     """Select historical filled entry gaps without widening the normal scan.
 
     This query is intentionally unbounded and deliberately separate from
-    ``_OPEN_LOCAL_STATES``.  Only native Bitget demo entries with a durable venue
+    ``NON_TERMINAL_ORDER_STATES``.  Only native Bitget demo entries with a durable venue
     id are eligible; adopted observations and close Orders remain read-only.
     """
     rows = get_db().execute(
@@ -673,7 +668,7 @@ def resolve_orders_missing_from_exchange(
     for o in local_orders:
         if (
             o.get("execution_mode") in modes
-            and o.get("status") in _OPEN_LOCAL_STATES
+            and o.get("status") in NON_TERMINAL_ORDER_STATES
             and o.get("exchange_order_id")
             and o["exchange_order_id"] not in exchange_open_ids
         ):
@@ -1973,13 +1968,13 @@ def reconcile() -> dict:
     bitget_orders = [
         o for o in all_orders
         if o.get("execution_mode") in _BITGET_ACCOUNT_MODES
-        and o.get("status") in _OPEN_LOCAL_STATES
+        and o.get("status") in NON_TERMINAL_ORDER_STATES
         and (o.get("exchange_order_id") or o.get("client_order_id"))
     ]
     multibroker_orders = [
         o for o in all_orders
         if o.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
-        and o.get("status") in _OPEN_LOCAL_STATES
+        and o.get("status") in NON_TERMINAL_ORDER_STATES
         and (o.get("exchange_order_id") or o.get("client_order_id"))
     ]
     errors: list[str] = []
