@@ -86,10 +86,14 @@ def _write_post_commit_audit(
         )
 
 
-def _reject_for_exchange_constraints(proposal: TradeProposal, reason: str) -> dict:
-    """Persist a fail-closed executable-venue rule rejection without an order."""
+def _reject_for_exchange_constraints(proposal: TradeProposal, reason: str, *, code: str) -> dict:
+    """Persist a fail-closed executable-venue rule rejection without an order.
+
+    ``reason`` is the human sentence returned to the caller; ``code`` is the bounded
+    token the Entry Plan records, so "why do entries stop here" can be counted.
+    """
     update_trade_proposal(proposal.id, status="rejected")
-    _fail_entry_plan(proposal, reason)
+    _fail_entry_plan(proposal, code)
     write_audit(
         {
             "actor": "system",
@@ -105,9 +109,17 @@ def _reject_for_exchange_constraints(proposal: TradeProposal, reason: str) -> di
     return {"status": "rejected", "proposal_id": proposal.id, "message": reason}
 
 
+# A terminal reason is a countable code: `token` or `token:token`. Free text (a venue
+# message, a sentence, a symbol) cannot be grouped, so it is never stored.
+_FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,95}(:[a-z][a-z0-9_]{0,95})?")
+
+
 def _fail_entry_plan(proposal: TradeProposal, reason: str) -> None:
     if not proposal.entry_plan_id:
         return
+    if not _FAILURE_CODE.fullmatch(reason):
+        logger.error("Entry Plan %s failure reason is not a bounded code; recording a placeholder", proposal.entry_plan_id)
+        reason = "entry_failure_code_invalid"
     from aletheia.storage import repositories as repo
 
     plan = repo.get_entry_plan(proposal.entry_plan_id)
@@ -134,7 +146,10 @@ def _prepare_exchange_quantity(
     price: float,
     *, allow_increase: bool = True,
 ) -> tuple[float, str | None]:
-    """Apply executable-venue minima before Risk Engine sees an exchange order."""
+    """Apply executable-venue minima before Risk Engine sees an exchange order.
+
+    Returns ``(quantity, None)`` or ``(quantity, reason_code)``; the code is the
+    ``ConstraintUnavailable.reason_code`` token, never the exception text."""
     from aletheia.execution.order_constraints import (
         ConstraintUnavailable,
         prepare_exchange_quantity,
@@ -156,7 +171,7 @@ def _prepare_exchange_quantity(
             # Entry keeps transient venue metadata failures in preparation WAIT.
             raise
         logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
-        return quantity, "Executable venue order rules are unavailable or do not support this order. No order was sent."
+        return quantity, exc.reason_code
 
 
 def submit_proposal(
@@ -1560,7 +1575,12 @@ def _execute_proposal(
         )
         _entry_execution_stage(proposal, execution_receipt, "quantity_normalization_completed")
         if constraint_error:
-            return _reject_for_exchange_constraints(proposal, constraint_error)
+            return _reject_for_exchange_constraints(
+                proposal,
+                f"Executable venue order rules are unavailable or do not support this order ({constraint_error}). "
+                "No order was sent.",
+                code=constraint_error,
+            )
 
         # quantity is hash-covered Proposal intent. Venue normalization
         # creates an immutable evaluated snapshot; it never rewrites storage
@@ -1592,11 +1612,13 @@ def _execute_proposal(
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan order tactics are unavailable for this execution mode.",
+                    code="entry_plan_tactics_unavailable",
                 )
             if execution_proposal.order_type != "limit":
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan execution requires a price-bounded Limit order.",
+                    code="entry_plan_requires_limit_order",
                 )
             if execution_proposal.order_tactic == "POST_ONLY_LIMIT" and not (
                 execution_proposal.post_only is True and execution_proposal.time_in_force == "post_only"
@@ -1604,6 +1626,7 @@ def _execute_proposal(
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Maker Entry Plan requires true Post-Only semantics.",
+                    code="entry_plan_requires_post_only",
                 )
             if execution_proposal.order_tactic == "OPPOSING_BBO_IOC" and not (
                 execution_proposal.post_only is False
@@ -1614,6 +1637,7 @@ def _execute_proposal(
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Urgent Entry Plan requires bounded opposing-BBO IOC semantics.",
+                    code="entry_plan_requires_bounded_ioc",
                 )
             from aletheia.storage import repositories as repo
 
@@ -1622,6 +1646,7 @@ def _execute_proposal(
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan lifecycle no longer permits a Risk reservation.",
+                    code="entry_plan_lifecycle_closed",
                 )
 
         # Symbol availability is the last pre-order check. If it raises, the
@@ -1633,7 +1658,7 @@ def _execute_proposal(
         )
         if _unavail:
             update_trade_proposal(proposal.id, status="rejected")
-            _fail_entry_plan(proposal, _unavail)
+            _fail_entry_plan(proposal, "symbol_not_available_on_venue")
             logger.info(
                 "Proposal %s skipped — symbol not on exchange: %s",
                 proposal.id,
@@ -1769,9 +1794,6 @@ def _execute_proposal(
                 failure_reason = ("entry_plan_price_invalidated"
                     if execution_receipt and str(e) == "entry_plan_price_invalidated"
                     and not has_order_for_proposal(proposal.id) else "demo_order_failed")
-                with transaction():
-                    update_trade_proposal(proposal.id, status="error")
-                    _fail_entry_plan(proposal, failure_reason)
                 # Record the failure's bounded code, never raw exception text: CCXT
                 # errors can carry request URLs and partial headers (#8's no-leak
                 # rule). The code is either the exception's own `reason_code`, or its
@@ -1783,6 +1805,13 @@ def _execute_proposal(
                 failure_code = getattr(e, "reason_code", None) or (
                     str(e) if re.fullmatch(r"[a-z][a-z0-9_]{0,127}", str(e)) else None
                 )
+                # The Plan keeps the same code, so "why do entries fail" is a GROUP BY.
+                plan_reason = failure_reason
+                if failure_reason == "demo_order_failed":
+                    plan_reason = f"{failure_reason}:{str(failure_code or 'unclassified').lower()[:95]}"
+                with transaction():
+                    update_trade_proposal(proposal.id, status="error")
+                    _fail_entry_plan(proposal, plan_reason)
                 msg = f"{failure_reason}: execution stopped ({type(e).__name__})"
                 if failure_code:
                     msg += f":{str(failure_code)[:120]}"

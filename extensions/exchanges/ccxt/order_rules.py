@@ -13,14 +13,14 @@ from aletheia.uta.compat import instrument_from_local
 def _amount_step(precision: Any, precision_mode: str) -> Decimal:
     if precision_mode == "significant_digits":
         # This has no fixed increment.  Guessing a step would allow an invalid order.
-        raise ConstraintUnavailable("exchange uses unsupported amount precision")
+        raise ConstraintUnavailable("exchange uses unsupported amount precision", reason_code="exchange_rule_precision_unsupported")
     if precision_mode == "decimal_places":
         try:
             places = int(precision)
         except (TypeError, ValueError) as exc:
-            raise ConstraintUnavailable("exchange rule missing amount precision") from exc
+            raise ConstraintUnavailable("exchange rule missing amount precision", reason_code="exchange_rule_field_missing") from exc
         if places < 0:
-            raise ConstraintUnavailable("exchange rule has invalid amount precision")
+            raise ConstraintUnavailable("exchange rule has invalid amount precision", reason_code="exchange_rule_field_invalid")
         return Decimal(1).scaleb(-places)
     return _decimal(precision, "amount precision", required=True)  # tick-size mode
 
@@ -45,7 +45,7 @@ def constraints_from_market(
     step = _amount_step((market.get("precision") or {}).get("amount"), precision_mode)
     min_cost = _decimal((limits.get("cost") or {}).get("min"), "minimum notional")
     if min_amount <= 0 and min_cost is None:
-        raise ConstraintUnavailable("exchange rule has no positive minimum amount or notional")
+        raise ConstraintUnavailable("exchange rule has no positive minimum amount or notional", reason_code="exchange_rule_minimum_missing")
     return OrderConstraints(
         venue=venue, symbol=symbol, market_type=market_type,
         min_quantity=min_amount * contract_size,
@@ -69,7 +69,7 @@ def _precision_mode_name(exchange: Any) -> str:
             return "tick_size"
     except ImportError:  # pragma: no cover - ccxt is a project dependency
         pass
-    raise ConstraintUnavailable("exchange reported an unknown amount precision mode")
+    raise ConstraintUnavailable("exchange reported an unknown amount precision mode", reason_code="exchange_rule_precision_unsupported")
 
 
 def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]:
@@ -80,7 +80,7 @@ def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]
             return market
         if instrument.market_type == "usdt_futures" and market.get("swap") and not market.get("future"):
             return market
-    raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue")
+    raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue", reason_code="symbol_not_active_on_venue")
 
 
 def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object], str]:
@@ -105,6 +105,7 @@ def _listing_view(execution_mode: str) -> tuple[bool, dict[str, object], str]:
         raise ConstraintUnavailable(
             f"execution mode '{execution_mode}' profile resolution failed",
             temporary=True,
+            reason_code="exchange_profile_unresolved",
         ) from exc
 
 
@@ -138,6 +139,7 @@ async def read_order_constraints(
         raise ConstraintUnavailable(
             f"could not refresh executable venue rules: {exc}",
             temporary=is_ambiguous_submission_error(exc),
+            reason_code="exchange_rules_refresh_failed",
         ) from exc
     finally:
         try:

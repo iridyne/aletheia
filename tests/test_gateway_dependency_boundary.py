@@ -51,5 +51,5 @@ def test_exchange_normalizes_dependency_failure_without_changing_quantity_gate(m
     else:
         quantity, reason = gateway._prepare_exchange_quantity("bitget_demo", "BTC/USDT", "spot", 0.001, 60000, allow_increase=allow_increase)
         assert quantity == 0.001
-        assert "No order was sent" in reason
+        assert reason == "exchange_rules_refresh_failed"
     assert closed == [True]

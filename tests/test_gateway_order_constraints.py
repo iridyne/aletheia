@@ -129,7 +129,7 @@ def test_unavailable_rules_reject_before_any_exchange_order(tmp_path, monkeypatc
         "evaluate_proposal",
         lambda _p, *, decision_role: _approved(),
     )
-    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (0.001, "Executable venue order rules are unavailable or do not support this order. No order was sent."))
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (0.001, "exchange_rules_unavailable"))
     import aletheia.execution.coordinator as broker
     monkeypatch.setattr(broker, "execute_order", lambda **kw: (_ for _ in ()).throw(AssertionError("exchange must not be called")))
 

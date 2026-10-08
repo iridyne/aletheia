@@ -28,9 +28,14 @@ _cache_lock = threading.Lock()
 class ConstraintUnavailable(RuntimeError):
     """The authoritative venue rules cannot safely be used for this order."""
 
-    def __init__(self, message: str, *, temporary: bool = False) -> None:
+    def __init__(
+        self, message: str, *, temporary: bool = False, reason_code: str = "exchange_rules_unavailable",
+    ) -> None:
         super().__init__(message)
         self.temporary = temporary
+        # A bounded, countable token for the durable record; the message may carry
+        # venue text and stays in process logs only.
+        self.reason_code = reason_code
 
 
 @dataclass(frozen=True)
@@ -67,15 +72,15 @@ def venue_for_execution_mode(execution_mode: str) -> str | None:
 def _decimal(value: Any, field: str, *, required: bool = False) -> Decimal | None:
     if value is None:
         if required:
-            raise ConstraintUnavailable(f"exchange rule missing {field}")
+            raise ConstraintUnavailable(f"exchange rule missing {field}", reason_code="exchange_rule_field_missing")
         return None
     try:
         parsed = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
-        raise ConstraintUnavailable(f"exchange rule has invalid {field}") from exc
+        raise ConstraintUnavailable(f"exchange rule has invalid {field}", reason_code="exchange_rule_field_invalid") from exc
     if parsed <= 0:
         if required:
-            raise ConstraintUnavailable(f"exchange rule has non-positive {field}")
+            raise ConstraintUnavailable(f"exchange rule has non-positive {field}", reason_code="exchange_rule_field_non_positive")
         return None
     return parsed
 
@@ -97,9 +102,9 @@ def normalize_quantity(quantity: float, price: float, constraints: OrderConstrai
     rounding = ROUND_CEILING if allow_increase else ROUND_FLOOR
     adjusted = (required / step).to_integral_value(rounding=rounding) * step
     if adjusted <= 0 or adjusted < minimum:
-        raise ConstraintUnavailable("bounded order quantity is below exchange minimum")
+        raise ConstraintUnavailable("bounded order quantity is below exchange minimum", reason_code="order_quantity_below_exchange_minimum")
     if constraints.max_quantity is not None and adjusted > constraints.max_quantity:
-        raise ConstraintUnavailable("order quantity exceeds exchange maximum")
+        raise ConstraintUnavailable("order quantity exceeds exchange maximum", reason_code="order_quantity_above_exchange_maximum")
     return float(adjusted)
 
 
@@ -111,7 +116,7 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     """
     venue = venue_for_execution_mode(execution_mode)
     if venue is None:
-        raise ConstraintUnavailable(f"no executable venue rules for mode {execution_mode}")
+        raise ConstraintUnavailable(f"no executable venue rules for mode {execution_mode}", reason_code="exchange_rules_mode_unsupported")
     reader = _constraints_reader
     if reader is None:
         raise ConstraintUnavailable("executable venue rules unavailable")
