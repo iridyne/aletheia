@@ -137,6 +137,11 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
+        # A generation-drifted identity makes the exact read below refuse the Order;
+        # re-bind it first (a no-op unless the venue proves account continuity).
+        from aletheia.execution.coordinator import reanchor_drifted_orders
+
+        reanchor_drifted_orders(execution_mode, [order])
         report = run_coro_from_sync(query_uta(
             execution_mode,
             "get_mass_status",

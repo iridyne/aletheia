@@ -115,6 +115,29 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
   `cancel_pending` 而不接触 venue;第 6 次尝试写一条 `entry_cancel_stalled` 审计事件。Order 与
   Entry Plan 仍留在 durable reconciliation 状态,不得静默放弃或推断 fill。
 
+### 3.0b 账户身份关系与连续性证明(2026-10-08, #3798)
+
+`UTAAccountIdentity` 里只有**账户事实**(`account_id` / `execution_mode` / `venue` / `environment`
+/ `profile` / `sub_accounts`)和**凭据代次**(`credential_generation`)构成身份。
+`adapter_implementation` / `adapter_version` / `ccxt_version` / `account_fingerprint` 是**出处**,
+只记录、不参与相等。唯一的判定是 `aletheia.uta.identity.identity_relation`,取值
+`SAME` / `GENERATION_DRIFT` / `DIFFERENT`;入场闸门、对账、精确读取(`query_uta`)、平仓与重标
+全部使用它,不再各自写相等。仅升级 CCXT 或适配器版本不得使任何持久身份变成硬不匹配。
+
+`GENERATION_DRIFT`(同一账户,只有凭据代次不同)的持久行只有在 **venue 的完整读取**证明当前
+凭据仍到达同一账户后才可重标并审计(`uta_account_reanchored`,带 `proof_order_id` 或
+`position_id`)。接受的证明有且仅有两种:
+
+1. 当前凭据下 venue 精确持有该本地开放 Position;
+2. 账户没有可证明的开放 Position 时(只有在途 Order 漂移),venue **完整**读回(按本地 client /
+   venue order id,带起始时间)一个**同一旧代次、本地已成交**的 Order。被怀疑的 Order 自己"没找到"
+   **不是**证明——换成另一个物理账户,同一个 client order id 也查不到。
+
+没有证明、`DIFFERENT`、身份未绑定或格式错误一律 fail closed:不 relabel、不提交。证明读取依赖
+各 venue profile 声明的精确读取能力(`client_order_lookup_param` / 历史扫描与
+`private_history_retention_days`);profile 不能给出完整的精确读取时证明不可得,系统保持 fail
+closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 profile 中声明这些能力。
+
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 
 核心逻辑(universe/opportunity/decision/risk)只认 canonical 类型 `spot` / `usdt_futures`,**不关心交易所**;能不能下某类型单是**各 adapter 的能力**,在 adapter 边界声明并路由(owner 原则 2)。

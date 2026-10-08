@@ -30,7 +30,8 @@ from aletheia.storage.repositories import (
     update_order_metadata,
 )
 from aletheia.storage.sqlite import get_db
-from aletheia.uta.compat import instrument_from_local
+from aletheia.uta.compat import instrument_from_local, scope_from_local
+from aletheia.uta.identity import IdentityRelation, identity_relation
 from aletheia.uta.manager import create_uta_adapter
 from aletheia.uta.models import (
     CancelOrderCommand,
@@ -38,6 +39,7 @@ from aletheia.uta.models import (
     CapabilitySupport,
     ModifyOrderCommand,
     OrderLifecycle,
+    OrderQuery,
     PositionQuery,
     QueryScope,
     ReadCompleteness,
@@ -77,18 +79,6 @@ def _create_bound_adapter(execution_mode: str, expected_account: UTAAccountIdent
         _close_adapter(adapter)
         raise
     return adapter
-
-
-def _identity_generation_drift(persisted: UTAAccountIdentity, current: UTAAccountIdentity) -> bool:
-    """Same configured account; only the durable credential generation differs."""
-    return (
-        persisted.credential_generation != current.credential_generation
-        and persisted.account_id == current.account_id
-        and persisted.execution_mode == current.execution_mode
-        and persisted.venue == current.venue
-        and persisted.environment == current.environment
-        and persisted.profile == current.profile
-    )
 
 
 async def _venue_positions(adapter) -> list | None:
@@ -143,13 +133,16 @@ def _reanchor_order_identity(
     current: UTAAccountIdentity,
     position_id: str | None,
     venue_position_id: str | None,
+    proof_order_id: str | None = None,
 ) -> None:
     """Re-bind one Order's account provenance to the current generation.
 
-    The venue already proved the same physical account holds the exact open
-    Position; this updates the local provenance label only, never the venue
-    state.  The audit event keeps the prior generation as explicit migration
-    evidence, so history is preserved, not silently relabeled.
+    The venue already proved the same account is reached by the current
+    credentials, either by holding the exact open Position or by returning a
+    locally Filled Order of the same generation (``proof_order_id``); this
+    updates the local provenance label only, never the venue state.  The audit
+    event keeps the prior generation as explicit migration evidence, so history
+    is preserved, not silently relabeled.
     """
     update_order_metadata(order_id, uta_account_identity_json=current.model_dump_json())
     write_post_commit_audit(
@@ -162,6 +155,7 @@ def _reanchor_order_identity(
             "reason": "credential_generation_drift_venue_proven",
             "position_id": position_id,
             "venue_position_id": venue_position_id,
+            "proof_order_id": proof_order_id,
             "before": {
                 "account_id": persisted.account_id,
                 "credential_generation": persisted.credential_generation,
@@ -191,9 +185,9 @@ def fence_identity_after_order_proof(
     if not raw:
         raise ValueError("uta_account_identity_unavailable")
     persisted = UTAAccountIdentity.model_validate_json(raw)
-    if persisted == current:
+    if identity_relation(persisted, current) is IdentityRelation.SAME:
         return current
-    if not _identity_generation_drift(persisted, current):
+    if identity_relation(persisted, current) is not IdentityRelation.GENERATION_DRIFT:
         raise ValueError("uta_account_identity_mismatch")
     _reanchor_order_identity(
         order_id=order_row["id"],
@@ -205,13 +199,74 @@ def fence_identity_after_order_proof(
     return current
 
 
+_SIBLING_PROOF_CANDIDATES = 3
+
+
+async def _venue_returns_filled_sibling(
+    execution_mode: str, current: UTAAccountIdentity, drifted: list[UTAAccountIdentity],
+) -> str | None:
+    """Id of a locally Filled Order of a drifted generation that the venue returns.
+
+    Account continuity when no Position is open: an Order this system already
+    materialized as Filled under the *same* old identity, read back completely and
+    by its own ids under the current credentials, can only live on the account the
+    current credentials reach.  Absence of the drifted Order itself proves nothing
+    about that, so it is never used as evidence here.
+    """
+    candidates = []
+    for row in get_db().execute(
+        "SELECT id, symbol, market_type, client_order_id, exchange_order_id, created_at, "
+        "uta_account_identity_json FROM orders WHERE execution_mode=? AND status='filled' "
+        "AND (client_order_id IS NOT NULL OR exchange_order_id IS NOT NULL) "
+        "ORDER BY created_at DESC LIMIT 200",
+        (execution_mode,),
+    ).fetchall():
+        try:
+            identity = UTAAccountIdentity.model_validate_json(row["uta_account_identity_json"] or "")
+        except (ValueError, TypeError):
+            continue
+        if any(identity_relation(identity, old) is IdentityRelation.SAME for old in drifted):
+            candidates.append(row)
+        if len(candidates) == _SIBLING_PROOF_CANDIDATES:
+            break
+    for row in candidates:
+        client_id = str(row["client_order_id"] or "").strip() or None
+        venue_id = str(row["exchange_order_id"] or "").strip() or None
+        try:
+            report = await _call_and_close(
+                _create_bound_adapter(execution_mode, current),
+                "get_order",
+                OrderQuery(
+                    scope=scope_from_local(row["symbol"], row["market_type"], start_at=row["created_at"]),
+                    client_order_id=client_id,
+                    venue_order_id=venue_id,
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "sibling continuity read failed for %s (%s)", execution_mode, type(exc).__name__,
+            )
+            continue
+        found = report.found
+        if (
+            report.completeness is ReadCompleteness.COMPLETE
+            and found is not None
+            and ((venue_id and found.venue_order_id == venue_id) or (client_id and found.client_order_id == client_id))
+        ):
+            return str(row["id"])
+    return None
+
+
 async def _reanchor_generation_drift_rows(execution_mode: str, adapter, rows) -> bool:
     """Re-bind drifted Order/Position identities after exact venue proof.
 
     Fail-closed when any drifted row is unbound, hard-mismatched, or cannot be
-    proven against the venue.  Returns ``True`` only when every drifted open
-    Position matched the venue exactly and the whole drifted set was re-anchored.
+    proven against the venue.  Returns ``True`` only when the venue proved account
+    continuity and the whole drifted set was re-anchored.  Continuity is proven by
+    an open Position the venue holds exactly or, when only Orders drifted, by a
+    locally Filled Order of the same old generation that the venue returns.
     """
+    current = adapter.identity
     drifted = []
     for existing in rows:
         try:
@@ -219,39 +274,90 @@ async def _reanchor_generation_drift_rows(execution_mode: str, adapter, rows) ->
         except (ValueError, TypeError):
             # Unbound/malformed identity cannot be proven; fail closed.
             return False
-        if persisted == adapter.identity:
+        relation = identity_relation(persisted, current)
+        if relation is IdentityRelation.SAME:
             continue
-        if not _identity_generation_drift(persisted, adapter.identity):
+        if relation is not IdentityRelation.GENERATION_DRIFT:
             return False
         drifted.append((existing, persisted))
     if not drifted:
         return True
-    venue_positions = await _venue_positions(adapter)
-    if venue_positions is None:
-        return False
-    for existing, _persisted in drifted:
-        if existing["source_kind"] != "position":
-            continue
-        if _venue_confirms_position(existing, venue_positions) is None:
+    venue_positions = None
+    proof_order_id = None
+    if any(existing["source_kind"] == "position" for existing, _persisted in drifted):
+        venue_positions = await _venue_positions(adapter)
+        if venue_positions is None:
             return False
-    if any(existing["source_kind"] == "order" for existing, _persisted in drifted) and not any(
-        existing["source_kind"] == "position" for existing, _persisted in drifted
-    ):
-        # No open Position to prove account continuity; refuse to relabel in-flight Orders.
-        return False
+        for existing, _persisted in drifted:
+            if existing["source_kind"] == "position" and _venue_confirms_position(existing, venue_positions) is None:
+                return False
+    else:
+        # Only Orders drifted. Release the caller's adapter here, as the Position
+        # read above does; each sibling read below binds its own.
+        try:
+            await adapter.close()
+        except Exception:
+            logger.warning("Adapter close failed before the sibling continuity read", exc_info=True)
+        proof_order_id = await _venue_returns_filled_sibling(
+            execution_mode, current, [persisted for _existing, persisted in drifted],
+        )
+        if proof_order_id is None:
+            return False
     for existing, persisted in drifted:
         _reanchor_order_identity(
             order_id=existing["order_id"] or existing["id"],
             persisted=persisted,
-            current=adapter.identity,
+            current=current,
             position_id=existing["id"] if existing["source_kind"] == "position" else None,
             venue_position_id=(
-                _venue_confirms_position(existing, venue_positions)
+                _venue_confirms_position(existing, venue_positions or [])
                 if existing["source_kind"] == "position"
                 else None
             ),
+            proof_order_id=proof_order_id,
         )
     return True
+
+
+def reanchor_drifted_orders(execution_mode: str, orders: list[dict]) -> set[str]:
+    """Re-bind unresolved Orders whose stored identity only drifted in generation.
+
+    The reconciler used to skip such an Order forever: reading it needed the stored
+    identity to equal the current one, and the only way to make them equal needed
+    that read. Returns the ids re-bound (an empty set when the venue gives no
+    continuity proof, which leaves every Order exactly as it was).
+    """
+    try:
+        adapter = _create_bound_adapter(execution_mode)
+    except Exception:
+        return set()
+    rows = []
+    for order in orders:
+        try:
+            persisted = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
+        except (ValueError, TypeError):
+            continue
+        if identity_relation(persisted, adapter.identity) is IdentityRelation.GENERATION_DRIFT:
+            rows.append({
+                "id": order["id"], "order_id": None, "source_kind": "order",
+                "uta_account_identity_json": order["uta_account_identity_json"],
+            })
+    if not rows:
+        _close_adapter(adapter)
+        return set()
+    current = adapter.identity
+    try:
+        proven = run_coro_from_sync(_reanchor_generation_drift_rows(execution_mode, adapter, rows))
+    except Exception as exc:
+        logger.warning("reanchor of drifted Orders failed for %s (%s)", execution_mode, type(exc).__name__)
+        _close_adapter(adapter)
+        return set()
+    if not proven:
+        return set()
+    for order in orders:
+        if any(row["id"] == order["id"] for row in rows):
+            order["uta_account_identity_json"] = current.model_dump_json()
+    return {row["id"] for row in rows}
 
 
 def _all_rows_match_current_identity(rows, current: UTAAccountIdentity) -> bool:
@@ -261,7 +367,7 @@ def _all_rows_match_current_identity(rows, current: UTAAccountIdentity) -> bool:
         except (ValueError, TypeError):
             # Unbound/malformed identity is never trusted as the current account.
             return False
-        if persisted != current:
+        if identity_relation(persisted, current) is not IdentityRelation.SAME:
             return False
     return True
 
@@ -736,7 +842,7 @@ def close_position(
             pending_close_status="error",
         )
         raise
-    if adapter.identity != persisted:
+    if identity_relation(persisted, adapter.identity) is not IdentityRelation.SAME:
         # Credential/config generation drift: the persisted identity predates the
         # current generation.  Re-bind only after the venue proves the exact open
         # Position still exists under current credentials; otherwise fail closed.
@@ -746,7 +852,7 @@ def close_position(
             venue_positions = None
         venue_position_id = (
             _venue_confirms_position(row, venue_positions)
-            if _identity_generation_drift(persisted, adapter.identity) and venue_positions
+            if identity_relation(persisted, adapter.identity) is IdentityRelation.GENERATION_DRIFT and venue_positions
             else None
         )
         if venue_position_id is None:
