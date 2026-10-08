@@ -19,6 +19,12 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Entry feature Tier C plan — 2026-10-08](market-data/ENTRY_FEATURE_TIER_C_PLAN_2026-10-08.md)
+  inventories the nine #3785 Tier C Entry Planner features (existing data, venue
+  sources, point-in-time rules, fingerprint path, cost, evaluation on the FCO
+  ledger) and proposes a dependency-ordered sequence plus owner decisions. It
+  authorizes no collector or model-input change.
+
 - [Slim Core private-I/O reachability — 2026-09-13](audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md)
   distinguishes stored-account probes, candidate credentials, TP/SL recovery and
   public listing reads at the remaining concrete-client imports. It is bounded
