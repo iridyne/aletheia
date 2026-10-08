@@ -29,6 +29,45 @@ def test_ema_recovers_after_seed():
     assert 3 < out < 5  # weighted toward recent values
 
 
+def test_macd_matches_hand_computed_small_series():
+    # fast=2, slow=3, signal=2 over [1, 2, 4, 8, 16], SMA-seeded EMAs:
+    # EMA2 = 1.5, 19/6, 115/18, 691/54; EMA3 = 7/3, 31/6, 127/12
+    # line = 5/6, 11/9, 239/108; signal = 37/36, then 589/324.
+    out = indicators.macd([1, 2, 4, 8, 16], fast=2, slow=3, signal=2)
+    assert [tuple(round(v, 9) for v in point) for point in out] == [
+        (round(11 / 9, 9), round(37 / 36, 9), round(11 / 9 - 37 / 36, 9)),
+        (round(239 / 108, 9), round(589 / 324, 9), round(239 / 108 - 589 / 324, 9)),
+    ]
+
+
+def test_macd_ramp_has_constant_lag_and_needs_34_closes():
+    # A unit ramp lags EMA(n) by (n-1)/2 exactly: line = 12.5 - 5.5 = 7, hist = 0.
+    line, signal, hist = indicators.macd([float(i) for i in range(100)])[-1]
+    assert (line, round(signal, 9), round(hist, 9)) == (7.0, 7.0, 0.0)
+    assert indicators.macd([float(i) for i in range(33)]) == []
+    assert len(indicators.macd([float(i) for i in range(34)])) == 1
+    assert len(indicators.macd([float(i) for i in range(35)])) == 2
+
+
+def test_adx_matches_hand_computed_small_series():
+    # period=2. TR = 2, 3, 4; +DM = 1, 1, 0; -DM = 0, 0, 2.
+    # First DI: +DI = 1/2.5 = 40, -DI = 0 -> DX 100. Next: TR 3.25, +DM 0.5,
+    # -DM 1 -> +DI 200/13, -DI 400/13, DX 100/3. ADX = mean(100, 100/3).
+    out = indicators.adx([10, 11, 12, 11], [8, 9, 9, 7], [9, 10, 11, 8], period=2)
+    assert out is not None
+    assert [round(v, 9) for v in out] == [round(200 / 3, 9), round(200 / 13, 9), round(400 / 13, 9)]
+
+
+def test_adx_ramp_saturates_and_flat_or_short_series_is_unavailable():
+    highs = [i + 1.0 for i in range(28)]
+    lows = [float(i) for i in range(28)]
+    assert indicators.adx(highs, lows, highs) == (100.0, 100.0, 0.0)
+    assert indicators.adx(highs[:27], lows[:27], highs[:27]) is None
+    assert indicators.adx([1.0] * 28, [1.0] * 28, [1.0] * 28) is None
+    # Inside bars only: range exists but there is no directional movement (0/0).
+    assert indicators.adx([2.0] * 28, [1.0] * 28, [1.5] * 28) is None
+
+
 def test_rsi_uptrend_above_50():
     closes = [float(i) for i in range(1, 30)]
     r = indicators.rsi(closes, 14)
