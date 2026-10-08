@@ -2040,3 +2040,65 @@ def test_gateway_cancel_backoff_does_not_hide_a_local_fill(monkeypatch):
     from aletheia.execution import gateway
 
     assert gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")["status"] == "filled"
+
+
+def _strand_ordered_plan(monkeypatch, *, absent: bool) -> tuple[EntryPlan, Order]:
+    """An entry whose submission outcome was never learned and is now past the soft window."""
+    from datetime import timedelta
+    from aletheia.execution import stale_order_cleanup as soc
+
+    plan, order = _persist_ordered_plan()
+    assert order.proposal_id is not None
+    repo.transition_order(order.id, status="submission_unknown")
+    repo.update_trade_proposal(order.proposal_id, status="submission_unknown")
+    stale = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    repo.get_db().execute("UPDATE orders SET created_at=? WHERE id=?", (stale, order.id))
+    repo.get_db().commit()
+    monkeypatch.setattr(soc, "_exchange_order_absent_unfilled", lambda _order: absent)
+    return plan, order
+
+
+def _proposal_status(order: Order) -> str:
+    assert order.proposal_id is not None
+    proposal = repo.get_trade_proposal(order.proposal_id)
+    assert proposal is not None
+    return proposal["status"]
+
+
+def _stored(getter, key: str) -> dict:
+    row = getter(key)
+    assert row is not None
+    return row
+
+
+def test_venue_confirmed_absence_ends_the_whole_entry_chain(monkeypatch):
+    """The Order, its Proposal and its Plan leave their non-terminal states together.
+
+    Cancelling only the Order left the Proposal `submission_unknown` and the Plan
+    `ordered` for 11 days on the Fedora runtime, holding the planning_key.
+    """
+    from aletheia.execution import stale_order_cleanup as soc
+
+    plan, order = _strand_ordered_plan(monkeypatch, absent=True)
+    assert soc.cleanup_stale_orphan_orders()["cancelled_ids"] == [order.id]
+
+    assert _stored(repo.get_order, order.id)["status"] == "cancelled"
+    assert _proposal_status(order) == "error"
+    stored = _stored(repo.get_entry_plan, plan.plan_id)
+    assert (stored["status"], stored["terminal_reason"]) == ("failed", "venue_confirmed_absence")
+    audit = repo.get_db().execute(
+        "SELECT after_state FROM audit_events WHERE entity_id=? AND event_type='order_stale_cancelled'",
+        (order.id,),
+    ).fetchone()
+    assert str(order.proposal_id) in audit["after_state"] and plan.plan_id in audit["after_state"]
+
+
+def test_without_venue_confirmation_the_chain_is_left_alone(monkeypatch):
+    from aletheia.execution import stale_order_cleanup as soc
+
+    plan, order = _strand_ordered_plan(monkeypatch, absent=False)
+    assert soc.cleanup_stale_orphan_orders()["cancelled"] == 0
+
+    assert _stored(repo.get_order, order.id)["status"] == "submission_unknown"
+    assert _proposal_status(order) == "submission_unknown"
+    assert _stored(repo.get_entry_plan, plan.plan_id)["status"] == "ordered"

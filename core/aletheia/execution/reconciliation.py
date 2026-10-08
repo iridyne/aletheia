@@ -721,11 +721,30 @@ def _is_close_order(order: dict) -> bool:
     return row is not None and row["pending_close_order_id"] == order["id"]
 
 
+def _last_inconclusive_reason(order_id: str) -> str | None:
+    row = get_db().execute(
+        "SELECT after_state FROM audit_events WHERE entity_id=? "
+        "AND event_type='order_reconciliation_inconclusive' ORDER BY rowid DESC LIMIT 1",
+        (order_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["after_state"] or "{}").get("reason")
+    except (TypeError, ValueError):
+        return None
+
+
 def _write_reconcile_event(order: dict, *, state: str, reason: str) -> None:
+    event_type = "order_reconciled" if state == "filled" else "order_reconciliation_inconclusive"
+    # An unchanged inconclusive verdict is not a new fact: one row per change of
+    # reason, not one per 2-minute pass (a stuck Order accrued ~2,500 identical rows).
+    if event_type == "order_reconciliation_inconclusive" and _last_inconclusive_reason(order["id"]) == reason:
+        return
     write_audit({
         "actor": "system",
         "source": "reconciliation",
-        "event_type": "order_reconciled" if state == "filled" else "order_reconciliation_inconclusive",
+        "event_type": event_type,
         "entity_type": "order",
         "entity_id": order["id"],
         "reason": reason,

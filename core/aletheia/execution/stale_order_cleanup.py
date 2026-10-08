@@ -208,6 +208,43 @@ def _decide(order: dict) -> tuple[str, str] | None:
     return None
 
 
+# What a venue-confirmed absent entry Order ends for the rest of its chain.
+_ABSENCE_REASON = "venue_confirmed_absence"
+_PROPOSAL_IN_FLIGHT = ("submission_unknown", "executing")
+
+
+def _end_entry_chain(fresh_order: dict) -> dict[str, str]:
+    """End the Proposal and Entry Plan that only this absent Order kept alive.
+
+    Runs inside ``_apply``'s writer slot, so the Order, Proposal and Plan leave
+    their non-terminal states together.  A Plan left ``ordered`` after its Order
+    ended would hold its ``planning_key`` forever and block a replacement.
+    """
+    ended: dict[str, str] = {}
+    proposal_id = fresh_order.get("proposal_id")
+    proposal = repo.get_trade_proposal(str(proposal_id)) if proposal_id else None
+    if proposal is None:
+        return ended
+    if proposal["status"] in _PROPOSAL_IN_FLIGHT:
+        repo.update_trade_proposal(proposal["id"], status="error")
+        ended["proposal_id"] = proposal["id"]
+    plan_id = proposal.get("entry_plan_id")
+    plan = repo.get_entry_plan(str(plan_id)) if plan_id else None
+    latest = repo.get_order_for_entry_plan(plan["id"]) if plan is not None else None
+    # Only the Plan's latest leg may end it; an earlier absent leg must not fail a Plan
+    # that has since placed another Order.
+    if plan is not None and latest is not None and latest["id"] == fresh_order["id"] \
+            and plan["status"] not in _ENTRY_PLAN_TERMINAL:
+        if repo.transition_entry_plan(
+            plan["id"], expected_status=plan["status"], status="failed", reason=_ABSENCE_REASON,
+        ):
+            ended["entry_plan_id"] = plan["id"]
+    return ended
+
+
+_ENTRY_PLAN_TERMINAL = frozenset({"filled", "invalidated", "expired", "cancelled", "failed"})
+
+
 def _apply(order: dict, reason_code: str, kind: str) -> str | None:
     """Compare-and-write the cancel under the SQLite writer slot.
 
@@ -239,10 +276,11 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
         # (outside any lock); we deliberately do not re-query the venue while
         # holding the writer slot. The local guards re-checked above are enough.
         repo.transition_order(oid, status="cancelled", error_reason=reason_code)
+        chain = _end_entry_chain(fresh) if kind == "cancel" else {}
         before = {"status": fresh["status"]}
         if cleared_position_id:
             before["pending_close_position_id"] = cleared_position_id
-        after = {"status": "cancelled", "error_reason": reason_code}
+        after = {"status": "cancelled", "error_reason": reason_code, **chain}
         repo.insert_audit_event(AuditEvent(
             actor="system",
             source="stale_order_cleanup",
