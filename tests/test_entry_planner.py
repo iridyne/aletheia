@@ -452,6 +452,36 @@ def test_behavior_fingerprint_upgrade_supersedes_each_durable_result_once(termin
         assert stored_plan["terminal_reason"] == "canonical_compatibility_cutover"
 
 
+def test_a_generation_frozen_under_another_entry_contract_is_not_claimable():
+    """A stored input in another contract's shape must not reach the Planner.
+
+    It used to be claimed (the predicate only required a non-null fingerprint),
+    failed re-validation, and burned its three attempts as PLANNER_INTERNAL.
+    The compatibility cutover replaces it at the next publication instead.
+    """
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.count_pending_candidate_planning() == 1
+    assert repo.list_candidate_planning_demand()
+
+    for column in ("entry_behavior_fingerprint", "schema_fingerprint"):
+        original = repo.get_candidate_planning_generation(generation["id"])[column]
+        repo.execute_write(
+            f"UPDATE candidate_planning_generations SET {column}=? WHERE id=?",
+            ("0" * 64, generation["id"]),
+        )
+        assert repo.count_pending_candidate_planning() == 0
+        assert repo.list_candidate_planning_demand() == []
+        assert repo.claim_next_candidate_planning("stale-owner") is None
+        repo.execute_write(
+            f"UPDATE candidate_planning_generations SET {column}=? WHERE id=?",
+            (original, generation["id"]),
+        )
+
+    assert repo.count_pending_candidate_planning() == 1
+    assert repo.claim_next_candidate_planning("current-owner")["id"] == generation["id"]
+
+
 def test_legacy_false_no_plan_remains_immutable_during_canonical_cutover():
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)

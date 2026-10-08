@@ -3932,10 +3932,13 @@ _CLAIMABLE_PLANNING_SOURCE = (
 # Shared verbatim by the claim, the pending count, and the venue-margin demand
 # projection (#3741) so the instrument facts the runtime maintains cannot drift
 # from the generations the Planner actually claims. Placeholder order is
-# ``(resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp)``.
+# ``(behavior, schema, resume_only, timestamp, timestamp, max_attempts,
+# timestamp, timestamp)``. A Generation frozen under another Entry contract is
+# never claimed: its stored input is in that contract's shape, and the
+# compatibility cutover (``ensure_candidate_planning_generation``) replaces it.
 _CLAIMABLE_PLANNING_WHERE = (
     "pg.is_current=1 AND pg.attention_status='active' "
-    "AND pg.entry_behavior_fingerprint IS NOT NULL "
+    "AND pg.entry_behavior_fingerprint=? AND pg.schema_fingerprint=? "
     "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
     "AND um.execution_eligible=1 "
     "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
@@ -3948,7 +3951,10 @@ _CLAIMABLE_PLANNING_WHERE = (
 def _claimable_planning_params(
     resume_only: bool, max_attempts: int, timestamp: str
 ) -> tuple:
-    return (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp)
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+
+    behavior, schema = entry_contract_fingerprints()
+    return (behavior, schema, resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp)
 
 
 def claim_next_candidate_planning(
@@ -4246,18 +4252,9 @@ def list_candidate_planning_demand(
     rows = (
         get_db()
         .execute(
-            "SELECT DISTINCT pg.symbol, pg.market_type FROM candidate_planning_generations pg "
-            "JOIN universe_members um ON um.id=pg.last_candidate_id "
-            "WHERE pg.is_current=1 AND pg.attention_status='active' "
-            "AND pg.entry_behavior_fingerprint IS NOT NULL "
-            "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
-            "AND um.execution_eligible=1 "
-            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
-            "AND pg.attempt_count<? AND (pg.status='pending' "
-            "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
-            "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
-            "ORDER BY pg.symbol",
-            (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
+            "SELECT DISTINCT pg.symbol, pg.market_type " + _CLAIMABLE_PLANNING_SOURCE
+            + "WHERE " + _CLAIMABLE_PLANNING_WHERE + " ORDER BY pg.symbol",
+            _claimable_planning_params(resume_only, max_attempts, timestamp),
         )
         .fetchall()
     )
