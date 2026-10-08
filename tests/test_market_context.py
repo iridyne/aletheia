@@ -56,6 +56,11 @@ def test_adx_matches_hand_computed_small_series():
     out = indicators.adx([10, 11, 12, 11], [8, 9, 9, 7], [9, 10, 11, 8], period=2)
     assert out is not None
     assert [round(v, 9) for v in out] == [round(200 / 3, 9), round(200 / 13, 9), round(400 / 13, 9)]
+    # One more bar (12, 10, 11): TR 4, +DM 1 -> TR 3.625, +DM 0.75, -DM 0.5,
+    # +DI 600/29, -DI 400/29, DX 20; Wilder ADX = (200/3 + 20) / 2 = 130/3.
+    out = indicators.adx([10, 11, 12, 11, 12], [8, 9, 9, 7, 10], [9, 10, 11, 8, 11], period=2)
+    assert out is not None
+    assert [round(v, 9) for v in out] == [round(130 / 3, 9), round(600 / 29, 9), round(400 / 29, 9)]
 
 
 def test_adx_ramp_saturates_and_flat_or_short_series_is_unavailable():

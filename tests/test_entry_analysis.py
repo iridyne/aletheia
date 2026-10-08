@@ -471,6 +471,10 @@ def test_model_view_exposes_technical_labels_and_imbalance_when_inputs_suffice()
     one_hour = quant["technical"]["1h"]["values"]
     assert one_hour["ma_alignment"] == "bullish"
     assert one_hour["macd_line"] > 0 and one_hour["trend_regime"] == "trend_up"
+    from aletheia.trading.indicators import macd
+
+    series = macd([bar["close"] for bar in context.candle_windows["1h"]["bars"]])
+    assert (one_hour["macd_hist"], one_hour["macd_hist_delta"]) == (series[-1][2], series[-1][2] - series[-2][2])
     assert one_hour["plus_di_14"] > one_hour["minus_di_14"]
     assert view["execution_context"]["imbalance_ratio"] == 0.25
     assert view["execution_context"]["unavailable_fields"] == []
