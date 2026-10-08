@@ -116,7 +116,9 @@ def _local_venue_capabilities():
 
     Seeding the cache keeps the real ``load_venue_capabilities`` code path (its
     TTL, lock and fail-closed branches all still execute) while making the
-    listing a local fact.
+    listing a local fact. The entry is stored under the key the code itself
+    computes: it includes the exchange profile (#3475), so a hand-written
+    ``"bitget_demo"`` key never matches and the cold-cache refresh runs.
     """
     from aletheia.execution import venue_capabilities as _vc
 
@@ -126,7 +128,7 @@ def _local_venue_capabilities():
     }
     with _vc._demo_capabilities_lock:
         preserved = dict(_vc._demo_capabilities_cache)
-        _vc._demo_capabilities_cache["bitget_demo"] = (listing, time.time())
+        _vc._demo_capabilities_cache[_vc._capability_cache_key("bitget_demo")] = (listing, time.time())
     try:
         yield listing
     finally:
