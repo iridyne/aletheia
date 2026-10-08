@@ -567,8 +567,11 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         source_cutoff_at="2026-09-02T00:00:00+00:00",
         cost_assumptions=cost_assumptions,
     )
-    assert frozen.economic_utility_pct is None
-    assert frozen.unavailable_reason == "history_economics_incomplete"
+    # The row priced under another cost model is left out of the sample and only
+    # lowers coverage; it no longer voids the cohort.
+    assert frozen.economic_utility_pct == estimate.economic_utility_pct
+    assert frozen.source_outcome_fingerprint == estimate.source_outcome_fingerprint
+    assert frozen.outcome_coverage < estimate.outcome_coverage
 
     other_venue = [
         {**row, "venue": "bitget", "net_return_pct": 99.0}
@@ -664,8 +667,11 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         source_cutoff_at="2026-09-02T00:00:00+00:00",
         cost_assumptions=cost_assumptions,
     )
-    assert unavailable_tail.estimate_status == "unavailable"
-    assert unavailable_tail.tail_evidence.status == "unavailable"
+    # A row whose MAE is unknown is left out of the sample (it only lowers coverage),
+    # so the tail is still measured from the rows that do have one.
+    assert unavailable_tail.estimate_status == "available"
+    assert unavailable_tail.tail_evidence.status == "clear"
+    assert unavailable_tail.outcome_coverage < 1.0
 
     skipped_missing_tail = {
         **_outcomes()[0],
@@ -686,8 +692,9 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         source_cutoff_at="2026-09-02T00:00:00+00:00",
         cost_assumptions=cost_assumptions,
     )
-    assert overlap_unavailable.estimate_status == "unavailable"
-    assert overlap_unavailable.tail_evidence.status == "unavailable"
+    assert overlap_unavailable.estimate_status == "available"
+    assert overlap_unavailable.tail_evidence.status == "clear"
+    assert overlap_unavailable.source_outcome_fingerprint == estimate.source_outcome_fingerprint
 
     catastrophic = [dict(row) for row in _outcomes()]
     catastrophic[0]["net_return_pct"] = -20.0
@@ -1663,8 +1670,8 @@ def test_startup_requires_genuine_scarcity_and_cutoff_safe_settlement():
     for changes, reason in (
         ({"outcome_candidate_key": None}, "history_identity_invalid"),
         ({"entry_ts": "bad"}, "history_time_invalid"),
-        ({"mae_pct": None}, "history_economics_incomplete"),
-        ({"estimated_fee_pct": None}, "history_economics_incomplete"),
+        ({"mae_pct": None}, "parent_sample_insufficient"),
+        ({"estimated_fee_pct": None}, "parent_sample_insufficient"),
         ({"net_return_pct": -20}, "tail_harm"),
         ({"status": "pending"}, "settlement_overdue"),
     ):
@@ -1829,7 +1836,16 @@ def test_incomplete_cost_history_admits_via_startup_instead_of_stalling():
             source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=row["cost_assumptions"],
         )
 
+    # A row with an unknown cost is left out of the sample; the cohort is then
+    # simply too thin to measure, which is also unmeasured evidence.
     incomplete = estimate([{**row, "estimated_funding_pct": None}])
+    assert incomplete.unavailable_reason == "parent_sample_insufficient"
+    assert incomplete.economic_utility_pct is None
+    from aletheia.universe.economic_utility import reason_proves_evidence_absent as _absent
+    assert _absent(incomplete.unavailable_reason)
+    # What still voids a cohort is complete rows that disagree on the cost floor.
+    first, second = _outcomes(2)
+    incomplete = estimate([first, {**second, "min_tradable_edge_pct": 0.07}])
     assert incomplete.unavailable_reason == "history_economics_incomplete"
     assert incomplete.economic_utility_pct is None
     # The estimate stays unavailable; what changes is that admission may now treat
@@ -1837,6 +1853,65 @@ def test_incomplete_cost_history_admits_via_startup_instead_of_stalling():
     from aletheia.universe.economic_utility import reason_proves_evidence_absent
     assert reason_proves_evidence_absent(incomplete.unavailable_reason)
     assert not reason_proves_evidence_absent(estimate([{**row, "net_return_pct": -20}]).unavailable_reason)
+
+
+def test_one_incomplete_row_does_not_void_a_mature_cohort():
+    """A single row with an unknown cost drops out of the sample, not the cohort."""
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = _outcomes(60)
+    cost = rows[0]["cost_assumptions"]
+
+    def estimate(history):
+        return estimate_economic_utility(
+            candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+            market_type="spot", strength_percentile=0.9, outcomes=history,
+            source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=cost,
+        )
+
+    clean = estimate(rows)
+    assert clean.estimate_status == "available"
+    for field in ("estimated_funding_pct", "mae_pct", "net_return_pct"):
+        # The bad row sits at an interior T0 so the independent sample is unchanged.
+        damaged = [{**row, field: None} if i == 30 else row for i, row in enumerate(rows)]
+        result = estimate(damaged)
+        assert result.unavailable_reason is None
+        assert result.estimate_status == "available"
+        assert result.outcome_coverage == pytest.approx(59 / 60)
+        assert result.parent_independent_n == clean.parent_independent_n - 1
+
+
+def test_widespread_incomplete_rows_still_refuse_the_cohort():
+    """The 80% coverage floor is what stops a systematic gap from being averaged away."""
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = _outcomes(60)
+    damaged = [{**row, "estimated_funding_pct": None} if i % 4 == 0 else row
+               for i, row in enumerate(rows)]  # 25% of rows
+    result = estimate_economic_utility(
+        candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+        market_type="spot", strength_percentile=0.9, outcomes=damaged,
+        source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=rows[0]["cost_assumptions"],
+    )
+    assert result.outcome_coverage < 0.80
+    assert result.estimate_status != "available"
+    assert result.unavailable_reason == "parent_sample_insufficient"
+    assert result.economic_utility_pct is None
+
+
+def test_an_incomplete_row_with_a_tail_loss_still_flags_the_cohort():
+    """Dropping a row from the sample must not hide a measured catastrophic loss."""
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = _outcomes(60)
+    rows[30] = {**rows[30], "mae_pct": None, "net_return_pct": -20.0}
+    result = estimate_economic_utility(
+        candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+        market_type="spot", strength_percentile=0.9, outcomes=rows,
+        source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=rows[0]["cost_assumptions"],
+    )
+    assert result.unavailable_reason == "tail_harm"
+    assert result.economic_utility_pct is None
 
 
 def test_admission_consumes_estimator_classification_not_its_own_literals():

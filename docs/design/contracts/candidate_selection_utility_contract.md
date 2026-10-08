@@ -77,12 +77,23 @@ The current chain is:
    80% coverage; the child
    requires 20 clusters. These thresholds are not lowered for Startup.
 5. Only `no_history`, `parent_sample_insufficient` or
-   `child_sample_insufficient` can support Startup. It requires an eligible,
-   actionable instrument, explicit direction, available capabilities and finite
-   positive `pessimistic_strength`. Invalid-only history, missing costs/MAE,
-   invalid identities/times, overdue settlement, tail harm and known economic
-   rejection cannot be bypassed through another sparse mechanism. A mature
-   parent without a current percentile is unavailable, not Startup.
+   `child_sample_insufficient`, `history_economics_incomplete` or
+   `settlement_overdue` can support Startup: each means "not measured yet", not
+   "measured and refused". It requires an eligible, actionable instrument,
+   explicit direction, available capabilities and finite positive
+   `pessimistic_strength`. Invalid-only history, invalid identities/times, tail
+   harm and known economic rejection cannot be bypassed through another sparse
+   mechanism. A mature parent without a current percentile is unavailable, not
+   Startup.
+
+   A history row with any unknown cost or risk field (net return, MAE, fee,
+   spread/slippage, funding, cost-covering floor, cost assumptions or cost-model
+   version) is excluded from the sample and stays in the coverage denominator.
+   It no longer voids its cohort; a systematic gap lowers coverage below the 80%
+   floor and refuses the cohort through `parent_sample_insufficient`. A cohort
+   reports `history_economics_incomplete` only when complete rows disagree on the
+   cost floor. A settled row below the tail-harm floor still flags the cohort
+   even if another field of it is unknown. (#3786, 2026-10-08)
 6. Measured candidates sort first by Utility; Startup fills remaining existing
    `max_candidates` slots by conservative signal strength. Stable identity breaks
    ties. Cross-market deduplication uses the same order, with preferred market
