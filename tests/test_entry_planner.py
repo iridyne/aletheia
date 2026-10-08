@@ -465,7 +465,9 @@ def test_a_generation_frozen_under_another_entry_contract_is_not_claimable():
     assert repo.list_candidate_planning_demand()
 
     for column in ("entry_behavior_fingerprint", "schema_fingerprint"):
-        original = repo.get_candidate_planning_generation(generation["id"])[column]
+        stored = repo.get_candidate_planning_generation(generation["id"])
+        assert stored is not None
+        original = stored[column]
         repo.execute_write(
             f"UPDATE candidate_planning_generations SET {column}=? WHERE id=?",
             ("0" * 64, generation["id"]),
@@ -479,7 +481,8 @@ def test_a_generation_frozen_under_another_entry_contract_is_not_claimable():
         )
 
     assert repo.count_pending_candidate_planning() == 1
-    assert repo.claim_next_candidate_planning("current-owner")["id"] == generation["id"]
+    claimed = repo.claim_next_candidate_planning("current-owner")
+    assert claimed is not None and claimed["id"] == generation["id"]
 
 
 def test_legacy_false_no_plan_remains_immutable_during_canonical_cutover():
