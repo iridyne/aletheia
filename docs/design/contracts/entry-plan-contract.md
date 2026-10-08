@@ -88,12 +88,51 @@ source identity. There is no independent feature flag, activation timestamp,
 cohort gate, or activation identity.
 
 The Planner binds one immutable canonical `planner_input_json/hash` per cycle.
-It contains bounded completed exact-instrument windows (30×4h, 48×1h, 96×15m),
-existing causal Market Structure facts, at most 12 canonical 15m Anchors, and
-explicit unavailable sections. The model emits one canonical `EntryHypothesis`:
+It contains bounded completed exact-instrument windows (35×4h, 50×1h, 96×15m;
+`ENTRY_WINDOW_BARS`), existing causal Market Structure facts, at most 12
+canonical 15m Anchors, and explicit unavailable sections. The model emits one
+canonical `EntryHypothesis`:
 controlled enums and supplied references only, with no price, size, leverage, ATR
 multiplier, slippage, or other numeric execution authority. `NO_PLAN` clears every
 execution field and requires a stable non-OK reason.
+
+### Model-visible quantitative fields (#3785)
+
+`entry_model_view` passes `quant_context` and `execution_context` whole. Every
+field below is computed on the entry path from inputs the Planner already loads;
+none is added to `UniverseFeatureSnapshot` or the Candidate feature acquisition.
+A field whose input is missing, too short, or a 0/0 reading is absent from its
+`values` and listed in that block's `unavailable_fields`; it is never emitted as
+0, a neutral label, or a fallback.
+
+- `quant_context.values` (from the admitted feature snapshot, cited by
+  `feature:<id>`): the existing snapshot fields plus `rsi_14` (1h RSI14);
+  `rsi_zone_15m|1h|4h` = `oversold` at RSI ≤ 30, `overbought` at RSI ≥ 70,
+  else `neutral`; `oi_price_quadrant` = `price_{up|down}_oi_{up|down}` from the
+  signs of `return_1h` and `oi_delta_1h`, or `flat` when |return_1h| < 0.2 % or
+  |oi_delta_1h| < 0.5 %. `oi_price_divergence` is unchanged.
+- `quant_context.technical.<15m|1h|4h>` (from that admitted closed-bar window
+  at the cutoff, no forming bar; cited by `technical:<tf>:<window
+  source_fingerprint>`, which is a current-market fact ref): `vwap_dev_pct`
+  (close vs VWAP20 of typical price), `obv_normalized`, `ema_20`, `sma_20`,
+  `bb_pct_b` (20, 2σ) from `BatchTechnicalAnalyzer`; MACD(12,26,9)
+  `macd_line|signal|hist`, `macd_hist_delta` (hist − previous hist),
+  `macd_hist_atr` (hist / ATR14), `macd_state` = `bull_expanding` (hist > 0,
+  delta > 0), `bull_contracting` (hist > 0, delta ≤ 0), `bear_expanding`
+  (hist < 0, delta < 0), `bear_contracting` (hist < 0, delta ≥ 0); Wilder
+  `adx_14`, `plus_di_14`, `minus_di_14`. 15m and 1h also carry `ema_50`,
+  `sma_50`, `ma_alignment` (`bullish` if close > EMA20 > EMA50, `bearish` if
+  close < EMA20 < EMA50, else `mixed`) and the per-instrument `trend_regime`
+  (`trend_up`/`trend_down` when ADX ≥ 25 and both DI order and `ma_alignment`
+  agree, `range` when ADX < 20, else `transition`); the 35-bar 4h window cannot
+  hold EMA50, so 4h does not define them. The market-wide `regime_tag` is
+  unchanged.
+- `execution_context.imbalance_ratio`: (bid − ask) / (bid + ask) size over the
+  top 10 levels per side, in [−1, 1], as stored with the book by the orderbook
+  parser; present only when the book is admitted.
+
+Labels describe market data; they carry no execution authority and do not
+change Anchor, Profile, Compiler or Risk behavior.
 
 Before the first bind, the Planner requires available 15m candles, anchors, and
 an exact-venue/symbol/market orderbook observed no later than the cutoff and at

@@ -654,7 +654,7 @@ def oi_price_quadrant(return_1h: float | None, oi_delta_1h: float | None) -> str
 
 
 def macd_state(hist: float, hist_delta: float) -> str | None:
-    """Histogram sign gives bull/bear; |histogram| growing gives expanding."""
+    """Histogram sign gives bull/bear; a delta in that sign's direction gives expanding."""
     if hist == 0:
         return None
     if hist > 0:
