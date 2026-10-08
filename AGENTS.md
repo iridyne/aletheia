@@ -164,6 +164,28 @@ independent mutation batch.
 - Commit, PR, merge, deployment, and runtime proof remain separate claims. Follow
   the matched Development Workflow and PR Review Lifecycle guides for details.
 
+### Version control: jj
+
+The checkout is jj-colocated (`.jj` beside `.git`). Use `jj` for all day-to-day
+version control: `jj st`, `jj diff`, `jj log`, `jj describe`, `jj new`, `jj commit`,
+`jj bookmark`, `jj git fetch`, `jj git push`, `jj rebase`, `jj workspace`. There is
+no staging area and jj runs no git hooks, so the cheap gate is
+`uv run python scripts/ci/dev_check.py` on the working copy `@` (`--base <revset>`,
+e.g. `master@origin`, covers the branch since its fork point); it also carries the
+`.env`/secret scan the retired pre-commit hook used to run. `jj undo` and `jj op log`
+replace reflog and stash as the safety net. Command recipes live in
+[`DEVELOPMENT_WORKFLOW.md`](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md).
+
+In the checkpoint rules above, "commit" means `jj describe` + `jj new` (or
+`jj commit`). A checkpoint is not complete while the work sits only in `@`: git
+plumbing reads git HEAD, which in a colocated checkout is `@-`.
+
+Raw `git` remains only where the surface is git by construction: the production
+self-updater and Fedora/tarball runtimes (`ops/update/`, `aletheia.update.git_ops`,
+`core/aletheia/files/git.py`), `scripts/ci/ci_plan.py`, `ci_local.py`,
+`check_change_contract.py` and `.github/workflows` (they also run on plain-git CI
+runners), Orca-managed worktrees, and git-only tools such as `gh`.
+
 ## Environment and verification boundaries
 
 Use `uv run` for Python. macOS is development/control only; do not infer Fedora
@@ -289,7 +311,7 @@ Some machines have a CodeGraph index (`.codegraph/`), but this file cannot promi
 that any given checkout has one, or that its index matches the current HEAD. Use it
 only after probing: `codegraph explore "<symbols or question>"` if the command and
 index are present and the index is not obviously behind. If it is missing or stale,
-fall back to `git grep` / language-server lookups — do not build a CodeGraph index
+fall back to text search / language-server lookups — do not build a CodeGraph index
 as a prerequisite for ordinary work. Either way, read the file before editing: the
 index can lag.
 
@@ -306,7 +328,7 @@ contributors.
 | --- | --- |
 | Trading, live, risk, execution, credentials, permissions, audit | [@SAFETY_AND_TRUST.md](docs/operations/development/agent-guides/SAFETY_AND_TRUST.md) |
 | SQLite, runtime files, market data, symbols, paper accounting, config, async API | [@STATE_AND_DATA.md](docs/operations/development/agent-guides/STATE_AND_DATA.md) |
-| Files/tools, Orca, worktrees, tests, Git, PR, CI, documentation, preview, Gateway | [@DEVELOPMENT_WORKFLOW.md](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md) |
+| Files/tools, Orca, worktrees, tests, version control (jj), PR, CI, documentation, preview, Gateway | [@DEVELOPMENT_WORKFLOW.md](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md) |
 | PR review, feedback validity, lifecycle, merge readiness | [@PR_REVIEW_LIFECYCLE.md](docs/operations/development/agent-guides/PR_REVIEW_LIFECYCLE.md) |
 | Bug classification, experiments, unfamiliar subsystems, authority selection | [@TASK_ROUTING.md](docs/operations/development/agent-guides/TASK_ROUTING.md) |
 | D1/D2 or high-risk D0 semantic audit (optional shadow workflow) | [@SDD_SHADOW_WORKFLOW.md](docs/operations/development/agent-guides/SDD_SHADOW_WORKFLOW.md) |

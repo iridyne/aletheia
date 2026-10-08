@@ -3,7 +3,7 @@
 
 Runs only what is cheap, and only against the files this change touched:
 
-  1. ``git diff --check``  whitespace / conflict-marker hygiene on the whole diff
+  1. diff scan           trailing whitespace / conflict markers on added lines
   2. ``ruff check``        E/F plus B,ASYNC,RUF, reported only on changed lines
   3. ``check_test_hygiene`` dead skip/xfail and data-guarded silent-pass audit
   4. ``check_docs``        documentation governance, when docs/ or a spec changed
@@ -23,9 +23,8 @@ This is not a CI replacement: ``scripts/ci/ci_preflight.py`` and
 ``scripts/ci/ci_local.py`` own the PR-level gate. This is the 5-30s loop.
 
 Usage:
-  uv run python scripts/ci/dev_check.py               # working tree vs HEAD
-  uv run python scripts/ci/dev_check.py --staged      # staged only
-  uv run python scripts/ci/dev_check.py --base origin/master
+  uv run python scripts/ci/dev_check.py               # working copy (@) vs its parent
+  uv run python scripts/ci/dev_check.py --base master@origin   # jj revset; diff since the fork point
   uv run python scripts/ci/dev_check.py --no-tests --no-types
 
 Exit codes: 0 clean, 1 findings, 2 usage/tool failure.
@@ -46,6 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_docs
 import check_test_hygiene
+import vcs
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -66,31 +66,11 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 # --------------------------------------------------------------------------- #
-# Git plumbing
+# Change set (jj; there is no staging area, so the view is `@` or the fork-point range)
 # --------------------------------------------------------------------------- #
-def _git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout
-
-
-def changed_files(*, base: str | None, staged: bool) -> list[str]:
+def changed_files(*, base: str | None) -> list[str]:
     """Repository-relative paths this change touches, sorted and deduplicated."""
-    if base:
-        out = _git("diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD", "--")
-        return sorted({line for line in out.splitlines() if line})
-    if staged:
-        out = _git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "--")
-        return sorted({line for line in out.splitlines() if line})
-    tracked = _git("diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--")
-    untracked = _git("ls-files", "--others", "--exclude-standard")
-    return sorted(
-        {line for line in tracked.splitlines() if line}
-        | {line for line in untracked.splitlines() if line}
-    )
+    return vcs.changed_files(base)
 
 
 def parse_added_lines(diff_text: str) -> dict[str, set[int]]:
@@ -110,17 +90,11 @@ def parse_added_lines(diff_text: str) -> dict[str, set[int]]:
     return result
 
 
-def changed_lines(*, base: str | None, staged: bool) -> dict[str, set[int] | None]:
+def changed_lines(*, base: str | None) -> dict[str, set[int] | None]:
     """Changed line numbers per path; ``None`` means "whole file" (new file)."""
-    if base:
-        args = ["diff", "-U0", "--no-color", f"{base}...HEAD", "--"]
-    elif staged:
-        args = ["diff", "-U0", "--no-color", "--cached", "--"]
-    else:
-        args = ["diff", "-U0", "--no-color", "HEAD", "--"]
-    ranges: dict[str, set[int] | None] = dict(parse_added_lines(_git(*args)))
-    for path in changed_files(base=base, staged=staged):
-        ranges.setdefault(path, None)  # untracked / renamed / unparseable -> whole file
+    ranges: dict[str, set[int] | None] = dict(parse_added_lines(vcs.diff_text(base)))
+    for path in changed_files(base=base):
+        ranges.setdefault(path, None)  # renamed / unparseable -> whole file
     return ranges
 
 
@@ -142,13 +116,52 @@ def tool_command(name: str) -> list[str]:
     return ["uv", "run", name]
 
 
-def step_diff_check(*, base: str | None, staged: bool) -> list[str]:
-    scope = ["--cached"] if staged and not base else []
-    if base:
-        out = _git("diff", "--check", f"{base}...HEAD", "--")
-    else:
-        out = _git("diff", "--check", *scope, "--") if staged else _git("diff", "--check", "--")
-    return [line for line in out.splitlines() if line.strip()]
+_CONFLICT_MARKERS = ("<<<<<<< ", ">>>>>>> ")
+_ENV_FILE_RE = re.compile(r"^\.(env|env\..*)$")
+_SECRETS_RE = re.compile(
+    r"(PRIVATE_" "KEY|API_" "KEY|SECRET_" "KEY|ACCESS_" "TOKEN"  # split: this file must not flag itself
+    r"|sk-[a-zA-Z0-9]{20,}|dapi[a-f0-9]{32,})"
+)
+
+
+def added_lines(diff_text: str) -> list[tuple[str, int, str]]:
+    """``(path, new-side line number, text)`` for every added line of a git-format diff."""
+    found: list[tuple[str, int, str]] = []
+    path: str | None = None
+    row = 0
+    for line in diff_text.splitlines():
+        if line.startswith("+++ b/"):
+            path = line[len("+++ b/") :]
+        elif line.startswith("+++ "):
+            path = None  # /dev/null: deletion
+        elif line.startswith("@@") and (match := _HUNK_RE.match(line)):
+            row = int(match.group(1))
+        elif path and line.startswith("+"):
+            found.append((path, row, line[1:]))
+            row += 1
+    return found
+
+
+def step_diff_check(diff_text: str) -> list[str]:
+    """Trailing whitespace and unresolved conflict markers on added lines."""
+    findings: list[str] = []
+    for path, row, text in added_lines(diff_text):
+        if text != text.rstrip():
+            findings.append(f"{path}:{row}: trailing whitespace")
+        if text.startswith(_CONFLICT_MARKERS) or text == "=======":
+            findings.append(f"{path}:{row}: conflict marker")
+    return findings
+
+
+def step_secrets(files: list[str], diff_text: str) -> list[str]:
+    """``.env`` files and credential-shaped added lines (jj runs no pre-commit hook)."""
+    findings = [f"{path}: .env file must not be committed" for path in files if _ENV_FILE_RE.match(path)]
+    findings.extend(
+        f"{path}:{row}: possible secret/token"
+        for path, row, text in added_lines(diff_text)
+        if _SECRETS_RE.search(text)
+    )
+    return findings
 
 
 def filter_ruff_diagnostics(
@@ -256,6 +269,7 @@ def previous_failed_test_files() -> list[str]:
 def focused_tests(changed: list[str]) -> list[str]:
     """Test/spec files that name or import a changed Python module."""
     found: set[str] = set()
+    dotted_names: list[str] = []
     for path in changed:
         if not path.endswith(".py"):
             continue
@@ -269,18 +283,13 @@ def focused_tests(changed: list[str]) -> list[str]:
                 for candidate in REPO_ROOT.glob(f"tests/**/{prefix}{stem}.py")
             )
         dotted = dotted_module(path)
-        if not dotted:
-            continue
-        grep = subprocess.run(
-            ["git", "grep", "-l", "--untracked", "-F", dotted, "--", "tests"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        found.update(
-            line for line in grep.stdout.splitlines() if line.endswith(".py") and line.startswith("tests/")
-        )
+        if dotted:
+            dotted_names.append(dotted)
+    if dotted_names:
+        for candidate in (REPO_ROOT / "tests").rglob("*.py"):
+            text = candidate.read_text(encoding="utf-8", errors="ignore")
+            if any(name in text for name in dotted_names):
+                found.add(str(candidate.relative_to(REPO_ROOT)))
     return sorted(found)[:FOCUSED_TEST_LIMIT]
 
 
@@ -335,34 +344,42 @@ def step_pyright(
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fast changed-file feedback gate.")
-    parser.add_argument("--base", help="compare the branch against this ref (merge-base diff)")
-    parser.add_argument("--staged", action="store_true", help="check staged files only")
+    parser.add_argument("--base", help="jj revset to compare the branch against (diff since fork_point(@|BASE)), e.g. master@origin")
+    parser.add_argument("--no-secrets-scan", action="store_true", help="skip the .env/secret scan (verified false positive only)")
     parser.add_argument("--no-tests", action="store_true", help="skip the pytest steps")
     parser.add_argument("--no-types", action="store_true", help="skip basedpyright")
     parser.add_argument("--fast", action="store_true", help="also run the `-m fast` default feedback set")
     args = parser.parse_args(argv)
 
-    if args.base and args.staged:
-        parser.error("--base and --staged are mutually exclusive")
-
     started = time.monotonic()
-    changed = changed_files(base=args.base, staged=args.staged)
+    changed = changed_files(base=args.base)
     if not changed:
         print("dev_check: no changed files")
         return EXIT_PASS
 
-    ranges = changed_lines(base=args.base, staged=args.staged)
+    ranges = changed_lines(base=args.base)
     python_files = [path for path in changed if path.endswith(".py")]
 
     print(f"dev_check: {len(changed)} changed file(s), {len(python_files)} Python")
     failures: list[str] = []
 
-    whitespace = step_diff_check(base=args.base, staged=args.staged)
+    diff_text = vcs.diff_text(args.base)
+    whitespace = step_diff_check(diff_text)
     if whitespace:
-        failures.extend(f"git diff --check: {line}" for line in whitespace)
+        failures.extend(f"diff-check: {line}" for line in whitespace)
         print(f"  diff-check   FAIL ({len(whitespace)})")
     else:
         print("  diff-check   ok")
+
+    if args.no_secrets_scan:
+        print("  secrets      skipped (--no-secrets-scan)")
+    else:
+        secret_findings = step_secrets(changed, diff_text)
+        if secret_findings:
+            failures.extend(f"secrets {line}" for line in secret_findings)
+            print(f"  secrets      FAIL ({len(secret_findings)})")
+        else:
+            print("  secrets      ok")
 
     if python_files:
         ruff_findings = step_ruff(python_files, ranges)

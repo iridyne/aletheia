@@ -8,9 +8,11 @@ whole-file gate would fail on every edit.
 from __future__ import annotations
 
 import json
-import os
+import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+
+import pytest
 
 import scripts.ci.dev_check as dev_check
 
@@ -162,21 +164,19 @@ def test_missing_cached_files_do_not_modify_failure_evidence(tmp_path, monkeypat
 
 
 
+@pytest.mark.skipif(shutil.which("jj") is None, reason="dev_check reads the change set through jj")
 def test_empty_cached_file_does_not_hide_a_focused_failure(tmp_path, monkeypatch, capfd):
     monkeypatch.setattr(dev_check, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(dev_check.vcs, "REPO_ROOT", tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("JJ_USER", "Test")
+    monkeypatch.setenv("JJ_EMAIL", "test@example.invalid")
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_unrelated.py").write_text("raise RuntimeError('unrelated module collected')\n")
-    for args in (
-        ["init"], ["add", "tests/test_unrelated.py"],
-        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "-c", "commit.gpgsign=false", "commit", "-m", "baseline"],
-    ):
-        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    for args in (["git", "init"], ["commit", "-m", "baseline"]):
+        subprocess.run(["jj", *args], cwd=tmp_path, check=True, capture_output=True)
     (tests / "test_removed.py").write_text("# The formerly failing test was removed.\n")
     (tests / "test_focused.py").write_text(
         "def test_focused():\n    observed = 1\n    assert observed == 2, 'focused_failure_visible'\n"
@@ -187,3 +187,35 @@ def test_empty_cached_file_does_not_hide_a_focused_failure(tmp_path, monkeypatch
 
     assert dev_check.main(["--no-types"]) == dev_check.EXIT_FINDINGS
     assert "focused_failure_visible" in capfd.readouterr().out
+
+
+ADDED_DIFF = "\n".join([
+    "diff --git a/core/x.py b/core/x.py",
+    "--- a/core/x.py",
+    "+++ b/core/x.py",
+    "@@ -4,0 +5,3 @@",
+    "+clean = 1",
+    "+trailing = 2 ",  # the trailing space is the finding
+    "+<<<<<<< ours",
+    "diff --git a/gone.py b/gone.py",
+    "--- a/gone.py",
+    "+++ /dev/null",
+    "@@ -1,2 +0,0 @@",
+    "-removed",
+])
+
+
+def test_diff_check_flags_only_added_trailing_whitespace_and_conflict_markers():
+    assert dev_check.step_diff_check(ADDED_DIFF) == [
+        "core/x.py:6: trailing whitespace",
+        "core/x.py:7: conflict marker",
+    ]
+
+
+def test_secrets_step_flags_env_files_and_credential_shaped_added_lines():
+    diff = "+++ b/core/y.py\n@@ -0,0 +1,2 @@\n+token = 'sk-" + "a" * 24 + "'\n+ok = 1\n"
+
+    assert dev_check.step_secrets([".env", "core/y.py"], diff) == [
+        ".env: .env file must not be committed",
+        "core/y.py:1: possible secret/token",
+    ]

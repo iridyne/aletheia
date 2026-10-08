@@ -2,7 +2,7 @@
 
 ## Tools and workspace
 
-- Use normal filesystem, shell, and Git tools for search, reads, edits, patches,
+- Use normal filesystem, shell, and jj tools for search, reads, edits, patches,
   builds, tests, and repository inspection.
 - Use Orca only when Orca owns the state: managed workspace/worktree lifecycle,
   Orca terminals, embedded browser tabs, automations, card state, or handoffs.
@@ -14,16 +14,18 @@
   Do not build repository task databases, worker leases, handoff ledgers, or an
   orchestration CLI.
 - Use a dedicated worktree/branch for non-trivial changes. In an explicitly
-  requested shared checkout, re-check status before Git state changes, stage
-  only named files, preserve unrelated edits, and never amend or use destructive
-  Git commands without approval.
+  requested shared checkout, re-check `jj st` before changing VCS state, commit
+  only named files (`jj commit <paths>`), preserve unrelated edits, and never
+  `jj abandon`, rewrite others' changes (`jj squash`/`jj rebase` over them), or
+  `jj op restore` without approval.
 
 ## Change and proof
 
 When safe for the checkout, start with:
 
 ```sh
-git pull --ff-only
+jj git fetch
+jj new master@origin   # start new work on the latest master (or `jj rebase -d master@origin` to move existing work)
 uv sync
 uv run aletheia doctor
 ```
@@ -85,11 +87,13 @@ Categorize commits by concern, not by session order.
 Every routine edit starts with the changed-file gate, not with a suite run:
 
 ```sh
-uv run python scripts/ci/dev_check.py          # working tree vs HEAD
-uv run python scripts/ci/dev_check.py --staged # staged only (what the hook runs)
+uv run python scripts/ci/dev_check.py                       # working copy (@) vs its parent
+uv run python scripts/ci/dev_check.py --base master@origin  # branch since fork_point(@|master@origin)
 ```
 
-It runs, in order and only against what this change touched: `git diff --check`;
+jj has no staging area, so there is no `--staged` mode. It runs, in order and only
+against what this change touched: a trailing-whitespace / conflict-marker scan of
+added lines plus the `.env` / credential-shaped-line scan; then
 `ruff check` with `B,ASYNC,RUF` enabled **reported on changed lines only**; the
 test skip/xfail census, data-guarded silent-pass audit and assertion presence
 (`scripts/ci/check_test_hygiene.py`, #3471, `check_docs.vacuous_test_failures`); the
@@ -121,10 +125,10 @@ Do not re-run the whole suite after every edit. Do not treat a green `dev_check`
 as PR-level evidence: `scripts/ci/ci_preflight.py` / `scripts/ci/ci_local.py` still own
 that, and neither grants merge or runtime authority.
 
-`scripts/hooks/pre-commit` enforces the cheap subset (secrets/`.env`,
-whitespace, ruff on staged lines, test hygiene) and never runs pytest; it is
-installed by `scripts/dev/dev-init.sh`. Use `git commit --no-verify` only for a
-verified false positive and say so in the commit.
+jj runs no git hooks, so nothing runs implicitly at commit time: `dev_check` is the
+only place the cheap subset runs, including the `.env` / credential-shaped-line scan
+the former pre-commit hook enforced. Use `--no-secrets-scan` only for a verified
+false positive and say so in the commit description.
 
 ## Measuring test results honestly
 
@@ -137,9 +141,9 @@ verified false positive and say so in the commit.
   document's `141 failed` was `125 failed` by the time it was used). Use a
   throwaway worktree:
   ```sh
-  git worktree add /tmp/baseline origin/master
+  jj workspace add /tmp/baseline -r master@origin
   (cd /tmp/baseline && uv run pytest tests -q -p no:randomly --tb=no) > /tmp/base.txt
-  git worktree remove /tmp/baseline --force
+  jj workspace forget baseline && rm -rf /tmp/baseline
   ```
 - **Never run two full suites concurrently.** They share the data directory and
   crash each other; the crash looks like a test failure. Run them in sequence.
@@ -150,8 +154,9 @@ verified false positive and say so in the commit.
 - Some specs are run-to-run unstable. If a count moves with no code change,
   re-run before attributing it, and report the stable value plus the observed
   spread rather than the single most favourable number.
-- Before claiming a failure is pre-existing, prove it: `git stash push -- <files>`,
-  re-run, `git stash pop`, re-run. Same reds both ways ⇒ pre-existing.
+- Before claiming a failure is pre-existing, prove it on the parent revision:
+  `jj workspace add /tmp/parent -r @-`, run the same tests there, then
+  `jj workspace forget parent && rm -rf /tmp/parent`. Same reds in both ⇒ pre-existing.
 
 ## Verifying a seam, not a stub
 

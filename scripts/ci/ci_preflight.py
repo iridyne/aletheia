@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -36,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_change_contract import (
     structured_check_pr,
 )
+import vcs
 
 SCHEMA_VERSION = "ci_preflight.v1"
 EXIT_PASS = 0
@@ -45,38 +45,23 @@ EXIT_USAGE = 3
 
 
 def changed_files_vs_base(base_ref: str | None = None) -> list[str]:
-    """Return files changed on this branch relative to ``base_ref``.
+    """Return files changed on this branch relative to ``base_ref`` (a jj revset).
 
-    Prefers the merge-base with the given base so a long-lived branch compares
-    against the point it actually diverged from, mirroring the synthetic
-    merge-base semantics used by the GitHub gate (``HEAD^1``). If ``base_ref``
-    is omitted, use the repository's ``origin/master`` and then local ``master``.
-    A feature branch's upstream is its remote tracking branch, not its PR base;
-    comparing against it after the first push would incorrectly produce an empty
-    changed-file set and diverge from GitHub's exemption decision.
+    Diffs from ``fork_point(@|base)``, so a long-lived branch compares against
+    the point it actually diverged from, mirroring the synthetic merge-base
+    semantics used by the GitHub gate (``HEAD^1``). If ``base_ref`` is omitted,
+    use ``master@origin`` and then local ``master``. A feature branch's upstream
+    is its remote bookmark, not its PR base; comparing against it after the
+    first push would incorrectly produce an empty changed-file set and diverge
+    from GitHub's exemption decision.
     """
-    refs = [base_ref] if base_ref else ["origin/master", "master"]
-    last_error: Exception | None = None
+    refs = [base_ref] if base_ref else ["master@origin", "master"]
+    last_error: BaseException | None = None
     for ref in refs:
         try:
-            merge_base = subprocess.run(
-                ["git", "merge-base", "HEAD", ref],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        except (OSError, subprocess.CalledProcessError) as exc:
+            return vcs.changed_files(ref)
+        except SystemExit as exc:  # vcs.run: revset did not resolve
             last_error = exc
-            continue
-        if not merge_base:
-            continue
-        diff = subprocess.run(
-            ["git", "diff", "--name-only", f"{merge_base}...HEAD", "--"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        return [line.strip() for line in diff.splitlines() if line.strip()]
     raise RuntimeError(
         f"unable to resolve a base to compare against ({', '.join(refs)})"
     ) from last_error
@@ -132,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         "--base-ref",
         default=None,
         metavar="REF",
-        help="base ref to diff against (default @{upstream}, then origin/master)",
+        help="jj revset to diff against (default master@origin, then master)",
     )
     parser.add_argument(
         "--json",

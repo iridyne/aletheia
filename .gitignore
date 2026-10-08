@@ -88,3 +88,8 @@ docs/monitoring/ufc_casi_monitor_state.md
 # coverage.py data files (produced by `pytest --cov`, see .coveragerc)
 .coverage
 .coverage.*
+
+# Local tool caches (regenerable; never commit)
+.hypothesis/
+.ruff_cache/
+.pytest_tmp_unawaited_probe/
