@@ -805,7 +805,6 @@ def test_unbound_historical_exposure_blocks_new_entry_without_rebinding(tmp_path
 
 def _drifted_adapter_factory(mode, *, venue_position_ids, submit_recorder):
     """Adapter factory whose identity drifts one generation and whose venue answers."""
-    from aletheia.execution.coordinator import _identity_generation_drift
     from aletheia.uta.models import (
         InstrumentIdentity,
         PositionListReport,

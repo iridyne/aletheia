@@ -1144,3 +1144,25 @@ docs-only PR 无 review 秒合。人工合是唯一让 owner 保持决定权的�
 - 测试：`test_one_incomplete_row_does_not_void_a_mature_cohort`、
   `test_widespread_incomplete_rows_still_refuse_the_cohort`、
   `test_an_incomplete_row_with_a_tail_loss_still_flags_the_cohort`。
+
+## 2026-10-08 — 账户身份只比"是不是同一个账户";新增"同代次已成交订单"作为连续性证明
+
+**Decision:** 持久身份与当前身份的比较统一为 `aletheia.uta.identity.identity_relation`:
+`account_id/execution_mode/venue/environment/profile/sub_accounts` 构成账户事实,
+`credential_generation` 是凭据代次,`ccxt_version/adapter_version/adapter_implementation/
+account_fingerprint` 是出处,不参与相等。入场闸门在"只有在途订单漂移、没有开放持仓"时,
+可凭 venue 完整读回一个同旧代次、本地已成交的订单来证明账户连续并重标;对账器在校验身份
+之前先做同样的重标。没有证明仍然 fail closed。(owner 2026-10-08 批准修复并要求不局限于 Bitget。)
+
+**Reason:** Fedora Bitget Demo 上 4 个 9-27 的 `submission_unknown` 入场订单(交易所上不存在)
+携带凭据代次 137,当前为 277。两个代次解码后密钥代次同为 5,只是配置计数 0→1,凭据从未更换。
+旧规则要求"开放持仓 + 交易所精确匹配"才可重标,账户空仓时永远无法重标;对账器又因身份不相等
+拒绝读取这些订单,每 2 分钟写一行 inconclusive(各 2,200–2,700 行)。出口依赖的证据只能通过被
+该状态自己关闭的闸门获得。另外,`ccxt_version` 在严格相等里,单纯升级 CCXT 会让所有持久身份
+变成硬不匹配,所有重标路径同时失效。
+
+**Guardrail:**
+- "被怀疑的订单自己没找到"不是证据;证据必须是别的、已知属于旧代次的订单被当前凭据读到。
+- `DIFFERENT` 账户永不重标;证明读取不完整(`PARTIAL`/`UNAVAILABLE`)等同于没有证明。
+- 回归测试 `tests/uta/test_identity_liveness.py` 对 bitget_demo / okx_demo / binance_testnet
+  参数化;变异验证:撤销任一处修复,对应测试在三个模式上同时变红。

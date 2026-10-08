@@ -40,6 +40,7 @@ from aletheia.storage.repositories import transition_order, update_order_metadat
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 from aletheia.uta.compat import instrument_from_local, scope_from_local
+from aletheia.uta.identity import IdentityRelation, identity_relation
 from aletheia.uta.manager import UTA_EXECUTION_MODES, build_uta_registry, query_uta
 from aletheia.uta.models import (
     UTAAccountIdentity,
@@ -1122,7 +1123,8 @@ def _validate_reconcile_identities(
         for order in orders:
             try:
                 identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
-                if identity != configured_identities.get(order["execution_mode"]):
+                current = configured_identities.get(order["execution_mode"])
+                if current is None or identity_relation(identity, current) is not IdentityRelation.SAME:
                     raise ValueError("uta_account_identity_mismatch")
             except ValueError:
                 inconclusive += 1
@@ -1971,6 +1973,16 @@ def reconcile() -> dict:
     checked = len(bitget_orders) + len(multibroker_orders) + len(filled_gap_orders)
     filled_gap_checked = len(filled_gap_orders)
     configured = {identity.execution_mode: identity for identity in build_uta_registry().configured_identities()}
+    # An Order stored under an older credential generation can only be read once its
+    # identity is re-bound, and re-binding needs a venue read: do that first, so the
+    # check below sees the bound identity instead of skipping the Order every pass.
+    from aletheia.execution.coordinator import reanchor_drifted_orders
+
+    unresolved = bitget_orders + multibroker_orders
+    for execution_mode in sorted({str(o.get("execution_mode") or "") for o in unresolved} & set(configured)):
+        reanchor_drifted_orders(
+            execution_mode, [o for o in unresolved if o.get("execution_mode") == execution_mode],
+        )
     (
         candidate_orders, filled_gap_orders, identity_errors,
         identity_inconclusive, identity_gap_inconclusive,

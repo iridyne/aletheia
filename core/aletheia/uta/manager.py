@@ -12,6 +12,7 @@ from decimal import Decimal
 from aletheia.config.loader import load_config
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
 from aletheia.uta.contract import NativeProtectionReader
+from aletheia.uta.identity import IdentityRelation, identity_relation
 from aletheia.uta.models import OrderQuery, OrderQueryReport, ReadCompleteness, UTAAccountIdentity
 from aletheia.uta.registry import UTARegistry
 
@@ -110,7 +111,7 @@ def create_native_protection_reader(
     if _native_protection_reader_factory is None or execution_mode not in _native_protection_modes:
         raise RuntimeError("native_protection_reader_unavailable")
     reader = _native_protection_reader_factory(execution_mode, expected_account=expected_account)
-    if reader.identity != expected_account:
+    if identity_relation(expected_account, reader.identity) is not IdentityRelation.SAME:
         raise ValueError("uta_account_identity_mismatch")
     return reader
 
@@ -148,7 +149,7 @@ async def query_uta(
     """Run one bounded UTA read with deterministic loop-local teardown."""
     adapter = create_uta_adapter(execution_mode, cfg)
     try:
-        if expected_account is not None and adapter.identity != expected_account:
+        if expected_account is not None and identity_relation(expected_account, adapter.identity) is not IdentityRelation.SAME:
             raise ValueError("uta_account_identity_mismatch")
         if method == "get_order":
             if not isinstance(query, OrderQuery):
@@ -157,7 +158,7 @@ async def query_uta(
         await adapter.connect()
         operation = getattr(adapter, method)
         report = await operation() if query is None else await operation(query)
-        if expected_account is not None and report.identity != expected_account:
+        if expected_account is not None and identity_relation(expected_account, report.identity) is not IdentityRelation.SAME:
             raise ValueError("uta_account_identity_mismatch")
         if method == "get_order":
             if not isinstance(report, OrderQueryReport):
