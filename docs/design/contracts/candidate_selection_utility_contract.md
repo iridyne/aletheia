@@ -194,10 +194,9 @@ proved causal attribution.
 Discovery acquires exact venue/symbol/physical-market books independently of
 Candidate existence. Only durable observations enter evidence. Suppressed
 calculations becoming evidence persist current payload and timestamp. The
-manifest includes `feature_acquisition`, automatically derived as the SHA-256
-hex digest of `core/aletheia/universe/features.py` bytes once at module import.
-It replaces the manually bumped `candidate-feature-acquisition/v2` identity;
-there is no v3. The existing serialized `feature_acquisition_version` field stores
+manifest includes `feature_acquisition`, which replaced the manually bumped
+`candidate-feature-acquisition/v2` identity (see the 2026-10-08 amendment below
+for how it is maintained now). The existing serialized `feature_acquisition_version` field stores
 the digest without changing the record decoding/schema version. Training requires
 equality to the explicitly supplied frozen policy identity before labels are built.
 Missing identities match only missing historical identities; current policies
@@ -213,11 +212,26 @@ exact build and process. The runtime `behavior_fingerprint` hashes configuration
 only and cannot distinguish the #3492 source change; it is not this boundary.
 
 Matching acquisition identities may pool across producer commits/sessions subject
-to the existing outcome, funding, mechanism, cost and cutoff checks. An unrelated
-file change does not rotate acquisition identity. Any edit inside `features.py`,
-including a comment, conservatively does. This bounded source fingerprint is not
-a transitive dependency or whole-repository semantic hash. No new experiment
+to the existing outcome, funding, mechanism, cost and cutoff checks. No new experiment
 framework, database migration, admission threshold or execution authority is added.
+
+### Amendment — 2026-10-08: frozen, hand-maintained acquisition identity
+
+The import-time digest of `features.py` bytes is retired. Comment-only and
+logging-only edits each rotated it and discarded all accumulated training
+history, while the code that computes feature values outside that file was never
+covered (#3786). `feature_acquisition` is now the literal constant
+`CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT` in `features.py`, frozen at that
+file's digest as deployed on 2026-09-27
+(`5c0692756228107b3d549e4c07db170d0397bcc1c8f90c69fe89f47eca928774`), so evidence
+captured since then keeps matching. Training still requires equality, and legacy
+or missing identities stay excluded exactly as above.
+
+The constant changes by hand, in the same commit, when and only when a change
+alters a computed Candidate feature value, wherever that code lives. Comments,
+logging and refactors leave it unchanged. Every Outcome keeps `producer_commit`,
+so evidence from a build whose bump was missed can still be identified and
+excluded afterwards. No record is rewritten.
 
 Canonical planning generations own refresh priority without legacy wakes.
 Scanner `candidate_path` metrics distinguish unavailable data, legitimate empty

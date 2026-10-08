@@ -212,3 +212,38 @@ def test_measurement_cutover_excludes_stale_history_without_rewriting_it():
     assert index.cohorts[("continuation", "long", "okx", "spot")].parent_values == (2.0,)
     assert before == {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
                       for table in tables}
+
+
+@spec_claim(SpecClaim(
+    "CSU-S07b", _CONTRACT, "Candidate measurement acquisition identity", "L2c",
+    "The acquisition identity is a hand-maintained literal, not a digest of source "
+    "bytes, so comment, logging and refactor edits keep accumulated history.",
+    status="implemented",
+))
+def test_acquisition_identity_is_a_literal_not_a_source_digest():
+    import ast
+    import hashlib
+    from pathlib import Path
+
+    from aletheia.universe import features
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.config.schema import AletheiaConfig
+
+    source = Path(features.__file__).read_text()
+    assigned = next(
+        node.value for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Assign)
+        and any(getattr(target, "id", None) == "CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT"
+                for target in node.targets)
+    )
+    assert isinstance(assigned, ast.Constant) and isinstance(assigned.value, str)
+    # Frozen at the 2026-09-27 deployed digest; editing this file must not move it.
+    assert features.CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT == (
+        "5c0692756228107b3d549e4c07db170d0397bcc1c8f90c69fe89f47eca928774"
+    )
+    assert features.CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT != hashlib.sha256(
+        Path(features.__file__).read_bytes()
+    ).hexdigest()
+    manifest = candidate_selection_policy_identity(AletheiaConfig())["semantic_manifest"]
+    assert isinstance(manifest, dict)
+    assert manifest["feature_acquisition"] == features.CANDIDATE_FEATURE_ACQUISITION_FINGERPRINT
