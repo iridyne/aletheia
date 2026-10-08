@@ -38,6 +38,11 @@ _status: dict[str, object] = {
     "watched_entry_plan_ids": [],
 }
 _WATCHER_RELOAD_INTERVAL_SEC = 2.0
+# Risk answers DEFER ("cannot be approved right now, retry under the Plan's own
+# expiry"). Without a delay every quote re-ran a full Risk evaluation and wrote a
+# decision row: 5,785 for one proposal in one hour (#3798). ponytail: one fixed
+# interval for every deferral reason; per-reason intervals if a cause needs it.
+_RISK_DEFER_RETRY_SEC = 15.0
 
 
 async def _prewarm_market_structure(
@@ -692,7 +697,7 @@ async def _submit_entry_plan(plan, event, *, activation=None, depth=None, curren
         "depth_exchange_timestamp_ms": snapshot.depth_exchange_timestamp_ms, "depth_received_timestamp_ms": snapshot.depth_received_timestamp_ms,
         "depth_sequence": snapshot.depth_sequence} if snapshot else {})
     try:
-        await asyncio.to_thread(execute_entry_plan, plan.plan_id,
+        return await asyncio.to_thread(execute_entry_plan, plan.plan_id,
             bid=float(event.bid), ask=float(event.ask),
             observed_at=datetime.fromtimestamp(event.received_timestamp_ms / 1000, timezone.utc).isoformat(),
             source_observed_at=datetime.fromtimestamp(event.exchange_timestamp_ms / 1000, timezone.utc).isoformat(),
@@ -714,6 +719,7 @@ async def _watch_loop(cfg) -> None:
     global _status
     backoff = 1.0
     submission_failures: dict[str, str] = {}
+    risk_deferred_until: dict[str, float] = {}
     stop = _stop_event
     if stop is None:
         return
@@ -743,6 +749,7 @@ async def _watch_loop(cfg) -> None:
         # rather than re-dispatching at event rate (#3747). Declared once outside
         # the loop so the dispatch closure is not a loop-variable capture.
         submission_failures.clear()
+        risk_deferred_until.clear()
         latest_quotes = {}
         latest_depth = {}
 
@@ -752,12 +759,16 @@ async def _watch_loop(cfg) -> None:
         def dispatch(plan_id, operation, *args, **kwargs):
             if plan_id in submission_failures:
                 return
+            if risk_deferred_until.get(plan_id, 0.0) > asyncio.get_running_loop().time():
+                return
             task = execution_tasks.get(plan_id)
             if task is not None and not task.done():
                 return
             async def run():
                 try:
-                    await operation(*args, **kwargs)
+                    result = await operation(*args, **kwargs)
+                    if isinstance(result, dict) and result.get("status") == "waiting_risk":
+                        risk_deferred_until[plan_id] = asyncio.get_running_loop().time() + _RISK_DEFER_RETRY_SEC
                 except Exception as exc:
                     # Bounded code, never a bare type: a swallowed `ValueError`
                     # left the cause underivable from logs (#3747).
