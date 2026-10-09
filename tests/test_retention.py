@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from tests.helpers.config_stub import stub_config_edits
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -71,8 +72,7 @@ def test_retention_settings_usage_windows_are_limited_to_90_days(monkeypatch):
     cfg = AletheiaConfig()
     app = FastAPI()
     app.include_router(settings.router)
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda _cfg: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda _event: None)
     client = TestClient(app)
 

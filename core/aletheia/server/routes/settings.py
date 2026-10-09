@@ -4,13 +4,13 @@ import logging
 
 import asyncio
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from typing_extensions import TypedDict
 
-from aletheia.config.loader import load_config, save_config, mutate_config
+from aletheia.config.loader import edit_config, load_config, mutate_config
 from aletheia.config.execution_costs import (
     EXECUTION_FEE_PCT_BOUNDS,
     FALLBACK_SPREAD_BPS_BOUNDS,
@@ -499,10 +499,9 @@ class AutonomousLearningRequest(SettingsRequest):
 
 @router.post("/autonomous-learning")
 def set_autonomous_learning(req: AutonomousLearningRequest):
-    cfg = load_config()
-    old = cfg.agent.autonomous_learning
-    cfg.agent.autonomous_learning = req.enabled
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.agent.autonomous_learning
+        cfg.agent.autonomous_learning = req.enabled
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "autonomous_learning_changed",
                  "entity_type": "agent_config", "before": {"autonomous_learning": old},
@@ -517,10 +516,9 @@ class BypassDistressGateRequest(SettingsRequest):
 
 @router.post("/bypass-distress-gate")
 def set_bypass_distress_gate(req: BypassDistressGateRequest):
-    cfg = load_config()
-    old = cfg.agent.bypass_distress_gate
-    cfg.agent.bypass_distress_gate = req.enabled
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.agent.bypass_distress_gate
+        cfg.agent.bypass_distress_gate = req.enabled
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "bypass_distress_gate_changed",
                  "entity_type": "agent_config", "before": {"bypass_distress_gate": old},
@@ -697,14 +695,13 @@ class EconomicsConfigUpdate(SettingsRequest):
 @router.post("/economics")
 def update_economics_config(req: EconomicsConfigUpdate):
     """Persist the default-off Phase 2 shadow-observation controls."""
-    cfg = load_config()
-    old = cfg.economics.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.economics, field, value)
-    if not cfg.economics.enabled:
-        cfg.economics.budgets_shadow_enabled = False
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.economics.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            setattr(cfg.economics, field, value)
+        if not cfg.economics.enabled:
+            cfg.economics.budgets_shadow_enabled = False
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "dashboard",
@@ -717,12 +714,11 @@ def update_economics_config(req: EconomicsConfigUpdate):
 
 @router.post("/runtime")
 def update_runtime_config(req: RuntimeConfigUpdate):
-    cfg = load_config()
-    old = cfg.runtime.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.runtime, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.runtime.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            setattr(cfg.runtime, field, value)
     # Notify APScheduler if scheduler_enabled changed. The public resume entry
     # owns the durable pause-owner check, so Settings cannot bypass a gate lease.
     if "scheduler_enabled" in updates:
@@ -781,17 +777,16 @@ class AppConfigUpdate(SettingsRequest):
 
 @router.post("/app")
 def update_app_config(req: AppConfigUpdate):
-    cfg = load_config()
-    old = cfg.app.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    if "bind_host" in updates:
-        raise HTTPException(
-            400,
-            "bind_host is managed by Remote Control network-adapter selection",
-        )
-    for field, value in updates.items():
-        setattr(cfg.app, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.app.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        if "bind_host" in updates:
+            raise HTTPException(
+                400,
+                "bind_host is managed by Remote Control network-adapter selection",
+            )
+        for field, value in updates.items():
+            setattr(cfg.app, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "app_config_changed",
                  "entity_type": "app_config", "before": old,
@@ -878,11 +873,10 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     keys; new UI copy uses "System Operator daemon".
     """
     from aletheia.config.schema import PiDaemonConfig
-    cfg = load_config()
-    old = cfg.pi_daemon.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    cfg.pi_daemon = _validated_settings_section(PiDaemonConfig, old, updates, name="PiDaemonConfig")
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.pi_daemon.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        cfg.pi_daemon = _validated_settings_section(PiDaemonConfig, old, updates, name="PiDaemonConfig")
     from aletheia.agent_runtime.pi_daemon import daemon_status
 
     blocker: str | None = None
@@ -978,16 +972,15 @@ _SERENITY_BOUNDS: dict[str, tuple[float, float]] = {
 
 @router.post("/serenity")
 def update_serenity_config(req: SerenityConfigUpdate):
-    cfg = load_config()
-    old = cfg.serenity.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _SERENITY_BOUNDS:
-            lo, hi = _SERENITY_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.serenity, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.serenity.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            if field in _SERENITY_BOUNDS:
+                lo, hi = _SERENITY_BOUNDS[field]
+                if not (lo <= value <= hi):
+                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+            setattr(cfg.serenity, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "serenity_config_changed",
                  "entity_type": "serenity_config", "before": old,
@@ -1016,16 +1009,15 @@ _CONTROLLER_BOUNDS: dict[str, tuple[float, float]] = {
 
 @router.post("/controller")
 async def update_controller_config(req: ControllerConfigUpdate):
-    cfg = load_config()
-    old = cfg.controller.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _CONTROLLER_BOUNDS:
-            lo, hi = _CONTROLLER_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.controller, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.controller.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            if field in _CONTROLLER_BOUNDS:
+                lo, hi = _CONTROLLER_BOUNDS[field]
+                if not (lo <= value <= hi):
+                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+            setattr(cfg.controller, field, value)
 
     _CONTROLLER_SCHEDULER_FIELDS = {"shadow_enabled", "observe_interval_hours"}
     rescheduled = False
@@ -1102,24 +1094,23 @@ def _validated_paper_influence_paths(values: list[str]) -> list[str]:
 
 @router.post("/learning")
 async def update_learning_config(req: LearningConfigUpdate):
-    cfg = load_config()
-    old = cfg.learning.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    if "evaluation_interval_minutes" in updates and not (15 <= int(updates["evaluation_interval_minutes"]) <= 1440):
-        raise HTTPException(400, "evaluation_interval_minutes must be between 15 and 1440")
-    if "paper_active_allocation_pct" in updates and not (0 < float(updates["paper_active_allocation_pct"]) <= 0.90):
-        raise HTTPException(400, "paper_active_allocation_pct must be > 0 and <= 0.90")
-    if "paper_influence_paths" in updates:
-        updates["paper_influence_paths"] = _validated_paper_influence_paths(
-            updates["paper_influence_paths"],
-        )
-    elif updates.get("paper_influence_enabled") is True:
-        # Old versions accepted arbitrary free text.  Merely toggling the master
-        # switch must not reactivate one of those unsupported saved values.
-        _validated_paper_influence_paths(list(cfg.learning.paper_influence_paths or []))
-    for field, value in updates.items():
-        setattr(cfg.learning, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.learning.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        if "evaluation_interval_minutes" in updates and not (15 <= int(updates["evaluation_interval_minutes"]) <= 1440):
+            raise HTTPException(400, "evaluation_interval_minutes must be between 15 and 1440")
+        if "paper_active_allocation_pct" in updates and not (0 < float(updates["paper_active_allocation_pct"]) <= 0.90):
+            raise HTTPException(400, "paper_active_allocation_pct must be > 0 and <= 0.90")
+        if "paper_influence_paths" in updates:
+            updates["paper_influence_paths"] = _validated_paper_influence_paths(
+                updates["paper_influence_paths"],
+            )
+        elif updates.get("paper_influence_enabled") is True:
+            # Old versions accepted arbitrary free text.  Merely toggling the master
+            # switch must not reactivate one of those unsupported saved values.
+            _validated_paper_influence_paths(list(cfg.learning.paper_influence_paths or []))
+        for field, value in updates.items():
+            setattr(cfg.learning, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "learning_config_changed",
                  "entity_type": "learning_config", "before": old,
@@ -1478,12 +1469,11 @@ class GuardConfigUpdate(SettingsRequest):
 
 @router.post("/guard")
 def update_guard_config(req: GuardConfigUpdate):
-    cfg = load_config()
-    old = cfg.guard.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.guard, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.guard.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            setattr(cfg.guard, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "guard_config_changed",
                  "entity_type": "guard_config", "before": old,
@@ -1534,11 +1524,10 @@ class HealthConfigUpdate(SettingsRequest):
 @router.post("/health-config")
 def update_health_config(req: HealthConfigUpdate):
     from aletheia.config.schema import HealthConfig
-    cfg = load_config()
-    old = cfg.health.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    cfg.health = _validated_settings_section(HealthConfig, old, updates, name="HealthConfig")
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.health.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        cfg.health = _validated_settings_section(HealthConfig, old, updates, name="HealthConfig")
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "health_config_changed",
                  "entity_type": "health_config", "before": old,
@@ -1578,16 +1567,15 @@ _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
 
 @router.post("/retention")
 def update_retention_config(req: RetentionConfigUpdate):
-    cfg = load_config()
-    old = cfg.retention.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _RETENTION_BOUNDS:
-            lo, hi = _RETENTION_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.retention, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.retention.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            if field in _RETENTION_BOUNDS:
+                lo, hi = _RETENTION_BOUNDS[field]
+                if not (lo <= value <= hi):
+                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+            setattr(cfg.retention, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "retention_config_changed",
                  "entity_type": "retention_config", "before": old,
@@ -1613,17 +1601,16 @@ class TelegramConfigUpdate(SettingsRequest):
 
 @router.post("/telegram")
 async def update_telegram_config(req: TelegramConfigUpdate):
-    cfg = load_config()
-    old = cfg.telegram.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    candidate = _validated_settings_section(
-        TelegramConfig,
-        old,
-        updates,
-        name="telegram configuration",
-    )
-    cfg.telegram = candidate
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.telegram.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        candidate = _validated_settings_section(
+            TelegramConfig,
+            old,
+            updates,
+            name="telegram configuration",
+        )
+        cfg.telegram = candidate
 
     rescheduled = False
     if (
@@ -1641,8 +1628,8 @@ async def update_telegram_config(req: TelegramConfigUpdate):
             rescheduled = False
         if not rescheduled:
             try:
-                cfg.telegram = TelegramConfig.model_validate(old)
-                save_config(cfg)
+                with edit_config() as current:
+                    current.telegram = TelegramConfig.model_validate(old)
             except Exception as exc:
                 raise HTTPException(
                     status_code=500,
@@ -1683,16 +1670,15 @@ class WebhookConfigUpdate(SettingsRequest):
 
 @router.post("/webhook")
 def update_webhook_config(req: WebhookConfigUpdate):
-    cfg = load_config()
-    old = cfg.webhook.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    cfg.webhook = _validated_settings_section(
-        WebhookConfig,
-        old,
-        updates,
-        name="webhook configuration",
-    )
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.webhook.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        cfg.webhook = _validated_settings_section(
+            WebhookConfig,
+            old,
+            updates,
+            name="webhook configuration",
+        )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
                  "entity_type": "webhook_config", "before": _redacted_webhook(old),
@@ -1714,16 +1700,15 @@ class UpdateConfigUpdate(SettingsRequest):
 
 @router.post("/update-config")
 def update_update_config(req: UpdateConfigUpdate):
-    cfg = load_config()
-    old = {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
-    if req.enabled is not None:
-        cfg.update.enabled = req.enabled
-    if req.branch is not None:
-        branch = req.branch.strip()
-        if not branch:
-            raise HTTPException(400, "branch must not be empty")
-        cfg.update.branch = branch
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
+        if req.enabled is not None:
+            cfg.update.enabled = req.enabled
+        if req.branch is not None:
+            branch = req.branch.strip()
+            if not branch:
+                raise HTTPException(400, "branch must not be empty")
+            cfg.update.branch = branch
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "update_config_changed",
                  "entity_type": "update_config", "before": old,
@@ -1736,10 +1721,9 @@ def update_update_config(req: UpdateConfigUpdate):
 def set_permission_mode(req: PermissionModeRequest):
     if req.mode not in VALID_PERMISSION_MODES:
         raise HTTPException(400, f"Invalid mode. Choose from: {sorted(VALID_PERMISSION_MODES)}")
-    cfg = load_config()
-    old = cfg.agent.permission_mode
-    cfg.agent.permission_mode = req.mode
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.agent.permission_mode
+        cfg.agent.permission_mode = req.mode
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "permission_changed",
                  "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
@@ -1753,11 +1737,10 @@ def set_permission_mode(req: PermissionModeRequest):
 def set_exchange_mode(req: ExchangeModeRequest):
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "Mode must be 'demo' or 'live'")
-    cfg = load_config()
-    old = cfg.exchange.mode
-    _reject_live_identity_change(cfg, changed=req.mode != old)
-    cfg.exchange.mode = req.mode
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.exchange.mode
+        _reject_live_identity_change(cfg, changed=req.mode != old)
+        cfg.exchange.mode = req.mode
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_mode_changed",
                  "entity_type": "exchange_mode", "before": {"mode": old}, "after": {"mode": req.mode},
@@ -1852,37 +1835,36 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
 @router.post("/risk")
 def update_risk_config(req: RiskConfigUpdate):
     """Update editable risk limits. Immutable fields are rejected."""
-    cfg = load_config()
-    old = cfg.risk.model_dump(mode="json")
-    old_policy_hashes = {
-        mode: risk_policy_hash(getattr(cfg.risk, mode))
-        for mode in ("demo", "live")
-    }
-    updates = req.model_dump(exclude_none=True)
-    candidate = cfg.risk.model_copy(deep=True)
+    with edit_config() as cfg:
+        old = cfg.risk.model_dump(mode="json")
+        old_policy_hashes = {
+            mode: risk_policy_hash(getattr(cfg.risk, mode))
+            for mode in ("demo", "live")
+        }
+        updates = req.model_dump(exclude_none=True)
+        candidate = cfg.risk.model_copy(deep=True)
 
-    try:
-        for field, value in updates.items():
-            if field in _RISK_IMMUTABLE:
-                raise HTTPException(400, f"Field '{field}' cannot be modified via the dashboard")
-            if field in _RISK_MINIMUMS and value < _RISK_MINIMUMS[field]:
-                raise HTTPException(400, f"'{field}' must be at least {_RISK_MINIMUMS[field]}, got {value}")
-            if field in _RISK_BOUNDS:
-                lo, hi = _RISK_BOUNDS[field]
-                if not (lo <= value <= hi):
-                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}, got {value}")
-            setattr(candidate, field, value)
+        try:
+            for field, value in updates.items():
+                if field in _RISK_IMMUTABLE:
+                    raise HTTPException(400, f"Field '{field}' cannot be modified via the dashboard")
+                if field in _RISK_MINIMUMS and value < _RISK_MINIMUMS[field]:
+                    raise HTTPException(400, f"'{field}' must be at least {_RISK_MINIMUMS[field]}, got {value}")
+                if field in _RISK_BOUNDS:
+                    lo, hi = _RISK_BOUNDS[field]
+                    if not (lo <= value <= hi):
+                        raise HTTPException(400, f"'{field}' must be between {lo} and {hi}, got {value}")
+                setattr(candidate, field, value)
+            for mode in ("demo", "live"):
+                _validate_mode_policy(mode, getattr(candidate, mode))
+        except ValidationError as exc:
+            raise HTTPException(400, "Invalid risk policy fields") from exc
+
         for mode in ("demo", "live"):
-            _validate_mode_policy(mode, getattr(candidate, mode))
-    except ValidationError as exc:
-        raise HTTPException(400, "Invalid risk policy fields") from exc
-
-    for mode in ("demo", "live"):
-        policy = getattr(candidate, mode)
-        if risk_policy_hash(policy) != old_policy_hashes[mode]:
-            policy.revision += 1
-    cfg.risk = candidate
-    save_config(cfg)
+            policy = getattr(candidate, mode)
+            if risk_policy_hash(policy) != old_policy_hashes[mode]:
+                policy.revision += 1
+        cfg.risk = candidate
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "risk_config_changed",
                  "entity_type": "risk_config", "before": old,
@@ -2097,25 +2079,24 @@ def update_tradable_symbols(req: SymbolsUpdate):
 
     normalized = list(dict.fromkeys(s.strip().upper() for s in req.symbols if s.strip()))
 
-    cfg = load_config()
-    old = {"mode": cfg.risk.symbol_filter_mode, "symbols": list(cfg.risk.symbol_list)}
+    with edit_config() as cfg:
+        old = {"mode": cfg.risk.symbol_filter_mode, "symbols": list(cfg.risk.symbol_list)}
 
-    cfg.risk.symbol_filter_mode = req.mode
-    cfg.risk.symbol_list = normalized
-    cfg.exchange.symbol_list = normalized
+        cfg.risk.symbol_filter_mode = cast(Literal["whitelist", "blacklist"], req.mode)
+        cfg.risk.symbol_list = normalized
+        cfg.exchange.symbol_list = normalized
 
-    # In whitelist mode, sync observed_symbols so the data layer fetches them.
-    from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
-    if req.mode == "whitelist" and normalized:
-        canonical_symbols = [to_canonical(s) for s in normalized]
-        cfg.market_data.observed_symbols = canonical_symbols
-        exchange = cfg.market_data.ccxt_exchange or "binance"
-        cfg.market_data.observed_instruments = [
-            str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
-            for sym in canonical_symbols
-        ]
+        # In whitelist mode, sync observed_symbols so the data layer fetches them.
+        from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
+        if req.mode == "whitelist" and normalized:
+            canonical_symbols = [to_canonical(s) for s in normalized]
+            cfg.market_data.observed_symbols = canonical_symbols
+            exchange = cfg.market_data.ccxt_exchange or "binance"
+            cfg.market_data.observed_instruments = [
+                str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
+                for sym in canonical_symbols
+            ]
 
-    save_config(cfg)
 
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "symbols_changed",
@@ -2223,40 +2204,38 @@ _EXPERIMENTAL_ENABLEMENT_HOLDS = {
 @router.post("/trading")
 async def update_trading_config(req: TradingConfigUpdate):
     """Update paper position management parameters."""
-    cfg = load_config()
-    old = cfg.trading.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-
-    for field, value in updates.items():
-        if field == "market_aware_exits" and isinstance(value, dict):
-            for k, v in value.items():
-                if v is not None:
-                    setattr(cfg.trading.market_aware_exits, k, v)
-            continue
-        if field == "active_persona":
-            if value not in (cfg.trading.personas or {}):
-                raise HTTPException(400, f"active_persona must be one of {sorted(cfg.trading.personas or {})}")
-        elif field in _EXPERIMENTAL_ENABLEMENT_HOLDS and value is True:
-            raise HTTPException(409, _EXPERIMENTAL_ENABLEMENT_HOLDS[field])
-        elif field in _TRADING_BOUNDS:
-            lo, hi = _TRADING_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.trading, field, value)
-
-    old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
-        old.get("persona_sizing_enabled")
-    )
-    new_rollout_enabled = bool(cfg.trading.persona_progressive_unlock_enabled) and bool(
-        cfg.trading.persona_sizing_enabled
-    )
-    if old_rollout_enabled and not new_rollout_enabled:
-        cfg.trading.persona_rollout_generation += 1
-
     from aletheia.storage import repositories as repo
 
-    with repo.transaction(immediate=True):
-        save_config(cfg)
+    # Same lock order as _mutate_config_with_candidate_publication_permit.
+    with repo.transaction(immediate=True), edit_config() as cfg:
+        old = cfg.trading.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+
+        for field, value in updates.items():
+            if field == "market_aware_exits" and isinstance(value, dict):
+                for k, v in value.items():
+                    if v is not None:
+                        setattr(cfg.trading.market_aware_exits, k, v)
+                continue
+            if field == "active_persona":
+                if value not in (cfg.trading.personas or {}):
+                    raise HTTPException(400, f"active_persona must be one of {sorted(cfg.trading.personas or {})}")
+            elif field in _EXPERIMENTAL_ENABLEMENT_HOLDS and value is True:
+                raise HTTPException(409, _EXPERIMENTAL_ENABLEMENT_HOLDS[field])
+            elif field in _TRADING_BOUNDS:
+                lo, hi = _TRADING_BOUNDS[field]
+                if not (lo <= value <= hi):
+                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+            setattr(cfg.trading, field, value)
+
+        old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
+            old.get("persona_sizing_enabled")
+        )
+        new_rollout_enabled = bool(cfg.trading.persona_progressive_unlock_enabled) and bool(
+            cfg.trading.persona_sizing_enabled
+        )
+        if old_rollout_enabled and not new_rollout_enabled:
+            cfg.trading.persona_rollout_generation += 1
     rollout_error = None
     if old_rollout_enabled and not new_rollout_enabled:
         # Disabling either prerequisite ends the cohort. Re-enabling must not
@@ -2619,12 +2598,11 @@ async def get_tunnel_status():
 
 @router.post("/tunnel")
 def update_tunnel_config(req: TunnelConfigUpdate):
-    cfg = load_config()
-    old = cfg.tunnel.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.tunnel, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.tunnel.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            setattr(cfg.tunnel, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "tunnel_config_changed",
                  "entity_type": "tunnel_config", "before": old,
@@ -2638,34 +2616,32 @@ def update_tunnel_config(req: TunnelConfigUpdate):
 @router.post("/remote-control")
 def update_remote_control_config(req: RemoteControlConfigUpdate):
     """Save the independent remote-control switch and optional write-only API token."""
-    cfg = load_config()
-    old_enabled = cfg.remote_control.enabled
-    updates = req.model_dump(exclude_none=True)
-    api_token = updates.pop("api_token", None)
-    if "bind_hosts" in updates:
-        from aletheia.gateway.network import normalize_remote_bind_hosts
-        try:
-            updates["bind_hosts"] = normalize_remote_bind_hosts(updates["bind_hosts"])
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-    effective_enabled = updates.get("enabled", cfg.remote_control.enabled)
-    effective_hosts = updates.get("bind_hosts", cfg.remote_control.bind_hosts)
-    if effective_enabled and not effective_hosts:
-        raise HTTPException(400, "Select at least one network adapter before enabling Remote Control")
-    if updates.get("require_token") is True and api_token is None:
-        from aletheia.config.secrets import get_secret
-        if not (get_secret("remote_control_api_token") or get_secret("tunnel_api_token")):
-            raise HTTPException(
-                400,
-                "Set an API token before enabling Remote Control Token protection",
-            )
-    if api_token is not None:
-        from aletheia.config.secrets import set_secret
-        set_secret("remote_control_api_token", api_token)
-    if updates:
+    with edit_config() as cfg:
+        old_enabled = cfg.remote_control.enabled
+        updates = req.model_dump(exclude_none=True)
+        api_token = updates.pop("api_token", None)
+        if "bind_hosts" in updates:
+            from aletheia.gateway.network import normalize_remote_bind_hosts
+            try:
+                updates["bind_hosts"] = normalize_remote_bind_hosts(updates["bind_hosts"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        effective_enabled = updates.get("enabled", cfg.remote_control.enabled)
+        effective_hosts = updates.get("bind_hosts", cfg.remote_control.bind_hosts)
+        if effective_enabled and not effective_hosts:
+            raise HTTPException(400, "Select at least one network adapter before enabling Remote Control")
+        if updates.get("require_token") is True and api_token is None:
+            from aletheia.config.secrets import get_secret
+            if not (get_secret("remote_control_api_token") or get_secret("tunnel_api_token")):
+                raise HTTPException(
+                    400,
+                    "Set an API token before enabling Remote Control Token protection",
+                )
+        if api_token is not None:
+            from aletheia.config.secrets import set_secret
+            set_secret("remote_control_api_token", api_token)
         for field, value in updates.items():
             setattr(cfg.remote_control, field, value)
-        save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "remote_control_config_changed",
                  "entity_type": "remote_control_config", "before": {"enabled": old_enabled},
@@ -2716,20 +2692,19 @@ class NetworkConfigUpdate(SettingsRequest):
 @router.post("/network")
 def update_network_config(req: NetworkConfigUpdate):
     """Update global proxy configuration and apply it to the running process."""
-    cfg = load_config()
-    old = cfg.network.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.network, field, value)
-    # setattr does not re-run the model validator, so keep proxy_url and the
-    # structured parts consistent explicitly (structured inputs win; a legacy
-    # proxy_url-only update is decomposed back into the parts).
-    if {"proxy_protocol", "proxy_host", "proxy_port"} & set(updates):
-        cfg.network.recompose_proxy_url()
-    elif "proxy_url" in updates and cfg.network.proxy_url:
-        cfg.network.parse_proxy_url()
-        cfg.network.recompose_proxy_url()
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.network.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            setattr(cfg.network, field, value)
+        # setattr does not re-run the model validator, so keep proxy_url and the
+        # structured parts consistent explicitly (structured inputs win; a legacy
+        # proxy_url-only update is decomposed back into the parts).
+        if {"proxy_protocol", "proxy_host", "proxy_port"} & set(updates):
+            cfg.network.recompose_proxy_url()
+        elif "proxy_url" in updates and cfg.network.proxy_url:
+            cfg.network.parse_proxy_url()
+            cfg.network.recompose_proxy_url()
 
     # Apply immediately: set env vars so trust_env=True clients pick them up.
     from aletheia.net import apply_proxy_env
@@ -2783,11 +2758,10 @@ class HistoricalDataConfigUpdate(SettingsRequest):
 async def update_historical_data_config(req: HistoricalDataConfigUpdate):
     """Update historical OHLCV data management settings."""
     from aletheia.config.schema import HistoricalDataConfig
-    cfg = load_config()
-    old = cfg.historical_data.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    cfg.historical_data = _validated_settings_section(HistoricalDataConfig, old, updates, name="HistoricalDataConfig")
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.historical_data.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        cfg.historical_data = _validated_settings_section(HistoricalDataConfig, old, updates, name="HistoricalDataConfig")
 
     _SCHEDULER_FIELDS = {
         "nightly_backfill_enabled",
@@ -2837,16 +2811,15 @@ _EVENT_TRIGGER_BOUNDS: dict[str, tuple[float, float]] = {
 @router.post("/event_triggers")
 def update_event_trigger_config(req: EventTriggerConfigUpdate):
     """Update event-driven trigger thresholds."""
-    cfg = load_config()
-    old = cfg.event_triggers.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _EVENT_TRIGGER_BOUNDS:
-            lo, hi = _EVENT_TRIGGER_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.event_triggers, field, value)
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.event_triggers.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True)
+        for field, value in updates.items():
+            if field in _EVENT_TRIGGER_BOUNDS:
+                lo, hi = _EVENT_TRIGGER_BOUNDS[field]
+                if not (lo <= value <= hi):
+                    raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+            setattr(cfg.event_triggers, field, value)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard",
                  "event_type": "event_trigger_config_changed",
@@ -2877,14 +2850,13 @@ class NewsConfigUpdate(SettingsRequest):
 @router.post("/news")
 async def update_news_config(req: NewsConfigUpdate):
     from aletheia.config.schema import NewsConfig
-    cfg = load_config()
-    old = cfg.news.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True, exclude={"feeds"})
-    cfg.news = _validated_settings_section(NewsConfig, old, updates, name="NewsConfig")
-    if req.feeds is not None:
-        from aletheia.config.schema import NewsFeedEntry
-        cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.news.model_dump(mode="json")
+        updates = req.model_dump(exclude_none=True, exclude={"feeds"})
+        cfg.news = _validated_settings_section(NewsConfig, old, updates, name="NewsConfig")
+        if req.feeds is not None:
+            from aletheia.config.schema import NewsFeedEntry
+            cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
 
     rescheduled = False
     if (
