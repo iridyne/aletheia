@@ -89,6 +89,7 @@ def test_order(
     from aletheia.execution import gateway
     from aletheia.files.jsonl import write_audit
     from aletheia.storage.repositories import get_order
+    from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
 
     mode = (load_config().exchange.paper_execution_mode or "").strip()
     if mode not in DEMO_EXECUTION_MODES:
@@ -97,11 +98,11 @@ def test_order(
     if direction not in {"long", "short"}:
         raise typer.BadParameter("must be long or short", param_hint="--direction")
 
-    risk = abs(price - stop)
-    if risk <= 0:
-        raise typer.BadParameter("must differ from --price", param_hint="--stop")
-    # Risk requires an entry price, stop, take-profit and reward:risk on every entry (check 2b).
-    risk_reward = abs(take_profit - price) / risk
+    # Risk requires entry price, stop, take-profit and reward:risk on every entry (check 2b) and
+    # compares reward:risk against its own rounded value, so use the same function.
+    risk_reward = calculate_entry_plan_risk_reward(price, stop, take_profit)
+    if risk_reward is None:
+        raise typer.BadParameter("--stop must differ from --price", param_hint="--stop")
 
     result = gateway.submit_proposal(
         symbol=to_canonical(symbol),
