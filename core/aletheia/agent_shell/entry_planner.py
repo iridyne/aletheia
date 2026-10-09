@@ -600,6 +600,7 @@ async def system_operator_entry_planner(
 ) -> EntryHypothesis | None:
     """Canonical slow AI producer; all output is validated before persistence."""
 
+    from aletheia.agent_runtime.run_context import bind_economic_attribution, current_economic_attribution
     from aletheia.agents.helpers import llm_structured
     from aletheia.model_provider.broker import InferencePriority, inference_priority
     from aletheia.model_provider.router import get_provider_for_tier
@@ -651,7 +652,8 @@ async def system_operator_entry_planner(
         "semantic_validator": _validate_semantics,
     }
     prompt_payload = canonical_json_strict(model_view)
-    with inference_priority(InferencePriority.DEFAULT):
+    attribution = {**current_economic_attribution(), "planning_generation_id": planning_generation_id}
+    with inference_priority(InferencePriority.DEFAULT), bind_economic_attribution(**attribution):
         result, error = await llm_structured(
             CANONICAL_ENTRY_SYSTEM_PROMPT, prompt_payload,
             caller="agent_shell.entry_planner",

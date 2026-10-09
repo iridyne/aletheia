@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v95"
+SCHEMA_VERSION = "aletheia-sqlite-v96"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7827,6 +7827,31 @@ def _apply_entry_plan_financing_v95(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE trade_proposals ADD COLUMN margin_mode TEXT")
 
 
+# Append-only history of every planning attempt outcome (#3852). The generation row
+# keeps only the current outcome; each outcome write also appends one row here.
+_PLANNING_ATTEMPT_OUTCOMES_SQL = (
+    "CREATE TABLE IF NOT EXISTS candidate_planning_attempt_outcomes ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "generation_id TEXT NOT NULL REFERENCES candidate_planning_generations(id), "
+    "attempt_index INTEGER NOT NULL CHECK(attempt_index >= 1), "
+    "outcome_class TEXT NOT NULL, stage TEXT, reason TEXT, detail TEXT, "
+    "created_at TEXT NOT NULL, UNIQUE(generation_id, attempt_index))",
+    "CREATE INDEX IF NOT EXISTS idx_planning_attempt_outcomes_created "
+    "ON candidate_planning_attempt_outcomes(created_at)",
+    "CREATE TRIGGER IF NOT EXISTS trg_planning_attempt_outcomes_immutable "
+    "BEFORE UPDATE ON candidate_planning_attempt_outcomes "
+    "BEGIN SELECT RAISE(ABORT,'planning attempt outcome is immutable'); END",
+    "CREATE TRIGGER IF NOT EXISTS trg_planning_attempt_outcomes_no_delete "
+    "BEFORE DELETE ON candidate_planning_attempt_outcomes "
+    "BEGIN SELECT RAISE(ABORT,'planning attempt outcome is retained'); END",
+)
+
+
+def _apply_planning_attempt_outcomes_v96(db: sqlite3.Connection) -> None:
+    for statement in _PLANNING_ATTEMPT_OUTCOMES_SQL:
+        db.execute(statement)
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -9095,6 +9120,12 @@ _MIGRATIONS = (
         ).hexdigest(),
         schema_version="aletheia-sqlite-v95",
         apply=_apply_entry_plan_financing_v95,
+    ),
+    MigrationStep(
+        migration_id="20261009_0096_planning_attempt_outcomes_v96",
+        checksum=hashlib.sha256("\n".join(_PLANNING_ATTEMPT_OUTCOMES_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v96",
+        apply=_apply_planning_attempt_outcomes_v96,
     ),
 )
 

@@ -20,6 +20,7 @@ _ECONOMIC_ATTRIBUTION_KEYS = frozenset({
     "opportunity_id",
     "decision_id",
     "proposal_id",
+    "planning_generation_id",
 })
 
 
