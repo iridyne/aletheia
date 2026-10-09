@@ -1873,6 +1873,20 @@ def test_bare_manual_update_reads_the_paper_role_from_the_installed_timer_unit(t
     assert "live_disabled" in result["message"]
 
 
+def test_unreadable_installed_timer_unit_still_runs_the_paper_admission(tmp_path, monkeypatch):
+    """#3020: an installed unit that cannot be read must not silently skip the admission gate."""
+    from ops.update import auto
+
+    unit_dir = tmp_path / "units"
+    unit_dir.mkdir()
+    (unit_dir / "aletheia-auto-update.service").write_text("[Service]\n", encoding="utf-8")
+    monkeypatch.setattr(auto, "_unit_dir", lambda: unit_dir)
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    monkeypatch.setattr(auto.os, "access", lambda _path, _mode: False)
+
+    assert auto.paper_role_configured() is True
+
+
 def test_unclassified_runtime_manual_update_skips_the_paper_admission(tmp_path, monkeypatch):
     from ops.update import auto, continuity
 

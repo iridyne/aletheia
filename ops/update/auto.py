@@ -1011,7 +1011,10 @@ def paper_role_configured() -> bool:
     The role normally lives only in the unit, so a bare manual ``aletheia update``
     on the same checkout must still see it (#3020).
     """
-    unit_role = _owned_unit_env(_unit_dir() / "aletheia-auto-update.service", _RUNTIME_ROLE_ENV)
+    unit = _unit_dir() / "aletheia-auto-update.service"
+    if unit.exists() and not os.access(unit, os.R_OK):
+        return True  # an installed but unreadable unit must not skip the admission gate
+    unit_role = _owned_unit_env(unit, _RUNTIME_ROLE_ENV)
     return _AUTO_DEPLOY_ROLE in {os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower(), unit_role.lower()}
 
 
