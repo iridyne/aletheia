@@ -1,0 +1,921 @@
+{
+  "note": "Frozen baseline for tests/audit/test_no_zero_reference_definitions.py: top-level def/class in core and extensions with no word reference outside its own definition (tests excluded) as of generated_at. A deletion backlog, not a permit: remove an entry when the definition is deleted or wired.",
+  "generated_at": "2026-10-09",
+  "definitions": [
+    {
+      "file": "core/aletheia/agent_runtime/connectivity.py",
+      "name": "probe_exchange_sync",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/health.py",
+      "name": "get_llm_consecutive_failures",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/health.py",
+      "name": "reset_llm_failures",
+      "reason": "untriaged by the sweep; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/permissions.py",
+      "name": "get_permitted_tools",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/run_context.py",
+      "name": "bind_agent_run",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/runtime_session.py",
+      "name": "reset_current_session",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/scheduler.py",
+      "name": "scheduler_timeout_metrics_snapshot",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agent_runtime/startup_behavior_gate.py",
+      "name": "_gate_owns_pause",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "name": "agent_telemetry_snapshot",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "name": "prepend_environment_header",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/agents/helpers.py",
+      "name": "render_context_adapter",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/alpha_attribution.py",
+      "name": "_exit_price_from_ohlcv",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/candidate_facts.py",
+      "name": "_parsed",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/candidate_supply.py",
+      "name": "build_candidate_supply_snapshot",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/causal_controls.py",
+      "name": "_deterministic_pick",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/filter_evidence.py",
+      "name": "atomic_opportunity_evidence",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/filter_evidence.py",
+      "name": "record_observer_pre_filter_evidence",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/filter_evidence.py",
+      "name": "record_operator_filter_trace",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/filter_evidence.py",
+      "name": "verify_signal_emitter_admission",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/go_live_scorecard.py",
+      "name": "check_kill_condition_consecutive_rounds",
+      "reason": "sweep 2026-10-09 MS-03 NEEDS_OWNER; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/go_live_scorecard.py",
+      "name": "compute_pnl_by_trade_school",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/go_live_scorecard.py",
+      "name": "count_consecutive_zero_fill_days",
+      "reason": "sweep 2026-10-09 MS-03 NEEDS_OWNER; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/opportunity_flow.py",
+      "name": "_guard_reason",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/outcome_integrity.py",
+      "name": "administrative_closures",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/pi_evidence.py",
+      "name": "b2_horizon_status",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/pi_evidence.py",
+      "name": "render_b2_evidence_summary",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/ranker_objective_audit.py",
+      "name": "_admission_effects",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/signal_replay.py",
+      "name": "block_bootstrap_mean_ci",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/signal_replay.py",
+      "name": "random_entry_baseline",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/trade_path.py",
+      "name": "_classify_path_bucket",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/trade_path.py",
+      "name": "build_post_exit_path_observation",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/analytics/trading_mandate_compliance.py",
+      "name": "_fit_reasons",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/analytics/trading_mandate_compliance.py",
+      "name": "_fit_status",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/cli/observe_cmd.py",
+      "name": "_find_observation",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/cli/observe_cmd.py",
+      "name": "_latest_lab_evaluation",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/context_builder.py",
+      "name": "render_enriched_context_md",
+      "reason": "sweep 2026-10-09 SP-05 DELETE; referenced only by 8 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/data_coverage.py",
+      "name": "clear_data_coverage_cache",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/freshness.py",
+      "name": "fresh_rows",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/history_downloader.py",
+      "name": "check_coverage",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/market_structure.py",
+      "name": "MarketStructureProvider",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "get_cached_price",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "get_price_for_liquidation",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "get_price_for_risk",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "get_watched_symbols",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "instrument_refresh_attempted",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/price_feed.py",
+      "name": "process_owns_price_cache",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/data/venue_health.py",
+      "name": "reset_venue_health",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/data/venue_listing_cache.py",
+      "name": "invalidate_all",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/economics/budgets.py",
+      "name": "budgets_applicable_to",
+      "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/economics/inference_calls.py",
+      "name": "list_inference_calls",
+      "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/economics/tracing.py",
+      "name": "record_fixed_cost_event",
+      "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/execution/broker_funding.py",
+      "name": "require_retained_history",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/execution/broker_utils.py",
+      "name": "entry_acknowledgement_state",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/execution/gateway.py",
+      "name": "submit_proposal",
+      "reason": "sweep 2026-10-09 MP-05 WIRE_D0, MP-08 DELETE; referenced only by 16 test file(s)"
+    },
+    {
+      "file": "core/aletheia/execution/reconciliation.py",
+      "name": "resolve_orders_missing_from_exchange",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/execution/verified_exit.py",
+      "name": "private_history_window_available",
+      "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/files/paths.py",
+      "name": "playbooks_dir",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/files/paths.py",
+      "name": "reports_dir",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "name": "is_supported_platform",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/gateway/autostart.py",
+      "name": "write_watchdog_tick",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/gateway/client_order_id.py",
+      "name": "make_client_order_id",
+      "reason": "sweep 2026-10-09 LO-02 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/gateway/client_order_id.py",
+      "name": "make_idempotency_key",
+      "reason": "sweep 2026-10-09 LO-02 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/gateway/preflight.py",
+      "name": "log_preflight_result",
+      "reason": "sweep 2026-10-09 LO-04 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/gateway/windows_machine_service.py",
+      "name": "_apply_acls",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/maintenance/database_capacity.py",
+      "name": "optimize_query_planner",
+      "reason": "sweep 2026-10-09 LO-04 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/model_provider/base.py",
+      "name": "health_from_catalogue_probe",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/model_provider/fallback.py",
+      "name": "reset_model_health",
+      "reason": "untriaged by the sweep; referenced only by 5 test file(s)"
+    },
+    {
+      "file": "core/aletheia/model_provider/inference_contract.py",
+      "name": "caller_matrix_markdown",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/model_provider/router.py",
+      "name": "list_models_cached",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "core/aletheia/notifications.py",
+      "name": "notify_trade_fill",
+      "reason": "sweep 2026-10-09 RP-07 NEEDS_OWNER; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/portfolio/pnl.py",
+      "name": "_latest_price",
+      "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/portfolio/pnl.py",
+      "name": "today_eligible_strategy_pnl",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/portfolio/position_manager.py",
+      "name": "reduce_position_routed",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/portfolio/position_reconciler.py",
+      "name": "report_invalid_open_position_exposures",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/portfolio/reconciliation_integrity.py",
+      "name": "resolve_reconciliation_integrity_incident",
+      "reason": "sweep 2026-10-09 MP-07 WIRE_D0; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/risk/demo_entry_quality.py",
+      "name": "is_demo_entry_quality_skip",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/risk/demo_entry_quality.py",
+      "name": "ranker_skip_reason",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/server/dev_reload.py",
+      "name": "record_reload",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/server/routes/operator.py",
+      "name": "_parse_ts",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/storage/market_ohlcv_tiering.py",
+      "name": "MemoryColdOHLCVBackend",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/models.py",
+      "name": "OperatorEvaluationEvent",
+      "reason": "sweep 2026-10-09 MS-04 NEEDS_OWNER, MS-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/models.py",
+      "name": "PSGatewaySession",
+      "reason": "sweep 2026-10-09 MS-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/models.py",
+      "name": "PSOrderIntent",
+      "reason": "sweep 2026-10-09 MS-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/models.py",
+      "name": "PSReconciliationReport",
+      "reason": "sweep 2026-10-09 MS-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/models.py",
+      "name": "ShadowTrade",
+      "reason": "sweep 2026-10-09 MS-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "batch_news",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "latest_options_structure",
+      "reason": "sweep 2026-10-09 SP-05 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "latest_perp_structure",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "list_open_opportunities",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "list_strategy_positions",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/storage/repositories.py",
+      "name": "plan_market_ohlcv_tiering",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/sqlite.py",
+      "name": "reset_db",
+      "reason": "untriaged by the sweep; referenced only by 147 test file(s)"
+    },
+    {
+      "file": "core/aletheia/storage/sqlite.py",
+      "name": "writer_metrics_snapshot",
+      "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/instruments.py",
+      "name": "contracts_to_notional",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/instruments.py",
+      "name": "futures_instruments_from_config",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/instruments.py",
+      "name": "notional_to_contracts",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/market_context.py",
+      "name": "_compute_snap",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/persona_rollout.py",
+      "name": "start_persona_rollout",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/playbooks.py",
+      "name": "format_playbook_block",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/sizing.py",
+      "name": "conviction_to_multiplier",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/sizing.py",
+      "name": "vol_target_size",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 4 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/sizing_policy.py",
+      "name": "clean_close_count",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/sizing_policy.py",
+      "name": "pyramid_plan",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/trade_motivation.py",
+      "name": "build_trade_motivation",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/trade_motivation.py",
+      "name": "serialize_trade_motivation",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/trading_mandate.py",
+      "name": "assess_trading_mandate_fit",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/trading_mandate.py",
+      "name": "canonical_mandate_json",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/trading_mandate.py",
+      "name": "canonical_mandate_payload",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/trading_mandate.py",
+      "name": "compute_mandate_content_hash",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/trading/venue_margin.py",
+      "name": "clear_venue_margin_envelope",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/trading/venue_margin.py",
+      "name": "inspect_venue_margin_envelope",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/universe/allocator.py",
+      "name": "get_family_multipliers",
+      "reason": "sweep 2026-10-09 SP-07 NEEDS_OWNER; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/universe/fast_stream.py",
+      "name": "fast_market_stream_available",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "name": "_atr_pct",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "name": "_is_valid_symbol",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "core/aletheia/universe/features.py",
+      "name": "_provider_observed_at",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "core/aletheia/universe/filter_advisor.py",
+      "name": "get_family_spread_tolerances",
+      "reason": "sweep 2026-10-09 SP-07 NEEDS_OWNER; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/universe/market_structure.py",
+      "name": "hard_gate_decision",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "core/aletheia/universe/service.py",
+      "name": "universe_publication_metrics",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/analytics/confidence_calibration.py",
+      "name": "render_calibration_for_pi",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/analytics/filter_registry.py",
+      "name": "filter_by_name",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/analytics/filter_registry.py",
+      "name": "filters_by_stage",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/analytics/insight_synthesizer.py",
+      "name": "render_memo_for_observer",
+      "reason": "sweep 2026-10-09 MS-07 NEEDS_OWNER; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/analytics/reasoning_feedback.py",
+      "name": "render_feedback_for_pi",
+      "reason": "sweep 2026-10-09 MS-07 NEEDS_OWNER; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/analytics/trade_case_builder.py",
+      "name": "_opened_after",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/counterfactual/filter_experiments.py",
+      "name": "evaluate_active_shadow_experiments",
+      "reason": "sweep 2026-10-09 LR-07 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/counterfactual/filter_experiments.py",
+      "name": "register_observation_from_spec",
+      "reason": "sweep 2026-10-09 LR-07 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/data/collectors/vergex_structure.py",
+      "name": "VergexStructureCollector",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/data/perp_structure_shadow.py",
+      "name": "shadow_window_status",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/data/position_x.py",
+      "name": "extract_position_x_material_bundle",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/exchanges/ccxt/submission_errors.py",
+      "name": "ClosePositionAbsentError",
+      "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/knowledge/manager.py",
+      "name": "create_strategy_memory",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/knowledge/manager.py",
+      "name": "create_trading_guard",
+      "reason": "sweep 2026-10-09 LR-01 NEEDS_OWNER; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/knowledge/manager.py",
+      "name": "delete_item",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/knowledge/router.py",
+      "name": "build_guard_advisory",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/knowledge/seed_guards.py",
+      "name": "ensure_seed_guards",
+      "reason": "sweep 2026-10-09 LR-01 NEEDS_OWNER; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/b2_evidence_policy.py",
+      "name": "attach_b2_candidate_evidence",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/b2_evidence_policy.py",
+      "name": "ensure_b2_candidate_evidence_policy_epoch",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/behavior_contracts.py",
+      "name": "current_behavior_contract_hash",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/cohorts.py",
+      "name": "_exact_outcome",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/contrastive_evidence.py",
+      "name": "build_contrastive_bundle",
+      "reason": "untriaged by the sweep; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/learning/contribution.py",
+      "name": "aggregate_observations",
+      "reason": "sweep 2026-10-09 LR-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/control.py",
+      "name": "learning_influence_enabled",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/control.py",
+      "name": "promotion_refreeze_reason",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 4 test file(s)"
+    },
+    {
+      "file": "extensions/learning/demo_entry_quality.py",
+      "name": "demo_entry_quality_policy_context",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/economic_knowledge.py",
+      "name": "inherit_behavioral_economic_knowledge",
+      "reason": "sweep 2026-10-09 LR-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/economic_knowledge.py",
+      "name": "project_economic_knowledge_as_of",
+      "reason": "sweep 2026-10-09 LR-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/economic_knowledge.py",
+      "name": "retrieve_cognitive_economic_knowledge",
+      "reason": "sweep 2026-10-09 LR-08 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/experiments.py",
+      "name": "current_policy_epoch",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/hypotheses.py",
+      "name": "publish_hypothesis_nomination",
+      "reason": "sweep 2026-10-09 LR-06 NEEDS_OWNER; referenced only by 5 test file(s)"
+    },
+    {
+      "file": "extensions/learning/hypothesis_compiler.py",
+      "name": "assess_experimentability",
+      "reason": "sweep 2026-10-09 LR-06 NEEDS_OWNER; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "extensions/learning/hypothesis_compiler.py",
+      "name": "compile_hypothesis_draft",
+      "reason": "sweep 2026-10-09 LR-06 NEEDS_OWNER; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "close_policy_epoch",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "count_unmirrored_lifecycle_events",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_exposure",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_exposure_by_dedup_key",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_latest_measurement_verdict",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_latest_verdict",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_latest_verdict_for_cohort",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_lifecycle_event_by_dedup_key",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_open_experiment",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_open_policy_epoch",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "get_trial_admission_event",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "linked_settled_exposure_counts",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "list_lifecycle_events",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/ledger.py",
+      "name": "list_unmirrored_lifecycle_events",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/memory_assets.py",
+      "name": "independent_quantitative_observation_count",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/memory_assets.py",
+      "name": "unique_root_observations",
+      "reason": "untriaged by the sweep; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/models.py",
+      "name": "LearningContributionVerdict",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/models.py",
+      "name": "LearningExposure",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "extensions/learning/models.py",
+      "name": "LearningInferenceDecision",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/models.py",
+      "name": "LearningLifecycleEvent",
+      "reason": "sweep 2026-10-09 LR-05 DELETE; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/policy_epochs.py",
+      "name": "compare_policy_epochs",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 2 test file(s)"
+    },
+    {
+      "file": "extensions/learning/prompt_bundles.py",
+      "name": "authorize_observer_learning_bundle",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/prompt_bundles.py",
+      "name": "authorize_operator_learning_context",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/learning/skip_policy.py",
+      "name": "defer_extends_carrier_valid_until",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/skip_policy.py",
+      "name": "defer_window_minutes_for_reason",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/skip_policy.py",
+      "name": "emit_suppression_applies_to_defer",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/learning/skip_policy.py",
+      "name": "ensure_skip_remediation_policy_epoch",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "extensions/learning/t0_context.py",
+      "name": "replay_t0_envelope",
+      "reason": "sweep 2026-10-09 LR-09 DELETE; referenced only by 1 test file(s)"
+    },
+    {
+      "file": "extensions/policies/diff.py",
+      "name": "diff_dicts",
+      "reason": "untriaged by the sweep; no reference anywhere, tests included"
+    },
+    {
+      "file": "extensions/regime/detector.py",
+      "name": "reset_state",
+      "reason": "sweep 2026-10-09 SP-08 DELETE; referenced only by 3 test file(s)"
+    },
+    {
+      "file": "extensions/sync/conflicts.py",
+      "name": "detect_policy_conflicts",
+      "reason": "sweep 2026-10-09 RP-13 DELETE; no reference anywhere, tests included"
+    }
+  ]
+}
