@@ -1208,11 +1208,35 @@ async def test_bitget_mutations_keep_contract_units_and_endpoint_family(monkeypa
     assert create[1][5] == {
         "clientOrderId": "bitget-client-1",
         "hedged": True,
-        "marginMode": "cross",
         "reduceOnly": True,
         "uta": True,
     }
     assert not any(event[0] == "set_leverage" for event in exchange.events)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_bitget_isolated_entry_keeps_margin_mode_out_of_the_order_body(monkeypatch):
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "bitget-entry-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    await adapter.submit_order(_bitget_command(identity, leverage="3", margin_mode="isolated"))
+
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert "marginMode" not in create[1][5]
     await adapter.close()
 
 
@@ -1259,7 +1283,6 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(monkeypatch)
     assert exchange.events[3][1][5] == {
         "clientOrderId": "bitget-client-1",
         "hedged": True,
-        "marginMode": "cross",
         "stopLoss": {"triggerPrice": "49000"},
         "takeProfit": {"triggerPrice": "62000"},
         "uta": True,
@@ -1429,7 +1452,6 @@ async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(monkeypa
     assert create[1][5] == {
         "clientOrderId": "bitget-client-1",
         "hedged": True,
-        "marginMode": "cross",
         "reduceOnly": True,
         "stopLossPrice": "49000",
         "uta": True,
