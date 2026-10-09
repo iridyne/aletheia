@@ -76,10 +76,10 @@ def test_order(
     symbol: str = typer.Argument(..., help="Canonical symbol, for example BTC/USDT."),
     direction: str = typer.Option(..., "--direction", help="long or short."),
     quantity: float = typer.Option(..., "--quantity", min=0.0, help="Base-asset quantity."),
+    price: float = typer.Option(..., "--price", min=0.0, help="Limit price; set it on the marketable side to fill at once."),
     stop: float = typer.Option(..., "--stop", min=0.0, help="Protective stop price."),
-    take_profit: float | None = typer.Option(None, "--take-profit", min=0.0),
+    take_profit: float = typer.Option(..., "--take-profit", min=0.0, help="Take-profit price."),
     leverage: int = typer.Option(1, "--leverage", min=1),
-    price: float | None = typer.Option(None, "--price", min=0.0, help="Limit price; omit for a market order."),
     horizon_hours: float = typer.Option(24.0, "--horizon-hours", min=0.0),
 ):
     """Debug-only: send one USDT-perp Proposal through Risk and the Gateway on a demo account."""
@@ -97,16 +97,23 @@ def test_order(
     if direction not in {"long", "short"}:
         raise typer.BadParameter("must be long or short", param_hint="--direction")
 
+    risk = abs(price - stop)
+    if risk <= 0:
+        raise typer.BadParameter("must differ from --price", param_hint="--stop")
+    # Risk requires an entry price, stop, take-profit and reward:risk on every entry (check 2b).
+    risk_reward = abs(take_profit - price) / risk
+
     result = gateway.submit_proposal(
         symbol=to_canonical(symbol),
         market_type="usdt_futures",
         direction=direction,
-        order_type="market" if price is None else "limit",
+        order_type="limit",
         quantity=quantity,
-        price=price or 0.0,
+        price=price,
         leverage=leverage,
         stop_price=stop,
         take_profit=take_profit,
+        risk_reward=risk_reward,
         execution_mode=mode,
         agent_rationale="aletheia dev test-order (debug CLI)",
         trade_school="short_term",
