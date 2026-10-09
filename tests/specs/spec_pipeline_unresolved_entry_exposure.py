@@ -322,7 +322,7 @@ def test_partial_entry_position_and_remaining_order_are_not_double_counted(
     import aletheia.risk.engine as eng
 
     # Position exposure = 4*10; unresolved remainder = (10-4)*10.
-    assert eng._current_live_exposure() == pytest.approx(100.0)
+    assert eng._current_account_exposure("bitget_live_limited") == pytest.approx(100.0)
 
 
 @spec_claim(
@@ -353,7 +353,7 @@ def test_persisted_fill_without_position_reserves_full_live_order(
 
     import aletheia.risk.engine as eng
 
-    assert eng._current_live_exposure() == pytest.approx(100.0)
+    assert eng._current_account_exposure("bitget_live_limited") == pytest.approx(100.0)
 
 
 @spec_claim(
@@ -1087,7 +1087,7 @@ def test_normalized_quantity_authority_counts_exact_exposure(tmp_path, monkeypat
     assert len(pre_order) == 1
     assert pre_order[0].reserved_quantity == pytest.approx(4.0)
     assert pre_order[0].invalid_reasons == ()
-    assert engine._current_live_exposure() == pytest.approx(400.0)
+    assert engine._current_account_exposure("bitget_live_limited") == pytest.approx(400.0)
 
     repo.insert_order(Order(
         id="normalized-authority-order",
@@ -1109,7 +1109,7 @@ def test_normalized_quantity_authority_counts_exact_exposure(tmp_path, monkeypat
     assert unresolved[0].reserved_quantity == pytest.approx(4.0)
     assert unresolved[0].leverage == pytest.approx(5.0)
     assert unresolved[0].invalid_reasons == ()
-    assert engine._current_live_exposure() == pytest.approx(400.0)
+    assert engine._current_account_exposure("bitget_live_limited") == pytest.approx(400.0)
 
 
 @spec_claim(
@@ -1180,7 +1180,7 @@ def test_unresolved_close_order_does_not_add_entry_exposure(tmp_path, monkeypatc
 
     import aletheia.risk.engine as eng
 
-    assert eng._current_live_exposure() == pytest.approx(50.0)
+    assert eng._current_account_exposure("bitget_live_limited") == pytest.approx(50.0)
 
 
 def test_archived_reservations_remain_read_only_without_current_capacity(tmp_path, monkeypatch):
