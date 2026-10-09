@@ -840,8 +840,7 @@ def get_cost_summary(execution_mode: str | None = None):
     )
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
-        eligible_strategy_outcomes,
-        raw_account_events,
+        read_complete_outcome_cohort,
     )
     mode = (execution_mode or resolve_selected_execution_mode())
     if not mode:
@@ -902,13 +901,21 @@ def get_cost_summary(execution_mode: str | None = None):
             "missing_cost_counts": missing,
         }
 
-    verified = _costs(eligible_strategy_outcomes(execution_mode=mode))
-    raw = _costs(raw_account_events(execution_mode=mode))
+    # One snapshot feeds verified costs, raw costs and the cohort summary (#1262).
+    cohort = read_complete_outcome_cohort(execution_mode=mode)
+    if cohort.cohort_state != "available":
+        return {
+            "outcome_status": "unavailable",
+            "unavailable_reason": "outcome_cohort_unavailable",
+            **execution_mode_identity(mode),
+        }
+    verified = _costs(cohort.eligible_rows)
+    raw = _costs(list(cohort.rows))
     return {
         **verified,
         "raw_recorded_costs": raw,
         **execution_mode_identity(mode),
-        **build_outcome_cohort_summary(execution_mode=mode),
+        **build_outcome_cohort_summary(cohort=cohort),
     }
 
 

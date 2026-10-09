@@ -26,21 +26,25 @@ def configure_shadow_cohort_reader(reader=None) -> None:
     _read_shadow_cohort = reader
 
 
-def compute_family_scorecard(*, execution_mode: str | None = None) -> list[dict]:
+def compute_family_scorecard(
+    *, execution_mode: str | None = None, rows: list[dict] | None = None,
+) -> list[dict]:
     """Compute per-scanner_family performance statistics.
 
     Returns a list of dicts, one per family:
         {family, trade_count, win_rate, expectancy_pct, avg_hold_hours,
          shadow_count, alpha_vs_btc_pct}
-    Scoped to a single ``execution_mode`` when provided (#1939).
+    Scoped to a single ``execution_mode`` when provided (#1939). ``rows`` lets a
+    caller that already read one cohort snapshot aggregate those same eligible
+    rows instead of reading the outcomes a second time (#1262).
     """
     return compute_family_scorecard_with_epoch(
-        execution_mode=execution_mode,
+        execution_mode=execution_mode, rows=rows,
     )["families"]
 
 
 def compute_family_scorecard_with_epoch(
-    *, execution_mode: str | None = None,
+    *, execution_mode: str | None = None, rows: list[dict] | None = None,
 ) -> dict:
     """Same as compute_family_scorecard() but also returns shadow epoch metadata.
 
@@ -65,10 +69,13 @@ def compute_family_scorecard_with_epoch(
     from aletheia.analytics.candidate_lifecycle import for_proposal
 
     # Metadata joins do not decide eligibility; the central read model does.
+    eligible = (
+        outcome_integrity.eligible_strategy_outcomes(execution_mode=execution_mode)
+        if rows is None
+        else rows
+    )
     rows = []
-    for position in outcome_integrity.eligible_strategy_outcomes(
-        execution_mode=execution_mode,
-    ):
+    for position in eligible:
         scanner_family = "unknown"
         proposal_id = position.get("proposal_id")
         if proposal_id:
