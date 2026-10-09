@@ -5,7 +5,7 @@ related_contracts:
   - docs/design/api/api_reference.md
   - docs/design/data/data_utilization.md
 supersedes:
-  - docs/design/frontend/usage_insights_design.md
+  - docs/design/history/usage_insights_design.md
 ---
 
 # Usage v2 production read model and workspace

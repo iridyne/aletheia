@@ -15,8 +15,8 @@ This is the main implementation authority after governance and product scope. Re
 | `operator/` | System Operator and PI Operator design |
 | `frontend/` | Web UI information architecture and design system |
 | `market-systems/` | Equity, prediction market, freshness, filters, and market-related subsystem designs |
-| `research/` | Design research that has not become a contract |
-| `history/` | Frozen historical operator specs and crosswalks |
+| `history/` | Retired mechanisms and superseded designs, kept as history |
+| `process/` | SDD methodology |
 | `subsystems/` | Smaller subsystem designs without a larger folder yet |
 
 ## Fast Routing

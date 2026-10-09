@@ -1,10 +1,14 @@
 ---
 id: position-replay-profit-gradient
-status: accepted
+status: implemented
 github_issue: 964
-related_contracts: []
+related_contracts:
+  - ../contracts/profit_loop_observability_contract.md
+  - ../contracts/profit_gradient_evidence_contract.md
 supersedes: []
 ---
+
+> 2026-10-09 状态改为 implemented：#964 已关闭；规范内容在 docs/design/contracts/profit_loop_observability_contract.md（含 seven-layer gates 与 unique winner）和 profit_gradient_evidence_contract.md。经验证据仍按该契约 Known gaps 一节积累，状态不代表已有经验结论。
 
 # Position replay and profit-gradient evidence
 

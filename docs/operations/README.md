@@ -10,12 +10,11 @@ defined only in [`PR_REVIEW_LIFECYCLE.md`](development/agent-guides/PR_REVIEW_LI
 
 | Folder | Use |
 | --- | --- |
-| `runbooks/` | Daily operations and SOPs |
+| `runbooks/` | Daily operations, diagnostics and manual reconciliation |
 | `development/` | Local setup, tests, worktree preview, pytest optimization |
-| `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), legacy autostart, source-runtime release/deployment notes, source-update Observer continuity |
-| `recovery/` | Data reload and outcome-history remediation |
+| `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), source-runtime release/deployment notes, source-update Observer continuity |
+| `recovery/` | Outcome-history remediation |
 | `architecture/` | Stability target architecture for operations |
-| `records/` | Dated operational recovery records |
 
 For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
 [Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md). For CASI-authoritative

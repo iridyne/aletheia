@@ -6,6 +6,8 @@ related_contracts: []
 supersedes: []
 ---
 
+> 2026-10-09 注：自 2026-09-28 起只维护 Linux systemd user session；macOS/Windows 后端见 ../history/platform_specific_gateway_services.md。
+
 # Gateway Service Lifecycle Proposal
 
 ## Summary

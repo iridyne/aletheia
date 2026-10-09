@@ -59,4 +59,4 @@ counts only makes the Shadow direction interpretable. A future authority change
 still requires a separately reviewed Paper contract and explicit owner approval.
 
 Research history and rationale live in
-[`../research/universe-scoring/relative-rank-candidate/`](../research/universe-scoring/relative-rank-candidate/).
+[`docs/research/universe-scoring/relative-rank-candidate/`](../../research/universe-scoring/relative-rank-candidate/).

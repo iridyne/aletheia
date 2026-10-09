@@ -16,8 +16,9 @@ stage: it exists only inside a `TRIGGERED` Entry Plan. A `RESTING_MAKER` plan ma
 reserve Risk and place a true Post-Only Order immediately.
 
 This proposal records the accepted direction for #2288. The normative behavior
-now lives in `docs/design/contracts/decision_lifecycle_contract.md` and
-`docs/design/contracts/execution_contract.md`.
+now lives in [`docs/design/contracts/entry-plan-contract.md`](../contracts/entry-plan-contract.md),
+with lifecycle and execution boundaries in `decision_lifecycle_contract.md` and
+`execution_contract.md`.
 
 ## Accepted 2026-08-30 conformance amendment
 

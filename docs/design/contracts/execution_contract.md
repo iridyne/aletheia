@@ -801,7 +801,7 @@ close event、Outcome eligibility 与 hook 意图；调用方仍在同一 writer
 恢复队列与待恢复计数共用实际成本缺口及已验证 broker-fill 证据条件，不以 Outcome 排除标签
 作为成本恢复许可。已验证的外部关闭即使为 `administrative_close`，仍可补齐账户净经济结果，
 但不因此获得策略 Outcome 资格；无成交证据的行政关闭不得进入此队列。
-当前所有者及独立校验边界的调查见 [settlement ownership evidence](../proposals/slim_core_settlement_convergence.md)。
+当前所有者及独立校验边界的调查见 [settlement ownership evidence](../../research/audits/SLIM_CORE_SETTLEMENT_OWNERSHIP_2026-09-12.md)。
 
 当 UTA 的同账户 funding ledger 以稳定 reason
 `funding_history_retention_expired` 证明查询起点早于该 profile 的私有历史保留边界时，

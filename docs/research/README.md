@@ -15,17 +15,13 @@ Research files are evidence, audits, and explorations. They can guide work but d
 | `integrations/` | Demo/live parity and infrastructure integrations |
 | `knowledge-bases/` | Imported or synthesized domain knowledge bases |
 | `explorations/` | Smaller exploratory reports and postmortems |
-| `tokenomics/` | LLM harness and cost-control research feeding the `tokenomics` branch |
+| `tokenomics/` | LLM harness and cost-control research |
+| `llm_harness/` | Dated inference-harness, context-adapter and token-observation evidence |
+| `counterfactual/` | Shadow/counterfactual data audit, calibration and RDD findings (2026-07-31) |
+| `universe-scoring/` | Universe continuous-scoring and relative-rank research (2026-08) |
 
 ## Current audit entry points
 
-- [Slim Core private-I/O reachability — 2026-09-13](audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md)
-  distinguishes stored-account probes, candidate credentials, TP/SL recovery and
-  public listing reads at the remaining concrete-client imports. It is bounded
-  source evidence, not whole-product ownership or runtime qualification.
-- [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
-  records the #1002 repository-wide scope check against OKX's checksum
-  deprecation and the active REST-only snapshot boundary.
 - [Entry geometry phase-1 research (#3850) — 2026-10-09](trading-strategy/ENTRY_GEOMETRY_PHASE1_RESEARCH_2026-10-09.md)
   records how price-action schools, competitors and open-source frameworks place entry, stop and target. It
   includes a Fedora MAE/MFE study of the planner's hypotheses, three candidate geometry designs and an
@@ -40,45 +36,13 @@ Research files are evidence, audits, and explorations. They can guide work but d
   and tier leverage. It also records Aletheia's own trade statistics, the 500 USDT
   Monte Carlo, and a draft definition of "best". It is unapproved evidence for
   the entry-order-risk-sizing proposal.
-- [Vergex platform analysis process evidence — 2026-08-11](trading-strategy/VERGEX_PLATFORM_ANALYSIS_PROCESS_2026-08-11.md)
-  records the source-bundle inventory, safety boundary, capability decomposition,
-  evidence classification, multi-temporal method, and algorithm-fidelity review.
-- [Vergex platform gap and implementation candidate report — 2026-08-11](trading-strategy/VERGEX_PLATFORM_GAP_AND_IMPL_CANDIDATE_REPORT_2026-08-11.md)
-  compares current Aletheia with the reusable Vergex ideas and presents
-  unapproved repair priorities, feature candidates, metric benchmarks, and
-  implementation decision gates for owner review.
-- [Minimum Profit Loop Convergence Evidence — 2026-08-08](audits/MINIMUM_PROFIT_LOOP_CONVERGENCE_2026-08-08.md)
-  records the merged PR chain and a dated Fedora checkpoint for the narrowed
-  scan-to-Learning loop. It is historical evidence, not current Runtime truth.
-- [TickFlow first-batch selection — 2026-08-09](explorations/TICKFLOW_FIRST_BATCH_SELECTION_2026-08-09.md)
-  records the seven selected implementation boundaries and their acceptance
-  evidence. Git and pull requests, not the document, carry current progress.
-- [TickFlow first-batch implementation evidence — 2026-08-09](explorations/TICKFLOW_FIRST_BATCH_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
-  records the resulting design decisions, focused validation, observed bundle
-  effect, and remaining ceilings after implementing the selected boundaries.
-- [TickFlow remaining merge candidate catalog — 2026-08-09](explorations/TICKFLOW_REMAINING_MERGE_CANDIDATE_CATALOG_2026-08-09.md)
-  classifies 60 post-first-batch candidates by domain, cost, dependency, and
-  merge readiness, with separate recommended merge waves and safety exclusions.
-- [TickFlow Wave A implementation evidence — 2026-08-09](explorations/TICKFLOW_WAVE_A_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
-  records the nine implemented small boundaries, schema-v15 retry identity,
-  focused verification, preserved invariants, and explicit remaining ceilings.
-- [TickFlow Wave B-01 semantic data-state evidence — 2026-08-09](explorations/TICKFLOW_WAVE_B_01_SEMANTIC_DATA_STATE_EVIDENCE_2026-08-09.md)
-  records the shared dashboard presentation vocabulary, the first explicit
-  DataTable consumer, focused verification, and tables intentionally left for
-  endpoint-by-endpoint migration.
-- [TickFlow Wave B-01 retrospective contract review — 2026-08-10](explorations/TICKFLOW_WAVE_B_01_RETROSPECTIVE_CONTRACT_REVIEW_2026-08-10.md)
-  reconstructs the missed owner-review gate, separates production-backed states
-  from dormant presentation branches, and records the owner-approved narrow
-  outcome without authorizing production caller migration.
-- [TickFlow Wave B-03 dataset readiness evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_03_DATASET_READINESS_EVIDENCE_2026-08-10.md)
-  records why exact OHLCV needs no consumer fallback matrix, formalizes the
-  existing collector/coverage boundary, and defers generic publication
-  completeness until a named derived dataset exists.
-- [TickFlow Wave B-04 Serenity attempt truth evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_04_SERENITY_ATTEMPT_TRUTH_EVIDENCE_2026-08-10.md)
-  records cooperative cancellation acknowledgement, guarded terminal writes,
-  durable stage visibility, and restart reconciliation without a generic job
-  framework.
-
+- [Slim Core private-I/O reachability — 2026-09-13](audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md)
+  distinguishes stored-account probes, candidate credentials, TP/SL recovery and
+  public listing reads at the remaining concrete-client imports. It is bounded
+  source evidence, not whole-product ownership or runtime qualification.
+- [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
+  records the #1002 repository-wide scope check against OKX's checksum
+  deprecation and the active REST-only snapshot boundary.
 - [Backend state, authority, and production-parity audit — 2026-09-06](audits/BACKEND_STATE_AUTHORITY_PRODUCTION_PARITY_AUDIT_2026-09-06.md)
   identifies the shared ownership failure behind weak lifecycle boundaries,
   distributed authority enforcement, and test/production semantic drift; it records
@@ -90,6 +54,32 @@ Research files are evidence, audits, and explorations. They can guide work but d
   two reported P1 defects were misdiagnosed (one would have blocked candidate
   selection if "fixed"), and closing a status vocabulary requires enumerating the
   values stored rows already hold — six were missing, each named by a read path.
+- [Vergex platform analysis process evidence — 2026-08-11](trading-strategy/VERGEX_PLATFORM_ANALYSIS_PROCESS_2026-08-11.md)
+  records the source-bundle inventory, safety boundary, capability decomposition,
+  evidence classification, multi-temporal method, and algorithm-fidelity review.
+- [Vergex platform gap and implementation candidate report — 2026-08-11](trading-strategy/VERGEX_PLATFORM_GAP_AND_IMPL_CANDIDATE_REPORT_2026-08-11.md)
+  compares current Aletheia with the reusable Vergex ideas and presents
+  unapproved repair priorities, feature candidates, metric benchmarks, and
+  implementation decision gates for owner review.
+- [Minimum Profit Loop Convergence Evidence — 2026-08-08](audits/MINIMUM_PROFIT_LOOP_CONVERGENCE_2026-08-08.md)
+  records the merged PR chain and a dated Fedora checkpoint for the narrowed
+  scan-to-Learning loop. It is historical evidence, not current Runtime truth.
+- [TickFlow first-batch selection — 2026-08-09](explorations/TICKFLOW_FIRST_BATCH_SELECTION_2026-08-09.md)
+  records the seven selected implementation boundaries and their acceptance evidence.
+- [TickFlow first-batch implementation evidence — 2026-08-09](explorations/TICKFLOW_FIRST_BATCH_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
+  records the resulting design decisions, focused validation, observed bundle effect, and remaining ceilings.
+- [TickFlow remaining merge candidate catalog — 2026-08-09](explorations/TICKFLOW_REMAINING_MERGE_CANDIDATE_CATALOG_2026-08-09.md)
+  classifies 60 post-first-batch candidates by domain, cost, dependency, and merge readiness.
+- [TickFlow Wave A implementation evidence — 2026-08-09](explorations/TICKFLOW_WAVE_A_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
+  records the nine implemented small boundaries, schema-v15 retry identity, focused verification.
+- [TickFlow Wave B-01 semantic data-state evidence — 2026-08-09](explorations/TICKFLOW_WAVE_B_01_SEMANTIC_DATA_STATE_EVIDENCE_2026-08-09.md)
+  records the shared dashboard presentation vocabulary and the first explicit DataTable consumer.
+- [TickFlow Wave B-01 retrospective contract review — 2026-08-10](explorations/TICKFLOW_WAVE_B_01_RETROSPECTIVE_CONTRACT_REVIEW_2026-08-10.md)
+  reconstructs the missed owner-review gate and records the owner-approved narrow outcome.
+- [TickFlow Wave B-03 dataset readiness evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_03_DATASET_READINESS_EVIDENCE_2026-08-10.md)
+  records exact OHLCV coverage boundary and defers generic publication completeness.
+- [TickFlow Wave B-04 Serenity attempt truth evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_04_SERENITY_ATTEMPT_TRUTH_EVIDENCE_2026-08-10.md)
+  records cooperative cancellation acknowledgement, guarded terminal writes and restart reconciliation.
 
 ## Agent Rule
 

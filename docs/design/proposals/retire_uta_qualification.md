@@ -1,10 +1,12 @@
 ---
 id: retire-uta-qualification
-status: accepted
+status: implemented
 github_issue: 3035
 related_contracts:
   - docs/design/contracts/execution_contract.md
 ---
+
+> 2026-10-09 状态改为 implemented：#3035 已关闭；现行规则在 docs/design/contracts/execution_contract.md（Demo/Testnet mutation 不要求 SHA-bound 资格证书）。
 
 # Retire SHA-bound UTA mutation qualification
 

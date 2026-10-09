@@ -23,8 +23,9 @@ supersedes: []
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
 > Last aligned with code: 2026-08-06. The executable registry contains implemented
-> and partial claims; it has no strict-xfail placeholders. Full workbench delivery is
-> tracked by GitHub issue #614 under the #470 Learning umbrella.
+> and partial claims; it has no strict-xfail placeholders. The remaining full-workbench
+> targets are unplanned: #614 and its #470 umbrella were closed in 2026-08, and a new
+> Issue is required before any of them is restarted.
 
 This proposal defines the intended owner-facing, read-only projection of the measured
 Learning loop. Current behavior remains defined by
@@ -803,7 +804,7 @@ states. This is adjacent UI honesty work, not contribution authority.
 
 Partial claims stay partial until their executable proof runs the claimed behavior.
 This proposal currently has no strict-xfail placeholder for future workbench slices;
-their delivery state belongs to GitHub issue #614. Source-string presence alone
+they are unplanned (#614 is closed). Source-string presence alone
 cannot make a behavioral claim GREEN.
 
 ## 12. Acceptance Matrix

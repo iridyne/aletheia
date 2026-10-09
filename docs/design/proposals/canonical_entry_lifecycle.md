@@ -1,6 +1,6 @@
 ---
 id: canonical-entry-lifecycle
-status: accepted
+status: implemented
 github_issue: 2851
 related_contracts:
   - ../contracts/entry-plan-contract.md
@@ -8,6 +8,8 @@ related_contracts:
   - ../contracts/learning_contract.md
 supersedes: []
 ---
+
+> 2026-10-09 状态改为 implemented：#2851 已关闭；规范内容在 docs/design/contracts/entry-plan-contract.md 的 Canonical Entry hypothesis authority 一节。
 
 # Canonical Entry Lifecycle Proposal
 

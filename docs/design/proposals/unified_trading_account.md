@@ -8,6 +8,8 @@ supersedes:
   - issue-2189-read-only-uta-decision
 ---
 
+> 2026-10-09 注：Bitget Classic-v2 profile 已由 #3806（4a3fb5afc）删除，只保留 uta_v3；profile qualification 语义已由 retire_uta_qualification.md 退役。正文保持原样，状态保持 accepted。
+
 # Complete Unified Trading Account
 
 ## Summary

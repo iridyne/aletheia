@@ -7,7 +7,7 @@ import { ProposalRationaleDetail } from './ProposalRationaleDetail'
 import { fmtOpportunityScore, fmtScore100, fmtSymbol, opportunityScoreLabel } from '../lib/format'
 
 /**
- * Agent activity feed (docs/design/frontend/overview_redesign.md Decision 2).
+ * Agent activity feed (Overview ownership: docs/design/frontend/webui_page_map.md).
  *
  * Three switchable modes, preference persisted to localStorage:
  *   - narrative: what the AI concluded (opportunities w/ thesis, proposals w/ rationale,
@@ -17,7 +17,7 @@ import { fmtOpportunityScore, fmtScore100, fmtSymbol, opportunityScoreLabel } fr
  *
  * Honesty: the initial version interleaves two tracks by TIMESTAMP. It does NOT claim a
  * strict run->output causal binding (the backend has no reverse index yet — see
- * docs/design/frontend/overview_redesign.md backend TODO). We never fabricate causality.
+ * the archived 2026-06-07 overview redesign notes). We never fabricate causality.
  */
 
 type FeedMode = 'narrative' | 'ops' | 'both'

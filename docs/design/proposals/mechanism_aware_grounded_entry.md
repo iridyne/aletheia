@@ -10,6 +10,8 @@ related_contracts:
 supersedes: []
 ---
 
+> 2026-10-09 注：文中的 planner 版本标签已由 canonical_entry_lifecycle.md（implemented）取代，当前只有一个 Grounded Entry 实现。状态保持 accepted。
+
 # Mechanism-aware Grounded Entry Proposal
 
 > Proposal status: owner-accepted design from Issue #2791, not an implementation,
