@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.test_position_reconciler import install_uta_registry
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ def _setup_db(tmp_path, monkeypatch):
     conn.execute("PRAGMA busy_timeout=5000")
     sq._db_conn = conn
     run_migrations()
+    install_uta_registry(monkeypatch)
     return conn
 
 
