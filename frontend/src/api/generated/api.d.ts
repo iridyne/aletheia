@@ -11229,11 +11229,6 @@ export interface components {
              */
             futures_margin_warning_ratio: number;
             /**
-             * Horizon Due Allow Hold
-             * @default true
-             */
-            horizon_due_allow_hold: boolean;
-            /**
              * Horizon Hard Backstop Mult
              * @default 3
              */
@@ -11542,11 +11537,6 @@ export interface components {
              * @default 15
              */
             catastrophic_stop_pct_serenity: number;
-            /**
-             * Horizon Due Allow Hold
-             * @default true
-             */
-            horizon_due_allow_hold: boolean;
             /**
              * Horizon Hard Backstop Mult
              * @default 3
