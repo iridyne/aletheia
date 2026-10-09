@@ -129,13 +129,13 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 ## D8 · 持久化·同步·恢复
 
-**Scope**：`storage/`(event_store/artifact_store) + `sync/` + `backup/` + `policies/`；旧 PS Gateway 恢复/写入模块已退役，历史表与读取保留。
+**Scope**：`storage/`(event_store) + `sync/` + `backup/` + `policies/`；旧 PS Gateway 恢复/写入模块已退役，历史表与读取保留。
 
 - **当前契约与退役边界**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 覆盖当前持久化行为 · [`Slim Core 退役决定`](../proposals/slim_core_legacy_gateway_retirement.md) 保留历史数据并删除旧写入/准入权 · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界。
 - **历史实施证据**：归档的
   [`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../archive/legacy/plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)
   保存早期总体设计；[旧 Gateway Recovery 提案](../history/gateway_recovery.md) 仅为历史，不得从旧模块清单推断当前能力或恢复其双写设计。
-- **保证边界**：SQLite/JSONL/Artifact 持久化不等于自动启动对账；当前 Core 未决订单、平仓与 pause owner 仍由 execution/startup 约定治理，不存在另一个 PS `SAFE_FREEZE` 权威。
+- **保证边界**：SQLite/JSONL 持久化不等于自动启动对账；当前 Core 未决订单、平仓与 pause owner 仍由 execution/startup 约定治理，不存在另一个 PS `SAFE_FREEZE` 权威。
 
 ## D9 · 运行时与稳定性
 

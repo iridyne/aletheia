@@ -2510,46 +2510,32 @@ def test_gateway_has_no_risk_free_broker_path():
 
 
 # ---------------------------------------------------------------------------
-# RE-S05 (L2a, missing_tripwire) — dynamic stop-price adjustment path
+# RE-S05 (L2a) — one stop-adjustment entry (apply_operator_adjustment)
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("RE-S05", "risk_engine_contract", "§8 stop adjustment", "L2a",
-              "position_manager (or equivalent) exposes a callable "
-              "accepting (position_id, new_stop_price) that writes stop_price to DB — "
-              "execution path for PI instruction 'adjust stop to X'.",
+              "position_manager exposes exactly one stop-adjustment entry, "
+              "apply_operator_adjustment(position_id, new_stop=...), for the PI "
+              "instruction 'adjust stop to X'; no second unvalidated stop writer exists.",
               status="implemented"),
 )
-def test_position_manager_has_adjust_stop_interface():
-    """When this tripwire passes, a dynamic stop-adjustment path exists.
-    Remove the xfail decorator and add a real L2b behavioral test at that point.
-    """
+def test_position_manager_has_one_stop_adjustment_entry():
     import inspect
 
-    # Try canonical module path first, fall back to any positions submodule.
-    try:
-        import aletheia.positions.position_manager as pm
-    except ImportError:
-        import aletheia.portfolio.position_manager as pm  # type: ignore[no-redef]
+    import aletheia.portfolio.position_manager as pm
 
-    candidates = [
-        name for name in dir(pm)
-        if any(kw in name for kw in ("adjust_stop", "update_stop", "set_stop_price"))
-        and callable(getattr(pm, name))
+    params = inspect.signature(pm.apply_operator_adjustment).parameters
+    assert "position_id" in params
+    assert "new_stop" in params
+    duplicates = [
+        name for name in ("adjust_stop", "update_stop", "set_stop_price")
+        if callable(getattr(pm, name, None))
     ]
-    assert candidates, (
-        "No adjust_stop / update_stop / set_stop_price callable found in position_manager. "
-        "Implement the interface then remove the xfail decorator."
-    )
-
-    # Verify the found function accepts position_id and a stop price parameter.
-    fn = getattr(pm, candidates[0])
-    sig = inspect.signature(fn)
-    params = list(sig.parameters.keys())
-    assert "position_id" in params, f"{candidates[0]} must accept position_id param"
-    assert any(p in params for p in ("new_stop_price", "stop_price")), (
-        f"{candidates[0]} must accept new_stop_price or stop_price param"
+    assert duplicates == [], (
+        f"second stop-adjustment implementation(s) {duplicates} bypass "
+        "apply_operator_adjustment validation"
     )
 
 

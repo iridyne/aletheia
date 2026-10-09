@@ -1149,13 +1149,6 @@ class PSEvent(BaseModel):
     schema_version: str = "v1"
 
 
-class PSArtifactRef(BaseModel):
-    path: str
-    sha256: str
-    content_type: str
-    created_at: str = Field(default_factory=_utcnow)
-
-
 class PSGatewaySession(BaseModel):
     gateway_session_id: str = Field(default_factory=new_id)
     gateway_id: str

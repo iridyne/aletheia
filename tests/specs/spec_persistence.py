@@ -79,18 +79,18 @@ def test_idempotency_generators_exist():
     SpecClaim(
         "PR-S03", "persistence_recovery_contract",
         "Durable state and consumers", "L2a",
-        "Append-only EventStore and ArtifactStore are implemented with accessors "
-        "(get_event_store / get_artifact_store) — the non-memory sources of truth",
+        "Append-only EventStore is implemented with its accessor (get_event_store); "
+        "no consumer-less ArtifactStore is listed as a durable source of truth",
     ),
 )
-def test_event_and_artifact_stores_exist():
+def test_event_store_exists_and_artifact_store_is_retired():
+    import importlib.util
+
     from aletheia.storage.event_store import EventStore, get_event_store
-    from aletheia.storage.artifact_store import ArtifactStore, get_artifact_store
 
     assert callable(getattr(EventStore, "append", None))
     assert callable(get_event_store)
-    assert isinstance(ArtifactStore, type)
-    assert callable(get_artifact_store)
+    assert importlib.util.find_spec("aletheia.storage.artifact_store") is None
 
 
 # ---------------------------------------------------------------------------

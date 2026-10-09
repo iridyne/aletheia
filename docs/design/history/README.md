@@ -15,6 +15,9 @@ reactivating a historical document in place.
   dual-write/recovery design; current startup uses canonical Core order/close
   evidence, not historical PS lifecycle state.
 
+- [Retired ArtifactStore](artifact_store.md): consumer-less filesystem artifact
+  store whose "immutable manifest" claim never had a production producer.
+
 - [Local simulated account controls](local_paper_account_controls.md): retired Settings/API surfaces, preserved only as history.
 - [Deterministic control-loop simulator](deterministic_control_loop_simulation.md): retired Python-Operator harness and its simulated-account tests.
 
