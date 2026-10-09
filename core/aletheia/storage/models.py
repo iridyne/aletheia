@@ -1,6 +1,5 @@
 """Pydantic models for storage entities."""
 
-import json
 import math
 from datetime import datetime, timezone
 from typing import Literal
@@ -12,26 +11,6 @@ from aletheia.storage.time_utils import utcnow_iso as _utcnow
 
 def new_id() -> str:
     return uuid4().hex[:12]
-
-
-
-
-class StrategyParametersInvalid(ValueError):
-    def __init__(self, reason: str):
-        self.reason = reason
-        super().__init__(reason)
-
-
-def decode_strategy_parameters(parameters: str | None) -> dict:
-    if not isinstance(parameters, str) or not parameters.strip():
-        raise StrategyParametersInvalid("parameters_missing")
-    try:
-        parsed = json.loads(parameters)
-    except json.JSONDecodeError as exc:
-        raise StrategyParametersInvalid("invalid_json") from exc
-    if not isinstance(parsed, dict):
-        raise StrategyParametersInvalid("not_json_object")
-    return parsed
 
 
 EXIT_INTENT_STOP_SOURCES = frozenset({"operator", "default"})
@@ -225,42 +204,6 @@ class Opportunity(_Provenanced):
     generation_version: str | None = None
     generation_json: str | None = None
     generation_hash: str | None = None
-
-
-class ShadowTrade(BaseModel):
-    id: str = Field(default_factory=new_id)
-    batch_id: str | None = None
-    opportunity_id: str
-    symbol: str
-    venue: str | None = None
-    market_type: str = "spot"
-    direction: str
-    scanner_family: str | None = None
-    trade_score: float = -999.0
-    rank: int = 0
-    entry_price: float | None = None
-    entry_spread_bps: float | None = None
-    funding_rate_at_entry: float | None = None
-    outcome_candidate_key: str | None = None
-    regime_tag: str | None = None
-    was_selected: bool = False
-    created_at: str = Field(default_factory=_utcnow)
-    exit_price: float | None = None
-    pnl_pct: float | None = None
-    gross_return_pct: float | None = None
-    net_pnl_pct: float | None = None
-    estimated_fee_pct: float | None = None
-    estimated_spread_slippage_pct: float | None = None
-    estimated_funding_pct: float | None = None
-    min_tradable_edge_pct: float | None = None
-    min_cost_covering_edge_pct: float | None = None
-    settlement_price_source: str | None = None
-    settlement_lag_sec: float | None = None
-    cost_model_version: str | None = None
-    btc_return_pct: float | None = None
-    resolved_at: str | None = None
-    policy_epoch_id: str | None = None
-    learning_score_trace_json: str | None = None
 
 
 class FilterDecision(BaseModel):
@@ -786,39 +729,6 @@ class MarketRegimeRecord(BaseModel):
     detected_at: str = Field(default_factory=_utcnow)
 
 
-class StrategyRecord(BaseModel):
-    id: str = Field(default_factory=new_id)
-    name: str
-    description: str | None = None
-    state: str = "draft"
-    # JSON blob with entry_rule/exit_rule/timeframe/direction_bias.
-    # NOTE: entry_rule/exit_rule are ADVISORY (LLM-generated intent text),
-    # They do not authorize orders or define executable trading rules.
-    parameters: str = "{}"
-    under_review: bool = False
-    review_notes: str | None = None
-    review_updated_at: str | None = None
-    paper_trading_paused: bool = False
-    paper_pause_reason: str | None = None
-    paper_paused_at: str | None = None
-    direction_affinity: str = "both"
-    applicable_regimes: str = "all"
-    # Which market a strategy is designed for: "spot" | "usdt_futures" | "both".
-    # The paper ranker won't match a spot-only strategy to a perp opportunity (or
-    # vice versa) now that the observer emits both (Round 2 perp enablement).
-    market_type_affinity: str = "both"
-    strategy_type: str = "scanner"
-    execution_venue: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-    updated_at: str = Field(default_factory=_utcnow)
-
-    @field_validator("parameters")
-    @classmethod
-    def _parameters_must_be_json_object(cls, value: str) -> str:
-        decode_strategy_parameters(value)
-        return value
-
-
 class KnowledgeItem(BaseModel):
     id: str = Field(default_factory=new_id)
     item_type: str
@@ -1151,52 +1061,6 @@ class PSEvent(BaseModel):
     created_at: str = Field(default_factory=_utcnow)
     machine_id: str = ""
     schema_version: str = "v1"
-
-
-class PSGatewaySession(BaseModel):
-    gateway_session_id: str = Field(default_factory=new_id)
-    gateway_id: str
-    mode: str
-    status: str
-    started_at: str = Field(default_factory=_utcnow)
-    ended_at: str | None = None
-    heartbeat_at: str | None = None
-    machine_id: str = ""
-    recovery_report_id: str | None = None
-    freeze_reason: str | None = None
-    config_hash: str | None = None
-
-
-class PSReconciliationReport(BaseModel):
-    reconciliation_report_id: str = Field(default_factory=new_id)
-    gateway_session_id: str
-    status: str  # ok | diff_found | frozen | failed
-    local_state_hash: str | None = None
-    remote_state_hash: str | None = None
-    diffs_json: str = "[]"
-    actions_json: str = "[]"
-    artifact_path: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-
-
-class PSOrderIntent(BaseModel):
-    intent_id: str = Field(default_factory=new_id)
-    execution_intent_id: str | None = None
-    proposal_id: str
-    strategy_id: str
-    mode: str  # paper | live
-    venue: str
-    symbol: str
-    side: str  # buy | sell
-    order_type: str
-    quantity: str
-    limit_price: str | None = None
-    reduce_only: int = 0
-    status: str = "created"  # created | submitted | cancelled | failed | completed
-    client_order_id: str = ""
-    idempotency_key: str = ""
-    created_at: str = Field(default_factory=_utcnow)
-    updated_at: str = Field(default_factory=_utcnow)
 
 
 class PSLesson(BaseModel):
@@ -1783,22 +1647,6 @@ class PiDecision(_Provenanced):
     # Conditional-entry decisions do not point at an Opportunity because an
     # Opportunity does not exist until T0 materialization.
     setup_id: str | None = None
-
-
-class OperatorEvaluationEvent(BaseModel):
-    """Append-only observation outside the candidate-trading state machine."""
-
-    id: str = Field(default_factory=new_id)
-    dedup_key: str
-    event_kind: str
-    trigger: str
-    pending_unresolved_total: int
-    pending_visible_count: int
-    pending_oldest_created_at: str | None = None
-    queue_snapshot_json: str = "{}"
-    data_health_json: str = "{}"
-    policy_epoch_id: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
 
 
 class CapitalEvent(BaseModel):

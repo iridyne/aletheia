@@ -133,15 +133,20 @@ def test_gateway_status_does_not_invent_dormant_recovery_state():
 
 def test_retired_gateway_history_remains_readable_without_lifecycle_writes():
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PSGatewaySession, PSReconciliationReport
     from aletheia.server.routes.persistence import list_gateway_sessions, list_reconciliation_reports
 
-    session = PSGatewaySession(gateway_id="historical", mode="paper", status="SAFE_FREEZE")
-    report = PSReconciliationReport(gateway_session_id=session.gateway_session_id, status="frozen")
-    repo._insert("ps_gateway_sessions", session.model_dump())
-    repo._insert("ps_reconciliation_reports", report.model_dump())
-    assert list_gateway_sessions(limit=10) == [session.model_dump()]
-    assert list_reconciliation_reports(limit=10) == [report.model_dump()]
+    repo._insert("ps_gateway_sessions", {
+        "gateway_session_id": "gs-historical", "gateway_id": "historical",
+        "mode": "paper", "status": "SAFE_FREEZE", "started_at": "2026-01-01T00:00:00Z",
+        "machine_id": "",
+    })
+    repo._insert("ps_reconciliation_reports", {
+        "reconciliation_report_id": "rr-historical", "gateway_session_id": "gs-historical",
+        "status": "frozen", "diffs_json": "[]", "actions_json": "[]",
+        "created_at": "2026-01-01T00:00:00Z",
+    })
+    assert [row["gateway_session_id"] for row in list_gateway_sessions(limit=10)] == ["gs-historical"]
+    assert [row["status"] for row in list_reconciliation_reports(limit=10)] == ["frozen"]
     assert repo.get_db().execute("SELECT count(*) FROM ps_orders").fetchone()[0] == 0
     assert repo.get_db().execute("SELECT count(*) FROM ps_fills").fetchone()[0] == 0
     assert repo.get_db().execute("SELECT count(*) FROM ps_positions").fetchone()[0] == 0
