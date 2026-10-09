@@ -1800,3 +1800,62 @@ def test_smoke_import_gate_passes_create_no_window_on_windows(tmp_path, monkeypa
     assert calls["kwargs_list"], "expected at least one subprocess call"
     for kw in calls["kwargs_list"]:
         assert kw.get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def _forbid_update_body(monkeypatch):
+    from ops.update import applier, continuity
+
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: pytest.fail("preflight reached"))
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: pytest.fail("gateway stopped"))
+    monkeypatch.setattr(applier, "apply_update", lambda **_k: pytest.fail("source mutated"))
+
+
+def test_manual_update_refuses_while_the_deployment_lock_is_held(tmp_path, monkeypatch):
+    """#3018: a timer tick holding the lock blocks a concurrent manual update before preflight."""
+    import fcntl
+
+    from ops.update import auto, continuity
+
+    monkeypatch.setattr(auto, "_paths", lambda: {"lock": tmp_path / "update" / "auto-deploy.lock"})
+    _forbid_update_body(monkeypatch)
+    (tmp_path / "update").mkdir()
+    with (tmp_path / "update" / "auto-deploy.lock").open("a+") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # the other transaction
+        result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "deployment_busy"
+
+
+@pytest.mark.parametrize(
+    ("gate", "refused"),
+    [
+        ({"ok": False, "reason": "runtime_gate_failed", "failed": ["live_disabled"]}, "live_disabled"),
+        ({"ok": False, "reason": "runtime_gate_failed", "failed": ["deployment_mode"]}, "deployment_mode"),
+        ({"ok": False, "reason": "gateway_unhealthy", "detail": "URLError"}, "status_unavailable"),
+    ],
+)
+def test_paper_role_manual_update_requires_the_deployment_admission(tmp_path, monkeypatch, gate, refused):
+    """#3020: live_limited or an unapproved mode on a paper-role runtime refuses before mutation."""
+    from ops.update import auto, continuity
+
+    monkeypatch.setattr(auto, "_paths", lambda: {"lock": tmp_path / "update" / "auto-deploy.lock"})
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.setattr(auto, "_runtime_gate", lambda **_k: gate)
+    _forbid_update_body(monkeypatch)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["reason"] == "runtime_admission_failed"
+    assert refused in result["message"]
+
+
+def test_paper_role_manual_update_admits_paper_live_disabled_even_if_unhealthy(tmp_path, monkeypatch):
+    from ops.update import auto, continuity
+
+    monkeypatch.setattr(auto, "_paths", lambda: {"lock": tmp_path / "update" / "auto-deploy.lock"})
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.setattr(auto, "_runtime_gate", lambda **_k: {"ok": False, "failed": ["health", "scheduler_running"]})
+    monkeypatch.setattr(continuity, "_apply_update_with_continuity", lambda **_k: {"applied": True, "reached": True})
+
+    assert continuity.apply_update_with_continuity(restart=True) == {"applied": True, "reached": True}

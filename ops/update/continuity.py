@@ -942,6 +942,38 @@ def capture_update_continuity_until_settled(
 
 
 def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
+    """Run one source-update transaction: deployment lock, admission, then the update.
+
+    DEPLOYMENT.md: runtime mutation holds the deployment lock (#3018), and a
+    runtime configured with the ``paper`` role admits only bitget_demo /
+    external_exchange with live_disabled, for manual updates too (#3020).
+    Both are checked before preflight, so a refusal mutates nothing.
+    """
+    from ops.update import auto
+
+    with auto._deployment_lock() as acquired:
+        if not acquired and auto.fcntl is not None:
+            return {
+                "applied": False, "mode": "development", "reason": "deployment_busy",
+                "message": "Another update or deployment holds the deployment lock; nothing was changed.",
+            }
+        if os.environ.get(auto._RUNTIME_ROLE_ENV, "").strip().lower() == auto._AUTO_DEPLOY_ROLE:
+            gate = auto._runtime_gate()
+            failed = gate.get("failed")
+            # Unreachable status cannot prove the mode: fail closed.
+            refused = ["status_unavailable"] if failed is None else [
+                name for name in ("deployment_mode", "live_disabled") if name in failed
+            ]
+            if refused:
+                return {
+                    "applied": False, "mode": "development", "reason": "runtime_admission_failed",
+                    "message": "Paper runtime admission failed: " + ",".join(refused)
+                    + (f" ({gate.get('detail')})" if gate.get("detail") else "") + "; nothing was changed.",
+                }
+        return _apply_update_with_continuity(restart=restart, progress=progress)
+
+
+def _apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
     from ops.update import applier
 
