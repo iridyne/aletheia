@@ -10,7 +10,10 @@ from typing import Callable
 
 logger = logging.getLogger("aletheia.analytics.go_live_scorecard")
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.outcome_integrity import (
+    CompleteOutcomeCohort,
+    read_complete_outcome_cohort,
+)
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
@@ -25,21 +28,38 @@ def configure_calibration_readers(*, score_reader=None, report_reader=None) -> N
     _get_calibration_report = report_reader
 
 
-def _scorecard_outcomes() -> list[dict]:
-    """Read the selected external cohort; unresolved selection has no evidence."""
+def _scorecard_cohort() -> CompleteOutcomeCohort | None:
+    """Read the selected external cohort completely; unresolved selection has none."""
     from aletheia.analytics.execution_mode import resolve_selected_execution_mode
 
     mode = resolve_selected_execution_mode()
-    return eligible_strategy_outcomes(execution_mode=mode) if mode else []
+    return read_complete_outcome_cohort(execution_mode=mode) if mode else None
+
+
+def _scorecard_outcomes() -> list[dict]:
+    """Eligible rows of the selected cohort, oldest close first."""
+    cohort = _scorecard_cohort()
+    if cohort is None:
+        return []
+    if cohort.cohort_state != "available":
+        raise RuntimeError("go-live outcome cohort unavailable")
+    return cohort.eligible_rows
 
 
 def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
-    """Compute the go-live readiness scorecard. Pure read-only, no side effects."""
+    """Compute the go-live readiness scorecard. Pure read-only, no side effects.
+
+    Every PnL criterion and the net-PnL gate read one complete cohort snapshot
+    (#1262, #1968); a cohort that cannot be read is a blocker, never a partial
+    sample scored as if it were the whole history.
+    """
+    cohort = _scorecard_cohort()
+    pnls = _genuine_closed_pnls(cohort)
     criteria = [
-        _check_trade_volume(),
-        _check_profit_factor(),
-        _check_win_rate(),
-        _check_max_drawdown(),
+        _check_trade_volume(pnls),
+        _check_profit_factor(pnls),
+        _check_win_rate(pnls),
+        _check_max_drawdown(pnls),
         _check_exchange_connectivity(live_evidence),
         _check_risk_violations(),
         _check_data_coverage(),
@@ -56,8 +76,11 @@ def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
     else:
         traffic_light = "green"
 
-    performance_gate = _check_positive_net_pnl()
+    performance_gate = _check_positive_net_pnl(pnls)
     blockers = [c["detail"] for c in criteria if c["status"] == "fail"]
+    if pnls is None:
+        traffic_light = "red"
+        blockers.append("Eligible outcome cohort is not available")
     if performance_gate["status"] == "fail":
         traffic_light = "red"
         blockers.append(performance_gate["detail"])
@@ -68,26 +91,31 @@ def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
         "performance_gate": performance_gate,
         "criteria": criteria,
         "blockers": blockers,
+        "cohort_state": cohort.cohort_state if cohort is not None else "unavailable",
+        "cohort_complete": cohort.cohort_complete if cohort is not None else False,
+        "source_raw_event_count": cohort.source_raw_event_count if cohort is not None else None,
+        "ordered_source_digest": cohort.ordered_source_digest if cohort is not None else None,
         "computed_at": datetime.now(timezone.utc).isoformat(),
         **outcome_window_metadata(),
     }
 
 
-def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
-    """realized_pnl of GENUINE closed positions (synthetic/administrative excluded).
+def _genuine_closed_pnls(cohort: CompleteOutcomeCohort | None) -> list[float] | None:
+    """realized_pnl of GENUINE closed positions, oldest close first.
 
     Reconciler orphan sweeps, maintenance closes, legacy rows and incomplete economics
     are not verified outcomes; counting them pollutes PF / win-rate / drawdown / volume.
+    ``None`` means the cohort could not be read; an unresolved account has no outcomes.
     """
-    rows = _scorecard_outcomes()
-    if not order_by_closed_at:
-        rows = list(reversed(rows))
-    return [float(row["realized_pnl"]) for row in rows]
+    if cohort is None:
+        return []
+    if cohort.cohort_state != "available":
+        return None
+    return [float(row["realized_pnl"]) for row in cohort.eligible_rows]
 
 
-def _check_positive_net_pnl() -> dict:
+def _check_positive_net_pnl(pnls: list[float] | None) -> dict:
     """Return the non-weighted profitability gate for live readiness."""
-    pnls = _genuine_closed_pnls()
     if not pnls:
         return {
             "status": "not_available",
@@ -128,9 +156,11 @@ def _criterion(key: str, label: str, score: float, weight: float, detail: str) -
     }
 
 
-def _check_trade_volume() -> dict:
+def _check_trade_volume(pnls: list[float] | None) -> dict:
     try:
-        count = len(_genuine_closed_pnls())
+        if pnls is None:
+            raise RuntimeError("outcome cohort unavailable")
+        count = len(pnls)
         target = 50
         score = min(count / target, 1.0) * 100
         return _criterion("trade_volume", "Trade Volume (≥50 closed)", score, 0.135,
@@ -181,7 +211,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
     Two consecutive kill rounds → recommend terminating the experiment.
     """
     try:
-        rows = list(reversed(_scorecard_outcomes()))
+        rows = _scorecard_outcomes()
         if not rows:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
@@ -250,9 +280,10 @@ def compute_pnl_by_trade_school() -> dict:
         return {}
 
 
-def _check_profit_factor() -> dict:
+def _check_profit_factor(pnls: list[float] | None) -> dict:
     try:
-        pnls = _genuine_closed_pnls()
+        if pnls is None:
+            raise RuntimeError("outcome cohort unavailable")
         if not pnls:
             return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18, "no trades")
         gross_profit = sum(p for p in pnls if p > 0)
@@ -270,9 +301,10 @@ def _check_profit_factor() -> dict:
         return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18, "unavailable")
 
 
-def _check_win_rate() -> dict:
+def _check_win_rate(pnls: list[float] | None) -> dict:
     try:
-        pnls = _genuine_closed_pnls()
+        if pnls is None:
+            raise RuntimeError("outcome cohort unavailable")
         if not pnls:
             return _criterion("win_rate", "Win Rate (≥45%)", 0, 0.135, "no trades")
         wins = sum(1 for p in pnls if p > 0)
@@ -286,9 +318,10 @@ def _check_win_rate() -> dict:
         return _criterion("win_rate", "Win Rate (≥45%)", 0, 0.135, "unavailable")
 
 
-def _check_max_drawdown() -> dict:
+def _check_max_drawdown(pnls: list[float] | None) -> dict:
     try:
-        pnls = _genuine_closed_pnls(order_by_closed_at=True)
+        if pnls is None:
+            raise RuntimeError("outcome cohort unavailable")
         if not pnls:
             return _criterion("max_drawdown", "Max Drawdown (<10%)", 100, 0.135, "no trades")
         cum = 0.0

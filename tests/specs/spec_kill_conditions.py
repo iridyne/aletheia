@@ -135,7 +135,11 @@ def test_zero_fill_days_detection_exists():
 )
 def test_profit_factor_below_kill_threshold_returns_fail():
     """极低 PF（PF=0.4 < 0.5）必须评为 fail/score=0，不得软化。"""
-    from aletheia.analytics.go_live_scorecard import _check_profit_factor
+    from aletheia.analytics.go_live_scorecard import (
+        _check_profit_factor,
+        _genuine_closed_pnls,
+        _scorecard_cohort,
+    )
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -150,7 +154,7 @@ def test_profit_factor_below_kill_threshold_returns_fail():
     )
     db.commit()
 
-    result = _check_profit_factor()
+    result = _check_profit_factor(_genuine_closed_pnls(_scorecard_cohort()))
 
     assert result["status"] == "fail", (
         f"D8-B01: PF=0.4 (below kill threshold 0.5) must yield status='fail', "
@@ -239,7 +243,7 @@ def test_scorecard_blocks_negative_eligible_net_pnl(monkeypatch):
     monkeypatch.setattr(
         scorecard_mod,
         "_genuine_closed_pnls",
-        lambda order_by_closed_at=False: pnls,
+        lambda _cohort: pnls,
     )
 
     result = scorecard_mod.compute_scorecard()
@@ -266,13 +270,7 @@ def test_scorecard_blocks_negative_eligible_net_pnl(monkeypatch):
 def test_loss_first_curve_does_not_report_zero_drawdown(monkeypatch):
     import aletheia.analytics.go_live_scorecard as scorecard_mod
 
-    monkeypatch.setattr(
-        scorecard_mod,
-        "_genuine_closed_pnls",
-        lambda order_by_closed_at=False: [-100.0] + [2.0] * 49,
-    )
-
-    result = scorecard_mod._check_max_drawdown()
+    result = scorecard_mod._check_max_drawdown([-100.0] + [2.0] * 49)
 
     assert result["status"] == "fail"
     assert result["score"] == 0
