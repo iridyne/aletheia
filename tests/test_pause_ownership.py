@@ -725,3 +725,75 @@ def test_resume_gate_probe_exception_is_durable_fail_closed(tmp_path, monkeypatc
     assert result["allowed"] is False
     assert result["reason"] == "llm_probe_exception"
     assert set(load_config().runtime.pause_owners) == {"manual", "llm_startup_gate"}
+
+
+def test_partial_selective_resume_restores_lease_and_keeps_jobs_paused(
+    tmp_path, monkeypatch
+) -> None:
+    """#391: one resume_job failure must not report a released, resumed gateway."""
+    _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.schedulers.base import STATE_RUNNING
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.agent_runtime import pause_ownership
+    from aletheia.agent_runtime.pause_ownership import acquire_pause, release_pause
+    from aletheia.config.loader import load_config
+
+    acquire_pause("exchange_connectivity", reason="exchange probe failed", generation="outage-1")
+    audits: list[str] = []
+    monkeypatch.setattr(pause_ownership, "_audit", lambda event, **_kw: audits.append(event))
+
+    paused = {"candidate_scan", "paper_trader"}
+    calls: list[tuple[str, str]] = []
+    fail = {"paper_trader"}
+
+    def resume_job(job_id):
+        calls.append(("resume", job_id))
+        if job_id in fail:
+            raise RuntimeError("jobstore write failed")
+        paused.discard(job_id)
+
+    def pause_job(job_id):
+        calls.append(("pause", job_id))
+        paused.add(job_id)
+
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_RUNNING
+    fake_scheduler.resume_job.side_effect = resume_job
+    fake_scheduler.pause_job.side_effect = pause_job
+    monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"candidate_scan", "paper_trader"})
+
+    result = release_pause("exchange_connectivity", generation="outage-1", resume_when_clear=True)
+
+    assert result.released is False and result.resumed is False and result.resume_failed is True
+    persisted = load_config()
+    assert persisted.runtime.paused is True
+    assert persisted.runtime.pause_owners["exchange_connectivity"].generation == "outage-1"
+    assert paused == {"candidate_scan", "paper_trader"}  # job 1 re-paused, job 2 never ran
+    assert scheduler._selectively_paused_jobs == {"candidate_scan", "paper_trader"}
+    assert "pause_owner_released" not in audits
+
+    # Retry with a healthy jobstore releases exactly once.
+    fail.clear()
+    retry = release_pause("exchange_connectivity", generation="outage-1", resume_when_clear=True)
+    assert retry.released is True and retry.resumed is True
+    assert paused == set() and scheduler._selectively_paused_jobs == set()
+    assert audits.count("pause_owner_released") == 1
+
+
+def test_selective_resume_treats_removed_job_as_resolved(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.jobstores.base import JobLookupError
+    from apscheduler.schedulers.base import STATE_RUNNING
+
+    from aletheia.agent_runtime import scheduler
+
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_RUNNING
+    fake_scheduler.resume_job.side_effect = lambda job_id: (_ for _ in ()).throw(JobLookupError(job_id))
+    monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"retired_job"})
+
+    assert scheduler.resume_scheduler() is True
+    assert scheduler._selectively_paused_jobs == set()
