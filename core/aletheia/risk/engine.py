@@ -2237,9 +2237,10 @@ def _check_correlation_exposure(
             if _is_live(entry.execution_mode) == proposal_is_live
         ]
 
-        # (symbol, notional, opportunity_id). Keep each position/reservation as
-        # an independent row instead of collapsing repeated symbols.
-        existing_exposures: list[tuple[str, float, str | None]] = []
+        # (symbol, notional, opportunity_id, execution_mode, market_type). Keep
+        # each position/reservation as an independent row instead of collapsing
+        # repeated symbols.
+        existing_exposures: list[tuple[str, float, str | None, str | None, str]] = []
         for pos in open_positions:
             try:
                 quantity = float(pos.get("quantity") or 0.0)
@@ -2252,6 +2253,8 @@ def _check_correlation_exposure(
                     str(pos.get("symbol") or ""),
                     notional,
                     str(pos.get("opportunity_id")) if pos.get("opportunity_id") else None,
+                    pos.get("execution_mode"),
+                    str(pos.get("market_type") or ""),
                 ))
 
         for entry in (*unresolved_entries, *pre_order_entries):
@@ -2263,6 +2266,8 @@ def _check_correlation_exposure(
                     entry.symbol,
                     notional,
                     entry.opportunity_id,
+                    entry.execution_mode,
+                    entry.market_type,
                 ))
 
         # With N=2 positions the same-family share is 50% or 100%, so 60% is a
@@ -2277,7 +2282,10 @@ def _check_correlation_exposure(
 
         all_exposures = [
             *existing_exposures,
-            (proposal.symbol, prop_notional, proposal.opportunity_id),
+            (
+                proposal.symbol, prop_notional, proposal.opportunity_id,
+                proposal.execution_mode, proposal.market_type,
+            ),
         ]
 
         # ── Sector concentration ──────────────────────────────────────────────
@@ -2286,7 +2294,7 @@ def _check_correlation_exposure(
             # between per-row lookups and a database failure cannot look like "none".
             opportunity_ids = sorted({
                 opportunity_id
-                for _, _, opportunity_id in all_exposures
+                for _, _, opportunity_id, *_ in all_exposures
                 if opportunity_id
             })
             families: dict[str, str] = {}
@@ -2304,11 +2312,11 @@ def _check_correlation_exposure(
 
             prop_family = families.get(str(proposal.opportunity_id))
             if prop_family:
-                total_notional = sum(notional for _, notional, _ in all_exposures)
+                total_notional = sum(e[1] for e in all_exposures)
                 if total_notional > 0:
                     family_notional = sum(
                         notional
-                        for _, notional, opportunity_id in all_exposures
+                        for _, notional, opportunity_id, *_ in all_exposures
                         if families.get(str(opportunity_id)) == prop_family
                     )
                     sector_pct = (family_notional / total_notional) * 100
@@ -2320,19 +2328,23 @@ def _check_correlation_exposure(
 
         # ── Portfolio BTC beta ────────────────────────────────────────────────
         max_beta = getattr(risk, "max_portfolio_beta", 3.0)
-        prop_beta = _lookup_beta(proposal.symbol)
+        prop_beta = _lookup_beta(
+            proposal.symbol,
+            execution_mode_venue(proposal.execution_mode),
+            proposal.market_type,
+        )
         if prop_beta is not None and prop_notional > 0:
-            total_notional = sum(notional for _, notional, _ in all_exposures)
+            total_notional = sum(e[1] for e in all_exposures)
             if total_notional > 0:
                 weighted_beta = prop_beta * prop_notional
-                for sym, notional, _ in existing_exposures:
-                    b = _lookup_beta(sym)
+                for sym, notional, _, mode, market in existing_exposures:
+                    b = _lookup_beta(sym, execution_mode_venue(mode), market)
                     if b is not None:
                         weighted_beta += abs(b) * notional
                 portfolio_beta = weighted_beta / total_notional
                 if portfolio_beta > max_beta:
                     violations.append(
-                        f"portfolio_beta:{portfolio_beta:.1f}>{max_beta:.1f}"
+                        f"portfolio_beta:{portfolio_beta:.4g}>{max_beta:g}"
                     )
     except Exception as exc:
         logger.warning("_check_correlation_exposure failed (safe-reject): %s", exc)
@@ -2340,26 +2352,38 @@ def _check_correlation_exposure(
     return violations
 
 
-def _lookup_beta(symbol: str) -> float | None:
-    """Fetch the most recent btc_beta for a symbol from universe_feature_snapshots.
+def _lookup_beta(symbol: str, venue: str | None, market_type: str) -> float | None:
+    """Fetch the newest btc_beta for the exact symbol + venue + market_type.
 
     universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
-    not symbol. We join through universe_registry to filter by symbol.
+    not symbol. We join through universe_registry; the same symbol is registered
+    per venue/market, so identity must match exactly. A future-dated or
+    non-finite newest row is rejected (None = no data, check skipped).
     """
+    market = _physical_market_type(market_type)
+    if not venue or market is None:
+        return None
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT ufs.btc_beta FROM universe_feature_snapshots ufs "
+            "SELECT ufs.btc_beta, ufs.ts FROM universe_feature_snapshots ufs "
             "JOIN universe_registry ur ON ufs.asset_id = ur.id "
-            "WHERE ur.symbol = ? "
+            "WHERE ur.symbol = ? AND ur.venue = ? AND ur.market_type = ? "
             "ORDER BY ufs.ts DESC LIMIT 1",
-            (symbol,)
+            (symbol, venue, market),
         ).fetchone()
         if row and row[0] is not None:
-            return float(row[0])
+            ts = datetime.fromisoformat(str(row[1]).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            beta = float(row[0])
+            if ts <= datetime.now(timezone.utc) and math.isfinite(beta):
+                return beta
     except Exception:
-        logger.warning("risk.engine: min_stop DB read failed (returning None)", exc_info=True)
+        logger.warning("risk.engine: btc_beta DB read failed (returning None)", exc_info=True)
+    # ponytail: debug only; Risk runs per quote, a per-miss warning would flood.
+    logger.debug("risk.engine: no usable btc_beta for %s %s/%s; beta check skipped", symbol, venue, market)
     return None
 
 
