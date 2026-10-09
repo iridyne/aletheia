@@ -207,6 +207,9 @@ class AccountSizingState:
     # Same account pool: open Position + unresolved entry Order + pre-Order
     # Risk reservation notional already committed.
     open_pool_notional_usdt: float
+    # Same account pool and same symbol: the part of the above that sits in
+    # this instrument's venue tier bracket (Contract C step 4).
+    symbol_position_notional_usdt: float
     # Same symbol: stop-loss risk already projected by existing exposure.
     symbol_projected_stop_risk_usdt: float
     # Executable depth the venue can absorb at the entry (market-quality cap).

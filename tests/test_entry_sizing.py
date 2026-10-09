@@ -38,6 +38,7 @@ def _account(**changes):
         available_balance_usdt=5000.0,
         equity_usdt=5000.0,
         open_pool_notional_usdt=0.0,
+        symbol_position_notional_usdt=0.0,
         symbol_projected_stop_risk_usdt=0.0,
         executable_notional_cap_usdt=None,
         instrument_min_notional_usdt=1.0,

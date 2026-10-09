@@ -24,6 +24,7 @@ def apply_entry_financing(
     available_balance_usdt: float | None = 5000.0,
     equity_usdt: float | None = 5000.0,
     open_pool_notional_usdt: float = 0.0,
+    symbol_position_notional_usdt: float = 0.0,
     symbol_projected_stop_risk_usdt: float = 0.0,
     cfg=None,
     seed_envelope: bool = True,
@@ -66,6 +67,7 @@ def apply_entry_financing(
         available_balance_usdt=available_balance_usdt,
         equity_usdt=equity_usdt,
         open_pool_notional_usdt=open_pool_notional_usdt,
+        symbol_position_notional_usdt=symbol_position_notional_usdt,
         symbol_projected_stop_risk_usdt=symbol_projected_stop_risk_usdt,
         executable_notional_cap_usdt=executable_notional_cap_usdt,
         instrument_min_notional_usdt=instrument_min_notional_usdt,
@@ -92,7 +94,7 @@ def apply_entry_financing(
         liquidation_buffer_pct=float(
             resolve_risk_policy(cfg, mode).policy.margin.min_entry_liquidation_buffer_pct
         ),
-        existing_position_notional_usdt=account.open_pool_notional_usdt,
+        existing_position_notional_usdt=account.symbol_position_notional_usdt,
         spot=is_spot,
     )
     assert sizing.status == "resolved", sizing.reason

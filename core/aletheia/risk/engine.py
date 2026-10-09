@@ -234,7 +234,7 @@ def _recomputed_entry_financing(plan, proposal: TradeProposal, resolved_policy, 
         envelope=envelope,
         policy_leverage_cap=policy_leverage_cap,
         liquidation_buffer_pct=float(resolved_policy.policy.margin.min_entry_liquidation_buffer_pct),
-        existing_position_notional_usdt=account.open_pool_notional_usdt,
+        existing_position_notional_usdt=account.symbol_position_notional_usdt,
         spot=is_spot,
     )
 
@@ -2837,6 +2837,9 @@ def account_sizing_state(
     re-spending the same exposure. ``symbol_projected_stop_risk_usdt`` (#20) is
     the same-symbol loss-at-stop already projected in the live/demo class, the
     same scope as #19 which it replaces for financed Plans.
+    ``symbol_position_notional_usdt`` is the same-pool, same-symbol share of
+    the pool notional: the venue tier is a per-instrument bracket, so Contract C
+    step 4 projects the tier from it, not from the whole pool.
 
     Authority that cannot be read is a typed failure, never a zero.
     """
@@ -2882,6 +2885,7 @@ def account_sizing_state(
         raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, invalid[0])
 
     open_pool_notional = 0.0
+    symbol_position_notional = 0.0
     symbol_stop_risk = 0.0
     for row in positions:
         try:
@@ -2892,10 +2896,13 @@ def account_sizing_state(
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid") from None
         if not all(math.isfinite(value) for value in (quantity, entry_price, mark)):
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid")
-        if _account_pool_matches(str(row.get("execution_mode") or ""), execution_mode):
+        same_pool = _account_pool_matches(str(row.get("execution_mode") or ""), execution_mode)
+        if same_pool:
             open_pool_notional += abs(mark * quantity)
         if row.get("symbol") != symbol:
             continue
+        if same_pool:
+            symbol_position_notional += abs(mark * quantity)
         stop_raw = row.get("stop_price")
         try:
             stop_price = float(stop_raw) if stop_raw is not None else None
@@ -2915,10 +2922,13 @@ def account_sizing_state(
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid") from None
         if not all(math.isfinite(value) for value in (price, quantity)):
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid")
-        if _account_pool_matches(entry.execution_mode, execution_mode):
+        same_pool = _account_pool_matches(entry.execution_mode, execution_mode)
+        if same_pool:
             open_pool_notional += abs(price * quantity)
         if entry.symbol == symbol:
             symbol_stop_risk += abs(price * quantity)
+            if same_pool:
+                symbol_position_notional += abs(price * quantity)
 
     snapshot_payload = "|".join(
         str(value) for value in (
@@ -2928,6 +2938,7 @@ def account_sizing_state(
             round(float(available_balance), 10) if available_balance is not None else None,
             round(float(equity), 10) if equity is not None else None,
             round(open_pool_notional, 10),
+            round(symbol_position_notional, 10),
             round(symbol_stop_risk, 10),
             tuple(sorted(str(row.get("id")) for row in positions)),
         )
@@ -2937,6 +2948,7 @@ def account_sizing_state(
         available_balance_usdt=available_balance,
         equity_usdt=equity,
         open_pool_notional_usdt=open_pool_notional,
+        symbol_position_notional_usdt=symbol_position_notional,
         symbol_projected_stop_risk_usdt=symbol_stop_risk,
         executable_notional_cap_usdt=executable_notional_cap_usdt,
         instrument_min_notional_usdt=instrument_min_notional_usdt,
