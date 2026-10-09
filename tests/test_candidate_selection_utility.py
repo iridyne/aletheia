@@ -78,7 +78,7 @@ def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp
     for table in ("universe_members", "candidate_planning_generations", "market_snapshots"):
         assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     candidate = _controlled_admitted_target_candidate(
-        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="perp",
     )
     assert candidate.symbol.startswith("COIN") and candidate.execution_eligible
     generation = repo.get_candidate_planning_for_candidate(candidate.id)
@@ -141,7 +141,7 @@ def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, mo
         detected_at=datetime.now(timezone.utc).isoformat(),
     ))
     candidate = _controlled_admitted_target_candidate(
-        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="perp",
     )
     context = json.loads(candidate.candidate_opportunity_context_json)
     assert candidate.regime_tag == context["context"]["regime"] == "bear"
@@ -181,7 +181,7 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
                 self.markets[symbol] = {"id": f"COIN{i}USDT", "symbol": symbol, "base": f"COIN{i}", "quote": "USDT",
                     "active": True, "spot": market_type == "spot", "swap": market_type == "perp", "contract": market_type == "perp",
                     "linear": market_type == "perp", "settle": "USDT" if market_type == "perp" else None, "contractSize": 1,
-                    "precision": {"price": 4, "amount": 6}, "limits": {"cost": {"min": 1}}}
+                    "precision": {"price": 4, "amount": 6}, "limits": {"cost": {"min": 1}}, "info": {"isRwa": "NO"}}
         async def load_markets(self):
             return self.markets
         def market(self, symbol):
@@ -232,7 +232,7 @@ def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkey
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "bitget"
     candidate = _controlled_admitted_target_candidate(
-        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="perp",
     )
     outcomes = load_candidate_selection_outcomes(selection_policy=candidate_selection_policy_identity(load_config()))
     assert any(row["symbol"] == candidate.symbol and row["direction"] == "long"
@@ -258,7 +258,7 @@ def test_current_publication_survives_retired_scanner_failure(tmp_path, monkeypa
 
     monkeypatch.setattr(scanners, "run_all_scanners", unavailable_research_scanner)
     candidate = _controlled_admitted_target_candidate(
-        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="perp",
     )
     assert calls  # The failing research seam was actually exercised.
     db = repo.get_db()

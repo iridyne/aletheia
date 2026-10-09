@@ -174,7 +174,6 @@ async def test_registry_demo_whitelist_does_not_admit_perp_from_spot_listing(mon
         "aletheia.universe.registry.repo.sync_universe_assets", fake_sync
     )
 
-    assert await sync_registry(cfg) == 1
-    assert [(a.symbol, a.market_type) for a in captured["assets"]] == [
-        ("SPOTONLY/USDT", "spot")
-    ]
+    # Spot is outside the product scope, so nothing is registered at all.
+    assert await sync_registry(cfg) == 0
+    assert captured["assets"] == []

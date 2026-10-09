@@ -303,10 +303,11 @@ INSTRUMENT_BACKGROUND_VERSION = "instrument-background/v1"
 INSTRUMENT_ANALYSIS_CONTEXT_VERSION = "instrument-analysis-context/v1"
 # These exchange/product pairs expose crypto instruments without a separate
 # asset-class field. Every other missing classification stays unresolved.
+# Bitget perpetuals are not here: they carry the first-party ``isRwa`` flag, and
+# defaulting them to crypto classified stock/metal/oil/index perps as crypto (#3440).
 _DEFAULT_CRYPTO_MARKETS = {
     ("binance", MARKET_SPOT),
     ("bitget", MARKET_SPOT),
-    ("bitget", MARKET_PERP),
 }
 
 
@@ -468,9 +469,17 @@ def build_instrument_background(
     raw_symbol = f"{raw_base}/{raw_quote}"
     stock_ticker = stock_token_to_ticker(raw_symbol)
     okx_category = str(raw.get("instCategory") or "")
+    # Bitget perps: isRwa=YES is any real-world-asset underlying (equity, metal,
+    # oil, index) without a finer category; NO is crypto; absent stays unresolved.
+    bitget_rwa = (
+        str(raw.get("isRwa") or "").upper()
+        if venue == "bitget" and market_type == MARKET_PERP else ""
+    )
     is_exchange_equity = underlying_type.endswith("EQUITY") or okx_category == "3"
     if stock_ticker or is_exchange_equity:
         asset_class = "equity"
+    elif bitget_rwa in {"YES", "NO"}:
+        asset_class = "real_world_asset" if bitget_rwa == "YES" else "crypto"
     elif underlying_type in {"COMMODITY", "INDEX"}:
         asset_class = underlying_type.lower()
     elif underlying_type:
@@ -503,13 +512,13 @@ def build_instrument_background(
             "tracks_reference_price" if market_type == MARKET_PERP else "direct_asset"
         )
         background_status = "complete"
-    elif asset_class in {"equity", "commodity", "index"}:
+    elif asset_class in {"equity", "commodity", "index", "real_world_asset"}:
         product_kind = (
             "tradifi_perpetual" if market_type == MARKET_PERP
             else f"tokenized_{asset_class}"
         )
         reference_asset = stock_ticker or (
-            base if underlying_type else None
+            base if underlying_type or bitget_rwa else None
         )
         relationship = "tracks_reference_price" if reference_asset else "unknown"
         background_status = "complete" if reference_asset else "partial"
@@ -536,6 +545,7 @@ def build_instrument_background(
                 if (
                     underlying_type
                     or stock_ticker
+                    or bitget_rwa
                     or raw.get("instCategory") is not None
                 )
                 else (
