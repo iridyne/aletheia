@@ -37,17 +37,20 @@ _IN_PROGRESS_STATUSES = {"queued", "running"}
 _last_alerted_issue_keys: frozenset[str] = frozenset()
 
 # --- Deterministic self-heal state (see HealthConfig.self_heal_*) ---
-# Indirection over os._exit so tests can patch it without killing the test
-# process. The real restart is exit(42) → the supervisor respawns fresh code,
-# mirroring POST /api/gateway/restart.
-_os_exit = os._exit
+# Indirection so tests can patch it without signalling the test process. The
+# real restart is a controlled restart (#1454): graceful lifespan shutdown, then
+# exit 42 → the supervisor respawns fresh code, mirroring POST /api/gateway/restart.
+def _request_restart() -> None:
+    from aletheia.server.controlled_restart import request_controlled_restart
+
+    request_controlled_restart()
 # De-dupe consecutive "self-heal wanted to act but was suppressed" alerts.
 # In-process is fine here: a suppressed alert does NOT restart, so the flag
 # survives across health cycles within one process; it only needs to reset when
 # health recovers (done in run_health_check).
 _self_heal_suppressed_alerted = False
 # Rate limiting reads from the PERSISTED audit log (self_heal_restart events),
-# NOT in-process memory — because the restart action (os._exit) wipes any
+# NOT in-process memory — because the restart (a new process) wipes any
 # in-memory counter, so a memory-based limit can never see "I just restarted"
 # and would loop every health cycle on any restart-resistant issue. See
 # _recent_self_heal_restarts().
@@ -480,7 +483,7 @@ def _send_alert(message: str) -> None:
 def _recent_self_heal_restarts() -> list[float]:
     """Ages (seconds-ago) of self_heal_restart events in the last hour, oldest→newest.
 
-    Reads from the PERSISTED audit log, so the count survives the os._exit(42)
+    Reads from the PERSISTED audit log, so the count survives the process replacement
     that a restart performs. A memory counter cannot: the restart wipes it, so
     the next process would see zero history and restart again every cycle. Audit
     timestamps are naive-UTC isoformat (write_audit uses datetime.utcnow()); we
@@ -552,7 +555,8 @@ def _trigger_restart(reason: str) -> None:
     triggers a clean reload (os._exit would kill the worker but the reloader
     wouldn't respawn it — it only acts on file changes).
 
-    Without --reload: exit(42) so the supervisor respawns with fresh code.
+    Without --reload: controlled restart (graceful shutdown, then exit 42) so
+    the supervisor respawns with fresh code outside its crash budget.
 
     Only call after _can_self_restart() has confirmed a supervisor/autostart will
     bring the process back — otherwise this would permanently kill the gateway.
@@ -562,7 +566,7 @@ def _trigger_restart(reason: str) -> None:
         from aletheia.server.dev_reload import is_dev_reload_enabled
 
         # Same gate as every dev-reload path (env AND live_disabled, read now).
-        # Under --reload os._exit would not be respawned, so blocked = no restart.
+        # Under --reload a non-reload restart would not be respawned, so blocked = no restart.
         if not is_dev_reload_enabled():
             write_audit({
                 "actor": "system", "source": "self_heal", "event_type": "self_heal_restart_blocked",
@@ -584,7 +588,7 @@ def _trigger_restart(reason: str) -> None:
         touch_reload_sentinel(f"self_heal_{reason}")
         return
 
-    _os_exit(42)
+    _request_restart()
 
 
 def _can_self_restart() -> tuple[bool, str]:

@@ -937,3 +937,42 @@ def test_frontdoor_recovery_does_not_signal_the_supervisor_process_group():
     )
     assert result.returncode == 0, (result.returncode, result.stderr[-2000:])
     assert result.stdout.strip() == "SURVIVED"
+
+
+def test_controlled_restarts_never_consume_the_crash_budget(tmp_path, monkeypatch):
+    """#1454: exit 42 is a typed controlled restart, not a crash.
+
+    Ten controlled restarts with a crash budget of 3 all respawn without backoff
+    or crash history; the three genuine crashes after them still give up exactly
+    at the configured limit.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files.jsonl import read_jsonl
+
+    cfg = load_config()
+    cfg.health.supervisor_max_restarts = 3
+    cfg.health.supervisor_restart_window_sec = 600
+    cfg.health.supervisor_backoff_cap_sec = 5
+    save_config(cfg)
+
+    outcomes = iter([42] * 10 + [1] * 3)
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner, "_sleep", sleeps.append)
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
+    history: list[list[dict]] = []
+    monkeypatch.setattr(runner, "_write_restart_history", lambda h: history.append(list(h)))
+
+    result = runner.run_supervised(spawn_fn=lambda: next(outcomes))
+
+    assert result == {"gave_up": True, "restarts": 3, "controlled_restarts": 10}
+    # Only the two crashes that were respawned slept (1s, 2s); restarts never did.
+    assert sleeps == [1, 2]
+    assert history == [[
+        {"exit_code": 1, "restart_n": 1},
+        {"exit_code": 1, "restart_n": 2},
+        {"exit_code": 1, "restart_n": 3},
+    ]]
+    events = [e.get("event_type") for e in read_jsonl("audit.jsonl")]
+    assert events.count("gateway_controlled_restart") == 10

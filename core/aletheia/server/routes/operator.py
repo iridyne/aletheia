@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from aletheia.agent_shell.runtime import CommandResponse
+from aletheia.server.controlled_restart import restart_requested
 
 from aletheia.agent_shell.context import (
     ALL_SECTIONS,
@@ -1004,6 +1005,16 @@ def operator_events(
     return list_events(limit=limit, session_id=session_id, task_id=task_id)
 
 
+async def _sleep_unless_restart(seconds: float) -> None:
+    # Wake at least every 0.5s so a controlled restart ends the stream promptly.
+    deadline = time.monotonic() + seconds
+    while not restart_requested():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(0.5, remaining))
+
+
 @router.get("/events/stream")
 async def operator_events_stream(limit: int = 50, once: bool = False):
     async def _stream():
@@ -1017,8 +1028,12 @@ async def operator_events_stream(limit: int = 50, once: bool = False):
         if once:
             return
 
-        while True:
-            await asyncio.sleep(idle_poll_secs)
+        # uvicorn's graceful shutdown waits for every open response, so an
+        # endless stream would hold a controlled restart open (#1454).
+        while not restart_requested():
+            await _sleep_unless_restart(idle_poll_secs)
+            if restart_requested():
+                return
             latest = await asyncio.to_thread(list_events, limit=limit)
             fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
             for event in fresh:

@@ -120,6 +120,25 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
   the interactive user's credentials into the machine runtime.
 - Service lifecycle commands remain unavailable to LLM-driven agent tools.
 
+### Supervisor outcome contract (#1454, owner decision 2026-10-09)
+
+An intentional restart is not a crash. The supervisor types each backend exit:
+
+- `0`: clean shutdown; the supervisor stops supervising.
+- `42` (`RESTART_EXIT_CODE`): controlled restart. Only a dashboard restart
+  (`POST /api/gateway/restart`) or a self-heal restart produces it, and only
+  after uvicorn's normal graceful shutdown ran the full lifespan cleanup and
+  recorded the Runtime Session by its real shutdown result. The supervisor
+  respawns at once and audits `gateway_controlled_restart`. It never adds the
+  exit to the crash window, crash history, give-up count, or backoff. The
+  persisted self-heal rate limit is the only throttle on automated restarts.
+- Anything else: crash. Crash budget, backoff, history, and give-up are
+  unchanged. A graceful shutdown that hangs past the 15s port-lost watchdog is
+  killed and counted as a crash, not as a controlled restart.
+
+Restart requests keep their supervisor-required and dev-reload gates.
+Whole-gateway stop (SIGTERM to the supervisor) is unchanged.
+
 ---
 
 ## 2. Agent Contracts (by function)

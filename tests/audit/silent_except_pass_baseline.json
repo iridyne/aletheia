@@ -6,27 +6,27 @@
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 476,
+      "line": 477,
       "reason": "SIG_IGN inside a shutdown signal handler; signal.signal() raises off the main thread by design"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 484,
+      "line": 485,
       "reason": "signal.signal() raises when the supervisor is not on the main thread; default disposition stays"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 495,
+      "line": 496,
       "reason": "best-effort restore of prior signal handlers on exit; documented inline"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 638,
+      "line": 653,
       "reason": "SIG_IGN in the teardown path; same signal.signal() main-thread contract as line 462"
     },
     {
       "file": "core/aletheia/_gateway_runner.py",
-      "line": 812,
+      "line": 841,
       "reason": "ready-beacon unlink is documented best-effort and never raises"
     },
     {
