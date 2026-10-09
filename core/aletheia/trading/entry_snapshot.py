@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any
 
+from aletheia.data.symbols import normalize_market_type
+
 logger = logging.getLogger("aletheia.trading.entry_snapshot")
 
 
@@ -50,15 +52,6 @@ def _current_regime() -> str:
             exc_info=True,
         )
     return "unknown"
-
-
-def _physical_market_type(market_type: str | None) -> str:
-    normalized = str(market_type or "").strip().lower()
-    if normalized in {"usdt_futures", "swap"}:
-        return "perp"
-    if normalized in {"spot", "perp", "futures"}:
-        return normalized
-    return ""
 
 
 def _unavailable_analysis_context(reason: str) -> dict[str, Any]:
@@ -112,7 +105,7 @@ def _resolve_opportunity_context(
 
         background = instrument_background_from_metadata(raw_metadata)
         frozen_context = instrument_analysis_context_from_metadata(raw_metadata)
-        physical_market_type = _physical_market_type(market_type)
+        physical_market_type = normalize_market_type(market_type)
         requested_exchange = str(exchange or "").strip().lower()
         venue = str((background or {}).get("venue") or "").strip().lower()
         if background is None or frozen_context is None:
@@ -155,7 +148,7 @@ def capture_attribution_snapshot(
 ) -> dict[str, Any]:
     """Capture best-effort read-only context before Proposal hashing."""
     exact_exchange = str(exchange or "").strip().lower()
-    physical_market_type = _physical_market_type(market_type)
+    physical_market_type = normalize_market_type(market_type)
     resolved_context = _resolve_opportunity_context(
         symbol,
         exchange=exact_exchange,

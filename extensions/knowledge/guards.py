@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from aletheia.config.loader import get_data_dir, load_config
+from aletheia.data.symbols import normalize_market_type
 from aletheia.files.frontmatter import parse_frontmatter
 
 
@@ -507,8 +508,8 @@ def _applies_to_context(guard: TradingGuard, context: dict) -> bool:
         if val is None or val not in at.direction:
             return False
     if at.market_type:
-        val = _normalize_market_type(context.get("market_type"))
-        allowed = {_normalize_market_type(item) for item in at.market_type}
+        val = normalize_market_type(context.get("market_type"))
+        allowed = {normalize_market_type(item) for item in at.market_type}
         if val is None or val not in allowed:
             return False
     if at.confidence_bucket:
@@ -520,15 +521,6 @@ def _applies_to_context(guard: TradingGuard, context: dict) -> bool:
         if val is None or val not in at.late_entry_bucket:
             return False
     return True
-
-
-def _normalize_market_type(value: Any) -> str | None:
-    raw = str(value or "").lower()
-    if not raw:
-        return None
-    if raw in {"perp", "futures", "swap", "usdt_futures"}:
-        return "perp"
-    return "spot" if raw == "spot" else raw
 
 
 def _predicates_match(predicates: list[GuardPredicate], context: dict) -> bool:

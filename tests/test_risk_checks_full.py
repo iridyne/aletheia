@@ -468,6 +468,9 @@ def test_live_family_edge_selects_matching_market_type(monkeypatch):
         {"within_days": 7, "cost_model_version": COST_MODEL_VERSION},
         {"within_days": 7, "cost_model_version": COST_MODEL_VERSION},
     ]
+    # #3811: an unresolvable market never borrows another market's evidence.
+    assert _family_live_edge("momentum", "long", "futures") is None
+    assert _family_live_edge("momentum", "long", "margin") is None
 
     monkeypatch.setattr(
         repo,

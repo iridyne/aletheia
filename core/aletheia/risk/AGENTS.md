@@ -12,7 +12,7 @@ Approved behavior: [`risk_engine_contract.md`](../../../docs/design/contracts/ri
   visible in API/UI, and is tested on both approved and rejected paths.
 - Native Proposals accept only `_NATIVE_MARKET_TYPES` (`spot`, `usdt_futures`). Features keyed
   by instrument identity (`universe_registry`: `perp`) must be read through
-  `_physical_market_type`, not the raw Proposal value; otherwise the check skips silently.
+  `aletheia.data.symbols.normalize_market_type`, not the raw Proposal value; otherwise the check skips silently.
 - "Insufficient data → skip" policies are contract text; changing one to fail-closed (or the
   reverse) is a D1 policy change, not a fix.
 

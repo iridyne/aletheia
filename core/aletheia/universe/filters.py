@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
+from aletheia.data.symbols import normalize_market_type
 from aletheia.config.schema import UniverseConfig
 
 logger = logging.getLogger("aletheia.universe.filters")
@@ -47,15 +48,6 @@ _TRADABILITY_FILTERS = (
 # pre-scan. The fine filter re-applies the standard 2× threshold (with per-family
 # tolerance) on what passes through.
 _COARSE_SPREAD_MULTIPLIER = 3.0
-
-# Normalized market type aliases used in family tolerance key lookup
-_PERP_MARKET_TYPES = {"perp", "futures", "swap", "usdt_futures"}
-
-
-def _normalize_market_type(market_type: str | None) -> str:
-    mt = (market_type or "spot").lower()
-    return "perp" if mt in _PERP_MARKET_TYPES else mt
-
 
 def _compute_tradability_score(feat: dict, cfg: UniverseConfig) -> float:
     """Compute a 0-100 tradability score based on volume, spread, depth, freshness."""
@@ -442,7 +434,7 @@ def apply_fine_tradability_filters(
 
         family = scored.get("scanner_family")
         direction = scored.get("scanner_direction")
-        market_type = _normalize_market_type(scored.get("market_type"))
+        market_type = normalize_market_type(scored.get("market_type"))
 
         # Per-family tolerance lookup: exact key first, then family-only fallback
         exact_key = f"{family}:{direction or 'unknown'}:{market_type}"

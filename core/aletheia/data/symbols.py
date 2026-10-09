@@ -23,6 +23,27 @@ MARKET_FUTURES = "futures"
 
 _VALID_MARKET_TYPES = {MARKET_SPOT, MARKET_PERP, MARKET_FUTURES}
 
+# Every stored/configured market_type alias that names a physical instrument.
+# Execution rows use ``usdt_futures``; instrument-identity rows use ``perp``.
+# ``futures`` has no producer (Fedora census on #3811) and is deliberately absent.
+_PHYSICAL_MARKET_ALIASES = {
+    "spot": MARKET_SPOT,
+    "perp": MARKET_PERP,
+    "swap": MARKET_PERP,
+    "usdt_futures": MARKET_PERP,
+}
+
+
+def normalize_market_type(value: object) -> str | None:
+    """Resolve a market_type alias to ``spot``/``perp``; anything else is None.
+
+    The one canonical resolver (#3811). None is fail-closed: the caller decides
+    at its own trust boundary what an unresolvable market means.
+    """
+    if value is None:
+        return None
+    return _PHYSICAL_MARKET_ALIASES.get(str(value).strip().lower())
+
 # Known multi-character quote currencies, longest-first so USDT matches before USD.
 # Used to split a separator-less venue symbol (BTCUSDT) into base/quote.
 _KNOWN_QUOTES = ("USDT", "USDC", "USD", "BTC", "ETH", "EUR", "DAI", "TUSD")

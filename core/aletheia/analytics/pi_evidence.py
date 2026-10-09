@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aletheia.data.symbols import normalize_market_type
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 _MIN_NET_SAMPLES = 20
@@ -49,12 +50,6 @@ def score_bucket(trade_score: Any) -> str:
     return "high_score"
 
 
-def _market_type(value: Any) -> str:
-    return "perp" if str(value or "spot").lower() in {
-        "perp", "futures", "swap", "usdt_futures",
-    } else str(value or "spot").lower()
-
-
 def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str) -> dict[str, Any]:
     """Summarize settled same-epoch PI outcomes for this candidate cell.
 
@@ -69,7 +64,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
 
     family = str(candidate.get("scanner_family") or "unknown")
     direction = str(candidate.get("direction") or "unknown").lower()
-    market = _market_type(candidate.get("market_type"))
+    market = normalize_market_type(candidate.get("market_type"))
     bucket = score_bucket(candidate.get("trade_score"))
     base = {
         "version": _B2_VERSION,
@@ -85,7 +80,8 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "min_outcome_coverage": _MIN_OUTCOME_COVERAGE,
         "shrinkage_k": _SHRINKAGE_K,
     }
-    if family == "unknown" or direction not in {"long", "short"} or bucket == "unknown_score":
+    if (family == "unknown" or market is None or direction not in {"long", "short"}
+            or bucket == "unknown_score"):
         return {
             **base, "n_total": 0, "n_net": 0, "outcome_coverage": 0.0,
             "cost_model_mismatch_n": 0,

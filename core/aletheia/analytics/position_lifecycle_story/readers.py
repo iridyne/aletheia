@@ -11,6 +11,8 @@ import json
 import sqlite3
 from typing import Any
 
+from aletheia.data.symbols import normalize_market_type
+
 from .events import _utc
 
 _BAR_MS = 60_000
@@ -116,20 +118,6 @@ def _contiguous_prefix(
             break
         prefix.append(row)
     return prefix
-
-
-def _physical_market_type(value: object) -> str | None:
-    normalized = str(value or "").strip().lower()
-    if not normalized:
-        return None
-    return {
-        "spot": "spot",
-        "perp": "perp",
-        "swap": "perp",
-        "future": "perp",
-        "futures": "perp",
-        "usdt_futures": "perp",
-    }.get(normalized, normalized)
 
 
 def _ceil_bar(timestamp_ms: int) -> int:
@@ -356,11 +344,11 @@ def _instrument_identity(
         return str(value or "").strip().upper().replace("-", "/")
 
     position_symbol = symbol_key(position.get("symbol"))
-    position_market = _physical_market_type(position.get("market_type"))
+    position_market = normalize_market_type(position.get("market_type"))
     existing = fact.get("market_data_identity")
     if isinstance(existing, Mapping):
         symbol = existing.get("symbol") or position.get("symbol")
-        market_type = _physical_market_type(
+        market_type = normalize_market_type(
             existing.get("market_type") or position.get("market_type")
         )
         if symbol_key(symbol) != position_symbol or market_type != position_market:
@@ -383,7 +371,7 @@ def _instrument_identity(
     member = _row(db, "universe_members", member_id)
     asset = _row(db, "universe_registry", (member or {}).get("asset_id"))
     asset_symbol = symbol_key((asset or {}).get("symbol") or (member or {}).get("symbol"))
-    asset_market = _physical_market_type(
+    asset_market = normalize_market_type(
         (asset or {}).get("market_type") or (member or {}).get("market_type")
     )
     if (asset_symbol and asset_symbol != position_symbol) or (asset_market and asset_market != position_market):

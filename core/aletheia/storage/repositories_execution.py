@@ -631,7 +631,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
     )
 
     from aletheia.portfolio.pnl import _realized_economics_value
-    from aletheia.trading.trading_mandate import normalize_physical_market_type
+    from aletheia.data.symbols import normalize_market_type
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
     from aletheia.trading.entry_learning import _instant
 
@@ -723,7 +723,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                 for linked in related if not reason else []:
                     proposal = proposals.get(linked.get("proposal_id"))
                     if (proposal is None or proposal.get("entry_plan_id") != plan_id
-                        or normalize_physical_market_type(linked.get("market_type")) != plan["market_type"]
+                        or normalize_market_type(linked.get("market_type")) != plan["market_type"]
                         or to_canonical(str(linked.get("symbol") or "")) != plan["symbol"]
                         or linked.get("direction") != plan["direction"]):
                         reason = "order_proposal_identity_conflict"
@@ -781,7 +781,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                 root = next((o for o in related if o["id"] == position.get("order_id")), None)
                 if (root is None or position.get("proposal_id") != root.get("proposal_id")
                     or position.get("symbol") != order.get("symbol")
-                    or normalize_physical_market_type(position.get("market_type")) != plan["market_type"]
+                    or normalize_market_type(position.get("market_type")) != plan["market_type"]
                     or position.get("direction") != order.get("direction")
                     or position.get("execution_mode") != order.get("execution_mode")):
                     item.update(availability={"available": False, "reason": "position_proposal_conflict"}, execution_state="UNAVAILABLE")

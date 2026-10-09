@@ -13,29 +13,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from aletheia.data.symbols import (
-    MARKET_FUTURES,
-    MARKET_PERP,
-    MARKET_SPOT,
-    InstrumentId,
-)
+from aletheia.data.symbols import InstrumentId, normalize_market_type
 from aletheia.trading.instruments import instrument_market_to_db_market
 
 logger = logging.getLogger("aletheia.portfolio.market_signal_reader")
 
 _FUTURE_SKEW_ALLOWANCE = timedelta(minutes=5)
-
-
-def _physical_market_type(raw: str) -> str:
-    """Normalize stored/configured market names to InstrumentId vocabulary."""
-    normalized = (raw or "").strip().lower()
-    if normalized in {"perp", "swap", "usdt_futures"}:
-        return MARKET_PERP
-    if normalized == MARKET_SPOT:
-        return MARKET_SPOT
-    if normalized == MARKET_FUTURES:
-        return MARKET_FUTURES
-    raise ValueError(f"unsupported market type for market signal identity: {raw!r}")
 
 
 @dataclass(frozen=True)
@@ -58,7 +41,8 @@ class MarketSignalRequest:
             instrument=InstrumentId.from_parts(
                 venue,
                 symbol,
-                _physical_market_type(market_type),
+                # "" is rejected by InstrumentId: an unresolvable market raises.
+                normalize_market_type(market_type) or "",
             ),
             position_opportunity_id=position_opportunity_id,
         )
@@ -139,7 +123,7 @@ def _row_instrument(row) -> InstrumentId | None:
         instrument = InstrumentId.from_parts(
             row["venue"],
             row["registry_symbol"],
-            _physical_market_type(row["registry_market_type"]),
+            normalize_market_type(row["registry_market_type"]) or "",
         )
     except (TypeError, ValueError):
         return None
