@@ -443,7 +443,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     # BTC beta low enough to pass alone; ETH beta pushes the combined portfolio over the limit.
     monkeypatch.setattr(
         eng, "_lookup_beta",
-        lambda sym: 1.5 if sym == "BTC/USDT" else 5.0,
+        lambda sym, _venue, _market: 1.5 if sym == "BTC/USDT" else 5.0,
     )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
@@ -571,7 +571,7 @@ def test_sector_concentration_isolated_by_live_demo_pool(
     cfg.risk.max_sector_concentration_pct = 60.0
     cfg.risk.demo.correlation.min_positions_for_concentration = 1
     cfg.risk.live.correlation.min_positions_for_concentration = 1
-    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: None)
+    monkeypatch.setattr(eng, "_lookup_beta", lambda *_args: None)
 
     existing_opportunity = Opportunity(
         id=f"pool-existing-opportunity-{proposal_mode}",
@@ -681,7 +681,7 @@ def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
     cfg.risk.correlation_guard_enabled = True
     cfg.risk.max_portfolio_beta = 3.0
     cfg.risk.demo.correlation.min_positions_for_concentration = 4
-    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+    monkeypatch.setattr(eng, "_lookup_beta", lambda *_args: 4.0)
 
     with patch("aletheia.risk.engine.list_all_open_positions", return_value=[]):
         violations = eng._check_correlation_exposure(
@@ -704,6 +704,108 @@ def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
     assert not any(v.startswith("sector_concentration:") for v in violations), (
         f"sector_concentration must not fire below depth gate; got {violations!r}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B04d",
+        "risk_engine_contract",
+        "§2 check #16 beta feature identity (#1804)",
+        "L2c",
+        "Portfolio beta reads the newest btc_beta of the exact symbol + venue + "
+        "market_type; a newer row of another market, a future-dated row, or a "
+        "non-finite row never decides the check.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("perp_beta", "perp_age_s", "spot_beta", "rejected"),
+    [
+        pytest.param(5.0, 120, 0.1, True, id="exact-perp-high-newer-spot-low"),
+        pytest.param(0.1, 120, 5.0, False, id="exact-perp-low-newer-spot-high"),
+        pytest.param(5.0, -3600, None, False, id="future-dated-exact-row-ignored"),
+        pytest.param(float("inf"), 120, None, False, id="non-finite-exact-row-ignored"),
+    ],
+)
+def test_portfolio_beta_reads_exact_venue_market_feature(
+    tmp_path, monkeypatch, perp_beta, perp_age_s, spot_beta, rejected
+):
+    from datetime import datetime, timedelta, timezone
+
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    _setup_db(tmp_path, monkeypatch)
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    # Same symbol registered under four venue/market pairs, as on Fedora.
+    for venue, market in (
+        ("bitget", "perp"), ("bitget", "spot"), ("binance", "perp"), ("binance", "spot"),
+    ):
+        db.execute(
+            "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+            (f"{venue}-{market}", venue, market, "NEAR/USDT"),
+        )
+    snapshots = [("bitget-perp", perp_beta, perp_age_s)]
+    if spot_beta is not None:
+        snapshots.append(("bitget-spot", spot_beta, 60))  # newer than the exact perp row
+    snapshots.append(("binance-perp", 9.9, 30))  # newest of all, other venue
+    for asset_id, beta, age_s in snapshots:
+        db.execute(
+            "INSERT INTO universe_feature_snapshots (id, asset_id, ts, btc_beta) VALUES (?, ?, ?, ?)",
+            (f"snap-{asset_id}", asset_id, (now - timedelta(seconds=age_s)).isoformat(), beta),
+        )
+    db.commit()
+
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_portfolio_beta = 3.0
+    violations = eng._check_correlation_exposure(
+        TradeProposal(
+            symbol="NEAR/USDT",
+            market_type="usdt_futures",  # Proposal vocabulary; registry stores "perp".
+            direction="long",
+            execution_mode="bitget_demo",
+            quantity=1.0,
+            price=100.0,
+        ),
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    )
+
+    assert any(v.startswith("portfolio_beta:") for v in violations) is rejected, violations
+
+
+def test_portfolio_beta_violation_never_renders_equal_to_cap(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal
+
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_portfolio_beta = 3.0
+    monkeypatch.setattr(eng, "_lookup_beta", lambda *_args: 3.04)
+    monkeypatch.setattr(eng, "_active_open_positions", lambda: [])
+
+    violations = eng._check_correlation_exposure(
+        TradeProposal(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            execution_mode="bitget_demo",
+            quantity=1.0,
+            price=100.0,
+        ),
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    )
+
+    assert violations == ["portfolio_beta:3.04>3"]
 
 
 @spec_claim(
