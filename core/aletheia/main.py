@@ -449,7 +449,7 @@ app.add_typer(
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
 app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop tools (reindex, search).")
-app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only.")
+app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only, resolve a reconciliation incident.")
 
 try:
     from extensions.model_endpoints.credential_cli import set_cmd as set_model_credentials

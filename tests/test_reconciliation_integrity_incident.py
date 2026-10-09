@@ -365,3 +365,56 @@ def test_operator_prompt_progressive_unlock_and_rollout_share_incident_refreeze(
         "action": "hold",
         "reason": f"reconciliation_integrity_incident:{incident['id']}",
     }
+
+
+def _active_incident(clean_observations: int) -> dict:
+    from aletheia.portfolio import reconciliation_integrity as integrity
+
+    base = datetime(2026, 7, 12, 5, 0, tzinfo=timezone.utc)
+    incident, _ = integrity.record_reconciliation_integrity_incident(
+        {"is_thrashing": True, "churn_count": 2,
+         "churned_identities": [{"identity_key": "one"}, {"identity_key": "two"}]},
+        now=base,
+    )
+    for i in range(clean_observations):
+        integrity.record_reconciliation_clean_observation(
+            incident["id"], now=base + timedelta(minutes=5 * (i + 1))
+        )
+    return incident
+
+
+def test_cli_resolve_refuses_before_clean_observation_gate():
+    from typer.testing import CliRunner
+    from aletheia.main import app
+    from aletheia.portfolio import reconciliation_integrity as integrity
+
+    incident = _active_incident(clean_observations=1)
+    result = CliRunner().invoke(app, [
+        "guard", "resolve-reconcile-incident", "--actor", "owner", "--reason", "reviewed",
+    ])
+    assert result.exit_code == 1
+    assert "clean observation gate has not been met" in result.output
+    active = integrity.get_active_reconciliation_integrity_incident()
+    assert active is not None and active["id"] == incident["id"]
+
+
+def test_cli_resolve_releases_incident_and_appends_chained_audit(monkeypatch):
+    from typer.testing import CliRunner
+    from aletheia.files.jsonl import _log_dir
+    from aletheia.main import app
+    from aletheia.portfolio import reconciliation_integrity as integrity
+
+    incident = _active_incident(clean_observations=2)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_reconciler.detect_reconcile_thrash",
+        lambda window_minutes=30: {"is_thrashing": False},
+    )
+    result = CliRunner().invoke(app, [
+        "guard", "resolve-reconcile-incident", "--actor", "owner", "--reason", "two clean cycles",
+    ])
+    assert result.exit_code == 0, result.output
+    assert integrity.get_active_reconciliation_integrity_incident() is None
+    last = json.loads((_log_dir() / "audit.jsonl").read_text().splitlines()[-1])
+    assert last["event_type"] == "reconciliation_integrity_incident_resolved"
+    assert last["entity_id"] == incident["id"]
+    assert last["actor"] == "owner"

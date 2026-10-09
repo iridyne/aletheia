@@ -10,14 +10,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
-import json
+import logging
 import sqlite3
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
+from aletheia.files.jsonl import write_audit
 from aletheia.storage.models import AuditEvent, ReconciliationIntegrityIncident
 from aletheia.storage import repositories as repo
 from aletheia.utils.json_utils import canonical_json as _canonical_json
 
+logger = logging.getLogger(__name__)
 
 INCIDENT_TYPE = "close_reopen_churn"
 MIN_CLEAN_OBSERVATIONS = 2
@@ -157,6 +159,20 @@ def resolve_reconciliation_integrity_incident(
     stamp = _now(now).isoformat()
     resolved_by = str(actor).strip()
     resolution_reason = str(reason).strip()
+    after = {
+        "status": "resolved",
+        "clean_observation_count": incident["clean_observation_count"],
+    }
+    event = AuditEvent(
+        actor=resolved_by,
+        source="reconciliation_integrity",
+        event_type="reconciliation_integrity_incident_resolved",
+        entity_type="reconciliation_integrity_incident",
+        entity_id=incident_id,
+        before_state=_canonical_json({"status": "active"}),
+        after_state=_canonical_json(after),
+        message=resolution_reason,
+    )
     with repo.transaction():
         repo.update_reconciliation_integrity_incident(
             incident_id,
@@ -166,19 +182,21 @@ def resolve_reconciliation_integrity_incident(
             resolved_at=stamp,
             updated_at=stamp,
         )
-        repo.insert_audit_event(AuditEvent(
-            actor=resolved_by,
-            source="reconciliation_integrity",
-            event_type="reconciliation_integrity_incident_resolved",
-            entity_type="reconciliation_integrity_incident",
-            entity_id=incident_id,
-            before_state=_canonical_json({"status": "active"}),
-            after_state=_canonical_json({
-                "status": "resolved",
-                "clean_observation_count": incident["clean_observation_count"],
-            }),
-            message=resolution_reason,
-        ))
+        repo.insert_audit_event(event)
+    # The DB row above is the committed authority; this appends the
+    # hash-chained JSONL record only (no duplicate DB row).
+    if not write_audit({
+        "id": event.id,
+        "actor": resolved_by,
+        "source": event.source,
+        "event_type": event.event_type,
+        "entity_type": event.entity_type,
+        "entity_id": incident_id,
+        "before": {"status": "active"},
+        "after": after,
+        "message": resolution_reason,
+    }, mirror_db=False):
+        logger.error("reconciliation incident %s resolve: JSONL audit failed", incident_id)
     return repo.get_reconciliation_integrity_incident(incident_id)
 
 
