@@ -379,7 +379,22 @@ def test_apply_proceeds_past_gateway_check_when_probe_returns_false(tmp_path, mo
     from ops.maintenance import data_retention_backfill as drb
 
     monkeypatch.setattr(pidfile, "is_running", lambda: False)
+    monkeypatch.setattr(pidfile, "read_pid", lambda: None)
     monkeypatch.setattr(drb, "_backups_dir", lambda: tmp_path / "backups")
     db_file = tmp_path / "app.db"
     db = sqlite3.connect(db_file)
     assert drb._preflight(_minimal_args(), db, db_file)["gateway_running"] is False
+
+
+def test_apply_aborts_when_a_live_pid_cannot_be_verified(tmp_path, monkeypatch):
+    """#1384 x #1196: is_running() is False but keeps the pidfile for an unverifiable live PID."""
+    import aletheia.gateway.pidfile as pidfile
+    from ops.maintenance import data_retention_backfill as drb
+
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 4242)
+    monkeypatch.setattr(drb, "_backups_dir", lambda: pytest.fail("baseline/backup step reached"))
+    db_file = tmp_path / "app.db"
+    db = sqlite3.connect(db_file)
+    with pytest.raises(SystemExit, match="gateway state unknown"):
+        drb._preflight(_minimal_args(), db, db_file)

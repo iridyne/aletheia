@@ -532,8 +532,12 @@ def _preflight(args: argparse.Namespace, db: sqlite3.Connection, db_file: Path) 
     # 1) Gateway must be proven stopped (RETENTION_POLICY.md §12.1): apply
     #    proceeds only on a successful probe that returned False.
     try:
-        from aletheia.gateway.pidfile import is_running as _is_running
+        from aletheia.gateway.pidfile import is_running as _is_running, read_pid
         running = _is_running()
+        # is_running() keeps the pidfile when the PID is alive but its identity
+        # cannot be read (#1196); a surviving pidfile is not proof of a stop.
+        if running is False and read_pid() is not None:
+            running = None
     except Exception as exc:
         if args.apply:
             raise SystemExit(
@@ -542,6 +546,11 @@ def _preflight(args: argparse.Namespace, db: sqlite3.Connection, db_file: Path) 
         report["gateway_running"] = "unavailable"
     else:
         report["gateway_running"] = running
+        if running is None and args.apply:
+            raise SystemExit(
+                "ABORT: gateway state unknown: a live PID is recorded but cannot be "
+                "verified. Stop it first with `aletheia gateway stop`."
+            )
         if running is not False and args.apply:
             raise SystemExit(
                 "ABORT: gateway is running. Stop it first with `aletheia gateway stop`."
