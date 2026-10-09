@@ -914,7 +914,12 @@ class TestEquityCurveEndpoint:
 
     async def test_filters_by_days(self, client):
         c, _ = client
-        now = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(minutes=2)
+        # The route windows `days` against the real clock, so the in-window trade must be
+        # recent in real time; it is also after the (past) clean-window anchor.
+        now = max(
+            datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) + timedelta(minutes=2),
+            datetime.now(timezone.utc),
+        )
         pre_clean_window = (
             datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) - timedelta(minutes=1)
         )
@@ -940,7 +945,9 @@ class TestEquityCurveEndpoint:
         # Raw recorded account history remains available on its separately labelled curve.
         assert body["points"][0]["cumulative_pnl"] == 3.0
         assert body["total_realized"] == 3.0
-        assert [point["cumulative_pnl"] for point in body["raw_recorded_points"]] == [5.0, 8.0]
+        # The pre-anchor trade is older than the 7-day window, so it is not displayed, but the
+        # raw recorded curve still carries it forward (8.0 = 5.0 + 3.0).
+        assert [point["cumulative_pnl"] for point in body["raw_recorded_points"]] == [8.0]
 
     async def test_respects_limit(self, client):
         c, _ = client
