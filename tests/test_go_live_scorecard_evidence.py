@@ -173,3 +173,38 @@ def test_inconclusive_order_reconciliation_fails_reconciliation():
 
     assert result["status"] == "fail"
     assert result["detail"].startswith("1 errors in 7 days")
+
+
+@pytest.fixture
+def model_health():
+    from aletheia.model_provider import fallback
+
+    fallback.reset_model_health()
+    yield fallback
+    fallback.reset_model_health()
+
+
+def test_model_health_passes_with_one_healthy_provider(model_health):
+    """#1698: the snapshot is a list of records; reading it must not raise."""
+    from aletheia.analytics.go_live_scorecard import _check_model_health
+
+    model_health._record_model_success("openai", "gpt-primary")
+
+    result = _check_model_health()
+
+    assert (result["status"], result["score"]) == ("pass", 100)
+
+
+def test_model_health_fails_closed_without_a_proven_provider(model_health):
+    from aletheia.analytics.go_live_scorecard import _check_model_health
+
+    assert _check_model_health()["score"] == 0  # empty in-process snapshot
+
+    model_health._record_model_success("openai", "gpt-primary")
+    for _ in range(model_health._COOLDOWN_FAILURE_THRESHOLD):
+        model_health._record_model_failure("openai", "gpt-primary", TimeoutError("timeout"))
+    assert model_health.get_model_health_snapshot()[0]["cooling_down"] is True
+
+    result = _check_model_health()
+
+    assert (result["status"], result["score"]) == ("fail", 0)
