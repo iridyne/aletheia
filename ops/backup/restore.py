@@ -9,6 +9,12 @@ from pathlib import Path
 from aletheia.backup.verify import verify_backup
 from aletheia.runtime_paths import large_temp_dir
 
+# The rollback point: these SQLite snapshots replace the target's copies.
+# Every other root in the backup manifest (ops/backup/service.py) — events/,
+# artifacts/, logs/ other than the audit family, observation-lab/archives/ —
+# restores append-only: a missing file is written, an existing one is kept,
+# nothing is deleted (owner decision 2026-10-09, #3765 / #1441).
+_ROLLBACK_POINT = frozenset({Path("app.db"), Path("observation-lab/lab.db")})
 
 
 class RestoreSecurityError(RuntimeError):
@@ -22,6 +28,12 @@ def _is_audit_generation(path: Path) -> bool:
     return path.name.startswith(prefix) and path.name[len(prefix):].isdigit()
 
 
+def _append_only(rel: Path) -> bool:
+    if rel in _ROLLBACK_POINT or rel == Path("config.yaml"):
+        return False
+    return not (rel.parent == Path("logs") and _is_audit_generation(rel))
+
+
 class RestoreResult:
     """Result of a restore operation."""
 
@@ -30,6 +42,8 @@ class RestoreResult:
         self.restored_files: int = 0
         self.target_dir: str = ""
         self.errors: list[str] = []
+        # Archived paths left untouched because the target already had them (#1441).
+        self.preserved_files: list[str] = []
         # Rollback actions that failed after a failed restore: the target is mixed.
         self.rollback_failures: list[dict[str, str]] = []
 
@@ -43,6 +57,7 @@ class RestoreResult:
             "restored_files": self.restored_files,
             "target_dir": self.target_dir,
             "errors": self.errors,
+            "preserved_files": self.preserved_files,
             "rollback_complete": self.rollback_complete,
             "rollback_failures": self.rollback_failures,
         }
@@ -174,7 +189,7 @@ class RestoreService:
                     stale_sidecars = [
                         target_dir / item.relative_to(bundle_dir).with_name(item.name + suffix)
                         for item in files_to_restore
-                        if item.suffix == ".db"
+                        if item.relative_to(bundle_dir) in _ROLLBACK_POINT
                         for suffix in ("-wal", "-shm")
                     ]
                     for stale in stale_sidecars:
@@ -223,6 +238,9 @@ class RestoreService:
                                 f"restore target is a symlink and would redirect the write: {rel}"
                             )
 
+                        if dst.exists() and _append_only(rel):
+                            result.preserved_files.append(rel.as_posix())
+                            continue
                         if dst.exists():
                             bk = rollback_dir / rel
                             bk.parent.mkdir(parents=True, exist_ok=True)
