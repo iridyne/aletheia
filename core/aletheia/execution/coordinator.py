@@ -64,7 +64,7 @@ def _close_adapter(adapter) -> None:
 def _create_bound_adapter(execution_mode: str, expected_account: UTAAccountIdentity | None = None):
     adapter = create_uta_adapter(execution_mode)
     try:
-        if expected_account is not None and adapter.identity != expected_account:
+        if expected_account is not None and identity_relation(expected_account, adapter.identity) is not IdentityRelation.SAME:
             raise ValueError("uta_account_identity_mismatch")
     except Exception:
         _close_adapter(adapter)

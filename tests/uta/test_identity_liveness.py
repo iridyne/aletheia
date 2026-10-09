@@ -349,3 +349,86 @@ def test_an_unchanged_inconclusive_verdict_is_recorded_once(tmp_path, monkeypatc
     recon._write_reconcile_event(row, state="submission_unknown", reason="another_reason")
     recon._write_reconcile_event(row, state="submission_unknown", reason="same_reason")
     assert rows() == 3
+
+
+def _upgraded_position(monkeypatch, tmp_path):
+    """An open futures Position whose entry Order predates a CCXT bump."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+
+    old = _identity("bitget_demo").model_copy(update={"ccxt_version": "4.5.0"})
+    position = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long", quantity=0.01, entry_price=100.0,
+        current_price=101.0, stop_price=90.0, execution_mode="bitget_demo", status="open",
+        exchange_tpsl_order_id='{"sl":"old-sl"}',
+    )
+    _insert_bound_position(position)
+    assert position.order_id is not None
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=old.model_dump_json())
+    return position, old, old.model_copy(update={"ccxt_version": "4.5.84"})
+
+
+def test_a_library_upgrade_alone_does_not_block_stop_replacement(tmp_path, monkeypatch):
+    from aletheia.execution import coordinator
+    from aletheia.uta.models import CommandEvidence, CommandReport
+
+    position, _old, upgraded = _upgraded_position(monkeypatch, tmp_path)
+    cancels = []
+
+    class Adapter:
+        identity = upgraded
+
+        async def cancel_order(self, command):
+            cancels.append(command.target_venue_order_id)
+            return CommandReport(
+                identity=command.expected_account, command_id=command.command_id,
+                evidence=CommandEvidence.ACKNOWLEDGED, received_at=datetime.now(timezone.utc),
+                venue_order_id=command.target_venue_order_id, profile_version="1",
+            )
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _m: Adapter())
+    monkeypatch.setattr(coordinator, "_submit_protection_leg", lambda *_a, **_k: "new-sl")
+
+    assert coordinator.replace_protective_stop(position.id, 95.0) is True
+    assert cancels == ["old-sl"]
+
+
+def test_a_library_upgrade_alone_does_not_block_native_tpsl_close_registration(tmp_path, monkeypatch):
+    from aletheia.execution import exchange_materialization
+    from aletheia.uta import manager
+
+    position, old, upgraded = _upgraded_position(monkeypatch, tmp_path)
+    monkeypatch.setattr(manager, "native_protection_execution_modes", lambda: ("bitget_demo",))
+
+    claimed, created = exchange_materialization.claim_observed_tpsl_close(
+        position.id, execute_order_id="EXEC-1", reason="stop_loss", expected_account=upgraded,
+    )
+    assert created is True and claimed is not None
+    # The carrier is stamped with the entry identity; re-observing it under the
+    # upgraded reader must advance the same claim, not raise a mismatch.
+    again, created_again = exchange_materialization.claim_observed_tpsl_close(
+        position.id, execute_order_id="EXEC-1", reason="stop_loss", expected_account=upgraded,
+    )
+    assert created_again is False and again is not None and again["id"] == claimed["id"]
+    # A pending carrier written under a different library build is still the same account.
+    from aletheia.storage import repositories as repo
+
+    repo.update_order_metadata(
+        claimed["id"], uta_account_identity_json=old.model_copy(update={"ccxt_version": "4.4.0"}).model_dump_json()
+    )
+    again, _ = exchange_materialization.claim_observed_tpsl_close(
+        position.id, execute_order_id="EXEC-1", reason="stop_loss", expected_account=upgraded,
+    )
+    assert again is not None and again["id"] == claimed["id"]
+    # A different account is still refused.
+    with pytest.raises(ValueError, match="uta_account_identity_mismatch"):
+        exchange_materialization.claim_observed_tpsl_close(
+            position.id, execute_order_id="EXEC-1", reason="stop_loss",
+            expected_account=upgraded.model_copy(update={"account_id": "other"}),
+        )
