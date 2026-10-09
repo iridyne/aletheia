@@ -59,7 +59,6 @@ Hidden compatibility aliases (scripts only; human output points back here):
 
 | Old command | Current command |
 |---|---|
-| `aletheia flow audit` / `flow trace` | `aletheia opportunity audit` / `opportunity trace` |
 | `aletheia funnel audit` | `aletheia opportunity audit --view funnel` |
 | `aletheia sizing trace` | `aletheia opportunity audit --view sizing` |
 | `aletheia alpha audit` | `aletheia opportunity audit --view alpha` |
