@@ -28,7 +28,7 @@ def test_network_status_shows_config(tmp_path, monkeypatch):
     loader = _setup_config(tmp_path, monkeypatch)
     cfg = AletheiaConfig()
     cfg.network.proxy_protocol = "http"
-    cfg.network.proxy_host = "user:secret@127.0.0.1"
+    cfg.network.proxy_host = "127.0.0.1"
     cfg.network.proxy_port = 7890
     cfg.network.no_proxy = "example.internal,10.0.0.0/8"
     cfg.network.recompose_proxy_url()
@@ -155,3 +155,14 @@ def test_network_set_writes_audit_log(tmp_path, monkeypatch):
     audit_path = tmp_path / "logs" / "audit.jsonl"
     events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
     assert any(event.get("event_type") == "network_config_changed" for event in events)
+
+
+def test_network_set_rejects_userinfo_host(tmp_path, monkeypatch):
+    """#1642: the CLI refuses a user:pass@host and saves nothing."""
+    loader = _setup_config(tmp_path, monkeypatch)
+
+    result = runner.invoke(network_app, ["set", "--host", "user:secret@127.0.0.1"])
+
+    assert result.exit_code == 1
+    assert "secret" not in result.output
+    assert loader.load_config().network.proxy_host == "127.0.0.1"

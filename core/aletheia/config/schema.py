@@ -1936,7 +1936,19 @@ class RemoteControlConfig(BaseModel):
     require_token: bool = False
 
 
+_PROXY_USERINFO_ERROR = "authenticated proxies are not supported; remove the user:password@ part"
+
+
+def _proxy_has_userinfo(value: str) -> bool:
+    """True when a proxy host or URL carries a ``user[:password]@`` part (#1642)."""
+    return "@" in (value or "")
+
+
 class NetworkConfig(BaseModel):
+    # Authenticated proxies are unsupported (#1642): proxy_host/proxy_url never
+    # carry userinfo, and rejection errors never echo the rejected value.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     # Structured proxy definition (source of truth). ``proxy_url`` below is
     # recomposed from these three parts by the model validator; every consumer
     # (aletheia.net) still reads ``proxy_url``. Default 7890 (Clash/Mihomo common
@@ -1957,6 +1969,13 @@ class NetworkConfig(BaseModel):
     # Default False for portability — a fresh install / CI box without a proxy must
     # not be bricked by a strict default. Enable it in Settings for production.
     enforce: bool = False
+
+    @field_validator("proxy_host", "proxy_url")
+    @classmethod
+    def _reject_proxy_userinfo(cls, value: str) -> str:
+        if _proxy_has_userinfo(value):
+            raise ValueError(_PROXY_USERINFO_ERROR)
+        return value
 
     @model_validator(mode="after")
     def _sync_proxy_url(self) -> "NetworkConfig":
@@ -1979,12 +1998,16 @@ class NetworkConfig(BaseModel):
         not re-run the validator, so the route calls this explicitly after mutating).
         """
         host = (self.proxy_host or "").strip()
+        if _proxy_has_userinfo(host):
+            raise ValueError(_PROXY_USERINFO_ERROR)
         self.proxy_url = f"{self.proxy_protocol}://{host}:{self.proxy_port}" if host else ""
 
     def parse_proxy_url(self) -> None:
         """Decompose an externally-set proxy_url back into protocol/host/port."""
         from urllib.parse import urlparse
 
+        if _proxy_has_userinfo(self.proxy_url):
+            raise ValueError(_PROXY_USERINFO_ERROR)
         parsed = urlparse(self.proxy_url)
         scheme = (parsed.scheme or "http").lower()
         if scheme in ("socks", "socks5h"):
@@ -2178,6 +2201,10 @@ class LearningConfig(BaseModel):
 
 
 class AletheiaConfig(BaseModel):
+    # A nested model's error string echoes its input unless the outermost model
+    # hides it; config errors must never surface rejected values (credentials).
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     @field_validator("trading_mandate", mode="before")
     @classmethod
     def _preserve_malformed_trading_mandate(cls, value: object):

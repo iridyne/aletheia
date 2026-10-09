@@ -48,6 +48,20 @@ confirmed delisting removes tokens from that list under the existing rule.
 This does not change listing evidence, observation-only admission or trading policy.
 The former alias is [historical](../history/observed_xstocks_settings_control.md).
 
+## Network proxy settings
+
+Authenticated proxies are not supported (#1642, owner decision 2026-10-09).
+`network.proxy_host` names a host only and `network.proxy_url` carries no
+userinfo: any `user[:password]@` part in either field is a configuration error
+at the `NetworkConfig` schema boundary, so config load, Settings
+`POST /api/settings/network`, `aletheia network set` and every save reject it
+through the same validator. Load reports it through the `config.validation`
+blocker without rewriting the source; Settings returns `422
+invalid_configuration` with the field path and leaves the saved configuration
+unchanged; the CLI exits non-zero without saving. Rejection messages and error
+projections never contain the rejected value. Display redactors for proxy URLs
+remain as defense in depth for archives and historical files only.
+
 ## Executable evidence
 
 - `tests/test_config.py` covers unknown root/nested fields, safe error paths,
@@ -55,3 +69,6 @@ The former alias is [historical](../history/observed_xstocks_settings_control.md
 - `tests/test_doctor.py` covers the Doctor blocker projection and redaction.
 - `tests/specs/spec_configuration.py` registers the strict-load and dynamic-map
   claims in the executable conformance matrix.
+- `tests/test_config.py`, `tests/test_config_routes.py` and
+  `tests/test_network_cli.py` cover rejection of proxy userinfo without echoing
+  the credential.

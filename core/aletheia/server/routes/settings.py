@@ -2695,6 +2695,7 @@ def update_network_config(req: NetworkConfigUpdate):
     with edit_config() as cfg:
         old = cfg.network.model_dump(mode="json")
         updates = req.model_dump(exclude_none=True)
+        _validated_settings_section(NetworkConfig, old, updates, name="network")
         for field, value in updates.items():
             setattr(cfg.network, field, value)
         # setattr does not re-run the model validator, so keep proxy_url and the
