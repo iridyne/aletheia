@@ -1,0 +1,22 @@
+{
+  "note": "Frozen baseline for tests/audit/test_no_silent_healthy_fallback.py: unlogged `except Exception: return <constant>` sites in risk/execution/portfolio/diagnostics and agent_runtime/health.py as of generated_at. A shame list, not a permit: remove an entry when its site is fixed.",
+  "generated_at": "2026-10-09",
+  "sites": [
+    {"file": "core/aletheia/agent_runtime/health.py", "function": "_exchange_reachable", "returns": "None", "reason": "None means unknown and the caller renders it as not available, not as reachable"},
+    {"file": "core/aletheia/diagnostics/probes/environment.py", "function": "_egress_ip", "returns": "None", "reason": "best-effort egress IP; None is reported as unknown by _probe_network"},
+    {"file": "core/aletheia/diagnostics/probes/trading.py", "function": "_probe_trading_loop._count", "returns": "-1", "reason": "-1 is an out-of-band 'count unavailable' sentinel, not a plausible count"},
+    {"file": "core/aletheia/execution/position_enrichment.py", "function": "liquidation_price_for", "returns": "None", "reason": "liquidation price is display enrichment; None stays not available (caller file is in-flight, not touched here)"},
+    {"file": "core/aletheia/portfolio/account_loss.py", "function": "_partial_close_realized_today", "returns": "None", "reason": "documented: None propagates ledger unavailability to callers instead of zero loss"},
+    {"file": "core/aletheia/portfolio/disappearance_settlement.py", "function": "_direct_positions_present", "returns": "None", "reason": "None means direct absence is not confirmed, so the disappearance is not settled"},
+    {"file": "core/aletheia/portfolio/exchange_sync.py", "function": "_unified_identity_is_current", "returns": "(False, 'uta_registry_configuration_invalid')", "reason": "fail-closed: identity is not current, with a bounded reason token"},
+    {"file": "core/aletheia/portfolio/outcome_closure.py", "function": "_close_provenance", "returns": "None", "reason": "best-effort provenance enrichment; None leaves existing columns untouched and never blocks a close"},
+    {"file": "core/aletheia/portfolio/position_manager.py", "function": "_risk_approved_entry_plan", "returns": "None", "reason": "None means no Risk-approved plan is proven, so no plan-derived action is taken"},
+    {"file": "core/aletheia/portfolio/position_reconciler.py", "function": "_recover_strategy_link", "returns": "(None, None)", "reason": "None/None means no confident link recovery; the position keeps an unlinked identity"},
+    {"file": "core/aletheia/risk/engine.py", "function": "_cached_available_balance_usdt", "returns": "None", "reason": "two handlers; None means balance unavailable and the hard cap is preserved (risk/engine.py is in-flight, not touched here)"},
+    {"file": "core/aletheia/risk/engine.py", "function": "_cached_available_balance_usdt", "returns": "None", "reason": "second handler of the same function, same unavailable semantics"},
+    {"file": "core/aletheia/risk/engine.py", "function": "_portfolio_drawdown_assessment", "returns": "(1.0, False)", "reason": "KNOWN DEFECT MP-06: check #5 reads only the 1.0; fix is owned by the risk/engine.py batch, not this gate PR"},
+    {"file": "core/aletheia/risk/engine.py", "function": "_resolve_proposal_family", "returns": "None", "reason": "check #1a already rejects an undecodable Plan; an unknown family stays unknown"},
+    {"file": "core/aletheia/risk/engine.py", "function": "_account_equity", "returns": "None", "reason": "None means equity unavailable; callers fail closed on missing capital base"},
+    {"file": "core/aletheia/risk/engine.py", "function": "per_symbol_notional_ceiling", "returns": "None", "reason": "documented: None means ceiling unresolved and callers must fail closed"}
+  ]
+}
