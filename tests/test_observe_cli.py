@@ -285,3 +285,73 @@ def test_observe_legacy_authority_refuses_current_list():
     result = CliRunner().invoke(observe_app, ["list", "--json"])
     assert result.exit_code == 1
     assert get_authority_source() == before
+
+
+def _drift_after_migration_and_receipt():
+    """#3856: v95->v96 applied outside the updater plus one new Main receipt."""
+    from extensions.observation_lab.canonical import append_delivery_receipt
+    from extensions.observation_lab.checkpoint import (
+        _read_app_migration_state,
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+    )
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    head, count = _read_app_migration_state()
+    append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="ack-drift-receipt",
+        candidate_key="candidate-ack-drift",
+        resolution_reason="adapter_unavailable",
+    )
+    from unittest.mock import patch
+
+    return patch(
+        "extensions.observation_lab.checkpoint._read_app_migration_state",
+        return_value=(f"{head}-v96", count + 1),
+    )
+
+
+def test_checkpoint_acknowledge_exact_components_saves_and_audits(runner: CliRunner) -> None:
+    from aletheia.files.jsonl import read_jsonl
+    from extensions.observation_lab.checkpoint import verify_joint_checkpoint
+
+    with _drift_after_migration_and_receipt():
+        blocked = runner.invoke(observe_app, ["checkpoint", "--json"])
+        assert json.loads(blocked.output)["saved"] is False
+
+        result = runner.invoke(
+            observe_app,
+            ["checkpoint", "--acknowledge", "app_migration,main_outbox", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["saved"] is True
+        assert payload["acknowledged_components"] == ["app_migration", "main_outbox"]
+        assert verify_joint_checkpoint().reason == "fingerprint_match"
+
+    events = [
+        event for event in read_jsonl("audit.jsonl")
+        if event.get("event_type") == "observation_checkpoint_drift_acknowledged"
+    ]
+    assert len(events) == 1
+    assert events[0]["after"]["acknowledged_components"] == ["app_migration", "main_outbox"]
+
+
+def test_checkpoint_acknowledge_refuses_an_unnamed_component(runner: CliRunner) -> None:
+    from aletheia.files.jsonl import read_jsonl
+    from extensions.observation_lab.checkpoint import latest_joint_checkpoint
+
+    with _drift_after_migration_and_receipt():
+        before = latest_joint_checkpoint()
+        result = runner.invoke(observe_app, ["checkpoint", "--acknowledge", "app_migration"])
+        after = latest_joint_checkpoint()
+
+    assert result.exit_code == 1
+    assert "app_migration" in result.output and "main_outbox" in result.output
+    assert after is not None and before is not None
+    assert after.checkpoint_id == before.checkpoint_id
+    assert not any(
+        event.get("event_type") == "observation_checkpoint_drift_acknowledged"
+        for event in read_jsonl("audit.jsonl")
+    )

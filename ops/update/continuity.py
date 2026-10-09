@@ -427,7 +427,7 @@ _CODE_HINTS: dict[str, tuple[str, str]] = {
     # ── checkpoint verdict ────────────────────────────────────────────────────
     "observation_checkpoint_app_migration_drift": (
         "DB migrations ran since the last observation checkpoint was recorded",
-        "aletheia observe checkpoint",
+        "aletheia observe checkpoint --verify-only, then --acknowledge <components> once the drift is explained",
     ),
     "observation_checkpoint_drift": (
         "Observation checkpoint fingerprint has an unrecognised mismatch shape",
