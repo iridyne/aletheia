@@ -13,16 +13,17 @@
 > **Position C 更新（2026-07-03）**：本文中涉及 `strategy_designer`、
 > `backtest_orchestrator`、Optuna/RuleSet 策略生成或策略晋级的内容均为历史设计背景。
 > 规则引擎已于 2026-07-02 删除；当前 System Operator 不再触发 strategy_designer、
-> backtest 或 Optuna sweep。当前有效边界见 `agent_contracts.md` 与
-> `promotion_gates_contract.md`。
+> backtest 或 Optuna sweep。当前有效边界见 `agent_contracts.md`；策略晋级门已退役
+> （[history](../history/promotion_gates_contract.md)）。
 
 ---
 
-## [必看] 三组件别混(2026-06-28)
+## [必看] 两组件别混（2026-10-09 更新）
 
-本文的 Operator = TS operator-shell/(Node 子进程, 真正顶层操作员)。它与 Python
-agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交易决策 daemon)
-是三个不同组件, 反复被审计混淆。完整区分图见 operator_layer.md。
+本文的 Operator = TS operator-shell（Node 子进程，真正顶层操作员）。它与
+`core/aletheia/agent_runtime/pi_daemon.py`（交易决策 daemon / Canonical Entry Planner）是两个
+不同组件。原第三个组件 Python `agent_shell/operator_loop.py`（4h config 调参）已随 #3134 退役；
+下文提到它的段落是历史设计。完整区分图见 operator_layer.md。
 
 ---
 

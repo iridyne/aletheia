@@ -21,9 +21,17 @@ dated design documents and archive; they are not active page authority.
 | `/serenity-lens` | Serenity Lens | Long-horizon research |
 | `/news` | News Intel | Collected news evidence |
 
-`/blotter` and `/proposals` are compatibility redirects to
-`/universe?tab=plans`. They own no unique UI. `/paper-trades` and `/positions`
-remain compatibility redirects into Trades & Positions.
+Compatibility redirects (`LegacyRedirect` in `frontend/src/App.tsx`) own no unique UI:
+
+| Old path | Redirects to |
+|---|---|
+| `/agent-runs` | `/agent-activity?tab=runs` |
+| `/opportunities` | `/agent-activity?tab=opps` |
+| `/dreaming` | `/learning?tab=dreaming` |
+| `/knowledge` | `/learning?tab=knowledge` |
+| `/reports` | `/learning?tab=operations` |
+| `/blotter`, `/proposals` | `/universe?tab=plans` |
+| `/paper-trades`, `/positions` | `/trades?tab=blotter` |
 
 ## Navigation information architecture
 

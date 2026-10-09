@@ -1,4 +1,4 @@
-> 2026-10-09 归档：原路径 docs/design/data/RETENTION_WRITE_GUARDRAILS_TODO.md。待办清单不属于当前设计文档；仍需做的条目应开 GitHub Issue。
+> 2026-10-09 归档：原路径 docs/design/data/RETENTION_WRITE_GUARDRAILS_TODO.md；其引用方 RETENTION_POLICY §10.5 同日归档到同目录 RETENTION_POLICY_followups_2026-07-17.md。待办清单不属于当前设计文档；仍需做的条目应开 GitHub Issue。
 
 # Retention — Deferred Write-Side Guardrails (Phase 3 follow-up)
 

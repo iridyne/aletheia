@@ -223,7 +223,7 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 | Candidate publication | Core `publish_candidate_snapshot`；Universe / Serenity 来源编排 | current PlanningGeneration | source/hash 出生冻结、exact instrument 单一 owner、原子 publication | entry-plan-contract / Serenity §7 |
 | Planning→Plan | Entry Planner / Compiler | Plan execution / watcher | immutable input、CAS、typed unavailable/no-plan、真实 Profile | entry-plan-contract |
 | Plan→Proposal | canonical entry_plan_execution | Risk / Gateway | source/school/holding 一致、唯一 Plan lineage、不可复活旧 pending | entry-plan-contract |
-| 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
+| 提案→风控 | `gateway.py` | `risk/engine.py` 的 `evaluate_proposal` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
 | 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；authoritative Risk evidence 与 RiskDecision 原子提交 | filter_evidence_contract / spec_filter_evidence |
 
@@ -252,7 +252,7 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 - **DL-INV-35 Price Action 权限隔离**:`market-structure/v2` 只可将同一 [Market Structure Derived Data Contract](market_structure_contract.md) 的连续、已收盘、同 venue 1m 因果事实投影成 append-only Shadow assessment；历史 v1 行保持不可变。BOS/CHoCH 不得改变 Opportunity、Risk 或 Execution。hard-gate consumer seam 必须对未批准版本及 unavailable 结果 fail closed，生产 allowlist 为空。
 - **DL-INV-36 Universe instrument background**:每个进入 feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`，并解析到一个明确支持的 analysis context。当前只支持既有 crypto context 与经核验的 `stock_linked_perp` context；后者只消费 instrument-local 行情、成本与衍生品证据，BTC 相对强弱、全局 crypto regime 和旧 crypto-family prior 明确不适用。Candidate publication 将同一 background 与 applicability 冻结进 typed context；缺失、冲突、未解析或无受支持 context 均 fail closed，完整 equity 身份本身不是拒绝理由。
 - **DL-INV-37 Candidate planning priority**:稀缺 Entry Planner capacity 必须先 claim 当前 `last_candidate_id` 所指向的最低 Candidate rank；每轮可用 3–15 个并发 worker 依次完成 CAS claim 后并行规划，且每个 generation 仍只有一个 owner。rank 只决定调度顺序，不进入 planning identity 或经济权限。exact rank 不可用时稳定回退 generation `created_at`、再 `id`，不得随机排序或因 rank/score churn 创建重复 LLM work。
-- **DL-INV-29 Outcome 与 funding 符号固定**:B2 `qualified_negative` 表示同身份、同方向成熟 cohort 的净收益为负，不表示 bearish 方向，也不单独授权 trade/skip/veto。正 funding 是 longs pay shorts / long crowding，支持 contrarian short；负 funding 是 shorts pay longs / short crowding，支持 contrarian long 并反对 short。语义改变必须轮换 policy epoch。
+- **DL-INV-29 Funding 符号固定**:正 funding 是 longs pay shorts / long crowding，支持 contrarian short；负 funding 是 shorts pay longs / short crowding，支持 contrarian long 并反对 short。语义改变必须轮换 policy epoch。
 
 ---
 
@@ -262,9 +262,6 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 `tests/test_entry_lifecycle_cutover.py`、`tests/test_candidate_opportunity_persistence.py`、
 `tests/test_serenity_routes.py` 和 `tests/test_pi_daemon.py`。文档同步不表示这些测试已在此执行，
 也不表示 Fedora 已部署或账户已获资格。
-
-本次说明入场 D2 收口。UTA 唯一私有账户路径、Learning 单向 Lab 迁移和生产部署
-唯一 auto.run 是已批准的后续部分，不在这里宣称已经交付或上线。
 
 ## 附录：退役入场历史（非执行契约）
 

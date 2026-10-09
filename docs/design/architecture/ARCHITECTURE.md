@@ -13,15 +13,15 @@
 
 | Layer | Technology |
 |-------|-----------|
-| 语言 | Python 3.12（后端）/ TypeScript + React 18（前端）|
+| 语言 | Python 3.12（后端）/ TypeScript + React 19（前端）|
 | Web 框架 | FastAPI + uvicorn（`--loop none` 强制，防 IOCP 冻结）|
 | 数据库 | SQLite（WAL 模式，进程级 `_WRITE_LOCK` 写序列化，`busy_timeout=30s`，线程本地连接；运行实例使用 owner 选定的数据根目录）|
 | 包管理 | `uv`（禁用 pip/poetry）|
-| 前端构建 | Vite + React（产物 `aletheia/dashboard_static/`，gitignored）|
+| 前端构建 | Vite + React（产物 `core/aletheia/dashboard_static/`，gitignored）|
 | 交易所接入 | Core 通过 UTA/Coordinator 与 Exchange Port 访问已注册的 `bitget_demo`、`okx_demo`、`binance_testnet`；注册不等于凭据、能力或资格证明 |
 | LLM 路由 | 兼容 OpenAI / Anthropic 格式；实际 provider 以运行实例 provenance 为准 |
 | 进程管理 | supervisor → frontdoor(:8787) + backend(:8788)，`lifecycle.py` 统管 |
-| 任务调度 | APScheduler（max_workers=3，不得上调）|
+| 任务调度 | APScheduler，命名 executor 池各 `max_workers` ≤ 3（[scheduler_contract](../contracts/scheduler_contract.md) INV-SCH-1）|
 
 ---
 
@@ -42,33 +42,11 @@ stage → location 另见 [`AGENTS.md`](../../../AGENTS.md#where-the-stages-live
 |---|---|---|
 | `storage/repositories.py` | `repositories_positions` `repositories_universe` `repositories_research` `repositories_market_data` `repositories_execution` | `_stamp_provenance` / `_insert` / `_update` / `_select_*` / `transaction`；所有 writers（domain seam 因 ownership guard 拒绝导入 generic writers）|
 | `diagnostics/doctor.py` | `probes/content` `probes/storage_trust` `probes/environment` `probes/data_quality` `probes/trading` | `Check` / `Report` 类；`_build_report` 编排；shared helpers（`_age_minutes`, `_fmt_age`, `_parse_iso_datetime`）|
-| `observation_lab/canonical.py` | `canonical_adapters`（Domain A：value helpers + adapter Protocol/registry singleton）`canonical_lifecycle`（Domain B：Lab 证据 + lifecycle writes）| Domain C/D/E（authority/treatment 决策 · Main/Lab transport · retention/archive）— 跨事务边界，暂未拆 |
+| `extensions/observation_lab/canonical.py` | `canonical_adapters`（Domain A：value helpers + adapter Protocol/registry singleton）`canonical_lifecycle`（Domain B：Lab 证据 + lifecycle writes）| Domain C/D/E（authority/treatment 决策 · Main/Lab transport · retention/archive）— 跨事务边界，暂未拆 |
 | `agent_runtime/scheduler.py` | `scheduler_retention`（`_prune_*` × 7 + `_cleanup_catchup_due`）| `_run_cleanup` 因 `spec_agent_contracts` AST-scan 阻拦保留；所有 `add_job()`、`_ESSENTIAL_JOBS`、timeout workers |
 | `analytics/profit_gradient_evidence.py` | `profit_gradient_evidence_utils`（8 SAFE：`_json` `_hash` `_utc_text` `_text` `_safe_json_object` `_parse_utc` `_iso` `_finite`）| builder / verifier / registration / pairing / coverage — 跨事务 + `source_hash` binding，未拆 |
 
-### 单函数解构
-
-不新增文件，直接把巨型函数拆成同模块 `_` prefix helpers：
-
-| 函数 | 起始 → 当前 | Helpers |
-|---|---|---|
-| `execution/reconciliation.py::reconcile()` | 767 → 123 (-84%) | `_validate_reconcile_identities` `_recover_filled_gap_orders` `_reconcile_multibroker_orders` `_prepare_bitget_private_views` `_recover_exchange_order_id` `_fetch_order_history_and_ioc_state` `_converge_legacy_order_status` `_materialize_native_order` |
-| `agent_shell/operator_recommendations.py::build_recommendations()` | 946 单函数 → 完全解构 | 11 helpers：`_make_task_recommendation` factory + `_build_*_recommendation(s)` × 8 + `_missing_review_strategy_ids` + `_group_agent_runs` |
-| `storage/repositories.py::ensure_candidate_planning_generation()` | 383 → 187 (-51%) | `_candidate_planning_existing_state` `_candidate_planning_requalification` `_candidate_planning_generation_data` |
-| `agent_shell/entry_planner.py::plan_next_candidate()` | 430 → 226 (-47%) | `_parse_candidate_opportunity` `_ensure_entry_orderbook` `_build_fresh_entry_context` `_validate_and_bind_hypothesis` `_compile_current_entry_plan` `_load_or_invoke_hypothesis` |
-| `agent_shell/commands.py::review_portfolio_state()` | 638 → 部分拆 | `_collect_fresh_review_marks` `_collect_review_scope` `_record_unavailable_review` `_normalize_review_and_select_target` `_build_review_request`（`_apply_review_effect` + `_finalize_review` 契约敏感未拆）|
-
-### 未拆的巨型函数（audit 完成，拆分成本 > 收益）
-
-| 函数 | 行数 | 阻拦 |
-|---|---|---|
-| `universe/service.py::refresh()` | 564 | 4 spec 用 `inspect.getsource(refresh)` 或按文件路径截取函数体做 AST 断言；改行为断言的工作在 #3561 |
-| `agent_runtime/scheduler.py::init_scheduler` | 467 | INV-SCH-5 spec 用 AST 扫 scheduler.py 检查每个 `add_job` wrapper；改行为断言的工作也在 #3561 |
-| `risk/engine.py::_evaluate_proposal_locked` | 595 | 未 audit；D2 敏感，风控决策核心 |
-| `execution/gateway.py::_execute_proposal` | 516 | 未 audit；段 3 主入口 |
-| `universe/features.py::_fetch_single_feature` | 487 | 未 audit |
-| `universe/filter_outcome_recorder.py::settle_due_filter_outcomes` | 455 | 未 audit |
-| `extensions/observation_lab/canonical.py::resolve_observation_treatment` | 480 | Domain C（authority/treatment 决策），跨 Main/Lab 事务边界，RISKY |
+大函数拆分的逐项记录不在此维护；以 Git 历史与 #3561 为准。
 
 ---
 
@@ -104,16 +82,10 @@ UTA 只负责外部账户 I/O。已注册的 Demo/Testnet 模式仍不证明凭�
 
 ---
 
-## 禁止修改区域（无 owner 明确授权不得碰）
+## 高敏感区域
 
-| 路径 | 理由 |
-|------|------|
-| `core/aletheia/risk/` | 风控核心，行为变更必须有回归测试 |
-| `core/aletheia/execution/` | 执行网关，直接影响资金安全 |
-| `extensions/exchanges/bitget/auth.py` | 凭证签名逻辑 |
-| `core/aletheia/config/secrets.py` | 密钥处理 |
-| `core/aletheia/agent_runtime/permissions.py` | Agent 权限边界 |
-| `core/aletheia/server/routes/live.py` | 实盘开关 |
+Risk、Execution、凭证、Agent 权限与 Live 开关的改动边界只在
+[SAFETY_AND_TRUST](../../operations/development/agent-guides/SAFETY_AND_TRUST.md) 定义。
 
 ---
 

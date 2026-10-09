@@ -1,10 +1,9 @@
-# Data Retention Policy (Phase 3)
+# Data Retention Policy
 
 > Authoritative retention contract for the local SQLite (`~/.aletheia/app.db`),
 > secondary SQLite (`~/.aletheia/tasks.db`), and filesystem artefact trees under
 > `~/.aletheia/`.
-> Last updated: 2026-08-06 (offline layout optimization and WAL backlog evidence).
-> Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
+> Last updated: 2026-10-09 (UFO table removed in v94; dated follow-ups archived).
 
 > Issue #2737: the [Phase 1 Migration Contract](../contracts/observation_experiment_ownership_v2.md) preserves the current no-prune and earliest-exposure guards, while the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future exact-claim design. No retention authority changes until its serial proof and cutover gates are satisfied.
 
@@ -12,12 +11,12 @@ Two hard rules govern every retention decision here:
 
 1. **Trust-bearing tables are permanent.** The 12 audit-chain tables and the
    7 Measured Learning Ledger tables MUST NEVER appear in `_PRUNABLE`
-   (`aletheia/storage/repositories.py:2860-2887`) and MUST NEVER be
-   dispatched from `_run_cleanup` (`aletheia/agent_runtime/scheduler.py:1764`).
+   (`core/aletheia/storage/repositories.py`) and MUST NEVER be
+   dispatched from `_run_cleanup` (`core/aletheia/agent_runtime/scheduler.py`).
 2. **All other retention is telemetry-only.** Every prune function is
-   transactional (`was_in_tx` pattern from `_delete_old_rows` at
-   `repositories.py:2900-2929`) and every parent-table prune cascade-deletes
-   children FIRST (mirror `prune_agent_runs` at `:2929-2946`).
+   transactional (`was_in_tx` pattern from `_delete_old_rows` in
+   `core/aletheia/storage/repositories.py`) and every parent-table prune cascade-deletes
+   children FIRST (mirror `prune_agent_runs` in `core/aletheia/storage/repositories_research.py`).
 
 ---
 
@@ -54,7 +53,7 @@ keeps steady state after that.
 `ps_orders`, `ps_fills`, `ps_positions`.
 
 Enforced by:
-- Exclusion from `_PRUNABLE` at `aletheia/storage/repositories.py:2860-2887`.
+- Exclusion from `_PRUNABLE` in `core/aletheia/storage/repositories.py`.
 - Architecture fitness assertion at `tests/test_architecture_fitness.py`.
 - Pre/post baseline row-count invariant captured by the backfill script;
   any mismatch aborts and restores from backup.
@@ -78,14 +77,14 @@ breaks the audit invariant.
 
 ## 3. Per-table retention (prunable)
 
-Windows below are the Phase 3 defaults; each is wired through the new
+Windows below are the defaults; each is wired through the new
 `config.retention.*` section in `aletheia/config/schema.py`.
 
 ### 3.1 Agent runtime and shell telemetry
 
 | Table | Window | Prune column | Function | Cascade | Archive? | Rationale (see §7 for MB) |
 |-------|--------|--------------|----------|---------|----------|---------------------------|
-| `agent_run_steps` | 14d | `created_at` | `prune_run_steps` (existing, `repositories.py:2947`; window shortened) | via `prune_agent_runs` | hard delete | Pure telemetry, no audit/learning binding. Combined with write-guardrail #2 (drop `log_tool` double-write) stabilises at ~15 MiB. |
+| `agent_run_steps` | 14d | `created_at` | `prune_run_steps` (existing, `repositories_research.py`; window shortened) | via `prune_agent_runs` | hard delete | Pure telemetry, no audit/learning binding. Combined with write-guardrail #2 (drop `log_tool` double-write) stabilises at ~15 MiB. |
 | `agent_shell_messages` (context) | 3d | `created_at` | `prune_agent_shell_messages` (existing, `:4549`; new type-tiered signature) | none (FK only to `agent_shell_sessions`) | hard delete | 91 % of message bytes are `content.context` payloads (~143 MiB) that no reader consumes. Paired with write-guardrail #1 to shrink each surviving context row from ~7.6 KiB to <500 B. |
 | `agent_shell_messages` (other) | 14d | `created_at` | same function, `other` tier | none | archive to `agent_shell_messages_review.jsonl.gz` | Preserves delegation/review/diagnostic chain-of-thought that Lens-C flagged as post-mortem load-bearing. |
 | `agent_shell_events` | 14d | `created_at` | `prune_agent_shell_events` (existing, `:4538`; unchanged) | none | archive to `agent_shell_events.jsonl.gz` | 7-14d incident-diagnosis window. Savings come from write-guardrail #10 (payload trim). |
@@ -123,7 +122,6 @@ Windows below are the Phase 3 defaults; each is wired through the new
 | `universe_twin_shadow_batches` | fixed 30d, except admitted Candidate-selection trust prefix/training denominator | `captured_at` | `prune_universe_twin_shadow_evidence` | logical parent; records deleted first | hard delete | Prospective Shadow scorer-run identity; repository enforces at most one capture per 55min. For a protected epoch, rows through its first admission audit and rows at or before the global frozen training cutoff are retained; later telemetry expires at 30d. A protected epoch without an admission audit fails closed and retains all evidence, as does unreadable Candidate policy state. |
 | `universe_twin_shadow_records` | via batch cutoff/protected Candidate prefix | parent batch `captured_at` | `prune_universe_twin_shadow_evidence` | deleted before batch | hard delete | Complete candidates within the sampled batch; record v2 removes reconstructible per-row duplicates while retaining raw input, selection, outcome linkage, cost, and audit identity. A 20-row fixture projects 77,016 payload bytes/run, 27 cadence-bounded runs/day, 1.983 MiB/day, and 59.493 MiB per rolling 30d window, plus the finite admission/training trust prefix. |
 | `universe_relative_rank_shadow_batches` | fixed 30d | `captured_at` | `prune_universe_twin_shadow_evidence` | independent compact batch | hard delete | Relative Rank candidate records are compact JSON; namespaced selected outcomes follow canonical outcome retention. No Learning clean-window extension or authority is inferred. |
-| `universe_forward_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_universe_forward_outcomes` | none | hard delete | Selected-member legacy fallback remains reproducible while an active open Learning experiment may still cite it. |
 | `alpha_control_observations` | 60d | `entry_ts` | `prune_alpha_control_observations` (NEW) | none | hard delete | Matches alpha_attribution default 30d reader window + 7d horizon + settlement lag + margin. Sample cadence reduced 6× (write-guardrail #16). |
 
 ### 3.4 Filter evidence
@@ -182,12 +180,12 @@ Knowledge subdirs:
 ## 5. Write-side guardrails
 
 Each guardrail stops a dead-write pattern at the source. File references
-below are the Phase 3 target lines.
+below name the writer touched by each guardrail (paths as of 2026-07-17; resolve by symbol).
 
 | # | Target | File:line | Effect |
 |---|--------|-----------|--------|
 | 1 | `agent_shell_messages` content.context | `aletheia/server/routes/operator.py:512-524` (`_seed_branch_workspace`) + `operator-shell/src/operator_loop.ts:1023` (external repo — see §9) | Stop persisting `snapshot.context` on `message_type='context'`. Retro-strip surviving <3d rows via one-shot UPDATE inside the backfill script. |
-| 2 | `agent_run_steps` double-write | `aletheia/agents/helpers.py:395-401` (`log_tool`) + `aletheia/server/routes/data.py:238-246` (`/api/agent-runs/{run_id}/steps` UNION at read) | Remove double-write. `agent_tool_calls` remains sole tool-call ledger. Endpoint UNIONs both at read. Frontend UNION follow-up in §10. |
+| 2 | `agent_run_steps` double-write | `aletheia/agents/helpers.py:395-401` (`log_tool`) + `aletheia/server/routes/data.py:238-246` (`/api/agent-runs/{run_id}/steps` UNION at read) | Remove double-write. `agent_tool_calls` remains sole tool-call ledger. Endpoint UNIONs both at read. Frontend UNION follow-up is in the archived follow-ups (§7). |
 | 3 | `controller_recommendations` insufficient×insufficient | `aletheia/analytics/filter_controller.py:244-272` (gate insert) + `:218-224` (freshness gate on `0.5 × observe_interval_hours`) | Skip 91 % of rows; write one summary row per run. Preserves the `test_filter_evidence.py:520` assertion (only both-insufficient dropped). |
 | 4 | `agent_shell_heartbeats` UPDATE-not-INSERT | `aletheia/agent_shell/operator_store.py:222` | Hash semantic payload (status, mode, permission_mode, is_busy, current_task_id, current_intent, queue_size, last_error, model_provider, session_id, active_branch_id, active_branch_kind, active_branch_title). If identical to previous row, UPDATE `last_seen_at`. Never skip entirely — supervisor staleness detection at `gateway/operator_shell.py:296` depends on the bump. |
 | 5 | `funding_rate_snapshots` skip-if-unchanged | `aletheia/storage/repositories.py:4027-4031` (`insert_funding_rate_snapshot`) | Skip INSERT if `funding_rate == prev.funding_rate AND next_funding_time == prev.next_funding_time AND long_short_ratio == prev.long_short_ratio`. Hourly floor. |
@@ -261,173 +259,13 @@ enforces gateway-stopped as a preflight check (`aletheia gateway status`).
 
 ---
 
-## 7. Trajectory and corrected capacity evidence
+## 7. Dated follow-ups (archived)
 
-The table below is the 2026-07-17 planning projection, not proof that Phase 4
-completed. On CASI at 2026-08-06, the measured `app.db` was 1781.84 MiB with
-88.11 MiB on the freelist and `auto_vacuum=NONE`; therefore the projected
-530–550 MiB state was never established. From the documented 1031 MiB point to
-the current measurement the historical net slope is about 37.6 MiB/day, but
-recent high-volume experiment writers stopped on 2026-08-03, so that slope must
-not be extrapolated as a precise forward forecast.
-
-| Day | `app.db` (MiB) | `agent_shell/` (MiB) | Notes |
-|-----|----------------|----------------------|-------|
-| 0 (before Phase 4) | 1031 | 278 | Starting state 2026-07-17. `agent_shell_messages` 219 / `market_ohlcv` 103 / `agent_run_steps` 53 / `filter_candidate_outcomes` 49 / `universe_feature_snapshots` 60 / `controller_recommendations` 42 / `filter_decisions` 34 / `filter_decision_batches` 32 / `agent_shell_events` 32 / `funding_rate_snapshots` 47 / `open_interest_snapshots` 38 / others. Audit chain 15 MiB, learning 8 MiB. |
-| 0 (immediately after Phase 4) | 530 | 25 | Post gateway-stop → backup → prune → VACUUM → restart. Expected reclaim ~442 MiB rows + ~50 MiB via VACUUM. Retro-strip of `content.context` on surviving <3d rows adds ~8 MiB. If landing lands at 550 MiB, run VACUUM again after `wal_checkpoint(TRUNCATE)` and `PRAGMA optimize`. |
-| 7 | 520 | 30 | Steady state stabilises. Write-guardrails 1 / 3 / 14 / 18 / 15 / 5 deployed by Day 7 cut daily growth from ~25 MiB/day to ~5-8 MiB/day; nightly prune counterbalances. |
-| 30 | 540 | 40 | Full steady state; retention windows fully populated. `filter_candidate_outcomes` @ 30d ≈ 200 MiB dominates. Add write-guardrail #6 (batch scanner_weights_quota) early to keep `filter_decisions` 45d plateau near ~150 MiB rather than 200 MiB. |
-| 60 | 530 | 45 | Long-run steady state with all guardrails and clean_window_cutoff active. `filter_candidate_outcomes` holds at ~200 MiB (would blow past 500 MiB without retention). If future writers land in currently-empty `artifacts/` or `reports/` subdirs, per-subdir retention must be in place before those writers ship. |
-
-The runtime now appends one exact post-cleanup sample to
-`logs/database_capacity.jsonl`, including main DB, WAL, logical used bytes,
-freelist bytes, capacity ratio, reclaim mode, and the latest PASSIVE-checkpoint
-backlog. Use at least 30 samples before
-claiming a new steady-state curve. A first-order post-v4 estimate is roughly
-1.4–1.7 GiB after redundant-index removal and offline compaction, with a 2 GiB
-operational budget; this remains a model until the nightly history validates it.
-
-`aletheia data capacity --deep` uses SQLite `dbstat` aggregate mode and reports
-per-object packing ratio, so a VACUUM decision can distinguish freelist/poor page
-packing from legitimate retained payload. Capacity trend uses the median of
-pairwise physical-size slopes; fewer than 3 samples or less than 7 elapsed days is
-reported as provisional/insufficient rather than a reliable ETA.
-
-### 7.1 Explicit physical-layout optimization and remaining boundaries
-
-- `market_ohlcv` retention now deletes by the durable composite primary key rather
-  than hidden `rowid`. Explicit offline compact can therefore rebuild the table as
-  `WITHOUT ROWID`, eliminating the separate primary-key B-tree while preserving
-  the logical schema and indexed timeframe query. This is intentionally not a v6
-  migration: migrations remain additive-only, and no dataset-sized rebuild is an
-  implicit first-deploy or Gateway-start side effect.
-- A read-only CASI sample on 2026-08-06 copied 250,000 real retained rows into both
-  layouts. Rowid table + PK + timeframe index used 38,699,008 bytes; WITHOUT ROWID
-  table + timeframe index used 33,611,776 bytes, a 13.15% reduction. Point primary-key
-  lookup measured 0.021277 ms versus 0.021260 ms and the prune selector 0.024 ms versus
-  0.023 ms, so no regression was measurable at this sample size. Applied to the current
-  post-v4 OHLCV objects, the projected saving is about 36 MiB; this remains a projection
-  until an owner schedules and measures production compaction.
-- Permanent Learning/audit ledgers must not be TTL-pruned. If their growth becomes
-  material, use a separately specified content-addressed manifest or verified cold
-  archive with transparent replay; never silently delete or detach authority evidence.
-- Time retention is paired with per-instrument bar caps and capacity alerts. A hard
-  global row cap must not override active-experiment clean-window guards.
-
-SQLite authorities for these choices: [auto/incremental vacuum and optimize](https://www.sqlite.org/pragma.html),
-[WAL checkpoint behavior](https://www.sqlite.org/wal.html),
-[partial indexes](https://www.sqlite.org/partialindex.html),
-[dbstat aggregate mode](https://www.sqlite.org/dbstat.html), and
-[WITHOUT ROWID trade-offs](https://www.sqlite.org/withoutrowid.html).
-
----
-
-## 8. Open-questions resolution (Phase 2 decisions)
-
-All 11 open questions from workflow Phase 1 are resolved. Decisions below
-match `/tmp/RETENTION_SPEC.md#user-confirmed-decisions-phase-2`.
-
-| # | Question | Decision |
-|---|----------|----------|
-| 1 | Filter tables safety (`filter_candidate_outcomes` + `filter_decisions`) | **A** — 30d/45d with clean_window_cutoff guard. Effective cutoff = `min(now-Nd, MIN(exposed_at) for active open experiments)`. Unexposed registrations are ignored. |
-| 2 | `content.context` write-fix coordination | Cross-repo coordinated. Python-side (`aletheia/server/routes/operator.py:512-524` + `aletheia/agent_shell/operator_store.py`) ships in this workflow. TypeScript peer (`operator-shell/src/operator_loop.ts:1023`) documented as TODO in §9 for the external repo but NOT implemented here. |
-| 3 | `auto_vacuum` mode | **INCREMENTAL**. One-time `PRAGMA auto_vacuum=INCREMENTAL` in the backfill (takes effect after VACUUM), then rely on `PRAGMA incremental_vacuum(1000)` in `_run_cleanup`. |
-| 4 | `agent_shell_messages` retention shape | **Type-tiered**. `message_type='context'`: 3d. All other message_types: 14d. |
-| 5 | Backup rotation | **`keep_recent=7`** (count-based). |
-| 6 | `filter_shadow_evaluations` schema | **Keep append-only.** No UPSERT-latest schema change. |
-| 7 | `universe_snapshots` + `universe_members` + `universe_scanner_runs` | **30d retention plus selected-member fallback guard.** Parent pruning preserves rows still referenced by a guarded `universe_forward_outcomes` observation. |
-| 8 | Learning cohort hash | **Drop `code_commit` from statistical identity.** `learning_exposures.code_commit` remains provenance; authority/replay currentness uses the versioned, secret-free `behavior_contract_hash`. |
-| 9 | Retro-strip `content.context` | **Yes.** One-shot UPDATE strips `content.context` from surviving <3d rows inside the backfill script. Saves ~8 MiB immediately. |
-| 10 | Legacy source tree removal | **NOT part of this workflow.** Schedule a `CronCreate` job for 2026-08-16. See §11. |
-| 11 | Doctor threshold regression tests | **Yes.** Agent 10 writes `tests/test_doctor_thresholds.py` covering agent_shell_events counts, filter_candidate_outcomes registered/settled ratios, coingecko_top_snapshots 30-min freshness. |
-
----
-
-## 9. Cross-repo TODO: `operator-shell/src/operator_loop.ts:1023`
-
-The TypeScript peer to write-guardrail #1 lives in the external
-`operator-shell` repository. In this workflow the Python server-side drop
-of the `context` field ships (`aletheia/server/routes/operator.py:512-524`
-in `_seed_branch_workspace`). Until the TS PR lands, the TS writer keeps
-producing bloated `context` payloads on every re-entered session and the
-Python server strips them at persistence.
-
-Action for the external repo:
-
-- File: `operator-shell/src/operator_loop.ts`, line 1023.
-- Change the `createMessage` body from
-  `{text, profile, session_kind, sections, context: snapshot.context}` to
-  `{text, profile, session_kind, sections}`.
-- Ship as a coordinated PR paired with the Python-side deploy.
-
-Coordinated PR status: in flight; tracked separately from Phase 3.
-
----
-
-## 10. Frontend follow-up: `AgentActivity.tsx` UNION
-
-Agent 8 removed the `agent_run_steps` double-write inside `log_tool`
-(write-guardrail #2). The server endpoint `/api/agent-runs/{run_id}/steps`
-now UNIONs `agent_run_steps` and `agent_tool_calls` at read time
-(`aletheia/server/routes/data.py:238-246`).
-
-The frontend `AgentActivity.tsx` component still reads only
-`/api/agent-runs/{id}/steps` today. Because the endpoint contract change is
-a superset (steps + tool_calls appear as one merged list), the UI works
-unchanged. Future frontend work should:
-
-- Confirm the merged list renders correctly for legacy runs (pre-guardrail)
-  where `agent_run_steps` contains duplicate tool-call rows.
-- Optionally show tool-call rows and reasoning-step rows differently once
-  the transition window has passed (~ 14d, when older duplicated
-  `agent_run_steps` rows have been pruned).
-
-Not in scope for Phase 3.
-
----
-
-## 10.5. Deferred write-side guardrails
-
-Phase 3 deployed the top-priority write guardrails (Section 4) but did not
-close every writer path considered during the workflow. A running list of
-unfinished items, with rationale, expected impact, and code touchpoints,
-lives in the archived companion
-[`RETENTION_WRITE_GUARDRAILS_TODO_2026-07-17.md`](../../archive/design-superseded/data/RETENTION_WRITE_GUARDRAILS_TODO_2026-07-17.md). Read
-that file before starting a "second-round retention" push so previously
-analyzed context is not re-discovered.
-
-Highest-leverage deferred items (see companion doc for details):
-
-- **P0-1** `agent_shell/sessions/` strategy-stem file writes — the main
-  reason `agent_shell/` sits at ~246 MiB instead of the 50 MiB synthesis
-  target. Requires a new session_kind gate in `append_session_log`.
-- **P0-2** Cross-repo `operator-shell/src/operator_loop.ts:1023` context
-  sender — server strips the payload, TS side still generates it.
-- **P0-3** `filter_decisions` scanner_weights_quota — flip writer to
-  batch form (read-side dual-decode already shipped in PR #121).
-- **P0-4** `market_ohlcv` legacy_unknown writer — one-time delete done;
-  writer path still needs sealing to prevent regrowth.
-
----
-
-## 11. Legacy source tree removal (2026-08-16)
-
-The runtime-home migration (`.runtime-home-migration.json.completed_at =
-2026-07-17T11:25:17`) preserved `/Users/yixian/Projects/aletheia/data/`
-(~3 GiB) as a rollback source. Per user decision Q10 that path is NOT
-touched by Phase 3.
-
-Schedule a session-scope `CronCreate` job for **2026-08-16** that:
-
-1. Verifies runtime-home stability — `aletheia gateway status` running,
-   `aletheia doctor` fully green, `PRAGMA integrity_check` on `app.db`
-   returns `ok`, `~/.aletheia/.runtime-home-migration.json` unchanged.
-2. Prompts the user before running
-   `rm -rf /Users/yixian/Projects/aletheia/data/`.
-3. Records the removal (or the user's decline) in a durable audit event.
-
-The scheduling lives outside code (session-scope, not durable). See
-[claude scheduling section](#) for how to instantiate.
+The 2026-07-17 capacity projection and 2026-08-06 measurements, the Phase 2
+open-question resolutions, the cross-repo / frontend / deferred write-guardrail
+follow-ups and the 2026-08-16 legacy source-tree removal note were moved to
+[`RETENTION_POLICY_followups_2026-07-17.md`](../../archive/design-superseded/data/RETENTION_POLICY_followups_2026-07-17.md)
+on 2026-10-09. Open items there need a GitHub Issue before work restarts.
 
 ---
 

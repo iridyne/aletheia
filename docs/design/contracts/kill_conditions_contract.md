@@ -38,15 +38,12 @@
 **判决标准**：系统连续 3 个自然日没有新的 position open，
 意味着决策链已经僵死——数据在流动，但系统无法将机会转化为行动。
 
-**监测结构**（已实现）：
-- `_probe_profit_loop()` 在 `core/aletheia/diagnostics/doctor.py` 中检测 opportunities
-  流动而 proposals 为零的解耦状态，报告键 `loop.profit`（D8-S03 锁死，已实现）
-
 **当前机器保护**：
 - `count_consecutive_zero_fill_days()` 读取 `positions.opened_at` 并返回连续无新开仓天数；
 - 函数名保留历史 `zero_fill` 用语，但当前统计单元是 position open，不是 `fills` 表行。
+- 原 doctor 探针 `_probe_profit_loop()`（`loop.profit`）及其 claim D8-S03 已随 #2945（2e69baae9）删除。
 
-**对应 Spec Claims**：D8-S03 · D8-S04
+**对应 Spec Claims**：D8-S04
 
 ---
 

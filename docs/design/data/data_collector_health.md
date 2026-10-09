@@ -88,8 +88,8 @@ essential layered-pause jobs, so their task entries do not exit merely because
 
 When no observed instruments exist, symbol-dependent domains are marked
 `not_configured`; symbol-independent CoinGecko, macro, and DefiLlama collection
-continues on the normal context-lane cadence. This preserves research supply on a
-local-paper installation with no configured execution exchange.
+continues on the normal context-lane cadence. This preserves research supply on an
+installation with no configured execution exchange.
 
 ## Operator surfaces
 

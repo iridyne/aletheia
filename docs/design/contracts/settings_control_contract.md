@@ -77,7 +77,6 @@ runtime; each grid uses the staged mode and the named Save boundary.
 | same | Serenity Lens enabled | immediate | `updateSerenityConfig` |
 | same | Auto-promote candidate themes | immediate | `updateSerenityConfig` |
 | same | Scheduler enabled | immediate | `updateRuntimeConfig` |
-| same | Operator loop | immediate | `updateOperatorConfig` |
 | same | System Operator daemon | immediate | `updatePiDaemonConfig` |
 | same `EconomicsSnapshotCard` | Enable economics harness | immediate | `updateEconomicsConfig` |
 | same | Budget shadow observation | immediate | `updateEconomicsConfig` |

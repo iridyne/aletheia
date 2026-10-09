@@ -28,10 +28,41 @@ uv run aletheia opportunity audit --view alpha --hours 720
 - **Sizing**: why intended or executed sizes are small.
 - **Alpha**: which measured layer appears to add or destroy alpha.
 
-Add `--json` for machine-readable output. The older `funnel audit` and
-`sizing trace` commands remain compatibility aliases but are deprecated.
-For the complete stage vocabulary, filters, and compatibility routing, see
-[Opportunity Lifecycle CLI](OPPORTUNITY_LIFECYCLE_CLI.md).
+Add `--json` for machine-readable output. Other views of the same command:
+`overview` (default), `thesis`, `sizing-counterfactual`, `controller`,
+`ranker-objective`, `entry-exit` (`_VIEWS` in `core/aletheia/cli/opportunity.py`).
+
+## Opportunity lifecycle trace
+
+`opportunity audit` / `opportunity trace` reconstruct, read-only, why a legacy
+Opportunity did or did not become a trade. They never call an LLM, rerun ranker,
+guard, debate or Risk, submit proposals or place orders; missing legacy evidence
+stays `insufficient_data`.
+
+```bash
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity audit --hours 24 --stage debate_downgraded
+uv run aletheia opportunity audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia opportunity audit --hours 24 --symbol TRX/USDT
+uv run aletheia opportunity trace --id <id>
+```
+
+`--stage` / `--verdict` / `--symbol` apply to the `overview` view. The stage
+vocabulary (`created`, `ttl_expired`, `signal_pending`, `operator_skip`,
+`debate_downgraded`, `proposal_created`, `risk_rejected`, `order_executed`,
+`position_opened`, `position_closed`, `shadow_resolved`,
+`forward_outcome_resolved`, …) is defined by `_causal_stage_order` in
+`core/aletheia/analytics/opportunity_flow.py`. `inspect opportunities` remains
+the raw row listing.
+
+Hidden compatibility aliases (scripts only; human output points back here):
+
+| Old command | Current command |
+|---|---|
+| `aletheia flow audit` / `flow trace` | `aletheia opportunity audit` / `opportunity trace` |
+| `aletheia funnel audit` | `aletheia opportunity audit --view funnel` |
+| `aletheia sizing trace` | `aletheia opportunity audit --view sizing` |
+| `aletheia alpha audit` | `aletheia opportunity audit --view alpha` |
 
 ## Evidence boundaries
 

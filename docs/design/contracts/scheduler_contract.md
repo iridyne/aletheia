@@ -11,16 +11,16 @@
 
 调度器通过 `init_scheduler()` 构建并启动，无单独的 `build_scheduler()` 函数。
 
-| 函数 | 文件:行 | 说明 |
-|---|---|---|
-| `init_scheduler()` | `scheduler.py:298` | 构造 `BackgroundScheduler`、注册全部 job、调用 `_scheduler.start()` |
-| `stop_scheduler()` | `scheduler.py:494` | `_scheduler.shutdown(wait=False)` → 置 `_scheduler = None` |
-| `pause_scheduler()` | `scheduler.py:501` | APScheduler `pause()`；job 不再派发，但不销毁注册表 |
-| `resume_scheduler()` | `scheduler.py:508` | 若 `_scheduler is None` 则按需重建；否则 `_scheduler.resume()` |
+| 函数（`core/aletheia/agent_runtime/scheduler.py`） | 说明 |
+|---|---|
+| `init_scheduler()` | 构造 `BackgroundScheduler`、注册全部 job、调用 `_scheduler.start()` |
+| `stop_scheduler()` | `_scheduler.shutdown(wait=False)` → 置 `_scheduler = None` |
+| `pause_scheduler()` | APScheduler `pause()`；job 不再派发，但不销毁注册表 |
+| `resume_scheduler()` | 若 `_scheduler is None` 则按需重建；否则 `_scheduler.resume()` |
 
-**调用路径**：`core/aletheia/server/app.py:301` 的 FastAPI lifespan 在 `run_migrations()` + `init_tool_registry()` 之后调用 `init_scheduler()`；shutdown 阶段 `app.py:387` 调用 `stop_scheduler()`。
+**调用路径**：`core/aletheia/server/app.py` 的 FastAPI lifespan 在 `run_migrations()` + `init_tool_registry()` 之后调用 `init_scheduler()`；shutdown 阶段调用 `stop_scheduler()`。
 
-**APScheduler 版本**：`3.11.2`（`pyproject.toml:15`，`uv.lock:259`），使用 `BackgroundScheduler`（`apscheduler.schedulers.background`）。
+**APScheduler 版本**：`3.11.2`（`pyproject.toml` 约束 `apscheduler>=3.10`，`uv.lock` 锁定），使用 `BackgroundScheduler`（`apscheduler.schedulers.background`）。
 
 **启动时暂停**：`init_scheduler()` 在 `_scheduler.start()` 后检查 `cfg.runtime.paused`。当 `layered_pause_enabled=true` 时，只暂停开仓、观察者和 LLM/决策任务；下列 `_ESSENTIAL_JOBS` 仍派发，以维持市场价格、账户视图、保护性退出、对账、健康检查和数据维护。只有 `layered_pause_enabled=false` 的 blanket pause 才暂停整个 APScheduler。集合内任务不得再在函数体中因 `runtime.paused` 提前返回，这一一致性由 `tests/test_layered_pause.py` 锁定。
 
@@ -32,19 +32,18 @@
 
 ## §2 执行器池
 
-`_EXECUTOR_WORKERS` 字典定义于 `scheduler.py:96–107`，由 `scheduler.py:320` 展开为 APScheduler executors：
+`scheduler.py` 的 `_EXECUTOR_WORKERS` 字典定义命名池，`init_scheduler()` 将其展开为 APScheduler executors：
 
 ```python
-# scheduler.py:96
 _EXECUTOR_WORKERS = {
     "default": 2,
-    "io":      1,
-    "audit":   1,
+    "io": 1,
+    "maintenance_io": 1,
+    "audit": 1,
     "fast_io": 1,
     "protective": 1,
-    "learning_measurement": 1,
-    "observer":1,
-    "agents":  1,
+    "observer": 1,
+    "agents": 1,
 }
 ```
 
@@ -52,57 +51,73 @@ _EXECUTOR_WORKERS = {
 |---|---|---|
 | `default` | 2 | 通用基础设施（portfolio_snapshot） |
 | `io` | 1 | 短时 read/write 基础任务（market_data、reconciliation、cleanup 等）；单写防 WAL 碰撞 |
-| `audit` | 1 | Universe recovery 的 hash-chain mirror；与 operational `io` 队列完全隔离 |
-| `fast_io` | 1 | 延迟敏感的基础设施（price_feed，30s 周期） |
-| `protective` | 1 | Position 保护检查；不得排在长时数据/结算任务之后 |
-| `learning_measurement` | 1 | 串行执行 contribution evaluator 与 boot measurement catch-up；不与 31-job `io` 队列共享排队 |
-| `observer` | 1 | boot catch-up 市场观察者；独立隔离，防被 LLM job 饿死 |
-| `agents` | 1 | LLM/agent 密集型 job（paper_trader、post_trade_reviewer 等）；串行防 SQLite 竞争 |
+| `maintenance_io` | 1 | 长时有界维护（universe_refresh、outcome_settler、OHLCV backfill）；不占用短时 `io` 队列 |
+| `audit` | 1 | hash-chain mirror 与 audit outbox（universe_scanner_audit_reconciler、funding_audit_reconciler、observation_lab_bridge）；与 operational `io` 队列完全隔离 |
+| `fast_io` | 1 | 延迟敏感的基础设施（price_feed、connectivity_monitor） |
+| `protective` | 1 | Position 保护检查（position_manager 是此池唯一 job）；不得排在长时数据/结算任务之后 |
+| `observer` | 1 | 保留的隔离池；原 market_observer 已退役（#2933），当前没有 job 注册到此池 |
+| `agents` | 1 | LLM/agent 密集型 job（pi_trading_decision、news_analyze、post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
-**总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **9**。
+**总工人数**：2 + 1 × 7 = **9**。
 
-注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane；普通同步 job 与 Universe recovery audit 分别复用独立的固定 1-worker daemon lane。三条 lane 的 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
+注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`tests/specs/spec_agent_contracts.py`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane；普通同步 job 与 Universe recovery audit 分别复用独立的固定 1-worker daemon lane。三条 lane 的 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
 
 ---
 
 ## §3 任务注册表
 
-全局 `job_defaults`（`scheduler.py:321`）：`coalesce=True`，`max_instances=1`（universe_refresh 在 job 级别显式重复声明 `max_instances=1`，`scheduler.py:438`）。
+全局 `job_defaults`（`init_scheduler()`）：`coalesce=True`，`max_instances=1`（universe_refresh 等在 job 级别显式重复声明 `max_instances=1`）。
 
-下表记录任务的调度参数；实际注册还受配置与 composition 准入约束（见注），不是所有任务无条件同时存在的保证。
+下表由 `init_scheduler()` 的 `add_job` 调用整理（2026-10-09）；实际注册还受配置与 composition 准入约束（见注），不是所有任务无条件同时存在的保证。timeout 列来自 `_ASYNC_JOB_TIMEOUT_SEC`（`_run_async_with_timeout` / `_run_sync_with_timeout` 共用），`—` 表示该 job 不经该表计时。
 
-| # | job_id | 行 | trigger | 参数 | executor | timeout(s) | misfire_grace |
-|---|---|---|---|---|---|---|---|
-| 1 | `market_data` | 324 | interval | minutes=5 | io | 90 | 60 |
-| 2 | `market_observer` | — | interval | minutes=10；仅注册已组合的 producer | observer | 500 | 60 |
-| 3 | `dreaming_daily` | — | cron | hour=2, minute=0, tz=Asia/Shanghai；至少一个 nightly Research callback 已组合 | agents | 300 | 300 |
-| 4 | `insight_synthesizer` | 337 | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
-| 5 | `confidence_calibration` | 341 | interval | hours=6 | io | 30 | 300 |
-| 9 | `reconciliation` | 357 | interval | minutes=2 | io | — | 60 |
-| 10 | `portfolio_snapshot` | 361 | interval | minutes=10 | default | 45 | 120 |
-| 11 | `exchange_sync` | 366 | interval | minutes=5 | io | 60 | 60 |
-| 12 | `paper_trader` | 371 | interval | minutes=3 | agents | 300 | 60 |
-| 13 | `pi_trading_decision` | 376 | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
-| 14 | `price_feed` | 381 | interval | seconds=30 | fast_io | 45 | 15 |
-| 15 | `position_manager` | 385 | interval | seconds=30 | io | — | 60 |
-| 15a | `position_path_observer` | 389 | interval | minutes=5 | io | 90 | 120 |
-| 16 | `position_reconcile` | 393 | interval | minutes=5 | io | — | 60 |
-| 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | 45 | 30 |
-| 18 | `cleanup` | 399 | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
-| 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |
-| 20 | `equity_observer` | — | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟；仅注册已组合的 producer | agents | 240 | 300 |
-| 21 | `prediction_observer` | — | interval | minutes=30；仅当 Prediction Observer 与 Divergence Scanner 均已组合时注册 | agents | 240 | 120 |
-| 22 | `post_trade_reviewer` | — | interval | hours=4；仅注册已组合的 producer | agents | 300 | 300 |
-| 23 | `risk_critic` | — | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
-| 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
-| 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
-| 24b | `funding_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
-| 25 | `data_collectors` | 444 | interval | minutes=2 | io | 55 | 60 |
-| 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
-| 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
-| 27 | `ohlcv_nightly_backfill` | 457 | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | io | 3600 | 600 |
-| 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
-| 29 | `daily_summary` | 471 | cron | hour=cfg.telegram.daily_summary_hour_cst (default 8), minute=0, tz=Asia/Shanghai | io | 60 | 600 |
+| job_id | trigger | 参数 | executor | async timeout(s) | misfire_grace |
+|---|---|---|---|---|---|
+| `market_data` | interval | minutes=5（`MARKET_DATA_INTERVAL_MINUTES`） | io | 90 | 60 |
+| `dreaming_daily` | cron | hour=2, minute=0, tz=Asia/Shanghai；至少一个 nightly Research callback 已组合 | agents | 300（`dreaming_agent`）| 300 |
+| `serenity_startup_catchup` | date | — | agents | — | None（不限）|
+| `lesson_reviewer` | cron | hour=3, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
+| `insight_synthesizer` | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
+| `learning_startup_catchup` | date | — | agents | — | None（不限）|
+| `confidence_calibration` | interval | hours=6 | io | 30 | 300 |
+| `pricing_reference_refresh` | interval | hours=6 | io | — | 300 |
+| `reconciliation` | interval | minutes=2 | io | — | 60 |
+| `portfolio_snapshot` | interval | minutes=10（`PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES`） | default | 45 | 120 |
+| `exchange_sync` | interval | minutes=5 | io | 60 | 60 |
+| `position_path_observer` | interval | minutes=5 | io | 90 | 120 |
+| `pi_trading_decision` | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
+| `price_feed` | interval | seconds=30 | fast_io | 45 | 15 |
+| `connectivity_monitor` | interval | seconds=cfg.health.exchange_probe_interval_sec | fast_io | 15 | 15 |
+| `position_manager` | interval | seconds=30 | protective | — | 60 |
+| `position_reconcile` | interval | minutes=5 | io | — | 60 |
+| `tpsl_fill_check` | interval | seconds=90 | io | 45 | 30 |
+| `cleanup` | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
+| `outcome_hook_replay` | interval | minutes=1 | io | — | 60 |
+| `health_check` | interval | minutes=10 | io | — | 120 |
+| `persona_rollout` | interval | hours=8 | io | — | 600 |
+| `filter_controller_observe` | interval | hours=max(1, int(cfg.controller.observe_interval_hours)) | io | — | 600 |
+| `news_fetch` | interval | minutes=cfg.news.fetch_interval_minutes | io | 120 | 120 |
+| `news_analyze` | interval | minutes=5 | agents | 105 | 120 |
+| `equity_observer` | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟（`_equity_observer_trigger()`）；仅注册已组合的 producer | agents | 240 | 300 |
+| `prediction_observer` | interval | minutes=30；Prediction Observer 与 Divergence Scanner 均已组合时注册 | agents | 240 | 120 |
+| `post_trade_reviewer` | interval | hours=4；仅注册已组合的 producer | agents | 300 | 300 |
+| `risk_critic` | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
+| `universe_refresh` | interval | minutes=10 | maintenance_io | 600 | 120 |
+| `universe_scanner_audit_reconciler` | interval | minutes=5 | audit | 15 | 120 |
+| `observation_lab_bridge` | interval | minutes=1 | audit | 30 | 120 |
+| `outcome_settler` | interval | minutes=10 | maintenance_io | 300 | 120 |
+| `funding_audit_reconciler` | interval | minutes=5 | audit | 15 | 120 |
+| `broker_funding_settler` | interval | minutes=30 | io | 120 | 120 |
+| `data_collectors` | interval | minutes=2 | io | 55 | 60 |
+| `data_collector_context` | interval | minutes=10 | io | 60 | 60 |
+| `guard_promotion` | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
+| `ohlcv_nightly_backfill` | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | maintenance_io | 3600 | 600 |
+| `ohlcv_active_backfill` | interval | minutes=getattr(cfg.historical_data, 'active_universe_backfill_interval_minutes', 10) | maintenance_io | 300 | 120 |
+| `okx_demo_symbols` | interval | hours=4 | io | — | 600 |
+| `bitget_demo_capabilities` | interval | hours=4 | io | — | 600 |
+| `venue_margin_facts` | interval | minutes=5（`VENUE_MARGIN_REFRESH_INTERVAL_MINUTES`） | io | 60 | 120 |
+| `daily_summary` | cron | hour=cfg.telegram.daily_summary_hour_cst（默认 8）, minute=0, tz=Asia/Shanghai | io | 60 | 600 |
+
+已退役、不再注册的 job：`market_observer`（#2933）、`paper_trader`（#2945，2e69baae9）、`shadow_resolver`（shadow 写路径随 #3704 退役，384cd0cb2）。
 
 Nightly Research availability 不改变上述 cadence：`dreaming_daily` 仅在 lesson
 extraction 或 Serenity enqueue callback 至少一个已组合时注册；各自只执行可用子能力。
@@ -138,7 +153,7 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
 **注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。
-`market_observer`、`post_trade_reviewer`、`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
+`post_trade_reviewer`、`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
 `extensions/research` producer 绑定到既有 agent registry、`get_agent_fn()` 可解析时注册。
 Research 缺失时省略对应 job，不创建失败 AgentRun 或调度失败健康记录；Core 任务保持注册。
 Equity 的 `_equity_observer_trigger()` 保留 Eastern-time DST 与 misfire 语义。
@@ -210,14 +225,13 @@ The full proposed response and bounded/cache rules are in
 
 每个注册任务都通过 `_guarded(job_id, fn)` 进入 `_run_job_guarded()`。该最外层包装会捕获未处理异常、登记失败，并在前后清理线程局部 SQLite 状态；多数 `_run_xxx()` 还会就地捕获超时或生产函数已经报告的局部失败，以便保留同轮已完成工作。任何单个任务失败都不会终止 APScheduler 调度线程。
 
-### 4.2 连续失败计数器 → infra_event（`scheduler.py:57–79`）
+### 4.2 连续失败计数器 → infra_event（`_record_job_failure`）
 
 ```python
-# scheduler.py:57
 _consecutive_failures: dict[str, int] = {}
-_FAILURE_ALERT_THRESHOLD = 3            # scheduler.py:60
+_FAILURE_ALERT_THRESHOLD = 3
 
-def _record_job_failure(job_id, error):  # scheduler.py:67
+def _record_job_failure(job_id, error):
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     count = _consecutive_failures[job_id]
@@ -319,18 +333,18 @@ PRAGMA busy_timeout=30000   -- 30s，仅作为 _WRITE_LOCK 的最终兜底
 PRAGMA wal_autocheckpoint=1000
 ```
 
-**支柱 3 — 每线程独立连接**（`sqlite.py:11`）
+**支柱 3 — 每线程独立连接**（`core/aletheia/storage/sqlite.py`）
 
 `threading.local()` 保证每个 APScheduler worker thread 持有各自的 `sqlite3.Connection`，连接不跨线程共享。
 
-**支柱 4 — `_run_job_guarded()` 清理包装**（`scheduler.py:110–134`）
+**支柱 4 — `_run_job_guarded()` 清理包装**
 
-每个 job 通过 `_guarded(job_id, fn)` 包装执行（`scheduler.py:137`）：
+每个 job 通过 `_guarded(job_id, fn)` 包装执行：
 
 - **job 执行前**（在 `_SCHEDULER_JOB_LOCK` 保护下）：调用 `rollback_if_in_transaction()` 回滚上个 job 可能泄漏的事务。
 - **job 执行后**（finally 块）：再次 `rollback_if_in_transaction()` + `close_db()`，释放线程局部连接，防止 WAL 写锁被空占。
 
-注：`_SCHEDULER_JOB_LOCK`（`threading.RLock`，`scheduler.py:18`）仅包裹 cleanup 调用（前/后各一次），**不**包裹 job 函数体本身（`scheduler.py:125–134`），避免长时 job 持锁饿死其他线程。
+注：`_SCHEDULER_JOB_LOCK`（`threading.RLock`）仅包裹 cleanup 调用（前/后各一次），**不**包裹 job 函数体本身，避免长时 job 持锁饿死其他线程。
 
 对于带超时的 job，DB cleanup（`rollback_if_in_transaction` + `close_db`）在常驻异步 worker
 协程的 `finally` 块中执行，或在固定同步 worker wrapper 的 `finally` 块中执行。异步取消会
@@ -343,7 +357,7 @@ PRAGMA wal_autocheckpoint=1000
 
 ## §6 关停协议
 
-`stop_scheduler()`（`scheduler.py:494–498`）：
+`stop_scheduler()`：
 
 ```python
 def stop_scheduler() -> None:
@@ -372,7 +386,7 @@ sync worker 同样是 daemon，非协作调用不会产生第二条替代线程�
 |---|---|---|---|
 | INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 2 条相互隔离的 sync lane（ordinary + Universe audit），每条 outstanding ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
-| INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |
+| INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`；async/sync timeout wrapper `finally` 块 | — |
 | INV-SCH-5 | 任务抛异常或显式报告失败时，连续失败 ≥ 3 次必须触发 infra_event；外层不得在同轮清零 | `_run_job_guarded()` + `_record_job_failure()` | — |
 | INV-SCH-6 | layered pause 只停非 essential job；essential 入口及其委托 body 不得用 `runtime.paused` 自我禁用 | `_ESSENTIAL_JOBS` + `pause_scheduler()` | `test_layered_pause.py` |
 

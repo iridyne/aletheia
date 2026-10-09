@@ -155,14 +155,15 @@ closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 p
 
 风控批准后、Broker 下单前，gateway 对**所有真实交易所模式**做一次 symbol 可用性验证（`gateway.py:_check_symbol_availability`）。不可用时直接返回 `rejected`，写 `event_type=proposal_skipped` 审计记录，**不产生** `error` 状态。
 
+标的来源由 `core/aletheia/execution/venue_capabilities.py` 的 `get_supported_symbols()`
+（经 `load_venue_capabilities()`）提供，按 market type 区分 spot 与 `usdt_futures`：
+
 | 模式 | 标的来源 | 缓存 TTL |
 |------|---------|---------|
-| `okx_demo` | `execution.venue_capabilities.load_venue_capabilities()`（sandbox 公共行情列表） | 4h |
-| `okx_live_limited` | `universe_registry`（venue=`"okx"`） | 4h |
-| `bitget_demo` / `bitget_live_limited` | `universe_registry`（venue=`"bitget"`） | 4h |
-| `binance_testnet` / `binance_live_limited` | `universe_registry`（venue=`"binance"`） | 4h |
+| sandbox 模式（`*_demo` / `*_testnet`，由 CCXT profile 的 restricted listing 判定） | profile 感知的 sandbox 公共行情列表（`refresh_demo_capabilities`；冷缓存时同步刷新，刷新失败 fail-closed） | 4h |
+| 非 sandbox 模式（`*_live_limited`） | `universe_registry` 中该执行模式对应 venue 的行（`load_registry_symbols`） | 4h |
 
-**Fail-open**：缓存未就绪或 registry 为空时返回 `None`，不阻塞下单（避免首次启动 / registry 未同步时误伤）。
+**Fail-open**：非 sandbox 模式下 profile 无法解析或 registry 未就绪时返回 `None`，不阻塞下单；提交路径的 `read_order_constraints` 对同一解析独立 fail-closed。
 
 上层 `agents/`、`universe/`、`trading/`、`risk/` 只消费
 `execution.venue_capabilities` 提供的 canonical capability facts，不导入具体
@@ -171,9 +172,9 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 
 **新交易所接入方式**（e.g. Hyperliquid）：
 1. 在 `config.exchanges` 的执行模式、环境和 venue 注册表中登记 `"hyperliquid_demo": "hyperliquid"`
-2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
+2. 确保 `core/aletheia/universe/registry.py` 的 `sync_registry()` 已写入 `venue="hyperliquid"` 行（非 sandbox 模式），或其 CCXT profile 提供 sandbox listing
 
-**Spec claims**：`EX-S07`（结构）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
+**Spec claims**：`EX-S07`（结构）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。入口：`gateway.py` 的 `_check_symbol_availability`。
 
 ### 3.4 Worktree preview runtime（fail-closed）
 
@@ -371,24 +372,26 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 
 ---
 
-## 8. 已交付
+## 8. 审计链 hash 链
 
-- ✅ **审计链 `_prev_hash` hash 链**:每条 audit 记录写入前追加前一行的 SHA-256(`_prev_hash`),验证逻辑在同文件。实现位置:`core/aletheia/files/jsonl.py:182-200`(写入)、`jsonl.py:259-320`(校验)。历史 ⚠️ 注记已失效,此条目已交付。
+每条 audit 记录写入前追加前一行的 SHA-256（`_prev_hash`），写入与校验都在
+`core/aletheia/files/jsonl.py`。规范见 [audit_chain_contract](audit_chain_contract.md) §3。
 
-## 9. 目标态差距 — 当前活跃
+## 9. 策略规则引擎（已删除）
 
-- ✅ **已由 Position C 解决(2026-07-02)**:此前 strategy 的 `entry_rule/exit_rule`/`RuleSet` 是"从不被解析执行的死字符串",strategy 层名义上驱动交易实则 advisory——这个诚实性缺口现已**通过删除整个规则引擎彻底消除**(`aletheia/strategy/` 整包 + `strategy_designer.py` + `ruleset_scanner.py` 删除)。交易方向唯一来自 System Operator 对 opportunity 的决策(`evaluate_trading_opportunity`);`strategy_id` 仅作可空历史归因标签(legacy)。不再存在"策略规则驱动交易"的名实不符。
+规则引擎已于 2026-07-02 整体删除（Position C）；交易方向不来自任何策略规则，
+`strategy_id` 只是可空的历史归因标签。
 
 ---
 
 ## 10. 平仓/退出通路 (Exit Path)
 
 > §1–§6 定义**开仓**通路;本节定义**平仓/退出**通路,达到与开仓对等的严谨度。
-> 入口:`evaluate_open_positions()`(`portfolio/position_manager.py:299`),由 `position_manager` job 每 5min 触发。
+> 入口:`core/aletheia/portfolio/position_manager.py` 的 `evaluate_open_positions()`,由 `position_manager` job 每 30 秒触发(executor=`protective`,见 scheduler_contract §3)。
 
 ### 10.1 退出触发器优先级
 
-`_decide_exit(p, price, cfg)`(`position_manager.py:347`)按**固定顺序**判定,先命中先平:
+`_decide_exit(position, price, cfg)`(`position_manager.py`)按**固定顺序**判定,先命中先平:
 
 | 优先级 | 触发器 | 判定 | 位置 |
 |--------|--------|------|------|
@@ -646,7 +649,7 @@ Proposal 的这一权限边界。
 
 旧本地保护屏障见[归档](../history/local_simulated_protection.md)。
 
-## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented；自然 Runtime soak 待补）
+## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented）
 
 `positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
 关闭分为两条不互相冒充的路径：

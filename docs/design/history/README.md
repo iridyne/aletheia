@@ -84,3 +84,6 @@ Moved here on 2026-10-09 (each file carries a dated header note):
 - [Usage insights design](usage_insights_design.md): superseded by the implemented Usage v2 proposal.
 - [macOS Gateway watchdog](macos_gateway_autostart.md): retired LaunchAgent watchdog, kept to identify old registrations.
 - [Runtime continuity SOP](runtime_continuity_sop.md): retired PI runtime-continuity mechanism (`retired_runtime_keys`).
+- [Retired knowledge consumers](knowledge_retired_entry_consumers.md): former Ranker weighting and Operator entry-prompt injection (knowledge_contract §8.1/§8.2).
+- [Retired shadow_trades write path](shadow_trades_write_path.md): former shadow writer/resolver entry points and CF-I02/I04/I05/I06 (#3704).
+- [Retired Ranker / PaperTrader filter-evidence rules](ranker_paper_trader_filter_evidence.md): former batch selection, Stage E record and completion criteria (filter_evidence_contract §7/§9/§11).

@@ -5,17 +5,12 @@
 
 ---
 
-## 当前基线（2026-06-17）
+## 历史基线
 
-| 指标 | 优化前 | 优化后 |
-|---|---|---|
-| 全量测试数 | 1321 | **1340**（+19 属性测试） |
-| 全量耗时 | ~47s | **~49s**（测试数 +1.4%，耗时基本持平） |
-| 通过率 | 100% | **100%**（1338 passed，另 2 预存在前端 UI 失败） |
-| SQLite 模式 | 文件 DB（disk I/O） | **in-memory `:memory:` DB**（RAM，per-test） |
-| 主要瓶颈 | migrations 重建 (~38ms/用例) | blueprint + backup() 克隆 (~0.4ms)，已最优 |
-
-> **注**：2 个预存在失败（`test_frontend_build_config`、`test_universe_settings_ui`）是文档/CSS 断言，与本次改动无关，跑前就存在。
+2026-06-17 的优化把 SQLite 从文件 DB 改为 per-test in-memory DB（blueprint + `backup()` 克隆，
+migration 从 ~38ms/用例降到 ~0.4ms），当时全量 1340 个测试约 49s。套件规模此后增长了一个
+数量级；当前全量耗时与并行度的实测见
+[DEVELOPMENT_WORKFLOW.md](agent-guides/DEVELOPMENT_WORKFLOW.md)。
 
 ---
 
@@ -32,7 +27,7 @@
 
 现在通过 `conftest.py` 的 `_inmemory_db` autouse fixture，所有不带 `setup_env` 的测试（unit tests、route tests 等）自动得到一个 `:memory:` 内存 DB，消除磁盘 I/O。
 
-已有的加速措施：`_blueprint + backup()` 克隆（`storage/migrations.py`），把 migration 从 ~38ms 压到 ~0.4ms，已是当前最优解，不要改动。**不要试图用 pytest-xdist 并行**——Windows 下多进程共享 SQLite 文件锁会引发竞争，得不偿失。
+已有的加速措施：`_blueprint + backup()` 克隆（`storage/migrations.py`），把 migration 从 ~38ms 压到 ~0.4ms，已是当前最优解，不要改动。并行方式见 §六（每个 xdist worker 有独立 runtime 目录）。
 
 ### 2. 真实网络调用（可消除）
 
@@ -149,23 +144,17 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 
 ---
 
-## 六、pytest-xdist 并行——最后阶段才用
+## 六、pytest-xdist 并行
 
-2026-07-03 已引入 `pytest-xdist`，但**不设为默认**。
+`pytest-xdist` 不写进默认 `addopts`：AI 修 bug 的默认目标是快反馈，不是把全量并行打满。
+`tests/conftest.py::_configure_xdist_runtime_dir` 给每个 worker 独立的 runtime 目录。
 
-原因：
-1. AI 修 bug 的默认目标是快反馈，不是把全量测试并行打满。
-2. Windows 下多进程容易暴露隐藏的文件锁、端口、全局单例问题。
-3. 本项目有 gateway 全局单例和 SQLite 运行态约束，不能把 `-n auto` 写进默认 `addopts`。
-
-可用命令：
-
-```powershell
-# 只在 fast 层稳定后使用
+```sh
+# fast 层或单一 marker 选择
 uv run pytest -m fast -n auto -q
 
-# 提交前后台全量可尝试并行；失败时先用非并行复现
-uv run pytest tests/ -n auto --tb=line -q
+# 全量只在 Fedora 测试环境跑；默认 -n 2（实测数据见 DEVELOPMENT_WORKFLOW.md）
+uv run pytest tests/ -n 2 --tb=line -q
 ```
 
 判断原则：如果并行失败、非并行通过，先把它当成测试隔离问题处理，不要直接改生产逻辑。
@@ -262,21 +251,48 @@ _h_settings.load_profile("dev")  # 日常用 dev；CI 环境 load "ci"
 ## 十、日常工作流建议
 
 ```bash
-# 改动单模块 → 只跑相关测试（秒级）
+# 改动后的第一道门（秒级）
+uv run python scripts/ci/dev_check.py
+
+# 改动单模块 → 只跑相关测试
 uv run pytest tests/test_knowledge_manager.py -q
 
-# 跨模块改动 → 关键词过滤
+# 跨模块改动 → 关键词或 domain marker 过滤
 uv run pytest -q -k "knowledge or dreaming or quality"
 
-# 提交前 → 后台全量，不阻塞
-# （在 PowerShell 后台跑或用 run_in_background）
-uv run pytest tests/ --tb=no -q
-
 # 看慢测试分布
-uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
+uv run pytest tests/ --tb=no --durations=20 -q
 ```
 
-**原则：不等全量完成再继续工作**——后台跑，有红灯再回头修。
+全量只在 Fedora 测试环境跑（见根 `AGENTS.md`），本机不跑后台全量。
+
+---
+
+## 十A、Mock 边界与本地证明收据
+
+原 `TESTING.md`（2026-10-09 并入）中仍有效的两条规则：
+
+**Mock 边界**
+
+```
+允许 mock：网络 I/O（HTTP、WebSocket）/ 子进程 / 外部 API
+禁止 mock：模块间接口 / 数据库层 / 内部函数调用链
+```
+
+- 伪造子进程时同时隔离创建和终止；不得把虚拟 PID 交给真实 OS。
+- 不写只 `assert_called` 的测试；验证数据结果，不验证调用次数。
+- 离线交易测试同时隔离私有下单和公共 listing I/O；保留真实能力刷新、Gateway 校验与记账断言。
+- DB 测试用真实隔离 SQLite，不 mock；测试自建的连接在分配后立即 `request.addfinalizer(db.close)`。
+  跨线程场景使用 `real_db` 与既有文件数据库 fixture，补齐真实外键种子。
+- 平台分支测试显式声明目标平台。
+- 渲染测试补齐实际会调用的外部 API 测试响应，不依赖未配置 localhost 的连接失败维持通过。
+
+**本地证明收据**：`scripts/ci/ci_plan.py` / `scripts/ci/ci_local.py` 负责 required proof lanes。
+每个执行的检查记录 lane、命令、退出码、耗时以及 base/head 与 plan fingerprint；required check
+失败即停止。没有 executor 的 required lane 报 `required_but_unavailable` 并以非零退出，绝不算通过；
+`--skip-execute` 只返回计划命令，不是通过收据。
+
+Trust-boundary 分支覆盖见 [`TRUST_BOUNDARY_COVERAGE.md`](TRUST_BOUNDARY_COVERAGE.md)。
 
 ---
 
@@ -316,9 +332,9 @@ agent_runtime|execution|portfolio|uta|...`。文件名仍先区分 e2e / spec / 
 
 常用命令：
 
-```powershell
-# AI 默认：先跑上次失败；再跑 fast
-.\scripts\test_ai.ps1
+```sh
+# AI 默认：先跑上次失败；再跑 fast（Windows 历史脚本 scripts/dev/test_ai.ps1 做同样的事）
+uv run pytest --lf -q && uv run pytest -m fast -q
 
 # 手工只跑日常最快层
 uv run pytest -m fast -q
@@ -348,7 +364,7 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 - 分层计数：`fast=1189`，`slow or e2e=338`，`not slow and not e2e=1943`。
 - `--durations=20` 最慢项全部是 `call` 阶段，说明慢点集中在测试主体，不是 autouse fixture 清理。
 - 当前 top 20 热点：Serenity pipeline/workbench、doctor 报告、operator/session、agent runtime、少量 specs。
-- 这些热点已通过路径规则自动打 `slow`，不会进入 `.\scripts\test_ai.ps1` 的默认 fast 回归。
+- 这些热点已通过路径规则自动打 `slow`，不会进入默认 fast 回归（`-m fast`，`scripts/dev/test_ai.ps1`）。
 
 注意：`spec_*.py` 现在被 `python_files` 默认收集。这样会更准确地暴露 SDD
 契约红灯；当前 spec 层仍有红灯，不应通过禁收集或静默 xfail 掩盖。

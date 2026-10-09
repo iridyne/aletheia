@@ -25,6 +25,13 @@
   `ALETHEIA_SLOW_REQUEST_MS` (default 500 ms) are logged without query strings or bodies;
   `ALETHEIA_HTTP_TIMING=1` logs every API request for a bounded diagnostic session.
 
+- **Response schema authority**: field-level truth is the route's Pydantic response model in
+  code, not this index. `uv run python scripts/ci/export_openapi_schema.py --output docs/_generated/openapi.json`
+  exports the current FastAPI schema offline for frontend type generation (`npm run check:api-types`).
+- **Symbol format**: request/response bodies use canonical symbols (`BTC/USDT`); venue
+  adapters convert at the execution boundary; the frontend displays symbols only through
+  `fmtSymbol()` (`frontend/src/lib/format.ts`).
+
 ### Status code semantics
 
 | Code | Meaning in this API |
@@ -53,7 +60,7 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | `PUT /settings/risk-policies/{mode}` · `POST /settings/risk-policies/copy` | explicit confirmation, optimistic revision check and target-scoped audit; never copies live authority or runtime state | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /risk/brakes/{global\|demo\|live}` | engage is immediate; release requires `confirm_release=true`; mode brake never releases global brake | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /proposals/{id}/reject` | preserves the original proposal ID; commits rejection, reservation release and audit together; already submitted/executed orders cannot be rejected through this route | [execution_contract §1](../contracts/execution_contract.md) |
-| `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
+| `POST /gateway/restart` · `/update/apply` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
 
 ---
 
@@ -156,15 +163,9 @@ the list row for an order anchor.
 
 ## Strategies
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/strategies` | List all strategies (read-only legacy attribution) |
-
-> Rules engine removed (Position C, 2026-07-02): `/strategies/{id}/gates`,
-> `/promote`, `/retire`, `/strategies/summary`, `/strategies/{id}` and
-> `PATCH /strategies/{id}/venue` are all gone — strategies are no longer
-> created/promoted and `strategy_records` is a read-only legacy table. Only
-> `GET /strategies` remains for historical attribution display.
+The rules engine was removed (Position C, 2026-07-02) and no `/strategies`
+route remains; `strategy_records` was dropped in schema v92 (#3702/#3703).
+`GET /analytics/strategy-performance` is the remaining per-strategy read.
 
 ---
 
@@ -192,7 +193,6 @@ the list row for an order anchor.
 | GET | `/analytics/operator-decisions` | Terminal Candidate Ledger projection companion to the funnel. Uses parsed UTC decision/rejection timestamps for windowing and ordering, prefers the latest `proposal_rejected` audit time, and classifies only `human+dashboard` as `user_reject` and `system+execution_gateway` as `auto_reject`; missing/inconsistent attribution is `reject_unknown`. A rejected Proposal supersedes its earlier trade-intent row. Administrative `system_cascade` cleanup rows and non-terminal conviction deferrals are not presented as Operator decisions; defer lifecycle facts remain available from `/analytics/opportunity-trace/{opportunity_id}`. Each item has additive `attribution` for the `system_operator_skip_remediation` policy epoch and producing runtime session/commit; manifest attribution wins, while legacy decisions use the durable epoch time window. `current_context`, `current_policy_counts`, and `historical_policy_counts` prevent old-runtime decisions from being presented as current behavior. `counts` and `total_count` cover the FULL window; when the optional `outcome` (comma-separated) / `symbol` (canonicalized) filters are applied, filtered rows go into `items` while `matched_count` reports how many rows survived the filter pre-truncation. Filter never lies about totals (2026-07-18). Read-only. |
 | GET | `/analytics/opportunity-trace/{opportunity_id}` | Compatibility lifecycle trace for a legacy opportunity — emit → filter_trace → pi_decision → risk_decision → proposal → order → fill → position → close. Read-only and not the canonical Candidate → Entry Plan detail path. |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
-| GET | `/analytics/shadow-trades` | Authority-aware shadow comparison data. Canonical 24h keyed results retain economics; pending or unauthorized keyed rows retain exposure identity but clear result fields and report `authority_status`/`authority_reason`. Legacy unkeyed observations remain visible with `authorized=false`. |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume activity visibility. Optional PI windows, Lesson, Serenity and contradiction reads expose stable `query_errors`; failed optional counts are `null`/unchecked rather than genuine zero. This remains activity context, not contribution evidence. |
 | GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health, lifecycle readiness and the existing resolver's effective treatment-authority decision. GET performs no authority mutation. `path_states` keeps each measurement-supported path's availability, empty/active state and cadence-aware freshness separate. Operations exposes its own availability/error map and preserves config plus whichever evaluator/audit health sections succeeded. Uses a 30-second monotonic process-local cache and emits `Server-Timing` (`ledger` or `cache_hit`, plus `total`). Legacy activity aggregates remain compatibility context, not contribution evidence; `legacy_query_errors` and nullable counts distinguish read failure from genuine empty or zero activity. No evaluation or mutation is run. |
@@ -203,9 +203,8 @@ Only the implemented endpoint indexed above is part of the current API
 reference. Additional routes are design proposals in
 [`learning_observability.md`](../proposals/learning_observability.md) and must
 not appear in current UI, OpenAPI expectations, or owner instructions.
-Proposed paths, hypothesis, experiment, and health routes remain specified there; the exposure
-detail target is repeated below for API-family visibility.
-| GET | `/learning/exposures/{entity_id}` | Bounded indexed influence explanation for an explicit entity type |
+Proposed paths (hypothesis, experiment, health and exposure-detail routes) remain specified
+there; none of them is a current route.
 
 The targets are GET-only cached read projections. They run no evaluator or
 lifecycle action and expose no trial-admission mutation. The existing
@@ -310,7 +309,6 @@ fresh, since each window is distinct.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/knowledge` | Knowledge items filtered by validated `type`; `type=all` accepts `offset`, `limit`, `q`, and `status=active/archived/deprecated/all`, returning `{items,total,limit,offset,returned,has_more}` plus an explicitly persisted producer run when available. Content remains detail-on-demand. |
-| GET | `/knowledge/research-notes` | Research notes only |
 | GET | `/knowledge/dreaming-logs` | Dreaming agent summaries |
 | GET | `/knowledge/strategy-memory` | Strategy-specific memory |
 | GET | `/knowledge/guards` | Active Guard storage rows plus separate lifecycle, origin, proposed effect, experiment, assignment, guard-level authority, and actual baseline-effect fields; current measurement-unsupported learned guards report no experiment or assignment. Read failure returns stable `503 guard_read_failed`, never HTTP 200 with an empty collection. |
@@ -447,7 +445,6 @@ fresh, since each window is distinct.
 | GET | `/universe/candidates/{candidate_id}` | Exact Candidate attention and planning evidence by identity; elapsed soft/hard attention deadlines are projected immediately as `ttl_expired` / `max_attention_age` without mutating Entry Plans or Orders |
 | GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`), using the same effective attention-expiry projection as Candidate detail |
 | GET | `/universe/members/{id}` | Member detail (features, outcomes) |
-| GET | `/universe/members/{id}/outcomes` | Market-aware gross/net outcome history, including estimated costs and MFE/MAE |
 | POST | `/universe/refresh` | Trigger universe refresh |
 | GET | `/universe/policy` | Active universe policies |
 | GET | `/universe/calibration` | Cost-aware scanner calibration keyed by family + direction + market type + horizon (`by_cohort_horizon`, `by_cohort`) |
@@ -611,23 +608,6 @@ fresh, since each window is distinct.
 
 ---
 
-## Runtime (Canary/Shadow deployment)
-
-> **Path prefix**: `/api/operator/runtime/`, **not** `/api/runtime/` — this router is mounted under the operator prefix. The paths below are correct; `/runtime/...` (without `operator/`) would 404.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/operator/runtime` | Current runtime state |
-| POST | `/operator/runtime/candidate` | Register candidate version |
-| POST | `/operator/runtime/shadow` | Start shadow execution |
-| POST | `/operator/runtime/promote` | Promote candidate to active |
-| POST | `/operator/runtime/drain` | Drain current version |
-| POST | `/operator/runtime/rollback` | Rollback to previous version |
-| GET | `/operator/runtime/events` | Runtime event log |
-| GET | `/operator/runtime/events/stream` | SSE stream of runtime events |
-
----
-
 ## Gateway Management
 
 | Method | Path | Description |
@@ -652,8 +632,6 @@ fresh, since each window is distinct.
 | POST | `/update/check` | Explicitly check remote update availability |
 | GET | `/update/progress` | Read durable packaged-update progress without repeating the network check |
 | POST | `/update/apply` | Human-confirmed update request; installed runtimes stage a signed payload in the background |
-| POST | `/update/rollback` | Human-confirmed rollback request within the recorded backup window |
-| POST | `/update/continuity` | Development-checkout-only runtime candidate materialization; packaged runtimes use the signed update flow |
 
 ---
 
@@ -709,7 +687,6 @@ fresh, since each window is distinct.
 | GET | `/analytics/exit-policy-advice` | Exit strategy diagnostics |
 | GET | `/analytics/trade-paths` | MFE/MAE path analysis |
 | GET | `/analytics/family-scorecard` | Strategy family scorecard |
-| GET | `/analytics/shadow-trades` | Authority-aware shadow comparison; keyed results require the exact canonical 24h projection, while legacy unkeyed observations are explicitly non-authorizing |
 
 ## Infrastructure (internal)
 

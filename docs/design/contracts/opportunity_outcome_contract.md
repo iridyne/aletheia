@@ -14,7 +14,7 @@
 
 ## 2. 工具身份
 
-每条 `universe_forward_outcomes` 必须保存：
+每条 `filter_candidate_outcomes` 必须保存：
 
 - `venue`：产生该候选的行情场所。
 - `symbol`：内部 canonical symbol，例如 `BTC/USDT`。
@@ -23,8 +23,9 @@
 
 取价边界必须使用完整的 `InstrumentId(venue, symbol, market_type)`。永续取价失败时不得回退到同名现货。
 
-`filter_candidate_outcomes` 复用完全相同的标的身份、固定周期、成本和路径质量字段。
-同一候选经过多个筛选关时，以 `outcome_candidate_key + horizon` 共享一条结果，
+原 `universe_forward_outcomes` 已随 #3701 在 v94 迁移
+（`20260929_0094_drop_universe_forward_outcomes_v94`）删除，`filter_candidate_outcomes`
+是唯一的固定持有期结果载体。同一候选经过多个筛选关时，以 `outcome_candidate_key + horizon` 共享一条结果，
 禁止把同一条价格路径重复当成多个独立样本。
 
 ## 3. 固定持有期
@@ -79,7 +80,7 @@ CLI/Web 将其异步结算器绑定到 Core Universe outcome recorder 的精确 
 不把未测量 shadow 行改成失败。已安装时沿用原尾部调用次序、批量上限及非致命异常处理；
 这不是 Portfolio 真实持仓 Outcome 的投递/重试机制。
 
-`universe_forward_outcomes`、`filter_candidate_outcomes` 和
+`filter_candidate_outcomes` 和
 `perp_structure_shadow_outcomes` 共用同一套 `status` 取值，其中只有一个是终态：
 
 - `pending`：已登记、尚未得到测量。唯一可重试的状态，下一周期会再问一次。
