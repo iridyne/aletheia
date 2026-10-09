@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 import aletheia.analytics.execution_mode as _execution_mode
 from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.outcome_integrity import (
-    eligible_strategy_outcomes,
     is_current_outcome_artifact,
+    read_complete_outcome_cohort,
 )
 from aletheia.analytics.learning_window import outcome_window_metadata
 
@@ -55,33 +55,45 @@ def build_calibration_report(
         # current-mode identity.  #1939
         return None
     try:
-        from aletheia.storage.sqlite import get_db
+        from aletheia.storage.repositories import get_pi_decision_for_proposal
         from aletheia.analytics.learning_window import clean_window_cutoff
-        db = get_db()
         # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
         cutoff = clean_window_cutoff(
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
-        rows = []
-        for position in eligible_strategy_outcomes(
+        # The whole window in one snapshot; a partial cohort is no calibration (#1955).
+        cohort = read_complete_outcome_cohort(
             closed_after=cutoff, execution_mode=execution_mode,
-        ):
+        )
+        if cohort.cohort_state != "available":
+            raise RuntimeError("calibration outcome cohort unavailable")
+        outcomes = cohort.eligible_rows
+        rows = []
+        exclusions: dict[str, int] = {}
+        for position in outcomes:
             proposal_id = position.get("proposal_id")
+            decision = get_pi_decision_for_proposal(proposal_id) if proposal_id else None
             if not proposal_id:
-                continue
-            decision = db.execute(
-                "SELECT conviction FROM pi_decisions "
-                "WHERE proposal_id = ? AND conviction > 0 "
-                "AND action IN ('trade', 'scale_in', 'flip') "
-                "AND created_at >= ? ORDER BY datetime(created_at) DESC LIMIT 1",
-                (proposal_id, cutoff),
-            ).fetchone()
-            if decision:
+                reason = "missing_proposal_id"
+            elif decision is None:
+                reason = "decision_missing"
+            elif decision.get("_integrity_error"):
+                reason = "decision_ambiguous"
+            elif decision.get("action") not in ("trade", "scale_in", "flip"):
+                reason = "non_trade_decision"
+            elif not decision.get("conviction") or decision["conviction"] <= 0:
+                reason = "missing_conviction"
+            elif str(decision.get("created_at") or "") < cutoff:
+                # Unchanged window rule: the decision must also fall in the window.
+                reason = "decision_before_window"
+            else:
                 rows.append({
                     "conviction": decision["conviction"],
                     "realized_pnl": position["realized_pnl"],
                 })
+                continue
+            exclusions[reason] = exclusions.get(reason, 0) + 1
 
         if not rows:
             return None
@@ -155,6 +167,11 @@ def build_calibration_report(
             "generated_at": now,
             "window_days": window_days,
             "total_executed": total,
+            "source_outcome_count": len(outcomes),
+            "linked_count": total,
+            "linkage_exclusions": dict(sorted(exclusions.items())),
+            "source_raw_event_count": cohort.source_raw_event_count,
+            "cohort_complete": cohort.cohort_complete,
             "reliable_sample_count": reliable_n,
             "calibration_state": calibration_state,
             "buckets": buckets,
