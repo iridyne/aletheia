@@ -58,6 +58,32 @@ It does two things:
 7. **Write it down.** The design must live in `docs/`. It must record both the owner's
    ideas and the final engineering choice, as at least one complete original design.
 
+### Owner's trading model (verbatim intent, 2026-10-09, second statement)
+
+The owner expected this to be simple and described the intended model in standard R terms:
+
+- **Stop.** Take a price-action reference point from minutes, 1h or 4h structure. It is
+  a support line or a similar level. Add an ATR buffer to it. The distance from the
+  entry point to the stop is **1R**.
+- **Target.** Trade at **1:3** reward:risk, so the take-profit sits **3R** from entry.
+- **Size.** The quantity per order is set by the **margin it actually occupies**: **1%
+  or up to 5% of available capital**. This leaves enough chances to start over.
+- **Leverage.** The owner envisages **10x**.
+- **Roles.**
+  1. The **AI gives a risk judgment** as a reference value.
+  2. The **system computes** the actual values and runs a consolidated risk
+     assessment.
+  3. The system **executes** the result.
+- **Problem statement.** Each piece seemed reasonable on its own. Combined, they made
+  the system so complex that many plans never pass risk control. The owner asks for a
+  complete system design that solves this and fits the model above.
+
+Arithmetic that follows directly from the model, with 500 USDT starting capital:
+
+    loss at stop (% of equity) = margin% × leverage × stop%
+    e.g. 5% × 10 × 2% = 1% of equity (5 USDT); target 3R = +3% (15 USDT)
+    break-even win rate at 1:3 = 25% before costs (≈30% after measured friction)
+
 ## Current fact (2026-10-09, master `1cea7366`, Fedora read-only)
 
 - **Stop placement.** The Compiler derives the stop as anchor ∓ ≈0.05 × ATR(15m). It
