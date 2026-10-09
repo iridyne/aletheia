@@ -97,6 +97,17 @@ Arithmetic that follows directly from the model, with 500 USDT starting capital:
     e.g. 5% × 10 × 2% = 1% of equity (5 USDT); target 3R = +3% (15 USDT)
     break-even win rate at 1:3 = 25% before costs (≈30% after measured friction)
 
+### Owner decision 1b（2026-10-09）：止损是否挂上，以下单回执为准，不再轮询后平仓
+
+Owner 的原话：开仓时同时提交 TPSL，交易所会返回执行回执，靠这个回执就能确认；"每 90 秒读回一次，3 分钟读不到止损就平仓"太莽撞，没有必要；只要保证 TPSL 真的挂上了就可以。
+
+落地方式：
+1. **发送前检查**：系统先组装下单请求，确认请求里确实带着已批准的止损价和止盈价，再发给交易所。请求里缺了止损或止盈，就**不发这笔单**。这一步是为了防 #3783 那类问题：参数被静默丢掉，交易所却照常接单。
+2. **以交易所回执为准**：交易所接受了带 TPSL 的开仓单，就视为止损已经挂上。开仓单被拒，就没有持仓，也就不存在需要保护的仓位。
+3. **读回只用来记账**：读回到的止损单 id 记下来，供以后改单和识别成交使用。读不到时只发告警，**从不平仓**。
+
+这条决定取代 #3849 中"读回后平仓"的行为。
+
 ### Owner decision 1 (2026-10-09): exchange-native stops first
 
 Protective stops **must be exchange-native orders** and take **top priority**. A local
