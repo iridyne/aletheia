@@ -234,7 +234,7 @@ def _exact_fill_reads(calls) -> list[tuple[str, str]]:
     ]
 
 
-@pytest.mark.parametrize("report_kind", ["exact", "wrong_account", "wrong_plan", "raw"])
+@pytest.mark.parametrize("report_kind", ["exact", "ccxt_upgrade", "wrong_account", "wrong_generation", "wrong_plan", "raw"])
 def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkeypatch, report_kind):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
@@ -255,8 +255,16 @@ def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkey
         async def get_plan_order_history(self, *, order_id):
             if report_kind == "raw":
                 return [{"orderId": order_id, "executeOrderId": "EXEC"}]
+            history_identity = {
+                "wrong_account": _identity("bitget_live_limited"),
+                # §3.0b: provenance alone is the same account; a generation change is not.
+                "ccxt_upgrade": identity.model_copy(update={"ccxt_version": "4.5.99"}),
+                "wrong_generation": identity.model_copy(
+                    update={"credential_generation": identity.credential_generation + 1}
+                ),
+            }.get(report_kind, identity)
             return NativeProtectionHistory(
-                identity=_identity("bitget_live_limited") if report_kind == "wrong_account" else identity,
+                identity=history_identity,
                 plan_order_id="OTHER" if report_kind == "wrong_plan" else order_id,
                 execute_order_ids=("EXEC",),
             )
@@ -278,7 +286,7 @@ def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkey
     monkeypatch.setattr(bitget_client, "BitgetClient", forbidden_client)
     result = scheduler._tpsl_fill_check_body()
     assert calls[-1] == "closed"
-    if report_kind == "exact":
+    if report_kind in {"exact", "ccxt_upgrade"}:
         assert result["failed_count"] == 0
         assert repo._select_one("positions", position.id)["status"] == "closed"
         assert _account_proofs(proofs) == [("EXEC", "usdt_futures", True)]
