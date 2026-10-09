@@ -22,6 +22,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Five-pattern disconnection sweep — 2026-10-09](audits/FIVE_PATTERN_DISCONNECTION_SWEEP_2026-10-09.md)
+  verifies 66 disconnections across six subsystems (orphaned producer/consumer, unused features, silent healthy
+  fallbacks, untested-in-runtime paths), groups the fixable ones into 19 PR-sized batches, and lists the owner
+  questions and three mechanical prevention gates. Frozen evidence; progress lives in GitHub.
 - [Entry geometry phase-1 research (#3850) — 2026-10-09](trading-strategy/ENTRY_GEOMETRY_PHASE1_RESEARCH_2026-10-09.md)
   records how price-action schools, competitors and open-source frameworks place entry, stop and target. It
   includes a Fedora MAE/MFE study of the planner's hypotheses, three candidate geometry designs and an
