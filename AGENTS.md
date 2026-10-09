@@ -110,7 +110,7 @@ surface is git by construction. Recipes: [Development Workflow](docs/operations/
 
 - Python always through `uv`. macOS is development/control only, Fedora the verification target,
   Windows never a fallback; do not infer Fedora state or start a local Gateway unless asked.
-- No full suite on macOS, never two at once (shared data dir). Remote CI is retired: never start,
+- Run pytest on Fedora, not the Mac: `scripts/dev/remote_pytest.sh <pytest args>` (sandboxed; see Development Workflow). No full suite on macOS, never two at once (shared data dir). Remote CI is retired: never start,
   wait for, or cite it. Every change starts with `uv run python scripts/ci/dev_check.py`, which
   never replaces the PR-level gates (`ci_plan.py`, `ci_preflight.py`, `ci_local.py`, `check_docs.py`).
 - Before opening/resetting an Observation window after a merged change, deploy that exact commit

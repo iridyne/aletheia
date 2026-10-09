@@ -219,3 +219,11 @@ def test_secrets_step_flags_env_files_and_credential_shaped_added_lines():
         ".env: .env file must not be committed",
         "core/y.py:1: possible secret/token",
     ]
+
+
+def test_run_pytest_goes_to_the_remote_sandbox_when_a_test_host_is_set(monkeypatch):
+    calls = []
+    monkeypatch.setenv("ALETHEIA_TEST_HOST", "u7p")
+    monkeypatch.setattr(dev_check.subprocess, "run", lambda cmd, **_k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
+    assert dev_check.run_pytest(["tests/test_x.py"]) == 0
+    assert calls[0][0].endswith("scripts/dev/remote_pytest.sh") and "tests/test_x.py" in calls[0]

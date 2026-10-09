@@ -162,6 +162,18 @@ whole-file gate would fail on every edit and be ignored. The enforced contract i
 `ruff format --check` to this loop without first landing a repository-wide
 formatting migration.
 
+**Where tests run.** pytest does not run on the Mac. `scripts/dev/remote_pytest.sh <pytest args>`
+rsyncs the working tree, uncommitted edits included, to `~/remote-test/<repo>-<checkout>` on Fedora (`u7p`).
+There it runs pytest in a sandbox:
+- a systemd user scope caps CPU at 800% and memory at 3G;
+- user, net and pid namespaces give the run a private loopback, no network, and no view of the live runtime;
+- `ALETHEIA_DATA_DIR` and `TMPDIR` point at a fresh directory.
+
+Each checkout gets its own remote directory and lock, so parallel workspaces don't collide. With
+`ALETHEIA_TEST_HOST=u7p` exported, `dev_check` sends its pytest steps there too. Pass `-n 4` for
+anything bigger than a handful of files. Tests that need the local jj/git checkout, such as
+`tests/test_dev_check.py`, still run locally.
+
 Repair order — stop at the first red and fix it before widening:
 
 1. `dev_check` (seconds) — ruff/hygiene/whitespace/previous red set.

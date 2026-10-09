@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -303,7 +304,11 @@ def dotted_module(path: str) -> str | None:
 
 
 def run_pytest(args: list[str]) -> int:
-    command = [*tool_command("pytest"), *args, "-q", "--tb=short", f"--timeout={PYTEST_TIMEOUT_SECONDS}"]
+    runner = tool_command("pytest")
+    if os.environ.get("ALETHEIA_TEST_HOST"):
+        # Keep the dev machine cool: run on the remote sandbox (scripts/dev/remote_pytest.sh).
+        runner = [str(REPO_ROOT / "scripts" / "dev" / "remote_pytest.sh")]
+    command = [*runner, *args, "-q", "--tb=short", f"--timeout={PYTEST_TIMEOUT_SECONDS}"]
     return subprocess.run(command, cwd=REPO_ROOT, check=False).returncode
 
 
