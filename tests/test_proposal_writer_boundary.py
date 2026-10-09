@@ -14,9 +14,10 @@ def _assert_proposal_writer_boundary(root):
                 "execution/gateway.py", "execution/entry_plan_execution.py",
                 "portfolio/position_reconciler.py",
             },
+            # execution_contract.md §6.1: stale_order_cleanup moves an in-flight Proposal to error.
             "update_trade_proposal": {
                 "execution/gateway.py", "execution/exchange_materialization.py",
-                "risk/engine.py", "server/routes/data.py",
+                "execution/stale_order_cleanup.py", "risk/engine.py", "server/routes/data.py",
             },
         },
         raw_owners={"insert_trade_proposal", "update_trade_proposal"},
