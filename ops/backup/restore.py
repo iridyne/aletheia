@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from aletheia.backup.verify import verify_backup
+from aletheia.runtime_paths import large_temp_dir
 
 
 
@@ -50,7 +51,7 @@ class RestoreService:
         mutable source path, so replacing the archive between the verify and
         extract calls cannot affect which bytes are consumed.
         """
-        fd, snap = tempfile.mkstemp(suffix=".tar.gz.snap")
+        fd, snap = tempfile.mkstemp(suffix=".tar.gz.snap", dir=large_temp_dir())
         os.close(fd)
         snap_path = Path(snap)
         shutil.copy2(archive_path, snap_path)
@@ -81,7 +82,7 @@ class RestoreService:
                 )
                 return result
 
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory(dir=large_temp_dir()) as tmp:
                 tmp_path = Path(tmp)
                 with tarfile.open(snap, "r:gz") as tar:
                     tar.extractall(tmp_path, filter="data")
@@ -126,7 +127,7 @@ class RestoreService:
                 )
                 return result
 
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory(dir=large_temp_dir()) as tmp:
                 tmp_path = Path(tmp)
                 with tarfile.open(snap, "r:gz") as tar:
                     tar.extractall(tmp_path, filter="data")

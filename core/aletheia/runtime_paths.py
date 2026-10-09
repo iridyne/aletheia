@@ -19,6 +19,16 @@ def default_runtime_home() -> Path:
     return (_user_home() / ".aletheia").resolve()
 
 
+def large_temp_dir() -> str | None:
+    """Scratch location for multi-GB temporaries (backup snapshots, restore extraction).
+
+    Fedora's /tmp is a quota-limited tmpfs that cannot hold a restored app.db
+    (`[Errno 122] Disk quota exceeded`, #3719); /var/tmp is the FHS large-temp
+    location. ``None`` keeps the platform default where /var/tmp does not exist.
+    """
+    return "/var/tmp" if Path("/var/tmp").is_dir() else None
+
+
 def runtime_home() -> Path:
     """Resolve the primary runtime root, honoring an explicit absolute override."""
     raw = os.environ.get(RUNTIME_DATA_DIR_ENV, "").strip()

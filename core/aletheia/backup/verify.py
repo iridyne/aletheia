@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from aletheia.storage.hashing import sha256_file
+from aletheia.runtime_paths import large_temp_dir
 from aletheia.utils.json_utils import canonical_json_strict as _canonical_json
 
 _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -78,7 +79,7 @@ def verify_backup(archive_path: Path) -> VerifyResult:
         result.errors.append(f"Archive not found: {archive_path}")
         return result
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=large_temp_dir()) as tmp:
         tmp_path = Path(tmp)
         try:
             with tarfile.open(archive_path, "r:gz") as tar:
