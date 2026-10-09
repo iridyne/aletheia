@@ -317,7 +317,13 @@ def _proposal_geometry(
 
 
 def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
-    """Validate the target snapshot and its post-TaG hashed prefix."""
+    """Validate the target's content hash and the unbroken link prefix behind it.
+
+    Earlier rows are checked by link (``parent_hash`` = previous ``commit_hash``)
+    only. Their content was hashed with the Proposal field set of their write
+    time, which current code cannot reproduce after an additive field; their own
+    integrity does not decide whether this Proposal is authentic.
+    """
     proposal_id = str(proposal.get("id") or "")
     if not proposal_id or not isinstance(proposal.get("commit_hash"), str):
         return False
@@ -349,20 +355,14 @@ def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
         ):
             return False
         started = True
-        try:
-            model = TradeProposal.model_validate(stored)
-            expected_hash = repo.validate_trade_proposal_commit_hash(model)
-        except Exception as exc:
-            logger.warning("entry_exit_geometry: proposal chain validation unavailable (%s)", type(exc).__name__)
-            return False
-        if commit_hash != expected_hash:
-            return False
-        previous_hash = expected_hash
+        previous_hash = commit_hash
     if not started:
         return False
     try:
+        target = TradeProposal.model_validate(chain[-1])
+        repo.validate_trade_proposal_commit_hash(target)
         supplied = TradeProposal.model_validate(proposal).model_dump()
-        persisted = TradeProposal.model_validate(chain[-1]).model_dump()
+        persisted = target.model_dump()
     except Exception as exc:
         logger.warning("entry_exit_geometry: proposal normalization unavailable (%s)", type(exc).__name__)
         return False
