@@ -19,6 +19,60 @@
   `jj abandon`, rewrite others' changes (`jj squash`/`jj rebase` over them), or
   `jj op restore` without approval.
 
+- Some machines have a CodeGraph index (`.codegraph/`), but no checkout is promised one or
+  an index that matches the current HEAD. Probe first: use `codegraph explore "<symbols or
+  question>"` only if the command and index exist and the index is not obviously behind;
+  otherwise fall back to text search / language-server lookups. Do not build an index as a
+  prerequisite for ordinary work, and read the file before editing — the index can lag.
+
+## Durable checkpoints
+
+Issue comments and progress checkpoints are evidence, not durable source state.
+Once one independently coherent bounded mutation batch has passed its focused
+verification and self-review, commit that scoped batch before starting the next
+independent mutation batch.
+
+- An uncommitted checkpoint must say `UNCOMMITTED` explicitly and remains
+  incomplete until committed or reverted. Do not accumulate several already-
+  verified checkpoints in one growing dirty worktree.
+- A completed-batch checkpoint references the resulting commit SHA and, after
+  publication, its PR. Without a commit SHA, do not describe source convergence
+  as completed, landed, or durable.
+- In long-running owner-approved work, open or update a normal reviewable PR once
+  a coherent slice exists; do not wait for the entire program or several unrelated
+  ownership domains to accumulate. Split PRs by independently reviewable root
+  cause / ownership boundary, not by session order or arbitrary file count.
+- A PR may contain several tightly related commits. Do not create micro-commits or
+  micro-PRs for trivial edits merely to satisfy this rule.
+- A batch may remain temporarily uncommitted only when the same accepted change
+  requires an atomic cross-file/package cutover to stay buildable or testable.
+  Record that exact reason; this exception never carries completed unrelated work.
+- Commit, PR, merge, deployment, and runtime proof remain separate claims; see the
+  PR Review Lifecycle guide for merge readiness.
+
+### Version control: jj
+
+The checkout is jj-colocated (`.jj` beside `.git`). Use `jj` for all day-to-day
+version control: `jj st`, `jj diff`, `jj log`, `jj describe`, `jj new`, `jj commit`,
+`jj bookmark`, `jj git fetch`, `jj git push`, `jj rebase`, `jj workspace`. There is
+no staging area and jj runs no git hooks, so the cheap gate is
+`uv run python scripts/ci/dev_check.py` on the working copy `@` (`--base <revset>`,
+e.g. `master@origin`, covers the branch since its fork point); it also carries the
+`.env`/secret scan the retired pre-commit hook used to run. `jj undo` and `jj op log`
+replace reflog and stash as the safety net.
+
+In the checkpoint rules above, "commit" means `jj describe` + `jj new` (or
+`jj commit`). A checkpoint is not complete while the work sits only in `@`: git
+plumbing reads git HEAD, which in a colocated checkout is `@-`. Isolated workspaces
+live under `.claude/worktrees/<name>` (see the
+[workspace playbook](../GIT_WORKTREE_PLAYBOOK.md)).
+
+Raw `git` remains only where the surface is git by construction: the production
+self-updater and Fedora/tarball runtimes (`ops/update/`, `aletheia.update.git_ops`,
+`core/aletheia/files/git.py`), `scripts/ci/ci_plan.py`, `ci_local.py`,
+`check_change_contract.py` and `.github/workflows`, Orca-managed worktrees, and
+git-only tools such as `gh`.
+
 ## Change and proof
 
 When safe for the checkout, start with:
@@ -312,6 +366,9 @@ recorded in
 - Changed-file gate (first step of every edit loop):
   `uv run python scripts/ci/dev_check.py`
 - Focused test: `uv run pytest tests/test_<area>.py -q`
+- Environment self-check: `uv run aletheia doctor`; lint: `uv run ruff check core extensions ops tests`
+- Local validation plan / PR body preflight: `uv run python scripts/ci/ci_plan.py`;
+  `uv run --no-sync python scripts/ci/ci_preflight.py --pr-body-file <file>`
 - CI Yield baseline (read-only GitHub facts):
   `uv run --no-sync python scripts/ci/ci_yield.py --limit 20
   --json-output /tmp/ci-yield.json --markdown-output /tmp/ci-yield.md`.

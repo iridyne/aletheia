@@ -16,7 +16,9 @@ Read these files before making a non-trivial change:
 5. `docs/design/data/data_model.md` and `docs/design/api/api_reference.md` when changing schema or API behavior.
 
 `CLAUDE.md` and `CODEX.md` intentionally point back to `AGENTS.md`; do not
-maintain separate rule copies.
+maintain separate rule copies. Directories with local conventions (`frontend/`,
+`tests/`, `scripts/ci/`, `extensions/`, `core/aletheia/{execution,risk,storage}/`)
+carry their own `AGENTS.md` plus a `CLAUDE.md` that only imports it.
 
 ## Contribution Scope
 
