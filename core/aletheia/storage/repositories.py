@@ -1476,6 +1476,7 @@ def transition_order(
     position_id: str | None = None,
     error_reason: str | None = None,
     filled_at: str | None = None,
+    raw_error: str | None = None,
 ) -> dict:
     """Apply one legal Order transition; EntryPlan owns its aggregate authority."""
 
@@ -1488,14 +1489,15 @@ def transition_order(
             raise ValueError(f"invalid_order_transition:{current}->{status}")
         updated = execute_write(
             "UPDATE orders SET exchange_order_id=COALESCE(?,exchange_order_id), "
-            "position_id=COALESCE(?,position_id), status=?, error_reason=?, filled_at=? "
-            "WHERE id=? AND status=?",
+            "position_id=COALESCE(?,position_id), status=?, error_reason=?, filled_at=?, "
+            "raw_error=COALESCE(?,raw_error) WHERE id=? AND status=?",
             (
                 exchange_order_id,
                 position_id,
                 status,
                 error_reason,
                 filled_at,
+                raw_error,
                 order_id,
                 current,
             ),
@@ -1514,6 +1516,7 @@ def finalize_exchange_acknowledgement(
     error_reason: str | None,
     close_position_id: str | None = None,
     pending_close_status: str | None = None,
+    raw_error: str | None = None,
 ) -> dict:
     """Apply one aggregate venue acknowledgement without overriding private fills."""
     incoming_exchange_id = str(exchange_order_id or "").strip() or None
@@ -1539,6 +1542,7 @@ def finalize_exchange_acknowledgement(
                 exchange_order_id=current_exchange_id or incoming_exchange_id,
                 status=status,
                 error_reason=error_reason,
+                raw_error=raw_error,
             )
             applied = True
             if applied and close_position_id:

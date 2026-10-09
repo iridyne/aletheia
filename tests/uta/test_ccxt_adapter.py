@@ -1957,6 +1957,81 @@ async def test_bitget_pre_request_failure_keeps_its_cause_in_the_reason(monkeypa
         await adapter.close()
 
 
+def _bitget_venue_error(code: str, msg: str):
+    """The exception the real ccxt Bitget codec raises for this venue response body."""
+    response = {"code": code, "msg": msg}
+    try:
+        ccxt.bitget().handle_errors(400, "Bad Request", "url", "POST", {}, json.dumps(response), response, {}, None)
+    except ccxt.ExchangeError as error:
+        return error
+    raise AssertionError("the Bitget codec accepted a rejection body")
+
+
+def _transport_error(cls, path: str):
+    # ccxt formats transport failures as "<id> <method> <url>"; the URL carries
+    # the query string, where some venues put the signature and API key.
+    try:
+        try:
+            raise TimeoutError("read timed out")
+        except TimeoutError as cause:
+            raise cls(f"bitget POST https://api.bitget.com{path}?signature=SIGLEAK123&apiKey=KEYLEAK456") from cause
+    except cls as error:
+        return error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage,failure,evidence,expected", [
+    ("leverage", "venue", CommandEvidence.NOT_SENT, ("40797", "leverage rejected by venue")),
+    ("create", "venue", CommandEvidence.VENUE_REJECTED, ("40797", "leverage rejected by venue")),
+    ("create", "timeout", CommandEvidence.AMBIGUOUS, ("RequestTimeout", "/api/v3/trade/place-order", "read timed out")),
+    ("leverage", "network", CommandEvidence.NOT_SENT, ("ExchangeNotAvailable", "/api/v2/mix/account/set-leverage", "TimeoutError")),
+])
+async def test_bitget_command_failure_keeps_the_raw_venue_error(monkeypatch, stage, failure, evidence, expected):
+    # #3880: the bounded reason token alone cannot say what the venue answered.
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    if failure == "venue":
+        error = _bitget_venue_error("40797", "leverage rejected by venue")
+    else:
+        error = _transport_error(
+            ccxt.RequestTimeout if failure == "timeout" else ccxt.ExchangeNotAvailable,
+            "/api/v3/trade/place-order" if stage == "create" else "/api/v2/mix/account/set-leverage",
+        )
+    if stage == "leverage":
+        exchange.leverage_response = error
+    else:
+        exchange.create_response = error
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(adapter.identity))
+        assert report.evidence is evidence
+        assert report.raw_error is not None
+        assert type(error).__name__ in report.raw_error
+        assert all(part in report.raw_error for part in expected), report.raw_error
+        assert "SIGLEAK123" not in report.raw_error and "KEYLEAK456" not in report.raw_error
+        assert "signature=" not in report.raw_error
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_raw_venue_error_is_bounded(monkeypatch):
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    exchange.create_response = _bitget_venue_error("40797", "x" * 20_000)
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(adapter.identity))
+        assert report.evidence is CommandEvidence.VENUE_REJECTED
+        assert report.raw_error is not None
+        assert "40797" in report.raw_error
+        assert len(report.raw_error.encode()) <= 4096
+    finally:
+        await adapter.close()
+
+
 @pytest.mark.asyncio
 async def test_request_build_not_sent_error_keeps_its_own_reason(monkeypatch):
     profile = _profile("uta_v3")

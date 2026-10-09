@@ -460,6 +460,7 @@ def _apply_report(
             exchange_order_id=report.venue_order_id,
             status=status,
             error_reason=reason,
+            raw_error=report.raw_error,
             close_position_id=close_position_id,
             pending_close_status=pending_close_status if close_position_id else None,
         )
@@ -479,6 +480,7 @@ def _apply_report(
                     "status": status,
                     "command_evidence": report.evidence.value,
                     **({"error_code": report.error_code} if report.error_code else {}),
+                    **({"raw_error": report.raw_error} if report.raw_error else {}),
                     **(audit_context or {}),
                 },
             }

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v98"
+SCHEMA_VERSION = "aletheia-sqlite-v99"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7876,6 +7876,13 @@ def _apply_risk_policy_snapshots_v98(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+def _apply_order_raw_error_v99(db: sqlite3.Connection) -> None:
+    """Additive nullable original venue/transport error beside orders.error_reason (#3880); no backfill."""
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(orders)").fetchall()}
+    if "raw_error" not in columns:
+        db.execute("ALTER TABLE orders ADD COLUMN raw_error TEXT")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -9164,6 +9171,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_RISK_POLICY_SNAPSHOTS_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v98",
         apply=_apply_risk_policy_snapshots_v98,
+    ),
+    MigrationStep(
+        migration_id="20261009_0099_order_raw_error_v99",
+        checksum=hashlib.sha256(b"order_raw_error_v99:orders.raw_error:nullable_no_backfill").hexdigest(),
+        schema_version="aletheia-sqlite-v99",
+        apply=_apply_order_raw_error_v99,
     ),
 )
 

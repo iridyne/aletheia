@@ -504,6 +504,7 @@ class Order(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None
     error_reason: str | None = None
+    raw_error: str | None = None  # #3880: redacted original venue error; error_reason stays the bounded token
 
 
 class Fill(_Provenanced):

@@ -184,6 +184,7 @@ def test_not_sent_report_keeps_adapter_reason_and_error_code(tmp_path, monkeypat
             client_order_id=command.client_order_id,
             error_code="UTA_VENUE_REJECTED",
             reason_code="command_not_sent_40797",
+            raw_error='venue_code=40797 ExchangeError: bitget {"code":"40797","msg":"leverage rejected"}',
             profile_version="1",
         )
 
@@ -196,9 +197,16 @@ def test_not_sent_report_keeps_adapter_reason_and_error_code(tmp_path, monkeypat
 
     [order] = repo.list_orders(limit=10)
     assert (order["status"], order["error_reason"]) == ("error", "command_not_sent_40797")
+    assert order["raw_error"] == (
+        'venue_code=40797 ExchangeError: bitget {"code":"40797","msg":"leverage rejected"}'
+    )
     [applied] = [event for event in audit if event["event_type"] == "uta_command_applied"]
     assert applied["reason"] == "command_not_sent_40797"
     assert applied["after"]["error_code"] == "UTA_VENUE_REJECTED"
+    # #3880: the raw venue answer is persisted beside the bounded token.
+    assert applied["after"]["raw_error"] == (
+        'venue_code=40797 ExchangeError: bitget {"code":"40797","msg":"leverage rejected"}'
+    )
 
 
 def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeypatch):
