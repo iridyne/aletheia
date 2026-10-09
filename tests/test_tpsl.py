@@ -90,3 +90,24 @@ async def test_get_order_fills_uta_treats_null_list_as_empty():
         market_type="usdt_futures",
     )
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_follows_cursor_past_a_full_page():
+    """A full 100-row page is not the complete history; the next cursor page is read too."""
+    full = [{"orderId": "uta-big", "execId": f"f{i}"} for i in range(100)]
+    pages = iter([
+        {"code": "00000", "data": {"cursor": "c1", "list": full}},
+        {"code": "00000", "data": {"cursor": "c2", "list": [{"orderId": "uta-big", "execId": "f100"}]}},
+    ])
+    exchange = _FakeUTAExchange()
+
+    async def _fills(params):
+        exchange.requests.append(("fills", dict(params)))
+        return next(pages)
+
+    exchange.privateUtaGetV3TradeFills = _fills
+    result = await _make_client(exchange).get_order_fills(order_id="uta-big", symbol="XRPUSDT")
+
+    assert len(result) == 101
+    assert exchange.requests[1][1]["cursor"] == "c1"
