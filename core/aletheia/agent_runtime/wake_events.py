@@ -2,15 +2,15 @@
 
 The exit-intent plan (M1.5, decision D6) adds several event sources that can wake the
 LLM-backed System Operator — stop/target proximity, horizon due, thesis invalidation,
-adverse market signal, catastrophic breach. Waking the LLM is expensive, so this
+adverse market signal, manual-close reconciliation. Waking the LLM is expensive, so this
 module bounds and shapes those wakes:
 
   • Coalescing  — events for the same position inside a fixed window collapse into ONE
     batch, whose combined context is handed to the LLM in a single evaluation.
   • Rate limit  — a per-position token bucket caps waking at capacity/refill (default
     15 per hour per position), while allowing short bursts on volatile markets.
-  • Priority    — P0 catastrophic bypasses the limit and pre-empts; P1 urgent
-    (stop-loss / thesis / horizon-due, the D3 "must-answer" events) is never dropped
+  • Priority    — P1 urgent (stop-loss / thesis / horizon-due, the D3
+    "must-answer" events) is never dropped
     (it requeues until a token refills); P3 low (take-profit proximity) is dropped
     under pressure and picked up by the daemon heartbeat.
 
@@ -24,8 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ── Event kinds and priority tiers ───────────────────────────────────────────
-# Lower number = higher priority. P0 pre-empts and bypasses the rate limit.
-CATASTROPHIC = "catastrophic"
+# Lower number = higher priority.
 STOP_LOSS_NEAR = "stop_loss_near"
 THESIS_INVALIDATED = "thesis_invalidated"
 HORIZON_DUE = "horizon_due"
@@ -35,11 +34,10 @@ TAKE_PROFIT_NEAR = "take_profit_near"
 # is P1 must-answer, never dropped under rate pressure.
 MANUAL_CLOSE_RECONCILIATION_REQUIRED = "manual_close_reconciliation_required"
 
-P0, P1, P2, P3 = 0, 1, 2, 3
+P1, P2, P3 = 1, 2, 3
 _DEFAULT_PRIORITY = P2
 
 PRIORITY: dict[str, int] = {
-    CATASTROPHIC: P0,
     STOP_LOSS_NEAR: P1,
     THESIS_INVALIDATED: P1,
     HORIZON_DUE: P1,        # D3: horizon-due is a "must-answer" wake → never dropped
@@ -49,7 +47,7 @@ PRIORITY: dict[str, int] = {
 }
 
 # Priority at/below this tier is never dropped under rate pressure — it requeues
-# until a token refills (P0 catastrophic, P1 urgent/must-answer).
+# until a token refills (P1 urgent/must-answer).
 _MUST_NOT_DROP_MAX = P1
 
 
@@ -142,9 +140,8 @@ class WakeCoalescer:
     Semantics of :meth:`ready_batches`:
       • A position's buffer becomes eligible when its coalesce window has elapsed
         (fixed window from first event — not sliding, so a steady stream can't starve
-        it), OR immediately if it holds a P0 event.
-      • P0 batches emit immediately, bypassing the token bucket.
-      • Other eligible batches consume one token. If none is available:
+        it).
+      • Eligible batches consume one token. If none is available:
           – priority ≤ P1 (must-not-drop) → requeue (kept, retried when a token refills),
           – priority ≥ P2 → dropped (heartbeat will pick the position up).
     """
@@ -179,17 +176,10 @@ class WakeCoalescer:
         out: list[WakeBatch] = []
         for pid in list(self._pending.keys()):
             pending = self._pending[pid]
-            has_p0 = any(e.priority == P0 for e in pending.events)
-            window_elapsed = (now - pending.first_seen) >= self.coalesce_window_sec
-            if not (has_p0 or window_elapsed):
+            if (now - pending.first_seen) < self.coalesce_window_sec:
                 continue
 
             batch = WakeBatch(pid, list(pending.events))
-            if has_p0:
-                out.append(batch)
-                del self._pending[pid]
-                continue
-
             if self._bucket(pid).take(now):
                 out.append(batch)
                 del self._pending[pid]

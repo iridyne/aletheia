@@ -5,7 +5,6 @@ Pure and time-injected, so no async / no daemon needed here.
 
 from aletheia.agent_runtime.wake_events import (
     ADVERSE_SIGNAL,
-    CATASTROPHIC,
     HORIZON_DUE,
     STOP_LOSS_NEAR,
     TAKE_PROFIT_NEAR,
@@ -23,7 +22,6 @@ def _ev(kind, pid="p1", ts=0.0, priority=-1, **payload):
 # ── priority assignment ──────────────────────────────────────────────────────
 
 def test_default_priority_from_kind():
-    assert _ev(CATASTROPHIC).priority == 0
     assert _ev(STOP_LOSS_NEAR).priority == 1
     assert _ev(HORIZON_DUE).priority == 1        # D3: must-answer
     assert _ev(ADVERSE_SIGNAL).priority == 2
@@ -66,14 +64,6 @@ def test_coalesces_burst_into_one_batch_after_window():
     assert len(batches[0].events) == 2                 # both events in ONE batch
     assert batches[0].max_priority == 1                # STOP_LOSS_NEAR dominates
     assert c.pending_count() == 0
-
-
-def test_p0_emits_immediately_bypassing_window_and_limit():
-    c = WakeCoalescer(capacity=0, coalesce_window_sec=3.0)  # zero tokens
-    c.add(_ev(CATASTROPHIC, ts=0.0), now=0.0)
-    batches = c.ready_batches(now=0.0)                  # no window wait, no token
-    assert len(batches) == 1
-    assert batches[0].max_priority == 0
 
 
 def test_separate_positions_have_independent_buckets():

@@ -15,7 +15,6 @@ from aletheia.agent_runtime.pi_daemon import (
     stop_pi_daemon,
 )
 from aletheia.agent_runtime.wake_events import (
-    CATASTROPHIC,
     HORIZON_DUE,
     STOP_LOSS_NEAR,
     TAKE_PROFIT_NEAR,
@@ -552,15 +551,6 @@ async def test_ratelimited_event_does_not_wake():
     ev = WakeEvent(position_id="p1", kind=TAKE_PROFIT_NEAR, ts=0.0)
     captured = await _run_daemon_with_event(ev, wake_capacity=0)
     assert captured == [], f"expected no eval, got {captured}"
-
-
-async def test_catastrophic_event_bypasses_ratelimit():
-    """A P0 catastrophic event evaluates even with zero token budget."""
-    ev = WakeEvent(position_id="p1", kind=CATASTROPHIC, ts=0.0)
-    captured = await _run_daemon_with_event(ev, wake_capacity=0)
-    with_batches = [p for p in captured if p.get("wake_batches")]
-    assert with_batches, f"catastrophic must bypass rate limit; got {captured}"
-    assert with_batches[0]["wake_batches"][0]["max_priority"] == 0
 
 
 async def test_legacy_pending_does_not_wake_or_invoke_model_when_planner_is_idle(tmp_path, monkeypatch):
