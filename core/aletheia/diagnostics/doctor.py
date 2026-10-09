@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import sqlite3
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -73,6 +74,17 @@ class Report:
 
     def add(self, name: str, severity: Severity, detail: str, fix_hint: str = "") -> None:
         self.checks.append(Check(name, severity, detail, fix_hint))
+
+    def add_probe_error(self, name: str, exc: BaseException, prefix: str = "probe error") -> None:
+        """Record a probe that raised. A probe that cannot run cannot vouch for health,
+        so it is a warn (healthy=False). Absence is not breakage and stays info: no DB
+        file or no table yet on a fresh data dir, or an optional extension not installed."""
+        missing = (
+            isinstance(exc, FileNotFoundError)
+            or (isinstance(exc, sqlite3.OperationalError) and "no such table" in str(exc))
+            or (isinstance(exc, ModuleNotFoundError) and (exc.name or "").startswith("extensions."))
+        )
+        self.add(name, "info" if missing else "warn", f"{prefix}: {exc}")
 
     @property
     def blockers(self) -> list[Check]:
@@ -419,7 +431,7 @@ def build_content_report() -> Report:
         try:
             probe(report)
         except Exception as e:
-            report.add(probe.__name__, "info", f"probe error: {e}")
+            report.add_probe_error(probe.__name__, e)
     return report
 
 
@@ -501,7 +513,7 @@ def _build_report(*, probe_requested: bool = False) -> Report:
             # functools.partial has no __name__; fall back to the wrapped probe.
             name = getattr(probe, "__name__", None) or getattr(
                 getattr(probe, "func", None), "__name__", "probe")
-            report.add(name, "info", f"probe error: {e}")
+            report.add_probe_error(name, e)
     return report
 
 

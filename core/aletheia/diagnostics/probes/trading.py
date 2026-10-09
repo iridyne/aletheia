@@ -110,7 +110,7 @@ def _probe_trading_loop(report: Report) -> None:
         except Exception:
             logger.warning("doctor: session-uptime probe unavailable", exc_info=True)
     except Exception as e:
-        report.add("loop.activity", "info", f"could not read trading tables: {e}")
+        report.add_probe_error("loop.activity", e, "could not read trading tables")
         return
 
     opp_age = _age_minutes(newest_opp)
@@ -239,7 +239,7 @@ def _probe_skip_halt(report: Report) -> None:
             (cutoff,),
         ).fetchone()[0]
     except Exception as exc:
-        report.add("loop.skip_halt", "info", f"probe error: {exc}")
+        report.add_probe_error("loop.skip_halt", exc)
         return
 
     candidate_skips = int((row or [0])[0] or 0)
@@ -298,7 +298,7 @@ def _probe_round1(report: Report) -> None:
             ("2026-06-22",),
         ).fetchone()
     except Exception as e:
-        report.add("loop.round1", "info", f"could not read positions: {e}")
+        report.add_probe_error("loop.round1", e, "could not read positions")
         return
     closed = row["closed"] or 0
     wins = row["wins"] or 0
@@ -337,7 +337,7 @@ def _probe_knowledge_flood(report: Report) -> None:
             "WHERE item_type='guard_candidate' AND created_at >= datetime('now','-7 days')"
         ).fetchone()[0]
     except Exception as e:
-        report.add("loop.knowledge_flood", "info", f"probe error: {e}")
+        report.add_probe_error("loop.knowledge_flood", e)
         return
 
     if total_guards == 0:
@@ -424,7 +424,7 @@ def _probe_learning_retrieval(report: Report) -> None:
         detail = f"{active_guards} active guard(s), {pending_candidates} pending shadow candidate(s)"
         report.add("loop.guard_promotion", "ok", detail)
     except Exception as e:
-        report.add("loop.retrieval_pool", "info", f"probe error: {e}")
+        report.add_probe_error("loop.retrieval_pool", e)
 
 
 def _probe_reconciled_ratio(report: Report) -> None:
@@ -498,7 +498,7 @@ def _probe_reconciled_ratio(report: Report) -> None:
         else:
             report.add("loop.reconciled_ratio", "ok", detail)
     except Exception as e:
-        report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
+        report.add_probe_error("loop.reconciled_ratio", e)
 
 
 def _probe_outcome_history_integrity(report: Report) -> None:
@@ -523,7 +523,7 @@ def _probe_outcome_history_integrity(report: Report) -> None:
         else:
             report.add("loop.outcome_history", "ok", detail)
     except Exception as e:
-        report.add("loop.outcome_history", "info", f"probe error: {e}")
+        report.add_probe_error("loop.outcome_history", e)
 
 
 def _probe_sizing_policy(report: Report) -> None:
@@ -554,7 +554,7 @@ def _probe_sizing_policy(report: Report) -> None:
         else:
             report.add("loop.sizing_policy", "ok", f"active learning buckets: {summary}")
     except Exception as e:
-        report.add("loop.sizing_policy", "info", f"probe error: {e}")
+        report.add_probe_error("loop.sizing_policy", e)
 
 
 def _probe_persona_rollout(report: Report) -> None:
@@ -595,7 +595,7 @@ def _probe_persona_rollout(report: Report) -> None:
         else:
             report.add("loop.persona_rollout", "info", detail)
     except Exception as e:
-        report.add("loop.persona_rollout", "info", f"probe error: {e}")
+        report.add_probe_error("loop.persona_rollout", e)
 
 
 def _probe_execution_liveness(report: Report) -> None:
@@ -634,7 +634,7 @@ def _probe_execution_liveness(report: Report) -> None:
         else:
             report.add("loop.execution_liveness", "ok", detail)
     except Exception as e:
-        report.add("loop.execution_liveness", "info", f"probe error: {e}")
+        report.add_probe_error("loop.execution_liveness", e)
 
 
 def _probe_reconcile_thrash(report: Report) -> None:
@@ -682,7 +682,7 @@ def _probe_reconcile_thrash(report: Report) -> None:
         else:
             report.add("loop.reconcile_thrash", "ok", f"no thrash fingerprint: {detail}")
     except Exception as e:
-        report.add("loop.reconcile_thrash", "info", f"probe error: {e}")
+        report.add_probe_error("loop.reconcile_thrash", e)
 
 
 def _probe_concentration(report: Report) -> None:
@@ -724,7 +724,7 @@ def _probe_concentration(report: Report) -> None:
         else:
             report.add("loop.concentration", "ok", detail)
     except Exception as e:
-        report.add("loop.concentration", "info", f"probe error: {e}")
+        report.add_probe_error("loop.concentration", e)
 
 
 def _probe_health(report: Report) -> None:
@@ -732,7 +732,7 @@ def _probe_health(report: Report) -> None:
         from aletheia.agent_runtime.health import compute_health
         h = compute_health()
     except Exception as e:
-        report.add("health.rollup", "info", f"compute_health failed: {e}")
+        report.add_probe_error("health.rollup", e, "compute_health failed")
         return
     status = str(h.get("status") or ("healthy" if h.get("healthy") else "degraded"))
     if status == "healthy":
@@ -781,7 +781,7 @@ def _probe_startup_behavior_gate(report: Report) -> None:
                          "dashboard or clear the kill switch to lift it.",
             )
     except Exception as e:
-        report.add("startup_gate.status", "info", f"startup gate probe error: {e}")
+        report.add_probe_error("startup_gate.status", e, "startup gate probe error")
 
 
 def _probe_operator_shell(report: Report) -> None:
@@ -836,7 +836,7 @@ def _probe_operator_shell(report: Report) -> None:
             hint = f"inspect {get_data_dir() / 'logs' / 'operator-shell-errors.log'} and restart the gateway"
         report.add("operator.shell", "warn", detail, hint)
     except Exception as e:
-        report.add("operator.shell", "info", f"probe error: {e}")
+        report.add_probe_error("operator.shell", e)
 
 
 def _probe_pi_daemon(report: Report) -> None:
@@ -931,7 +931,7 @@ def _probe_pi_daemon(report: Report) -> None:
                 "gateway may be restarting; re-run `aletheia doctor` in a moment",
             )
     except Exception as e:
-        report.add("pi_daemon", "info", f"probe error: {e}")
+        report.add_probe_error("pi_daemon", e)
 
 
 def _render_daemon_report(report: Report, daemon: dict) -> None:

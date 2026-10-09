@@ -113,7 +113,7 @@ def _probe_runtime_session_provenance(report: Report) -> None:
                     "no stale open sessions from prior crashes",
                 )
         except Exception as e:
-            report.add("trust.runtime_session.stale_open", "info", f"stale-session probe error: {e}")
+            report.add_probe_error("trust.runtime_session.stale_open", e, "stale-session probe error")
 
         # --- Orphan scan: child rows with no parent session ---
         try:
@@ -141,10 +141,10 @@ def _probe_runtime_session_provenance(report: Report) -> None:
                              "scan_orphan_session_ids() for a full breakdown.",
                 )
         except Exception as e:
-            report.add("trust.runtime_session.orphans", "info", f"orphan scan error: {e}")
+            report.add_probe_error("trust.runtime_session.orphans", e, "orphan scan error")
 
     except Exception as e:
-        report.add("trust.runtime_session.current", "info", f"probe error: {e}")
+        report.add_probe_error("trust.runtime_session.current", e)
 
 
 def _probe_audit_chain(report: Report) -> None:
@@ -401,7 +401,7 @@ def _probe_infra_db_size(report: Report) -> None:
             load_config(persist_migrations=False).retention.app_db_capacity_mb
         )
     except Exception as e:
-        report.add("infra.db_size", "info", f"probe error: {e}")
+        report.add_probe_error("infra.db_size", e)
         return
     severity, label, hint = _classify_db_capacity(
         db_mb=db_mb,
@@ -424,7 +424,7 @@ def _probe_infra_schema_current(report: Report) -> None:
         from aletheia.storage.migrations import migration_status
         status = migration_status()
     except Exception as e:
-        report.add("infra.schema", "info", f"probe error: {e}")
+        report.add_probe_error("infra.schema", e)
         return
     pending = status.get("pending") or []
     if not pending:
