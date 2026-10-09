@@ -10220,7 +10220,13 @@ export interface components {
             /** Top Rejection Reasons */
             top_rejection_reasons: components["schemas"]["RejectionReasonCount"][];
         };
-        /** PlanningHistoryItem */
+        /**
+         * PlanningHistoryItem
+         * @description List read model: no planner input / requalification / hypothesis blobs (#3642).
+         *
+         *     Measured 20.4 MB per 200 rows, 92% `planner_input_json`. The columns stay in the
+         *     durable row and are served by `GET /api/universe/candidates/{id}`.
+         */
         PlanningHistoryItem: {
             /** Activation Identity */
             activation_identity: string | null;
@@ -10316,8 +10322,6 @@ export interface components {
             planner_contract_version: string | null;
             /** Planner Input Hash */
             planner_input_hash: string | null;
-            /** Planner Input Json */
-            planner_input_json: string | null;
             /** Planning Identity */
             planning_identity: string;
             /** Planning Key */
@@ -10330,8 +10334,6 @@ export interface components {
             producer_commit: string | null;
             /** Requalification Candidate Id */
             requalification_candidate_id: string | null;
-            /** Requalification Source Json */
-            requalification_source_json: string | null;
             /** Result Json */
             result_json: string | null;
             /** Result Kind */
@@ -10352,8 +10354,6 @@ export interface components {
             symbol: string;
             /** Updated At */
             updated_at: string;
-            /** Validated Hypothesis Json */
-            validated_hypothesis_json: string | null;
             /** Venue */
             venue: string;
         };
