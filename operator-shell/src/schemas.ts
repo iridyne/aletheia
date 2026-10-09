@@ -268,7 +268,11 @@ export interface OperatorCommandExecution {
 
 export interface OperatorCommandExecutionResult {
   command: string
+  // May this caller run it. Not proof that it ran: see `executed`.
   permitted: boolean
+  // The handler ran and reported success. A confirmation-gated command answered
+  // to a machine caller has permitted=true, executed=false, needs_confirmation=true.
+  executed: boolean
   response: string
   result: Record<string, unknown> | null
   action: Record<string, unknown> | null

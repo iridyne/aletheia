@@ -1180,7 +1180,15 @@ async def reconcile_positions(params: dict) -> dict:
         parts.append(f"closed_orphans={closed_count}")
     if errors:
         parts.append(f"errors={len(errors)}")
+    if summary.get("suspended"):
+        parts.append("suspended")
 
+    if errors or summary.get("suspended"):
+        # Same convention as every handler: a top-level error is a failed run.
+        return {
+            "error": f"Position reconciliation incomplete: {', '.join(parts)}",
+            "summary": summary,
+        }
     return {
         "message": f"Position reconciliation complete: {', '.join(parts)}",
         "summary": summary,

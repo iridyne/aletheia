@@ -15,7 +15,12 @@ class TypedCommandExecutionResult(BaseModel):
     response: str
     result: dict[str, Any] | None = None
     action: dict[str, Any] | None = None
+    # True only on the confirmation gate: the command was not run and waits for
+    # the human operator. False once anything ran, failed or was refused.
     needs_confirmation: bool = False
+    # True only when the handler ran and reported success. ``permitted`` answers
+    # "may this caller run it"; it is not proof that anything happened.
+    executed: bool = False
     session_id: str
 
 
@@ -23,6 +28,11 @@ CONFIRMATION_REQUIRED_RESPONSE = (
     "'{command}' requires operator confirmation and was not executed. "
     "Only the operator can confirm it from the Command Center."
 )
+
+
+def handler_succeeded(result: dict[str, Any]) -> bool:
+    """Registry handlers report failure with a top-level ``error`` key."""
+    return "error" not in result
 
 
 def build_action(command: str) -> dict[str, Any] | None:
@@ -144,7 +154,6 @@ async def execute_typed_command(
             permitted=False,
             risk_level=cmd_def.risk_level,
             response=response,
-            needs_confirmation=cmd_def.requires_confirmation,
             session_id=session_id,
         )
 
@@ -185,13 +194,13 @@ async def execute_typed_command(
             permitted=False,
             risk_level=cmd_def.risk_level,
             response=response,
-            needs_confirmation=cmd_def.requires_confirmation,
             session_id=session_id,
         )
 
     result = await handler(params)
     response = _format_fallback(result)
-    record(True, response)
+    executed = handler_succeeded(result)
+    record(executed, response)
     close_session(
         session_id,
         intent=command_name,
@@ -206,7 +215,7 @@ async def execute_typed_command(
         risk_level=cmd_def.risk_level,
         response=response,
         result=result,
-        action=build_action(command_name),
-        needs_confirmation=cmd_def.requires_confirmation,
+        action=build_action(command_name) if executed else None,
+        executed=executed,
         session_id=session_id,
     )

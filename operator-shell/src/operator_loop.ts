@@ -1231,11 +1231,12 @@ export class OperatorLoop {
           text: execution.response,
           command: 'rerun_failed_agent_task',
           permitted: execution.permitted,
+          executed: execution.executed,
           result: execution.result,
         },
       })
 
-      if (!execution.permitted) {
+      if (!execution.executed) {
         await this.backendClient.createEvent({
           event_type: 'failed_agent_rerun_failed',
           severity: 'high',
@@ -1352,11 +1353,12 @@ export class OperatorLoop {
           text: execution.response,
           command: 'set_symbol_observe_only',
           permitted: execution.permitted,
+          executed: execution.executed,
           result: execution.result,
         },
       })
 
-      if (!execution.permitted) {
+      if (!execution.executed) {
         await this.backendClient.createEvent({
           event_type: 'observe_only_update_failed',
           severity: 'high',
@@ -1501,11 +1503,12 @@ export class OperatorLoop {
           text: execution.response,
           command: 'create_review_report',
           permitted: execution.permitted,
+          executed: execution.executed,
           result: execution.result,
         },
       })
 
-      if (!execution.permitted) {
+      if (!execution.executed) {
         await this.backendClient.createEvent({
           event_type: 'review_report_refresh_failed',
           severity: 'high',
@@ -1641,11 +1644,12 @@ export class OperatorLoop {
           text: execution.response,
           command: 'create_diagnostic_report',
           permitted: execution.permitted,
+          executed: execution.executed,
           result: execution.result,
         },
       })
 
-      if (!execution.permitted) {
+      if (!execution.executed) {
         await this.backendClient.createEvent({
           event_type: 'diagnostic_report_refresh_failed',
           severity: 'high',
@@ -1758,11 +1762,12 @@ export class OperatorLoop {
         text: execution.response,
         command: 'create_daily_review',
         permitted: execution.permitted,
+        executed: execution.executed,
         result: execution.result,
       },
     })
 
-    if (!execution.permitted) {
+    if (!execution.executed) {
       await this.backendClient.createEvent({
         event_type: 'daily_review_refresh_failed',
         severity: 'high',
@@ -2076,7 +2081,7 @@ export class OperatorLoop {
         user_input: decision.summary,
         parameters: decision.parameters || {},
       })
-      if (decision.classification === 'proposal_only' && execution.permitted) {
+      if (decision.classification === 'proposal_only' && execution.executed) {
         const proposalArtifactId =
           execution.result &&
           typeof execution.result === 'object' &&
@@ -2118,8 +2123,8 @@ export class OperatorLoop {
         })
       } else {
         await this.backendClient.createEvent({
-          event_type: execution.permitted ? 'repair_executed' : 'repair_failed',
-          severity: execution.permitted ? 'info' : 'high',
+          event_type: execution.executed ? 'repair_executed' : 'repair_failed',
+          severity: execution.executed ? 'info' : 'high',
           source: 'operator_loop',
           session_id: sessionId,
           task_id: this.taskRuntime.snapshot().currentTaskId,
@@ -2128,11 +2133,12 @@ export class OperatorLoop {
           payload: {
             command: decision.commandName,
             permitted: execution.permitted,
+            executed: execution.executed,
             response: execution.response,
             result: execution.result,
           },
         })
-        if (execution.permitted) {
+        if (execution.executed) {
           if (decision.recommendationId) {
             await this.taskRuntime.completeTaskForRecommendation(decision.recommendationId, {
               summary: execution.response,

@@ -13,7 +13,12 @@ class CommandResponse(BaseModel):
     risk_level: str
     response: str
     action: dict | None = None
+    # True only on the confirmation gate (not run, waiting for the operator).
     needs_confirmation: bool = False
+    # Passed intent/permission checks; not proof that anything ran.
+    permitted: bool = False
+    # True only when a handler (or the general-query answer) ran and succeeded.
+    executed: bool = False
     session_id: str | None = None
 
 
@@ -228,7 +233,9 @@ class AgentShellRuntime:
                 close_session(session_id, intent="query", command=None,
                               response=response, permitted=True, start_time=start_time)
                 return CommandResponse(
-                    intent="query", risk_level="read", response=response, session_id=session_id,
+                    intent="query", risk_level="read", response=response,
+                    permitted=True, executed=True,
+                    session_id=session_id,
                 )
 
             cmd_def = COMMANDS.get(intent.command)
@@ -311,6 +318,7 @@ class AgentShellRuntime:
                     risk_level=cmd_def.risk_level,
                     response=response,
                     needs_confirmation=True,
+                    permitted=True,
                     session_id=session_id,
                 )
 
@@ -318,10 +326,11 @@ class AgentShellRuntime:
 
             response = await synthesize_answer(result, text, ctx)
 
-            from aletheia.agent_shell.executor import build_action
+            from aletheia.agent_shell.executor import build_action, handler_succeeded
 
-            action = build_action(intent.command)
-            record_command(session_id, intent.command, intent.parameters, True, response[:200])
+            executed = handler_succeeded(result)
+            action = build_action(intent.command) if executed else None
+            record_command(session_id, intent.command, intent.parameters, executed, response[:200])
             close_session(session_id, intent=intent.command, command=intent.command,
                           response=response, permitted=True, start_time=start_time)
 
@@ -330,7 +339,8 @@ class AgentShellRuntime:
                 risk_level=cmd_def.risk_level,
                 response=response,
                 action=action,
-                needs_confirmation=cmd_def.requires_confirmation,
+                permitted=True,
+                executed=executed,
                 session_id=session_id,
             )
 

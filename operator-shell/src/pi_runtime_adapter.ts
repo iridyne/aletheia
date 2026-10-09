@@ -15,6 +15,7 @@ export interface PiSessionResult {
   commandsExecuted: Array<{
     command: string
     permitted: boolean
+    executed?: boolean
     response?: string
     reason?: string
   }>
