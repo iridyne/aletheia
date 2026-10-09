@@ -1,6 +1,12 @@
 {
   "permissions": {
     "allow": [],
-    "deny": []
+    "deny": [
+      "Read(./frontend/node_modules/**/*)",
+      "Read(./.venv/**/*)",
+      "Read(./frontend/dist/**/*)",
+      "Read(./core/aletheia/dashboard_static/**/*)",
+      "Read(./frontend/src/api/generated/**/*)"
+    ]
   }
 }
