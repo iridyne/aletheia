@@ -12,10 +12,10 @@ from aletheia.trading.entry_analysis import (
     EntryAnchor,
     EntryHypothesis,
     _candidate_opportunity_evidence_refs,
-    canonical_json,
     entry_model_view,
     validate_hypothesis_references,
 )
+from aletheia.utils.json_utils import canonical_json_strict
 from aletheia.trading.risk_intent import RiskIntent
 
 
@@ -151,15 +151,15 @@ def test_entry_model_view_excludes_raw_evidence_and_retains_grounding_identities
 
 def test_entry_model_view_is_deterministic_bounded_and_does_not_mutate_context():
     context = _maximal_context()
-    frozen_before = canonical_json(context.model_dump(mode="json"))
+    frozen_before = canonical_json_strict(context.model_dump(mode="json"))
 
-    first = canonical_json(entry_model_view(context))
-    second = canonical_json(entry_model_view(context))
+    first = canonical_json_strict(entry_model_view(context))
+    second = canonical_json_strict(entry_model_view(context))
 
     assert first == second
     assert len(first.encode()) < 24 * 1024
     assert len(frozen_before.encode()) > 24 * 1024
-    assert canonical_json(context.model_dump(mode="json")) == frozen_before
+    assert canonical_json_strict(context.model_dump(mode="json")) == frozen_before
 
 
 def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(monkeypatch):

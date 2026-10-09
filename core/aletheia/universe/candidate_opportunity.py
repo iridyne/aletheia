@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
@@ -11,6 +10,7 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aletheia.universe.economic_utility import reason_proves_evidence_absent
+from aletheia.utils.json_utils import canonical_json_strict
 
 
 CANDIDATE_OPPORTUNITY_CONTEXT_VERSION = "candidate-opportunity-context/v1"
@@ -23,12 +23,8 @@ LEGACY_MECHANISM_MAP = {
 }
 
 
-def canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
 def fingerprint(value: object) -> str:
-    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+    return hashlib.sha256(canonical_json_strict(value).encode()).hexdigest()
 
 
 class CandidateOpportunityContext(BaseModel):

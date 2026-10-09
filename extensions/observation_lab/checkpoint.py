@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from aletheia.storage.time_utils import utcnow_iso_us as _now
+from aletheia.utils.json_utils import canonical_json_safe
 
 
 # Checkpoints prove durable evidence identity, not scheduler heartbeats or
@@ -90,10 +91,6 @@ class CheckpointVerification:
     mismatch_components: tuple[str, ...] = ()
 
 
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _read_app_migration_state() -> tuple[str, int]:
@@ -166,12 +163,12 @@ def _read_app_outbox_states(
         else logical_watermark
     )
     fingerprint = hashlib.sha256(
-        _canonical_json([tuple(row) for row in rows]).encode("utf-8")
+        canonical_json_safe([tuple(row) for row in rows]).encode("utf-8")
     ).hexdigest()
     legacy_watermark = int(legacy_rows[-1][0]) if legacy_rows else 0
     legacy_pending = sum(1 for row in legacy_rows if row[3] is None)
     legacy_fingerprint = hashlib.sha256(
-        _canonical_json([tuple(row) for row in legacy_rows]).encode("utf-8")
+        canonical_json_safe([tuple(row) for row in legacy_rows]).encode("utf-8")
     ).hexdigest()
     return (
         (watermark, len(rows), fingerprint),
@@ -334,7 +331,7 @@ def _lab_state_fingerprint(*, db: sqlite3.Connection | None = None) -> str:
                 [_json_value(row[column]) for column in selected_columns]
                 for row in rows
             ],
-            key=_canonical_json,
+            key=canonical_json_safe,
         )
         material.append({
             "name": name,
@@ -342,7 +339,7 @@ def _lab_state_fingerprint(*, db: sqlite3.Connection | None = None) -> str:
             "columns": list(selected_columns),
             "rows": encoded_rows,
         })
-    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_safe(material).encode("utf-8")).hexdigest()
 
 
 def _checkpoint_ledger_fingerprint(
@@ -376,7 +373,7 @@ def _checkpoint_ledger_fingerprint(
         for row in rows
         if row["lab_state_fingerprint"] != lab_state_fingerprint
     ]
-    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_safe(material).encode("utf-8")).hexdigest()
 
 
 def _fingerprint(
@@ -404,7 +401,7 @@ def _fingerprint(
         "main_outbox_pending_count": int(main_outbox_pending_count),
         "main_outbox_fingerprint": main_outbox_fingerprint,
     }
-    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_safe(payload).encode("utf-8")).hexdigest()
 
 
 def compute_joint_checkpoint(
@@ -494,7 +491,7 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
             checkpoint.recorded_at,
             checkpoint.app_migration_head,
             checkpoint.app_migration_count,
-            _canonical_json(list(checkpoint.active_manifest_hashes)),
+            canonical_json_safe(list(checkpoint.active_manifest_hashes)),
             checkpoint.active_manifest_count,
             checkpoint.joint_fingerprint,
             checkpoint.notes,

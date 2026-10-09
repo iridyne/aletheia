@@ -242,10 +242,10 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
     from aletheia.agent_shell.entry_planner import PlanIntentError
     from aletheia.trading.entry_analysis import (
-        canonical_json,
         fingerprint,
         validate_hypothesis_references,
     )
+    from aletheia.utils.json_utils import canonical_json_strict
 
     validate_hypothesis_references(hypothesis, context)
 
@@ -457,7 +457,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     limit_price = primary.price if maker else None
     # Frozen BBO is context, not future submission authority. The fixed passive
     # price waits for current-BBO eligibility in the existing execution boundary.
-    hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
+    hypothesis_json = canonical_json_strict(hypothesis.model_dump(mode="json"))
     source = context.candidate_opportunity_context["source"]
     updates = {
         "source_kind": source["kind"],

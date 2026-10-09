@@ -15,6 +15,7 @@ import yaml
 from aletheia.config.loader import get_data_dir
 from aletheia.maintenance.filesystem_retention import prune_backups
 from aletheia.storage.hashing import sha256_file
+from aletheia.storage.time_utils import utcnow_iso
 
 logger = logging.getLogger("aletheia.backup.service")
 
@@ -27,10 +28,6 @@ DEFAULT_KEEP_RECENT = 7
 # dots, underscores, and hyphens — no path separators, spaces, or control
 # chars. Max 63 chars so the full backup_id stays well under filesystem limits.
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 _BACKUP_PROFILES = frozenset({"online", "authoritative"})
@@ -432,7 +429,7 @@ class BackupService:
             # Write manifest
             manifest = BackupManifest(
                 backup_id=backup_id,
-                created_at=_utcnow(),
+                created_at=utcnow_iso(),
                 data_dir=str(self._data_dir),
                 file_count=file_count,
                 total_bytes=total_bytes,

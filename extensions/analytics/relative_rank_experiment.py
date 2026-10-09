@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
-import json
 from collections.abc import Mapping, Sequence
 
 from aletheia.config.schema import UniverseConfig
+from aletheia.utils.json_utils import canonical_json_strict
 from extensions.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
@@ -31,13 +31,9 @@ RELATIVE_RANK_CONTROL_POLICY = "universe_step_v1"
 RELATIVE_RANK_TREATMENT_POLICY = "relative_rank_50_30_20"
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
 def _behavior_hash(policy_hash: str) -> str:
     return hashlib.sha256(
-        _canonical_json(
+        canonical_json_strict(
             {
                 "path_id": RELATIVE_RANK_PATH_ID,
                 "contract": RELATIVE_RANK_EXPERIMENT_CONTRACT,

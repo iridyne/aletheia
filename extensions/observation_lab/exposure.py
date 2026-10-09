@@ -20,12 +20,12 @@ Missing evidence is unavailable, never zero or control by implication
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from aletheia.utils.json_utils import canonical_json_safe
 from extensions.observation_lab.manifest import ExecutionManifest
 from aletheia.storage.time_utils import utcnow_iso_us as _now
 
@@ -49,10 +49,6 @@ class LabExposureFact:
     source_runtime_commit: str | None = None
 
 
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def record_lab_exposure(fact: LabExposureFact) -> str:
@@ -85,9 +81,9 @@ def record_lab_exposure(fact: LabExposureFact) -> str:
             fact.assignment,
             1 if fact.applied else 0,
             1 if fact.behavior_changed else 0,
-            _canonical_json(fact.payload),
+            canonical_json_safe(fact.payload),
             fact.reason,
-            _canonical_json(fact.active_manifest_set),
+            canonical_json_safe(fact.active_manifest_set),
             fact.conflict_result,
             _now(),
             fact.source_runtime_commit,

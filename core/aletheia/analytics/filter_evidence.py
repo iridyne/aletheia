@@ -27,6 +27,7 @@ from aletheia.storage.models import (
 )
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.storage.time_utils import utcnow_iso as _utcnow
+from aletheia.utils.json_utils import canonical_json
 
 logger = logging.getLogger("aletheia.analytics.filter_evidence")
 
@@ -160,8 +161,8 @@ def record_filter_decision(
 
     params = _sanitize_snapshot(parameters or {})
     input_values = _sanitize_snapshot(inputs or {})
-    parameter_json = _canonical_json(params)
-    input_json = _canonical_json(input_values)
+    parameter_json = canonical_json(params)
+    input_json = canonical_json(input_values)
     filter_version = _filter_version(filter_name, parameter_json)
     dedup_material = (
         f"{candidate_key}|{filter_name}|{stage}|{sequence_no}|{decision}|{filter_version}"
@@ -369,7 +370,7 @@ def record_filter_decision_batch(
     if not run_id or not filter_name:
         raise ValueError("run_id and filter_name are required")
     params = _sanitize_snapshot(parameters or {})
-    parameter_json = _canonical_json(params)
+    parameter_json = canonical_json(params)
     filter_version = _filter_version(filter_name, parameter_json)
     effective_evaluated_at = evaluated_at or _utcnow()
     if min_interval_sec is not None and min_interval_sec > 0:
@@ -1365,7 +1366,7 @@ def _compact_candidate_facts(facts: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _encode_candidate_facts(facts: list[dict[str, Any]]) -> str:
     """Compress the lossless row matrix while keeping a self-describing TEXT value."""
-    raw = _canonical_json(_compact_candidate_facts(facts)).encode("utf-8")
+    raw = canonical_json(_compact_candidate_facts(facts)).encode("utf-8")
     compressed = zlib.compress(raw, level=6)
     return "zlib-base64:" + base64.b64encode(compressed).decode("ascii")
 
@@ -1410,10 +1411,6 @@ def _safe_text(value: str | None) -> str | None:
     if value is None:
         return None
     return str(value)[:500]
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
 

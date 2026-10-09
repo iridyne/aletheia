@@ -24,6 +24,7 @@ from aletheia.analytics.outcome_semantics import (
 )
 from aletheia.config.loader import get_data_dir
 from aletheia.files.frontmatter import parse_frontmatter
+from aletheia.storage.table_utils import table_exists
 from extensions.knowledge.guards import TradingGuard, evaluate_guards, load_trading_guards
 from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 from aletheia.storage.sqlite import get_db, readonly_db
@@ -164,7 +165,7 @@ def render_guard_impact_audit(report: dict[str, Any]) -> str:
 
 
 def _recent_open_opportunities(db, cutoff: str) -> list[dict[str, Any]]:
-    if not _table_exists(db, "opportunities"):
+    if not table_exists(db, "opportunities"):
         return []
     rows = db.execute(
         "SELECT * FROM opportunities "
@@ -177,7 +178,7 @@ def _recent_open_opportunities(db, cutoff: str) -> list[dict[str, Any]]:
 
 def _universe_members_by_id(db, member_ids: list[Any]) -> dict[str, dict[str, Any]]:
     ids = [str(x) for x in member_ids if x]
-    if not ids or not _table_exists(db, "universe_members"):
+    if not ids or not table_exists(db, "universe_members"):
         return {}
     out: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(ids, 100):
@@ -235,7 +236,7 @@ def _pre_guard_skip_reason(opp: dict[str, Any], member: dict[str, Any] | None) -
 
 def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str, Any]:
     outcomes: dict[str, Any] = {"shadow": None, "forward": {}}
-    if _table_exists(db, "shadow_trades"):
+    if table_exists(db, "shadow_trades"):
         keyed_projection = valid_keyed_shadow_projection_sql("shadow_trades")
         row = db.execute(
             "SELECT pnl_pct, resolved_at, created_at, batch_id, rank FROM shadow_trades "
@@ -255,7 +256,7 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
                 "rank": d.get("rank"),
             }
     member_id = opp.get("universe_member_id")
-    if member_id and _table_exists(db, "filter_candidate_outcomes"):
+    if member_id and table_exists(db, "filter_candidate_outcomes"):
         member_row = db.execute(
             "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member_id,)
         ).fetchone()
@@ -501,16 +502,6 @@ def _fmt_outcomes(outcomes: dict[str, Any]) -> str:
         if item and item.get("direction_adjusted_return_pct") is not None:
             parts.append(f"{horizon}={item['direction_adjusted_return_pct']:+.2f}%")
     return ", ".join(parts) if parts else "n/a"
-
-
-def _table_exists(db, table: str) -> bool:
-    if db is None:
-        return False
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    ).fetchone()
-    return row is not None
 
 
 def _chunks(values: list[str], size: int):
