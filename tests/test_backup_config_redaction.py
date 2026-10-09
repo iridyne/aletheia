@@ -120,5 +120,7 @@ def test_backup_archive_contains_no_sentinel_bytes(tmp_path):
     restored = tmp_path / "restored"
     outcome = RestoreService().restore(archive, restored)
     assert outcome.success, outcome.errors
+    assert outcome.config_disposition == "restored_redacted"
     config = yaml.safe_load((restored / "config.yaml").read_text())
     assert not WebhookConfig.model_validate(config["webhook"]).secret
+

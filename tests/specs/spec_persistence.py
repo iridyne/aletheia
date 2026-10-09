@@ -495,3 +495,32 @@ def test_rollback_restore_keeps_live_managed_files_and_fills_missing(tmp_path):
     assert (tmp_path / "events" / "new.jsonl").read_text() == "new\n"
     assert (tmp_path / "artifacts" / "run" / "result.json").read_text() == "{}"
     assert "events/kept.jsonl" in result.to_dict()["preserved_files"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PR-S08", "persistence_recovery_contract",
+        "Failure and recovery semantics — update rollback keeps live config", "L2b",
+        "A restore keeps an existing config.yaml byte for byte and reports "
+        "config_disposition=preserved_live; redacted fields are never rehydrated (#1621).",
+    ),
+)
+def test_rollback_restore_keeps_the_live_config(tmp_path):
+    """#1621: a rollback never overwrites config.yaml with the checkpoint's redacted copy."""
+    import yaml
+
+    sqlite3.connect(str(tmp_path / "app.db")).close()
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({"network": {"proxy_url": "http://usr:SENTINEL@host:80"}}),
+        encoding="utf-8",
+    )
+    live_bytes = (tmp_path / "config.yaml").read_bytes()
+    from ops.backup.service import BackupService
+    archive = BackupService(data_dir=tmp_path).create_backup()
+
+    from ops.backup.restore import RestoreService
+    outcome = RestoreService().restore(archive, tmp_path)
+
+    assert outcome.success, outcome.errors
+    assert (tmp_path / "config.yaml").read_bytes() == live_bytes
+    assert outcome.to_dict()["config_disposition"] == "preserved_live"
