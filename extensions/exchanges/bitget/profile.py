@@ -346,6 +346,31 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
         {"uta": True, "productType": "USDT-FUTURES"},
     )
 
+    def fill(
+        self,
+        raw: dict[str, object],
+        markets: dict[str, Any],
+        identity: UTAAccountIdentity,
+        received_at: datetime,
+    ) -> FillReport:
+        report = super().fill(raw, markets, identity, received_at)
+        # ccxt negates every Bitget fee (its `deduction` test never fires). The v2 mix endpoint
+        # reports a fee as a negative number, so that yields a positive cost; UTA v3 already
+        # reports the cost as a positive number, so ccxt turns it into a negative cost, which the
+        # Fill validator rejects and no uta_v3 fill could ever be materialized. Use the venue's value.
+        info = raw.get("info")
+        details = info.get("feeDetail") if isinstance(info, dict) else None
+        if isinstance(details, list) and len(details) == 1 and isinstance(details[0], dict):
+            detail: dict[str, Any] = details[0]
+            cost = decimal_value(detail.get("fee"))
+            if cost is not None:
+                coin = detail.get("feeCoin")
+                return report.model_copy(update={
+                    "fee": cost,
+                    "fee_currency": str(coin) if coin else report.fee_currency,
+                })
+        return report
+
     def account_values(self, balances):
         values, normalized, _reason = super().account_values(balances)
         usd_equity = Decimal(0)

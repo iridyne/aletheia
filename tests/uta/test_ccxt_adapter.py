@@ -2055,3 +2055,22 @@ async def test_bitget_fill_pages_respect_venue_row_cap():
     fill_requests = [url for url in sent if "/fills" in url]
     assert fill_requests
     assert all("limit=100&" in url or url.endswith("limit=100") for url in fill_requests), fill_requests
+
+
+def test_uta_v3_fill_fee_is_the_positive_cost_the_venue_reported():
+    """ccxt negates every Bitget fee; UTA v3 reports a positive cost, so the raw ccxt value is negative."""
+    import ccxt
+
+    venue_fill = {  # ccxt's own documented UTA v3 fetchMyTrades row
+        "execId": "1322441401010528257", "orderId": "1322441400976261120", "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT", "side": "sell", "execPrice": "107005.4", "execQty": "0.0001",
+        "tradeScope": "taker", "feeDetail": [{"feeCoin": "USDT", "fee": "0.00642032"}],
+        "createdTime": "1751020520451",
+    }
+    trade = dict(ccxt.bitget().parse_trade(venue_fill))
+    fee = trade["fee"]
+    assert isinstance(fee, dict) and float(fee["cost"]) == -0.00642032  # the premise: ccxt flips the sign
+    trade["symbol"] = "BTC/USDT:USDT"
+    profile = _profile("bitget")
+    report = profile.fill(trade, {}, _identity(profile), datetime.now(timezone.utc))
+    assert report.fee == Decimal("0.00642032") and report.fee_currency == "USDT"
