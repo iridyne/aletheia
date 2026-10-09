@@ -1266,31 +1266,30 @@ async def set_symbol_observe_only(params: dict) -> dict:
 
     canonical = to_canonical(str(symbol))
     exchange_symbol = canonical.replace("/", "")
-    cfg = config_loader.load_config()
+    with config_loader.edit_config() as cfg:
 
-    # In whitelist mode: remove from list. In blacklist mode: add to list.
-    if cfg.risk.symbol_filter_mode == "blacklist":
-        if exchange_symbol not in cfg.risk.symbol_list:
-            cfg.risk.symbol_list = [*cfg.risk.symbol_list, exchange_symbol]
-            cfg.exchange.symbol_list = list(cfg.risk.symbol_list)
-    else:
-        updated = [s for s in cfg.risk.symbol_list if s != exchange_symbol]
-        if not updated:
-            return {"error": "Cannot mark the last tradable symbol observe-only."}
-        cfg.risk.symbol_list = updated
-        cfg.exchange.symbol_list = updated
+        # In whitelist mode: remove from list. In blacklist mode: add to list.
+        if cfg.risk.symbol_filter_mode == "blacklist":
+            if exchange_symbol not in cfg.risk.symbol_list:
+                cfg.risk.symbol_list = [*cfg.risk.symbol_list, exchange_symbol]
+                cfg.exchange.symbol_list = list(cfg.risk.symbol_list)
+        else:
+            updated = [s for s in cfg.risk.symbol_list if s != exchange_symbol]
+            if not updated:
+                return {"error": "Cannot mark the last tradable symbol observe-only."}
+            cfg.risk.symbol_list = updated
+            cfg.exchange.symbol_list = updated
 
-    observed_symbols = list(dict.fromkeys([*cfg.market_data.observed_symbols, canonical]))
-    cfg.market_data.observed_symbols = observed_symbols
+        observed_symbols = list(dict.fromkeys([*cfg.market_data.observed_symbols, canonical]))
+        cfg.market_data.observed_symbols = observed_symbols
 
-    if cfg.market_data.observed_instruments:
-        observe_instrument = str(
-            InstrumentId.from_parts(cfg.market_data.ccxt_exchange or "binance", canonical, MARKET_SPOT)
-        )
-        if observe_instrument not in cfg.market_data.observed_instruments:
-            cfg.market_data.observed_instruments.append(observe_instrument)
+        if cfg.market_data.observed_instruments:
+            observe_instrument = str(
+                InstrumentId.from_parts(cfg.market_data.ccxt_exchange or "binance", canonical, MARKET_SPOT)
+            )
+            if observe_instrument not in cfg.market_data.observed_instruments:
+                cfg.market_data.observed_instruments.append(observe_instrument)
 
-    config_loader.save_config(cfg)
     write_audit(
         {
             "actor": "agent_shell",

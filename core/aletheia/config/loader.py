@@ -536,12 +536,18 @@ def _sync_config_directory() -> None:
 
 @contextmanager
 def _config_permit():
-    """Hold the process lock plus the cross-process config writer permit."""
+    """Hold the process lock plus the cross-process config writer permit.
+
+    The permit is not reentrant, so a load_config() inside it must never try to
+    persist a migration (that would wait on the permit this thread holds).
+    """
     with _config_write_lock:
         file_fd = _acquire_config_file_lock()
+        token = _READ_ONLY_CONFIG.set(True)
         try:
             yield
         finally:
+            _READ_ONLY_CONFIG.reset(token)
             _release_config_file_lock(file_fd)
 
 

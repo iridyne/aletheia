@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import threading
+from typing import Literal, cast
 
 from aletheia.config import loader as _config_loader
 from aletheia.config.schema import PauseOwnerLease
@@ -153,16 +154,15 @@ def acquire_pause(
 ) -> PauseOwnerLease:
     """Persist one owner lease and pause under the same process transition lock."""
     with _pause_transition_lock:
-        cfg = _config_loader.load_config()
-        lease = cfg.runtime.acquire_pause(
-            owner,
-            reason=reason,
-            generation=generation,
-            acquired_at=acquired_at,
-            source=source,
-            scope=scope,
-        )
-        _config_loader.save_config(cfg)
+        with _config_loader.edit_config() as cfg:
+            lease = cfg.runtime.acquire_pause(
+                owner,
+                reason=reason,
+                generation=generation,
+                acquired_at=acquired_at,
+                source=source,
+                scope=cast(Literal["global", "demo", "live"] | None, scope),
+            )
         try:
             from aletheia.agent_runtime.scheduler import pause_scheduler
 
@@ -247,42 +247,41 @@ def release_pauses(
 ) -> PauseReleaseResult:
     """Atomically release matching generations for one or more owners."""
     with _pause_transition_lock:
-        cfg = _config_loader.load_config()
-        released_leases: list[tuple[str, PauseOwnerLease]] = []
-        rejected: list[tuple[str, str | None, PauseOwnerLease | None]] = []
-        for owner, generation in owners.items():
-            lease = cfg.runtime.pause_owners.get(owner)
-            if (
-                lease is None
-                or not lease.active
-                or not _generation_matches(lease.generation if lease else None, generation)
-            ):
-                rejected.append((owner, generation, lease))
-                continue
-            if cfg.runtime.release_pause(owner, generation=generation):
-                released_leases.append((owner, lease))
+        with _config_loader.edit_config() as cfg:
+            released_leases: list[tuple[str, PauseOwnerLease]] = []
+            rejected: list[tuple[str, str | None, PauseOwnerLease | None]] = []
+            for owner, generation in owners.items():
+                lease = cfg.runtime.pause_owners.get(owner)
+                if (
+                    lease is None
+                    or not lease.active
+                    or not _generation_matches(lease.generation if lease else None, generation)
+                ):
+                    rejected.append((owner, generation, lease))
+                    continue
+                if cfg.runtime.release_pause(owner, generation=generation):
+                    released_leases.append((owner, lease))
 
-        for owner, generation, current in rejected:
-            _audit_release_rejected(
-                owner=owner,
-                requested_generation=generation,
-                current=current,
-                actor=actor,
-                source=source,
-            )
+            for owner, generation, current in rejected:
+                _audit_release_rejected(
+                    owner=owner,
+                    requested_generation=generation,
+                    current=current,
+                    actor=actor,
+                    source=source,
+                )
 
-        if not released_leases:
+            if not released_leases:
+                blocking = active_pause_blocker_names(cfg)
+                return PauseReleaseResult(
+                    released=False,
+                    resumed=False,
+                    remaining_owners=_active_owner_names(cfg),
+                    blocking_owners=blocking,
+                )
+
+            remaining = _active_owner_names(cfg)
             blocking = active_pause_blocker_names(cfg)
-            return PauseReleaseResult(
-                released=False,
-                resumed=False,
-                remaining_owners=_active_owner_names(cfg),
-                blocking_owners=blocking,
-            )
-
-        remaining = _active_owner_names(cfg)
-        blocking = active_pause_blocker_names(cfg)
-        _config_loader.save_config(cfg)
         resumed = False
         if resume_when_clear and not blocking:
             from aletheia.agent_runtime.scheduler import resume_scheduler
@@ -295,16 +294,16 @@ def release_pauses(
                 # Persistence already recorded the release. Restore the exact
                 # leases so config remains fail-closed and the owning recovery
                 # loop can retry instead of reporting a false resume.
-                for owner, lease in released_leases:
-                    cfg.runtime.acquire_pause(
-                        owner,
-                        reason=lease.reason,
-                        generation=lease.generation,
-                        acquired_at=lease.acquired_at,
-                        source=lease.source,
-                        scope=lease.scope,
-                    )
-                _config_loader.save_config(cfg)
+                with _config_loader.edit_config() as cfg:
+                    for owner, lease in released_leases:
+                        cfg.runtime.acquire_pause(
+                            owner,
+                            reason=lease.reason,
+                            generation=lease.generation,
+                            acquired_at=lease.acquired_at,
+                            source=lease.source,
+                            scope=lease.scope,
+                        )
                 return PauseReleaseResult(
                     released=False,
                     resumed=False,

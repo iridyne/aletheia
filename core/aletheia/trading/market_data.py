@@ -121,23 +121,22 @@ def _auto_remove_xstock(sym: str, exchange_name: str, consecutive: int) -> bool:
     consecutive is the current failure count, used only for logging context.
     """
     try:
-        from aletheia.config.loader import load_config, save_config
+        from aletheia.config.loader import edit_config
         from aletheia.infra.events import emit_infra_event
 
-        cfg = load_config()
-        canon = to_canonical(sym)
-        tokens = list(cfg.market_data.observed_stock_tokens or [])
-        filtered_tokens = [t for t in tokens if to_canonical(t) != canon]
-        if filtered_tokens == tokens:
-            return False
-        before = {
-            "observed_stock_tokens": tokens,
-        }
-        after = {
-            "observed_stock_tokens": filtered_tokens,
-        }
-        cfg.market_data.observed_stock_tokens = filtered_tokens
-        save_config(cfg)
+        with edit_config() as cfg:
+            canon = to_canonical(sym)
+            tokens = list(cfg.market_data.observed_stock_tokens or [])
+            filtered_tokens = [t for t in tokens if to_canonical(t) != canon]
+            if filtered_tokens == tokens:
+                return False
+            before = {
+                "observed_stock_tokens": tokens,
+            }
+            after = {
+                "observed_stock_tokens": filtered_tokens,
+            }
+            cfg.market_data.observed_stock_tokens = filtered_tokens
         logger.warning(
             "Auto-removed xStock %s from config (confirmed not listed on exchange, "
             "failure count=%d)",

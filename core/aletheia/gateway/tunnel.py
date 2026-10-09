@@ -14,7 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from aletheia.config.loader import get_data_dir, load_config, save_config
+from aletheia.config.loader import edit_config, get_data_dir, load_config
 
 logger = logging.getLogger("aletheia.tunnel")
 
@@ -347,16 +347,15 @@ def tunnel_status() -> dict:
 
 def setup_tunnel(tunnel_id: str, hostname: str, credentials_path: str = "") -> dict:
     """Configure tunnel settings (one-time setup)."""
-    cfg = load_config()
-    cfg.tunnel.tunnel_id = tunnel_id
-    cfg.tunnel.hostname = hostname
-    if credentials_path:
-        cfg.tunnel.credentials_path = credentials_path
-    cfg.tunnel.enabled = True
+    with edit_config() as cfg:
+        cfg.tunnel.tunnel_id = tunnel_id
+        cfg.tunnel.hostname = hostname
+        if credentials_path:
+            cfg.tunnel.credentials_path = credentials_path
+        cfg.tunnel.enabled = True
 
-    exe = find_cloudflared()
-    if exe and not cfg.tunnel.cloudflared_path:
-        cfg.tunnel.cloudflared_path = exe
+        exe = find_cloudflared()
+        if exe and not cfg.tunnel.cloudflared_path:
+            cfg.tunnel.cloudflared_path = exe
 
-    save_config(cfg)
     return {"ok": True, "tunnel_id": tunnel_id, "hostname": hostname}

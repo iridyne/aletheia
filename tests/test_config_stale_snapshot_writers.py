@@ -76,3 +76,50 @@ def test_settings_section_routes_preserve_a_concurrent_writer(config_home, monke
     )
     assert final.runtime.git_enabled is False
     assert final.agent.autonomous_learning is False
+
+
+def test_pause_lease_preserves_a_concurrent_writer(config_home, monkeypatch):
+    from aletheia.agent_runtime import pause_ownership
+    from aletheia.server.routes import settings
+
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda **_kw: None)
+    final = _race(
+        monkeypatch, [],
+        lambda: pause_ownership.acquire_pause("startup_behavior_gate", reason="gate"),
+        lambda: settings.set_permission_mode(settings.PermissionModeRequest(mode="Observe")),
+    )
+    assert final.runtime.pause_owners["startup_behavior_gate"].active
+    assert final.agent.permission_mode == "Observe"
+
+
+# Whole-snapshot save_config() callers that still read their base outside the
+# permit. Each is on a Live-authority or credential path and is tracked in #1074
+# for an owner decision; anything else must use edit_config()/mutate_config() or
+# pass expected_hash.
+_UNCONVERTED_SNAPSHOT_WRITERS = {
+    "core/aletheia/server/routes/live.py": 2,
+    "core/aletheia/trust/live_unlock.py": 1,
+    "extensions/model_endpoints/credential_cli.py": 1,
+    "extensions/model_endpoints/credential_routes.py": 2,
+}
+
+
+def test_no_new_unconditional_snapshot_writers():
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    found: dict[str, int] = {}
+    for top in ("core", "extensions", "ops"):
+        for path in (root / top).rglob("*.py"):
+            rel = path.relative_to(root).as_posix()
+            if rel == "core/aletheia/config/loader.py":
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+                if name == "save_config" and not any(k.arg == "expected_hash" for k in node.keywords):
+                    found[rel] = found.get(rel, 0) + 1
+    assert found == _UNCONVERTED_SNAPSHOT_WRITERS

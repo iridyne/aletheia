@@ -17,34 +17,33 @@ def use(
     ),
 ):
     """Switch primary exchange (atomically sets data source, execution, and risk)."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
 
     eid = exchange_id.strip().lower()
     if eid not in VALID_EXCHANGES:
         typer.echo(f"Error: exchange_id must be one of: {VALID_EXCHANGES}", err=True)
         raise typer.Exit(1)
 
-    cfg = load_config()
-    old_name = cfg.exchange.name
-    old_mode = cfg.exchange.paper_execution_mode
-    desired_mode = EXCHANGE_UNIFICATION_MAP[eid][1]
-    if cfg.live.state == "live_limited" and (
-        eid != str(old_name or "").lower() or desired_mode != old_mode
-    ):
-        typer.echo(
-            "Error: lock live trading and re-run the selected-account preflight before switching exchange.",
-            err=True,
-        )
-        raise typer.Exit(1)
+    with edit_config() as cfg:
+        old_name = cfg.exchange.name
+        old_mode = cfg.exchange.paper_execution_mode
+        desired_mode = EXCHANGE_UNIFICATION_MAP[eid][1]
+        if cfg.live.state == "live_limited" and (
+            eid != str(old_name or "").lower() or desired_mode != old_mode
+        ):
+            typer.echo(
+                "Error: lock live trading and re-run the selected-account preflight before switching exchange.",
+                err=True,
+            )
+            raise typer.Exit(1)
 
-    ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
-    cfg.exchange.name = eid
-    cfg.market_data.ccxt_exchange = ccxt_ex
-    cfg.market_data.ccxt_fallback = ccxt_ex
-    cfg.exchange.paper_execution_mode = paper_mode
-    cfg.risk.allowed_exchange = eid
+        ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
+        cfg.exchange.name = eid
+        cfg.market_data.ccxt_exchange = ccxt_ex
+        cfg.market_data.ccxt_fallback = ccxt_ex
+        cfg.exchange.paper_execution_mode = paper_mode
+        cfg.risk.allowed_exchange = eid
 
-    save_config(cfg)
 
     from aletheia.files.jsonl import write_audit
     write_audit({
@@ -70,7 +69,7 @@ def mode(
     value: str = typer.Argument(..., help="Trading mode: demo | live"),
 ):
     """Toggle exchange mode between demo and live."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
 
     val = value.strip().lower()
     if val not in ("demo", "live"):
@@ -81,16 +80,15 @@ def mode(
         typer.echo("WARNING: switching to LIVE mode enables real-money trading.", err=True)
         typer.confirm("Are you sure you want to enable live mode?", abort=True)
 
-    cfg = load_config()
-    old = cfg.exchange.mode
-    if cfg.live.state == "live_limited" and val != old:
-        typer.echo(
-            "Error: lock live trading and re-run the selected-account preflight before changing mode.",
-            err=True,
-        )
-        raise typer.Exit(1)
-    cfg.exchange.mode = val
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.exchange.mode
+        if cfg.live.state == "live_limited" and val != old:
+            typer.echo(
+                "Error: lock live trading and re-run the selected-account preflight before changing mode.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        cfg.exchange.mode = val
 
     from aletheia.files.jsonl import write_audit
     write_audit({

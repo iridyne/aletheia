@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.helpers.config_stub import stub_config_edits
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +305,7 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
 
     saved_configs: list = []
-    monkeypatch.setattr(loader_mod, "save_config", lambda value: saved_configs.append(value))
+    stub_config_edits(monkeypatch, loader_mod, cfg, lambda value: saved_configs.append(value))
 
     # Patch _build_dynamic_instruments to return empty (no regular instruments)
     monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
@@ -392,7 +393,7 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
 
     saved_configs: list = []
-    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+    stub_config_edits(monkeypatch, loader_mod, cfg, lambda c: saved_configs.append(c))
 
     import aletheia.files.jsonl as jsonl_mod
     audit_events: list[dict] = []
@@ -492,7 +493,7 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
     monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
 
     saved_configs: list = []
-    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+    stub_config_edits(monkeypatch, loader_mod, cfg, lambda c: saved_configs.append(c))
 
     monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
 

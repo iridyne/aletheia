@@ -69,27 +69,25 @@ def setup(
 @tunnel_app.command()
 def enable():
     """Enable tunnel (starts automatically with gateway)."""
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    if not cfg.tunnel.tunnel_id:
-        typer.echo("Run `aletheia tunnel setup` first.", err=True)
-        raise typer.Exit(1)
-    cfg.tunnel.enabled = True
-    save_config(cfg)
+    from aletheia.config.loader import edit_config
+    with edit_config() as cfg:
+        if not cfg.tunnel.tunnel_id:
+            typer.echo("Run `aletheia tunnel setup` first.", err=True)
+            raise typer.Exit(1)
+        cfg.tunnel.enabled = True
     typer.echo("Tunnel enabled. Will start with next `gateway start`.")
 
 
 @tunnel_app.command()
 def disable():
     """Disable tunnel (stops if running)."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
     from aletheia.gateway.tunnel import stop_tunnel, is_tunnel_running
 
     if is_tunnel_running():
         stop_tunnel()
         typer.echo("Tunnel stopped.")
 
-    cfg = load_config()
-    cfg.tunnel.enabled = False
-    save_config(cfg)
+    with edit_config() as cfg:
+        cfg.tunnel.enabled = False
     typer.echo("Tunnel disabled.")

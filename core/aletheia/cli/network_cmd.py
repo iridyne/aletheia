@@ -110,35 +110,34 @@ def set_cmd(
     ),
 ) -> None:
     """Update proxy configuration."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
     from aletheia.net import apply_proxy_env
 
     if port is not None and not 1 <= port <= 65535:
         typer.echo("--port must be between 1 and 65535.", err=True)
         raise typer.Exit(1)
 
-    cfg = load_config()
-    before = _network_snapshot(cfg.network)
-    changed: list[str] = []
+    with edit_config() as cfg:
+        before = _network_snapshot(cfg.network)
+        changed: list[str] = []
 
-    if protocol is not None:
-        cfg.network.proxy_protocol = protocol
-        changed.append("proxy_protocol")
-    if host is not None:
-        cfg.network.proxy_host = host
-        changed.append("proxy_host")
-    if port is not None:
-        cfg.network.proxy_port = port
-        changed.append("proxy_port")
-    if enforce is not None:
-        cfg.network.enforce = enforce
-        changed.append("enforce")
-    if no_proxy is not None:
-        cfg.network.no_proxy = no_proxy
-        changed.append("no_proxy")
+        if protocol is not None:
+            cfg.network.proxy_protocol = protocol
+            changed.append("proxy_protocol")
+        if host is not None:
+            cfg.network.proxy_host = host
+            changed.append("proxy_host")
+        if port is not None:
+            cfg.network.proxy_port = port
+            changed.append("proxy_port")
+        if enforce is not None:
+            cfg.network.enforce = enforce
+            changed.append("enforce")
+        if no_proxy is not None:
+            cfg.network.no_proxy = no_proxy
+            changed.append("no_proxy")
 
-    cfg.network.recompose_proxy_url()
-    save_config(cfg)
+        cfg.network.recompose_proxy_url()
     apply_proxy_env()
     _write_network_audit(
         before,
@@ -156,13 +155,12 @@ def set_cmd(
 @network_app.command()
 def disable() -> None:
     """Disable proxy routing and use direct connections."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
 
-    cfg = load_config()
-    before = _network_snapshot(cfg.network)
-    cfg.network.proxy_host = ""
-    cfg.network.recompose_proxy_url()
-    save_config(cfg)
+    with edit_config() as cfg:
+        before = _network_snapshot(cfg.network)
+        cfg.network.proxy_host = ""
+        cfg.network.recompose_proxy_url()
     _write_network_audit(
         before,
         _network_snapshot(cfg.network),
