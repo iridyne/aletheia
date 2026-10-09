@@ -18,13 +18,13 @@ logger = logging.getLogger("aletheia.analytics.entry_exit_geometry")
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.analytics.trade_path import build_trade_path_rows
+from aletheia.data.symbols import normalize_market_type
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import TradeProposal
 from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
 
 _ATOL = 1e-10
 _SOURCE_LIMIT = 10_000
-_PHYSICAL_MARKET_TYPES = {"spot": "spot", "perp": "perp", "usdt_futures": "perp"}
 
 
 def build_entry_exit_geometry_audit(
@@ -224,8 +224,8 @@ def _entry_atr(
     stop_distance = _positive(geometry.get("proposal_stop_distance"))
     target_distance = _positive(geometry.get("proposal_target_distance"))
     snapshot_atr_pct = _positive(snapshot.get("atr_pct"))
-    proposal_market = _physical_market(proposal.get("market_type"))
-    snapshot_market = _physical_market(snapshot.get("market_type"))
+    proposal_market = normalize_market_type(proposal.get("market_type"))
+    snapshot_market = normalize_market_type(snapshot.get("market_type"))
     if (
         None in (
             atr_pct, learned_atr_pct, snapshot_atr_pct, price,
@@ -539,7 +539,7 @@ def _cost_assumptions(
     fee_rate = _nonnegative(assignment.get("exit_fee_rate"))
     slippage_bps = _nonnegative(assignment.get("slippage_bps"))
     direction = _direction(row.get("direction"))
-    physical_market = _physical_market(row.get("market_type"))
+    physical_market = normalize_market_type(row.get("market_type"))
     identity = (
         state is not None
         and assignment.get("position_id") == row.get("position_id") == state.get("position_id")
@@ -985,22 +985,18 @@ def _direction(value: Any) -> str | None:
     return "long" if clean in {"long", "buy"} else "short" if clean in {"short", "sell"} else None
 
 
-def _physical_market(value: Any) -> str | None:
-    return _PHYSICAL_MARKET_TYPES.get(str(value or "").strip().lower())
-
-
 def _path_identity_status(row: dict[str, Any], evidence: dict[str, Any]) -> str:
     """Return aligned, independent, or mismatch for separately sourced OHLCV."""
     path_values = (
         str(row.get("ohlcv_exchange") or "").strip().lower(),
-        _physical_market(row.get("ohlcv_market_type")),
+        normalize_market_type(row.get("ohlcv_market_type")),
         str(row.get("timeframe") or "").strip().lower(),
     )
     if not any(path_values):
         return "independent"
     evidence_values = (
         str(evidence.get("venue") or "").strip().lower(),
-        _physical_market(evidence.get("market_type")),
+        normalize_market_type(evidence.get("market_type")),
         str(evidence.get("timeframe") or "").strip().lower(),
     )
     if not all(path_values) or not all(evidence_values) or path_values != evidence_values:

@@ -26,6 +26,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from aletheia.data.symbols import normalize_market_type
 from aletheia.utils.json_utils import canonical_json as _canonical_json
 
 TRADING_MANDATE_VERSION = "trading_mandate/v1"
@@ -33,16 +34,6 @@ TRADING_MANDATE_FIT_VERSION = "trading_mandate_fit/v1"
 MANDATE_ENFORCEMENT_MODE = "observe_only"
 
 _SUPPORTED_ASSET_CLASSES = frozenset({"crypto", "equity", "prediction"})
-_PHYSICAL_MARKET_ALIASES = {
-    "spot": "spot",
-    "perp": "perp",
-    "perpetual": "perp",
-    "swap": "perp",
-    "usdt_perpetual": "perp",
-    "future": "perp",
-    "futures": "perp",
-    "usdt_futures": "perp",
-}
 _SUPPORTED_PHYSICAL_MARKETS = frozenset({"spot", "perp"})
 _SUPPORTED_DIRECTIONS = frozenset({"long", "short"})
 
@@ -96,13 +87,6 @@ def _lower_text(value: str) -> str:
     return value.strip().lower()
 
 
-def normalize_physical_market_type(value: object) -> str | None:
-    """Normalize Proposal/config aliases to the contract's physical market vocabulary."""
-    if value is None:
-        return None
-    return _PHYSICAL_MARKET_ALIASES.get(str(value).strip().lower())
-
-
 def normalize_symbol(value: object) -> str | None:
     if value is None:
         return None
@@ -150,7 +134,7 @@ class MarketScope(_MandateModel):
     @classmethod
     def _physical_markets(cls, value: object) -> tuple[str, ...]:
         def normalize(value: str) -> str:
-            return _PHYSICAL_MARKET_ALIASES.get(value.strip().lower(), "")
+            return normalize_market_type(value) or ""
 
         result = _normalised_collection(
             value,
@@ -660,7 +644,7 @@ def assess_trading_mandate_fit(
         reasons.append("asset_class_disallowed")
 
     raw_market = _fact(prop, "market_type") or _fact(dec, "market_type")
-    market_type = normalize_physical_market_type(raw_market)
+    market_type = normalize_market_type(raw_market)
     if market_type is None:
         checks.append(
             _check(

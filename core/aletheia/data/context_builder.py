@@ -25,6 +25,7 @@ from aletheia.data.models import (
     TradabilityScore,
 )
 from aletheia.data.freshness import fresh_row
+from aletheia.data.symbols import normalize_market_type
 from aletheia.utils.dt import parse_utc
 
 logger = logging.getLogger("aletheia.data.context_builder")
@@ -128,15 +129,6 @@ def _loads_json(value: Any) -> dict[str, Any]:
         return {}
     return parsed if isinstance(parsed, dict) else {}
 
-
-def _physical_market_type(market_type: str | None) -> str:
-    """Map proposal/exchange vocabulary onto collector storage identity."""
-    normalized = str(market_type or "").strip().lower()
-    if normalized in {"usdt_futures", "swap"}:
-        return "perp"
-    if normalized in {"spot", "perp", "futures"}:
-        return normalized
-    return ""
 
 def build_market_context_snapshot(
     symbols: list[str],
@@ -458,7 +450,7 @@ def _fmt_usd_compact_precise(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 def build_market_context_from_db(
-    symbols: list[str], *, exchange: str = "", market_type: str = "",
+    symbols: list[str], *, exchange: str = "", market_type: str | None = "",
     now: datetime | None = None,
 ) -> MarketContextSnapshot:
     """Read latest collector data from SQLite and produce a full context snapshot.
@@ -471,19 +463,21 @@ def build_market_context_from_db(
 
     now = now or datetime.now(timezone.utc)
     exact_exchange = str(exchange or "").strip().lower()
-    physical_market_type = _physical_market_type(market_type)
+    # The default "" is the unscoped symbol lookup; any other value must resolve
+    # to an exact market or nothing is read (#3811).
+    physical_market_type = "" if market_type == "" else normalize_market_type(market_type)
     tradability: dict[str, TradabilityScore] = {}
     leverage_states: dict[str, LeverageState] = {}
 
     for sym in symbols:
         # Orderbook → TradabilityScore
-        ob = repo.latest_orderbook(
+        ob = None if physical_market_type is None else repo.latest_orderbook(
             sym,
             exchange=exact_exchange,
             market_type=physical_market_type,
         )
         ob = fresh_row(ob, "orderbook", now=now)
-        if ob:
+        if ob and physical_market_type is not None:
             vol = _get_volume(
                 sym,
                 exchange=exact_exchange,
@@ -499,8 +493,7 @@ def build_market_context_from_db(
 
         # Derivatives → LeverageState. Only an explicit derivatives identity may
         # consume perp funding, OI, liquidation, or positioning evidence.
-        normalized_market_type = str(market_type or "").lower()
-        if normalized_market_type in {"perp", "swap", "futures", "usdt_futures"}:
+        if physical_market_type == "perp":
             deriv_exchange = exact_exchange or None
             fr = fresh_row(
                 repo.latest_funding_rate(sym, exchange=deriv_exchange),

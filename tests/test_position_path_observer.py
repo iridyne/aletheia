@@ -2077,3 +2077,20 @@ async def test_archived_positions_and_retry_rows_are_not_observed_or_rewritten(m
     assert repo.list_position_path_observations("archived") == historical
     assert [tuple(row) for row in db.execute("SELECT * FROM position_path_observation_deferred_buckets")] == queued
     assert db.total_changes == before
+
+
+@pytest.mark.parametrize(
+    ("market_type", "expected"),
+    [("usdt_futures", "perp"), ("spot", "spot"), ("futures", None), ("future", None)],
+)
+def test_path_observer_resolves_only_canonical_market_types(market_type, expected):
+    """#3811: 'futures' has no producer and must not be observed as a perp."""
+    from aletheia.portfolio.position_path_observer import _resolve_instrument
+
+    instrument, source = _resolve_instrument(
+        {"execution_mode": "bitget_demo", "symbol": "BTC/USDT", "market_type": market_type}
+    )
+    if expected is None:
+        assert (instrument, source) == (None, "instrument_identity_unavailable")
+    else:
+        assert instrument is not None and instrument.market_type == expected

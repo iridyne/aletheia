@@ -257,3 +257,23 @@ class TestCanonicalOf:
         assert canonical_of("BTC-USDT") == "BTC/USDT"
         assert canonical_of("BTC/USDT:USDT") == "BTC/USDT"  # real perp suffix
         assert canonical_of("BTC/USDT") == "BTC/USDT"
+
+
+# ---------------------------------------------------------------------------
+# normalize_market_type — the one canonical market_type resolver (#3811)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("spot", "spot"), (" SPOT ", "spot"),
+        ("perp", "perp"), ("swap", "perp"), ("usdt_futures", "perp"), ("USDT_FUTURES", "perp"),
+        # 'futures' has no producer (Fedora census on #3811) and fails closed.
+        ("futures", None), ("future", None), ("coin_futures", None),
+        ("margin", None), ("", None), (None, None),
+    ],
+)
+def test_normalize_market_type(raw, expected):
+    from aletheia.data.symbols import normalize_market_type
+
+    assert normalize_market_type(raw) == expected

@@ -19,7 +19,7 @@ logger = logging.getLogger("aletheia.portfolio.position_path_observer")
 
 from aletheia.data.price_feed import protective_price_venue
 from aletheia.data.providers import Candle, MarketDataProvider
-from aletheia.data.symbols import InstrumentId, to_canonical
+from aletheia.data.symbols import InstrumentId, normalize_market_type, to_canonical
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import insert_position_path_observation
@@ -32,15 +32,6 @@ _PROVIDER_CLOSE_TIMEOUT_SECONDS = 5.0
 _MAX_DURABLE_OBSERVATION_ATTEMPTS = repo.POSITION_PATH_MAX_RETRY_ATTEMPTS
 _MAX_RECOVERY_PASSES_PER_CYCLE = 2
 _MAX_DEFERRED_BUCKETS_PER_PASS = _MAX_CONCURRENT_OHLCV_REQUESTS * 2
-
-
-def _physical_market_type(value: object) -> str | None:
-    normalized = str(value or "").strip().lower()
-    if normalized == "spot":
-        return "spot"
-    if normalized in {"perp", "swap", "usdt_futures", "future", "futures"}:
-        return "perp"
-    return None
 
 
 def _finite(value: object) -> float | None:
@@ -149,7 +140,7 @@ def _position_survives_target_bucket(
 
 def _resolve_instrument(position: dict[str, Any]) -> tuple[InstrumentId | None, str]:
     venue = protective_price_venue(position.get("execution_mode"))
-    market = _physical_market_type(position.get("market_type"))
+    market = normalize_market_type(position.get("market_type"))
     if venue is None or market is None:
         return None, "instrument_identity_unavailable"
     try:
@@ -168,7 +159,7 @@ def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed
         "observed_at": observed_at,
         "venue": None,
         "symbol": to_canonical(str(position.get("symbol") or "")),
-        "market_type": _physical_market_type(position.get("market_type")),
+        "market_type": normalize_market_type(position.get("market_type")),
         "direction": _normalize_direction(position.get("direction")),
         "entry_price": _finite(position.get("entry_price")),
         "quantity": _finite(position.get("quantity")),
@@ -221,7 +212,7 @@ def _project_position_state_as_of(
         if not position_id:
             return _historical_state_unavailable("position_identity_unavailable")
         expected_symbol = to_canonical(str(position.get("symbol") or ""))
-        expected_market = _physical_market_type(position.get("market_type"))
+        expected_market = normalize_market_type(position.get("market_type"))
         expected_direction = _normalize_direction(position.get("direction"))
         if not expected_symbol or not expected_market or not expected_direction:
             return _historical_state_unavailable("position_identity_invalid")
@@ -246,7 +237,7 @@ def _project_position_state_as_of(
         def identity_matches(row: Mapping[str, Any]) -> bool:
             return (
                 to_canonical(str(row.get("symbol") or "")) == expected_symbol
-                and _physical_market_type(row.get("market_type")) == expected_market
+                and normalize_market_type(row.get("market_type")) == expected_market
                 and _normalize_direction(row.get("direction")) == expected_direction
                 and str(row.get("execution_mode") or "")
                 == str(position.get("execution_mode") or "")

@@ -20,6 +20,7 @@ from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )
+from aletheia.data.symbols import normalize_market_type
 from aletheia.storage.table_utils import table_exists as _table_exists
 
 logger = logging.getLogger("aletheia.analytics.ranker_objective_audit")
@@ -317,7 +318,7 @@ def _load_observations(db, cutoff: str, limit: int) -> tuple[list[dict], dict]:
         row["policy_epoch"] = str(row.get("policy_epoch_id") or _LEGACY_EPOCH)
         row["family"] = str(row.get("scanner_family") or "unavailable")
         row["direction_value"] = str(row.get("direction") or "unavailable").lower()
-        row["market"] = _normalize_market(row.get("market_type")) if row.get("market_type") else "unavailable"
+        row["market"] = normalize_market_type(row.get("market_type")) or "unavailable"
         row["canonical_symbol"] = str(row.get("symbol") or "unavailable").upper()
         row["outcomes"] = {}
         row["outcome_states"] = {horizon: "missing" for horizon in _HORIZONS}
@@ -449,8 +450,8 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any, as_of_at: str) -> str | 
     )
     if any(value is None or not str(value).strip() for value in instrument):
         return "missing_instrument_identity"
-    ranked_market = _supported_market(row["market_type"])
-    outcome_market = _supported_market(outcome["market_type"])
+    ranked_market = normalize_market_type(row["market_type"])
+    outcome_market = normalize_market_type(outcome["market_type"])
     if ranked_market is None or outcome_market is None:
         return "unsupported_market_type"
     if (
@@ -813,23 +814,6 @@ def _exclusions(rows: list[dict]) -> dict:
 def _columns(db, table: str) -> set[str]:
     return {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
-
-
-def _supported_market(value: Any) -> str | None:
-    raw = str(value).strip().lower()
-    if raw == "spot":
-        return "spot"
-    if raw in {"perp", "futures", "swap", "usdt_futures"}:
-        return "perp"
-    return None
-
-
-def _normalize_market(value: Any) -> str:
-    return (
-        "perp"
-        if str(value).lower() in {"perp", "futures", "swap", "usdt_futures"}
-        else "spot"
-    )
 
 
 def _parse_time(value: Any) -> datetime | None:

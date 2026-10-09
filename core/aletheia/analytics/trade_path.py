@@ -21,6 +21,7 @@ from aletheia.analytics.trade_attribution import (
     build_trade_attribution_for_position,
     build_trade_attribution_rows,
 )
+from aletheia.data.symbols import normalize_market_type
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_path")
@@ -32,11 +33,6 @@ _BAD_ENTRY_MFE_PCT = 0.3
 _STOP_FAVORABLE_MFE_PCT = 0.8
 _EDGE_LOST_MFE_PCT = 1.0
 _POST_EXIT_CONTINUATION_PCT = 1.0
-_PHYSICAL_MARKET_TYPES = {
-    "spot": "spot",
-    "perp": "perp",
-    "usdt_futures": "perp",
-}
 
 
 @dataclass(frozen=True)
@@ -423,7 +419,7 @@ def _resolve_instrument_identity(
 ) -> tuple[_InstrumentIdentity | None, str | None]:
     """Resolve exact OHLCV scope from row identity or its Universe lineage."""
     symbol = str(row.get("symbol") or "").strip()
-    market_type = _physical_market_type(row.get("market_type"))
+    market_type = normalize_market_type(row.get("market_type"))
     direct_exchange = str(row.get("exchange") or row.get("venue") or "").strip().lower()
 
     if direct_exchange:
@@ -460,9 +456,9 @@ def _resolve_instrument_identity(
 
     exchange = str(asset.get("venue") or "").strip().lower()
     asset_symbol = str(asset.get("symbol") or "").strip()
-    asset_market_type = _physical_market_type(asset.get("market_type"))
+    asset_market_type = normalize_market_type(asset.get("market_type"))
     member_symbol = str(member.get("symbol") or "").strip()
-    member_market_type = _physical_market_type(member.get("market_type"))
+    member_market_type = normalize_market_type(member.get("market_type"))
     if (
         not exchange
         or exchange == "legacy_unknown"
@@ -929,12 +925,6 @@ def _integer(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
-
-
-def _physical_market_type(value: Any) -> str | None:
-    """Map known Position aliases to the physical OHLCV instrument type."""
-    normalized = str(value or "").strip().lower()
-    return _PHYSICAL_MARKET_TYPES.get(normalized)
 
 
 def _iso_to_ms(iso: str | None) -> int | None:

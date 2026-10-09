@@ -16,6 +16,7 @@ import sqlite3
 from typing import Any
 
 from aletheia.analytics.position_replay import build_position_replay
+from aletheia.data.symbols import normalize_market_type
 from aletheia.storage import repositories as repo
 from aletheia.storage.proposal_hypothesis import (
     HYPOTHESIS_CONTRACT_VERSION,
@@ -35,7 +36,6 @@ from .readers import (
     _mapping,
     _market_bars,
     _observer_audit,
-    _physical_market_type,
     _plan_rows,
     _position_snapshot,
     _protection_facts,
@@ -1202,7 +1202,7 @@ def build_position_lifecycle_story(
     funding_settlement_visible = True
     snapshot, closed_visible, closed_at = _position_snapshot(position, cutoff=cutoff)
     if (
-        _physical_market_type(position.get("market_type")) == "perp"
+        normalize_market_type(position.get("market_type")) == "perp"
         and str(position.get("funding_source") or "") == "broker_ledger"
         and settlement_at is None
     ):

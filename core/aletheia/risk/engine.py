@@ -24,7 +24,7 @@ from aletheia.config.exchanges import (
 )
 from aletheia.config.loader import load_config
 from aletheia.data.freshness import MAX_FUTURE_SKEW
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import normalize_market_type, to_canonical
 from aletheia.execution.venue_capabilities import entry_execution_minimum_permission
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import PSLesson, RiskDecision, TradeProposal, exit_intent_violations
@@ -89,17 +89,6 @@ _NATIVE_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
 _NATIVE_DIRECTIONS = frozenset({"long", "short"})
 _NATIVE_ORDER_TYPES = frozenset({"market", "limit"})
 _NATIVE_EXECUTION_MODES = EXTERNAL_EXECUTION_MODES
-
-
-def _physical_market_type(value: str | None) -> str | None:
-    raw = str(value or "").strip().lower()
-    if raw == "spot":
-        return "spot"
-    if raw in {"usdt_futures", "perp", "swap"}:
-        return "perp"
-    if raw == "futures":
-        return "futures"
-    return None
 
 
 def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
@@ -338,7 +327,7 @@ def _entry_plan_authority_violations(
         violations.append("entry_plan_expiry_invalid")
     if (
         plan.symbol != proposal.symbol
-        or _physical_market_type(plan.market_type) != _physical_market_type(proposal.market_type)
+        or normalize_market_type(plan.market_type) != normalize_market_type(proposal.market_type)
         or plan.direction != proposal.direction
         or plan.execution_account_mode != proposal.execution_mode
         or plan.trade_school != proposal.trade_school
@@ -2351,7 +2340,7 @@ def _lookup_beta(symbol: str, venue: str | None, market_type: str) -> float | No
     per venue/market, so identity must match exactly. A future-dated or
     non-finite newest row is rejected (None = no data, check skipped).
     """
-    market = _physical_market_type(market_type)
+    market = normalize_market_type(market_type)
     if not venue or market is None:
         return None
     try:
@@ -2422,12 +2411,8 @@ def _family_live_edge(
     ``fail_open=False`` to distinguish an unreadable evidence store.
     Check #14 (live-eligibility) gates on this — see engine §14.
     """
-    normalized_market = (
-        "perp"
-        if str(market_type or "spot").lower()
-        in {"perp", "futures", "swap", "usdt_futures"}
-        else "spot"
-    )
+    # None never equals a row's market, so an unresolvable market has no evidence.
+    normalized_market = normalize_market_type(market_type)
     try:
         from aletheia.storage.repositories import family_direction_edge
         from aletheia.universe.outcome_economics import COST_MODEL_VERSION
