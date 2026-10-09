@@ -534,3 +534,109 @@ def test_successful_backup_publishes_exactly_one_archive(tmp_path):
     listed = svc.list_backups()
     assert len(listed) == 1, f"expected exactly one backup listed, got {listed}"
     assert listed[0]["path"] == str(archive)
+
+
+def test_restore_reports_incomplete_rollback_with_the_residual_path(tmp_path):
+    """#1392: a failed rollback copy must not be reported as 'rolled back'."""
+    source = tmp_path / "source"
+    (source / "logs").mkdir(parents=True)
+    (source / "logs" / "audit.jsonl").write_text("archived-current\n", encoding="utf-8")
+    archive = _make_valid_archive(source, label="rollback-incomplete")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "app.db").write_bytes(b"original app.db bytes")
+
+    original_copy2 = shutil.copy2
+
+    def _fail_payload_and_rollback(src, dst, **kwargs):
+        if Path(dst) == target / "logs" / "audit.jsonl":
+            raise OSError(28, "No space left on device")
+        if Path(dst) == target / "app.db" and "_rollback" in Path(src).parts:
+            raise OSError(13, "Permission denied")
+        return original_copy2(src, dst, **kwargs)
+
+    from ops.backup.restore import RestoreService
+
+    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_payload_and_rollback):
+        result = RestoreService().restore(archive, target)
+
+    assert not result.success
+    assert result.rollback_complete is False
+    assert [f["path"] for f in result.rollback_failures] == [str(target / "app.db")]
+    assert "rollback INCOMPLETE" in result.errors[-1]
+    assert "was rolled back" not in result.errors[-1]
+
+
+def _wal_db_with_unflushed_frames(path: Path, rows: list[str]) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("CREATE TABLE t (x TEXT)")
+    conn.executemany("INSERT INTO t VALUES (?)", [(r,) for r in rows])
+    conn.commit()
+    return conn  # open: frames stay in -wal, as after an unclean close
+
+
+def test_restore_does_not_replay_a_stale_wal_onto_the_restored_db(tmp_path):
+    """#1598: the restored app.db must read as the backup snapshot, not snapshot + old WAL."""
+    source = tmp_path / "source"
+    source.mkdir()
+    conn = sqlite3.connect(str(source / "app.db"))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE t (x TEXT)")
+    conn.execute("INSERT INTO t VALUES ('backup')")
+    conn.commit()
+    conn.close()
+    archive = _make_valid_archive(source, label="stale-wal")
+
+    live = tmp_path / "live"
+    live.mkdir()
+    candidate = _wal_db_with_unflushed_frames(live / "app.db", ["candidate-1", "candidate-2"])
+    target = tmp_path / "target"
+    shutil.copytree(live, target)  # main + -wal + -shm of a crashed candidate
+    candidate.close()
+    assert (target / "app.db-wal").stat().st_size > 0
+
+    from ops.backup.restore import RestoreService
+
+    result = RestoreService().restore(archive, target)
+    assert result.success, result.errors
+
+    restored = sqlite3.connect(str(target / "app.db"))
+    try:
+        assert restored.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert [r[0] for r in restored.execute("SELECT x FROM t")] == ["backup"]
+    finally:
+        restored.close()
+
+
+def test_failed_restore_puts_back_the_original_main_and_wal_bytes(tmp_path):
+    source = tmp_path / "source"
+    (source / "logs").mkdir(parents=True)
+    (source / "logs" / "audit.jsonl").write_text("archived-current\n", encoding="utf-8")
+    archive = _make_valid_archive(source, label="wal-rollback")
+
+    live = tmp_path / "live"
+    live.mkdir()
+    candidate = _wal_db_with_unflushed_frames(live / "app.db", ["candidate"])
+    target = tmp_path / "target"
+    shutil.copytree(live, target)
+    candidate.close()
+    before = {p.name: p.read_bytes() for p in target.iterdir()}
+    assert {"app.db", "app.db-wal", "app.db-shm"} <= set(before)
+
+    original_copy2 = shutil.copy2
+
+    def _fail_audit_copy(src, dst, **kwargs):
+        if Path(dst) == target / "logs" / "audit.jsonl":
+            raise OSError("injected target copy failure")
+        return original_copy2(src, dst, **kwargs)
+
+    from ops.backup.restore import RestoreService
+
+    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_audit_copy):
+        result = RestoreService().restore(archive, target)
+
+    assert not result.success and result.rollback_complete
+    assert {p.name: p.read_bytes() for p in target.iterdir() if p.is_file()} == before

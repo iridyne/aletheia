@@ -1085,3 +1085,27 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
 
     assert result == {"ok": True, "reason": "restored"}
     assert calls == ["lock-enter", "restore", "invalidate:False", "lock-exit"]
+
+
+@pytest.mark.parametrize(
+    ("rollback_complete", "reason"),
+    [(True, "data_restore_failed"), (False, "data_restore_rollback_incomplete")],
+)
+def test_source_restore_names_an_incomplete_data_rollback(monkeypatch, tmp_path, rollback_complete, reason):
+    """#1392: a restore whose own rollback failed is a distinct, held outcome."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from extensions.observation_lab import worker_lock
+    from ops.update import auto, git_ops as git_mutations
+
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda old: {"ok": True})
+    monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
+    monkeypatch.setattr(auto, "get_data_dir", lambda: tmp_path)
+    failed = SimpleNamespace(success=False, errors=["boom"], rollback_complete=rollback_complete)
+    monkeypatch.setattr(auto, "RestoreService", lambda: SimpleNamespace(restore=lambda *_a, **_k: failed))
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", nullcontext)
+
+    result = auto._restore_old_runtime("old", tmp_path / "backup", False, restore_static=False)
+
+    assert result == {"ok": False, "reason": reason, "detail": "boom"}
