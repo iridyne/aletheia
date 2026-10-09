@@ -1237,6 +1237,14 @@ async def test_bitget_isolated_entry_keeps_margin_mode_out_of_the_order_body(mon
 
     create = next(event for event in exchange.events if event[0] == "create_order")
     assert "marginMode" not in create[1][5]
+    # Hedge-mode account: isolated leverage must name both sides or Bitget answers 25200.
+    leverage = next(event for event in exchange.events if event[0] == "set_leverage")
+    assert leverage[3] == {
+        "uta": True,
+        "marginMode": "isolated",
+        "longLeverage": "3",
+        "shortLeverage": "3",
+    }
     await adapter.close()
 
 
