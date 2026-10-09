@@ -298,27 +298,60 @@ async def test_daemon_status_exposes_active_params():
 # ---------------------------------------------------------------------------
 
 async def test_pending_events_survive_parameter_restart():
-    """Wake events buffered before a parameter restart are not lost."""
-    loop = asyncio.get_running_loop()
+    """#1410: accepted wakes buffered before a parameter restart are evaluated by
+    the next generation exactly once, with their original per-position context."""
+    from aletheia.agent_runtime.wake_events import HORIZON_DUE, STOP_LOSS_NEAR, WakeEvent
 
+    loop = asyncio.get_running_loop()
+    evaluations: list[tuple[str, dict]] = []
+
+    async def record(triggered_by, wake_context=None):
+        evaluations.append((triggered_by, wake_context or {}))
+        return 0
+
+    with patch("aletheia.config.loader.load_config", return_value=_paused_cfg(paused=False)), \
+            patch.object(pd, "_run_evaluation", record), \
+            patch.object(pd, "_has_pending_signal_work", lambda: False):
+        start_pi_daemon(
+            loop=loop, debounce_sec=0.0, cooldown_sec=0.0, heartbeat_sec=999.0,
+            coalesce_window_sec=0.05,
+        )
+        await asyncio.sleep(0.02)
+        assert pd._task_generation == 1
+
+        # Accepted before the restart, not yet evaluated: a generic wake, a
+        # HORIZON_DUE exit-review event, and a P1 batch held in the coalescer.
+        pd._generic_wake_pending = True
+        pd._pending_events.append(WakeEvent("pos-X", HORIZON_DUE, ts=1.0, payload={"horizon": "4h"}))
+        assert pd._coalescer is not None
+        pd._coalescer.add(WakeEvent("pos-Y", STOP_LOSS_NEAR, ts=2.0, payload={"dist_pct": 0.4}), loop.time())
+
+        await reconfigure_pi_daemon(
+            enabled=True, debounce_sec=0.0, cooldown_sec=0.0, heartbeat_sec=0.1, loop=loop,
+        )
+        assert pd._task_generation == 2
+        for _ in range(100):
+            if len({b["position_id"] for _, ctx in evaluations for b in ctx.get("wake_batches", [])}) >= 2:
+                break
+            await asyncio.sleep(0.02)
+
+    assert evaluations[0][0] == "signal", "generic wake must re-arm generation 2"
+    batches = [b for _, ctx in evaluations for b in ctx.get("wake_batches", [])]
+    by_position = {b["position_id"]: b for b in batches}
+    assert sorted(b["position_id"] for b in batches) == ["pos-X", "pos-Y"]  # exactly once each
+    assert by_position["pos-X"]["events"][0]["payload"] == {"horizon": "4h"}
+    assert by_position["pos-Y"]["events"][0]["payload"] == {"dist_pct": 0.4}
+
+
+async def test_full_stop_drops_pending_wake_state():
+    loop = asyncio.get_running_loop()
     with patch("aletheia.config.loader.load_config", return_value=_paused_cfg(paused=True)):
         start_pi_daemon(loop=loop, debounce_sec=0.0, cooldown_sec=0.0, heartbeat_sec=999.0)
         await asyncio.sleep(0.02)
-
-    # Plant a pending generic wake before the restart
     pd._generic_wake_pending = True
-
-    with patch("aletheia.config.loader.load_config", return_value=_paused_cfg(paused=True)):
-        await reconfigure_pi_daemon(
-            enabled=True,
-            debounce_sec=1.0,
-            cooldown_sec=0.0,
-            heartbeat_sec=999.0,
-            loop=loop,
-        )
-
-    # The flag must survive the restart
-    assert pd._generic_wake_pending is True, "Pending generic wake must not be lost during restart"
+    stop_pi_daemon()
+    assert pd._generic_wake_pending is False
+    assert pd._coalescer is None
 
 
 # ---------------------------------------------------------------------------
