@@ -93,45 +93,45 @@ of one behaviour and **delete** the loser — no bridge, shim, alias mirror, or 
 - An applied migration's ID and definition are frozen ([data_model.md §6](docs/design/data/data_model.md));
   a database that applied one fails closed against code that no longer knows it. Deleting a
   migration any deployed runtime applied is a breaking cutover, not convergence.
-- A compatibility shim ships with the deletion that retires it or an Issue that owns it; if
-  you add one to stop active bleeding, say so in the commit and name the follow-up.
+- A compatibility shim ships with the deletion that retires it or an Issue that owns it, and is
+  never the end state; if you add one to stop active bleeding, say so and name the follow-up.
 - Retired mechanisms move to [`docs/design/history/`](docs/design/history/). Keyword search cannot
-  identify duplicates: read both and prove they answer the same question
-  ([`DEBUG_AUDIT_PLAYBOOK.md`](docs/governance/protocols/DEBUG_AUDIT_PLAYBOOK.md) SOP-14).
+  identify duplicates: similar names may answer different questions and different names may be
+  one mainline; read both ([`DEBUG_AUDIT_PLAYBOOK.md`](docs/governance/protocols/DEBUG_AUDIT_PLAYBOOK.md) SOP-14).
 
 ### Durable checkpoints and version control
 
-Commit each independently coherent, verified batch before starting the next; an uncommitted
-checkpoint says `UNCOMMITTED` and is not complete. Commit, PR, merge, deployment, and runtime
-proof are separate claims. The checkout is jj-colocated: use `jj` for day-to-day version
-control ("commit" = `jj describe` + `jj new`, or `jj commit`), and open isolated workspaces
-under `.claude/worktrees/`. Raw `git` remains only where the surface is git by construction.
-Rules and recipes: [Development Workflow](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md#durable-checkpoints).
+Commit each coherent, verified batch before the next; an uncommitted checkpoint says `UNCOMMITTED`.
+Commit, PR, merge, deployment, and runtime proof are separate claims. Use `jj` ("commit" = `jj
+describe` + `jj new`) and isolated workspaces under `.claude/worktrees/`; raw `git` only where the
+surface is git by construction. Recipes: [Development Workflow](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md#durable-checkpoints).
 
 ## Environment and verification boundaries
 
 - Python always through `uv`. macOS is development/control only, Fedora the verification target,
   Windows never a fallback; do not infer Fedora state or start a local Gateway unless asked.
-- No full suite on macOS, never two full suites at once (shared data directory). Remote CI is
-  retired: never start, wait for, or cite it; local validation grants no merge/runtime authority.
-- Every routine change starts with `uv run python scripts/ci/dev_check.py` (changed-file
-  gate; `--base master@origin` for a branch). It never replaces the PR-level gates
-  (`scripts/ci/ci_plan.py`, `ci_preflight.py`, `ci_local.py`, `check_docs.py`).
-- Before opening/resetting an Observation window after a merged change, deploy that exact
-  commit to Fedora and verify runtime commit, schema, provider, and settlement health.
+- No full suite on macOS, never two at once (shared data dir). Remote CI is retired: never start,
+  wait for, or cite it. Every change starts with `uv run python scripts/ci/dev_check.py`, which
+  never replaces the PR-level gates (`ci_plan.py`, `ci_preflight.py`, `ci_local.py`, `check_docs.py`).
+- Before opening/resetting an Observation window after a merged change, deploy that exact commit
+  to Fedora, restart when required, and verify runtime commit, schema, provider, settlement health.
+- Orca-owned Mac-to-Windows work uses Orca Remote Runtime ([`ORCA_CLI_WORKFLOW.md`](docs/operations/development/ORCA_CLI_WORKFLOW.md),
+  after `orca skills get orca-cli`); pairing codes are credentials; SSH is bootstrap/recovery/OS diagnosis only.
 
 ## Where the stages live
 
-One distribution, four wheel roots: `core/aletheia` (importable as `aletheia`), `extensions`,
-`ops`, `legacy`. **Core stays provider-agnostic**: venues, data providers, and model vendors
+Four wheel roots: `core/aletheia` (importable as `aletheia`), `extensions`, `ops`, `legacy`.
+**Core stays provider-agnostic**: venues, data providers, and model vendors
 live in `extensions/` and are injected; core never imports a specific exchange module.
-Runtime state lives in `~/.aletheia` or an absolute `ALETHEIA_DATA_DIR`, never in the repo.
+Runtime state lives in `~/.aletheia` or an absolute `ALETHEIA_DATA_DIR` (`core/aletheia/runtime_paths.py`).
 
-Request path, under `core/aletheia/`: `cli/`, `server/`, `gateway/` (entry and lifecycle) →
-`universe/` (Candidates) → `trading/` (entry strategy) → `agent_shell/`, `agent_runtime/` (agent
-loop) → `risk/` → `execution/` (Gateway) → `uta/` → `portfolio/`, `analytics/` (outcomes), all
-persisted by `storage/`. Directories with their own `AGENTS.md`: `frontend/`, `tests/`,
-`scripts/ci/`, `extensions/`, `core/aletheia/{execution,risk,storage}/`.
+Request path, under `core/aletheia/`: `main.py` → `cli/` (one module per command group),
+`server/` (`app.py`, one route module per group), `gateway/` (lifecycle) → `universe/`
+(Candidates) → `trading/` (entry strategy, Serenity) → `agent_shell/`, `agent_runtime/`,
+`agents/` (agent loop) → `risk/` → `execution/` (Gateway) → `uta/` → `portfolio/`, `analytics/`,
+`economics/` (outcomes), persisted by `storage/`. Wheel roots are declared in
+`[tool.hatch.build.targets.wheel]`. Directories with their own `AGENTS.md`: `frontend/`,
+`tests/`, `scripts/ci/`, `extensions/`, `core/aletheia/{execution,risk,storage}/`.
 
 ## Tool entry files and matched guides
 
