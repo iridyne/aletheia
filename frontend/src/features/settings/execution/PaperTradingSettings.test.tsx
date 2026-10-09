@@ -141,4 +141,36 @@ describe('PaperTradingSettings', () => {
     expect(container.textContent).not.toContain('Load older')
   })
 
+  it('records one capital event per submit while the first request is in flight (#1555)', async () => {
+    const pending = deferred<never>()
+    vi.spyOn(api, 'getCapitalEvents').mockResolvedValue({ events: [], total: 0, has_more: false, next_cursor: null })
+    vi.spyOn(api, 'getNetDeposits').mockResolvedValue({ net_deposits_usdt: 0, first_event_at: null })
+    const create = vi.spyOn(api, 'createCapitalEvent').mockReturnValue(pending.promise)
+
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <CapitalEventsCard />
+        </QueryClientProvider>,
+      )
+    })
+    const amount = container.querySelector('input[type="number"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(amount, '100')
+      amount.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await act(async () => { button('Record').click() })
+    // A human double-click lands a macrotask later, after the pending render.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    await act(async () => { button('Record').click() })
+
+    expect(button('Record').disabled).toBe(true)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
 })

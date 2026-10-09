@@ -114,7 +114,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
         <input type="text" placeholder="Broker ID (e.g. bitget, okx)" value={brokerId} onChange={e => setBrokerId(e.target.value)} />
         <input type="number" placeholder="Amount (USDT)" min={0} step={0.01} value={amount} onChange={e => setAmount(e.target.value)} />
         <input type="text" placeholder="Note (optional)" value={note} onChange={e => setNote(e.target.value)} />
-        <button className="btn btn-primary" disabled={!amount || parseFloat(amount) <= 0} onClick={() => mutation.mutate()}>Record</button>
+        <button className="btn btn-primary" disabled={mutation.isPending || !amount || parseFloat(amount) <= 0} onClick={() => mutation.mutate()}>Record</button>
       </div>
       {msg && <p className="save-msg mt-1">{msg}</p>}
       {eventsLoading && <p className="hint mt-2">Loading capital events…</p>}

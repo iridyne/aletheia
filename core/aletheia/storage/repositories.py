@@ -992,6 +992,24 @@ def insert_capital_event(event) -> None:
     _insert("capital_events", _to_payload_dict(event))
 
 
+def insert_first_capital_event(event) -> bool:
+    """Record ``event`` only when its broker has no capital event yet.
+
+    The existence check and the insert are one statement, so two concurrent first
+    syncs cannot both record the broker's initial deposit (#1555).
+    """
+    if not math.isfinite(event.amount_usdt):
+        raise ValueError(f"capital event amount_usdt must be finite, got {event.amount_usdt!r}")
+    data = _to_payload_dict(event)
+    result = execute_write(
+        f"INSERT INTO capital_events ({', '.join(data)}) "
+        f"SELECT {', '.join('?' for _ in data)} "
+        "WHERE NOT EXISTS (SELECT 1 FROM capital_events WHERE broker_id = ?)",
+        [*data.values(), event.broker_id],
+    )
+    return result.rowcount == 1
+
+
 # --- Prediction Observer Runs ---
 
 

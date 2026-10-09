@@ -24,7 +24,6 @@ __all__ = [
     "get_prediction_event",
     "get_prediction_market_by_id",
     "get_volume_ranking_snapshot",
-    "has_capital_event_for_broker",
     "insert_collector_snapshot_batch",
     "latest_coingecko_top",
     "latest_funding_rate",
@@ -141,14 +140,6 @@ def get_net_deposits() -> float:
         for r in rows
         if math.isfinite(r["amount_usdt"])
     )
-
-
-def has_capital_event_for_broker(broker_id: str) -> bool:
-    from aletheia.storage.repositories import get_db
-
-    db = get_db()
-    row = db.execute("SELECT 1 FROM capital_events WHERE broker_id = ? LIMIT 1", (broker_id,)).fetchone()
-    return row is not None
 
 
 def get_first_capital_event_time() -> str | None:

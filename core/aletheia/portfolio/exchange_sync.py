@@ -284,7 +284,7 @@ def sync_all_exchanges(*, execution_modes: tuple[str, ...] | None = None) -> Opt
         # Use available_usdt (excludes unrealized PnL) as the deposit amount
         # to avoid inflating the baseline when the account already has open gains.
         try:
-            from aletheia.storage.repositories import has_capital_event_for_broker, insert_capital_event
+            from aletheia.storage.repositories import insert_first_capital_event
             from aletheia.storage.models import CapitalEvent
             for acct in unified.accounts:
                 if (
@@ -300,14 +300,13 @@ def sync_all_exchanges(*, execution_modes: tuple[str, ...] | None = None) -> Opt
                 ):
                     continue
                 deposit_amount = available if available > 0 else equity
-                if broker_id and deposit_amount > 0 and not has_capital_event_for_broker(broker_id):
-                    insert_capital_event(CapitalEvent(
-                        broker_id=broker_id,
-                        event_type="deposit",
-                        amount_usdt=deposit_amount,
-                        equity_at_event=equity,
-                        note="auto:initial_sync",
-                    ))
+                if broker_id and deposit_amount > 0 and insert_first_capital_event(CapitalEvent(
+                    broker_id=broker_id,
+                    event_type="deposit",
+                    amount_usdt=deposit_amount,
+                    equity_at_event=equity,
+                    note="auto:initial_sync",
+                )):
                     logger.info("capital_events: auto-recorded initial deposit %.2f for %s", deposit_amount, broker_id)
         except Exception as cap_err:
             logger.warning("capital_events auto-record failed: %s", cap_err)
