@@ -127,7 +127,7 @@ def test_debate_impact_read_model_has_no_llm_http_exchange_or_ranker_calls():
         "generate",
         "get_model_provider",
         "llm_structured",
-        "refresh_okx_demo_symbols",
+        "refresh_demo_capabilities",
     }
 
     def forbidden_root(name: str) -> str | None:

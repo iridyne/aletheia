@@ -197,7 +197,7 @@ def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls(
         "get_model_provider",
         "llm_structured",
         "place_order",
-        "refresh_okx_demo_symbols",
+        "refresh_demo_capabilities",
     }
 
     def forbidden_root(name: str) -> str | None:

@@ -3858,9 +3858,9 @@ def _ohlcv_backfill_body():
 
 def _run_okx_demo_symbols() -> None:
     """Refresh OKX demo symbol capabilities (scheduler job).  4 h interval."""
-    from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
+    from aletheia.execution.venue_capabilities import refresh_demo_capabilities
     try:
-        count = refresh_okx_demo_symbols()
+        count = refresh_demo_capabilities("okx_demo")
     except Exception as e:
         logger.warning("okx_demo_symbols refresh failed: %s", e)
         _record_job_failure("okx_demo_symbols", str(e))
