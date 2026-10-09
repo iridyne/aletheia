@@ -127,7 +127,7 @@ def get_learning_job_health(job_id: str) -> LearningJobHealth:
 
 
 def advance_learning_job_cursor(job_id: str, cursor: str) -> None:
-    """Persist a producer scan cursor without changing schedule watermarks."""
+    """Persist a job scan cursor without changing schedule watermarks."""
 
     if not is_autonomous_learning_job(job_id) or not cursor:
         return

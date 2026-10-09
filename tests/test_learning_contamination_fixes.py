@@ -354,3 +354,28 @@ def test_rejudge_window_reaches_every_lesson_within_bounded_runs():
         reached |= window
     assert reached == set(ids)
     assert lesson_reviewer._rejudge_window(ids[:5], day) == set(ids[:5])
+
+
+def test_lesson_reviewer_passes_reach_every_proposed_lesson(tmp_path, monkeypatch):
+    """Deferred lessons stay proposed, so a fixed oldest-first head starved the rest."""
+    import asyncio
+
+    _reviewer_db(tmp_path, monkeypatch)
+    import extensions.research.lesson_reviewer as reviewer
+    from extensions.learning.lessons import LessonStore
+
+    store = LessonStore()
+    ids = {
+        store.create(f"lesson {i}", source_type="test", source_id=str(i)).lesson_id
+        for i in range(reviewer._MAX_PROPOSED_PER_RUN + 1)
+    }
+    seen: set[str] = set()
+
+    def no_evidence(lesson):
+        seen.add(lesson.lesson_id)
+        return {"exact_scope": {"total": 0}}
+
+    monkeypatch.setattr(reviewer, "_fetch_evidence", no_evidence)
+    asyncio.run(reviewer.run_lesson_reviewer(run_id="pass-1"))
+    asyncio.run(reviewer.run_lesson_reviewer(run_id="pass-2"))
+    assert seen == ids

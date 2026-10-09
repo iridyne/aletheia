@@ -309,6 +309,10 @@ async def run_lesson_reviewer(
     **kwargs,
 ) -> dict:
     """Evidence-gated, overturnable review of proposed lessons (daily)."""
+    from extensions.learning.control import (
+        advance_learning_job_cursor,
+        get_learning_job_health,
+    )
     from extensions.learning.lessons import LessonStore
     from extensions.policies.store import PolicyStore
 
@@ -377,10 +381,17 @@ async def run_lesson_reviewer(
             errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
 
     # ── Step B: promote — judge proposed lessons ──
-    # Oldest-first prevents a busy producer from starving long-waiting lessons.
-    proposed = store.list_all(status="proposed", limit=200, oldest_first=True)
+    # A deferred lesson stays proposed, so a fixed oldest-first head would re-read
+    # the same batch forever. The durable created_at cursor resumes after the last
+    # reviewed lesson and wraps to the oldest, so every proposed lesson is reached
+    # within ceil(backlog / cap) runs while newer ones cannot starve older ones.
+    proposed = store.list_all(status="proposed", limit=-1, oldest_first=True)
     backlog, _oldest_backlog_at = store.backlog_stats()
-    batch = proposed[:_MAX_PROPOSED_PER_RUN]
+    cursor = get_learning_job_health("lesson_reviewer").input_cursor or ""
+    batch = (
+        [lesson for lesson in proposed if lesson.created_at > cursor]
+        + [lesson for lesson in proposed if lesson.created_at <= cursor]
+    )[:_MAX_PROPOSED_PER_RUN]
     newly_accepted: list[str] = []
     rejected = deferred = 0
     for lesson in batch:
@@ -429,6 +440,9 @@ async def run_lesson_reviewer(
             deferred += 1
             if judgment_failed:
                 errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
+
+    if batch:
+        advance_learning_job_cursor("lesson_reviewer", batch[-1].created_at)
 
     # ── Step C: apply — fold accepted lessons (this run + any stuck from prior runs) ──
     # GAP-04: a prior create_version failure leaves lessons stuck in 'accepted'; pick
