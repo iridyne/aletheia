@@ -439,7 +439,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             liquidation_buffer_pct=float(
                 resolved_policy.policy.margin.min_entry_liquidation_buffer_pct
             ),
-            existing_position_notional_usdt=account.open_pool_notional_usdt,
+            existing_position_notional_usdt=account.symbol_position_notional_usdt,
             spot=market_type == "spot",
         )
     except (SizingUnavailable, VenueMarginUnavailable) as exc:
