@@ -460,284 +460,279 @@ async def lifespan(app: FastAPI):
     if _owns_pid:
         write_pid()
     app.state._owns_pid = _owns_pid
-    # Record the source commit this process booted on, BEFORE any scheduler
-    # thread starts — lets /api/health flag "code updated, restart needed".
-    if background_services_enabled:
-        from aletheia.agent_runtime.build_info import record_boot_commit
-
-        record_boot_commit()
-    stage_started = _log_startup_stage("runtime_context", stage_started, startup_started)
-    logger.info("Aletheia Trading OS v%s starting", __version__)
-    logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
-    # Database upgrades belong to the owner-controlled gateway/deployment phase.
-    # The backend only verifies the durable ledger before starting any writer.
-    from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
-
-    stage_started = _log_startup_stage("startup_dependency_imports", stage_started, startup_started)
-    assert_migrations_current()
-    stage_started = _log_startup_stage("database_migration_verification", stage_started, startup_started)
-    logger.info("gateway_startup_migrations verified=true pending=0")
-    if background_services_enabled:
-        try:
-            from aletheia.agent_runtime.run_logger import mark_stale_running_runs
-
-            stale_runs = mark_stale_running_runs(
-                reason="gateway startup reconciled previous incomplete agent run",
-                source="startup",
-            )
-            if stale_runs:
-                logger.warning("Marked %d stale agent run(s) during startup reconciliation", stale_runs)
-        except Exception as e:
-            logger.warning("Agent run startup reconciliation failed: %s", e)
-        # Runtime Session: one row per process lifecycle. Created AFTER migrations
-        # (its table must exist) and after record_boot_commit (for the boot commit).
-        # Core trading facts produced this boot inherit its identity. Best-effort.
-        runtime_session = None
-        try:
-            from aletheia.agent_runtime.runtime_session import start_runtime_session
-
-            runtime_session = start_runtime_session(cfg, runtime_context)
-        except Exception as e:
-            logger.warning("Runtime session start failed (non-fatal): %s", e)
-        try:
-            from aletheia.economics.inference_calls import reconcile_interrupted_inferences
-
-            current_session_id = (
-                str(runtime_session.get("session_id"))
-                if runtime_session and runtime_session.get("durable") is True
-                else None
-            )
-            interrupted = reconcile_interrupted_inferences(current_session_id)
-            if interrupted:
-                logger.warning("Marked %d interrupted logical inference call(s)", interrupted)
-        except Exception as e:
-            logger.warning("Inference startup reconciliation failed (non-fatal): %s", e)
-        if runtime_session and runtime_session.get("durable") is True:
-            try:
-                from extensions.learning.evidence_epoch import (
-                    EXPECTED_EVIDENCE_PATH_IDS,
-                    ensure_evidence_epochs,
-                )
-
-                evidence_epochs = ensure_evidence_epochs()
-                missing_evidence_paths = EXPECTED_EVIDENCE_PATH_IDS - evidence_epochs.keys()
-                if missing_evidence_paths:
-                    logger.warning(
-                        "Evidence epoch registration incomplete; missing=%s registered=%s",
-                        sorted(missing_evidence_paths),
-                        evidence_epochs,
-                    )
-            except Exception as e:
-                logger.warning("Evidence epoch registration failed (non-fatal): %s", e)
-        else:
-            logger.warning("Evidence epoch registration skipped: runtime session is not durable")
-        try:
-            from aletheia.storage.event_store import get_event_store
-
-            mirror_result = get_event_store().reconcile_jsonl(limit=100)
-            if mirror_result["attempted"]:
-                logger.info("Event JSONL mirror reconciliation: %s", mirror_result)
-        except Exception as e:
-            logger.warning("Event JSONL mirror reconciliation failed (non-fatal): %s", e)
-    stage_started = _log_startup_stage("runtime_reconciliation", stage_started, startup_started)
+    # One cleanup path for every exit (#1450): each owner below may or may not
+    # have started when startup raises, so the finally tolerates partial starts
+    # and a failure before yield marks the Runtime Session unclean.
+    reached_yield = False
+    agent_job_manager = None
+    llm_gate_task = startup_sync_task = exchange_gate_task = behavior_gate_task = None
+    pi_daemon_task = fast_trigger_task = None
+    telegram_bot = telegram_task = None
     try:
-        from aletheia.economics.pricing_sync import activate_cached_catalog
+        # Record the source commit this process booted on, BEFORE any scheduler
+        # thread starts — lets /api/health flag "code updated, restart needed".
+        if background_services_enabled:
+            from aletheia.agent_runtime.build_info import record_boot_commit
 
-        activate_cached_catalog()
-    except Exception as e:
-        logger.warning("Pricing cache activation failed (non-fatal): %s", e)
-    init_tool_registry()
-    from aletheia.agent_runtime.job_queue import get_agent_job_manager
+            record_boot_commit()
+        stage_started = _log_startup_stage("runtime_context", stage_started, startup_started)
+        logger.info("Aletheia Trading OS v%s starting", __version__)
+        logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
+        # Database upgrades belong to the owner-controlled gateway/deployment phase.
+        # The backend only verifies the durable ledger before starting any writer.
+        from aletheia.storage.migrations import assert_migrations_current
+        from aletheia.agent_runtime.tool_registry import init_tool_registry
+        from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
 
-    agent_job_manager = get_agent_job_manager()
-    if background_services_enabled:
-        agent_job_manager.start()
-    if background_services_enabled:
-        try:
-            init_scheduler()
-        except Exception as e:
-            logger.warning("Scheduler failed to start: %s", e)
+        stage_started = _log_startup_stage("startup_dependency_imports", stage_started, startup_started)
+        assert_migrations_current()
+        stage_started = _log_startup_stage("database_migration_verification", stage_started, startup_started)
+        logger.info("gateway_startup_migrations verified=true pending=0")
+        if background_services_enabled:
             try:
-                agent_job_manager.stop()
-            except Exception as stop_error:
-                logger.warning(
-                    "Agent job manager cleanup after scheduler failure failed: %s",
-                    stop_error,
+                from aletheia.agent_runtime.run_logger import mark_stale_running_runs
+
+                stale_runs = mark_stale_running_runs(
+                    reason="gateway startup reconciled previous incomplete agent run",
+                    source="startup",
                 )
-            try:
-                _clear_owned_gateway_pid(app)
-            except Exception as pid_error:
-                logger.warning(
-                    "Owned PID cleanup after scheduler failure failed: %s",
-                    pid_error,
-                )
-            raise RuntimeError("scheduler_initialization_failed") from e
-    else:
-        logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
-    stage_started = _log_startup_stage("scheduler_initialization", stage_started, startup_started)
-    if background_services_enabled:
-        try:
-            from aletheia.economics.pricing_sync import start_pricing_refresh
-
-            start_pricing_refresh(trigger="startup")
-        except Exception as e:
-            logger.warning("Pricing reference refresh failed to start (non-fatal): %s", e)
-    # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
-    # provider can actually do inference it pauses the scheduler and persists
-    # runtime.paused. Deferring it until AFTER init_scheduler + yield means the
-    # HTTP port binds immediately, so the spawn-verifier/watchdog see a live port
-    # and the dashboard is reachable WHILE the probe runs. Booting un-paused for
-    # the few seconds the probe takes is safe: scheduler jobs themselves re-check
-    # cfg.runtime.paused, and the only time-sensitive job (market_data) is
-    # harmless to run once. See _llm_startup_gate.
-    llm_gate_task = (
-        asyncio.create_task(_llm_startup_gate(cfg), name="llm_startup_gate") if background_services_enabled else None
-    )
-
-    # #138: initial exchange-state sync deferred to a POST-yield worker-thread task.
-    # It is a blocking aggregation that can take up to 30s on a slow/unreachable broker;
-    # running it inline before `yield` delayed the HTTP port bind, so the spawn-verifier /
-    # OS watchdog could see a dead port and falsely report gateway failure — the same
-    # reason the LLM/exchange gates are deferred. asyncio.to_thread keeps it off the loop.
-    # The scheduler's periodic exchange-sync keeps state fresh regardless.
-    startup_sync_task = None
-    if background_services_enabled:
-
-        async def _startup_exchange_sync():
-            try:
-                from aletheia.portfolio.exchange_sync import sync_all_exchanges
-
-                await _run_startup_sync(sync_all_exchanges)
-                logger.info("startup exchange sync complete")
-            except asyncio.CancelledError:
-                raise
+                if stale_runs:
+                    logger.warning("Marked %d stale agent run(s) during startup reconciliation", stale_runs)
             except Exception as e:
-                logger.warning("startup exchange sync failed (non-fatal): %s", e)
+                logger.warning("Agent run startup reconciliation failed: %s", e)
+            # Runtime Session: one row per process lifecycle. Created AFTER migrations
+            # (its table must exist) and after record_boot_commit (for the boot commit).
+            # Core trading facts produced this boot inherit its identity. Best-effort.
+            runtime_session = None
+            try:
+                from aletheia.agent_runtime.runtime_session import start_runtime_session
 
-        startup_sync_task = asyncio.create_task(_startup_exchange_sync(), name="startup_exchange_sync")
+                runtime_session = start_runtime_session(cfg, runtime_context)
+            except Exception as e:
+                logger.warning("Runtime session start failed (non-fatal): %s", e)
+            try:
+                from aletheia.economics.inference_calls import reconcile_interrupted_inferences
 
-    # Exchange connectivity gate — if exchange is unreachable at startup, pause
-    # immediately and start auto-resume (same pattern as LLM gate).
-    exchange_gate_task = None
-    if background_services_enabled:
-        from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+                current_session_id = (
+                    str(runtime_session.get("session_id"))
+                    if runtime_session and runtime_session.get("durable") is True
+                    else None
+                )
+                interrupted = reconcile_interrupted_inferences(current_session_id)
+                if interrupted:
+                    logger.warning("Marked %d interrupted logical inference call(s)", interrupted)
+            except Exception as e:
+                logger.warning("Inference startup reconciliation failed (non-fatal): %s", e)
+            if runtime_session and runtime_session.get("durable") is True:
+                try:
+                    from extensions.learning.evidence_epoch import (
+                        EXPECTED_EVIDENCE_PATH_IDS,
+                        ensure_evidence_epochs,
+                    )
 
-        # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
-        # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
-        # survives — not on the per-job loop that is torn down right after the check runs.
-        set_uvicorn_loop(asyncio.get_running_loop())
-        exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg), name="startup_exchange_gate")
+                    evidence_epochs = ensure_evidence_epochs()
+                    missing_evidence_paths = EXPECTED_EVIDENCE_PATH_IDS - evidence_epochs.keys()
+                    if missing_evidence_paths:
+                        logger.warning(
+                            "Evidence epoch registration incomplete; missing=%s registered=%s",
+                            sorted(missing_evidence_paths),
+                            evidence_epochs,
+                        )
+                except Exception as e:
+                    logger.warning("Evidence epoch registration failed (non-fatal): %s", e)
+            else:
+                logger.warning("Evidence epoch registration skipped: runtime session is not durable")
+            try:
+                from aletheia.storage.event_store import get_event_store
 
-    # Startup Behavior Gate — hold AI decisions + new trading PAUSED until a set
-    # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
-    # sync, no unexplained pending orders/closes, no active
-    # reconciliation incident, learning influence within bounds, no user
-    # pause/kill switch). Runs as a post-yield task (so the port binds first) but
-    # its checks are all LOCAL/fast reads. On failure it applies a layered pause
-    # (essential data jobs keep running), records a durable blocker, and starts a
-    # recheck loop. Default off — a no-op unless health.startup_behavior_gate_enabled.
-    behavior_gate_task = None
-    gate_permits_pi_daemon = True
-    if background_services_enabled:
-        from aletheia.agent_runtime import startup_behavior_gate as behavior_gate
-
-        behavior_gate.set_uvicorn_loop(asyncio.get_running_loop())
-        # Fast local verdict decides whether the System Operator daemon may start
-        # at all — "pi_daemon must not start before the gate passes".
+                mirror_result = get_event_store().reconcile_jsonl(limit=100)
+                if mirror_result["attempted"]:
+                    logger.info("Event JSONL mirror reconciliation: %s", mirror_result)
+            except Exception as e:
+                logger.warning("Event JSONL mirror reconciliation failed (non-fatal): %s", e)
+        stage_started = _log_startup_stage("runtime_reconciliation", stage_started, startup_started)
         try:
-            gate_permits_pi_daemon = behavior_gate.gate_allows_startup(cfg)
+            from aletheia.economics.pricing_sync import activate_cached_catalog
+
+            activate_cached_catalog()
         except Exception as e:
-            logger.error("startup behaviour gate pre-check raised — blocking PI daemon: %s", e)
-            gate_permits_pi_daemon = False
-        behavior_gate_task = asyncio.create_task(behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate")
+            logger.warning("Pricing cache activation failed (non-fatal): %s", e)
+        init_tool_registry()
+        from aletheia.agent_runtime.job_queue import get_agent_job_manager
 
-    # System Operator event-driven daemon — wakes immediately on signal arrival.
-    # Gated by the Startup Behavior Gate: it must not start while the gate blocks
-    # (the recheck loop restarts it on resume).
-    pi_daemon_task = None
-    if background_services_enabled and cfg.pi_daemon.enabled and gate_permits_pi_daemon:
-        try:
-            from aletheia.agent_runtime.pi_daemon import start_pi_daemon
+        agent_job_manager = get_agent_job_manager()
+        if background_services_enabled:
+            agent_job_manager.start()
+        if background_services_enabled:
+            try:
+                init_scheduler()
+            except Exception as e:
+                logger.warning("Scheduler failed to start: %s", e)
+                raise RuntimeError("scheduler_initialization_failed") from e
+        else:
+            logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
+        stage_started = _log_startup_stage("scheduler_initialization", stage_started, startup_started)
+        if background_services_enabled:
+            try:
+                from aletheia.economics.pricing_sync import start_pricing_refresh
 
-            pi_daemon_task = start_pi_daemon(
-                loop=asyncio.get_running_loop(),
-                debounce_sec=cfg.pi_daemon.debounce_sec,
-                cooldown_sec=cfg.pi_daemon.cooldown_sec,
-                heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
-            )
-        except Exception as e:
-            logger.warning("PI daemon failed to start: %s", e, exc_info=True)
-
-    fast_trigger_task = None
-    if background_services_enabled:
-        from aletheia.agent_runtime.fast_trigger_watch import (
-            register_fast_trigger_lifecycle,
+                start_pricing_refresh(trigger="startup")
+            except Exception as e:
+                logger.warning("Pricing reference refresh failed to start (non-fatal): %s", e)
+        # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
+        # provider can actually do inference it pauses the scheduler and persists
+        # runtime.paused. Deferring it until AFTER init_scheduler + yield means the
+        # HTTP port binds immediately, so the spawn-verifier/watchdog see a live port
+        # and the dashboard is reachable WHILE the probe runs. Booting un-paused for
+        # the few seconds the probe takes is safe: scheduler jobs themselves re-check
+        # cfg.runtime.paused, and the only time-sensitive job (market_data) is
+        # harmless to run once. See _llm_startup_gate.
+        llm_gate_task = (
+            asyncio.create_task(_llm_startup_gate(cfg), name="llm_startup_gate") if background_services_enabled else None
         )
 
-        register_fast_trigger_lifecycle()
-    if background_services_enabled and gate_permits_pi_daemon:
-        try:
+        # #138: initial exchange-state sync deferred to a POST-yield worker-thread task.
+        # It is a blocking aggregation that can take up to 30s on a slow/unreachable broker;
+        # running it inline before `yield` delayed the HTTP port bind, so the spawn-verifier /
+        # OS watchdog could see a dead port and falsely report gateway failure — the same
+        # reason the LLM/exchange gates are deferred. asyncio.to_thread keeps it off the loop.
+        # The scheduler's periodic exchange-sync keeps state fresh regardless.
+        startup_sync_task = None
+        if background_services_enabled:
+
+            async def _startup_exchange_sync():
+                try:
+                    from aletheia.portfolio.exchange_sync import sync_all_exchanges
+
+                    await _run_startup_sync(sync_all_exchanges)
+                    logger.info("startup exchange sync complete")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("startup exchange sync failed (non-fatal): %s", e)
+
+            startup_sync_task = asyncio.create_task(_startup_exchange_sync(), name="startup_exchange_sync")
+
+        # Exchange connectivity gate — if exchange is unreachable at startup, pause
+        # immediately and start auto-resume (same pattern as LLM gate).
+        exchange_gate_task = None
+        if background_services_enabled:
+            from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+
+            # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
+            # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
+            # survives — not on the per-job loop that is torn down right after the check runs.
+            set_uvicorn_loop(asyncio.get_running_loop())
+            exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg), name="startup_exchange_gate")
+
+        # Startup Behavior Gate — hold AI decisions + new trading PAUSED until a set
+        # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
+        # sync, no unexplained pending orders/closes, no active
+        # reconciliation incident, learning influence within bounds, no user
+        # pause/kill switch). Runs as a post-yield task (so the port binds first) but
+        # its checks are all LOCAL/fast reads. On failure it applies a layered pause
+        # (essential data jobs keep running), records a durable blocker, and starts a
+        # recheck loop. Default off — a no-op unless health.startup_behavior_gate_enabled.
+        behavior_gate_task = None
+        gate_permits_pi_daemon = True
+        if background_services_enabled:
+            from aletheia.agent_runtime import startup_behavior_gate as behavior_gate
+
+            behavior_gate.set_uvicorn_loop(asyncio.get_running_loop())
+            # Fast local verdict decides whether the System Operator daemon may start
+            # at all — "pi_daemon must not start before the gate passes".
+            try:
+                gate_permits_pi_daemon = behavior_gate.gate_allows_startup(cfg)
+            except Exception as e:
+                logger.error("startup behaviour gate pre-check raised — blocking PI daemon: %s", e)
+                gate_permits_pi_daemon = False
+            behavior_gate_task = asyncio.create_task(behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate")
+
+        # System Operator event-driven daemon — wakes immediately on signal arrival.
+        # Gated by the Startup Behavior Gate: it must not start while the gate blocks
+        # (the recheck loop restarts it on resume).
+        pi_daemon_task = None
+        if background_services_enabled and cfg.pi_daemon.enabled and gate_permits_pi_daemon:
+            try:
+                from aletheia.agent_runtime.pi_daemon import start_pi_daemon
+
+                pi_daemon_task = start_pi_daemon(
+                    loop=asyncio.get_running_loop(),
+                    debounce_sec=cfg.pi_daemon.debounce_sec,
+                    cooldown_sec=cfg.pi_daemon.cooldown_sec,
+                    heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
+                )
+            except Exception as e:
+                logger.warning("PI daemon failed to start: %s", e, exc_info=True)
+
+        fast_trigger_task = None
+        if background_services_enabled:
             from aletheia.agent_runtime.fast_trigger_watch import (
-                current_fast_trigger_task,
-                reconfigure_fast_trigger_watch,
+                register_fast_trigger_lifecycle,
             )
 
-            await reconfigure_fast_trigger_watch(cfg, asyncio.get_running_loop())
-            fast_trigger_task = current_fast_trigger_task()
-        except Exception as e:
-            logger.warning("Fast Trigger watcher failed to start: %s", e, exc_info=True)
+            register_fast_trigger_lifecycle()
+        if background_services_enabled and gate_permits_pi_daemon:
+            try:
+                from aletheia.agent_runtime.fast_trigger_watch import (
+                    current_fast_trigger_task,
+                    reconfigure_fast_trigger_watch,
+                )
 
-    telegram_bot = None
-    telegram_task = None
-    if background_services_enabled:
-        try:
-            from extensions.telegram.bot import TelegramBot
+                await reconfigure_fast_trigger_watch(cfg, asyncio.get_running_loop())
+                fast_trigger_task = current_fast_trigger_task()
+            except Exception as e:
+                logger.warning("Fast Trigger watcher failed to start: %s", e, exc_info=True)
 
-            telegram_bot = TelegramBot()
-            if telegram_bot.configure():
-                if telegram_bot.allowed_chat_ids:
-                    try:
-                        telegram_task = asyncio.create_task(telegram_bot.run(), name="telegram_polling")
-                    except Exception as e:
-                        logger.warning("Telegram polling startup failed: %s", type(e).__name__)
-                        telegram_task = None
-                else:
-                    logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
-        except Exception as exc:
-            # Telegram is an optional notification adapter; its absence or
-            # configuration failure must not prevent the Core Gateway startup.
-            logger.info("Telegram optional adapter unavailable: %s", type(exc).__name__)
-            telegram_bot = None
-    app.state.telegram_bot = telegram_bot
-    app.state.telegram_task = telegram_task
-    # Mount static files AFTER scheduler init — by this point Vite watch (if running)
-    # has had time to build dashboard_static/. Mounting at module-top hits a race:
-    # uvicorn loads app.py before Vite finishes its first build, so index.html is
-    # missing and the mount never happens. Deferred mount fixes the issue.
-    _mount_static_dashboard()
-    from aletheia.server.responsiveness import event_loop_lag_monitor
+        telegram_bot = None
+        telegram_task = None
+        if background_services_enabled:
+            try:
+                from extensions.telegram.bot import TelegramBot
 
-    event_loop_lag_task = asyncio.create_task(
-        event_loop_lag_monitor.run(),
-        name="event_loop_lag_monitor",
-    )
-    _lifespan_tasks.clear()
-    _lifespan_tasks.update(
-        {
-            "llm_startup_gate": llm_gate_task,
-            "startup_exchange_sync": startup_sync_task,
-            "startup_exchange_gate": exchange_gate_task,
-            "startup_behavior_gate": behavior_gate_task,
-            "pi_daemon": pi_daemon_task,
-            "fast_trigger_watch": fast_trigger_task,
-            "telegram_polling": telegram_task,
-            "event_loop_lag_monitor": event_loop_lag_task,
-        }
-    )
-    _log_startup_stage("pre_yield_services", stage_started, startup_started)
-    try:
+                telegram_bot = TelegramBot()
+                if telegram_bot.configure():
+                    if telegram_bot.allowed_chat_ids:
+                        try:
+                            telegram_task = asyncio.create_task(telegram_bot.run(), name="telegram_polling")
+                        except Exception as e:
+                            logger.warning("Telegram polling startup failed: %s", type(e).__name__)
+                            telegram_task = None
+                    else:
+                        logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
+            except Exception as exc:
+                # Telegram is an optional notification adapter; its absence or
+                # configuration failure must not prevent the Core Gateway startup.
+                logger.info("Telegram optional adapter unavailable: %s", type(exc).__name__)
+                telegram_bot = None
+        app.state.telegram_bot = telegram_bot
+        app.state.telegram_task = telegram_task
+        # Mount static files AFTER scheduler init — by this point Vite watch (if running)
+        # has had time to build dashboard_static/. Mounting at module-top hits a race:
+        # uvicorn loads app.py before Vite finishes its first build, so index.html is
+        # missing and the mount never happens. Deferred mount fixes the issue.
+        _mount_static_dashboard()
+        from aletheia.server.responsiveness import event_loop_lag_monitor
+
+        event_loop_lag_task = asyncio.create_task(
+            event_loop_lag_monitor.run(),
+            name="event_loop_lag_monitor",
+        )
+        _lifespan_tasks.clear()
+        _lifespan_tasks.update(
+            {
+                "llm_startup_gate": llm_gate_task,
+                "startup_exchange_sync": startup_sync_task,
+                "startup_exchange_gate": exchange_gate_task,
+                "startup_behavior_gate": behavior_gate_task,
+                "pi_daemon": pi_daemon_task,
+                "fast_trigger_watch": fast_trigger_task,
+                "telegram_polling": telegram_task,
+                "event_loop_lag_monitor": event_loop_lag_task,
+            }
+        )
+        _log_startup_stage("pre_yield_services", stage_started, startup_started)
+        reached_yield = True
         yield
     finally:
         # Stop producers before consumers so shutdown cannot spawn fresh recovery work.
@@ -758,7 +753,8 @@ async def lifespan(app: FastAPI):
                 stop_scheduler()
             except Exception:
                 logger.warning("scheduler stop failed during shutdown", exc_info=True)
-            await asyncio.to_thread(agent_job_manager.stop)
+            if agent_job_manager is not None:
+                await asyncio.to_thread(agent_job_manager.stop)
 
         await _cancel_background_task(llm_gate_task, "LLM startup gate")
         await _cancel_background_task(event_loop_lag_task, "event-loop lag monitor")
@@ -812,14 +808,14 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.warning("PI daemon stop failed during shutdown", exc_info=True)
         _lifespan_tasks.clear()
-        # Mark the Runtime Session ended cleanly. Reaching this finally means an
-        # orderly lifespan exit; a hard kill skips it, leaving ended_at NULL +
-        # shutdown_clean=0 so a crash stays distinguishable from a clean stop.
+        # Mark the Runtime Session ended: clean only after an orderly lifespan
+        # exit; a startup failure before yield is recorded unclean. A hard kill
+        # skips this, leaving ended_at NULL + shutdown_clean=0.
         if background_services_enabled:
             try:
                 from aletheia.agent_runtime.runtime_session import end_runtime_session
 
-                end_runtime_session(clean=True)
+                end_runtime_session(clean=reached_yield)
             except Exception as e:
                 logger.debug("Runtime session end failed: %s", e)
         # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
