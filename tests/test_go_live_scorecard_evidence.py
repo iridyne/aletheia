@@ -110,3 +110,66 @@ def test_unreadable_cohort_is_a_blocker_even_when_every_criterion_passes(monkeyp
         if criterion["key"] in pnl_keys:
             assert criterion["detail"] == "unavailable"
             assert criterion["score"] == 0
+
+
+def test_risk_violation_older_than_the_newest_twenty_decisions_still_fails():
+    """#1696: the 24h target covers the whole window, not its newest 20 rows."""
+    from aletheia.analytics.go_live_scorecard import _check_risk_violations
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    now = datetime.now(timezone.utc)
+    for index in range(21):
+        proposal_id = f"risk-proposal-{index}"
+        repo._insert("trade_proposals", TradeProposal(
+            id=proposal_id, symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", execution_mode="bitget_demo",
+        ).model_dump())
+        repo._insert("risk_decisions", RiskDecision(
+            id=f"risk-decision-{index}", proposal_id=proposal_id, approved=index != 0,
+            proposal_execution_mode="bitget_demo",
+            # The oldest decision (row 21 by recency) carries the only violation.
+            violations='["max_leverage"]' if index == 0 else "[]",
+            created_at=(now - timedelta(hours=20) + timedelta(minutes=index)).isoformat(),
+        ).model_dump())
+
+    result = _check_risk_violations()
+
+    assert result["status"] == "fail"
+    assert result["detail"] == "1 violation events"
+
+
+def test_active_reconciliation_integrity_incident_fails_reconciliation():
+    """#1696: no code writes 'reconciliation_error'; live incidents must count."""
+    from aletheia.analytics.go_live_scorecard import _check_reconciliation
+    from aletheia.storage.models import ReconciliationIntegrityIncident
+    from aletheia.storage.repositories import insert_reconciliation_integrity_incident
+
+    assert _check_reconciliation()["status"] == "pass"
+    insert_reconciliation_integrity_incident(ReconciliationIntegrityIncident(
+        fingerprint="churn-fixture", churn_count=4,
+    ))
+
+    result = _check_reconciliation()
+
+    assert result["status"] == "fail"
+    assert "1 active integrity incidents" in result["detail"]
+
+
+def test_inconclusive_order_reconciliation_fails_reconciliation():
+    """#1696: a current reconciliation path's failure fact is a reconciliation error."""
+    from aletheia.analytics.go_live_scorecard import _check_reconciliation
+    from aletheia.files.jsonl import write_audit
+
+    write_audit({
+        "actor": "system", "source": "reconciliation",
+        "event_type": "order_reconciliation_inconclusive",
+        "entity_type": "order", "entity_id": "order-1",
+        "reason": "exchange_order_not_found",
+        "message": "Order reconciliation reached inconclusive.",
+    })
+
+    result = _check_reconciliation()
+
+    assert result["status"] == "fail"
+    assert result["detail"].startswith("1 errors in 7 days")
