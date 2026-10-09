@@ -1242,6 +1242,22 @@ class CCXTUTAAdapter:
                 reason="integer_leverage_required",
                 error_code=UTAErrorCode.INVALID_ORDER,
             )
+        # Presets the approved command asks the venue to attach (#3848, owner D1
+        # 2026-10-09). Captured before the profile prepares the command.
+        presets = (
+            {
+                key: value
+                for key, value in (
+                    ("stopLoss", command.stop_loss_price),
+                    ("takeProfit", command.take_profit_price),
+                )
+                if value is not None
+            }
+            if command.instrument.market_type == "usdt_futures"
+            and command.purpose == "entry"
+            and not command.reduce_only
+            else {}
+        )
         exchange = None
         try:
             exchange = await self._connected_exchange()
@@ -1262,6 +1278,20 @@ class CCXTUTAAdapter:
         request_started = False
         try:
             args = self._profile.submit_request(command)
+            # The venue ACK is the protection confirmation, so the built body must
+            # carry every approved preset as the exact string; otherwise nothing is
+            # sent (#3783: params silently dropped while the venue still ACKs).
+            if any(
+                not isinstance(args[-1].get(key), dict)
+                or args[-1][key].get("triggerPrice") != str(value)
+                for key, value in presets.items()
+            ):
+                return self._not_sent(
+                    command,
+                    SubmissionReport,
+                    reason="native_tpsl_params_missing",
+                    error_code=UTAErrorCode.INVALID_ORDER,
+                )
             request_started = True
             raw = await self._request(exchange.create_order(*args))
             venue_order_id = self._profile.acknowledgement_order_id(raw)

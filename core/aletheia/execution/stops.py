@@ -123,7 +123,8 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
 
 
 # Two tpsl_fill_check cycles (90s): time for an accepted entry's attached preset
-# to be readable before its absence is treated as proven (#3848).
+# to be readable before the bookkeeping read-back audits it as not found (#3848).
+# The read-back never closes a Position (owner D1, 2026-10-09).
 PROTECTION_GRACE_SECONDS = 180
 # Marks ids read back from an entry preset. `replace_protective_stop` refuses
 # them until #3848 PR-B amends the preset in place (modify-strategy-order).
@@ -135,7 +136,8 @@ def classify_native_protection(position: dict, legs, *, now) -> tuple[str, dict[
 
     Returns ``("verified", {"sl": id[, "tp": id]})``, ``("unverified", reason)`` when
     the venue state is real but not provably this Position's full stop, or
-    ``("absent", reason)`` only when no venue stop exists past the grace window.
+    ``("absent", reason)`` only when no venue stop exists past the grace window
+    (audited by the bookkeeping read-back; never a close).
     A take-profit alone is not protection.
     """
     from datetime import datetime, timezone
