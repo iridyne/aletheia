@@ -30,6 +30,12 @@ class RestoreResult:
         self.restored_files: int = 0
         self.target_dir: str = ""
         self.errors: list[str] = []
+        # Rollback actions that failed after a failed restore: the target is mixed.
+        self.rollback_failures: list[dict[str, str]] = []
+
+    @property
+    def rollback_complete(self) -> bool:
+        return not self.rollback_failures
 
     def to_dict(self) -> dict:
         return {
@@ -37,6 +43,8 @@ class RestoreResult:
             "restored_files": self.restored_files,
             "target_dir": self.target_dir,
             "errors": self.errors,
+            "rollback_complete": self.rollback_complete,
+            "rollback_failures": self.rollback_failures,
         }
 
 
@@ -160,6 +168,29 @@ class RestoreService:
                         if item.parent.relative_to(bundle_dir) == Path("logs")
                         and _is_audit_generation(item)
                     }
+                    # #1598: a restored standalone .db snapshot must not meet a
+                    # -wal/-shm left by the runtime it replaces; set them aside
+                    # (rolled back with the rest on failure).
+                    stale_sidecars = [
+                        target_dir / item.relative_to(bundle_dir).with_name(item.name + suffix)
+                        for item in files_to_restore
+                        if item.suffix == ".db"
+                        for suffix in ("-wal", "-shm")
+                    ]
+                    for stale in stale_sidecars:
+                        if not (stale.exists() or stale.is_symlink()):
+                            continue
+                        rel = stale.relative_to(target_dir)
+                        if stale.is_symlink():
+                            raise RestoreSecurityError(
+                                f"restore target is a symlink and would redirect the write: {rel}"
+                            )
+                        bk = rollback_dir / "_removed" / rel
+                        bk.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(stale, bk)
+                        removed_files.append((stale, bk))
+                        stale.unlink()
+
                     target_logs = target_dir / "logs"
                     if target_logs.is_symlink():
                         raise RestoreSecurityError(
@@ -207,30 +238,37 @@ class RestoreService:
                     return result
 
                 except Exception as exc:
+                    def undo(path: Path, action: str, step) -> None:
+                        try:
+                            step()
+                        except Exception as undo_exc:
+                            result.rollback_failures.append(
+                                {"path": str(path), "action": action, "error": repr(undo_exc)}
+                            )
+
                     # Restore overwritten files to their pre-restore bytes
                     for dst, bk in overwrites:
-                        try:
-                            shutil.copy2(bk, dst)
-                        except Exception:
-                            pass
+                        undo(dst, "restore_overwritten", lambda dst=dst, bk=bk: shutil.copy2(bk, dst))
                     # Remove files that didn't exist before this call
                     for p in new_files:
-                        try:
-                            p.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                    # Restore target-only audit generations removed for set replacement
+                        undo(p, "remove_new", lambda p=p: p.unlink(missing_ok=True))
+                    # Restore removed audit generations and WAL sidecars
                     for dst, bk in removed_files:
-                        try:
+                        def put_back(dst=dst, bk=bk):
                             dst.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(bk, dst)
-                        except Exception:
-                            pass
+                        undo(dst, "restore_removed", put_back)
                     # If target_dir was created by this call, remove it entirely
                     if target_was_absent:
-                        shutil.rmtree(target_dir, ignore_errors=True)
+                        undo(target_dir, "remove_created_target", lambda: shutil.rmtree(target_dir))
 
-                    result.errors.append(f"Restore failed and was rolled back: {exc}")
+                    if result.rollback_complete:
+                        result.errors.append(f"Restore failed and was rolled back: {exc}")
+                    else:
+                        paths = ", ".join(f["path"] for f in result.rollback_failures)
+                        result.errors.append(
+                            f"Restore failed and rollback INCOMPLETE ({paths}): {exc}"
+                        )
                     result.restored_files = 0
                     return result
         finally:

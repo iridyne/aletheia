@@ -565,7 +565,9 @@ def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, r
         with worker_cycle_exclusion():
             restored = RestoreService().restore(backup, get_data_dir())
             if not restored.success:
-                return {"ok": False, "reason": "data_restore_failed", "detail": "; ".join(restored.errors)}
+                # A rollback that could not put the old files back leaves a mixed data root.
+                reason = "data_restore_failed" if restored.rollback_complete else "data_restore_rollback_incomplete"
+                return {"ok": False, "reason": reason, "detail": "; ".join(restored.errors)}
             invalidate_active_for_restore(joint_cut_proven=False)
         started = _gateway_command("start")
         if not started.get("ok"):
