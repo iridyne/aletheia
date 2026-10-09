@@ -83,6 +83,7 @@ CURRENT_DOC_FILES = {
     "docs/product/SCOPE.md",
     "docs/product/ACTIVE_RUNTIME_SCOPE.md",
     "docs/product/CAPABILITY_GROUND_TRUTH.md",
+    "docs/product/CAPABILITY_MAP.md",
     "docs/product/capability-integrity/README.md",
     "docs/design/README.md",
     "docs/design/process/SDD_METHODOLOGY.md",
@@ -411,13 +412,15 @@ BASELINE_MISSING_CONTRACT_PATHS: set[str] = set()
 CODE_PATH_DOCS: tuple[str, ...] = (
     "docs/design/contracts",
     "docs/product/capability-integrity/CAPABILITY_INVENTORY.md",
+    # Only the backticked .py probe paths are checked, not symbols or callers.
+    "docs/product/CAPABILITY_MAP.md",
 )
 
 
 def contract_code_path_failures() -> list[str]:
     """Authority docs must reference real repo file paths in backticked `.py` spans.
 
-    Scopes to `docs/design/contracts/*.md` and to `CAPABILITY_INVENTORY.md`, the
+    Scopes to `docs/design/contracts/*.md`, `CAPABILITY_MAP.md` and `CAPABILITY_INVENTORY.md`, the
     product-promise authority: a promise whose discovery evidence points at a
     module that no longer exists is a promise resting on nothing, and it is the
     kind of drift no reader notices (the 2026-09-28 audit found the inventory

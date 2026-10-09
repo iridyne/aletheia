@@ -9,6 +9,10 @@ proof of implementation. Each question has an existing canonical owner:
   active-admission declaration. Read it first for the current trading route.
 - [CAPABILITY_GROUND_TRUTH.md](CAPABILITY_GROUND_TRUTH.md) owns current capability
   promises, support boundaries and evidence limits; it is not a live status page.
+- [CAPABILITY_MAP.md](CAPABILITY_MAP.md) is the stable lifecycle capability
+  registry (`CAP-<STAGE>-nn` definitions, target levels, L0–L4 criteria). It holds
+  no current levels; those are dated `/capability-review` comments on the roadmap
+  issue. It neither expands Active Runtime Scope nor replaces Ground Truth.
 - [SCOPE.md](SCOPE.md) supplies broader inclusion/deferral context, without
   expanding the active declaration or overriding capability limits.
 - `gates/` defines metric meaning and applicable admission criteria, not new
