@@ -705,26 +705,6 @@ def test_opportunity_cli_outputs_audit_and_trace():
     assert payload["final_stage"] == "debate_downgraded"
 
 
-def test_legacy_flow_cli_remains_hidden_compatibility_alias():
-    from aletheia.main import app
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    _insert_opp(db)
-    _insert_decision(db)
-
-    runner = CliRunner()
-    audit = runner.invoke(app, ["flow", "audit", "--hours", "24", "--limit", "5"])
-    trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
-
-    assert audit.exit_code == 0
-    assert "Deprecated: use `uv run aletheia opportunity audit`" in audit.output
-    assert "Opportunity Flow Ledger" in audit.output
-    assert trace.exit_code == 0
-    payload = json.loads(trace.output)
-    assert payload["opportunity_id"] == "opp-flow-1"
-
-
 def test_opportunity_cli_outputs_specialized_views():
     from aletheia.main import app
     from aletheia.storage.sqlite import get_db

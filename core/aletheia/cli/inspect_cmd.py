@@ -60,7 +60,7 @@ def _with_flow_hint(text: str, hours: int) -> str:
     return (
         f"{text}\n\n"
         "Also summarized in the opportunity ledger:\n"
-        f"  uv run aletheia flow audit --hours {max(1, int(hours or 24))}"
+        f"  uv run aletheia opportunity audit --hours {max(1, int(hours or 24))}"
     )
 
 

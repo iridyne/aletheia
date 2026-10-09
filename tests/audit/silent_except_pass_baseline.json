@@ -151,7 +151,7 @@
     },
     {
       "file": "core/aletheia/main.py",
-      "line": 523,
+      "line": 521,
       "reason": "SystemExit from the install subcommand is the CLI own exit path"
     },
     {

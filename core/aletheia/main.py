@@ -34,7 +34,6 @@ from aletheia.cli.exchange_cmd import exchange_app
 from aletheia.cli.network_cmd import network_app
 from aletheia.cli.alpha import alpha_app
 from aletheia.cli.opportunity import opportunity_app
-from aletheia.cli.flow import flow_app
 from aletheia.cli.funnel import funnel_app
 from aletheia.cli.sizing import sizing_app
 from aletheia.cli.thesis import thesis_app
@@ -433,7 +432,6 @@ app.add_typer(exchange_app, name="exchange", help="Switch active exchange, mode,
 app.add_typer(opportunity_app, name="opportunity", help="Analyze opportunity lifecycle and outcomes.")
 app.add_typer(thesis_app, name="thesis", help="Thesis lineage snapshots and record export.")
 app.add_typer(alpha_app, name="alpha", help="Read-only alpha attribution audit.", hidden=True)
-app.add_typer(flow_app, name="flow", help="Deprecated alias for opportunity.", hidden=True)
 app.add_typer(funnel_app, name="funnel", help="Read-only trade funnel audit.", hidden=True)
 app.add_typer(sizing_app, name="sizing", help="Read-only sizing trace audit.", hidden=True)
 app.add_typer(dev_app, name="dev", help="Isolated worktree development preview commands.")

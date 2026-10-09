@@ -80,7 +80,6 @@ def _echo_audit(
     symbol: str | None = None,
     view: str = "overview",
     json_output: bool = False,
-    deprecated_from: str | None = None,
     provided_options: set[str] | None = None,
 ) -> None:
     report, rendered = _build_audit_view(
@@ -95,8 +94,6 @@ def _echo_audit(
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
-    if deprecated_from:
-        typer.echo(_deprecation_notice(deprecated_from, view))
     typer.echo(rendered)
 
 
@@ -104,7 +101,6 @@ def _echo_trace(
     *,
     opportunity_id: str,
     json_output: bool = False,
-    deprecated_from: str | None = None,
 ) -> None:
     from aletheia.analytics.opportunity_flow import render_flow_trace, trace_opportunity_flow
 
@@ -112,8 +108,6 @@ def _echo_trace(
     if json_output:
         typer.echo(json.dumps(record, ensure_ascii=False, indent=2))
         return
-    if deprecated_from:
-        typer.echo("Deprecated: use `uv run aletheia opportunity trace --id <opportunity_id>` instead.\n")
     typer.echo(render_flow_trace(record))
 
 
@@ -221,10 +215,3 @@ def _build_audit_view(
     report = build_thesis_lineage_audit(days=days)
     return report, render_thesis_lineage_audit(report)
 
-
-def _deprecation_notice(command_name: str, view: str) -> str:
-    suffix = "" if view == "overview" else f" --view {view}"
-    return (
-        f"Deprecated: use `uv run aletheia opportunity audit{suffix}` instead.\n"
-        f"This compatibility command remains available as `{command_name}` for now.\n"
-    )
