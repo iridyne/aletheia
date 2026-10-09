@@ -1,8 +1,7 @@
-"""Tests for the three remaining real gaps wired in this pass:
+"""Tests for the remaining real gaps wired in this pass:
 
 1. agent_run_steps now populated automatically via log_tool/record_step.
-2. Stability monitor reports orphan/uptime + score.
-3. Learning Ledger surfaces stage-1 quality signals (activation/retire/coverage).
+2. Learning Ledger surfaces stage-1 quality signals (activation/retire/coverage).
 """
 
 import sqlite3
@@ -88,66 +87,6 @@ def test_orchestrator_releases_counter(tmp_path, monkeypatch):
     # other tests are allowed — we only own the keys introduced in this call).
     new_keys = set(helpers._step_counters) - keys_before
     assert not new_keys, f"run_agent leaked counters: {new_keys}"
-
-
-# === Gap 2: stability monitor ===
-
-def test_stability_clean_state(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime.stability_monitor import compute_stability
-    s = compute_stability()
-    # Empty DB = no orphans, no failure ratio → score stays 100.
-    assert s["score"] == 100
-    assert s["reasons"] == []
-    assert s["orphans"]["orphan_fills"] == 0
-
-
-def test_stability_detects_orphan_fill(tmp_path, monkeypatch):
-    """An orphan fill (FK to a non-existent order) must count and dock the score."""
-    setup_env(tmp_path, monkeypatch)
-    # Insert raw orphan fill bypassing FK (PRAGMA foreign_keys=ON would normally block;
-    # we simulate the corruption that the monitor is meant to detect).
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    db.execute("PRAGMA foreign_keys=OFF")
-    db.execute(
-        "INSERT INTO fills(id, order_id, fill_price, fill_quantity, fee, fee_currency) "
-        "VALUES('f-orphan', 'no-such-order', 100, 1, 0, 'USDT')"
-    )
-    db.commit()
-    db.execute("PRAGMA foreign_keys=ON")
-
-    from aletheia.agent_runtime.stability_monitor import compute_stability
-    s = compute_stability()
-    assert s["orphans"]["orphan_fills"] == 1
-    assert s["score"] < 100
-    assert any("orphans" in r for r in s["reasons"])
-
-
-def test_stability_does_not_require_retired_strategy_binding(tmp_path, monkeypatch):
-    """Neither archived proposals nor current Operator proposals need this binding."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage.sqlite import get_db
-
-    proposal = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="bitget_demo", strategy_id=None,
-    )
-    repo.insert_trade_proposal(proposal)
-    db = get_db()
-    db.execute(
-        "INSERT INTO trade_proposals(id, symbol, market_type, direction, execution_mode) "
-        "VALUES('archived-proposal', 'BTCUSDT', 'spot', 'long', 'paper_internal')"
-    )
-    db.commit()
-
-    from aletheia.agent_runtime.stability_monitor import compute_stability
-    s = compute_stability()
-    assert s["score"] == 100
-    assert s["reasons"] == []
-    assert "strategy_id_drift" not in s
-    assert repo.get_trade_proposal("archived-proposal")["execution_mode"] == "paper_internal"
 
 
 # === Gap 3: Learning Ledger quality block ===

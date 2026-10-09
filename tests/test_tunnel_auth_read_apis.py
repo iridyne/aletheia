@@ -89,7 +89,6 @@ _PRIVATE_READ_ROUTES = [
     ("GET", "/_infra/status"),
     ("GET", "/api/status"),
     ("GET", "/api/health"),
-    ("GET", "/api/stability"),
     ("GET", "/api/version"),
     # Research/memory (infra events)
     ("GET", "/api/infra/events"),

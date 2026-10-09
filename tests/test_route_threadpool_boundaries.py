@@ -16,7 +16,6 @@ def test_hot_sqlite_and_config_routes_are_sync_handlers():
         data.start_agent_run,
         health.health,
         health.status,
-        health.stability,
         model.get_model_config,
         model.get_provider_types,
         settings.get_settings,
