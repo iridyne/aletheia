@@ -201,15 +201,13 @@ def _decide(order: dict) -> tuple[str, str] | None:
     if _has_real_economics(order):
         return None
 
-    # Stale close Order on an already-closed Position: safe to converge once old,
-    # regardless of venue reachability — the Position is already terminal.
+    # A terminal local Position proves nothing about its close Order on the venue:
+    # it may still rest or fill there (§6). Both kinds need the same exact proof.
+    if _exchange_order_absent_unfilled(order) is not True:
+        return None
     if _stale_pending_close_position_id(order) is not None:
         return ("stale_close_order_position_already_closed", "clear_pending_close")
-
-    absent_unfilled = _exchange_order_absent_unfilled(order)
-    if absent_unfilled is True:
-        return ("stale_order_absent_on_exchange", "cancel")
-    return None
+    return ("stale_order_absent_on_exchange", "cancel")
 
 
 # What a venue-confirmed absent entry Order ends for the rest of its chain.
