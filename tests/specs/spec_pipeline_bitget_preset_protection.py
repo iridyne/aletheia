@@ -443,7 +443,7 @@ def test_gateway_does_not_invent_take_profit_from_config(monkeypatch):
         "§4 entry-attached protection read-back",
         "L2b",
         "The venue ids of an entry's attached SL/TP are read back from the open "
-        "strategy orders and persisted in the place_protection shape, with audit.",
+        "strategy orders and persisted as {sl, tp, origin=entry_preset}, with audit.",
         status="implemented",
     )
 )
@@ -522,3 +522,110 @@ def test_read_back_that_finds_no_stop_audits_and_never_closes(tmp_path, monkeypa
     else:
         assert audit_types(position_id) == []
     assert stored_ids(position_id) == {}
+
+
+def _amend_command(identity, trigger_price, target="PRESET-1"):
+    from aletheia.uta.models import ModifyOrderCommand
+    from tests.uta.test_ccxt_adapter import _bitget_command
+
+    return ModifyOrderCommand(
+        command_id="amend-1", expected_account=identity,
+        instrument=_bitget_command(identity).instrument, purpose="protective_stop",
+        position_id="position-1", target_venue_order_id=target, trigger_price=trigger_price,
+    )
+
+
+def _install_strategy_venue(exchange, rows):
+    """Real ccxt codec; only the two UTA strategy endpoints are answered locally."""
+    calls = []
+
+    async def unfilled(params):
+        calls.append(("unfilled", params))
+        return {"code": "00000", "data": rows}
+
+    async def modify(request):
+        calls.append(("modify", request))
+        return {"code": "00000", "data": {"orderId": request["orderId"], "clientOid": ""}}
+
+    async def forbidden(*args, **kwargs):
+        calls.append(("forbidden", args))
+        raise AssertionError("an amend must never cancel or place a stop")
+
+    exchange.privateUtaGetV3TradeUnfilledStrategyOrders = unfilled
+    exchange.privateUtaPostV3TradeModifyStrategyOrder = modify
+    for name in ("privateUtaPostV3TradeCancelStrategyOrder", "privateUtaPostV3TradePlaceStrategyOrder",
+                 "privateUtaPostV3TradePlaceOrder", "privateUtaPostV3TradeCancelOrder"):
+        setattr(exchange, name, forbidden)
+    return calls
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-BG-PRESET-09",
+        "pipeline_bitget_preset_protection",
+        "§4 venue stop amended in place",
+        "L2b",
+        "A tightened stop amends the stored Bitget UTA strategy order in place "
+        "(modify-strategy-order, never cancel-then-place). A take-profit carried by the "
+        "same strategy order is resent unchanged, so the amend cannot drop it.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize("shared_take_profit", [True, False], ids=["shared_sl_tp_order", "stop_only_order"])
+async def test_tightened_stop_amends_the_venue_strategy_order_in_place(monkeypatch, shared_take_profit):
+    from aletheia.uta.models import CommandEvidence
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.test_bitget_uta_v3_switch import _strategy_row
+
+    adapter, exchange = _bitget_adapter(monkeypatch)
+    assert exchange.markets is not None
+    exchange.markets["BTC/USDT:USDT"]["precision"]["price"] = 0.01
+    row = _strategy_row(orderId="PRESET-1") if shared_take_profit else _strategy_row(
+        orderId="PRESET-1", takeProfit="", tpTriggerBy="", tpOrderType="",
+    )
+    calls = _install_strategy_venue(exchange, [_strategy_row(orderId="OTHER-9", posSide="short"), row])
+    try:
+        report = await adapter.modify_order(_amend_command(adapter.identity, "59500.5"))
+    finally:
+        await adapter.close()
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    assert report.venue_order_id == "PRESET-1"
+    assert calls[0] == ("unfilled", {"category": "USDT-FUTURES", "symbol": "BTCUSDT"})
+    expected = {
+        "orderId": "PRESET-1", "qty": "0.01",
+        "stopLoss": "59500.5", "slTriggerBy": "mark", "slOrderType": "market",
+    }
+    if shared_take_profit:
+        expected |= {"takeProfit": "62000.75", "tpTriggerBy": "market", "tpOrderType": "market"}
+    assert calls[1:] == [("modify", expected)]
+
+
+@pytest.mark.parametrize(
+    ("pos_side", "venue_stop", "new_stop"),
+    [("long", "59000.25", "58900"), ("short", "61000.5", "61100")],
+)
+async def test_stop_amend_that_would_loosen_the_venue_stop_is_never_sent(
+    monkeypatch, pos_side, venue_stop, new_stop,
+):
+    from aletheia.uta.models import CommandEvidence
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.test_bitget_uta_v3_switch import _strategy_row
+
+    adapter, exchange = _bitget_adapter(monkeypatch)
+    assert exchange.markets is not None
+    exchange.markets["BTC/USDT:USDT"]["precision"]["price"] = 0.01
+    calls = _install_strategy_venue(
+        exchange, [_strategy_row(orderId="PRESET-1", posSide=pos_side, stopLoss=venue_stop)],
+    )
+    try:
+        report = await adapter.modify_order(_amend_command(adapter.identity, new_stop))
+        missing = await adapter.modify_order(_amend_command(adapter.identity, new_stop, target="GONE-1"))
+    finally:
+        await adapter.close()
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.reason_code == "protection_amend_loosens"
+    assert missing.evidence is CommandEvidence.NOT_SENT
+    assert missing.reason_code == "modify_target_unavailable"
+    assert [name for name, _ in calls] == ["unfilled", "unfilled"]

@@ -811,17 +811,6 @@ def close_exchange_position(position_id: str, reason: str, *, close_reasoning: s
     return close_position(position_id, reason=reason, close_reasoning=close_reasoning)
 
 
-def place_exchange_protection(position_id: str) -> dict:
-    """Route protection through the qualified account coordinator."""
-    from aletheia.execution.coordinator import place_protection
-    from aletheia.storage import repositories as repo
-
-    row = repo.get_position(position_id)
-    if row is None or row["execution_mode"] not in EXTERNAL_EXECUTION_MODES:
-        raise ValueError(f"Gateway protection route does not support position {position_id!r}")
-    return place_protection(position_id)
-
-
 def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> bool:
     """Replace protection through the qualified account coordinator."""
     from aletheia.execution.coordinator import replace_protective_stop

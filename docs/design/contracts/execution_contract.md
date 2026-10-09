@@ -207,12 +207,12 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 路径 | Gateway → Coordinator → UTA profile | `execution/coordinator.py` |
-| 内容 | 持久化 protection child 后发送 typed protective_stop / take_profit command | `place_protection` |
-| SL / TP | 使用 Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `place_protection` |
+| 路径 | 保护只随入场单以 preset 携带(Gateway → Coordinator → UTA profile);入场后单独下 SL/TP 子单的 `place_protection` 链无生产调用方,已删除(#3848 PR-B) | `execution/coordinator.py::execute_order` |
+| SL / TP | 使用 Proposal / Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `execution/coordinator.py::execute_order` |
 | 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `extensions/exchanges/{venue}/profile.py` |
-| 持久化 | 仅已确认的 venue IDs 写入 position.exchange_tpsl_order_id；未决 child 保留 | `execution/coordinator.py` |
-| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功；撤单确认后新 stop 提交失败时删除持久化的 `sl` id(交易所侧已无该单),交由下方回读判定。回读得到的入场 preset id(`origin=entry_preset`)不做撤单重下,保留已批准的 venue stop,直到 #3848 PR-B 以原地修改替代 | `replace_protective_stop` |
+| 持久化 | 仅回读确认的 venue IDs 写入 position.exchange_tpsl_order_id(见下方回读) | `portfolio/native_protection.py` |
+| 收紧 / 追踪(原地修改,#3848 PR-B) | trailing 与 operator 调整经 `replace_protective_stop` **原地修改**已存的 venue stop(Bitget UTA `modify-strategy-order`),**绝不撤单重下**,因此不存在无 venue stop 的窗口;入场 preset(`origin=entry_preset`)同样原地修改。发送前读取 venue 未成交策略单,目标 id 恰好一个且属本 symbol 才发送,否则 `NOT_SENT` + `modify_target_unavailable`。请求重述该策略单上的全部腿:与 SL 共用同一策略单的 TP 以原值重发,修改不会丢掉 TP(CCXT `edit_order` 的 `stopLossPrice` 虽路由到同一端点,却会丢弃 TP 参数,故请求体由 profile 构建)。只朝有利方向移动:相对 venue 当前 stop 放宽的修改不发送(`protection_amend_loosens`);限价型 stop 不修改。仅 venue ACK 记为成功;拒绝 / 不确定 / 未发送 / 异常时原 venue stop 仍有效,id 不删,返回 False,写 `native_protection_amend_failed` 审计(成功写 `native_protection_amended`)。不支持原地修改的 profile 返回 `protection_amend_unsupported`,不退化为撤单重下 | `execution/coordinator.py::replace_protective_stop`、`extensions/exchanges/ccxt/adapter.py::modify_order`、`extensions/exchanges/bitget/profile.py::protection_amend_request` |
+| 本地兜底 | trailing 无论 venue 修改结果如何都持久化更紧的本地 stop,由本地轮询兜底;`exit_plan.trailing.last_runtime_observation.exchange_synced` 记录 venue 的实际回答(此前替换失败也记 True)。operator 调整的返回值 `exchange_synced` 同义 | `portfolio/position_manager.py::_maybe_update_trailing_stop`、`apply_operator_adjustment` |
 | 开关默认 | `trading.exchange_tpsl_enabled` 未设置时仅对 `bitget_demo` 生效(#3848 PR-A 第 4 项);显式 true/false 对所有 execution mode 生效 | `execution/stops.py::native_tpsl_enabled` |
 | 入场附带保护确认(#3848 owner D1, 2026-10-09,取代 PR #3849 的"回读否则平仓") | 保护由**携带 SL/TP 的入场单自身的执行回执**确认,不靠周期回读平仓。**发送前守卫**:profile 声明 native TPSL 且 `native_tpsl_enabled(mode)` 为真、purpose=entry、非 reduce_only、`usdt_futures`,且已批准 command 携带 `stop_loss_price`/`take_profit_price` 时,经 `profile.submit_request` 构建出的 venue 请求参数必须以与批准值相等的字符串携带这些触发价(`stopLoss`/`takeProfit.triggerPrice`);否则不发送,`NOT_SENT` + `native_tpsl_params_missing`,Order 以 `error` 终结并写审计(防 #3783 类:参数被静默丢弃而 venue 仍 ACK)。**ACK**:venue 受理的此类入场在 `uta_command_applied` 审计中记 `protection_source=entry_preset_ack`;被拒即无仓位,无需保护。spot 与 reduce_only / exit 按设计不在此守卫内(Bitget preset 仅 futures 入场) | `extensions/exchanges/ccxt/adapter.py::submit_order`、`execution/coordinator.py::execute_order` |
 | 入场附带保护回读(仅记账) | 受理回执不含 preset 的 id。`tpsl_fill_check` 每轮先读取 venue 未成交策略单(UTA `unfilled-strategy-orders`),只把**同账户、同方向、恰好一个**的 SL(以及恰好一个的 TP)id 连同 `origin=entry_preset` 写入 `exchange_tpsl_order_id`(供后续修改与成交识别),并写 `native_protection_verified` 审计(含 venue 触发价);SL/TP 可能共用同一 id,其触发按成交均价最近的触发价归因为 `stop_loss` / `take_profit`。完整读取在 grace(`PROTECTION_GRACE_SECONDS`)后仍找不到本仓 SL 时只写 `native_protection_absent` 审计并让 job 变红;读取失败、不完整、身份非 `SAME`、多个 SL 或 SL 数量小于持仓时不写库。回读**永不平仓** | `portfolio/native_protection.py`、`execution/stops.py::classify_native_protection` |
@@ -637,7 +637,7 @@ a guard.
 config 发明保护。只有没有 Proposal 身份的历史仓位，或明确 `source=adopted` 的外部接管仓位，才保留
 config 默认百分比兜底；接管流程会尽量在接管时一次性固化这些值，避免之后漂移。`PL-PM-09` 锁定原生
 Proposal 的这一权限边界。
-交易所原生 TPSL 已触发的平仓由 `tpsl_fill_check`(`agent_runtime/scheduler.py::_tpsl_fill_check_body`,每 90 秒)按已持久化的 `exchange_tpsl_order_id` 收敛,避免本地-交易所长期 desync(见 §4)。
+交易所原生 TPSL 已触发的平仓由 `tpsl_fill_check`(`agent_runtime/scheduler.py::_tpsl_fill_check_body`,每 90 秒)收敛:每轮先由 `portfolio/native_protection.py::verify_native_protection` 回读并记下入场 preset 的 venue id,再按已持久化的 `exchange_tpsl_order_id` 收敛已触发的 SL/TP,避免本地-交易所长期 desync(见 §4)。trailing / operator 收紧经 §4 的原地修改移动 venue stop;本地 `stop_price` 仍是兜底。
 
 ### 10.5 已知状态与边界
 

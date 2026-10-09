@@ -376,13 +376,13 @@ def test_a_library_upgrade_alone_does_not_block_stop_replacement(tmp_path, monke
     from aletheia.uta.models import CommandEvidence, CommandReport
 
     position, _old, upgraded = _upgraded_position(monkeypatch, tmp_path)
-    cancels = []
+    amends = []
 
     class Adapter:
         identity = upgraded
 
-        async def cancel_order(self, command):
-            cancels.append(command.target_venue_order_id)
+        async def modify_order(self, command):
+            amends.append(command.target_venue_order_id)
             return CommandReport(
                 identity=command.expected_account, command_id=command.command_id,
                 evidence=CommandEvidence.ACKNOWLEDGED, received_at=datetime.now(timezone.utc),
@@ -393,10 +393,9 @@ def test_a_library_upgrade_alone_does_not_block_stop_replacement(tmp_path, monke
             pass
 
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _m: Adapter())
-    monkeypatch.setattr(coordinator, "_submit_protection_leg", lambda *_a, **_k: "new-sl")
 
     assert coordinator.replace_protective_stop(position.id, 95.0) is True
-    assert cancels == ["old-sl"]
+    assert amends == ["old-sl"]
 
 
 def test_a_library_upgrade_alone_does_not_block_native_tpsl_close_registration(tmp_path, monkeypatch):

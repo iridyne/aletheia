@@ -791,22 +791,12 @@ def _maybe_update_trailing_stop(
     if updates:
         new_stop = updates.get("stop_price")
         if new_stop is not None:
-            # #1467 fix: sync exchange FIRST, then persist to local DB only on success.
-            # If exchange call fails, we don't commit the trailing stop locally (no split state).
-            exchange_synced = False
-            if sync_exchange:
-                try:
-                    from aletheia.execution.stops import replace_exchange_protective_stop
-                    replace_exchange_protective_stop(position["id"], float(new_stop))
-                    exchange_synced = True
-                except Exception as e:
-                    logger.warning(
-                        "exchange stop sync failed pos=%s: %s — local stop not updated",
-                        position["id"], e,
-                    )
-                    return False  # abort local DB update on exchange failure
-            
-            # Exchange succeeded (or sync_exchange=False) → persist to local DB
+            # #3848 PR-B: amend the venue stop in place first. A failed amend leaves
+            # the previous venue stop live; the tighter local stop is still persisted
+            # as the backstop, and `exchange_synced` records the venue's real answer.
+            exchange_synced = sync_exchange and _sync_exchange_stop(
+                position["id"], float(new_stop), position, cfg,
+            )
             from aletheia.portfolio.exit_plan import (
                 save_exit_plan,
             )
@@ -815,7 +805,7 @@ def _maybe_update_trailing_stop(
             persisted_plan.stop_price = float(new_stop)
             persisted_plan.trailing = {
                 **(persisted_plan.trailing or {}),
-                "last_runtime_observation": runtime_observation,
+                "last_runtime_observation": {**runtime_observation, "exchange_synced": exchange_synced},
             }
             save_exit_plan(
                 position["id"],

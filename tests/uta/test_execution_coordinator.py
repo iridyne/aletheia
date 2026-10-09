@@ -621,109 +621,51 @@ def test_close_fallback_uses_capability_and_closes_exact_quote_provider(
 
 
 
-def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.coordinator import _submit_protection_leg
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
+class _AmendAdapter(_Adapter):
+    """Records every amend; a cancel or a new stop order fails the test (#3848 PR-B)."""
 
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        stop_price=90.0,
-        take_profit_price=120.0,
-        execution_mode="okx_demo",
-        status="open",
-    )
-    _insert_bound_position(position)
-    calls = []
+    def __init__(self, mode, outcome):
+        super().__init__(self._no_submit, mode)
+        self.amends = []
+        self._outcome = outcome
 
-    async def submit(command):
-        stored = repo.list_orders(limit=10)
-        assert any(row["status"] == "pending" for row in stored)
-        assert repo.get_position(position.id)["status"] == "open"
-        calls.append(command.purpose)
-        return _ack(command, f"venue-{command.purpose}")
+    @staticmethod
+    async def _no_submit(command):
+        raise AssertionError("a stop amend must never place a new order")
 
-    adapter = _Adapter(submit, "okx_demo")
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
-    )
+    async def cancel_order(self, command):
+        raise AssertionError("a stop amend must never cancel the live venue stop")
 
-    stored_position = repo.get_position(position.id)
-    result = {
-        "sl": _submit_protection_leg(stored_position, "protective_stop", 90.0),
-        "tp": _submit_protection_leg(stored_position, "take_profit", 120.0),
-    }
-
-    assert calls == ["protective_stop", "take_profit"]
-    assert result == {
-        "sl": "venue-protective_stop",
-        "tp": "venue-take_profit",
-    }
-    assert {row["status"] for row in repo.list_orders(limit=10) if row["position_id"] == position.id} == {"submitted"}
-
-
-def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.coordinator import replace_protective_stop
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-
-    position = Position(
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-        quantity=0.01, entry_price=100.0, stop_price=90.0,
-        execution_mode="okx_demo", status="open",
-        exchange_tpsl_order_id='{"sl":"old-sl","tp":"old-tp"}',
-    )
-    _insert_bound_position(position)
-    events = []
-
-    class Adapter(_Adapter):
-        async def cancel_order(self, command):
-            events.append(("cancel", command.target_venue_order_id))
-            return CommandReport(
-                identity=command.expected_account, command_id=command.command_id,
-                evidence=CommandEvidence.ACKNOWLEDGED,
-                received_at=datetime.now(timezone.utc),
-                venue_order_id=command.target_venue_order_id, profile_version="1",
-            )
-
-    async def submit(command):
-        events.append(("submit", str(command.trigger_price)))
-        return _ack(command, "new-sl")
-
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: Adapter(submit, "okx_demo"),
-    )
-
-    assert replace_protective_stop(position.id, 95.0) is True
-    assert events == [("cancel", "old-sl"), ("submit", "95.0")]
-    assert repo.get_position(position.id)["exchange_tpsl_order_id"] == '{"sl": "new-sl", "tp": "old-tp"}'
+    async def modify_order(self, command):
+        self.amends.append(command)
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return CommandReport(
+            identity=command.expected_account, command_id=command.command_id,
+            evidence=self._outcome, received_at=datetime.now(timezone.utc),
+            venue_order_id=command.target_venue_order_id, profile_version="1",
+            reason_code=None if self._outcome is CommandEvidence.ACKNOWLEDGED else "venue_rejected_command",
+        )
 
 
 @pytest.mark.parametrize(
-    ("stored", "submit_fails", "expected", "result", "cancelled"),
+    ("outcome", "amended"),
     [
-        ('{"sl":"old-sl","tp":"old-tp"}', True, {"tp": "old-tp"}, False, ["old-sl"]),
-        (
-            '{"origin":"entry_preset","sl":"PRESET-1","tp":"PRESET-1"}', False,
-            {"origin": "entry_preset", "sl": "PRESET-1", "tp": "PRESET-1"}, False, [],
-        ),
+        (CommandEvidence.ACKNOWLEDGED, True),
+        (CommandEvidence.VENUE_REJECTED, False),
+        (CommandEvidence.AMBIGUOUS, False),
+        (CommandEvidence.NOT_SENT, False),
+        (RuntimeError("venue timeout"), False),
     ],
-    ids=["submit_fails_after_cancel", "entry_preset_kept_until_pr_b"],
+    ids=["ack", "rejected", "ambiguous", "not_sent", "raised"],
 )
-def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
-    tmp_path, monkeypatch, stored, submit_fails, expected, result, cancelled,
+def test_entry_preset_stop_is_amended_in_place_and_failure_keeps_the_live_id(
+    tmp_path, monkeypatch, outcome, amended,
 ):
-    """#3848: after the old stop is cancelled, a persisted id must name live venue protection.
+    """#3848 PR-B: tightening amends the stored venue stop; no cancel-then-place window.
 
-    A read-back entry preset is never cancel-and-replaced (the fixed clientOid
-    would be resent); its approved venue stop stays until PR-B amends it.
+    On any failure the previous venue stop is still live, so its id (and the shared
+    take-profit id) stays stored and the caller hears False.
     """
     import json
 
@@ -732,40 +674,52 @@ def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 
+    stored = {"origin": "entry_preset", "sl": "PRESET-1", "tp": "PRESET-1"}
     position = Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.01, entry_price=60000.0, stop_price=59000.25, take_profit_price=62000.75,
-        execution_mode="bitget_demo", status="open", exchange_tpsl_order_id=stored,
+        execution_mode="bitget_demo", status="open", exchange_tpsl_order_id=json.dumps(stored),
     )
     _insert_bound_position(position)
+    adapter = _AmendAdapter("bitget_demo", outcome)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter)
 
-    cancels = []
+    assert replace_protective_stop(position.id, 59500.5) is amended
 
-    class Adapter(_Adapter):
-        async def cancel_order(self, command):
-            cancels.append(command.target_venue_order_id)
-            return CommandReport(
-                identity=command.expected_account, command_id=command.command_id,
-                evidence=CommandEvidence.ACKNOWLEDGED,
-                received_at=datetime.now(timezone.utc),
-                venue_order_id=command.target_venue_order_id, profile_version="1",
-            )
-
-    async def submit(command):
-        if submit_fails:
-            raise RuntimeError("venue rejected the replacement stop")
-        return _ack(command, "new-sl")
-
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: Adapter(submit, "bitget_demo"),
-    )
-
-    assert replace_protective_stop(position.id, 59500.0) is result
+    [command] = adapter.amends
+    assert command.purpose == "protective_stop"
+    assert command.target_venue_order_id == "PRESET-1"
+    assert command.trigger_price == Decimal("59500.5")
+    assert command.expected_account == adapter.identity
     stored_position = repo.get_position(position.id)
     assert stored_position is not None
-    assert json.loads(stored_position["exchange_tpsl_order_id"]) == expected
-    assert cancels == cancelled
+    assert json.loads(stored_position["exchange_tpsl_order_id"]) == stored
+    audits = [
+        row for row in repo.list_audit_events(limit=50)
+        if row["entity_id"] == position.id and row["source"] == "native_protection_amend"
+    ]
+    assert [row["event_type"] for row in audits] == [
+        "native_protection_amended" if amended else "native_protection_amend_failed"
+    ]
+
+
+def test_stop_amend_without_a_stored_venue_stop_sends_nothing(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import replace_protective_stop
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, stop_price=59000.25,
+        execution_mode="bitget_demo", status="open", exchange_tpsl_order_id='{"tp":"TP-1"}',
+    )
+    _insert_bound_position(position)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter",
+        lambda _mode: pytest.fail("no venue stop id means no venue call"),
+    )
+
+    assert replace_protective_stop(position.id, 59500.5) is False
 
 
 @pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
@@ -823,13 +777,6 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     )])
     assert materialized.state == "filled"
     [position] = repo.list_positions(status="open")
-    repo.update_open_position_exit_plan(position["id"], stop_price=90.0, take_profit_price=120.0)
-    protection = gateway.place_exchange_protection(position["id"])
-    if mode.startswith("binance"):
-        assert protection == {}  # existing profile explicitly lacks trigger orders
-    else:
-        assert set(protection) == {"sl", "tp"}
-        assert gateway.replace_exchange_protective_stop(position["id"], 95.0) is True
     closed = gateway.close_exchange_position(position["id"], "operator_close")
     assert closed["closed"] is False
     assert repo.get_position(position["id"])["status"] == "open"

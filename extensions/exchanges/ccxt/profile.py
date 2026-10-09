@@ -265,6 +265,21 @@ class CCXTProfile:
     def cancel_request(self, command: Any) -> tuple[object, str, dict]:
         raise NotImplementedError
 
+    async def protection_amend_request(self, exchange: Any, command: Any) -> dict:
+        """Read the venue's live stop and build its in-place amend (#3848 PR-B).
+
+        A venue without an in-place amend is never served by cancel-then-place.
+        """
+        raise UTAError(
+            UTAErrorCode.NOT_SUPPORTED,
+            "protection_amend_unsupported",
+            command_evidence=CommandEvidence.NOT_SENT,
+        )
+
+    async def amend_protection(self, exchange: Any, request: dict) -> str:
+        """Send the built amend; return the venue's acknowledged order id."""
+        raise NotImplementedError
+
     def account_values(
         self, balances: list[dict[str, object]]
     ) -> tuple[dict[str, Decimal | None], tuple[AccountBalance, ...], str | None]:

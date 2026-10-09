@@ -221,6 +221,74 @@ class _BitgetDemoProfile(CCXTProfile):
             params,
         )
 
+    async def protection_amend_request(self, exchange, command):
+        """Build the UTA modify-strategy-order body for a tightened stop (#3848 PR-B).
+
+        The stored id names a strategy (TPSL) order, which the ordinary order read
+        cannot see, so the venue's own open strategy orders are read first. The
+        body resends every leg that order carries: a take-profit sharing the order
+        is restated unchanged, so the amend cannot drop it. CCXT's ``edit_order``
+        routes ``stopLossPrice`` to the same endpoint (ccxt 4.5.84) but omits every
+        take-profit param while doing so, which is why the body is built here.
+        """
+        def refuse(reason):
+            return UTAError(UTAErrorCode.INVALID_ORDER, reason, command_evidence=CommandEvidence.NOT_SENT)
+
+        if command.purpose != "protective_stop" or command.instrument.market_type != "usdt_futures":
+            raise refuse("protection_amend_unsupported")
+        symbol = command.instrument.venue_symbol
+        market_id = exchange.market(symbol)["id"]
+        payload = await exchange.privateUtaGetV3TradeUnfilledStrategyOrders(
+            {"category": "USDT-FUTURES", "symbol": market_id}
+        )
+        rows = payload.get("data") if isinstance(payload, dict) and payload.get("code") == "00000" else None
+        if not isinstance(rows, list):
+            raise UTAError(UTAErrorCode.VENUE_REJECTED, "protection_amend_read_unavailable", command_evidence=CommandEvidence.NOT_SENT)
+        target = str(command.target_venue_order_id or "")
+        matches = [row for row in rows if isinstance(row, dict) and str(row.get("orderId") or "") == target]
+        if len(matches) != 1 or str(matches[0].get("symbol") or "") != market_id:
+            raise refuse("modify_target_unavailable")
+        row = matches[0]
+        current = str(row.get("stopLoss") or "").strip()
+        side = str(row.get("posSide") or "").strip().lower()
+        qty = str(row.get("qty") or "").strip()
+        if not current or side not in {"long", "short"}:
+            raise refuse("modify_target_unavailable")
+        if not qty:
+            raise refuse("protection_amend_quantity_unavailable")
+        if str(row.get("slOrderType") or "market").lower() != "market":
+            # A limit stop's execution price would be left behind by the new trigger.
+            raise refuse("protection_amend_limit_stop_unsupported")
+        new_stop = exchange.price_to_precision(symbol, str(command.trigger_price))
+        # Stops only move in the favourable direction. An equal price (the trail
+        # rounded onto the venue's current tick) is resent, which is idempotent.
+        looser = Decimal(new_stop) < Decimal(current) if side == "long" else Decimal(new_stop) > Decimal(current)
+        if looser:
+            raise refuse("protection_amend_loosens")
+        request: dict[str, object] = {
+            "orderId": target,
+            "qty": qty,
+            "stopLoss": new_stop,
+            "slTriggerBy": str(row.get("slTriggerBy") or "mark"),
+            "slOrderType": "market",
+        }
+        take_profit = str(row.get("takeProfit") or "").strip()
+        if take_profit:
+            request["takeProfit"] = take_profit
+            for key in ("tpTriggerBy", "tpOrderType", "tpLimitPrice"):
+                if str(row.get(key) or "").strip():
+                    request[key] = str(row[key])
+        return request
+
+    async def amend_protection(self, exchange, request):
+        response = await exchange.privateUtaPostV3TradeModifyStrategyOrder(request)
+        data = response.get("data") if isinstance(response, dict) and response.get("code") == "00000" else None
+        if not isinstance(data, dict):
+            raise ValueError("protection amend acknowledgement malformed")
+        if str(data.get("orderId") or "") != request["orderId"]:
+            raise ValueError("inconsistent acknowledgement identity")
+        return request["orderId"]
+
     def cancel_request(self, command):
         order_id = command.target_venue_order_id or command.target_client_order_id
         params: dict[str, object] = {"uta": True}

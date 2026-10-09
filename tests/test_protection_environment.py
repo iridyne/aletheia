@@ -19,17 +19,12 @@ def test_protection_dispatch_uses_registered_environment(monkeypatch, environmen
     monkeypatch.setitem(exchanges.EXECUTION_MODE_ENVIRONMENTS, "bitget_demo", environment)
     position = {"id": "position-1", "execution_mode": "bitget_demo", "stop_price": 95.0}
     monkeypatch.setattr("aletheia.storage.repositories._select_one", lambda *args: position)
-    place = Mock(return_value={"sl": "protection-1"})
     replace = Mock(return_value=True)
-    monkeypatch.setattr(gateway, "place_exchange_protection", place)
     monkeypatch.setattr(gateway, "replace_exchange_protective_stop", replace)
 
     allowed = enabled and environment == "demo"
-    assert stops.place_exchange_protective_orders(position) == ({"sl": "protection-1"} if allowed else {})
     assert stops.replace_exchange_protective_stop(position["id"], 97.0) is allowed
     if allowed:
-        place.assert_called_once_with(position["id"])
         replace.assert_called_once_with(position["id"], 97.0)
     else:
-        place.assert_not_called()
         replace.assert_not_called()

@@ -32,7 +32,6 @@ _PLACEMENT_TARGETS = {
             "execute_existing_proposal",
             "cancel_entry_plan_order",
             "close_exchange_position",
-            "place_exchange_protection",
             "replace_exchange_protective_stop",
         }
     ),
@@ -40,7 +39,6 @@ _PLACEMENT_TARGETS = {
         {
             "execute_order",
             "close_position",
-            "place_protection",
             "replace_protective_stop",
             "modify_order",
             "cancel_order",
