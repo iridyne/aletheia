@@ -52,7 +52,9 @@ def resolve_entry_execution(plan: EntryPlan, facts: EntryExecutionFacts) -> Entr
     working = facts.order_status in {"submitted", "partial", "partially_filled"}
     maker = facts.order_tactic == "POST_ONLY_LIMIT"
     remaining = max(0.0, plan.target_quantity - facts.filled_quantity)
-    if remaining <= 1e-12:
+    # Gateway rounds each leg down to the venue step (entry-plan-contract), so a
+    # fully filled latest leg has captured every executable unit of the target.
+    if remaining <= 1e-12 or facts.order_status == "filled":
         if working and maker:
             return EntryExecutionDirective("COMMAND", "entry_target_filled", "CANCEL_PASSIVE", facts.order_leg_index)
         return EntryExecutionDirective("DONE", "entry_target_filled")
