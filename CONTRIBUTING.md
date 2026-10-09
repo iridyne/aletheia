@@ -15,8 +15,8 @@ Read these files before making a non-trivial change:
 4. `docs/governance/policies/trust_and_change_control.md` before touching risk, execution, live trading, secrets, or permissions.
 5. `docs/design/data/data_model.md` and `docs/design/api/api_reference.md` when changing schema or API behavior.
 
-`CLAUDE.md` and `CODEX.md` intentionally point back to `AGENTS.md`; do not
-maintain separate rule copies. Directories with local conventions (`frontend/`,
+`CLAUDE.md` intentionally only imports `AGENTS.md` (Codex reads `AGENTS.md`
+natively); do not maintain separate rule copies. Directories with local conventions (`frontend/`,
 `tests/`, `scripts/ci/`, `extensions/`, `core/aletheia/{execution,risk,storage}/`)
 carry their own `AGENTS.md` plus a `CLAUDE.md` that only imports it.
 
@@ -32,8 +32,8 @@ Good first contributions:
 
 High-sensitivity areas:
 
-- `aletheia/risk/`
-- `aletheia/execution/`
+- `core/aletheia/risk/`
+- `core/aletheia/execution/`
 - exchange authentication and client code
 - secrets/config permission handling
 - live trading routes
@@ -55,7 +55,7 @@ Out of scope unless explicitly approved:
 
 Use Python through `uv` only:
 
-```powershell
+```sh
 uv sync
 uv run python -c "import aletheia.risk.engine"
 uv run aletheia doctor
@@ -63,21 +63,18 @@ uv run aletheia doctor
 
 Start the gateway through the project CLI:
 
-```powershell
+```sh
 uv run aletheia gateway start --no-browser
 ```
 
-For frontend iteration:
-
-```powershell
-.\scripts\dev.ps1
-```
-
-Use `http://127.0.0.1:8787/` as the canonical dashboard entrypoint.
+Use `http://127.0.0.1:8787/` as the canonical dashboard entrypoint. For frontend
+iteration in a separate workspace, follow
+[Development Preview](docs/operations/development/DEVELOPMENT_PREVIEW.md).
 
 ## Development Workflow
 
-1. Create a dedicated branch or worktree for each task.
+1. Create a dedicated jj workspace / bookmark for each task (see
+   [DEVELOPMENT_WORKFLOW.md](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md)).
 2. Inspect the current code path before editing.
 3. Keep the change narrowly scoped.
 4. Add or update a focused test for behavioral changes.
@@ -85,13 +82,15 @@ Use `http://127.0.0.1:8787/` as the canonical dashboard entrypoint.
 6. Run broader verification when the change touches shared or sensitive behavior.
 7. Summarize changed files, verification, and residual risk.
 
-Recommended commands:
+Mandatory first step after every change, then focused tests:
 
-```powershell
+```sh
+uv run python scripts/ci/dev_check.py
 uv run pytest tests/test_targeted_file.py -q
-uv run pytest tests/specs/ -q
-uv run aletheia doctor
+uv run python scripts/ci/check_docs.py   # when documentation changed
 ```
+
+Test selection by marker and tier is described in [tests/AGENTS.md](tests/AGENTS.md).
 
 Do not commit runtime state:
 
@@ -104,8 +103,8 @@ Do not commit runtime state:
 
 ## Testing Expectations
 
-Documentation-only changes usually need spelling/link review rather than the full
-test suite.
+Documentation-only changes need `scripts/ci/check_docs.py` and a link review
+rather than the full test suite.
 
 Code changes should include a focused regression test unless the behavior is
 purely mechanical. For trading, risk, execution, secrets, lifecycle, audit, or
@@ -113,10 +112,8 @@ schema changes, do not claim the fix is complete without test evidence.
 
 When changing frontend code, build before handoff:
 
-```powershell
-cd frontend
-npm run build
-cd ..
+```sh
+cd frontend && npm run build && cd ..
 ```
 
 ## Documentation Rules
@@ -142,15 +139,12 @@ the rules in `AGENTS.md`.
 Minimum agent checklist:
 
 1. State the boundary being touched before editing.
-2. Use a dedicated worktree for non-trivial file writes.
+2. Use a dedicated jj workspace for non-trivial file writes.
 3. Never read or print secrets.
 4. Never enable live trading or place orders.
 5. Never fabricate missing audit, thesis, or market evidence.
 6. Prefer read-only diagnostics when the requested change is unclear or unsafe.
 7. Report tests and limitations plainly.
-
-For AI handoffs, update only intention and coordination documents. Do not encode
-current runtime facts as if they were durable project state.
 
 ## Pull Request Checklist
 

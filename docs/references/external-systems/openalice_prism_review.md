@@ -212,13 +212,9 @@ Prism 表面有一整套 LLM 多 agent 协作，实际后台任务跑的是**纯
 
 ---
 
-## 六、施工状态跟踪
+## 六、施工状态
 
-| 蓝图 | 级别 | 模块 | change-controlled | 状态 |
-|---|---|---|---|---|
-| A — Guard 责任链 | P0 | risk/ | 是 ⚠️ | 📋 待授权 |
-| B — commit_hash+快照+reject | P0 | execution/, storage/ | 是 ⚠️ | 📋 待授权 |
-| C — Decimal 收口 | P1 | risk/, storage/ | 部分 | 📋 待授权 |
-| D — 进度推送 | P2 | server/, agent_runtime/ | 否 | 💤 暂缓 |
-
-> 动工任一 change-controlled 蓝图前：显式授权 → explore→plan → 焦点回归测试。完成后此表更新状态并记 commit。
+本表原为施工状态台账（2026-10-09 移除）。各蓝图的取舍结论见
+[references README](../README.md) 的红线一节与
+[`TAG_BORROW_BACKLOG`](../../archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md)；
+任何仍要做的条目应开 GitHub Issue，不在本文维护状态。

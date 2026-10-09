@@ -1,8 +1,10 @@
 # PR Review Lifecycle
 
 This policy is the single authority for pull-request review budgets, states,
-feedback validity, and merge readiness. It does not bypass branch protection,
-required CI, or required human approvals.
+feedback validity, and merge readiness. There is no branch protection or remote
+CI gate: required verification is the local `scripts/ci/ci_preflight.py` /
+`scripts/ci/ci_local.py` receipts, and merges are manual (`gh pr merge <n> --rebase`)
+by the owner.
 
 ## Scope and review budget
 
@@ -23,8 +25,8 @@ block merge.
 Every PR is exactly one of `WORKING`, `REVIEWING`, `FIXING_REVIEW`,
 `MERGE_READY`, or `MERGED`; transitions are explicit.
 
-Enter `MERGE_READY` only after implementation, relevant tests, required CI, and
-known blockers are complete, and the Codex budget is complete, exhausted,
+Enter `MERGE_READY` only after implementation, relevant tests, the local preflight
+receipts, and known blockers are complete, and the Codex budget is complete, exhausted,
 timed out, or intentionally skipped. Record the approved current head:
 
 ```text
@@ -46,7 +48,7 @@ unlimited review cycle.
 ## Pre-merge and post-merge
 
 Immediately before merging, fetch the current head, confirm it equals
-`MERGE_READY_SHA`, confirm required CI is green, and evaluate newly arrived
+`MERGE_READY_SHA`, confirm the local receipts cover that head, and evaluate newly arrived
 feedback using the stale-SHA and hard-blocker rules. Do not wait indefinitely or
 request another review merely because activity arrived.
 

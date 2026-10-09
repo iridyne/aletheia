@@ -11,11 +11,7 @@ Tier and domain markers are declared in `pyproject.toml` and classified from the
 module's own AST by `tests/conftest.py`; `tests/test_pytest_tiering.py` checks the
 classification against real collected items.
 
-```sh
-uv run pytest tests -q -m "domain_execution"   # one domain
-uv run pytest tests -q -m "fast"               # cheap set for every bug-fix loop
-uv run pytest tests/test_<area>.py::test_x -q  # single focused test
-```
+Commands are in [`AGENTS.md`](AGENTS.md).
 
 `tier_unit` admission is a conservative static module-level classification, not a
 runtime proof of no I/O; see `docs/operations/development/PYTEST_OPTIMIZATION_GUIDE.md`
@@ -29,7 +25,7 @@ for the marker table, the slow-test loop, and the xdist boundaries.
 | `audit/` | Structural gates run as their own changed-file step, regardless of tier; a gate must not force `tier_unit` against the classifier |
 | `helpers/` | Shared test code — fixtures, seeds, repository builders, seams, fakes — imported as `tests.helpers.<module>`. Not collected: no module here is named `test_*` |
 | `e2e/` | End-to-end pipeline over the real request path |
-| `uta/`, `filter_eval/`, `simulation/` | Subsystem suites with their own layout and fixtures |
+| `uta/`, `filter_eval/` | Subsystem suites with their own layout and fixtures |
 | `fixtures/` | Data fixtures only: JSON/SQLite goldens with frozen provenance. Shared Python helpers go in `helpers/`, never here |
 
 ## Find the test for a task
