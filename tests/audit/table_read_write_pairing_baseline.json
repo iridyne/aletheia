@@ -1,0 +1,27 @@
+{
+  "note": "Retired-tables baseline for tests/audit/test_table_read_write_pairing.py: tables read in production SQL (core/extensions/ops) with no production INSERT/UPDATE/REPLACE or literal write-helper call, as of generated_at. Tables stay (migrations are frozen, data_model.md §6); remove an entry when its last reader is deleted or a writer is wired.",
+  "generated_at": "2026-10-09",
+  "tables": [
+    {"table": "exit_breakeven_shadow_assignments", "reason": "read-only historical paired-exit report (persistence_recovery_contract.md); writer retired with the local simulator; sweep MS-05 NEEDS_OWNER"},
+    {"table": "exit_breakeven_shadow_outcomes", "reason": "read-only historical paired-exit report (persistence_recovery_contract.md); writer retired with the local simulator"},
+    {"table": "filter_shadow_evaluations", "reason": "legacy-authority counterfactual table; Lab authority writes observation_* instead (counterfactual_contract.md); kept for migration and history projection"},
+    {"table": "filter_shadow_experiments", "reason": "legacy-authority counterfactual table, no writer; sweep RP-13 DELETE covers its reader _find_observation"},
+    {"table": "historical_accounting_reconciliations", "reason": "read by maintenance/historical_accounting.py with no writer; sweep LO-04 DELETE"},
+    {"table": "learning_contribution_verdicts", "reason": "insert_record refuses it (observation_lab_authority_required); frozen legacy ledger, sweep LR-05 DELETE covers the readers"},
+    {"table": "learning_exposures", "reason": "insert_record refuses it (observation_lab_authority_required); frozen legacy ledger, sweep LR-05 DELETE covers the readers"},
+    {"table": "learning_lifecycle_events", "reason": "insert_record refuses it (observation_lab_authority_required); frozen legacy ledger, sweep LR-05 DELETE covers the readers"},
+    {"table": "operator_evaluation_events", "reason": "three diagnostics readers, no writer since the old Operator queue mainline; sweep MS-04 NEEDS_OWNER"},
+    {"table": "paper_account_events", "reason": "local paper_internal cash ledger retired with the local simulator (history/local_paper_account_controls.md); readers serve archived evidence and export"},
+    {"table": "position_exit_plan_versions", "reason": "read-only historical protection report (persistence_recovery_contract.md); sweep MS-05 NEEDS_OWNER"},
+    {"table": "position_protection_triggers", "reason": "read-only historical protection report (persistence_recovery_contract.md)"},
+    {"table": "ps_gateway_sessions", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
+    {"table": "ps_orders", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
+    {"table": "ps_positions", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
+    {"table": "ps_reconciliation_reports", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
+    {"table": "shadow_trades", "reason": "tombstone since 2026-08-27 (writer retired #3704); readers are sweep MS-02 DELETE / MS-05, LR-01, LR-02"},
+    {"table": "ufc_shadow_equivalence", "reason": "Observation Lab table read by observe/ufc_shadow with no writer in the repository; untriaged by the sweep"},
+    {"table": "universe_policies", "reason": "never had a writer, 0 rows on Fedora; sweep SP-11 / MS-08 DELETE the reader"},
+    {"table": "universe_relative_rank_shadow_batches", "reason": "writer moved to tests/fixtures in 57744d590; sweep MS-06 DELETE / SP-04 NEEDS_OWNER"},
+    {"table": "universe_setups", "reason": "no writer since 2026-08-27; sweep SP-10 DELETE the JOIN in routes/universe.py"}
+  ]
+}
