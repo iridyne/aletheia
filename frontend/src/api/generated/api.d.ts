@@ -9616,6 +9616,8 @@ export interface components {
         };
         /** OperatorCommandRequest */
         OperatorCommandRequest: {
+            /** Confirmed Command */
+            confirmed_command?: string | null;
             /** Context */
             context?: {
                 [key: string]: unknown;

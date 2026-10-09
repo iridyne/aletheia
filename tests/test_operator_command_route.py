@@ -65,6 +65,7 @@ async def test_operator_command_uses_existing_agent_shell_runtime(operator_env):
         permission_mode="Research",
         permission_scope="operator",
         session_id="operator-main",
+        confirmed_command=None,
     )
 
 
@@ -142,6 +143,7 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
         permission_mode="ReadOnly",
         permission_scope="operator",
         session_id="strategy-session-1",
+        confirmed_command=None,
     )
     messages = list_messages("strategy-session-1")
     assert len(messages) == 2

@@ -119,14 +119,10 @@ async def test_execute_typed_command_gates_pause_agents_without_confirm(tmp_path
     assert result.needs_confirmation is True
     # Handler must NOT have run — runtime.paused stays False.
     assert load_config().runtime.paused is False
-    assert "confirm=true" in result.response.lower() or "confirmation" in result.response.lower()
+    assert "confirmation" in result.response.lower()
 
 
-@pytest.mark.anyio
-async def test_execute_typed_command_runs_pause_agents_with_confirm_true(tmp_path, monkeypatch):
-    """#67: the two-call flow works — confirm=True executes the handler."""
-    _setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_shell.executor import execute_typed_command
+def _paper_auto_unpaused():
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
@@ -135,6 +131,19 @@ async def test_execute_typed_command_runs_pause_agents_with_confirm_true(tmp_pat
     cfg.runtime.paused = False
     save_config(cfg)
 
+
+@pytest.mark.anyio
+async def test_execute_typed_command_ignores_caller_supplied_confirm_param(tmp_path, monkeypatch):
+    """A model/agent-authored ``confirm: true`` parameter is not a human confirmation.
+
+    The llm-session loop and the internal command routes forward model/agent JSON
+    verbatim, so trusting params let the model confirm its own command.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.executor import execute_typed_command
+    from aletheia.config.loader import load_config
+
+    _paper_auto_unpaused()
     result = await execute_typed_command(
         "pause_agents",
         parameters={"confirm": True},
@@ -142,6 +151,71 @@ async def test_execute_typed_command_runs_pause_agents_with_confirm_true(tmp_pat
         session_id="test-session-confirm",
         user_input="pause agents",
     )
-    assert result.permitted is True
-    # With confirm=true, the handler ran and the state actually changed.
+    assert result.needs_confirmation is True
+    assert load_config().runtime.paused is False
+    # The denial must not teach the caller how to self-confirm.
+    assert "confirm=true" not in result.response.lower()
+
+
+def _stub_intent(monkeypatch, command: str, parameters: dict) -> None:
+    import aletheia.agent_shell.intent as intent_mod
+
+    async def fake_classify(text, summary):
+        return intent_mod.CommandIntent(command=command, parameters=parameters, confidence=0.9)
+
+    monkeypatch.setattr(intent_mod, "classify_intent", fake_classify)
+
+
+@pytest.mark.anyio
+async def test_operator_command_ignores_llm_extracted_confirm_param(tmp_path, monkeypatch):
+    """The natural-language path: the LLM intent classifier emitting confirm=true
+    must not stand in for the operator's confirmation."""
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.server.app import app
+
+    _paper_auto_unpaused()
+    _stub_intent(monkeypatch, "pause_agents", {"confirm": True})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.post("/api/operator/command", json={"input": "pause agents"})
+    assert r.status_code == 200
+    assert r.json()["needs_confirmation"] is True
+    assert load_config().runtime.paused is False
+
+
+@pytest.mark.anyio
+async def test_operator_command_runs_only_the_command_the_human_confirmed(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.server.app import app
+
+    _paper_auto_unpaused()
+    _stub_intent(monkeypatch, "pause_agents", {})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Confirmation of a different command does not carry over.
+        r = await client.post(
+            "/api/operator/command",
+            json={"input": "pause agents", "confirmed_command": "resume_agents"},
+        )
+        assert r.json()["needs_confirmation"] is True
+        assert load_config().runtime.paused is False
+
+        r = await client.post(
+            "/api/operator/command",
+            json={"input": "pause agents", "confirmed_command": "pause_agents"},
+        )
+    assert r.status_code == 200
     assert load_config().runtime.paused is True
+
+
+def test_set_symbol_observe_only_requires_allow_editing():
+    """It rewrites risk/exchange symbol_list via save_config: a config edit, which
+    live_unlock_contract.md §5 places at AllowEditing, not PaperAuto."""
+    from aletheia.agent_shell.permissions import check_permission
+
+    allowed, _ = check_permission("set_symbol_observe_only", "PaperAuto", permission_scope="operator")
+    assert allowed is False
+    allowed, _ = check_permission("set_symbol_observe_only", "AllowEditing", permission_scope="operator")
+    assert allowed is True

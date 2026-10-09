@@ -74,14 +74,17 @@ class AgentShellRuntime:
         permission_mode: str | None = None,
         permission_scope: str = "worker",
         session_id: str | None = None,
+        confirmed_command: str | None = None,
     ) -> CommandResponse:
+        """``confirmed_command`` is the command name the human confirmed in the
+        preview; a confirmation-gated intent runs only when it matches."""
         from aletheia.agent_shell.context import (
             build_app_context,
             context_summary_text,
             extend_summary_with_session_trace,
             sections_for_session_kind,
         )
-        from aletheia.agent_shell.intent import classify_intent
+        from aletheia.agent_shell.intent import CommandIntent, classify_intent
         from aletheia.agent_shell.operator_store import (
             create_event,
             get_extension_by_slash_command,
@@ -169,9 +172,11 @@ class AgentShellRuntime:
                         session_id=session_id,
                     )
 
-                intent = type("ResolvedIntent", (), {})()
-                intent.command = str(extension.get("target_command") or "").strip()
-                intent.parameters, parameter_error = self._extension_parameters(extension, raw_tail)
+                extension_params, parameter_error = self._extension_parameters(extension, raw_tail)
+                intent = CommandIntent(
+                    command=str(extension.get("target_command") or "").strip(),
+                    parameters=extension_params,
+                )
                 if parameter_error:
                     record_command(session_id, slash_command, {}, False, parameter_error)
                     close_session(
@@ -288,18 +293,10 @@ class AgentShellRuntime:
                     intent=intent.command, risk_level=cmd_def.risk_level, response=response, session_id=session_id,
                 )
 
-            # #67 fix: confirmation gate. The natural-language handler previously ran
-            # unconditionally while the response merely labelled itself
-            # `needs_confirmation=True`, so a first-turn "resume agents" already
-            # mutated state before the operator could confirm. Now the first turn is
-            # non-executing when confirmation is required; the caller must resubmit
-            # with confirm=true in intent.parameters.
-            from aletheia.agent_shell.executor import _params_confirm
-            if cmd_def.requires_confirmation and not _params_confirm(intent.parameters):
-                response = (
-                    f"'{intent.command}' requires confirmation. Re-send the command "
-                    f"with parameter confirm=true to execute."
-                )
+            from aletheia.agent_shell.executor import CONFIRMATION_REQUIRED_RESPONSE
+
+            if cmd_def.requires_confirmation and confirmed_command != intent.command:
+                response = CONFIRMATION_REQUIRED_RESPONSE.format(command=intent.command)
                 record_command(session_id, intent.command, intent.parameters, False, response)
                 close_session(
                     session_id,
