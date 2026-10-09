@@ -557,6 +557,20 @@ def _trigger_restart(reason: str) -> None:
     Only call after _can_self_restart() has confirmed a supervisor/autostart will
     bring the process back — otherwise this would permanently kill the gateway.
     The audit write is also what the NEXT process's rate limit reads back."""
+    reload_mode = os.environ.get("ALETHEIA_DEV_RELOAD") == "1"
+    if reload_mode:
+        from aletheia.server.dev_reload import is_dev_reload_enabled
+
+        # Same gate as every dev-reload path (env AND live_disabled, read now).
+        # Under --reload os._exit would not be respawned, so blocked = no restart.
+        if not is_dev_reload_enabled():
+            write_audit({
+                "actor": "system", "source": "self_heal", "event_type": "self_heal_restart_blocked",
+                "entity_type": "gateway", "entity_id": "gateway",
+                "reason": reason,
+                "message": f"Self-heal restart blocked ({reason}): dev reload not permitted while live is enabled",
+            })
+            return
     write_audit({
         "actor": "system", "source": "self_heal", "event_type": "self_heal_restart",
         "entity_type": "gateway", "entity_id": "gateway",
@@ -565,7 +579,7 @@ def _trigger_restart(reason: str) -> None:
     })
     _send_alert(f"self-heal restart ({reason}) — respawning")
 
-    if os.environ.get("ALETHEIA_DEV_RELOAD") == "1":
+    if reload_mode:
         from aletheia.server.dev_reload import touch_reload_sentinel
         touch_reload_sentinel(f"self_heal_{reason}")
         return
