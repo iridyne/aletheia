@@ -990,17 +990,29 @@ def _units(*, data_dir: str | None = None) -> dict[str, str]:
     return {"aletheia-auto-update.service": service, "aletheia-auto-update.timer": timer}
 
 
-def _owned_unit_data_dir(path: Path) -> str:
-    """Read the generated data root so a role-only migration cannot drop it."""
+def _owned_unit_env(path: Path, name: str) -> str:
+    """Read one ``Environment=`` value from the Aletheia-managed service unit only."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    prefix = "Environment=ALETHEIA_DATA_DIR="
+    if _SYSTEMD_MARKER not in text:
+        return ""
+    prefix = f"Environment={name}="
     for line in text.splitlines():
         if line.startswith(prefix):
             return line.removeprefix(prefix).strip()
     return ""
+
+
+def paper_role_configured() -> bool:
+    """The paper role is configured by this shell or by the installed timer unit.
+
+    The role normally lives only in the unit, so a bare manual ``aletheia update``
+    on the same checkout must still see it (#3020).
+    """
+    unit_role = _owned_unit_env(_unit_dir() / "aletheia-auto-update.service", _RUNTIME_ROLE_ENV)
+    return _AUTO_DEPLOY_ROLE in {os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower(), unit_role.lower()}
 
 
 def _systemctl(*args: str) -> None:
@@ -1036,7 +1048,8 @@ def install() -> dict[str, Any]:
                 return {"ok": False, "reason": "systemd_unit_ownership_conflict", "detail": name}
         data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
         if not data_dir:
-            data_dir = _owned_unit_data_dir(directory / "aletheia-auto-update.service")
+            # Keep the generated data root so a role-only migration cannot drop it.
+            data_dir = _owned_unit_env(directory / "aletheia-auto-update.service", "ALETHEIA_DATA_DIR")
         units = _units(data_dir=data_dir or None)
     except AutoUpdateError as exc:
         return {"ok": False, "reason": exc.reason, "detail": exc.detail}

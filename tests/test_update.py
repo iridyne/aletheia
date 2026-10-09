@@ -1850,6 +1850,40 @@ def test_paper_role_manual_update_requires_the_deployment_admission(tmp_path, mo
     assert refused in result["message"]
 
 
+def test_bare_manual_update_reads_the_paper_role_from_the_installed_timer_unit(tmp_path, monkeypatch):
+    """#3020: DEPLOYMENT.md's bare ``aletheia update`` carries no role env; the unit does."""
+    from ops.update import auto, continuity
+
+    unit_dir = tmp_path / "units"
+    unit_dir.mkdir()
+    (unit_dir / "aletheia-auto-update.service").write_text(
+        f"[Service]\n{auto._SYSTEMD_MARKER}\nEnvironment=ALETHEIA_RUNTIME_ROLE=paper\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(auto, "_unit_dir", lambda: unit_dir)
+    monkeypatch.setattr(auto, "_paths", lambda: {"lock": tmp_path / "update" / "auto-deploy.lock"})
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    monkeypatch.setattr(
+        auto, "_runtime_gate", lambda **_k: {"ok": False, "failed": ["live_disabled", "deployment_mode"]}
+    )
+    _forbid_update_body(monkeypatch)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["reason"] == "runtime_admission_failed"
+    assert "live_disabled" in result["message"]
+
+
+def test_unclassified_runtime_manual_update_skips_the_paper_admission(tmp_path, monkeypatch):
+    from ops.update import auto, continuity
+
+    monkeypatch.setattr(auto, "_paths", lambda: {"lock": tmp_path / "update" / "auto-deploy.lock"})
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    monkeypatch.setattr(auto, "_runtime_gate", lambda **_k: pytest.fail("gate read without a paper role"))
+    monkeypatch.setattr(continuity, "_apply_update_with_continuity", lambda **_k: {"applied": True})
+
+    assert continuity.apply_update_with_continuity(restart=True) == {"applied": True}
+
+
 def test_paper_role_manual_update_admits_paper_live_disabled_even_if_unhealthy(tmp_path, monkeypatch):
     from ops.update import auto, continuity
 
