@@ -30,7 +30,6 @@ __all__ = [
     "filter_outcome_unreachable_predicate",
     "filter_pressure_stats",
     "get_active_universe_members",
-    "get_active_universe_policy",
     "get_active_universe_snapshot",
     "get_candidate_entry_lifecycle",
     "get_candidate_planning_for_candidate",
@@ -976,17 +975,6 @@ def get_latest_feature_snapshot(asset_id: str) -> dict | None:
     row = db.execute(
         "SELECT * FROM universe_feature_snapshots WHERE asset_id = ? ORDER BY ts DESC LIMIT 1",
         (asset_id,),
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def get_active_universe_policy(market_type: str = "crypto") -> dict | None:
-    from aletheia.storage.repositories import get_db
-
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM universe_policies WHERE active = 1 AND market_type = ? ORDER BY created_at DESC LIMIT 1",
-        (market_type,),
     ).fetchone()
     return dict(row) if row else None
 

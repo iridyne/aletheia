@@ -7,7 +7,6 @@ from aletheia.storage.repositories import (
     Opportunity,
     Sequence,
     UniverseAsset,
-    UniversePolicy,
     _AUTO_EXPERIMENT_FLOOR,
     _OPEN_TRADE_RETRY_SQL,
     _OPEN_TRADE_UNRANKED_SQL,
@@ -520,10 +519,6 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
         )
         .fetchall()
     ]
-
-def insert_universe_policy(policy: UniversePolicy) -> None:
-    _insert("universe_policies", policy.model_dump())
-
 
 def insert_universe_discovery_benchmark(window) -> dict:
     """Insert one frozen read-only benchmark window, enforcing one active row."""

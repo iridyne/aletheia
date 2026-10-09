@@ -123,8 +123,6 @@ class Candidate(TypedDict):
     entry_plan_id: NotRequired[str | None]
     entry_plan_status: NotRequired[str | None]
     entry_plan_execution_mode: NotRequired[str | None]
-    setup_state: NotRequired[str | None]
-    triggered_opportunity_id: NotRequired[str | None]
     admission_basis: NotRequired[str | None]
     startup_reason: NotRequired[str | None]
     pessimistic_strength: NotRequired[float | None]
@@ -627,22 +625,6 @@ class UniverseRegistryStats(TypedDict):
     blacklisted: int
 
 
-class UniverseStoredPolicy(TypedDict):
-    id: str
-    created_at: str
-    created_by: str
-    active: int | None
-    market_type: str
-    family_quota: str
-    scoring_weights: str
-    filters: str
-    ttl_policy: str
-    explore_ratio: float
-    max_weight_step: float | None
-    change_reason: str | None
-    previous_policy_id: str | None
-
-
 class UniverseDefaultPolicy(TypedDict):
     id: None
     source: str
@@ -874,27 +856,11 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     member_ids = [str(member.get("id") or "") for member in members if member.get("id")]
     if not member_ids:
         return members
-    placeholders = ",".join("?" for _ in member_ids)
-    from aletheia.storage.sqlite import get_db
-
     plans_by_candidate = {}
     for candidate_id in member_ids:
         generation = repo.get_candidate_planning_for_candidate(candidate_id)
         if generation and generation.get("is_current") and generation.get("entry_plan_id"):
             plans_by_candidate[candidate_id] = repo.get_entry_plan(generation["entry_plan_id"])
-    # Historical wire projection is not runtime authority.
-    legacy_rows = get_db().execute(
-        "SELECT us.member_id, us.state, us.opportunity_id "
-        "FROM universe_setups us "
-        "JOIN ("
-        " SELECT member_id, MAX(datetime(created_at)) AS latest_created_at "
-        " FROM universe_setups "
-        f" WHERE member_id IN ({placeholders}) GROUP BY member_id"
-        ") latest ON latest.member_id=us.member_id "
-        "AND latest.latest_created_at=datetime(us.created_at)",
-        tuple(member_ids),
-    ).fetchall()
-    legacy_by_member = {str(row["member_id"]): dict(row) for row in legacy_rows}
     enriched = []
     for member in members:
         item = dict(member)
@@ -904,9 +870,6 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
         item["entry_plan_id"] = plan.get("id") if plan else None
         item["entry_plan_status"] = plan.get("status") if plan else None
         item["entry_plan_execution_mode"] = plan.get("execution_mode") if plan else None
-        setup = legacy_by_member.get(candidate_id)
-        item["setup_state"] = setup.get("state") if setup else None
-        item["triggered_opportunity_id"] = setup.get("opportunity_id") if setup else None
         enriched.append(item)
     return enriched
 
@@ -1012,14 +975,10 @@ async def trigger_refresh():
     return {"snapshot_id": snapshot_id, "status": "completed"}
 
 
-@router.get("/policy", responses={200: {"model": UniverseStoredPolicy | UniverseDefaultPolicy}})
+@router.get("/policy", responses={200: {"model": UniverseDefaultPolicy}})
 def get_current_policy():
-    """Return the current active universe policy."""
+    """Return the universe policy derived from config (the only policy source)."""
     cfg = load_config()
-    policy = repo.get_active_universe_policy(cfg.universe.market_type)
-    if policy:
-        return policy
-    # Return the config-derived defaults as a "virtual" policy
     return {
         "id": None,
         "source": "config_defaults",

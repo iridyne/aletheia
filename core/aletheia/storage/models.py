@@ -1636,22 +1636,6 @@ class UniverseSetup(_Provenanced):
     valid_until: str
 
 
-class UniversePolicy(BaseModel):
-    id: str = Field(default_factory=new_id)
-    created_at: str = Field(default_factory=_utcnow)
-    created_by: str = "system"
-    active: bool = False
-    market_type: str = "crypto"
-    family_quota: str = "{}"
-    scoring_weights: str = "{}"
-    filters: str = "{}"
-    ttl_policy: str = "{}"
-    explore_ratio: float = 0.2
-    max_weight_step: float = 0.15
-    change_reason: str | None = None
-    previous_policy_id: str | None = None
-
-
 class UniverseTwinShadowBatch(BaseModel):
     scanner_run_id: str
     authority_snapshot_id: str | None = None

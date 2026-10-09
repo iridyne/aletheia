@@ -442,7 +442,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniverseScannerRun | universe_scanner_runs | Universe |
 | UniverseSnapshot | universe_snapshots | Universe |
 | Candidate / UniverseMember compatibility alias | universe_members | Universe |
-| UniversePolicy | universe_policies | Universe |
+| (no model; retained table, no writer or reader) | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |
 | OperatorEvaluationEvent | operator_evaluation_events | System Operator |
 

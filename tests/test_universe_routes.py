@@ -1,6 +1,6 @@
 """Tests for universe API routes."""
 
-from tests.helpers.repo_test_helpers import insert_universe_asset, insert_universe_policy
+from tests.helpers.repo_test_helpers import insert_universe_asset
 
 import json
 from datetime import datetime, timezone, timedelta
@@ -123,8 +123,6 @@ def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
             "entry_plan_id": None,
             "entry_plan_status": None,
             "entry_plan_execution_mode": None,
-            "setup_state": None,
-            "triggered_opportunity_id": None,
         }
     ]
     assert data["fallback"] is False
@@ -135,9 +133,6 @@ def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
     from aletheia.server.routes.universe import _attach_candidate_handoff_state
     from aletheia.storage import repositories as repo
 
-    db = MagicMock()
-    db.execute.return_value.fetchall.return_value = []
-    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
     monkeypatch.setattr(repo, "get_candidate_planning_for_candidate", lambda _: {
         "is_current": 1, "entry_plan_id": "plan-1"})
     monkeypatch.setattr(repo, "get_entry_plan", lambda _: {
@@ -146,19 +141,16 @@ def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
     assert candidate["entry_plan_id"] == "plan-1"
     assert candidate["entry_plan_status"] == "active"
     assert candidate["entry_plan_execution_mode"] == "RESTING_MAKER"
-    assert candidate["setup_state"] is None
+    assert "setup_state" not in candidate
 
 
-@pytest.mark.parametrize("owner", ["generation", "plan", "legacy"])
+@pytest.mark.parametrize("owner", ["generation", "plan"])
 def test_candidate_handoff_read_failure_is_not_no_plan(monkeypatch, owner):
     from aletheia.server.routes.universe import _attach_candidate_handoff_state
     from aletheia.storage import repositories as repo
 
     def unavailable(*args):
         raise RuntimeError("read unavailable")
-    db = MagicMock()
-    db.execute.side_effect = unavailable if owner == "legacy" else None
-    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
     monkeypatch.setattr(repo, "get_candidate_planning_for_candidate", unavailable if owner == "generation"
         else lambda _: {"is_current": 1, "entry_plan_id": "plan-1"})
     monkeypatch.setattr(repo, "get_entry_plan", unavailable if owner == "plan" else lambda _: None)
@@ -384,8 +376,7 @@ def test_candidate_reads_hide_retired_scores_without_rewriting_history(client):
 
 def test_get_policy_returns_config_defaults(client, disabled_cfg):
     with patch("aletheia.server.routes.universe.load_config", return_value=disabled_cfg):
-        with patch("aletheia.server.routes.universe.repo.get_active_universe_policy", return_value=None):
-            resp = client.get("/api/universe/policy")
+        resp = client.get("/api/universe/policy")
     assert resp.status_code == 200
     data = resp.json()
     assert data["source"] == "config_defaults"
@@ -409,7 +400,7 @@ def test_get_member_found(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["member"]["symbol"] == "BTC/USDT"
-    assert body["member"]["setup_state"] is None
+    assert "setup_state" not in body["member"]
     assert body["features"]["rsi_14"] == 55.0
     assert body["entry_plans"] == []
     assert len(body["opportunities"]) == 1
@@ -477,7 +468,7 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
     from aletheia.config.loader import load_config, save_config
     from aletheia.server.routes import universe
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseAsset, UniverseFeatureSnapshot, UniversePolicy
+    from aletheia.storage.models import UniverseAsset, UniverseFeatureSnapshot
     from tests.test_entry_planner import _candidate, _plan
     from tests.test_universe_calibration import _settled
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
@@ -514,7 +505,7 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
         (f"/entry-plans/{plan.plan_id}", universe.get_entry_plan_detail, {"plan_id": plan.plan_id}, universe.EntryPlanProjection),
         ("/workbench", universe.get_entry_workbench, {"limit": 100, "plan_status": "active"}, universe.EntryWorkbenchResponse),
         ("/planning-history", universe.get_planning_history, {"limit": 50}, universe.PlanningHistoryResponse),
-        ("/policy", universe.get_current_policy, {}, universe.UniverseStoredPolicy | universe.UniverseDefaultPolicy),
+        ("/policy", universe.get_current_policy, {}, universe.UniverseDefaultPolicy),
         ("/registry/stats", universe.registry_stats, {}, universe.UniverseRegistryStats),
         ("/calibration", universe.get_calibration, {}, universe.CalibrationResponse),
     ]
@@ -535,10 +526,6 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
             dumped.get("progress", {}).pop("age_seconds", None)
         assert dumped == original, path
 
-    policy = UniversePolicy(active=True)
-    insert_universe_policy(policy)
-    stored = client.get("/api/universe/policy").json()
-    assert TypeAdapter(universe.UniverseStoredPolicy).validate_python(stored, strict=True) == stored
     cfg.universe.enabled = False
     monkeypatch.setattr(universe, "load_config", lambda: cfg)
     monkeypatch.setattr("aletheia.universe.service.load_config", lambda: cfg)
