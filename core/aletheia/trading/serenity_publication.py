@@ -69,7 +69,11 @@ def publish_serenity_candidates(
         feature = repo.get_latest_feature_snapshot(asset["id"])
         if feature is None:
             raise ValueError("serenity_pa_unavailable")
-        candles = repo.get_ohlcv_candles(opportunity["symbol"], "1h", 1, venue, opportunity["market_type"], int(now.timestamp()*1000)-3_600_000+1)
+        now_ms = int(now.timestamp() * 1000)
+        candles = repo.get_ohlcv_candles(opportunity["symbol"], "1h", 1, venue, opportunity["market_type"], now_ms - 3_600_000 + 1)
+        # Only the last closed 1h bar is a current anchor; an older bar means 1h
+        # ingestion stalled, and its close must not become entry_price_usd (#2986).
+        candles = [c for c in candles if int(c["ts"]) >= now_ms - 2 * 3_600_000]
         feature.update({"asset_id": asset["id"], "venue": venue, "symbol": asset["symbol"],
                         "market_type": asset["market_type"], "registry_status": asset["status"],
                         "feature_snapshot_id": feature["id"], "feature_snapshot_ts": feature["ts"],
