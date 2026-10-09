@@ -3090,7 +3090,6 @@ from aletheia.storage.models import (
     UniverseAsset,
     UniverseFeatureSnapshot,
     UniverseMember,
-    UniversePolicy,
     UniverseScannerRun,
     UniverseSnapshot,
     UniverseTwinShadowBatch,

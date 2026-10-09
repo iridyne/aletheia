@@ -2435,7 +2435,6 @@ export const api = {
 		),
 	refreshUniverse: () =>
 		post<operations["trigger_refresh_api_universe_refresh_post"]["responses"][200]["content"]["application/json"]>("/universe/refresh"),
-	getUniversePolicy: () => fetchJson<operations["get_current_policy_api_universe_policy_get"]["responses"][200]["content"]["application/json"]>("/universe/policy"),
 	getUniverseRegistryStats: () =>
 		fetchJson<operations["registry_stats_api_universe_registry_stats_get"]["responses"][200]["content"]["application/json"]>(
 			"/universe/registry/stats",

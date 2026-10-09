@@ -813,9 +813,6 @@ export interface Candidate {
   entry_plan_id?: string | null
   entry_plan_status?: string | null
   entry_plan_execution_mode?: 'RESTING_MAKER' | 'TRIGGERED' | null
-  // Backward-compatible API fields for historical setup rows.
-  setup_state?: string | null
-  triggered_opportunity_id?: string | null
 }
 
 /** @deprecated Compatibility alias for the physical `universe_members` wire row. */
