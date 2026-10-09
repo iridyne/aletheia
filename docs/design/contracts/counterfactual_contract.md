@@ -46,7 +46,7 @@
 生产入口只有下述几个函数；调用它们的位置由 [decision_lifecycle_contract.md](decision_lifecycle_contract.md) 与 [scheduler_contract.md](scheduler_contract.md) 约束：
 
 - `counterfactual.filter_experiments.register_replay_ready_experiments(replays)` — 由 `analytics.filter_controller` 在 shadow 观察周期调用。
-- `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 按 authority 路由到 legacy 快照或 Lab-owned Evaluation。
+- 前瞻实验评估不在本模块：由 Observation Lab 的 durable window（`observation_lab.evaluator.evaluate_observation` → `filter_shadow.evaluate_filter_shadow_observation`）推进，`observation_lab.runner` 的 `filter_shadow_evaluate` pass 只投影其结果；见 [observation_lab_contract.md](observation_lab_contract.md)。
 - `counterfactual.filter_experiments.build_filter_shadow_experiment_report(limit)` — CLI / API 只读消费对应 authority 的投影。
 - `counterfactual.calibration.build_calibration(days, symbols, policy_epoch_id)` — 由 `scripts/analysis/shadow_threshold_calibration.py` 与内部报告 API 调用。
 - `counterfactual.trades.list_deduped_shadows(days, symbols, policy_epoch_id, columns)` — 所有跨候选聚合的历史 shadow 消费必须走这里，去重按 `outcome_candidate_key`；表不存在时返回空。
@@ -77,7 +77,7 @@ legacy authority 下，反事实模块的兼容持久化状态在下列三张表
 | `analytics.alpha_attribution._learning_alpha` | Learning fixed-look decision + contribution verdict + exact candidate outcomes | 只消费已绑定的 confirmatory authority verdict；generic learning 事件仍为弱诊断 |
 | `analytics.alpha_attribution._exit_paired_evidence` | `exit_breakeven_shadow_assignments` + `_outcomes` | 投影同一 Position 的冻结 Exit treatment 增量净 PnL；不并入五层 verdict，不授权行为 |
 | `analytics.thesis_lineage` | `shadow_trades` | per-opp shadow 汇总 |
-| `analytics.filter_controller.evaluate_active_shadow_experiments` | `filter_shadow_experiments` / `_evaluations` | 前瞻实验周期评估 |
+| `observation_lab.runner` `filter_shadow_evaluate` pass | Lab `observation_windows` / `observation_evaluations` | 前瞻实验周期评估投影 |
 
 **跨候选的聚合消费必须走 `list_deduped_shadows`**（按 `outcome_candidate_key` 去重）。单-opp / 单-batch 的查询可以直接读表；因其查询模式天然不跨候选，不受长寿命候选过度加权影响。
 
@@ -110,7 +110,7 @@ estimand。不同 estimand
 - **已退役（#3704 / #3708）**：shadow 写入路径整体删除，其失败与恢复语义不再存在——`persist_shadow_batch` 的批级容错、`resolve_shadow_trades_for_position` 的 batch `RuntimeError` + `outcome_hooks` hook failure + `outcome_hook_replay`、`anchor_shadow_trade_exit_price_if_pending` 的 `_current_price` CAS 锚点幂等，以及 `resolve_stale_shadows` 的 `skipped_no_ohlcv` / `skipped_bad_entry` backfill 结算。`shadow_trades` 表是等待 DROP 迁移的墓碑，不再有 owner 结算它。
 - `build_calibration` 在 DB 未初始化 / 查询错误时返回带 `errors` 字段的 report，不 raise；这是只读诊断的一贯语义。
 - `shadow_trades` 读取出错（含表缺失）时，`_detect_window_epochs` 记 warning 并抛出，`build_calibration`、`build_propensity_report` 与 family scorecard 的 shadow cohort 因此报 `policy_epoch_status` / `shadow_epoch_status = "unavailable"` + `policy_epoch_detection_failed`，不把读取失败当成 `all_null` 的合法 0。
-- `evaluate_active_shadow_experiments` 检测到 `filter_version` 中途换代时把实验 `status="invalidated"` 并落一条空 evaluation；不做部分归因。
+- `evaluate_filter_shadow_observation` 检测到 `filter_version` 中途换代时把实验 `status="invalidated"` 并落一条空 evaluation；不做部分归因。
 
 ## 7. Executable evidence
 

@@ -212,7 +212,7 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
 def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     from datetime import datetime, timezone
 
-    from extensions.counterfactual.filter_experiments import register_observation_from_spec
+    from extensions.observation_lab.canonical import register_observation_spec
 
     calls = {"registered": 0}
     cutoffs = {}
@@ -243,7 +243,7 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
 
     # Under Lab authority the evaluate pass projects the durable windows it finds;
     # it does not call a separate evaluator. Give it exactly one active window.
-    register_observation_from_spec(
+    register_observation_spec(
         {
             "filter_name": "ranker_confidence_gate",
             "filter_version": "observe-cycle-v1",
@@ -256,7 +256,8 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
             "treatment": {"minimum_confidence": "medium"},
             "min_samples": 20,
         },
-        now=datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc),
+        actor="learning_replay",
+        started_at=datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc).isoformat(timespec="microseconds"),
     )
 
     summary = fc.run_controller_observe()
