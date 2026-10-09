@@ -1392,7 +1392,6 @@ def semantic_truth_failures() -> list[str]:
         ROOT / "docs/product/experiments/EXPERIMENT_PROTOCOL.md",
         ROOT / "docs/design/contracts/learning_contract.md",
         ROOT / "docs/design/proposals/learning_observability.md",
-        ROOT / "docs/design/process/DOC_ATLAS_BY_DOMAIN.md",
         ROOT / "docs/design/data/data_utilization.md",
     ]
     for path in truth_files:

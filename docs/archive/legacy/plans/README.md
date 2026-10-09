@@ -19,6 +19,7 @@ state. Do not add plans or update completion markers here.
 | `trading-pipeline/` | Strategy, Serenity, trade rationale, opportunity lifecycle, paper controls |
 | `strategy-research/` | Research-oriented and exploratory implementation plans |
 | `archive/` | Plans that were already explicitly archived |
+| `packaged_tray_cli_runtime.md` | Removed packaged tray/CLI runtime plan (see `design/history/packaged_runtime.md`) |
 
 ## Agent Rule
 

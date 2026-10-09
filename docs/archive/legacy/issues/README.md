@@ -26,6 +26,6 @@ Verify the problem against current code and runtime facts. If it remains real,
 create or update its GitHub Issue and leave the historical source unchanged.
 
 For safety-sensitive problems, follow
-[`BUG_TRIAGE_PROTOCOL.md`](../governance/protocols/BUG_TRIAGE_PROTOCOL.md).
+[`BUG_TRIAGE_PROTOCOL.md`](../../../governance/protocols/BUG_TRIAGE_PROTOCOL.md).
 Local documents may preserve evidence and decision context, but must never
 become a parallel issue database.

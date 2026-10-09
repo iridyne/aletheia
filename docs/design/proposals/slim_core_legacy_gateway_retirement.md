@@ -9,6 +9,8 @@ supersedes:
   - gateway-recovery
 ---
 
+> 2026-10-09 注：文中提到的 ArtifactStore 已由 #3838（cd093075c）另行退役，见 ../history/artifact_store.md。
+
 # Retire the dormant persistence Gateway authority
 
 This bounded D2 decision implements the owner-approved

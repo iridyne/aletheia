@@ -8,6 +8,7 @@ instructions, implementation truth, task tracking, or product support claims.
 | `status/` | Roadmaps, progress snapshots, and completion audits | Product direction and gates under `docs/product/`; current behavior in Product Ground Truth, code, tests, and runtime evidence |
 | `plans/` | Superseded implementation plans | Accepted contracts and proposals under `docs/design/`; current work in GitHub Issues and pull requests |
 | `issues/` | Local defect and backlog records | GitHub Issues |
+| `product/` | Superseded product definition snapshot (2026-06-30) | [`docs/product/definition/DIRECTION.md`](../../product/definition/DIRECTION.md) and Capability Ground Truth |
 | `ai-context/` | Agent handoffs, audits, discussions, decisions, development logs, and superseded workflow context | Repository governance, current contracts, operations documentation, and the active external orchestrator |
 
 Read an archived file only when its dated evidence or provenance is needed. If an

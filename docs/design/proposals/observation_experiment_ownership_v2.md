@@ -9,6 +9,8 @@ related_contracts:
 supersedes: []
 ---
 
+> 2026-10-09 注：Lab-only 实验写入守卫已落地（extensions/counterfactual/filter_experiments.py 的 _require_lab_authority）；默认权威仍是 legacy（observation_authority_state 初始化为 'legacy'），权威切换未完成，见 #2737 与 #3808（均 OPEN）。状态保持 accepted。
+
 # Observation Experiment Ownership V2 Proposal
 
 ## 1. Summary and current fact

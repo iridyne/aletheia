@@ -70,7 +70,7 @@ L5  人工治理：在风险与运行约束下决定是否另开 policy epoch。
 - [机会固定时点结果契约](../contracts/opportunity_outcome_contract.md)
 - [筛选证据契约](../contracts/filter_evidence_contract.md)
 - [Learning Contract](../contracts/learning_contract.md)
-- [PI Skip 反事实研究与恢复设计](../research/skip-remediation/README.md)
+- [PI Skip 反事实研究与恢复设计](../../archive/design-superseded/research/skip-remediation/README.md)
 
 实现代码：`aletheia/counterfactual/`：
 - `trades.py` — L1 固定 horizon Top-N shadow-trade 账本（含 `list_deduped_shadows` 去重 helper）；每行绑定当时的 `policy_epoch_id`；

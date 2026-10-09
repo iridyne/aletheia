@@ -1,11 +1,13 @@
 ---
 id: derivatives-facts
-status: accepted
+status: implemented
 github_issue: 2890
 related_contracts:
   - ../contracts/market_data_coverage_contract.md
 supersedes: []
 ---
+
+> 2026-10-09 状态改为 implemented：#2890 已关闭；规范内容在 docs/design/contracts/derivatives_economic_semantics.md（core/aletheia/data/derivatives_facts.py）。
 
 # Minimal canonical Derivatives Facts
 

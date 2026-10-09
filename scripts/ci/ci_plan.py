@@ -42,7 +42,6 @@ SAFE_DOC_PREFIXES = (
     "docs/diagrams/",
     "docs/references/",
     "docs/research/",
-    "docs/superpowers/",
 )
 SAFE_DOC_ASSET_SUFFIXES = (
     ".avif",

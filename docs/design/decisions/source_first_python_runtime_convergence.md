@@ -143,3 +143,14 @@ Reconsider Node Runtime management only if at least one real requirement appears
 Any future proposal must compare against the post-deletion baseline, keep Python as the
 durable state/trading authority, prove real-host process behavior, and earn explicit owner
 authorization.
+
+## Outcome (2026-09-28)
+
+The deferred retirement surface was executed: the packaged Runtime lane
+(`native/`, `packaging/`, `scripts/release/` and the packaged update path) was
+removed on 2026-09-28, and its operations are preserved as history in
+[packaged_runtime.md](../history/packaged_runtime.md) and its sibling pages. The
+same date narrowed the maintained Gateway service to the Linux systemd user
+session ([platform_specific_gateway_services.md](../history/platform_specific_gateway_services.md)).
+The decision above is otherwise unchanged; the revisit conditions still apply.
+

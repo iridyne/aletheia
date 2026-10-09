@@ -2,6 +2,10 @@
 
 This folder contains durable architectural decisions (ADR-style).
 
+The chronological architecture decision log is
+[`docs/governance/decisions/DECISIONS.md`](../../governance/decisions/DECISIONS.md);
+this folder holds the longer ADR-style records.
+
 ## Purpose
 
 Record **why** Aletheia made a long-lived design choice. Decisions preserve context,

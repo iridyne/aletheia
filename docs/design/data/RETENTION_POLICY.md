@@ -391,7 +391,8 @@ Not in scope for Phase 3.
 Phase 3 deployed the top-priority write guardrails (Section 4) but did not
 close every writer path considered during the workflow. A running list of
 unfinished items, with rationale, expected impact, and code touchpoints,
-lives in **`RETENTION_WRITE_GUARDRAILS_TODO.md`** (companion doc). Read
+lives in the archived companion
+[`RETENTION_WRITE_GUARDRAILS_TODO_2026-07-17.md`](../../archive/design-superseded/data/RETENTION_WRITE_GUARDRAILS_TODO_2026-07-17.md). Read
 that file before starting a "second-round retention" push so previously
 analyzed context is not re-discovered.
 

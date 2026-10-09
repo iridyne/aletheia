@@ -1,12 +1,14 @@
 ---
 id: proposal-retire-market-observer
-status: accepted
+status: implemented
 github_issue: 2933
 related_contracts:
   - docs/design/contracts/decision_lifecycle_contract.md
   - docs/design/contracts/knowledge_contract.md
 supersedes: []
 ---
+
+> 2026-10-09 状态改为 implemented：#2933 已关闭；退役结果记录在 docs/design/contracts/agent_contracts.md 的 market_observer (retired) 小节。正文中的行号是当时的源码位置。
 
 # Retire the Market Observer pipeline
 

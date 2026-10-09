@@ -10,7 +10,7 @@
 > [Product Scope](../../product/SCOPE.md) 取代;具体子系统契约以 [docs/design/](../../design/contracts) 的 L2 金标准为准
 > (Risk/Execution/Live/Promotion/data_model/agent_contracts/api_reference)。
 > 本文件仍保留有效的 CLI/目录结构/部分实现细节作参考;**契约层冲突时以 L2 design 文档为准**。
-> 长期不变的开发红线在 [trust_and_change_control](../../governance/policies/trust_and_change_control.md)。文档分层见 [DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)。
+> 长期不变的开发红线在 [trust_and_change_control](../../governance/policies/trust_and_change_control.md)。文档分层见 [DOC_SYSTEM_PLAN](../../archive/project-history/DOC_SYSTEM_PLAN_2026-06-21.md)。
 
 > **Target implementer:** Claude Code / Codex / Cursor / other AI coding agents\
 > **Target user:** one-person local AI-native trading system\

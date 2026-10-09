@@ -1503,7 +1503,7 @@ export const api = {
 
 	// Fast subset of getOpportunityFunnel — returns just `current` + config +
 	// family_ttl_sec. Retained for legacy Opportunity diagnostics. See
-	// docs/design/frontend/blotter_design.md#performance-backlog for why this
+	// docs/design/history/blotter_design.md#performance-backlog for why this
 	// split exists.
 	getOpportunityFunnelCurrentSnapshot: (hours = 24) =>
 		fetchJson<{

@@ -3203,7 +3203,7 @@ button.market-instrument-group-title { font-family: inherit; }
 
 
 
-/* ---------- Blotter (docs/design/frontend/blotter_design.md) -------------
+/* ---------- Blotter (docs/design/history/blotter_design.md) -------------
    Bloomberg EMSX "state as token, not sentence" — five fixed columns above a
    two-panel Candidates + Awaiting-Sign-off band, above a full-width Order
    History table. Class prefix .bl- to avoid collision with the pre-existing

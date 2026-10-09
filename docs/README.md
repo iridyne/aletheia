@@ -60,7 +60,6 @@ GitHub Issues/PRs track work and evidence, not a second runtime truth.
 | `references/` | External systems, papers, captured reference material | External reference only; never implementation authorization |
 | `diagrams/` | Diagram sources and rendered assets | Keep source and rendered output paired |
 | `archive/` | Superseded project history and consolidated legacy AI context, issues, plans, and status | Read only for provenance |
-| `superpowers/` | Optional/experimental specialized specs | Do not treat as core contract unless linked from design |
 
 ## Naming Rules For New Docs
 

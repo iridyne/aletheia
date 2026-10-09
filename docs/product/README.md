@@ -23,7 +23,6 @@ proof of implementation. Each question has an existing canonical owner:
 | `definition/` | The single canonical product direction definition |
 | `gates/` | Metrics and phase gate criteria |
 | `experiments/` | Current experiment protocol plus clearly retired Round 1 compatibility pointers |
-| `documentation/` | Frozen history of the previous documentation migration |
 | `capability-integrity/` | Evidence inventories and fact cards; retain their original scope and verify before using as current evidence |
 
 ## Agent Rule

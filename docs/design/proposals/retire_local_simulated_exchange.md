@@ -1,10 +1,12 @@
 ---
 id: retire-local-simulated-exchange
-status: accepted
+status: implemented
 github_issue: https://github.com/iridyne/aletheia/issues/2899
 related_contracts: []
 supersedes: []
 ---
+
+> 2026-10-09 状态改为 implemented：#2899 已关闭；退役边界已写入 docs/product/CAPABILITY_GROUND_TRUTH.md（Retired simulator），被退役机制的定义在 docs/design/history/local_simulated_*。
 
 # Retire the local simulated exchange
 

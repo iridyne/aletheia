@@ -1,5 +1,20 @@
 # Architecture Decision Log
 
+## 2026-10-09 — 本地版本控制改用 jj（colocated），本地门禁不再依赖 git hook（#3815 / PR #3816）
+
+**Decision:** 开发 checkout 是 jj-colocated（`.jj` 与 `.git` 并存），日常版本控制一律用 `jj`；
+jj 不运行 git hook，原 pre-commit hook 退役，廉价门禁改为 `uv run python scripts/ci/dev_check.py`
+（含原 hook 的 `.env`/secret 扫描）。只有 git 本身就是接口的地方（生产自更新器、Fedora/tarball
+runtime、`scripts/ci/ci_plan.py` 等也跑在纯 git runner 上的脚本、`gh`）保留原生 `git`。
+
+**Reason:** 在 jj-colocated checkout 中 git HEAD 是 `@-`，本地门禁读 git HEAD 会漏检工作副本，
+pre-commit hook 在 jj 下从不执行（#3815）。
+
+**Guardrail:** 命令配方只写在 `docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md`；
+规则只写在根 `AGENTS.md`。
+
+---
+
 ## 2026-10-09 — Bitget 只保留 UTA v3 一个账户 profile,删除 classic_v2 与运行时切换(#3806,D2)
 
 **Decision:** 删除 `BitgetClassicV2Profile` / `BitgetClassicV2LiveProfile`、`exchange.bitget_profile` 配置项与
@@ -142,6 +157,8 @@ boolean treatment 的唯一入口。它先探测 canonical Lab authority，autho
 - supervisor 仍是唯一内部进程管理者；launchd 只负责 supervisor 整体死亡或用户重新登录后的恢复。
 - 周期任务显示 `state=not running` 可以是正常状态，必须结合 runs 与 last exit code 判断是否成功。
 - 项目或 venv 路径变化会被标为配置漂移，需要重新 enable，而不是显示虚假绿色。
+
+> 2026-10-09 注：机制已归档。自 2026-09-28 起只维护 Linux systemd user session；macOS/Windows 服务后端见 [platform_specific_gateway_services](../../design/history/platform_specific_gateway_services.md)，watchdog 说明见 [macos_gateway_autostart](../../design/history/macos_gateway_autostart.md)。
 
 ---
 
@@ -861,6 +878,8 @@ Replace all subprocess-based process queries with pure ctypes Win32 API calls (k
 - Windows Service (pywin32/nssm): adds external dependency, overkill for current scope
 - Named pipe heartbeat: more complex, doesn't solve orphan discovery
 
+> 2026-10-09 注：Windows 不再是运行或验证目标；`core/aletheia/gateway/_win32_proc.py` 仅随 [platform_specific_gateway_services](../../design/history/platform_specific_gateway_services.md) 所述的保留但不维护的 Windows 分支存在。
+
 ---
 
 ## 2026-06-06 - AI Workspace Initialized
@@ -884,6 +903,8 @@ All AI sessions should follow start/end protocols documented in AGENTS.md.
 ### Alternatives Considered
 
 None — process improvement, not technical tradeoff.
+
+> 2026-10-09 注：已被取代。仓库内 AI workspace / handoff 协议已由 [2026-07-16 — Remove repository-local development task management](#2026-07-16--remove-repository-local-development-task-management) 移除；当前规则只在根 `AGENTS.md`。
 
 ---
 
@@ -1010,6 +1031,8 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
 - "我想证明这个 PR 没问题"不是触发远程 CI 的授权——本地 preflight 是默认验证手段。
 - Agent 想运行远程 CI 时，必须有 owner 在当次任务中的显式指令；release/merge/部署意图
   本身不构成授权。
+
+> 2026-10-09 注：决策仍成立并已收紧——根 `AGENTS.md` 现把远程 GitHub CI 视为 retired/unavailable，Agent 不得启动、等待或引用它；验证一律走本地 `scripts/ci/*`。
 
 ---
 
