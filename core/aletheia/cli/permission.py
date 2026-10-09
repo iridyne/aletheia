@@ -17,15 +17,14 @@ def status():
 def set_mode(mode: str = typer.Argument(..., help="Observe|Paper|Full")):
     """Set the agent permission mode."""
     from aletheia.agent_shell.permissions import VALID_WORKER_MODES
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
     valid = VALID_WORKER_MODES
     if mode not in valid:
         typer.echo(f"Invalid mode. Choose from: {', '.join(sorted(valid))}", err=True)
         raise typer.Exit(1)
-    cfg = load_config()
-    old = cfg.agent.permission_mode
-    cfg.agent.permission_mode = mode
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.agent.permission_mode
+        cfg.agent.permission_mode = mode
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "cli", "event_type": "permission_changed",

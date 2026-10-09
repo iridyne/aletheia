@@ -71,12 +71,11 @@ def get_prediction_status():
 @router.post("/toggle")
 def toggle_prediction(body: dict):
     """Enable or disable the prediction market module."""
-    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.loader import edit_config
     from aletheia.files.jsonl import write_audit
-    cfg = load_config()
-    old = cfg.market_data.prediction_enabled
-    cfg.market_data.prediction_enabled = bool(body.get("enabled", False))
-    save_config(cfg)
+    with edit_config() as cfg:
+        old = cfg.market_data.prediction_enabled
+        cfg.market_data.prediction_enabled = bool(body.get("enabled", False))
     write_audit({"actor": "human", "source": "dashboard", "event_type": "prediction_toggled",
                  "entity_type": "prediction_config", "before": {"enabled": old},
                  "after": {"enabled": cfg.market_data.prediction_enabled},
@@ -216,13 +215,12 @@ def get_prediction_preferences():
 @router.patch("/preferences")
 def update_prediction_preferences(body: dict):
     """Update prediction observer preferences."""
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    if "categories" in body:
-        cats = body["categories"]
-        if isinstance(cats, list) and all(isinstance(c, str) for c in cats):
-            cfg.market_data.observed_prediction_markets = cats
-    save_config(cfg)
+    from aletheia.config.loader import edit_config
+    with edit_config() as cfg:
+        if "categories" in body:
+            cats = body["categories"]
+            if isinstance(cats, list) and all(isinstance(c, str) for c in cats):
+                cfg.market_data.observed_prediction_markets = cats
     return {"status": "ok", "categories": cfg.market_data.observed_prediction_markets}
 
 
