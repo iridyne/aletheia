@@ -26,6 +26,10 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Lifecycle capability map](lifecycle_capability_map.md): a long-lived capability
+  map along the opportunity/position lifecycle. Stable definitions live in docs, progress
+  lives in GitHub, and the current level is generated from evidence.
+
 - [Entry, stop, target and position sizing](entry_order_risk_sizing.md): the
   owner's original intent for a 500 USDT starting account and the evidence-selected
   design for stop placement, sizing, leverage and stop execution.
