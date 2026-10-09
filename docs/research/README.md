@@ -26,6 +26,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 - [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
   records the #1002 repository-wide scope check against OKX's checksum
   deprecation and the active REST-only snapshot boundary.
+- [Entry funnel 14-day reject attribution — 2026-10-09](audits/ENTRY_REJECT_ATTRIBUTION_14D_2026-10-09.md)
+  attributes every planning generation on Fedora to one terminal reason, split by runtime period, then gives
+  root causes and a tiered solution draft. The draft has been reviewed by an independent critic. It is
+  unapproved discussion material.
 - [Entry, stop, sizing and leverage research — 2026-10-09](trading-strategy/ENTRY_STOP_SIZING_LEVERAGE_RESEARCH_2026-10-09.md)
   compares how AstraQuant, VergeX, nofx, OpenAlice, nof1 Alpha Arena, open-source
   frameworks, retail bot platforms and prop-firm rules place stops, size positions
