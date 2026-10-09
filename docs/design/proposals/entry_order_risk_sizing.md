@@ -182,6 +182,15 @@ Consequences for every later section:
 
 ## Decisions under discussion (2026-10-09)
 
+### 拒单归因之后的决定（2026-10-09）
+
+- **行情状态置信度门：选项 A。** 模拟盘阶段关闭这道门。
+  - 已执行：Fedora demo 策略升到 revision 10，`eligibility.min_regime_confidence_to_enter` 从 0.6 改为 0。由 AI 按 owner 的指示操作。
+  - 相关的 `sideways_standdown`（震荡行情停手）**没有改动**。当前行情状态是 bull，这道门不起作用；是否关闭，等 owner 决定。
+- **三项缺陷修复已批准，直接实施。** 分别是：格式校验收敛并记录字段路径、ccxt 品种元数据缓存、规划尝试只追加记录。实施进度见各自的 PR。
+- **几何研究 #3850 第一阶段已启动。** 内容包括：交易理论三个方向、竞品代码、我们自己的几何实现，以及用 Fedora 数据做的 MAE/MFE 研究。之后会给出 2～3 个候选设计，并由独立审查代理复核。
+
+
 下列事项按顺序与 owner 逐项讨论，结论记在各项下方。
 
 - [x] **决定 1：交易所原生止损优先**（已决定，#3848，PR-A 实施中）
