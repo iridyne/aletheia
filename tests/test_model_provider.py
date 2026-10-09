@@ -6,7 +6,7 @@ import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
 from tests.helpers.model_http import model_http
 
-from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
+from aletheia.model_provider.base import ModelRequest, ModelHealth, ProviderResponseError
 from extensions.model_endpoints.openai_compatible import (
     OpenAICompatibleProvider,
     _extract_chat_completion_text,
@@ -16,10 +16,8 @@ from aletheia.model_provider.router import (
     clear_cache,
     healthcheck_all,
     invalidate_health_cache,
-    invalidate_model_directory,
     get_provider,
     get_provider_async,
-    list_models_cached,
     ProviderNotConfigured,
 )
 
@@ -310,33 +308,6 @@ def test_router_raises_clear_error_when_no_provider_configured(tmp_path, monkeyp
     with pytest.raises(ValueError, match="No LLM provider configured"):
         get_provider()  # name=None → default_provider="" on a blank config
     clear_cache()
-
-
-@pytest.mark.anyio
-async def test_model_directory_cache_is_single_flight():
-    invalidate_model_directory("test_provider")
-
-    class FakeProvider(ModelProvider):
-        calls = 0
-
-        async def list_models(self):
-            self.calls += 1
-            await asyncio.sleep(0.03)
-            return [{"slug": "m1", "display_name": "M1"}]
-
-    provider = FakeProvider()
-    first, second, third = await asyncio.gather(
-        list_models_cached("test_provider", provider),
-        list_models_cached("test_provider", provider),
-        list_models_cached("test_provider", provider),
-    )
-
-    assert first == second == third
-    assert provider.calls == 1
-    cached = await list_models_cached("test_provider", provider)
-    assert cached == first
-    assert provider.calls == 1
-    invalidate_model_directory("test_provider")
 
 
 @pytest.mark.anyio

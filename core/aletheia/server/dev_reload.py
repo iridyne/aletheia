@@ -39,12 +39,6 @@ def touch_reload_sentinel(reason: str = "unknown") -> None:
     RELOAD_SENTINEL.write_text(f"# {reason} at {time.time()}\n")
 
 
-def record_reload() -> str:
-    global _reload_counter
-    _reload_counter += 1
-    return f"reload_{int(time.time())}_{_reload_counter}"
-
-
 def get_status() -> dict:
     return {
         "enabled": is_dev_reload_enabled(),

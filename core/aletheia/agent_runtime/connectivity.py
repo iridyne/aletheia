@@ -186,20 +186,6 @@ async def _probe_exchange_and_external(cfg) -> tuple[dict, dict]:
     return exchange_result, external_result
 
 
-def probe_exchange_sync(cfg=None) -> dict:
-    """Synchronous wrapper for use in compute_health() (called from scheduler thread)."""
-    import asyncio as _asyncio
-    coro = probe_exchange(cfg)
-    try:
-        _asyncio.get_running_loop()
-    except RuntimeError:
-        return _asyncio.run(coro)
-    # Already on an event loop — run in a thread
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_asyncio.run, coro).result(timeout=12)
-
-
 def _record_probe_result(result: dict, *, observed_at: float | None = None) -> dict:
     """Record exchange counters and invalidate in-flight recovery on failure."""
     global _consecutive_failures, _consecutive_successes

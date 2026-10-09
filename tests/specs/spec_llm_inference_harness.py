@@ -29,15 +29,12 @@ _HELPER_NAMES = {"llm_complete", "llm_structured", "llm_stream"}
 )
 async def test_fallback_candidates_are_explicit_and_bounded(monkeypatch):
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
     from aletheia.model_provider import fallback
 
     cfg = AletheiaConfig()
     pcfg = cfg.models.providers["endpoint"] = ProviderConfig(model="primary")
     monkeypatch.setattr(fallback, "load_config", lambda: cfg)
-    discovery = AsyncMock(return_value=[{"slug": "unconfigured"}])
-    monkeypatch.setattr(fallback.provider_router, "list_models_cached", discovery)
     provider = SimpleNamespace(model="primary")
     assert await fallback._candidate_models("endpoint", provider) == ["primary"]
     pcfg.fallback_models = ["primary", " m2 ", "m2", "@other:m3", ""]
@@ -48,7 +45,6 @@ async def test_fallback_candidates_are_explicit_and_bounded(monkeypatch):
     ]
     pcfg.model_fallback_enabled = False
     assert await fallback._candidate_models("endpoint", provider) == ["primary"]
-    discovery.assert_not_awaited()
 
 
 @spec_claim(

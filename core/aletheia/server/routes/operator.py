@@ -63,13 +63,6 @@ _recommendations_cache_lock = threading.Lock()
 _recommendations_cache: dict[str, Any] = {"value": None}
 
 
-def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    normalized = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized)
-
-
 def _operator_status_defaults() -> dict[str, Any]:
     cfg = load_config()
     return {

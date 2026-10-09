@@ -20,7 +20,3 @@ def is_tool_permitted(tool_name: str, permission_mode: str) -> bool:
     return permission_mode in allowed_modes
 
 
-def get_permitted_tools(permission_mode: str) -> list[str]:
-    """Get list of tools permitted for the given mode."""
-    return [name for name, cls in TOOL_REGISTRY.items()
-            if permission_mode in TOOL_CLASSES.get(cls, set())]
