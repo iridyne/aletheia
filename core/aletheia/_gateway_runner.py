@@ -179,7 +179,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
         return proc
     if proc is not None:
         try:
-            kill_pid_tree(proc.pid)
+            _terminate_child(proc)
         except Exception:
             logger.warning("gateway_runner: frontdoor old process kill failed", exc_info=True)
         _record_frontdoor_restart(cfg.app.dashboard_port, getattr(proc, "pid", 0))
@@ -187,7 +187,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     if not _wait_frontdoor_listening(cfg, new_proc):
         _record_frontdoor_restart(cfg.app.dashboard_port, getattr(new_proc, "pid", 0))
         try:
-            kill_pid_tree(new_proc.pid)
+            _terminate_child(new_proc)
         except Exception:
             logger.warning("gateway_runner: frontdoor failed-start cleanup failed", exc_info=True)
         return new_proc
@@ -283,7 +283,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
             code = proc.poll()
             if code is not None:
                 try:
-                    kill_pid_tree(proc.pid)  # defensive: ensure no orphan subtree
+                    _terminate_child(proc)  # defensive: ensure no orphan subtree
                 except (AttributeError, OSError):
                     logger.debug("stray backend process cleanup failed", exc_info=True)
                 return code
@@ -309,7 +309,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                     # Collector exited — respawn immediately (independent of the backend).
                     _record_collector_restart(getattr(cp, "pid", 0))
                     try:
-                        kill_pid_tree(cp.pid)
+                        _terminate_child(cp)
                     except Exception:
                         logger.debug("collector kill_pid_tree before respawn failed", exc_info=True)
                     collector_holder[0] = _spawn_collector_process(cfg)
@@ -342,11 +342,11 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                         port_missing_since = now
                     if now - port_missing_since >= _SERVER_PORT_LOST_GRACE_SEC:
                         _record_port_liveness_failure(runtime_context["port"], proc.pid)
-                        kill_pid_tree(proc.pid)
+                        _terminate_child(proc)
                         return 1
                 elif now - started_at >= _SERVER_PORT_STARTUP_GRACE_SEC:
                     _record_port_liveness_failure(runtime_context["port"], proc.pid)
-                    kill_pid_tree(proc.pid)
+                    _terminate_child(proc)
                     return 1
 
             _sleep(_SERVER_PORT_CHECK_INTERVAL_SEC)
@@ -395,6 +395,20 @@ def _stop_vite_watch(proc: subprocess.Popen | None) -> None:
             proc.kill()
         except Exception:
             logger.warning("gateway_runner: vite process kill failed", exc_info=True)
+
+
+def _terminate_child(proc: subprocess.Popen) -> None:
+    """Stop ONE supervised child for local recovery (#1594).
+
+    On POSIX the children share this supervisor's process group, so
+    kill_pid_tree (killpg) would SIGTERM the supervisor and every sibling — a
+    frontdoor fault would stop the whole Gateway. Signal only the child; Windows
+    keeps the per-child tree kill.
+    """
+    if platform.system() == "Windows":
+        kill_pid_tree(proc.pid)
+    else:
+        _stop_vite_watch(proc)
 
 
 def _spawn_collector_process(cfg) -> subprocess.Popen:
