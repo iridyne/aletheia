@@ -224,8 +224,8 @@ def test_application_model_requests_carry_inference_envelope():
         _CONTRACT,
         "§Failure and recovery semantics",
         "L2a",
-        "Structured failure diagnostics persist only fixed content-free enums, "
-        "never response content, values, arbitrary keys, field names, lengths, or hashes.",
+        "Structured failure diagnostics persist only fixed content-free enums and a "
+        "declared-schema path, never response content, values, model keys, lengths, or hashes.",
         status="implemented",
     ),
 )
@@ -236,16 +236,19 @@ def test_structured_failure_diagnostics_are_content_free_enums():
         {
             "response_shape": "json_object",
             "schema_error_code": "missing_required",
+            "schema_error_path": "$.lessons[0].summary",
             "response_text": "must never persist",
             "parsed_root_keys": "must never persist",
         }
     ) == {
         "response_shape": "json_object",
         "schema_error_code": "missing_required",
+        "schema_error_path": "$.lessons[0].summary",
     }
     assert _safe_failure_diagnostics(
         {
             "response_shape": "unregistered-shape",
             "schema_error_code": "unregistered-error",
+            "schema_error_path": "lessons: SYNTHETIC VALUE",
         }
     ) == {}

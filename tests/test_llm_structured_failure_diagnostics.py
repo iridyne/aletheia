@@ -120,6 +120,7 @@ async def test_schema_failure_persists_only_bounded_content_free_diagnostics():
         "output_tokens": "20",
         "response_shape": "json_object",
         "schema_error_code": "wrong_type",
+        "schema_error_path": "$.conviction",
     }
     assert secret_marker not in json.dumps(row, ensure_ascii=False)
     outcomes = get_db().execute(
@@ -218,5 +219,6 @@ def test_durable_diagnostic_allowlist_drops_arbitrary_keys_and_values():
             "schema_error_code": "SYNTHETIC_UNREGISTERED_ERROR",
             "response_text": "SYNTHETIC_BODY",
             "parsed_root_keys": "SYNTHETIC_KEYS",
+            "schema_error_path": "$.SYNTHETIC KEY: value",
         }
     ) == {}

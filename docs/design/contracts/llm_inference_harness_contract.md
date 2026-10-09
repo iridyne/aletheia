@@ -112,12 +112,15 @@ across structured repair retries and model fallback attempts.
 | Tools | model tool-interface type, exact allowed IDs when an interface exists, allowlist SHA-256 |
 | Environment | permission mode, paper execution mode, live state, logical agent/run identities, and explicitly bound evaluation/opportunity/decision/proposal IDs when already known |
 | Request | requested provider, temperature, max tokens, fallback policy |
-| Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class |
+| Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class and first failing schema path |
 | Evaluation | bounded pair, arm, fixture, and optional modality IDs when the call belongs to an offline evaluation |
 
 Prompt text, response text, source bodies, credentials, and secrets are not
 stored in this envelope. Structured-failure diagnostics never store model
-content, values, arbitrary root keys, field names, lengths, or content hashes.
+content, values, model-supplied keys, lengths, or content hashes. The only names
+they carry are the caller schema's own declared properties in the first failing
+path (`schema_error_path`, e.g. `$.risk_intent.posture`), truncated at the first
+segment the schema does not declare.
 Economic attribution accepts only the fixed identity keys documented here;
 unregistered keys are discarded before provider or ledger code can observe them.
 
@@ -181,10 +184,13 @@ that the model used it.
 ## Output validation
 
 `llm_structured()` first requires a JSON object and then validates it against
-the caller's declared schema. Pydantic schemas use `model_validate`; lightweight
-schema shims use the bounded JSON-Schema subset implemented by the helper.
-Schema-invalid objects enter the existing bounded repair loop and never become
-a successful logical outcome. Non-critical default fallback remains explicit
+the caller's declared schema. Pydantic schemas use `model_validate` first, so
+their normalizers run, and the bounded JSON-Schema subset then checks the
+normalized `model_dump`, which is the object the caller receives; lightweight
+schema shims use that subset alone. Schema-invalid objects enter the existing
+bounded repair loop with the same model and never become a successful logical
+outcome; only empty or non-JSON output excludes the model that produced it from
+the repair attempt. Non-critical default fallback remains explicit
 and the logical call remains an error.
 
 Reasoning control is caller-owned and default-off. `llm_structured()` preserves
@@ -239,7 +245,8 @@ failure is fail-open for the business call and records no database exception tex
   `CancelledError`. Cancellation is never converted into a default object or an
   availability tuple.
 - Terminal parse/schema failures may add only allowlisted, content-free enums to
-  `metadata_json.structured_failure`: response shape and schema error class.
+  `metadata_json.structured_failure`: response shape, schema error class and
+  schema error path.
   These facts diagnose a future replay without normalizing
   or accepting the failed response.
 - A caller may disable model fallback. Paired model evaluations do so to keep
