@@ -80,7 +80,7 @@ def is_tunnel_running() -> bool:
     record = _read_tunnel_record()
     if record is None:
         return False
-    return _tunnel_process_owned(record)
+    return _tunnel_process_owned(record) is True
 
 
 def read_tunnel_pid() -> int | None:
@@ -127,23 +127,34 @@ def _write_tunnel_record(*, pid: int, executable: str, config_path: Path) -> boo
 def _pid_alive(pid: int) -> bool:
     if platform.system() == "Windows":
         try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
+            # Wait-based liveness: an exited process whose handle is still open
+            # must read as dead, or a verified stop could never be observed.
+            from aletheia.gateway._win32_proc import pid_alive_win32
+            return pid_alive_win32(pid, ("",))
         except Exception as exc:
             logger.warning("tunnel: win32 pid probe unavailable for %s (%s)", pid, type(exc).__name__)
             return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
+    try:
+        # Reap it if it is our own exited child (route-started tunnel), so a
+        # zombie is not mistaken for a live cloudflared.
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        logger.debug("tunnel: pid %s is not a reapable child of this process", pid)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _wait_pid_exit(pid: int, timeout: float) -> bool:
+    """Poll until pid is observed dead; False if it is still alive at the deadline."""
+    deadline = time.monotonic() + timeout
+    while _pid_alive(pid):
+        if time.monotonic() >= deadline:
             return False
+        time.sleep(0.1)
+    return True
 
 
 def _process_command_line(pid: int) -> str | None:
@@ -168,8 +179,12 @@ def _process_command_line(pid: int) -> str | None:
         return None
 
 
-def _tunnel_process_owned(record: dict) -> bool:
-    """Verify that the live PID command is the configured cloudflared tunnel."""
+def _tunnel_process_owned(record: dict) -> bool | None:
+    """Verify that the live PID command is the configured cloudflared tunnel.
+
+    None means the live command line could not be read: ownership is unproven
+    but not disproven, so the record must be kept for a later retry (#1673).
+    """
     if record.get("legacy"):
         return False
     pid = int(record["pid"])
@@ -177,7 +192,7 @@ def _tunnel_process_owned(record: dict) -> bool:
         return False
     command_line = _process_command_line(pid)
     if not command_line:
-        return False
+        return None
     expected_exe = str(record.get("executable") or "")
     expected_config = str(record.get("config_path") or "")
     if platform.system() == "Windows":
@@ -256,7 +271,7 @@ def start_tunnel() -> dict:
 
 
 def stop_tunnel() -> dict:
-    """Stop the tunnel process."""
+    """Stop the tunnel process; report "stopped" only once it is observed dead."""
     record = _read_tunnel_record()
     if record is None:
         return {"ok": True, "status": "not_running"}
@@ -265,7 +280,16 @@ def stop_tunnel() -> dict:
     if not _pid_alive(pid):
         _pid_path().unlink(missing_ok=True)
         return {"ok": True, "status": "not_running"}
-    if not _tunnel_process_owned(record):
+    owned = _tunnel_process_owned(record)
+    if owned is None:
+        logger.error("Refused to stop tunnel pid=%d: its command line is unreadable; record kept", pid)
+        return {
+            "ok": False,
+            "status": "ownership_unverified",
+            "pid": pid,
+            "reason": "recorded PID is alive but its identity could not be read; retry",
+        }
+    if not owned:
         _pid_path().unlink(missing_ok=True)
         logger.error("Refused to stop unowned process referenced by tunnel pidfile (pid=%d)", pid)
         return {
@@ -283,12 +307,19 @@ def stop_tunnel() -> dict:
             )
         else:
             os.kill(pid, 15)  # SIGTERM
-            time.sleep(2)
-            if _pid_alive(pid):
+            if not _wait_pid_exit(pid, 2.0):
                 os.kill(pid, 9)  # SIGKILL
     except Exception as e:
         logger.warning("Error stopping tunnel pid=%d: %s", pid, e)
 
+    if not _wait_pid_exit(pid, 5.0):
+        logger.error("Tunnel pid=%d is still alive after the stop signal; record kept", pid)
+        return {
+            "ok": False,
+            "status": "stop_failed",
+            "pid": pid,
+            "reason": "cloudflared is still running after the stop signal",
+        }
     _pid_path().unlink(missing_ok=True)
     logger.info("Tunnel stopped (pid=%d)", pid)
     return {"ok": True, "status": "stopped", "pid": pid}

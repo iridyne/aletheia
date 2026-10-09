@@ -1128,10 +1128,15 @@ def _auto_start_tunnel(cfg) -> None:
 
 
 def _auto_stop_tunnel() -> None:
-    """Stop Cloudflare Tunnel if running. Best-effort, never blocks gateway stop."""
+    """Stop the recorded Cloudflare Tunnel. Best-effort, never blocks gateway stop."""
     try:
-        from aletheia.gateway.tunnel import is_tunnel_running, stop_tunnel
-        if is_tunnel_running():
-            stop_tunnel()
+        from aletheia.gateway.tunnel import stop_tunnel
+        result = stop_tunnel()  # no record → not_running; never signals an unverified PID
+        if not result.get("ok"):
+            logger.warning(
+                "gateway_lifecycle: tunnel stop not verified (%s); tunnel may remain active",
+                result.get("status"),
+            )
+            _echo_safe(f"Tunnel stop not verified: {result.get('reason', result.get('status'))}")
     except Exception:
         logger.warning("gateway_lifecycle: tunnel shutdown failed; tunnel may remain active after gateway stop", exc_info=True)
