@@ -51,15 +51,12 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
     """Realized-pnl-% of GENUINE closed positions opened in this regime bucket.
 
     Excludes synthetic/administrative closes and NULL-pnl rows. Reward is per-trade
-    realized_pnl as a fraction of entry notional (risk-normalized across sizes)."""
-    try:
-        rows = [
-            row for row in reversed(eligible_strategy_outcomes())
-            if row.get("regime_tag") == regime_bucket
-        ][:_WINDOW]
-    except Exception as e:
-        logger.debug("sizing_policy reward query failed: %s", e)
-        return []
+    realized_pnl as a fraction of entry notional (risk-normalized across sizes).
+    A failed read raises: an unreadable ledger is not the same as zero samples."""
+    rows = [
+        row for row in reversed(eligible_strategy_outcomes())
+        if row.get("regime_tag") == regime_bucket
+    ][:_WINDOW]
     out: list[float] = []
     for r in rows:
         notional = float(r.get("entry_price") or 0) * float(r.get("quantity") or 0)
@@ -161,7 +158,11 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
         return 0.0
     if not regime_bucket:
         return 0.0
-    rewards = _clean_bucket_rewards(regime_bucket)
+    try:
+        rewards = _clean_bucket_rewards(regime_bucket)
+    except Exception as exc:
+        logger.warning("sizing_policy: reward query failed, no learned nudge (%s)", exc)
+        return 0.0
     min_n = int(getattr(cfg.trading, "persona_learning_min_samples", 15))
     if len(rewards) < min_n:
         return 0.0
@@ -295,7 +296,8 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
 
 def sizing_policy_health(cfg=None) -> dict:
     """Observability for the doctor probe: per-regime clean sample counts + mean
-    reward + the resulting appetite nudge. Read-only, never raises."""
+    reward + the resulting appetite nudge. Read-only. An unreadable outcome ledger
+    raises so the doctor probe reports a probe error instead of "no samples"."""
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
     enabled = bool(getattr(cfg.trading, "persona_learning_enabled", False))

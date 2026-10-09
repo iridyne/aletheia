@@ -143,3 +143,15 @@ def test_raising_probe_is_unhealthy_but_missing_table_is_not(monkeypatch):
     monkeypatch.setattr(dx, "_CONTENT_PROBES", (fresh,))
     assert dx.build_content_report().to_dict()["healthy"] is True
 
+
+def test_unreadable_sizing_outcomes_is_a_probe_error_not_zero_samples(monkeypatch):
+    from aletheia.trading import sizing_policy
+
+    def unreadable():
+        raise RuntimeError("outcome_integrity unreadable")
+
+    monkeypatch.setattr(sizing_policy, "eligible_strategy_outcomes", unreadable)
+    report = dx.Report()
+    dx._probe_sizing_policy(report)
+    (check,) = report.checks
+    assert check.severity == "warn" and "outcome_integrity unreadable" in check.detail
