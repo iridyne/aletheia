@@ -97,6 +97,16 @@ audit head, and a derived checkpoint identity in `manifest.yaml`. Restore paths
 used for update rollback reject an online, legacy, malformed, or mismatched
 checkpoint instead of combining independently valid stores.
 
+An in-place update rollback restores the checkpoint without deleting
+post-checkpoint history (owner decision 2026-10-09, #3765). From the verified
+archive, `app.db` and `observation-lab/lab.db` are replaced as the rollback
+point, and only their `-wal`/`-shm` sidecars are set aside. Every other archived
+root (`events/`, `artifacts/`, `logs/` other than the audit family, and
+`observation-lab/archives/`) is restored append-only: a file absent from the
+target is written from the checkpoint, an existing target file is left unchanged,
+and a file created after the checkpoint is never deleted. The restore result lists
+every preserved path in `preserved_files`.
+
 ## Bundle imports do not create trading authority
 
 Under the accepted [research bundle boundary](../proposals/slim_core_research_bundle_import.md),

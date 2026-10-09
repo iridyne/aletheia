@@ -460,3 +460,38 @@ def test_event_store_idempotency_batch_and_pk_error(tmp_path, monkeypatch):
     assert len(lines_after) == len(lines_before), (
         "IntegrityError on PK clash must not write an extra JSONL line"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PR-S07", "persistence_recovery_contract",
+        "Failure and recovery semantics — update rollback append-only", "L2b",
+        "A restore replaces only app.db and observation-lab/lab.db; other archived roots "
+        "fill missing files, keep existing target files unchanged and delete nothing (#1441).",
+    ),
+)
+def test_rollback_restore_keeps_live_managed_files_and_fills_missing(tmp_path):
+    """#1441: managed namespaces restore append-only — fill missing, never overwrite or delete."""
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "kept.jsonl").write_text("checkpoint\n", encoding="utf-8")
+    (tmp_path / "artifacts" / "run").mkdir(parents=True)
+    (tmp_path / "artifacts" / "run" / "result.json").write_text("{}", encoding="utf-8")
+    sqlite3.connect(str(tmp_path / "app.db")).close()
+    from ops.backup.service import BackupService
+
+    archive = BackupService(data_dir=tmp_path).create_backup(label="append-only")
+
+    with (tmp_path / "events" / "kept.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("post\n")
+    (tmp_path / "events" / "new.jsonl").write_text("new\n", encoding="utf-8")
+    (tmp_path / "artifacts" / "run" / "result.json").unlink()
+
+    from ops.backup.restore import RestoreService
+
+    result = RestoreService().restore(archive, tmp_path)
+
+    assert result.success, result.errors
+    assert (tmp_path / "events" / "kept.jsonl").read_text() == "checkpoint\npost\n"
+    assert (tmp_path / "events" / "new.jsonl").read_text() == "new\n"
+    assert (tmp_path / "artifacts" / "run" / "result.json").read_text() == "{}"
+    assert "events/kept.jsonl" in result.to_dict()["preserved_files"]

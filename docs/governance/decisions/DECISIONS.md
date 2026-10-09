@@ -1,5 +1,17 @@
 # Architecture Decision Log
 
+## 2026-10-09 — 原地更新回滚只追加不删（#1441 / #1621 / #1910，D1，owner 决定见 #3765）
+
+**Decision:** 原地更新回滚（`ops/update/auto.py:_restore_old_runtime`，自动更新与 schema 更新回滚共用）
+从 checkpoint 只替换 `app.db` 与 `observation-lab/lab.db`；其余备份清单根按下列规则还原，写在
+[persistence recovery contract](../../design/contracts/persistence_recovery_contract.md)。
+
+- #1441「回滚：只追加不删，补回缺失文件，保留新增文件。」`events/`、`artifacts/`、`logs/`（审计家族除外）、
+  `observation-lab/archives/`：缺的写回，已有的不覆盖，checkpoint 之后新增的不删。这推翻了 #1441 issue
+  正文要求的“精确替换并删除多余文件”。
+
+---
+
 ## 2026-10-09 — 产品只做 USDT 永续合约；现货不在范围内，非加密永续不进候选（#3440）
 
 **Decision:** 产品范围是加密资产的 USDT 本位永续合约。现货不在范围内，也不在计划内
