@@ -26,6 +26,12 @@ Research files are evidence, audits, and explorations. They can guide work but d
 - [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
   records the #1002 repository-wide scope check against OKX's checksum
   deprecation and the active REST-only snapshot boundary.
+- [Entry, stop, sizing and leverage research — 2026-10-09](trading-strategy/ENTRY_STOP_SIZING_LEVERAGE_RESEARCH_2026-10-09.md)
+  compares how AstraQuant, VergeX, nofx, OpenAlice, nof1 Alpha Arena, open-source
+  frameworks, retail bot platforms and prop-firm rules place stops, size positions
+  and tier leverage. It also records Aletheia's own trade statistics, the 500 USDT
+  Monte Carlo, and a draft definition of "best". It is unapproved evidence for
+  the entry-order-risk-sizing proposal.
 - [Vergex platform analysis process evidence — 2026-08-11](trading-strategy/VERGEX_PLATFORM_ANALYSIS_PROCESS_2026-08-11.md)
   records the source-bundle inventory, safety boundary, capability decomposition,
   evidence classification, multi-temporal method, and algorithm-fidelity review.
