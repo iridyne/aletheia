@@ -189,11 +189,36 @@ def supervisor_owns_pid() -> bool:
         return False
 
 
-def _pid_alive(pid: int) -> bool:
-    """Return True if a process with this PID is currently alive AND is our gateway.
+def _is_gateway_cmdline(cmdline: str) -> bool:
+    """Same ownership markers as find_gateway_orphans: supervisor, or uvicorn serving our app."""
+    return _GATEWAY_SUPERVISOR_MARKER in cmdline or (
+        _GATEWAY_INNER_MARKER in cmdline and "uvicorn" in cmdline
+    )
+
+
+def _process_cmdline(pid: int) -> str | None:
+    """POSIX command line of pid: /proc first, `ps` fallback (macOS). None if unreadable."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        logger.debug("pidfile: /proc cmdline unavailable for pid %s; falling back to ps", pid)
+    try:
+        proc = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = proc.stdout.strip()
+    return out if proc.returncode == 0 and out else None
+
+
+def _pid_alive(pid: int) -> bool | None:
+    """True if pid is alive AND verified as our gateway; False if dead or a
+    different process; None if alive but its identity cannot be read.
+
+    None is not ownership: callers must not signal it, and is_running() keeps the
+    pidfile so a later probe can still decide (#1196).
 
     On Windows, uses pure ctypes Win32 API (no subprocess spawn — avoids console
-    window flash on Win11). On POSIX, os.kill(pid, 0) + /proc cmdline check.
+    window flash on Win11). On POSIX, os.kill(pid, 0) + command-line check.
     """
     if pid <= 0:
         return False
@@ -204,26 +229,27 @@ def _pid_alive(pid: int) -> bool:
         return True
     if platform.system() == "Windows":
         from aletheia.gateway._win32_proc import pid_alive_win32
-        return pid_alive_win32(pid, (_GATEWAY_SUPERVISOR_MARKER, "uvicorn"))
+        return pid_alive_win32(pid, (_GATEWAY_SUPERVISOR_MARKER, _GATEWAY_INNER_MARKER))
     try:
         os.kill(pid, 0)
     except (OSError, ProcessLookupError):
         return False
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_text()
-        return _GATEWAY_SUPERVISOR_MARKER in cmdline or "uvicorn" in cmdline
-    except Exception:
-        return True
+    cmdline = _process_cmdline(pid)
+    if cmdline is None:
+        return None
+    return _is_gateway_cmdline(cmdline)
 
 
 def is_running() -> bool:
-    """Check if the gateway PID is still alive."""
+    """Check if the gateway PID is still alive and verified as ours."""
     pid = read_pid()
     if pid is None:
         return False
-    if _pid_alive(pid):
+    alive = _pid_alive(pid)
+    if alive:
         return True
-    clear_pid()
+    if alive is False:
+        clear_pid()
     return False
 
 

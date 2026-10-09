@@ -1436,3 +1436,66 @@ def test_do_pause_prefers_running_gateway_api(tmp_path, monkeypatch, capsys):
 
     assert calls == ["api"]
     assert "2 essential jobs continue" in capsys.readouterr().out
+
+
+# --- #1196: a reused gateway PID must never be signalled on an unproven identity ---
+
+
+def _spawn_sleeper(*argv_tail: str):
+    import subprocess
+    import sys
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", *argv_tail])
+
+
+def _stop_with_stale_pid(tmp_path, monkeypatch, pid: int) -> list[int]:
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, pidfile
+    pidfile.pid_path().write_text(str(pid), encoding="utf-8")
+    killed: list[int] = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda p: killed.append(p))
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
+    lifecycle.do_stop()
+    return killed
+
+
+@pytest.mark.skipif(__import__("platform").system() == "Windows", reason="POSIX identity probe")
+def test_do_stop_never_signals_reused_pid_of_foreign_uvicorn(tmp_path, monkeypatch):
+    proc = _spawn_sleeper("uvicorn", "someones.other.app:app", "--port", "9000")
+    try:
+        killed = _stop_with_stale_pid(tmp_path, monkeypatch, proc.pid)
+        assert killed == []
+        assert proc.poll() is None
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+@pytest.mark.skipif(__import__("platform").system() == "Windows", reason="POSIX identity probe")
+def test_do_stop_never_signals_live_pid_with_unreadable_cmdline(tmp_path, monkeypatch):
+    from aletheia.gateway import pidfile
+    proc = _spawn_sleeper("-m", "uvicorn", "aletheia.server.app:app")
+    try:
+        monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: None, raising=False)
+        # No /proc on macOS; make the ps fallback unavailable too.
+        def _no_ps(*_a, **_k):
+            raise OSError("ps unavailable")
+        monkeypatch.setattr(pidfile.subprocess, "run", _no_ps)
+        killed = _stop_with_stale_pid(tmp_path, monkeypatch, proc.pid)
+        assert killed == []
+        assert proc.poll() is None
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+@pytest.mark.skipif(__import__("platform").system() == "Windows", reason="POSIX identity probe")
+def test_do_stop_still_stops_a_verified_supervisor(tmp_path, monkeypatch):
+    proc = _spawn_sleeper("/x/aletheia/_gateway_runner.py", "--no-browser")
+    try:
+        killed = _stop_with_stale_pid(tmp_path, monkeypatch, proc.pid)
+        assert killed == [proc.pid]
+    finally:
+        proc.kill()
+        proc.wait()
