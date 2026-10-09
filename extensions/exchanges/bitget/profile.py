@@ -139,7 +139,9 @@ class _BitgetDemoProfile(CCXTProfile):
             params["clientOrderId"] = command.client_order_id
         if command.instrument.market_type != "spot":
             params["hedged"] = True
-            params["marginMode"] = command.margin_mode or "cross"
+            # No marginMode: ccxt forwards it into the UTA v3 place-order body, which Bitget rejects
+            # (40034 "Parameter cross does not exist", seen on Fedora 2026-10-09 on every futures entry and
+            # close). ccxt's own UTA order request carries none; margin mode is not an order field there.
             if command.reduce_only:
                 params["reduceOnly"] = True
         if command.time_in_force:
