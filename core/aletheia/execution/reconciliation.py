@@ -1455,6 +1455,14 @@ def _reconcile_multibroker_orders(multibroker_orders) -> dict:
                 state="partially_filled",
                 reason="partial_private_fill_materialized",
             )
+        elif result.state == "overfilled" and not is_close_order:
+            # #2084: an entry overfill is a materialized Position, flagged.
+            filled += 1
+            _write_reconcile_event(
+                order,
+                state="overfilled",
+                reason="entry_fill_quantity_diverged",
+            )
         elif result.state == "overfilled":
             inconclusive += 1
             _write_reconcile_event(
@@ -1943,6 +1951,14 @@ def _materialize_native_order(
             reason="ioc_zero_fill_terminal",
         )
         return "cancelled", materialized_fills
+    if result.state == "overfilled" and not is_close_order:
+        # #2084: an entry overfill is a materialized Position, flagged.
+        _write_reconcile_event(
+            order,
+            state="overfilled",
+            reason="entry_fill_quantity_diverged",
+        )
+        return "filled", materialized_fills
     if result.state == "overfilled":
         _write_reconcile_event(
             order,

@@ -518,11 +518,20 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `close_convergence_state`、`close_convergence_owner_status`、claim age 与
   `close_convergence_requires_reconciliation`；缺失/过期时间戳和 stale claim fail-closed 为
   `manual attention required`。
+- **入场超量成交 = 正常持仓 + 数量偏差标记（#2084，owner 2026-10-09）**：入场 Order 的完整 private
+  Fill 累计数量超过授权 Order 数量（超出既有 tolerance）时，真实敞口按普通 open Position 物化
+  （`entry_fill_verified`、broker-fill 价格、可进入 Outcome），Proposal 为 `executed`，EntryPlan 按已成交
+  收敛；不隔离、不阻挡启动准入或新的自主入场。Order 保持 `overfilled` +
+  `exchange_quantity_exceeds_authoritative_order` 作为订单侧标记；同一事务在 Position 写入
+  `entry_quantity_divergence`（JSON：`order_id`、`planned_quantity`、`filled_quantity`），写一条
+  `entry_fill_quantity_diverged` 审计与 warning 日志；对账记为 filled（reason
+  `entry_fill_quantity_diverged`）；AI 持仓复查上下文逐仓展示该标记，使 AI 复查与人都不会把该仓位
+  读作计划数量。重放幂等（不重复标记、不重复审计）。平仓侧 `overfilled` 语义不变。
 - **启动准入必须读取权威主账**：Startup Behavior Gate 的 `pending_orders` / `pending_closes`
   只使用当前 Core Order、open `positions.pending_close_status` 与 reconciliation incident。
   遗留 `ps_*` intent、Order、Position 状态仅供历史读取，不再授予或阻挡启动/交易权限。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
-  `overfilled` 立即阻挡新的
+  `overfilled`（此处仅指平仓 claim 的 `positions.pending_close_status`）立即阻挡新的
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态与 owner-unlock-only 的
   `venue_trade_rate_limited` / `account_identity_unproven` 停泊只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
