@@ -169,6 +169,7 @@ def capture_environment(*, scope: str = "agent") -> dict[str, Any]:
             "opportunity_id",
             "decision_id",
             "proposal_id",
+            "planning_generation_id",
         ):
             environment[key] = _bounded(attribution.get(key))
     except Exception:

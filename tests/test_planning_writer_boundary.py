@@ -54,6 +54,8 @@ _RAW_OWNERS = {
         "bind_candidate_planner_input", "bind_candidate_planning_hypothesis",
         "complete_candidate_planning_with_plan",
     },
+    # Append-only attempt history (#3852): one writer, reached only through the outcome writers.
+    "candidate_planning_attempt_outcomes": {"_write_planning_outcome"},
     "entry_plans": {
         "ensure_candidate_planning_generation", "complete_candidate_planning_with_plan",
         "bind_entry_trigger_activation", "transition_entry_plan", "record_entry_plan_monitoring",

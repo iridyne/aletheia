@@ -4257,6 +4257,28 @@ def list_candidate_planning_demand(
     return [(str(row[0]), str(row[1])) for row in rows]
 
 
+def _write_planning_outcome(sql: str, params: tuple, generation_id: str, *, detail: str = "") -> bool:
+    """Apply one current-state outcome UPDATE and append it to attempt history atomically.
+
+    The generation row holds only the latest outcome; a retried generation would
+    otherwise lose every earlier reason (#3852). The history row copies the outcome
+    the UPDATE just wrote, so the two can never disagree.
+    """
+
+    with transaction(immediate=True):
+        if execute_write(sql, params).rowcount != 1:
+            return False
+        execute_write(
+            "INSERT INTO candidate_planning_attempt_outcomes "
+            "(generation_id, attempt_index, outcome_class, stage, reason, detail, created_at) "
+            "SELECT id, (SELECT COUNT(*) FROM candidate_planning_attempt_outcomes WHERE generation_id=?)+1, "
+            "outcome_class, last_stage, outcome_reason, ?, updated_at "
+            "FROM candidate_planning_generations WHERE id=?",
+            (generation_id, str(detail)[:120] or None, generation_id),
+        )
+        return True
+
+
 def complete_candidate_planning_no_plan(
     generation_id: str,
     owner_token: str,
@@ -4270,7 +4292,7 @@ def complete_candidate_planning_no_plan(
     timestamp = current.isoformat()
     expire_candidate_attention(now=current)
     payload = json.dumps(result, sort_keys=True, separators=(",", ":"))
-    updated = execute_write(
+    stored = _write_planning_outcome(
         "UPDATE candidate_planning_generations SET status='no_plan', "
         "result_kind='no_plan', result_json=?, owner_token=NULL, claim_expires_at=NULL, "
         "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
@@ -4282,15 +4304,16 @@ def complete_candidate_planning_no_plan(
         "WHERE um.id=candidate_planning_generations.last_candidate_id "
         "AND um.execution_eligible=1) AND status='planning' AND owner_token=?",
         (payload, timestamp, timestamp, payload, timestamp, generation_id, timestamp, timestamp, owner_token),
+        generation_id,
     )
-    if updated.rowcount != 1:
+    if not stored:
         execute_write(
             "UPDATE candidate_planning_generations SET result_kind='stale_result', "
             "result_json=?, owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
             "WHERE id=? AND status='planning' AND owner_token=?",
             (payload, timestamp, timestamp, generation_id, owner_token),
         )
-    return updated.rowcount == 1
+    return stored
 
 
 def block_candidate_planning(
@@ -4313,7 +4336,7 @@ def block_candidate_planning(
         sort_keys=True,
         separators=(",", ":"),
     )
-    updated = execute_write(
+    return _write_planning_outcome(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "result_kind='unavailable', result_json=?, retry_not_before=?, "
         "owner_token=NULL, claim_expires_at=NULL, completed_at=NULL, "
@@ -4330,8 +4353,8 @@ def block_candidate_planning(
             compiler_invoked, compiler_invoked, timestamp, str(reason)[:160], timestamp,
             generation_id, owner_token,
         ),
+        generation_id,
     )
-    return updated.rowcount == 1
 
 
 def mark_candidate_planning_stage(
@@ -4389,7 +4412,7 @@ def fail_candidate_planning(
     if detail:
         payload_fields["detail"] = str(detail)[:120]
     payload = json.dumps(payload_fields, sort_keys=True, separators=(",", ":"))
-    updated = execute_write(
+    return _write_planning_outcome(
         "UPDATE candidate_planning_generations SET status='unavailable', result_kind='unavailable', "
         "result_json=?, retry_not_before=NULL, owner_token=NULL, claim_expires_at=NULL, "
         "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
@@ -4404,8 +4427,9 @@ def fail_candidate_planning(
             compiler_invoked, compiler_invoked, timestamp,
             str(reason)[:160], timestamp, generation_id, owner_token,
         ),
+        generation_id,
+        detail=detail,
     )
-    return updated.rowcount == 1
 
 
 def defer_candidate_planning(
@@ -4438,7 +4462,7 @@ def defer_candidate_planning(
     terminal = int(row["attempt_count"] or 0) >= max_attempts
     retry_at = None if terminal else (current + timedelta(seconds=retry_seconds)).isoformat()
     payload = json.dumps({"reason": str(reason)[:160]}, sort_keys=True)
-    updated = execute_write(
+    return _write_planning_outcome(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "result_kind='unavailable', result_json=?, retry_not_before=?, "
         "owner_token=NULL, claim_expires_at=NULL, completed_at=?, "
@@ -4472,8 +4496,8 @@ def defer_candidate_planning(
             generation_id,
             owner_token,
         ),
+        generation_id,
     )
-    return updated.rowcount == 1
 
 
 def defer_candidate_planning_with_code(
@@ -4528,7 +4552,7 @@ def release_candidate_planning_claim(
     if detail:
         payload_fields["detail"] = str(detail)[:120]
     payload = json.dumps(payload_fields, sort_keys=True)
-    updated = execute_write(
+    return _write_planning_outcome(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "attempt_count=MAX(attempt_count-1, 0), result_kind='unavailable', "
         "result_json=?, retry_not_before=?, owner_token=NULL, claim_expires_at=NULL, "
@@ -4536,8 +4560,9 @@ def release_candidate_planning_claim(
         "completed_at=NULL, updated_at=? WHERE id=? AND is_current=1 "
         "AND attention_status='active' AND status='planning' AND owner_token=?",
         (payload, retry_at, str(reason)[:160], timestamp, generation_id, owner_token),
+        generation_id,
+        detail=detail,
     )
-    return updated.rowcount == 1
 
 
 def bind_candidate_planner_input(
@@ -4703,7 +4728,7 @@ def complete_candidate_planning_with_plan(
         )
         record_data = _stamp_provenance(record.model_dump())
         _insert("entry_plans", record_data)
-        completed = execute_write(
+        completed = _write_planning_outcome(
             "UPDATE candidate_planning_generations SET status='planned', "
             "result_kind='entry_plan', result_json=?, entry_plan_id=?, "
             "owner_token=NULL, claim_expires_at=NULL, completed_at=?, "
@@ -4726,8 +4751,9 @@ def complete_candidate_planning_with_plan(
                 timestamp,
                 owner_token,
             ),
+            generation_id,
         )
-        if completed.rowcount != 1:
+        if not completed:
             raise RuntimeError("candidate_attention_completion_cas_failed")
         return "planned", record_data
 

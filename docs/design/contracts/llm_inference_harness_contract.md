@@ -165,7 +165,9 @@ Canonical entry inference uses `agent_shell.entry_planner`. Its grounded
 EntryAnalysis input identifies the durable Candidate planning generation; an
 environment ContextArtifact links `planning-generation:<id>` from
 `candidate_planning_generations` to the exact logical call, with the analysis
-cutoff and rendered model-view character count. This is not a PiDecision or
+cutoff and rendered model-view character count. The call also binds
+`planning_generation_id` as explicit causal attribution, so the logical call's
+environment metadata names the generation without a join. This is not a PiDecision or
 Proposal identity. Downstream entities not yet created remain absent, and
 `run_id` exists only when an actual AgentRun is bound.
 

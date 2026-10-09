@@ -2148,3 +2148,34 @@ def test_additive_column_migrations_v88_v90_rerun_after_interrupted_ledger_write
     for table in ("filter_candidate_outcomes", "shadow_trades"):
         assert "min_cost_covering_edge_pct" in {str(r[1]) for r in connection.execute(f"PRAGMA table_info({table})")}
     connection.close()
+
+
+def test_planning_attempt_outcomes_v96_is_additive_idempotent_and_append_only():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE candidate_planning_generations (id TEXT PRIMARY KEY)")
+    connection.execute("INSERT INTO candidate_planning_generations VALUES ('g1')")
+
+    migrations._apply_planning_attempt_outcomes_v96(connection)
+    connection.execute(
+        "INSERT INTO candidate_planning_attempt_outcomes "
+        "(generation_id, attempt_index, outcome_class, reason, created_at) "
+        "VALUES ('g1', 1, 'planning_unavailable', 'ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE', '2026-10-09T00:00:00+00:00')"
+    )
+    migrations._apply_planning_attempt_outcomes_v96(connection)
+
+    assert connection.execute("SELECT COUNT(*) FROM candidate_planning_attempt_outcomes").fetchone()[0] == 1
+    for statement in (
+        "UPDATE candidate_planning_attempt_outcomes SET reason='rewritten'",
+        "DELETE FROM candidate_planning_attempt_outcomes",
+    ):
+        with pytest.raises(sqlite3.DatabaseError):
+            connection.execute(statement)
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO candidate_planning_attempt_outcomes "
+            "(generation_id, attempt_index, outcome_class, created_at) VALUES ('g1', 1, 'no_plan', 'x')"
+        )
+    assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION == "aletheia-sqlite-v96"
+    connection.close()

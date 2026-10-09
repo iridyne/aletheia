@@ -2076,3 +2076,92 @@ def test_inner_fresh_outer_stale_orderbook_records_mechanism(monkeypatch):
     payload = json.loads(stored["result_json"])
     assert payload["reason"] == "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE"
     assert payload["detail"] == "inner_fresh_outer_stale:elapsed_ms=3000"
+
+
+def _planning_attempt_outcomes(generation_id: str) -> list[dict]:
+    rows = repo.get_db().execute(
+        "SELECT attempt_index, outcome_class, stage, reason, detail FROM candidate_planning_attempt_outcomes "
+        "WHERE generation_id=? ORDER BY attempt_index",
+        (generation_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def test_retried_generation_keeps_every_attempt_outcome():
+    """A3 (ENTRY_REJECT_ATTRIBUTION_14D §4.1): each release overwrote the previous
+    attempt's reason on the current-state row, so a retried generation kept only
+    its last one. Every outcome is now appended to history; the row stays current state."""
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert (repo.claim_next_candidate_planning("owner-1") or {}).get("id") == generation["id"]
+    repo.mark_candidate_planning_stage(generation["id"], "owner-1", "prefetch")
+    assert repo.release_candidate_planning_claim(
+        generation["id"], "owner-1", "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+        detail="inner_fresh_outer_stale:elapsed_ms=2140",
+    )
+    assert (repo.claim_next_candidate_planning("owner-2") or {}).get("id") == generation["id"]
+    assert repo.release_candidate_planning_claim(
+        generation["id"], "owner-2", "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
+    )
+    assert (repo.claim_next_candidate_planning("owner-3") or {}).get("id") == generation["id"]
+    assert repo.fail_candidate_planning(
+        generation["id"], "owner-3", "ENTRY_PLAN_COMPILE_INVALID:ENTRY_STOP_DISTANCE_BELOW_FLOOR",
+        stage="compiler", model_invoked=True, compiler_invoked=True,
+        detail="stop_distance_pct=0.41 floor_pct=0.62",
+    )
+
+    assert _planning_attempt_outcomes(generation["id"]) == [
+        {"attempt_index": 1, "outcome_class": "planning_unavailable", "stage": "prefetch",
+         "reason": "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+         "detail": "inner_fresh_outer_stale:elapsed_ms=2140"},
+        {"attempt_index": 2, "outcome_class": "planning_unavailable", "stage": "planning",
+         "reason": "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE", "detail": None},
+        {"attempt_index": 3, "outcome_class": "planning_failed", "stage": "compiler",
+         "reason": "ENTRY_PLAN_COMPILE_INVALID:ENTRY_STOP_DISTANCE_BELOW_FLOOR",
+         "detail": "stop_distance_pct=0.41 floor_pct=0.62"},
+    ]
+    row = repo.get_candidate_planning_generation(generation["id"]) or {}
+    assert row["outcome_reason"] == "ENTRY_PLAN_COMPILE_INVALID:ENTRY_STOP_DISTANCE_BELOW_FLOOR"
+    with pytest.raises(sqlite3.DatabaseError):
+        repo.get_db().execute("DELETE FROM candidate_planning_attempt_outcomes")
+
+
+def test_lost_claim_appends_no_attempt_outcome():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("owner")
+    assert not repo.release_candidate_planning_claim(generation["id"], "someone-else", "PLANNER_CANCELLED_BEFORE_DISPATCH")
+    assert _planning_attempt_outcomes(generation["id"]) == []
+
+
+def test_entry_planner_model_call_metadata_carries_planning_generation_id(monkeypatch):
+    """A3 (§4.2): the logical model call row must name the planning generation it served."""
+    from tests.test_entry_analysis import _maximal_context
+    from aletheia.agent_runtime.run_context import bind_economic_attribution
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+    from aletheia.agents import helpers
+    from aletheia.economics.schema import ensure_economics_schema
+    from aletheia.model_provider.base import ModelResponse
+
+    context = _maximal_context()
+    valid = EntryHypothesis(
+        decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS", mechanism="reversal",
+        direction="long", risk_tier="NONE", horizon="NONE",
+    ).model_dump(mode="json")
+
+    async def complete(request, **kwargs):
+        return ModelResponse(content=json.dumps(valid), model="test")
+
+    async def provider(name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    with bind_economic_attribution(logical_agent="pi_trading_decision", evaluation_id="operator_eval_1"):
+        asyncio.run(system_operator_entry_planner(context.model_dump(mode="json"), "test"))
+    row = ensure_economics_schema().execute(
+        "SELECT metadata_json FROM llm_inference_calls WHERE caller='agent_shell.entry_planner'"
+    ).fetchone()
+    environment = json.loads(row["metadata_json"])["environment"]
+    assert environment["planning_generation_id"] == context.planning_generation["id"]
+    assert environment["evaluation_id"] == "operator_eval_1"
