@@ -140,7 +140,7 @@ async def test_server_binds_before_background_startup(monkeypatch):
             pytest.fail("no runtime startup is authorized in this test")
 
 
-@pytest.mark.parametrize("module_name", ["repair_administrative_close", "repair_doge_adoption_overlap"])
+@pytest.mark.parametrize("module_name", ["repair_administrative_close"])
 def test_maintenance_entrypoints_bind_before_help(monkeypatch, module_name):
     import importlib
     import sys

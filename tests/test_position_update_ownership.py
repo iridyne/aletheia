@@ -71,10 +71,6 @@ _RAW_POSITION_UPDATE_ALLOWED = {
     # whitelist by close_category + outcome_semantics_version to accommodate a
     # migration-shaped job. Keep the raw statement and the narrower authority.
     "ops/maintenance/outcome_integrity.py",
-    # Owner-approved #3111 fixed-target recovery: exact before-state comparison,
-    # private evidence validation and atomic audit idempotency; never a runtime caller.
-    # Do not widen the ordinary Position field owners for this historical repair.
-    "ops/maintenance/repair_doge_adoption_overlap.py",
 }
 
 _POSITION_WRITER_CALLERS = {
@@ -267,20 +263,6 @@ def test_settlement_guard_rejects_new_owner_or_expanded_field_authority(tmp_path
     target.write_text("from aletheia.storage import repositories as repo\n" + source, encoding="utf-8")
     with pytest.raises(AssertionError):
         _assert_settlement_callers(tmp_path)
-
-
-def test_fixed_target_historical_repair_is_not_imported_by_production():
-    import ast
-
-    root = Path(__file__).parents[1] / "core" / "aletheia"
-    assert (root / "storage/repositories.py").is_file()
-    for source in root.rglob("*.py"):
-        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                names = [alias.name for alias in node.names]
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    names.append(node.module)
-                assert not any("repair_doge_adoption_overlap" in name for name in names), source
 
 
 def test_known_pre_submission_error_can_be_reclaimed_by_one_new_close_order():
