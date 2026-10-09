@@ -11,8 +11,8 @@
 
 | 项 | 值 | 位置 |
 |----|----|----|
-| 入口 | `submit_proposal(...) -> dict` | `core/aletheia/execution/gateway.py:161` |
-| 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:271` |
+| 生产入口 | `execute_existing_proposal(proposal_id, mode)`(Entry Plan execution 先落库 Proposal 再调用) | `core/aletheia/execution/gateway.py` |
+| 直接入口(仅调试) | `submit_proposal(...) -> dict` = 创建 Proposal + `execute_existing_proposal`;唯一调用方是 `aletheia dev test-order`,非 demo 模式在创建 Proposal 前拒绝 | `gateway.py`、`core/aletheia/cli/dev.py` |
 
 **开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 

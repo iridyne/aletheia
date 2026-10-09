@@ -22,7 +22,7 @@ execution_modes:
   - bitget_demo
 decision_authority: aletheia.agent_shell.entry_planner.system_operator_entry_planner
 risk_authority: aletheia.risk.engine.evaluate_proposal
-execution_entrypoint: aletheia.execution.gateway.submit_proposal
+execution_entrypoint: aletheia.execution.gateway.execute_existing_proposal
 outcome_entrypoint: aletheia.portfolio.outcome_closure.close_position_verified
 learning_measurement: enabled
 learning_influence_default: enabled_owner_gated
@@ -95,6 +95,11 @@ signals; it cannot submit or execute an order.
 - The System Operator is the only native entry decision maker. Entry Plan execution
 creates immutable Order Intent and enters the Execution Gateway for Risk approval
 and UTA submission.
+- `execution_entrypoint` is the production entry: Entry Plan execution persists the
+Proposal and calls `execute_existing_proposal`. `submit_proposal` (create Proposal,
+then `execute_existing_proposal`) has one explicitly debug-only caller, the CLI
+`aletheia dev test-order`, which refuses every non-demo execution mode before
+creating a Proposal. Both pass through the same Risk and Gateway path.
 - The Risk Engine is the only approval authority. Guard output is advisory or a
 pre-risk candidate filter and cannot replace Risk Engine approval.
 - Frontend and Operator surfaces cannot call an exchange order adapter directly.
