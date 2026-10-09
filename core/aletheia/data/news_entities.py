@@ -61,8 +61,3 @@ def match_crypto_entities(*texts: str | None) -> list[str]:
             entities.append(symbol)
     return entities
 
-
-def news_matches_symbol(symbol: str, *texts: str | None) -> bool:
-    """Revalidate a stored news association against its current article text."""
-    canonical = symbol if "/" in symbol else f"{symbol}/USDT"
-    return canonical.upper() in match_crypto_entities(*texts)

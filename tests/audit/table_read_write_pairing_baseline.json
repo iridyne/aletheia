@@ -20,8 +20,6 @@
     {"table": "ps_reconciliation_reports", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
     {"table": "shadow_trades", "reason": "tombstone since 2026-08-27 (writer retired #3704); readers are sweep MS-02 DELETE / MS-05, LR-01, LR-02"},
     {"table": "ufc_shadow_equivalence", "reason": "Observation Lab table read by observe/ufc_shadow with no writer in the repository; untriaged by the sweep"},
-    {"table": "universe_policies", "reason": "never had a writer, 0 rows on Fedora; sweep SP-11 / MS-08 DELETE the reader"},
-    {"table": "universe_relative_rank_shadow_batches", "reason": "writer moved to tests/fixtures in 57744d590; sweep MS-06 DELETE / SP-04 NEEDS_OWNER"},
-    {"table": "universe_setups", "reason": "no writer since 2026-08-27; sweep SP-10 DELETE the JOIN in routes/universe.py"}
+    {"table": "universe_relative_rank_shadow_batches", "reason": "writer moved to tests/fixtures in 57744d590; sweep MS-06 DELETE / SP-04 NEEDS_OWNER"}
   ]
 }
