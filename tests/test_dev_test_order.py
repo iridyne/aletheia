@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-_ARGS = ["test-order", "BTC/USDT", "--direction", "short", "--quantity", "0.01", "--stop", "125000"]
+_ARGS = ["test-order", "BTC/USDT", "--direction", "short", "--quantity", "0.01", "--price", "120000", "--stop", "125000", "--take-profit", "108000"]
 
 
 def _mode(monkeypatch, mode):
@@ -43,4 +43,6 @@ def test_test_order_submits_a_futures_proposal(monkeypatch):
     assert result.exit_code == 1
     proposal, audit = calls
     assert (proposal["market_type"], proposal["execution_mode"], proposal["source"]) == ("usdt_futures", "bitget_demo", "native")
+    # Risk rejects an entry without price, stop, take-profit and reward:risk: 12000 of reward over 5000 of risk.
+    assert (proposal["price"], proposal["stop_price"], proposal["take_profit"], proposal["risk_reward"]) == (120000, 125000, 108000, pytest.approx(2.4))
     assert (audit["actor"], audit["source"], audit["entity_id"]) == ("human", "cli", "p1")
