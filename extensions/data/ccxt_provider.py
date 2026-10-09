@@ -5,6 +5,9 @@ ccxt.async_support binds its aiohttp session to the event loop that created it. 
 APScheduler jobs each run on a FRESH event loop (``asyncio.run`` per job), so a cached
 provider from a previous loop raises "Event loop is closed" on the next fetch. Every
 caller therefore constructs a provider, uses it, and ``await``s ``close()`` in a finally.
+The one process-level cache is ``_MARKETS_CACHE``: plain market-metadata dicts (no
+client, session or loop-bound object) that let the orderbook observation skip a
+repeated cold ``load_markets`` inside its five-second budget.
 
 Primary/fallback: each fetch tries the primary exchange, and on failure retries once on
 the configured fallback. Venue-pinned xStock listing checks still enter through
@@ -123,7 +126,7 @@ def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
 
     original_set_markets = exchange.set_markets
 
-    def guarded_set_markets(markets, currencies=None):
+    def guarded_set_markets(markets, currencies=None, *, acquired_at=None):
         dropped = 0
         if isinstance(markets, list):
             filtered = []
@@ -142,13 +145,44 @@ def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
         result = original_set_markets(markets, currencies)
         exchange._candidate_markets_snapshot = (
             getattr(exchange, "markets", None) or {},
-            datetime.now(timezone.utc).isoformat(),
+            acquired_at or datetime.now(timezone.utc).isoformat(),
         )
         return result
 
     exchange.set_markets = guarded_set_markets
     exchange._aletheia_market_id_guard = True
     return exchange
+
+
+# Market-metadata snapshots shared by fresh observation clients. Only plain dicts
+# are kept, never a client or session (those are loop-bound; see module docstring).
+# Order rules and venue listing reads call ``load_markets`` directly and never read it.
+_MARKETS_CACHE: dict[tuple[str, bool, str], tuple[float, dict, dict, str]] = {}
+_MARKETS_CACHE_TTL_S = 3600.0
+
+
+async def _load_markets_cached(exchange: Any) -> None:
+    """Load markets, restoring a recent snapshot for the same class/sandbox/options.
+
+    The restore keeps the snapshot's original acquisition time (#3786).
+    """
+    key = None
+    if not getattr(exchange, "markets", None):
+        key = (
+            type(exchange).__name__,
+            bool(getattr(exchange, "isSandboxModeEnabled", False)),
+            json.dumps(getattr(exchange, "options", {}), sort_keys=True, default=repr),
+        )
+        hit = _MARKETS_CACHE.get(key)
+        if hit is not None and time.monotonic() - hit[0] < _MARKETS_CACHE_TTL_S:
+            exchange.set_markets(hit[1], hit[2], acquired_at=hit[3])
+            return
+    await exchange.load_markets()
+    snapshot = getattr(exchange, "_candidate_markets_snapshot", None)
+    if key is not None and snapshot and snapshot[0]:
+        _MARKETS_CACHE[key] = (
+            time.monotonic(), snapshot[0], dict(getattr(exchange, "currencies", None) or {}), snapshot[1],
+        )
 
 
 class CCXTProvider:
@@ -569,7 +603,7 @@ class CCXTProvider:
             ccxt_symbol = to_ccxt_perp(symbol) if market_type in {"perp", "futures"} else to_canonical(symbol)
             with self._market_type_context(exchange, market_type):
                 phase = "load_markets"
-                await exchange.load_markets()
+                await _load_markets_cached(exchange)
                 phase = "market_metadata"
                 market = exchange.market(ccxt_symbol)
                 is_perp = market_type in {"perp", "futures"}
