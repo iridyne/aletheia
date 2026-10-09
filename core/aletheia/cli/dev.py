@@ -66,3 +66,71 @@ def api(
     )
     result = subprocess.run(command, cwd=root, env=env, check=False)
     raise typer.Exit(getattr(result, "returncode", 0))
+
+
+_TEST_ORDER_OK = frozenset({"executed", "submitted", "partially_filled"})
+
+
+@dev_app.command("test-order")
+def test_order(
+    symbol: str = typer.Argument(..., help="Canonical symbol, for example BTC/USDT."),
+    direction: str = typer.Option(..., "--direction", help="long or short."),
+    quantity: float = typer.Option(..., "--quantity", min=0.0, help="Base-asset quantity."),
+    stop: float = typer.Option(..., "--stop", min=0.0, help="Protective stop price."),
+    take_profit: float | None = typer.Option(None, "--take-profit", min=0.0),
+    leverage: int = typer.Option(1, "--leverage", min=1),
+    price: float | None = typer.Option(None, "--price", min=0.0, help="Limit price; omit for a market order."),
+    horizon_hours: float = typer.Option(24.0, "--horizon-hours", min=0.0),
+):
+    """Debug-only: send one USDT-perp Proposal through Risk and the Gateway on a demo account."""
+    from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+    from aletheia.config.loader import load_config
+    from aletheia.data.symbols import to_canonical
+    from aletheia.execution import gateway
+    from aletheia.files.jsonl import write_audit
+    from aletheia.storage.repositories import get_order
+
+    mode = (load_config().exchange.paper_execution_mode or "").strip()
+    if mode not in DEMO_EXECUTION_MODES:
+        typer.echo(f"refused: execution mode {mode!r} is not a demo execution mode; no Proposal was created", err=True)
+        raise typer.Exit(2)
+    if direction not in {"long", "short"}:
+        raise typer.BadParameter("must be long or short", param_hint="--direction")
+
+    result = gateway.submit_proposal(
+        symbol=to_canonical(symbol),
+        market_type="usdt_futures",
+        direction=direction,
+        order_type="market" if price is None else "limit",
+        quantity=quantity,
+        price=price or 0.0,
+        leverage=leverage,
+        stop_price=stop,
+        take_profit=take_profit,
+        execution_mode=mode,
+        agent_rationale="aletheia dev test-order (debug CLI)",
+        trade_school="short_term",
+        expected_horizon_hours=horizon_hours,
+        stop_source="operator",
+        source="native",
+    )
+    status = str(result.get("status"))
+    order = get_order(result["order_id"]) if result.get("order_id") else None
+    typer.echo(f"proposal_id: {result.get('proposal_id')}")
+    if "risk_violations" in result:
+        typer.echo(f"risk: rejected violations={result['risk_violations']}")
+    else:
+        typer.echo(f"risk: {'approved risk_decision_id=' + str(order.get('risk_decision_id')) if order else 'no order (see status)'}")
+    typer.echo(f"status: {status} reason_code={result.get('reason_code')} message={result.get('message')}")
+    if order:
+        typer.echo(f"order: id={order['id']} status={order['status']} exchange_order_id={order.get('exchange_order_id')} error_reason={order.get('error_reason')}")
+    typer.echo(f"position_id: {result.get('position_id') or (order or {}).get('position_id')}")
+    write_audit({
+        "actor": "human", "source": "cli",
+        "event_type": "dev_test_order_submitted",
+        "entity_type": "trade_proposal", "entity_id": result.get("proposal_id"),
+        "after": {"status": status, "execution_mode": mode, "symbol": to_canonical(symbol), "direction": direction},
+        "message": f"Debug test-order via CLI: {status}",
+    })
+    if status not in _TEST_ORDER_OK:
+        raise typer.Exit(1)
