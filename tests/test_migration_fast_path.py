@@ -2129,3 +2129,22 @@ def test_candidate_policy_name_convergence_v93_preserves_context_identity():
             "INSERT INTO candidate_planning_generations VALUES ('gen-3', 'not_a_real_policy')"
         )
     connection.close()
+
+
+def test_additive_column_migrations_v88_v90_rerun_after_interrupted_ledger_write():
+    """data_model.md §6.5: a run killed after the DDL autocommitted but before the
+    ledger row landed must be retryable, not fail with `duplicate column name`."""
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE orders (id TEXT PRIMARY KEY, status TEXT)")
+    for table in ("filter_candidate_outcomes", "shadow_trades"):
+        connection.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY)")
+    for _ in range(2):
+        migrations._apply_cost_covering_edge_v88(connection)
+        migrations._apply_entry_cancel_retry_v90(connection)
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(orders)")}
+    assert {"entry_cancel_attempts", "entry_cancel_retry_after"} <= columns
+    for table in ("filter_candidate_outcomes", "shadow_trades"):
+        assert "min_cost_covering_edge_pct" in {str(r[1]) for r in connection.execute(f"PRAGMA table_info({table})")}
+    connection.close()

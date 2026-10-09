@@ -316,3 +316,38 @@ def test_generation_source_is_frozen_and_refresh_assets_allow_all_venues():
     assert [row["id"] for row in repo.list_candidate_planning_refresh_assets()] == [candidate["asset_id"]]
     assert repo.list_candidate_planning_refresh_assets(venue="unconfigured-venue") == []
     assert repo.list_universe_snapshots() == []
+
+
+def test_requalification_ownership_reads_the_one_non_terminal_order_registry(monkeypatch):
+    """`order_states.NON_TERMINAL_ORDER_STATES` is the only definition of an
+    unfinished Order; the cross-source ownership check must not keep its own list."""
+    import hashlib
+    from datetime import timezone
+    from aletheia.storage import order_states
+    from aletheia.storage.models import Order, SerenityOpportunity
+
+    theme, first = _serenity_publication_source()
+    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long", market_type="spot")
+    repo.insert_serenity_opportunity(second)
+    owner = repo.get_candidate_planning_for_candidate(publish_serenity_candidates(theme.id, [first.id])[0])
+    assert owner is not None
+    payload = '{"expires_at":"2026-09-03T01:00:00+00:00"}'
+    repo._insert("entry_plans", {
+        "id": "owner-plan", "planning_generation_id": owner["id"], "candidate_id": owner["last_candidate_id"],
+        "planning_key": owner["planning_key"], "version": "entry-plan/v1", "venue": "bitget", "symbol": "BTC/USDT",
+        "market_type": "spot", "direction": "long", "execution_mode": "RESTING_MAKER", "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(), "status": "expired", "created_at": AT,
+        "updated_at": AT, "terminal_at": AT, "terminal_reason": "plan_expired",
+    })
+    repo._insert("orders", Order(
+        id="owner-order", symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+        quantity=1, price=100, execution_mode="bitget_demo", entry_plan_id="owner-plan", status="open",
+        created_at=AT,
+    ).model_dump())
+    repo.expire_candidate_attention(now=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    with pytest.raises(ValueError, match="instrument_owned"):
+        publish_serenity_candidates(theme.id, [second.id])
+    # Reclassify `open` in the registry: the ownership check must follow it.
+    monkeypatch.setattr(order_states, "NON_TERMINAL_ORDER_STATES",
+                        tuple(s for s in order_states.NON_TERMINAL_ORDER_STATES if s != "open"))
+    assert publish_serenity_candidates(theme.id, [second.id])
