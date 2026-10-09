@@ -867,6 +867,21 @@ def update_pi_decision(decision_id: str, **kwargs) -> None:
     _update("pi_decisions", decision_id, kwargs)
 
 
+def latest_operator_stop_venue_synced(position_id: str) -> bool | None:
+    """Whether the latest Operator stop change for one Position reached the venue."""
+    row = get_db().execute(
+        "SELECT json_extract(evidence_manifest_json, "
+        "'$.position_review.effect.venue_stop_synced') AS synced FROM pi_decisions "
+        "WHERE proposal_reason='position_review' AND json_valid(evidence_manifest_json) "
+        "AND json_extract(evidence_manifest_json, "
+        "'$.position_review.target_position_id')=? "
+        "AND synced IS NOT NULL "
+        "ORDER BY datetime(created_at) DESC, rowid DESC LIMIT 1",
+        (position_id,),
+    ).fetchone()
+    return None if row is None else bool(row["synced"])
+
+
 def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
     """Return the unique final PiDecision linked to one exact Proposal id."""
     if not proposal_id:

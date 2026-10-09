@@ -12,6 +12,7 @@ from aletheia.agent_runtime.orchestrator import run_agent
 from aletheia.storage.repositories import (
     get_agent_run,
     get_trade_proposal,
+    latest_operator_stop_venue_synced,
     list_agent_runs,
     list_all_open_positions,
     list_fills,
@@ -25,6 +26,12 @@ from aletheia.storage.repositories import (
 )
 
 logger = logging.getLogger("aletheia.agent_shell.commands")
+
+# apply_operator_adjustment persists the local stop even when the venue amend
+# fails; the local loop then enforces it (execution_contract §4 local fallback).
+_VENUE_STOP_NOT_UPDATED = (
+    "venue stop was not updated; the local stop is the fallback"
+)
 
 _FORBIDDEN_EXTENSION_CAPABILITIES = {
     "credentials_access": "credentials access",
@@ -1919,7 +1926,12 @@ def _build_review_request(
             f"persisted_current={_position_review_value(position.get('current_price'))} "
             f"persisted_upnl={_position_review_value(position.get('unrealized_pnl'))} "
             f"stop={_position_review_value(position.get('stop_price'))} "
-            f"target={_position_review_value(position.get('take_profit_price'))} "
+            + (
+                f"last_operator_stop_change=\"{_VENUE_STOP_NOT_UPDATED}\" "
+                if latest_operator_stop_venue_synced(str(position.get("id") or "")) is False
+                else ""
+            )
+            + f"target={_position_review_value(position.get('take_profit_price'))} "
             f"opened_at={_position_review_value(position.get('opened_at'))} "
             f"holding_age_hours="
             f"{_position_review_value(_position_holding_age_hours(position))} "
@@ -2058,6 +2070,8 @@ async def review_portfolio_state(params: dict) -> dict:
                 "close_one_error",
                 "positions_closed",
                 "horizon_review_error",
+                "venue_stop_synced",
+                "venue_stop_note",
             }
         }
 
@@ -2115,13 +2129,22 @@ async def review_portfolio_state(params: dict) -> dict:
         ):
             result["adjust_position_error"] = "horizon_extension_required"
         else:
-            result["adjust"] = apply_operator_adjustment(
+            adjustment = apply_operator_adjustment(
                 target["id"],
                 new_stop=review.get("new_stop_price"),
                 new_target=review.get("new_target_price"),
                 new_horizon=review.get("new_horizon_hours"),
                 reason=reasoning,
             )
+            result["adjust"] = adjustment
+            if (
+                review.get("new_stop_price") is not None
+                and isinstance(adjustment, dict)
+                and adjustment.get("updated") is True
+            ):
+                result["venue_stop_synced"] = adjustment.get("exchange_synced") is True
+                if not result["venue_stop_synced"]:
+                    result["venue_stop_note"] = _VENUE_STOP_NOT_UPDATED
 
     closed_count = 0
     if action == "close_one" and matching:
