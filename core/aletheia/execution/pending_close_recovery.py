@@ -67,6 +67,13 @@ TRADE_RATE_LIMIT_CANCEL_REASON = "trade_too_many_times_cancel"
 # (which may age out after STALE_PENDING_CLOSE_RELEASE_HOURS).
 VENUE_TRADE_RATE_LIMITED_STATUS = "venue_trade_rate_limited"
 
+# Owner-unlock-only park for a close that failed before submission because the
+# UTA account identity could not be proven (#3507, execution_contract §10.2).
+# The close Order stays ``error``/``uta_account_identity_mismatch`` with zero
+# submission; an automatic retry would only append one error Order per cycle.
+ACCOUNT_IDENTITY_UNPROVEN_STATUS = "account_identity_unproven"
+ACCOUNT_IDENTITY_MISMATCH_REASON = "uta_account_identity_mismatch"
+
 # Terminal, human-owned close claim (``position_manager`` sets it at the 24h
 # bound). Only operator resolution or later venue proof may leave it, so the
 # automatic paths must not even consider it a candidate.
@@ -636,13 +643,64 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
     return True
 
 
+def audit_account_identity_unproven_park(
+    order_id: str, position_id: str, *, before_status: str | None
+) -> None:
+    """Record the #3507 park once, at the transition (execution_contract §10.2).
+
+    The coordinator (the Order writer) finalizes the zero-submission close Order
+    as ``error``/``uta_account_identity_mismatch`` with the claim parked as
+    ``account_identity_unproven`` in the same transaction as this audit. Owner
+    unlock (``release_rate_limited_close_claim``) is the only exit; machine
+    recovery never releases it.
+    """
+    repo.insert_audit_event(
+        AuditEvent(
+            actor="system",
+            source="execution_coordinator",
+            event_type="pending_close_parked_account_identity_unproven",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(
+                {"pending_close_order_id": order_id, "pending_close_status": before_status},
+                sort_keys=True,
+            ),
+            after_state=json.dumps(
+                {
+                    "pending_close_order_id": order_id,
+                    "pending_close_status": ACCOUNT_IDENTITY_UNPROVEN_STATUS,
+                    "order_status": "error",
+                    "reason": ACCOUNT_IDENTITY_MISMATCH_REASON,
+                },
+                sort_keys=True,
+            ),
+            message=(
+                "Parked close claim: UTA account identity could not be proven before "
+                f"submission; status={ACCOUNT_IDENTITY_UNPROVEN_STATUS} until owner-authorized "
+                "recovery (POST /api/positions/{id}/recover-parked-close)."
+            ),
+        )
+    )
+    logger.warning(
+        "close parked: position=%s order=%s reason=%s status=%s",
+        position_id,
+        order_id,
+        ACCOUNT_IDENTITY_MISMATCH_REASON,
+        ACCOUNT_IDENTITY_UNPROVEN_STATUS,
+    )
+
+
 def release_rate_limited_close_claim(
     position_id: str,
     *,
     actor: str,
     reason: str,
 ) -> dict:
-    """Owner-authorized release of a venue_trade_rate_limited parked claim.
+    """Owner-authorized release of an owner-unlock-only parked close claim.
+
+    Accepts ``venue_trade_rate_limited`` (Bitget 40725), ``account_identity_unproven``
+    (#3507; the zero-submission ``error``/``uta_account_identity_mismatch`` Order is
+    left as-is) and a never-submitted ``submission_rejected`` claim.
 
     The park exists because an automatic retry would resubmit into Bitget 40725
     (trade_too_many_times_cancel). This is the owner-authorized unlock the
@@ -677,6 +735,15 @@ def release_rate_limited_close_claim(
                 != TRADE_RATE_LIMIT_CANCEL_REASON
             ):
                 return {"released": False, "code": "parked_order_mismatch"}
+        elif claim_status == ACCOUNT_IDENTITY_UNPROVEN_STATUS:
+            # Zero-submission pre-flight failure: terminal error, no venue id.
+            if (
+                str(fresh_order["status"] or "") != "error"
+                or str(fresh_order["error_reason"] or "")
+                != ACCOUNT_IDENTITY_MISMATCH_REASON
+                or str(fresh_order["exchange_order_id"] or "").strip() != ""
+            ):
+                return {"released": False, "code": "parked_order_mismatch"}
         elif claim_status == "submission_rejected":
             # A close the venue rejected at submission and that provably never
             # reached the exchange (no exchange order id, terminal error) has
@@ -692,10 +759,14 @@ def release_rate_limited_close_claim(
             return {"released": False, "code": "claim_not_parked"}
 
         next_oid = next_close_client_oid(position_id)
+        before_order_status = str(fresh_order["status"] or "")
+        before_order_reason = str(fresh_order["error_reason"] or "")
+        after_order_reason = before_order_reason
         if (
             str(fresh_order["status"] or "") == "cancelled"
             and str(fresh_order["error_reason"] or "") == TRADE_RATE_LIMIT_CANCEL_REASON
         ):
+            after_order_reason = "operator_authorized_cleanup_trade_rate_limited"
             repo.replace_order_error_reason(
                 order_id,
                 expected_status="cancelled",
@@ -713,9 +784,9 @@ def release_rate_limited_close_claim(
                 before_state=json.dumps(
                     {
                         "pending_close_order_id": order_id,
-                        "pending_close_status": VENUE_TRADE_RATE_LIMITED_STATUS,
-                        "order_status": "cancelled",
-                        "order_error_reason": TRADE_RATE_LIMIT_CANCEL_REASON,
+                        "pending_close_status": claim_status,
+                        "order_status": before_order_status,
+                        "order_error_reason": before_order_reason,
                     },
                     sort_keys=True,
                 ),
@@ -723,15 +794,15 @@ def release_rate_limited_close_claim(
                     {
                         "pending_close_order_id": None,
                         "pending_close_status": None,
-                        "order_status": "cancelled",
-                        "order_error_reason": "operator_authorized_cleanup_trade_rate_limited",
+                        "order_status": before_order_status,
+                        "order_error_reason": after_order_reason,
                         "retry_client_order_id": next_oid,
                         "reason": str(reason),
                     },
                     sort_keys=True,
                 ),
                 message=(
-                    f"Owner-authorized release of Bitget 40725-parked close claim "
+                    f"Owner-authorized release of {claim_status} close claim "
                     f"({order_id}); protective exits may retry as {next_oid}. "
                     f"Reason: {reason}"
                 ),

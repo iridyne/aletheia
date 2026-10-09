@@ -3417,10 +3417,12 @@ export interface paths {
         put?: never;
         /**
          * Recover Parked Close Position
-         * @description Owner-authorized release of a venue_trade_rate_limited pending close.
+         * @description Owner-authorized release of an owner-unlock-only parked pending close.
          *
-         *     The manual close endpoint deliberately refuses to bypass the 40725 park;
-         *     this is the explicit owner unlock the park's audit message promises. It
+         *     Parked states: venue_trade_rate_limited (Bitget 40725) and
+         *     account_identity_unproven (#3507). The manual close endpoint deliberately
+         *     refuses to bypass a park; this is the explicit owner unlock the park's
+         *     audit message promises. It
          *     releases the parked claim only — protective exits retry the close with a
          *     fresh close-{id}-rN client order id on their next evaluation. No fill,
          *     price, or PnL is fabricated here. Audit records actor='human' and the
@@ -10151,7 +10153,7 @@ export interface components {
         };
         /**
          * ParkedCloseRecoveryRequest
-         * @description Payload for an owner-authorized release of a Bitget 40725-parked close.
+         * @description Payload for an owner-authorized release of an owner-unlock-only parked close.
          */
         ParkedCloseRecoveryRequest: {
             /** Reason */

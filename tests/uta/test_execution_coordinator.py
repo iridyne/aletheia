@@ -978,11 +978,65 @@ def test_close_fails_closed_on_generation_drift_without_venue_proof(tmp_path, mo
     assert close_order["error_reason"] == "uta_account_identity_mismatch"
     position_row = repo.get_position(position.id)
     assert position_row is not None
-    assert position_row["pending_close_status"] == "error"
+    # #3507 (owner 2026-10-09): an unprovable identity parks the claim, owner-unlock-only.
+    assert position_row["pending_close_status"] == "account_identity_unproven"
     entry = repo.get_order(entry_id)
     assert entry is not None
     assert UTAAccountIdentity.model_validate_json(entry["uta_account_identity_json"]).credential_generation == 1
     assert position_row["status"] == "open"
+
+
+def test_close_parks_unprovable_identity_mismatch_once(tmp_path, monkeypatch):
+    """#3507: the parked claim stops per-cycle error Orders; only an owner unlock retries."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.execution.close_convergence import close_convergence_view
+    from aletheia.execution.coordinator import close_position
+    from aletheia.execution.pending_close_recovery import release_rate_limited_close_claim
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="spot", direction="long", quantity=0.01,
+        entry_price=100.0, current_price=101.0, execution_mode="binance_testnet", status="open",
+    )
+    _insert_bound_position(position)
+    recorder = []
+    factory, _current = _drifted_adapter_factory(
+        "binance_testnet", venue_position_ids=[], submit_recorder=recorder
+    )
+    monkeypatch.setattr(coordinator, "create_uta_adapter", factory)
+
+    def close_orders():
+        return [r for r in repo.list_orders(limit=50) if r["position_id"] == position.id and r["close_reason"]]
+
+    with pytest.raises(ValueError, match="uta_account_identity_mismatch"):
+        close_position(position.id, "stop_loss")
+    parked = repo.get_position(position.id) or {}
+    assert parked["pending_close_status"] == "account_identity_unproven"
+    view = close_convergence_view(parked)
+    assert view["pending_close"] is True
+    assert view["close_convergence_owner_status"] == "account identity unproven; owner unlock required"
+    assert view["close_convergence_requires_reconciliation"] is False
+    assert [e["event_type"] for e in repo.list_audit_events(limit=50)].count(
+        "pending_close_parked_account_identity_unproven"
+    ) == 1
+
+    # Next protective cycle: the fence holds, no second error Order.
+    again = close_position(position.id, "stop_loss")
+    assert again["already_pending"] is True
+    assert len(close_orders()) == 1
+
+    released = release_rate_limited_close_claim(position.id, actor="human", reason="identity fixed")
+    assert released["released"] is True
+    assert (repo.get_position(position.id) or {})["pending_close_status"] is None
+
+    # Still broken: exactly one new Order per unlock, then it re-parks.
+    with pytest.raises(ValueError, match="uta_account_identity_mismatch"):
+        close_position(position.id, "stop_loss")
+    assert len(close_orders()) == 2
+    assert (repo.get_position(position.id) or {})["pending_close_status"] == "account_identity_unproven"
+    assert recorder == []
 
 
 def test_close_reanchors_when_venue_position_has_no_venue_id(tmp_path, monkeypatch):
