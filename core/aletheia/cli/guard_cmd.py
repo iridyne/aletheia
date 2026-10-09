@@ -65,3 +65,32 @@ def prune_candidates(
 
     result = prune_learned_guard_candidates(dry_run=not apply)
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@guard_app.command("resolve-reconcile-incident")
+def resolve_reconcile_incident(
+    actor: str = typer.Option(..., "--actor", help="Who reviewed and resolves the incident."),
+    reason: str = typer.Option(..., "--reason", help="Why the incident is safe to resolve."),
+):
+    """Resolve the active reconciliation-integrity incident (owner action, audited).
+
+    Refuses unless the contract gate holds: two clean observations at least five
+    minutes apart and a clean detector right now (execution_contract §11.5).
+    """
+    from aletheia.portfolio.reconciliation_integrity import (
+        get_active_reconciliation_integrity_incident,
+        resolve_reconciliation_integrity_incident,
+    )
+
+    incident = get_active_reconciliation_integrity_incident()
+    if incident is None:
+        typer.echo("No active reconciliation integrity incident.", err=True)
+        raise typer.Exit(1)
+    try:
+        resolved = resolve_reconciliation_integrity_incident(
+            incident["id"], actor=actor, reason=reason,
+        )
+    except ValueError as exc:
+        typer.echo(f"Refused: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(json.dumps(resolved, indent=2, ensure_ascii=False, default=str))

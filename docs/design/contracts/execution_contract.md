@@ -787,7 +787,8 @@ Operator、KPI、Risk、API/UI 等行为消费者已迁移并由 `OI-C02~C04` �
 出现任何 native 或 adopted open event，短窗内达到两个独立 identity 即形成系统性事故。探测器在
 demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_integrity_incidents`，使这两个
 动作和所有会改变行为的 Learning 入口跨重启保持冻结。每次继续出现循环会重置干净计数；干净观察
-必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve。live 继续只分类和告警，不
+必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve（owner 入口
+`aletheia guard resolve-reconcile-incident --actor --reason`，同时写 `audit_events` 与 hash-chain JSONL）。live 继续只分类和告警，不
 获得任何新增自动收口权限。
 
 ### 11.6 期货资金费用的可证来源与诚实关闭
