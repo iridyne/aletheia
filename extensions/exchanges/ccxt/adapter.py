@@ -1119,19 +1119,23 @@ class CCXTUTAAdapter:
             return UTAErrorCode.RATE_LIMIT
         return UTAErrorCode.VENUE_REJECTED
 
-    def _venue_rejected_reason(self, exc: BaseException) -> str:
-        """`venue_rejected_command`, suffixed with the venue's code when it has one.
+    def _venue_rejected_reason(
+        self, exc: BaseException, base: str = "venue_rejected_command", *, class_fallback: bool = False
+    ) -> str:
+        """`base`, suffixed with the venue's code when it has one.
 
         The bare reason is not diagnosable after the fact: the raw payload never
         reaches the order row, so two rejections for entirely different causes are
         indistinguishable. The suffix keeps the stored reason actionable while
-        staying inside the sanitized taxonomy.
+        staying inside the sanitized taxonomy. With `class_fallback`, an error
+        without a venue code is suffixed with its exception class instead.
         """
-        base = "venue_rejected_command"
         try:
             code = self._profile.venue_rejection_code(exc)
         except Exception:  # noqa: BLE001 - diagnosis must never mask the rejection.
-            return base
+            code = None
+        if not code and class_fallback:
+            code = "".join(char for char in type(exc).__name__.lower() if char.isalnum())[:32]
         if not code:
             return base
         candidate = f"{base}_{code}"
@@ -1167,6 +1171,8 @@ class CCXTUTAAdapter:
         return "unknown"
 
     def _mutation_failure(self, command, report_type, exc, *, request_started):
+        if not request_started and isinstance(exc, UTAError) and exc.command_evidence in {None, CommandEvidence.NOT_SENT}:
+            return self._not_sent(command, report_type, reason=exc.reason, error_code=exc.code)
         error_kind = self._command_error_kind(exc)
         if request_started and command.purpose == "exit" and error_kind == "rejected" and self._profile.close_position_absent(exc):
             return self._command_report(command, report_type, CommandEvidence.VENUE_REJECTED, error_code=UTAErrorCode.VENUE_REJECTED.value, reason_code="close_position_absence_unverified")
@@ -1199,7 +1205,9 @@ class CCXTUTAAdapter:
             report_type,
             CommandEvidence.NOT_SENT,
             error_code=code.value,
-            reason_code="command_not_sent",
+            # Suffixed (venue code, else exception class): a bare `command_not_sent`
+            # cannot tell a set_leverage rejection from a timeout after the fact.
+            reason_code=self._venue_rejected_reason(exc, "command_not_sent", class_fallback=True),
         )
 
     def _validate_mutation(self, command, report_type, capability: bool):
