@@ -158,7 +158,6 @@ def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
         get_trade_insights,
         get_trade_stats,
     )
-    from aletheia.server.routes.data import get_family_scorecard
 
     _insert_mixed_cohort()
     # #1939: the resolver reads config.exchange.paper_execution_mode too, so
@@ -180,7 +179,6 @@ def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
         get_strategy_performance(),
         get_trade_insights(),
         get_confidence_calibration(),
-        get_family_scorecard(),
     )
     for payload in payloads:
         assert payload["raw_event_count"] == 3

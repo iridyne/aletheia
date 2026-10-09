@@ -1,8 +1,7 @@
 """Comprehensive trade analytics for the Insights visualization panel.
 
 Single SQL query over closed positions; all chart data computed in Python.
-Date filter aligned with analytics.py _ROUND1_START_UTC so all PnL numbers
-are consistent across the Analytics tab and Trade Insights panel.
+Date filter aligned with the doctor Round 1 probe (2026-06-22).
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from aletheia.utils.dt import parse_utc_instant
 from aletheia.data.symbols import to_canonical
 from aletheia.analytics.holding_time import holding_hours
 
-# Keep in sync with aletheia/server/routes/analytics.py _ROUND1_START_UTC
+# Keep in sync with diagnostics/probes/trading.py _probe_round1
 _SINCE_UTC = "2026-06-22"
 
 

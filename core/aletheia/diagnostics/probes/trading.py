@@ -282,8 +282,7 @@ def _probe_skip_halt(report: Report) -> None:
 def _probe_round1(report: Report) -> None:
     """Round 1 experiment progress vs Go/Kill thresholds.
 
-    Mirrors the SQL in /api/analytics/round1-progress so both surfaces share
-    one source of truth. Read-only; reports gap toward the 60-trade G6 line.
+    Read-only; reports gap toward the 60-trade G6 line.
     """
     try:
         from aletheia.storage.sqlite import get_db

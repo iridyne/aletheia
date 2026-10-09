@@ -478,20 +478,6 @@ def _analytics_instant(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _safe_pf(gross_profit: float, gross_loss: float) -> dict:
-    """Return JSON-safe profit factor payload (never float('inf'))."""
-    if gross_profit == 0 and gross_loss == 0:
-        return {"value": None, "unbounded": False}
-    if gross_loss == 0:
-        return {"value": None, "unbounded": True}
-    return {"value": round(gross_profit / gross_loss, 4), "unbounded": False}
-
-
-def _pf_fields(gross_profit: float, gross_loss: float) -> tuple[float | None, bool]:
-    pf = _safe_pf(gross_profit, gross_loss)
-    return pf["value"], bool(pf["unbounded"])
-
-
 def _policy_for_instant(epochs: list[dict], instant: str | None) -> str | None:
     decision_instant = _analytics_instant(instant)
     if decision_instant is None:
@@ -1018,136 +1004,9 @@ def get_thesis_lineage(
     }
 
 
-# --- Round 1 progress / pipeline-funnel / learning-funnel ---
+# --- pipeline-funnel / learning-funnel ---
 # Read-only observability endpoints added 2026-06-24 to make the freeze-period
 # experiment status visible without manual SQL. None of these affect AI decisions.
-
-_ROUND1_START_UTC = "2026-06-22"
-_G6_TARGET_TRADES = 60
-_PF_GO_LINE = 1.5
-_WR_GO_LINE = 50.0
-
-
-@router.get("/round1-progress")  # TODO: add response_model for OpenAPI schema (#1187)
-def get_round1_progress():
-    """Round 1 experiment progress vs the Go/Kill thresholds.
-
-    Read-only aggregation of `positions` since the Round 1 start date.
-    Designed so `aletheia doctor` and the UI share one source of truth.
-    """
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    row = db.execute(
-        "SELECT "
-        "  COUNT(*) AS closed_trades, "
-        "  COALESCE(ROUND(SUM(realized_pnl), 4), 0) AS total_realized, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) AS wins, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END), 0) AS losses, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) AS gross_profit, "
-        "  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) AS gross_loss, "
-        "  MIN(closed_at) AS first_closed_at, "
-        "  MAX(closed_at) AS last_closed_at "
-        "FROM positions WHERE status='closed' AND closed_at >= ?",
-        (_ROUND1_START_UTC,),
-    ).fetchone()
-    closed = row["closed_trades"] or 0
-    wins = row["wins"] or 0
-    gross_profit = float(row["gross_profit"] or 0)
-    gross_loss = float(row["gross_loss"] or 0)
-    win_rate = round(wins / closed * 100.0, 2) if closed else None
-    profit_factor, profit_factor_unbounded = _pf_fields(gross_profit, gross_loss)
-
-    # by_close_reason breakdown — judgement-critical: lets the UI / a Round 1
-    # reviewer distinguish AI-driven exits (stop_loss / take_profit / pi_close /
-    # manual_close / flip) from reconciler sweeps (reconciled_gone) and pre-Round
-    # bug cleanup (units_bug_cleanup). See ROUND1_JUDGMENT_PREVIEW.md §1D for
-    # why the headline PF / WR above can be dominated by non-AI events.
-    by_reason: list[dict] = []
-    for r in db.execute(
-        "SELECT close_reason, COUNT(*) n, "
-        "  COALESCE(ROUND(SUM(realized_pnl), 4), 0) net, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins "
-        "FROM positions WHERE status='closed' AND closed_at >= ? "
-        "GROUP BY close_reason ORDER BY n DESC",
-        (_ROUND1_START_UTC,),
-    ):
-        by_reason.append({
-            "close_reason": r["close_reason"],
-            "n": int(r["n"]),
-            "net_realized_pnl": float(r["net"]),
-            "wins": int(r["wins"]),
-        })
-
-    # Strict-cohort: only count AI-driven exits (skip reconciler sweeps + bug cleanups).
-    _AI_REASONS = ("stop_loss", "take_profit", "pi_close", "manual_close", "flip")
-    placeholders = ",".join("?" * len(_AI_REASONS))
-    strict = db.execute(
-        f"SELECT COUNT(*) n, "
-        f"  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins, "
-        f"  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) gp, "
-        f"  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) gl "
-        f"FROM positions WHERE status='closed' AND closed_at >= ? "
-        f"  AND close_reason IN ({placeholders})",
-        (_ROUND1_START_UTC, *_AI_REASONS),
-    ).fetchone()
-    s_n = int(strict["n"])
-    s_gp = float(strict["gp"])
-    s_gl = float(strict["gl"])
-    s_wins = int(strict["wins"])
-    strict_pf, strict_pf_unbounded = _pf_fields(s_gp, s_gl)
-    strict_wr = round(s_wins / s_n * 100.0, 2) if s_n else None
-
-    # Half-strict: drop only units_bug_cleanup (Round 1 pre-bug cleanup), keep reconciler.
-    hs = db.execute(
-        "SELECT COUNT(*) n, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins, "
-        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) gp, "
-        "  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) gl "
-        "FROM positions WHERE status='closed' AND closed_at >= ? "
-        "  AND close_reason != 'units_bug_cleanup'",
-        (_ROUND1_START_UTC,),
-    ).fetchone()
-    hs_n = int(hs["n"])
-    hs_gp = float(hs["gp"])
-    hs_gl = float(hs["gl"])
-    hs_wins = int(hs["wins"])
-    hs_pf, hs_pf_unbounded = _pf_fields(hs_gp, hs_gl)
-    hs_wr = round(hs_wins / hs_n * 100.0, 2) if hs_n else None
-
-    return {
-        "round1_start_utc": _ROUND1_START_UTC,
-        "closed_trades": closed,
-        "g6_target": _G6_TARGET_TRADES,
-        "g6_gap": max(0, _G6_TARGET_TRADES - closed),
-        "total_realized_pnl": float(row["total_realized"] or 0),
-        "wins": wins,
-        "losses": row["losses"] or 0,
-        "win_rate_pct": win_rate,
-        "wr_go_line_pct": _WR_GO_LINE,
-        "profit_factor": profit_factor,
-        "profit_factor_unbounded": profit_factor_unbounded,
-        "pf_go_line": _PF_GO_LINE,
-        "first_closed_at": row["first_closed_at"],
-        "last_closed_at": row["last_closed_at"],
-        "by_close_reason": by_reason,
-        "cohorts": {
-            "raw": {
-                "n": closed, "wr_pct": win_rate, "pf": profit_factor,
-                "pf_unbounded": profit_factor_unbounded,
-                "note": "all close_reason — judgement-noisy",
-            },
-            "half_strict": {
-                "n": hs_n, "wr_pct": hs_wr, "pf": hs_pf,
-                "pf_unbounded": hs_pf_unbounded,
-                "note": "excludes units_bug_cleanup (pre-Round bug)",
-            },
-            "strict_ai_driven": {
-                "n": s_n, "wr_pct": strict_wr, "pf": strict_pf,
-                "pf_unbounded": strict_pf_unbounded,
-                "note": f"only {','.join(_AI_REASONS)} — strongest AI-decision signal",
-            },
-        },
-    }
 
 
 @router.get("/pipeline-funnel", responses={200: {"model": PipelineFunnelResponse}})
