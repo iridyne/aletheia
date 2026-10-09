@@ -372,6 +372,57 @@ async def test_portfolio_review_missing_mark_rejects_adjustment_without_mutation
 
 
 @pytest.mark.asyncio
+async def test_unsynced_venue_stop_is_reported_and_shown_on_next_review(
+    tmp_path, monkeypatch
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="review-unsynced-stop-target",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        stop_price=90.0,
+        execution_mode="bitget_demo",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue, symbol=symbol, market_type=market_type,
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.apply_operator_adjustment",
+        lambda position_id, **_kwargs: {
+            "updated": True, "position_id": position_id, "exchange_synced": False,
+        },
+    )
+    prompts = []
+
+    async def choose_adjust(_system, user, *, schema, **_kwargs):
+        prompts.append(user)
+        return ({
+            "action": "adjust_position",
+            "target_position_id": target.id,
+            "new_stop_price": 95.0,
+            "reasoning": "tighten",
+        }, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_adjust)
+    result = await review_portfolio_state({})
+    assert result["venue_stop_synced"] is False
+
+    await review_portfolio_state({})
+    assert "venue stop was not updated; the local stop is the fallback" in prompts[1]
+
+
+@pytest.mark.asyncio
 async def test_stale_horizon_wake_does_not_restrict_open_adverse_review(
     tmp_path, monkeypatch
 ):
