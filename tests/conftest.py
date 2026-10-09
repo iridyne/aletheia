@@ -448,6 +448,11 @@ def _shutdown_scheduler_after_test():
         stop_scheduler()
     except Exception:
         pass
+    # stop_scheduler closes the sync lanes; re-arm them the way the next
+    # init_scheduler would. Deliberately not swallowed: a lane thread a test
+    # left running fails here instead of leaking into the next test (#1456).
+    from aletheia.agent_runtime.scheduler import _ensure_sync_lanes_ready
+    _ensure_sync_lanes_ready()
 
 
 @pytest.fixture(autouse=True)

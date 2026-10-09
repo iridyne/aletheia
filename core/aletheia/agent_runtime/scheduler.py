@@ -509,7 +509,13 @@ def _ensure_timeout_workers_ready() -> None:
 
 
 class _PersistentSyncTimeoutWorker:
-    """One daemon sync worker; equivalent to ``max_workers=1`` with a hard queue cap."""
+    """One daemon sync worker; equivalent to ``max_workers=1`` with a hard queue cap.
+
+    ``stop()`` + ``join()`` are the shutdown protocol (#1456): reject new work,
+    cancel queued work that has not started, then wait a bounded time for the one
+    running call. A running Python call cannot be interrupted, so ``join`` reports
+    whether it actually finished instead of pretending it did.
+    """
 
     def __init__(
         self,
@@ -522,42 +528,79 @@ class _PersistentSyncTimeoutWorker:
         self._thread: threading.Thread | None = None
         self._thread_name = thread_name
         self._pending = 0
+        self._closed = False
 
     @property
     def pending(self) -> int:
         with self._lock:
             return self._pending
 
-    def _start(self) -> None:
+    @property
+    def closed(self) -> bool:
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._thread = threading.Thread(
-                target=self._worker_main,
-                name=self._thread_name,
-                daemon=True,
-            )
-            self._thread.start()
+            return self._closed
+
+    @property
+    def thread_alive(self) -> bool:
+        with self._lock:
+            return bool(self._thread and self._thread.is_alive())
 
     def submit(self, fn) -> concurrent.futures.Future:
-        self._start()
         future: concurrent.futures.Future = concurrent.futures.Future()
+        # Admission, thread start and enqueue share one lock with stop(), so no
+        # item can land in the queue after stop() drained it.
         with self._lock:
+            if self._closed:
+                raise RuntimeError("scheduler sync timeout worker is closed")
             if self._pending >= _TIMEOUT_WORKER_CAPACITY:
                 raise RuntimeError("scheduler sync timeout queue is full")
+            try:
+                self._queue.put_nowait((fn, future))
+            except queue.Full as exc:
+                raise RuntimeError("scheduler sync timeout queue is full") from exc
             self._pending += 1
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._worker_main,
+                    name=self._thread_name,
+                    daemon=True,
+                )
+                self._thread.start()
 
         def _release(_future) -> None:
             with self._lock:
                 self._pending = max(0, self._pending - 1)
 
         future.add_done_callback(_release)
-        try:
-            self._queue.put_nowait((fn, future))
-        except queue.Full as exc:
-            future.cancel()
-            raise RuntimeError("scheduler sync timeout queue is full") from exc
         return future
+
+    def stop(self) -> None:
+        """Reject new work and cancel every queued call that has not started."""
+        queued: list[concurrent.futures.Future] = []
+        with self._lock:
+            self._closed = True
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                self._queue.task_done()
+                if item is not None:
+                    queued.append(item[1])
+            if self._thread is not None:
+                self._queue.put_nowait(None)
+        # Cancel outside the lock: the done callback re-acquires it.
+        for future in queued:
+            future.cancel()
+
+    def join(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` for the running call; True when the lane drained."""
+        with self._lock:
+            thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout=max(0.0, timeout))
+        return not thread.is_alive()
 
     def _worker_main(self) -> None:
         while True:
@@ -580,6 +623,31 @@ _sync_timeout_worker = _PersistentSyncTimeoutWorker()
 _universe_audit_timeout_worker = _PersistentSyncTimeoutWorker(
     "aletheia-universe-audit-sync"
 )
+# Bound for draining the running sync-lane calls at shutdown (#1456). It is the
+# same 5s the async timeout workers' close() joins for, and the 5s the POSIX
+# supervisor gives a backend between SIGTERM and SIGKILL on a whole-gateway stop.
+_SYNC_LANE_DRAIN_SEC = 5.0
+
+
+def _ensure_sync_lanes_ready() -> None:
+    """Re-arm lanes closed by stop_scheduler; never run two owners of one lane."""
+    global _sync_timeout_worker, _universe_audit_timeout_worker
+
+    with _timeout_workers_lock:
+        if _sync_timeout_worker.closed:
+            if _sync_timeout_worker.thread_alive:
+                raise RuntimeError(
+                    "scheduler sync lane shutdown incomplete; refusing unsafe replacement"
+                )
+            _sync_timeout_worker = _PersistentSyncTimeoutWorker()
+        if _universe_audit_timeout_worker.closed:
+            if _universe_audit_timeout_worker.thread_alive:
+                raise RuntimeError(
+                    "universe audit sync lane shutdown incomplete; refusing unsafe replacement"
+                )
+            _universe_audit_timeout_worker = _PersistentSyncTimeoutWorker(
+                "aletheia-universe-audit-sync"
+            )
 
 
 class _AsyncJobDeadline(TimeoutError):
@@ -1248,6 +1316,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     global _universe_scanner_startup_cutoff
     global _universe_scanner_startup_recovery_done
     global _universe_scanner_audit_mirror_done
+    _ensure_sync_lanes_ready()
     if _universe_scanner_startup_cutoff is None:
         _universe_scanner_startup_cutoff = datetime.now(timezone.utc).isoformat()
     if not _universe_scanner_startup_recovery_done:
@@ -1714,16 +1783,40 @@ def init_scheduler() -> BackgroundScheduler | None:
     return _scheduler
 
 
-def stop_scheduler() -> None:
+def stop_scheduler() -> bool:
+    """Stop APScheduler and the timeout lanes it owns.
+
+    Returns True only when both sync lanes drained (#1456): new sync work is
+    rejected, queued work is cancelled, and the running call gets a shared
+    ``_SYNC_LANE_DRAIN_SEC``. False means a call is still running, so the caller
+    must not record a clean shutdown.
+    """
     global _scheduler
     scheduler = _scheduler
     _scheduler = None
+    lanes = {
+        "sync": _sync_timeout_worker,
+        "universe_audit_sync": _universe_audit_timeout_worker,
+    }
     try:
         if scheduler:
             scheduler.shutdown(wait=False)
     finally:
+        for lane in lanes.values():
+            lane.stop()
+        deadline = time.monotonic() + _SYNC_LANE_DRAIN_SEC
         _async_timeout_worker.close()
         _news_analyzer_timeout_worker.close()
+    undrained = [
+        name for name, lane in lanes.items()
+        if not lane.join(deadline - time.monotonic())
+    ]
+    if undrained:
+        logger.warning(
+            "scheduler stop: sync lane(s) %s still running after %.0fs; shutdown is not clean",
+            ",".join(undrained), _SYNC_LANE_DRAIN_SEC,
+        )
+    return not undrained
 
 
 def pause_scheduler(layered: bool | None = None) -> None:

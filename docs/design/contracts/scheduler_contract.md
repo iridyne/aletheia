@@ -14,7 +14,7 @@
 | 函数（`core/aletheia/agent_runtime/scheduler.py`） | 说明 |
 |---|---|
 | `init_scheduler()` | 构造 `BackgroundScheduler`、注册全部 job、调用 `_scheduler.start()` |
-| `stop_scheduler()` | `_scheduler.shutdown(wait=False)` → 置 `_scheduler = None` |
+| `stop_scheduler()` | `_scheduler.shutdown(wait=False)` → 置 `_scheduler = None` → 关闭并有界排空两条 sync lane；返回 `bool`（两条 lane 是否已排空，见 §6） |
 | `pause_scheduler()` | APScheduler `pause()`；job 不再派发，但不销毁注册表 |
 | `resume_scheduler()` | 若 `_scheduler is None` 则按需重建；否则 `_scheduler.resume()` |
 
@@ -357,23 +357,26 @@ PRAGMA wal_autocheckpoint=1000
 
 ## §6 关停协议
 
-`stop_scheduler()`：
+`stop_scheduler() -> bool`（#1456，owner 2026-10-09 决定：停止接新任务 → 取消未开始的 →
+等正在跑的（有界时间）→ 再记干净退出）：
 
-```python
-def stop_scheduler() -> None:
-    global _scheduler
-    if _scheduler:
-        _scheduler.shutdown(wait=False)   # 不等待 running jobs 完成
-        _scheduler = None
-    _async_timeout_worker.close()
-    _news_analyzer_timeout_worker.close()
-```
+1. APScheduler `shutdown(wait=False)`，置 `_scheduler = None`，不再派发新 job。
+2. 两条 sync lane（ordinary 与 Universe audit）各自 `stop()`：此后 `submit()` 抛
+   `RuntimeError("... closed")`；队列中尚未开始的 future 全部 `cancel()`，永不执行。
+3. 关闭两条 async worker（行为同前：取消并 gather pending task、关闭 async generator，default
+   executor 最多 4 秒收尾，owner thread 5 秒 join 上限）。
+4. 两条 sync lane 共享一个 `_SYNC_LANE_DRAIN_SEC = 5` 秒的截止时间，等待正在运行的那一个调用
+   自然结束。5 秒取自现有上限：async worker `close()` 的 join 上限，以及 POSIX supervisor
+   在整机 stop 时从 SIGTERM 到 SIGKILL 给 backend 的宽限。Python 无法强杀运行中的线程，超时
+   后该线程只能自行返回或随进程退出。
+5. 返回值：两条 lane 都已排空才为 `True`；否则记 warning 并返回 `False`。
 
-APScheduler 使用 `wait=False`，不等待其 executor 中的 running job。两条常驻 async worker 收到
-loop stop 后会取消并 gather pending task、关闭 async generator，再给 default executor 最多 4 秒
-完成收尾；整个 owner thread 仍使用 5 秒 join 上限。已经运行且不响应取消的 executor thread 无法
-被 Python 强杀：超出 4 秒会发出 `RuntimeWarning`，该 thread 只能等自身返回或随进程退出。固定
-sync worker 同样是 daemon，非协作调用不会产生第二条替代线程。
+lifespan 只在 `reached_yield and stop_scheduler() 返回 True` 时调用
+`end_runtime_session(clean=True)`；否则记 `shutdown_clean=0`。
+
+重新 `init_scheduler()` 前先 `_ensure_sync_lanes_ready()`：已关闭的 lane 只有在旧线程确认结束
+后才替换为新 lane；旧线程仍在运行时 fail closed（抛 `RuntimeError`），同一 lane 永远不会同时
+有两个 owner。
 
 `pause_scheduler(layered=True)` 只暂停非 essential job；`resume_scheduler()` 恢复这些选择性暂停项。`layered=False`
 才暂停/恢复 APScheduler 整体派发循环。两种模式都不修改已注册的 job 表。
