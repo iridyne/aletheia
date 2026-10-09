@@ -41,6 +41,12 @@ name, persuasive chart, community example, or Paper result is not Alpha proof.
 9. [Technical-Context Evaluation Protocol](09_technical_context_evaluation_protocol.md)
    turns context selection into an offline paired evaluation followed, only if
    admitted, by Shadow integrity and Paper economic stages.
+10. [Alpha Sources First-Principles Review — 2026-10-09](10_alpha_sources_first_principles_review_2026-10-09.md)
+   judges the three proposed alpha sources (instrument selection, thesis type,
+   SMC/price-action geometry) on mechanism, evidence, cost-and-horizon fit and
+   our own data. Geometry cannot create expectancy from zero drift; none of the
+   three has net-of-cost evidence; three cheapest decisive tests are listed.
+   Evidence only, not an approved strategy change.
 
 ## Shared vocabulary rule
 
