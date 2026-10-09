@@ -88,3 +88,38 @@ def test_runtime_retirement_resolves_env_backup_and_allows_null_artifact(tmp_pat
 
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not set(migrations._RETIRED_RUNTIME_TABLES) & tables
+
+
+def test_retire_experiment_schema_cli_refuses_unverifiable_live_gateway_pid(tmp_path, monkeypatch):
+    """#3884: a live PID whose identity cannot be read is not a proven stop."""
+    import contextlib
+    import os
+
+    from typer.testing import CliRunner
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.cli.runtime_cmd import runtime_app
+    from aletheia.gateway import pidfile
+    from ops.update import auto
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    pidfile.pid_path().write_text(str(os.getppid()), encoding="utf-8")
+    monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: None)
+    monkeypatch.setattr(pidfile, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(auto, "_deployment_lock", lambda: contextlib.nullcontext(True))
+    reached = []
+
+    def acquire_write_lock(*_args, **_kwargs):
+        reached.append(True)
+        raise RuntimeError("write lock reached")
+
+    monkeypatch.setattr(sq, "acquire_write_lock", acquire_write_lock)
+    backup = tmp_path / "backup.tar.gz"
+    backup.write_bytes(b"")
+
+    result = CliRunner().invoke(runtime_app, ["retire-experiment-schema", "--backup", str(backup)])
+
+    assert reached == []
+    assert result.exit_code == 1, result.output
+    assert "Retirement rejected" in result.output

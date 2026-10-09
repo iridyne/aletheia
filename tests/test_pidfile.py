@@ -405,3 +405,22 @@ def test_resolve_real_python_case_a_venv_shim_resolves_to_base(tmp_path, monkeyp
     real_python, env_patch = pidfile._resolve_real_python()
     assert real_python == str(realpy_dir / "python.exe")
     assert env_patch.get("__PYVENV_LAUNCHER__") == str(shim.resolve())
+
+
+def test_gateway_proven_stopped_rejects_unverifiable_live_pid(tmp_path, monkeypatch):
+    """#3884: only an absent pidfile or a dead/foreign PID proves the gateway stopped."""
+    import os
+
+    setup_data(tmp_path, monkeypatch)
+    from aletheia.gateway import pidfile
+
+    assert pidfile.gateway_proven_stopped() is True
+
+    pidfile.pid_path().write_text(str(os.getppid()), encoding="utf-8")
+    monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: None)
+    assert pidfile.gateway_proven_stopped() is False
+    assert pidfile.read_pid() == os.getppid()
+
+    monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: "python -m pytest")
+    assert pidfile.gateway_proven_stopped() is True
+    assert pidfile.read_pid() is None
