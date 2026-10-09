@@ -19,6 +19,7 @@ from aletheia.config.exchanges import (
     is_live_execution_mode,
 )
 from aletheia.config.loader import load_config
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.price_feed import (
     get_fresh_mark_for_protective_close,
     get_fresh_price_for_protective_close,
@@ -460,6 +461,26 @@ def reduce_position_routed(position_id: str, reduce_qty: float, reason: str = "o
             "attributable Proposal, RiskDecision, confirmed fill, and TP/SL resync"
         ),
     }
+
+
+def _position_age_hours(position: dict, now: datetime) -> float | None:
+    """Holding age in hours; None when ``opened_at`` is missing or malformed.
+
+    A corrupt future ``opened_at`` reads as age 0 and is logged, never as a
+    negative age (#1599).
+    """
+    opened = parse_utc_strict(position.get("opened_at"))
+    if opened is None:
+        return None
+    age_hours = (now - opened).total_seconds() / 3600.0
+    if age_hours < 0:
+        if -age_hours > MAX_FUTURE_SKEW.total_seconds() / 3600.0:
+            logger.warning(
+                "position_manager: position %s has future opened_at %s; age read as 0",
+                position.get("id"), position.get("opened_at"),
+            )
+        return 0.0
+    return age_hours
 
 
 def parse_utc_strict(value: str | None) -> datetime | None:
@@ -939,11 +960,9 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     else:
         hard_hold = school_max
     if hard_hold and hard_hold > 0:
-        opened = parse_utc_strict(position.get("opened_at"))
-        if opened is not None:
-            age_hours = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
-            if age_hours >= hard_hold:
-                return "max_hold", price
+        age_hours = _position_age_hours(position, datetime.now(timezone.utc))
+        if age_hours is not None and age_hours >= hard_hold:
+            return "max_hold", price
 
     # Thesis-invalidation exit (serenity only): default auto-close (D5 option 2). When
     # thesis_auto_close is disabled, the loop wakes the Operator to review/veto instead
@@ -1105,10 +1124,9 @@ def _rearm_due_horizon_review(
             horizon = float(horizon) if horizon is not None else None
         except (TypeError, ValueError):
             horizon = None
-        opened = parse_utc_strict(current.get("opened_at"))
-        if not horizon or not math.isfinite(horizon) or horizon <= 0 or opened is None:
+        age_hours = _position_age_hours(current, evaluated_at)
+        if not horizon or not math.isfinite(horizon) or horizon <= 0 or age_hours is None:
             return None
-        age_hours = (evaluated_at - opened).total_seconds() / 3600.0
         if age_hours < horizon:
             return None
 
@@ -1169,12 +1187,9 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = None
     if not horizon or not math.isfinite(horizon) or horizon <= 0:
         return False
-    opened = parse_utc_strict(position.get("opened_at"))
-    if opened is None:
-        return False
     evaluated_at = datetime.now(timezone.utc)
-    age_hours = (evaluated_at - opened).total_seconds() / 3600.0
-    if age_hours < horizon:
+    age_hours = _position_age_hours(position, evaluated_at)
+    if age_hours is None or age_hours < horizon:
         return False
     if position.get("horizon_wake_sent_at"):
         position = _rearm_due_horizon_review(
@@ -1186,10 +1201,9 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = float(position["expected_horizon_hours"])
         if not math.isfinite(horizon) or horizon <= 0:
             return False
-        opened = parse_utc_strict(position.get("opened_at"))
-        if opened is None:
+        age_hours = _position_age_hours(position, evaluated_at)
+        if age_hours is None:
             return False
-        age_hours = (evaluated_at - opened).total_seconds() / 3600.0
 
     try:
         import time
@@ -1800,15 +1814,12 @@ def apply_operator_adjustment(
         if validated_horizon is None:
             return {"error": "invalid_new_horizon", "position_id": position_id}
         new_horizon = validated_horizon
-        opened_at = parse_utc_strict(pos.get("opened_at"))
-        if opened_at is None:
+        position_age_hours = _position_age_hours(pos, datetime.now(timezone.utc))
+        if position_age_hours is None:
             return {
                 "error": "position_age_unavailable",
                 "position_id": position_id,
             }
-        position_age_hours = (
-            datetime.now(timezone.utc) - opened_at
-        ).total_seconds() / 3600.0
         if new_horizon <= position_age_hours:
             return {
                 "error": "new_horizon_not_in_future",
