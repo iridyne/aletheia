@@ -1,6 +1,5 @@
 """Focused regressions for learning-loop contamination/dead-feedback fixes (B5a).
 
-#157 render_calibration_for_pi must not crash on a numeric ECE (broken f-string).
 #159 guard promotion/effectiveness must drop synthetic-close + pre-clean-window rows.
 """
 
@@ -9,15 +8,6 @@ from datetime import datetime
 from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 
 _ANCHOR = datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO)
-
-
-def test_render_calibration_does_not_crash_on_numeric_ece():
-    from extensions.analytics.confidence_calibration import render_calibration_for_pi
-    out = render_calibration_for_pi({"ece": 0.123, "ece_grade": "B", "total_executed": 12})
-    assert "Conviction Calibration" in out
-    assert "0.123" in out                       # numeric ECE renders (previously raised ValueError)
-    assert "0.000" in render_calibration_for_pi({"ece": 0.0, "total_executed": 5})
-    assert "?" in render_calibration_for_pi({"ece": None, "total_executed": 0})   # missing → "?"
 
 
 def test_guard_clean_rows_drops_synthetic_and_pre_floor():

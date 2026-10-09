@@ -22,19 +22,10 @@ def test_candidate_supply_drought_requires_two_consecutive_low_cycles():
     assert evaluate_candidate_supply_drought([latest_normal, previous_low]) is None
 
 
-def test_candidate_supply_drought_uses_excluded_summary_main_reason():
-    from aletheia.analytics.candidate_supply import (
-        build_candidate_supply_snapshot,
-        evaluate_candidate_supply_drought,
-    )
+def test_candidate_supply_drought_reports_recent_main_reason():
+    from aletheia.analytics.candidate_supply import evaluate_candidate_supply_drought
 
-    payload = build_candidate_supply_snapshot(
-        executable_candidates=[{"symbol": "OK/USDT"}],
-        excluded_candidates_summary=[
-            {"reason": "guard_blocked", "count": 1},
-            {"reason": "ttl_expired", "count": 4},
-        ],
-    )
+    payload = {"executable_count": 1, "main_reason": "ttl_expired"}
     events = [
         {
             "id": "cycle-2",

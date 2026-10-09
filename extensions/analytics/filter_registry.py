@@ -743,10 +743,6 @@ def report_only_filters() -> tuple[FilterSpec, ...]:
     return tuple(f for f in FILTER_REGISTRY if not f.auto_tunable)
 
 
-def filters_by_stage(stage: str) -> tuple[FilterSpec, ...]:
-    return tuple(f for f in FILTER_REGISTRY if f.stage == stage)
-
-
 def filter_by_name(name: str) -> FilterSpec | None:
     for f in _HISTORICAL_FILTER_REGISTRY:
         if f.name == name:

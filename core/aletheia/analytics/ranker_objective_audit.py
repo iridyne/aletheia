@@ -796,11 +796,6 @@ def _available(rows: list[dict], predicate) -> dict:
     return {"available": count, "unavailable": len(rows) - count}
 
 
-def _admission_effects(rows: list[dict]) -> dict:
-    counts = Counter(row["admission_reason"] for row in rows if row["admission_reason"] in _ADMISSION_REASONS)
-    return {reason: counts.get(reason, 0) for reason in sorted(_ADMISSION_REASONS)}
-
-
 def _exclusions(rows: list[dict]) -> dict:
     return {
         "missing_trade_score": sum(row.get("trade_score") is None for row in rows),

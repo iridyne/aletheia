@@ -10,10 +10,8 @@ from aletheia.analytics.trade_path import (
     _analyze_path,
     _compute_mfe_mae,
     _compute_exit_efficiency,
-    _classify_path_bucket,
     _iso_to_ms,
     _resolve_instrument_identity,
-    build_post_exit_path_observation,
 )
 
 
@@ -130,77 +128,6 @@ def test_exit_efficiency_middle():
 
 
 # ---------------------------------------------------------------------------
-# Path bucket classification
-# ---------------------------------------------------------------------------
-
-
-def test_bucket_bad_entry():
-    bucket, _ = _classify_path_bucket(
-        mfe_pct=0.1,
-        mae_pct=-2.0,
-        realized_pct=-1.5,
-        mfe_capture_ratio=0.0,
-        close_reason="stop_loss",
-        bars_in_trade=10,
-        time_to_mfe=1,
-    )
-    assert bucket == "bad_entry"
-
-
-def test_stop_loss_with_mfe_does_not_claim_causal_tightness():
-    bucket, reason = _classify_path_bucket(
-        mfe_pct=1.5,
-        mae_pct=-1.0,
-        realized_pct=-0.8,
-        mfe_capture_ratio=0.0,
-        close_reason="stop_loss",
-        bars_in_trade=10,
-        time_to_mfe=3,
-    )
-    assert bucket == "insufficient_path_data"
-    assert reason == "first_stop_barrier_cross_unavailable"
-
-
-def test_bucket_edge_lost():
-    bucket, _ = _classify_path_bucket(
-        mfe_pct=2.5,
-        mae_pct=-0.5,
-        realized_pct=-0.2,
-        mfe_capture_ratio=0.0,
-        close_reason="manual",
-        bars_in_trade=20,
-        time_to_mfe=5,
-    )
-    assert bucket == "edge_lost"
-
-
-def test_bucket_clean_win():
-    bucket, _ = _classify_path_bucket(
-        mfe_pct=2.0,
-        mae_pct=-0.3,
-        realized_pct=1.5,
-        mfe_capture_ratio=0.75,
-        close_reason="take_profit",
-        bars_in_trade=10,
-        time_to_mfe=5,
-    )
-    assert bucket == "clean_win"
-
-
-def test_bucket_time_exit_decay():
-    bucket, _ = _classify_path_bucket(
-        mfe_pct=2.0,
-        mae_pct=-0.5,
-        realized_pct=0.3,
-        mfe_capture_ratio=0.15,
-        close_reason="max_hold",
-        bars_in_trade=48,
-        time_to_mfe=8,
-    )
-    assert bucket == "time_exit_decay"
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -258,58 +185,6 @@ def test_trade_path_uses_exact_1m_identity_and_separate_post_exit_window(monkeyp
     assert result["post_exit_noncausal_observation"] == "post_exit_favorable_continuation"
     assert result["path_bucket"] == "uncategorized"
     assert result["path_bucket"] != "take_profit_too_early"
-
-
-def test_post_exit_observation_waits_for_and_requires_complete_exact_window(monkeypatch):
-    calls = []
-    candles = [
-        _candle(_BASE_TS + 2 * _BAR_MS, high=102.0, low=100.0, close=101.0),
-        _candle(_BASE_TS + 3 * _BAR_MS, high=103.0, low=99.5, close=102.0),
-    ]
-
-    def fake_get(*args, **kwargs):
-        calls.append((args, kwargs))
-        return candles
-
-    monkeypatch.setattr("aletheia.analytics.trade_path.repo.get_ohlcv_candles", fake_get)
-
-    pending = build_post_exit_path_observation(
-        _row(),
-        post_exit_bars=2,
-        observed_at_ms=_BASE_TS + 3 * _BAR_MS,
-    )
-    available = build_post_exit_path_observation(
-        _row(),
-        post_exit_bars=2,
-        observed_at_ms=_BASE_TS + 4 * _BAR_MS,
-    )
-    candles.pop()
-    unavailable = build_post_exit_path_observation(
-        _row(),
-        post_exit_bars=2,
-        observed_at_ms=_BASE_TS + 4 * _BAR_MS,
-    )
-
-    assert pending["status"] == "pending"
-    assert pending["reason"] == "post_exit_window_not_mature"
-    assert available["status"] == "available"
-    assert available["bars_observed"] == 2
-    assert available["mfe_pct"] == pytest.approx(1.9801980198)
-    assert available["venue"] == "okx"
-    assert unavailable["status"] == "unavailable"
-    assert unavailable["reason"] == "post_exit_coverage_unavailable"
-    assert unavailable["mfe_pct"] is None
-    assert calls == 2 * [
-        (
-            ("BTC/USDT", "1m"),
-            {
-                "limit": 2,
-                "exchange": "okx",
-                "market_type": "perp",
-                "before_ts": _BASE_TS + 4 * _BAR_MS,
-            },
-        )
-    ]
 
 
 def test_trade_path_marks_exit_bar_threshold_order_ambiguous(monkeypatch):

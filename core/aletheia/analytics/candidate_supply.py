@@ -8,34 +8,11 @@ risk, proposals, or execution.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any
 
 CANDIDATE_SUPPLY_FLOOR = 3
 CANDIDATE_SUPPLY_REQUIRED_CYCLES = 2
 EVENT_TYPE = "candidate_supply_snapshot"
-
-
-def build_candidate_supply_snapshot(
-    *,
-    executable_candidates: list[dict[str, Any]] | None,
-    excluded_candidates_summary: list[dict[str, Any]] | None,
-    floor: int = CANDIDATE_SUPPLY_FLOOR,
-    required_cycles: int = CANDIDATE_SUPPLY_REQUIRED_CYCLES,
-) -> dict[str, Any]:
-    executable = executable_candidates or []
-    excluded = excluded_candidates_summary or []
-    executable_count = len(executable)
-    main_reason = _main_reason(excluded, executable_count)
-    return {
-        "executable_count": executable_count,
-        "floor": max(1, int(floor or CANDIDATE_SUPPLY_FLOOR)),
-        "below_floor": executable_count < max(1, int(floor or CANDIDATE_SUPPLY_FLOOR)),
-        "required_consecutive_cycles": max(1, int(required_cycles or CANDIDATE_SUPPLY_REQUIRED_CYCLES)),
-        "main_reason": main_reason,
-        "excluded_candidates_summary": excluded,
-        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
 
 
 def evaluate_candidate_supply_drought(
@@ -82,16 +59,6 @@ def _candidate_supply_snapshots(events: list[dict[str, Any]]) -> list[dict[str, 
     ]
     rows.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
     return rows
-
-
-def _main_reason(excluded: list[dict[str, Any]], executable_count: int) -> str:
-    if not excluded:
-        return "no_candidates" if executable_count <= 0 else "insufficient_executable_candidates"
-    best = max(
-        excluded,
-        key=lambda row: int(row.get("count") or 0),
-    )
-    return str(best.get("reason") or "unknown")
 
 
 def _dominant_recent_reason(payloads: list[dict[str, Any]]) -> str:

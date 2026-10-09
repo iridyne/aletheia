@@ -238,35 +238,6 @@ def get_latest_calibration_report(
         return None
 
 
-def render_calibration_for_pi(report: dict) -> str:
-    """Render compact text for System Operator Layer 2 prompt injection."""
-    ece = report.get("ece")
-    grade = report.get("ece_grade", "?")
-    total = report.get("total_executed", 0)
-    # #157: the ECE format must be precomputed — `{ece:.3f if ece else '?'}` is an
-    # invalid format spec that raised ValueError on every real (numeric-ece) report,
-    # which the caller silently swallowed, killing the calibration feedback entirely.
-    ece_str = f"{ece:.3f}" if isinstance(ece, (int, float)) else "?"
-    lines = [f"\n## Conviction Calibration ({total} executed trades, ECE={ece_str} {grade})"]
-    lines.append(report.get("calibration_summary", ""))
-
-    overconf = report.get("overconfident_buckets", [])
-    if overconf:
-        lines.append(f"Recalibrate DOWN for high-conviction calls: {', '.join(overconf)} conviction → actual win rate is lower than stated.")
-
-    underconf = report.get("underconfident_buckets", [])
-    if underconf:
-        lines.append(f"Trust your lower-conviction signals more: {', '.join(underconf)} conviction → outperforming stated probability.")
-
-    for b in report.get("buckets", []):
-        if b["reliable"]:
-            lines.append(
-                f"  {b['conviction_range']} conviction: {b['actual_win_rate']*100:.0f}% actual vs {b['expected_win_rate']*100:.0f}% expected ({b['sample_size']} trades)"
-            )
-
-    return "\n".join(lines)
-
-
 def compute_calibration_score() -> float | None:
     """Return 0-100 score for go-live scorecard. 100=perfect, degrades with ECE."""
     report = get_latest_calibration_report()

@@ -1157,12 +1157,6 @@ def _event(
     }
 
 
-def _guard_reason(row: dict[str, Any]) -> str:
-    guards = row.get("matched_guards") or []
-    ids = [str(g.get("guard_id")) for g in guards if g.get("guard_id")]
-    return f"Blocked by active guard(s): {', '.join(ids)}" if ids else "Blocked by active guard."
-
-
 def _order_executed(order: dict[str, Any]) -> bool:
     status = str(order.get("status") or "").lower()
     return status in {"filled", "executed"} or bool(order.get("filled_at"))

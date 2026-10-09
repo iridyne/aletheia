@@ -6,7 +6,6 @@ from extensions.analytics.trade_case_builder import (
     _build_case_from_row,
     _render_case_body,
     _build_tags,
-    _opened_after,
     _is_synthetic_closure,
     detect_guard_candidates,
     build_case_studies,
@@ -151,19 +150,6 @@ class TestBuildTags:
         case = _build_case_from_row(row)
         tags = _build_tags(case)
         assert "wide-spread" in tags
-
-
-class TestOpenedAfter:
-    def test_after_cutoff(self):
-        assert _opened_after({"opened_at": "2026-06-14T00:00:00+00:00"}, 0) is True
-
-    def test_before_cutoff(self):
-        from datetime import datetime, timezone
-        future = datetime(2030, 1, 1, tzinfo=timezone.utc).timestamp()
-        assert _opened_after({"opened_at": "2026-06-14T00:00:00+00:00"}, future) is False
-
-    def test_missing_opened_at(self):
-        assert _opened_after({}, 0) is False
 
 
 class TestDetectGuardCandidates:

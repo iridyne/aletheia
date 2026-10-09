@@ -56,39 +56,6 @@ def test_news_publication_time_does_not_invent_or_accept_future_time():
     ) == (now - timedelta(minutes=1)).replace(microsecond=0).isoformat()
 
 
-def test_batch_news_revalidates_historical_matches_and_requires_analyzed_relevance(
-    tmp_path, monkeypatch,
-):
-    _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.repositories import batch_news
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    rows = [
-        ("false-positive", "New solution improves adoption", "SOL/USDT", "analyzed", 0.99),
-        ("not-analyzed", "Solana upgrade ships", "SOL/USDT", "new", 0.99),
-        ("low-relevance", "SOL market brief", "SOL/USDT", "analyzed", 0.59),
-        ("exact", "Solana network demand rises", "SOL/USDT", "analyzed", 0.60),
-    ]
-    db.executemany(
-        "INSERT INTO news_items "
-        "(id, title, source, summary, content, published_at, symbols_mentioned, status, relevance_score) "
-        "VALUES (?, ?, 'fixture', '', '', '2026-07-19T00:00:00Z', ?, ?, ?)",
-        rows,
-    )
-    db.execute(
-        "INSERT INTO news_items "
-        "(id, title, source, summary, content, published_at, symbols_mentioned, status, relevance_score) "
-        "VALUES ('future', 'Solana future bulletin', 'fixture', '', '', "
-        "'2099-01-01T00:00:00Z', 'SOL/USDT', 'analyzed', 0.99)"
-    )
-    db.commit()
-
-    result = batch_news(["SOL/USDT"], "2026-07-18T00:00:00Z")
-
-    assert [row["id"] for row in result["SOL/USDT"]] == ["exact"]
-
-
 @pytest.mark.asyncio
 async def test_analyzer_first_failure_schedules_retry_without_marking_analyzed(
     tmp_path, monkeypatch,

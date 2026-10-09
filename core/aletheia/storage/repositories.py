@@ -747,20 +747,6 @@ def list_opportunities_for_instrument(
     )
 
 
-def list_open_opportunities(limit: int = 50) -> list[dict]:
-    """Return a bounded FIFO working set without reviewed-history crowd-out.
-
-    Oldest-first ordering guarantees repeated bounded runs advance an existing
-    backlog even while newer Opportunities continue to arrive.
-    """
-    return _select_all(
-        "opportunities",
-        where="status = 'open'",
-        order="created_at ASC, rowid ASC",
-        limit=limit,
-    )
-
-
 _OPEN_TRADE_ASSET_PREDICATE = """
 COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')
 AND COALESCE(execution_eligible, 1)=1
@@ -1835,24 +1821,6 @@ def list_positions_for_path_observation_recovery() -> list[dict]:
         f"AND {_POSITION_PATH_EXECUTION_SCOPE_SQL} ORDER BY p.rowid DESC"
     ).fetchall()
     return [dict(row) for row in rows]
-
-
-def list_strategy_positions(strategy_id: str, status: str | None = None, limit: int = 1000) -> list[dict]:
-    if status:
-        return _select_all(
-            "positions",
-            where="strategy_id = ? AND status = ?",
-            params=(strategy_id, status),
-            order="COALESCE(closed_at, opened_at) ASC",
-            limit=limit,
-        )
-    return _select_all(
-        "positions",
-        where="strategy_id = ?",
-        params=(strategy_id,),
-        order="COALESCE(closed_at, opened_at) ASC",
-        limit=limit,
-    )
 
 
 def list_closed_positions(
@@ -6379,50 +6347,3 @@ def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None
             limit=1,
         )
     return rows[0] if rows else None
-
-def latest_options_structure(symbol: str) -> dict | None:
-    rows = _select_all(
-        "options_market_structure_snapshots",
-        where="symbol = ?",
-        params=(symbol,),
-        order="observed_at DESC",
-        limit=1,
-    )
-    return rows[0] if rows else None
-
-
-def batch_news(
-    symbols: list[str],
-    since_iso: str,
-    limit_per_symbol: int = 3,
-) -> dict[str, list[dict]]:
-    """Return exact, analyzed, relevant news grouped by requested symbol.
-
-    Historical ``symbols_mentioned`` values are hints only. Every row is
-    revalidated against article text so old substring false positives cannot
-    re-enter Observer context.
-    """
-    if not symbols:
-        return {}
-    from aletheia.data.news_entities import news_matches_symbol
-
-    db = get_db()
-    now_iso = datetime.now(timezone.utc).isoformat()
-    rows = db.execute(
-        "SELECT id, title, source, summary, content, published_at, symbols_mentioned, "
-        "relevance_score, analyzed_at FROM news_items "
-        "WHERE status = 'analyzed' AND relevance_score >= 0.6 "
-        "AND datetime(published_at) > datetime(?) "
-        "AND datetime(published_at) <= datetime(?) "
-        "ORDER BY published_at DESC LIMIT 500",
-        (since_iso, now_iso),
-    ).fetchall()
-    result: dict[str, list] = {s: [] for s in symbols}
-    for row in rows:
-        item = dict(row)
-        for sym in symbols:
-            if len(result[sym]) >= limit_per_symbol:
-                continue
-            if news_matches_symbol(sym, item.get("title"), item.get("summary"), item.get("content")):
-                result[sym].append(item)
-    return result
