@@ -80,7 +80,7 @@ _RAW_POSITION_UPDATE_ALLOWED = {
 _POSITION_WRITER_CALLERS = {
     "insert_position": {"execution/exchange_materialization.py", "portfolio/position_reconciler.py"},
     "update_open_position_materialization": {"execution/exchange_materialization.py", "portfolio/position_reconciler.py"},
-    "update_open_position_exit_plan": {"execution/coordinator.py", "execution/exchange_materialization.py", "portfolio/exit_plan.py", "portfolio/position_manager.py", "portfolio/position_reconciler.py"},
+    "update_open_position_exit_plan": {"execution/coordinator.py", "execution/exchange_materialization.py", "portfolio/exit_plan.py", "portfolio/native_protection.py", "portfolio/position_manager.py", "portfolio/position_reconciler.py"},
     "update_open_position_observation": {"portfolio/exit_plan.py", "portfolio/pnl.py", "portfolio/position_manager.py"},
     "claim_position_close": {"execution/coordinator.py", "execution/exchange_materialization.py"},
     "update_position_close_claim": {"execution/exchange_materialization.py", "execution/pending_close_recovery.py", "portfolio/position_manager.py", "storage/repositories.py"},

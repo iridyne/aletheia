@@ -109,3 +109,41 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     # Live modes (okx_live_limited / binance_live_limited): deliberately no-op —
     # placing an exchange order from an autonomous trail update is forbidden.
     return False
+
+
+# Two tpsl_fill_check cycles (90s): time for an accepted entry's attached preset
+# to be readable before its absence is treated as proven (#3848).
+PROTECTION_GRACE_SECONDS = 180
+
+
+def classify_native_protection(position: dict, legs, *, now) -> tuple[str, dict[str, str] | str]:
+    """Judge one Position against a complete read of its symbol's venue SL/TP legs.
+
+    Returns ``("verified", {"sl": id[, "tp": id]})``, ``("unverified", reason)`` when
+    the venue state is real but not provably this Position's full stop, or
+    ``("absent", reason)`` only when no venue stop exists past the grace window.
+    A take-profit alone is not protection.
+    """
+    from datetime import datetime, timezone
+
+    side = "long" if position["direction"] in {"long", "buy"} else "short"
+    mine = [leg for leg in legs if leg.position_side == side]
+    stops = [leg for leg in mine if leg.kind == "sl"]
+    stop_ids = {leg.plan_order_id for leg in stops}
+    take_ids = {leg.plan_order_id for leg in mine if leg.kind == "tp"}
+    if len(stop_ids) > 1:
+        return "unverified", "native_protection_ambiguous"
+    if stop_ids:
+        quantity = float(position["quantity"])
+        if any(leg.quantity is not None and float(leg.quantity) < quantity * (1 - 1e-9) for leg in stops):
+            return "unverified", "native_protection_partial"
+        ids = {"sl": next(iter(stop_ids))}
+        if len(take_ids) == 1:
+            ids["tp"] = next(iter(take_ids))
+        return "verified", ids
+    opened = datetime.fromisoformat(str(position["opened_at"]).replace("Z", "+00:00"))
+    if opened.tzinfo is None:
+        opened = opened.replace(tzinfo=timezone.utc)
+    if (now - opened).total_seconds() < PROTECTION_GRACE_SECONDS:
+        return "unverified", "native_protection_pending"
+    return "absent", "native_protection_absent"

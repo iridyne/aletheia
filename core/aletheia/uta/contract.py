@@ -15,6 +15,7 @@ from aletheia.uta.models import (
     FundingLedgerReport,
     ModifyOrderCommand,
     NativeProtectionHistory,
+    NativeProtectionOpenOrders,
     OrderListReport,
     OrderQuery,
     OrderQueryReport,
@@ -39,6 +40,10 @@ class NativeProtectionReader(Protocol):
     identity: UTAAccountIdentity
 
     async def get_plan_order_history(self, *, order_id: str) -> NativeProtectionHistory: ...
+
+    async def get_open_protection(
+        self, *, symbol: str, market_type: str,
+    ) -> NativeProtectionOpenOrders: ...
 
     async def get_order_fill_reports(
         self, *, order_id: str, symbol: str, market_type: str, identity: UTAAccountIdentity,

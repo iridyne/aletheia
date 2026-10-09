@@ -211,7 +211,9 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | SL / TP | 使用 Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `place_protection` |
 | 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `extensions/exchanges/{venue}/profile.py` |
 | 持久化 | 仅已确认的 venue IDs 写入 position.exchange_tpsl_order_id；未决 child 保留 | `execution/coordinator.py` |
-| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功 | `replace_protective_stop` |
+| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功；撤单确认后新 stop 提交失败时删除持久化的 `sl` id(交易所侧已无该单),交由下方回读判定;SL/TP 共用同一策略单时撤 SL 同时删除 `tp` id | `replace_protective_stop` |
+| 入场附带保护回读(#3848 owner D1, 2026-10-09) | Bitget futures 入场以 preset 携带已批准的 SL/TP,受理回执不含其 id。`tpsl_fill_check` 每轮先读取 venue 未成交策略单(UTA `unfilled-strategy-orders`),只把**同账户、同方向、恰好一个**的 SL(以及恰好一个的 TP)id 写入 `exchange_tpsl_order_id`,并写 `native_protection_verified` 审计(含 venue 触发价);SL/TP 可能共用同一 id,其触发按成交均价最近的触发价归因为 `stop_loss` / `take_profit` | `portfolio/native_protection.py`、`execution/stops.py::classify_native_protection` |
+| 保护缺失即平仓(#3848 owner D1) | 仅当 venue 读取**完整**且仓位开仓超过 grace(`PROTECTION_GRACE_SECONDS`)仍无本仓 SL(只有 TP 也算缺失)时,写 `native_protection_absent` 审计并经 `close_position_routed` 平仓,`close_reason=protection_absent_closed`(live 仍受 `allow_live` 守卫)。读取失败、不完整(含满页)、身份非 `SAME`、多个 SL 或 SL 数量小于持仓时**不写库、不平仓**,job 变红,本地保护继续生效 | `portfolio/native_protection.py` |
 
 ---
 
@@ -631,7 +633,7 @@ a guard.
 config 发明保护。只有没有 Proposal 身份的历史仓位，或明确 `source=adopted` 的外部接管仓位，才保留
 config 默认百分比兜底；接管流程会尽量在接管时一次性固化这些值，避免之后漂移。`PL-PM-09` 锁定原生
 Proposal 的这一权限边界。
-`_sync_exchange_closed`(`position_manager.py:311`,`248-296`):每轮先收敛交易所原生 TPSL(bitget demo bracket)已触发的平仓,避免本地-交易所长期 desync。
+交易所原生 TPSL 已触发的平仓由 `tpsl_fill_check`(`agent_runtime/scheduler.py::_tpsl_fill_check_body`,每 90 秒)按已持久化的 `exchange_tpsl_order_id` 收敛,避免本地-交易所长期 desync(见 §4)。
 
 ### 10.5 已知状态与边界
 

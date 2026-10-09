@@ -706,6 +706,58 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
     assert repo.get_position(position.id)["exchange_tpsl_order_id"] == '{"sl": "new-sl", "tp": "old-tp"}'
 
 
+@pytest.mark.parametrize(
+    ("stored", "submit_fails", "expected", "result"),
+    [
+        ('{"sl":"PRESET-1","tp":"PRESET-1"}', False, {"sl": "new-sl"}, True),
+        ('{"sl":"PRESET-1","tp":"PRESET-1"}', True, {}, False),
+        ('{"sl":"old-sl","tp":"old-tp"}', True, {"tp": "old-tp"}, False),
+    ],
+    ids=["shared_parent_drops_tp", "shared_parent_submit_fails", "separate_submit_fails"],
+)
+def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
+    tmp_path, monkeypatch, stored, submit_fails, expected, result,
+):
+    """#3848: after the old stop is cancelled, a persisted id must name live venue protection."""
+    import json
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import replace_protective_stop
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, stop_price=59000.25, take_profit_price=62000.75,
+        execution_mode="bitget_demo", status="open", exchange_tpsl_order_id=stored,
+    )
+    _insert_bound_position(position)
+
+    class Adapter(_Adapter):
+        async def cancel_order(self, command):
+            return CommandReport(
+                identity=command.expected_account, command_id=command.command_id,
+                evidence=CommandEvidence.ACKNOWLEDGED,
+                received_at=datetime.now(timezone.utc),
+                venue_order_id=command.target_venue_order_id, profile_version="1",
+            )
+
+    async def submit(command):
+        if submit_fails:
+            raise RuntimeError("venue rejected the replacement stop")
+        return _ack(command, "new-sl")
+
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter",
+        lambda _mode: Adapter(submit, "bitget_demo"),
+    )
+
+    assert replace_protective_stop(position.id, 59500.0) is result
+    stored_position = repo.get_position(position.id)
+    assert stored_position is not None
+    assert json.loads(stored_position["exchange_tpsl_order_id"]) == expected
+
+
 @pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
 def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, monkeypatch, mode):
     _setup_db(tmp_path, monkeypatch)

@@ -15,9 +15,8 @@
   looser bracket close first. Now dispatched broker-agnostically through
   execution.stops. Binance TPSL surface not implemented yet — logs+skips.
 
-The batch is gated behind cfg.trading.exchange_tpsl_enabled (default False),
-so this is dormant in production until the operator opts in — but the code
-paths must be correct so that opt-in doesn't silently under-protect.
+The batch is gated behind cfg.trading.exchange_tpsl_enabled; the code paths
+must be correct so that enabling it doesn't silently under-protect.
 """
 
 from __future__ import annotations
@@ -271,11 +270,15 @@ def test_replace_exchange_protective_stop_still_dispatches_bitget(
 def test_replace_exchange_protective_stop_is_noop_when_flag_disabled(
     tmp_path, monkeypatch,
 ):
-    """The whole feature is gated on cfg.trading.exchange_tpsl_enabled (default
-    False). With the flag off the dispatcher must be a total no-op — even a
-    Bitget position must not touch the exchange."""
+    """The whole feature is gated on cfg.trading.exchange_tpsl_enabled. With the
+    flag off the dispatcher must be a total no-op — even a Bitget position must
+    not touch the exchange."""
     _setup_env(tmp_path, monkeypatch)
-    # Config left at defaults → exchange_tpsl_enabled=False.
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.exchange_tpsl_enabled = False
+    save_config(cfg)
     position_id = _make_open_position(execution_mode="bitget_demo")
 
     called = []

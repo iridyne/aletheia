@@ -1631,9 +1631,13 @@ class TradingConfig(BaseModel):
     # default is to auto-close (D5 option 2, current behavior). Set False to instead
     # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.
     thesis_auto_close: bool = True
-    # Exchange-native TPSL bracket orders (Bitget demo/live only). Default off —
-    # enable after verifying Bitget TPSL API behavior in demo mode.
-    exchange_tpsl_enabled: bool = False
+    # Exchange-native protection (#3848, owner 2026-10-09: venue-side stops take
+    # priority over local polling). Global switch: an eligible futures entry on
+    # any venue that supports native TPSL carries its approved stop/take-profit
+    # (Bitget presets, OKX attachAlgoOrds; live paths stay behind live unlock).
+    # On Bitget the venue SL is read back and a Position proven to have none is
+    # closed (execution_contract.md §4). An explicit config value overrides this.
+    exchange_tpsl_enabled: bool = True
     # Market-aware exit intelligence: uses Market Observer signals to dynamically
     # tighten stops or exit early when market conditions deteriorate.
     market_aware_exits: "MarketAwareExitsConfig" = Field(default_factory=lambda: MarketAwareExitsConfig())

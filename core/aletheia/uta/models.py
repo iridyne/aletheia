@@ -334,6 +334,24 @@ class NativeProtectionHistory(UTAModel):
     execute_order_ids: tuple[str, ...] = ()
 
 
+class NativeProtectionLeg(UTAModel):
+    """One open venue SL or TP; a shared strategy order yields two legs, one id."""
+
+    plan_order_id: str = Field(min_length=1)
+    kind: Literal["sl", "tp"]
+    position_side: Literal["long", "short"]
+    trigger_price: PositiveDecimalValue
+    quantity: PositiveDecimalValue | None = None
+
+
+class NativeProtectionOpenOrders(UTAModel):
+    """A complete read of one symbol's open venue protection for one account."""
+
+    identity: UTAAccountIdentity
+    symbol: str = Field(min_length=1)
+    legs: tuple[NativeProtectionLeg, ...] = ()
+
+
 class OrderStatusReport(UTAModel):
     identity: UTAAccountIdentity
     instrument: InstrumentIdentity
