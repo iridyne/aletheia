@@ -26,6 +26,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 - [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
   records the #1002 repository-wide scope check against OKX's checksum
   deprecation and the active REST-only snapshot boundary.
+- [Entry geometry phase-1 research (#3850) — 2026-10-09](trading-strategy/ENTRY_GEOMETRY_PHASE1_RESEARCH_2026-10-09.md)
+  records how price-action schools, competitors and open-source frameworks place entry, stop and target. It
+  includes a Fedora MAE/MFE study of the planner's hypotheses, three candidate geometry designs and an
+  evaluation protocol. A critic reviewed it; it is unapproved evidence.
 - [Entry funnel 14-day reject attribution — 2026-10-09](audits/ENTRY_REJECT_ATTRIBUTION_14D_2026-10-09.md)
   attributes every planning generation on Fedora to one terminal reason, split by runtime period, then gives
   root causes and a tiered solution draft. The draft has been reviewed by an independent critic. It is
