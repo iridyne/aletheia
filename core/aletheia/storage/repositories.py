@@ -5846,10 +5846,108 @@ def prune_agent_shell_heartbeats(days: int = 2) -> int:
     return _delete_by_rowid_batches("agent_shell_heartbeats", "created_at < ?", (cutoff,))
 
 
+# Artifact type buckets. Anything outside the strategy/proposal buckets falls
+# through to the 14-day default.
+_ARTIFACT_TYPES_STRATEGY = ("strategy_evaluation",)
+_ARTIFACT_TYPES_PROPOSAL = ("proposal", "report", "daily_summary")
+
+# Children that an agent-shell parent prune deletes with it (no ON DELETE CASCADE).
+AGENT_SHELL_PRUNE_CASCADE: dict[str, tuple[tuple[str, str], ...]] = {
+    "agent_shell_tasks": (("agent_shell_events", "task_id"), ("agent_shell_artifacts", "task_id")),
+    "agent_shell_sessions": (
+        ("agent_shell_messages", "session_id"),
+        ("agent_shell_events", "session_id"),
+        ("agent_shell_artifacts", "session_id"),
+        ("agent_shell_commands", "session_id"),
+    ),
+}
+
+
+def agent_shell_prune_where(table: str, **windows: int) -> tuple[str, tuple[object, ...]]:
+    """The one row-selection predicate for each agent-shell retention prune.
+
+    The nightly ``prune_agent_shell_*`` functions and the archiving backfill
+    (``ops/maintenance/data_retention_backfill.py``) both select through this,
+    so the archived set and the deleted set cannot diverge (#1382).
+    """
+    now = datetime.now(timezone.utc)
+
+    def cut(key: str) -> str:
+        return (now - timedelta(days=windows[key])).isoformat()
+
+    if table in ("agent_shell_events", "agent_shell_commands"):
+        return "created_at < ?", (cut("days"),)
+    if table == "agent_shell_messages":
+        return (
+            "(message_type = 'context' AND created_at < ?) OR "
+            "((message_type IS NULL OR message_type != 'context') AND created_at < ?)",
+            (cut("days_context"), cut("days_other")),
+        )
+    if table == "agent_shell_artifacts":
+        combined = (*_ARTIFACT_TYPES_STRATEGY, *_ARTIFACT_TYPES_PROPOSAL)
+        return (
+            f"(artifact_type IN ({','.join('?' * len(_ARTIFACT_TYPES_STRATEGY))}) AND created_at < ?) OR "
+            f"(artifact_type IN ({','.join('?' * len(_ARTIFACT_TYPES_PROPOSAL))}) AND created_at < ?) OR "
+            f"((artifact_type IS NULL OR artifact_type NOT IN ({','.join('?' * len(combined))})) AND created_at < ?)",
+            (
+                *_ARTIFACT_TYPES_STRATEGY, cut("days_strategy"),
+                *_ARTIFACT_TYPES_PROPOSAL, cut("days_proposal"),
+                *combined, cut("days_other"),
+            ),
+        )
+    if table == "agent_shell_tasks":
+        # status IN ('running','pending') OR completed_at IS NULL are exempt.
+        return (
+            "completed_at IS NOT NULL AND ("
+            "(status = 'completed' AND completed_at < ?) OR "
+            "(status IN ('failed','cancelled') AND completed_at < ?))",
+            (cut("days_completed"), cut("days_failed")),
+        )
+    if table == "agent_shell_sessions":
+        # Sessions named as parent_session_id of another session are kept.
+        return (
+            "created_at < ? AND id NOT IN ("
+            "SELECT DISTINCT parent_session_id FROM agent_shell_sessions "
+            "WHERE parent_session_id IS NOT NULL)",
+            (cut("days"),),
+        )
+    raise ValueError(f"no agent-shell prune predicate for {table}")
+
+
+def delete_agent_shell_rows(table: str, ids: Sequence[object]) -> int:
+    """Delete exactly ``ids`` from ``table`` plus their cascade children, in one transaction."""
+    deleted = 0
+    with transaction():
+        for start in range(0, len(ids), 500):
+            batch = list(ids[start:start + 500])
+            placeholders = ",".join("?" * len(batch))
+            for child, column in AGENT_SHELL_PRUNE_CASCADE.get(table, ()):
+                execute_write(f"DELETE FROM {child} WHERE {column} IN ({placeholders})", batch)
+            cur = execute_write(f"DELETE FROM {table} WHERE id IN ({placeholders})", batch)
+            deleted += cur.rowcount or 0
+    return deleted
+
+
+def _delete_agent_shell_where(table: str, **windows: int) -> int:
+    where, params = agent_shell_prune_where(table, **windows)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = execute_write(f"DELETE FROM {table} WHERE {where}", params)
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def _prune_agent_shell_parent(table: str, **windows: int) -> int:
+    where, params = agent_shell_prune_where(table, **windows)
+    ids = [row[0] for row in get_db().execute(f"SELECT id FROM {table} WHERE {where}", params).fetchall()]
+    return delete_agent_shell_rows(table, ids) if ids else 0
+
+
 def prune_agent_shell_events(days: int = 14) -> int:
     """Prune old agent_shell_events rows (telemetry, no causal-chain value)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches("agent_shell_events", "created_at < ?", (cutoff,))
+    where, params = agent_shell_prune_where("agent_shell_events", days=days)
+    return _delete_by_rowid_batches("agent_shell_events", where, params)
 
 
 def prune_agent_shell_messages(
@@ -5861,31 +5959,9 @@ def prune_agent_shell_messages(
     - message_type='context' rows: dropped after ``days_context`` days (default 3).
     - all other message_type values: dropped after ``days_other`` days (default 14).
     """
-    now = datetime.now(timezone.utc)
-    ctx_cutoff = (now - timedelta(days=days_context)).isoformat()
-    other_cutoff = (now - timedelta(days=days_other)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    deleted = 0
-    ctx_cur = execute_write(
-        "DELETE FROM agent_shell_messages WHERE message_type = 'context' AND created_at < ?",
-        (ctx_cutoff,),
+    return _delete_agent_shell_where(
+        "agent_shell_messages", days_context=days_context, days_other=days_other
     )
-    deleted += ctx_cur.rowcount or 0
-    other_cur = execute_write(
-        "DELETE FROM agent_shell_messages WHERE (message_type IS NULL OR message_type != 'context') AND created_at < ?",
-        (other_cutoff,),
-    )
-    deleted += other_cur.rowcount or 0
-    if not was_in_tx:
-        db.commit()
-    return deleted
-
-
-# Artifact type buckets. Anything outside the strategy/proposal buckets falls
-# through to the 14-day default.
-_ARTIFACT_TYPES_STRATEGY = ("strategy_evaluation",)
-_ARTIFACT_TYPES_PROPOSAL = ("proposal", "report", "daily_summary")
 
 
 def prune_agent_shell_artifacts(
@@ -5899,37 +5975,10 @@ def prune_agent_shell_artifacts(
     - proposal / report / daily_summary rows: ``days_proposal`` (default 30).
     - all other artifact_type values: ``days_other`` (default 14).
     """
-    now = datetime.now(timezone.utc)
-    strat_cutoff = (now - timedelta(days=days_strategy)).isoformat()
-    prop_cutoff = (now - timedelta(days=days_proposal)).isoformat()
-    other_cutoff = (now - timedelta(days=days_other)).isoformat()
-    strat_placeholders = ",".join("?" * len(_ARTIFACT_TYPES_STRATEGY))
-    prop_placeholders = ",".join("?" * len(_ARTIFACT_TYPES_PROPOSAL))
-    combined_types = (*_ARTIFACT_TYPES_STRATEGY, *_ARTIFACT_TYPES_PROPOSAL)
-    combined_placeholders = ",".join("?" * len(combined_types))
-    db = get_db()
-    was_in_tx = db.in_transaction
-    deleted = 0
-    strat_cur = execute_write(
-        f"DELETE FROM agent_shell_artifacts WHERE artifact_type IN ({strat_placeholders}) AND created_at < ?",
-        (*_ARTIFACT_TYPES_STRATEGY, strat_cutoff),
+    return _delete_agent_shell_where(
+        "agent_shell_artifacts",
+        days_strategy=days_strategy, days_proposal=days_proposal, days_other=days_other,
     )
-    deleted += strat_cur.rowcount or 0
-    prop_cur = execute_write(
-        f"DELETE FROM agent_shell_artifacts WHERE artifact_type IN ({prop_placeholders}) AND created_at < ?",
-        (*_ARTIFACT_TYPES_PROPOSAL, prop_cutoff),
-    )
-    deleted += prop_cur.rowcount or 0
-    other_cur = execute_write(
-        f"DELETE FROM agent_shell_artifacts "
-        f"WHERE (artifact_type IS NULL OR artifact_type NOT IN ({combined_placeholders})) "
-        f"AND created_at < ?",
-        (*combined_types, other_cutoff),
-    )
-    deleted += other_cur.rowcount or 0
-    if not was_in_tx:
-        db.commit()
-    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -6110,13 +6159,7 @@ def prune_universe_snapshots(
 
 def prune_agent_shell_commands(days: int = 14) -> int:
     """Prune agent_shell_commands older than ``days`` (by created_at)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = execute_write("DELETE FROM agent_shell_commands WHERE created_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_agent_shell_where("agent_shell_commands", days=days)
 
 
 def prune_agent_shell_tasks(
@@ -6132,38 +6175,9 @@ def prune_agent_shell_tasks(
     agent_shell_events.task_id and agent_shell_artifacts.task_id both have no
     ON DELETE CASCADE — children are wiped first in the same transaction.
     """
-    now = datetime.now(timezone.utc)
-    completed_cutoff = (now - timedelta(days=days_completed)).isoformat()
-    failed_cutoff = (now - timedelta(days=days_failed)).isoformat()
-    db = get_db()
-    task_ids = [
-        row[0]
-        for row in db.execute(
-            "SELECT id FROM agent_shell_tasks "
-            "WHERE completed_at IS NOT NULL AND ("
-            "  (status = 'completed' AND completed_at < ?)"
-            "  OR (status IN ('failed','cancelled') AND completed_at < ?)"
-            ")",
-            (completed_cutoff, failed_cutoff),
-        ).fetchall()
-    ]
-    if not task_ids:
-        return 0
-    placeholders = ",".join("?" * len(task_ids))
-    with transaction():
-        execute_write(
-            f"DELETE FROM agent_shell_events WHERE task_id IN ({placeholders})",
-            task_ids,
-        )
-        execute_write(
-            f"DELETE FROM agent_shell_artifacts WHERE task_id IN ({placeholders})",
-            task_ids,
-        )
-        execute_write(
-            f"DELETE FROM agent_shell_tasks WHERE id IN ({placeholders})",
-            task_ids,
-        )
-    return len(task_ids)
+    return _prune_agent_shell_parent(
+        "agent_shell_tasks", days_completed=days_completed, days_failed=days_failed
+    )
 
 
 def prune_agent_shell_sessions(days: int = 14) -> int:
@@ -6175,48 +6189,7 @@ def prune_agent_shell_sessions(days: int = 14) -> int:
     Excludes rows named as ``parent_session_id`` of a younger session so the
     lineage-trace summary keeps working.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    session_ids = [
-        row[0]
-        for row in db.execute(
-            "SELECT id FROM agent_shell_sessions "
-            "WHERE created_at < ? "
-            "AND id NOT IN ("
-            "  SELECT DISTINCT parent_session_id FROM agent_shell_sessions "
-            "  WHERE parent_session_id IS NOT NULL"
-            ")",
-            (cutoff,),
-        ).fetchall()
-    ]
-    if not session_ids:
-        return 0
-    placeholders = ",".join("?" * len(session_ids))
-    with transaction():
-        execute_write(
-            f"DELETE FROM agent_shell_messages WHERE session_id IN ({placeholders})",
-            session_ids,
-        )
-        execute_write(
-            f"DELETE FROM agent_shell_events WHERE session_id IN ({placeholders})",
-            session_ids,
-        )
-        execute_write(
-            f"DELETE FROM agent_shell_artifacts WHERE session_id IN ({placeholders})",
-            session_ids,
-        )
-        execute_write(
-            f"DELETE FROM agent_shell_commands WHERE session_id IN ({placeholders})",
-            session_ids,
-        )
-        # agent_shell_tasks has no session_id column; it references tasks via
-        # events/artifacts task_id which we already cleared above. Nothing
-        # further to do for tasks here.
-        execute_write(
-            f"DELETE FROM agent_shell_sessions WHERE id IN ({placeholders})",
-            session_ids,
-        )
-    return len(session_ids)
+    return _prune_agent_shell_parent("agent_shell_sessions", days=days)
 
 
 # Per-timeframe millisecond TTLs. Tuple order matches the config schema

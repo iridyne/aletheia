@@ -269,3 +269,87 @@ def test_postflight_failure_reports_correct_backup_path(tmp_path, monkeypatch):
     assert "pre-migration-backup" not in msg, (
         "error message should not reference pre-migration-backup; that is a different file"
     )
+
+
+def _iso_days_ago(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _seed_completed_task(db, task_id: str, days_ago: int) -> None:
+    db.execute(
+        "INSERT INTO agent_shell_tasks "
+        "(id, task_type, status, priority, created_by, assigned_to, input_data, completed_at, created_at) "
+        "VALUES (?, 'generic', 'completed', 'normal', 'test', 'operator', '{}', ?, ?)",
+        (task_id, _iso_days_ago(days_ago), _iso_days_ago(days_ago)),
+    )
+    db.execute(
+        "INSERT INTO agent_shell_events (id, event_type, severity, source, task_id, created_at) "
+        "VALUES (?, 'x', 'info', 'test', ?, ?)",
+        (f"ev-{task_id}", task_id, _iso_days_ago(1)),
+    )
+    db.commit()
+
+
+def _archived_ids(path: Path) -> set[str]:
+    import gzip
+    import json
+
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return {json.loads(line)["id"] for line in fh}
+
+
+@pytest.mark.real_db
+@pytest.mark.parametrize("task_ages", [(35, 20), (20,)])
+def test_backfill_archives_exactly_the_tiered_task_set_it_deletes(tmp_path, monkeypatch, task_ages):
+    """#1382: the 14d-completed tier is counted, archived and deleted as one id set."""
+    import aletheia.config.loader as loader
+    from ops.maintenance import data_retention_backfill as drb
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, conn = _setup_db(tmp_path)
+    monkeypatch.setattr(drb, "_retro_strip_message_context", lambda _db, _days: {})
+    monkeypatch.setattr(drb, "_run_universe_features_raw_migration", lambda: {"skipped": "test"})
+    task_ids = {f"task-{age}d" for age in task_ages}
+    for age in task_ages:
+        _seed_completed_task(conn, f"task-{age}d", age)
+    _seed_completed_task(conn, "task-5d", 5)
+
+    archive_dir = tmp_path / "archive"
+    args = _minimal_args(
+        tables="agent_shell_tasks", archive_dir=str(archive_dir),
+        agent_shell_tasks_completed_days=14, agent_shell_tasks_failed_days=30,
+    )
+    assert drb.run(args) == 0
+
+    remaining = {row[0] for row in conn.execute("SELECT id FROM agent_shell_tasks")}
+    assert remaining == {"task-5d"}
+    assert _archived_ids(archive_dir / "agent_shell_tasks.jsonl.gz") == task_ids
+    assert _archived_ids(archive_dir / "agent_shell_tasks.agent_shell_events.jsonl.gz") == {
+        f"ev-{tid}" for tid in task_ids
+    }
+    events_left = {row[0] for row in conn.execute("SELECT task_id FROM agent_shell_events")}
+    assert events_left == {"task-5d"}
+
+
+@pytest.mark.real_db
+def test_backfill_archive_failure_aborts_before_any_delete(tmp_path, monkeypatch):
+    """#1382: an archive write failure exits non-zero and deletes nothing."""
+    import aletheia.config.loader as loader
+    from ops.maintenance import data_retention_backfill as drb
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, conn = _setup_db(tmp_path)
+    _seed_completed_task(conn, "task-35d", 35)
+
+    def fail_write(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(drb, "_write_archive", fail_write)
+    args = _minimal_args(tables="agent_shell_tasks", archive_dir=str(tmp_path / "archive"),
+                         agent_shell_tasks_completed_days=14)
+    with pytest.raises(SystemExit, match="archive of agent_shell_tasks failed"):
+        drb.run(args)
+    assert conn.execute("SELECT COUNT(*) FROM agent_shell_tasks").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM agent_shell_events").fetchone()[0] == 1
