@@ -784,44 +784,25 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
 
 
 @pytest.mark.asyncio
-async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
-    tmp_path, monkeypatch
-):
-    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+async def test_horizon_due_holds_never_extend_the_horizon(tmp_path, monkeypatch):
+    """execution_contract §10: a horizon-due `hold` stays unresolved and retries."""
+    _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import (
-        _select_one,
-        insert_position,
-    )
+    from aletheia.storage.repositories import _select_one, insert_position
 
     target = Position(
-        id="horizon-review-ack-target",
+        id="horizon-hold-target",
         symbol="SOL/USDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        current_price=102.0,
-        unrealized_pnl=2.0,
-        execution_mode="bitget_demo",
-        stop_price=95.0,
-        take_profit_price=110.0,
-    )
-    sibling = Position(
-        id="horizon-review-ack-sibling",
-        symbol="ETH/USDT",
-        market_type="spot",
-        direction="short",
-        quantity=1.0,
-        entry_price=200.0,
         execution_mode="bitget_demo",
     )
     insert_position(target)
-    insert_position(sibling)
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     force_update_position(target.id, expected_horizon_hours=10.0, opened_at=opened)
-    force_update_position(sibling.id, expected_horizon_hours=10.0, opened_at=opened)
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
         lambda sections=None: {
@@ -829,98 +810,27 @@ async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
         },
     )
 
-    async def choose_hold(_system, user, *, schema, **_kwargs):
-        assert "entry=100.0" in user
-        assert "hold" in schema.model_json_schema()["properties"]["action"]["enum"]
-        assert "no clear close thesis" in user
+    async def choose_hold(_system, _user, *, schema, **_kwargs):
         return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
-    result = await review_portfolio_state({
-        "trigger": "horizon_due",
-        "wake_batches": [
-            {
-                "position_id": target.id,
-                "max_priority": 1,
-                "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
-            },
-            {
-                "position_id": sibling.id,
-                "max_priority": 1,
-                "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
-            },
-        ],
-    })
-
-    assert result["action"] == "hold"
-    assert result["review_completed"] is True
-    assert "horizon_review_error" not in result
-    assert set(result["horizon_hold_extended_ids"]) == {target.id, sibling.id}
-    assert set(result["horizon_reviews_acknowledged"]) == {target.id, sibling.id}
-    assert _select_one("positions", target.id)["horizon_wake_sent_at"] is not None
-    assert _select_one("positions", sibling.id)["horizon_wake_sent_at"] is not None
-    assert float(_select_one("positions", target.id)["expected_horizon_hours"]) > 10.0
-
-
-@pytest.mark.asyncio
-async def test_horizon_hold_disabled_stays_incomplete(tmp_path, monkeypatch):
-    conn = _init_agent_shell_db(tmp_path, monkeypatch)
-    from aletheia.agent_shell import commands as shell_commands
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import (
-        _select_one,
-        insert_position,
-    )
-
-    monkeypatch.setattr(shell_commands, "_horizon_due_allow_hold", lambda _mode: False)
-    target = Position(
-        id="horizon-hold-disabled-target",
-        symbol="SOL/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        execution_mode="bitget_demo",
-    )
-    insert_position(target)
-    force_update_position(target.id, expected_horizon_hours=10.0)
-    monkeypatch.setattr(
-        "aletheia.agent_shell.context.build_app_context",
-        lambda sections=None: {
-            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
-        },
-    )
-
-    async def choose_hold(_system, user, *, schema, **_kwargs):
-        assert schema.model_json_schema()["properties"]["action"]["enum"] == [
-            "adjust_position",
-            "close_one",
-        ]
-        assert '"hold" is not a valid terminal answer' in user
-        return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
-    result = await shell_commands.review_portfolio_state({
+    wake = {
         "trigger": "horizon_due",
         "wake_batches": [{
             "position_id": target.id,
             "max_priority": 1,
             "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
         }],
-    })
-
-    assert result["action"] == "hold"
-    assert result["review_completed"] is False
-    assert result["horizon_review_error"] == "explicit_extension_or_close_required"
-    assert "horizon_reviews_acknowledged" not in result
-    assert _select_one("positions", target.id)["horizon_wake_sent_at"] is None
-    row = conn.execute(
-        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
-        (result["position_review_decision_id"],),
-    ).fetchone()
-    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {
-        "horizon_review_error": "explicit_extension_or_close_required",
     }
+    for _ in range(2):
+        result = await review_portfolio_state(wake)
+        assert result["review_completed"] is False
+        assert result["horizon_review_error"] == "explicit_extension_or_close_required"
+
+    row = _select_one("positions", target.id)
+    assert row is not None
+    assert float(row["expected_horizon_hours"]) == 10.0
+    assert row["horizon_wake_sent_at"] is None
 
 
 @pytest.mark.asyncio

@@ -634,10 +634,18 @@ class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_pct: float = Field(default=10.0, gt=0, le=100)
     catastrophic_stop_pct_serenity: float = Field(default=15.0, gt=0, le=100)
     horizon_hard_backstop_mult: float = Field(default=3.0, gt=0)
-    # Horizon-due review may hold (roll the authored horizon) instead of
-    # flattening. Default True is the safer behavior: expiry is not a forced
-    # close. False restores close-or-explicit-extend.
-    horizon_due_allow_hold: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_retired_horizon_hold(cls, value):
+        """Deployed configs still carry the retired horizon-hold knob; drop it.
+
+        execution_contract §10 keeps a horizon-due `hold` unresolved, so the
+        knob that let `hold` roll the horizon has nothing left to govern.
+        """
+        if isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k != "horizon_due_allow_hold"}
+        return value
 
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
@@ -805,9 +813,6 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             "horizon_hard_backstop_mult": data.get(
                 "horizon_hard_backstop_mult", 3.0
             ),
-            "horizon_due_allow_hold": data.get(
-                "horizon_due_allow_hold", True
-            ),
         },
         "eligibility": (
             {
@@ -955,6 +960,9 @@ class RiskConfig(BaseModel):
         # carries no information about how many entries it was meant to allow,
         # and the stale value is exactly what this migration exists to retire.
         data.pop("max_per_symbol_notional_usdt", None)
+        # Retired horizon-hold knob (flat copy); the nested copy is dropped by
+        # RiskExitPolicy.
+        data.pop("horizon_due_allow_hold", None)
         # Flat legacy field rename: max_{live/demo}_position_notional_usdt →
         # max_{live/demo}_position_margin_usdt. Keep the old key in data so
         # _legacy_mode_policy can still read it; add the new key for the flat field.
@@ -1096,9 +1104,6 @@ class RiskConfig(BaseModel):
             "horizon_hard_backstop_mult": (
                 "exits", "horizon_hard_backstop_mult",
             ),
-            "horizon_due_allow_hold": (
-                "exits", "horizon_due_allow_hold",
-            ),
         }
         if name in mode_paths:
             mode, group, field = mode_paths[name]
@@ -1178,7 +1183,6 @@ class RiskConfig(BaseModel):
     # decision (close / extend). The position is auto-closed only at the far backstop
     # min(expected_horizon * this multiplier, the school's absolute max_hold).
     horizon_hard_backstop_mult: float = 3.0
-    horizon_due_allow_hold: bool = True
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
