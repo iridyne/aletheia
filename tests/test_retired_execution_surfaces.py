@@ -206,10 +206,10 @@ def test_current_analytics_cannot_select_archived_or_missing_account(monkeypatch
     cfg = AletheiaConfig()
     cfg.exchange.paper_execution_mode = mode
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
-    monkeypatch.setattr(go_live_scorecard, "eligible_strategy_outcomes", lambda **kwargs: pytest.fail("unresolved selection must not query all-mode outcomes"))
+    monkeypatch.setattr(go_live_scorecard, "read_complete_outcome_cohort", lambda **kwargs: pytest.fail("unresolved selection must not query all-mode outcomes"))
 
     assert execution_mode.resolve_selected_execution_mode() is None
-    assert go_live_scorecard._genuine_closed_pnls() == []
+    assert go_live_scorecard._genuine_closed_pnls(go_live_scorecard._scorecard_cohort()) == []
     assert go_live_scorecard._check_exchange_connectivity()["score"] == 0
     assert go_live_scorecard._check_risk_violations()["score"] == 0
 
@@ -228,12 +228,14 @@ def test_scorecard_uses_external_cohort_without_archived_activity(monkeypatch):
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
     modes = []
 
+    from tests.helpers.outcome_cohort import available_cohort
+
     def outcomes(*, execution_mode):
         modes.append(execution_mode)
-        return [{"realized_pnl": 7.0, "trade_school": "short_term"}]
+        return available_cohort([{"realized_pnl": 7.0, "trade_school": "short_term"}])
 
-    monkeypatch.setattr(go_live_scorecard, "eligible_strategy_outcomes", outcomes)
-    assert go_live_scorecard._genuine_closed_pnls() == [7.0]
+    monkeypatch.setattr(go_live_scorecard, "read_complete_outcome_cohort", outcomes)
+    assert go_live_scorecard._genuine_closed_pnls(go_live_scorecard._scorecard_cohort()) == [7.0]
     assert go_live_scorecard.compute_pnl_by_trade_school()["short_term"]["count"] == 1
     assert modes == ["bitget_demo", "bitget_demo"]
 

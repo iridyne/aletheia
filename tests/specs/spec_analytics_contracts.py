@@ -245,19 +245,20 @@ def test_scorecard_excludes_synthetic_closes(monkeypatch):
     for i in range(10):
         _closed(f"JUNK{i}/USDT", "short", -1000.0, "reconciled_gone")
 
-    vol = sc._check_trade_volume()
+    pnls = sc._genuine_closed_pnls(sc._scorecard_cohort())
+    vol = sc._check_trade_volume(pnls)
     assert "3 trades" in vol["detail"], (
         f"trade volume must count only genuine closes (3), got: {vol['detail']!r} "
         "— synthetic reconciled_gone sweeps are being counted"
     )
 
-    wr = sc._check_win_rate()
+    wr = sc._check_win_rate(pnls)
     assert "66.7%" in wr["detail"], (
         f"win rate must be computed on genuine closes (66.7%), got: {wr['detail']!r}"
     )
     assert wr["score"] >= 100.0, "genuine WR 66.7% ≥ 45% target → full score"
 
-    pf = sc._check_profit_factor()
+    pf = sc._check_profit_factor(pnls)
     assert "PF 4.00" in pf["detail"] or "PF 4.0" in pf["detail"], (
         f"profit factor must exclude synthetic losses (expected PF 4.0), got: {pf['detail']!r}"
     )

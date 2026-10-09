@@ -149,7 +149,7 @@ def test_missing_calibration_blocks_otherwise_green_scorecard(monkeypatch):
     ):
         monkeypatch.setattr(scorecard, "_check_" + name,
                             lambda *args: scorecard._criterion("other", "other", 100, 0.1, "ok"))
-    monkeypatch.setattr(scorecard, "_check_positive_net_pnl", lambda: {"status": "pass", "detail": "ok"})
+    monkeypatch.setattr(scorecard, "_check_positive_net_pnl", lambda *args: {"status": "pass", "detail": "ok"})
     result = scorecard.compute_scorecard()
     assert result["composite_score"] == 90
     assert result["blockers"]

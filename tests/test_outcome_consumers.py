@@ -168,7 +168,7 @@ def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monke
 
 def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows(optional_evidence_jobs):
     from aletheia.analytics.family_scorecard import compute_family_scorecard
-    from aletheia.analytics.go_live_scorecard import _genuine_closed_pnls
+    from aletheia.analytics.go_live_scorecard import _genuine_closed_pnls, _scorecard_cohort
 
     _insert_closed("verified", 7.0, eligible=True)
     _insert_closed("administrative", -500.0, eligible=False)
@@ -179,7 +179,7 @@ def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows(option
     assert families[0]["win_rate"] == 100.0
     assert families[0]["outcome_semantics_version"] == "oi-v2"
 
-    assert _genuine_closed_pnls() == [7.0]
+    assert _genuine_closed_pnls(_scorecard_cohort()) == [7.0]
 
 
 def test_calibration_build_uses_only_verified_current_semantics_outcomes():
