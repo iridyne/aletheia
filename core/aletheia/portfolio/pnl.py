@@ -819,8 +819,14 @@ def close_position(
     funding_evidence: dict | None = None,
     close_category: str = "strategy",
     reconciliation_identity: dict | None = None,
+    exit_reference_price: float | None = None,
 ) -> dict:
     """Persist an exchange close and its supplied private evidence atomically.
+
+    ``exit_reference_price`` is the close Order's requested price. With a
+    verified exit fill it adds the exit leg to the entry-leg ``slippage_cost``
+    (the same ``|fill VWAP - Order price| * qty`` measure); without one the
+    round-trip slippage is unavailable.
 
     Exchange closes without private evidence remain explicitly ineligible.
     The materialization callback writes Order/Fill rows in the same transaction.
@@ -946,6 +952,13 @@ def close_position(
             )
 
     exit_fill_verified = private_exchange_fill
+    # Diagnostic round-trip execution drag; fill prices already carry it, so
+    # it is never subtracted from realized PnL (execution_contract §11.4).
+    slippage_cost = None
+    entry_slippage = _finite_number(row.get("slippage_cost"))
+    reference = _finite_number(exit_reference_price)
+    if private_exchange_fill and entry_slippage is not None and reference is not None and reference > 0:
+        slippage_cost = round(entry_slippage + abs(float(exit_price) - reference) * float(row["quantity"]), 8)
     from aletheia.analytics.outcome_integrity import (
         OUTCOME_SEMANTICS_VERSION,
     )
@@ -1028,7 +1041,7 @@ def close_position(
         "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
         "funding_cost": funding_cost,
         "funding_source": funding_source,
-        "slippage_cost": None,
+        "slippage_cost": slippage_cost,
         "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
         "close_category": close_category,
         "pending_close_order_id": None,

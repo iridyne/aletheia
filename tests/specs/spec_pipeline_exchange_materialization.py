@@ -1407,6 +1407,24 @@ def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(tmp_
     assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 1
 
 
+def test_verified_close_adds_exit_slippage_to_entry_slippage(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    _, _, position, close_order = _seed_pending_close(exchange_order_id="EX-XM-CLOSE-SLIP")
+    force_update_position(position.id, slippage_cost=0.5)
+    materialize_bitget_close(
+        close_order.id,
+        [_private_fill("EX-XM-CLOSE-SLIP", "BG-XM-CLOSE-SLIP-1", price=109.0, quantity=1.0,
+                       fee=0.2, filled_at_ms=1_784_400_000_000)],
+    )
+
+    # entry 0.5 + exit |109 fill - 110 close Order price| * 1
+    stored = repo._select_one("positions", position.id)
+    assert stored is not None and stored["slippage_cost"] == pytest.approx(1.5)
+
+
 @spec_claim(
     SpecClaim(
         "PL-XM-08",

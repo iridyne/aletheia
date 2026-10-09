@@ -151,6 +151,8 @@ Both the Position read model and CSV export expose signed `funding_cost`, its va
 `gross - entry_fee - exit_fee - funding_cost = realized_pnl`; incomplete futures rows keep funding blank and
 unavailable. Spot rows explicitly use `funding_cost=0` and `funding_source=not_applicable`. CSV `slippage_cost`
 remains a diagnostic execution-drag field and is not subtracted a second time from fill-based realized PnL.
+On a closed Position it is the round trip: every entry and exit leg adds `|fill VWAP - Order price| * quantity`;
+it is blank when an exit leg has no Order price (for example an externally observed close).
 
 `GET /positions` is a **summary** projection: it omits `decision_reasoning`, `reconciliation_evidence`,
 `reconciliation_identity`, `entry_market_summary`, `last_market_signal_evidence`, and `trailing_json`. These are

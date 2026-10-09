@@ -665,6 +665,7 @@ def _materialize_partial_close_accounting(
     position: dict,
     evidence: list[PrivateFill],
     *,
+    reference_price: float | None,
     close_reason: str | None,
     closed_at: str,
 ) -> None:
@@ -731,11 +732,20 @@ def _materialize_partial_close_accounting(
                 8,
             )
 
+    # Each exit leg adds its |fill VWAP - close Order price| drag; an unknown
+    # leg makes the round-trip total unavailable rather than understated.
+    old_slippage = position.get("slippage_cost")
+    slippage_cost = (
+        round(float(old_slippage) + abs(exit_price - float(reference_price)) * quantity, 8)
+        if old_slippage is not None and reference_price is not None and float(reference_price) > 0
+        else None
+    )
     new_quantity = round(old_quantity - quantity, 12)
     repo.update_open_position_materialization(
         position["id"],
         quantity=new_quantity,
         entry_fee=remaining_entry_fee,
+        slippage_cost=slippage_cost,
     )
     repo.insert_position_close_event(
         {
@@ -1511,6 +1521,7 @@ def _materialize_complete_private_close(
     close_position(
         position["id"],
         exit_price=exit_price,
+        exit_reference_price=order.get("price"),
         reason=order.get("close_reason") or "verified_exit",
         actual_exit_fee=total_fee,
         closed_at=max(item.filled_at for item in evidence),
@@ -1720,6 +1731,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                 _materialize_partial_close_accounting(
                     position,
                     delta_evidence,
+                    reference_price=order.get("price"),
                     close_reason=order.get("close_reason"),
                     closed_at=_ms_to_iso(closed_at_ms),
                 )
@@ -1758,6 +1770,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                 _materialize_partial_close_accounting(
                     position,
                     delta_evidence,
+                    reference_price=order.get("price"),
                     close_reason=order.get("close_reason") or "clipped_partial",
                     closed_at=max(i.filled_at for i in delta_evidence),
                 )
