@@ -1029,12 +1029,13 @@ def test_filter_shadow_experiments_are_prospective_and_observe_only():
 
     source = inspect.getsource(filter_shadow_experiments)
     assert "prospective_first_exposure" in source
-    assert "production_mutation_allowed" in source
     assert "save_config" not in source
     assert "ready_for_review" in source
     from aletheia.storage import migrations
 
     assert "idx_filter_shadow_experiments_fixed_scope" in migrations._FILTER_SHADOW_EXPERIMENTS_DDL
+    # The no-mutation guarantee is the table CHECK, not wrapper source text (LR-07 deleted the wrapper).
+    assert "CHECK (production_mutation_allowed = 0)" in migrations._FILTER_SHADOW_EXPERIMENTS_DDL
 
 
 @spec_claim(

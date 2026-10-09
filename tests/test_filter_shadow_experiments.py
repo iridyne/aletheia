@@ -27,6 +27,17 @@ def lab_authority():
     set_authority_source("lab", actor="test", reason="filter-shadow fixture")
 
 
+def _evaluate_active(*, now) -> int:
+    """Evaluate every active filter-shadow root through the live Lab evaluator."""
+    from extensions.observation_lab.evaluator import evaluate_observation
+    from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
+
+    roots = list_filter_shadow_observations(status="active", limit=1000) or []
+    for root in roots:
+        evaluate_observation(str(root["observation_id"]), int(root["generation"]), as_of_at=now)
+    return len(roots)
+
+
 def test_shared_first_exposure_orders_same_second_by_exact_instant():
     from aletheia.analytics.filter_evidence import FIRST_EXPOSURE_CTE_SQL
     from aletheia.storage.sqlite import get_db, register_instant_us
@@ -168,10 +179,7 @@ def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
 
 
 def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_config(monkeypatch):
-    from extensions.counterfactual.filter_experiments import (
-        evaluate_active_shadow_experiments,
-        register_replay_ready_experiments,
-    )
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = _anchor(minutes=1)
@@ -204,11 +212,10 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
 
     save_calls = []
     monkeypatch.setattr(loader, "save_config", lambda *args, **kwargs: save_calls.append(1))
-    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=2))
+    _evaluate_active(now=start + timedelta(hours=2))
     experiment = list_filter_shadow_observations()[0]
     evaluation = experiment["latest_evaluation"]
 
-    assert summary == {"evaluated": 1, "ready_for_review": 1, "completed_no_support": 0, "invalidated": 0}
     assert experiment["status"] == "ready_for_review"
     assert evaluation["control_candidate_count"] == 20
     assert evaluation["control_settled_n"] == 20
@@ -306,16 +313,6 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
         root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
     )
     assert repeated["evaluations"][0]["evaluation_id"] == evaluated["evaluations"][0]["evaluation_id"]
-    from extensions.counterfactual.filter_experiments import evaluate_active_shadow_experiments
-
-    assert evaluate_active_shadow_experiments(
-        now=start + timedelta(hours=2),
-    ) == {
-        "evaluated": 1,
-        "ready_for_review": 1,
-        "completed_no_support": 0,
-        "invalidated": 0,
-    }
     assert get_lab_db().execute(
         "SELECT COUNT(*) FROM observation_exposures WHERE observation_id=?",
         (root["observation_id"],),
@@ -691,10 +688,7 @@ def test_ranker_confidence_replay_selects_least_permissive_threshold():
 
 
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
-    from extensions.counterfactual.filter_experiments import (
-        evaluate_active_shadow_experiments,
-        register_replay_ready_experiments,
-    )
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = _anchor(minutes=1)
@@ -714,11 +708,10 @@ def test_shadow_experiment_invalidates_when_production_filter_version_changes():
     )
     assert changed_version != version
 
-    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    _evaluate_active(now=start + timedelta(hours=1))
     experiment = list_filter_shadow_observations()[0]
     evaluation = experiment["latest_evaluation"]
 
-    assert summary["invalidated"] == 1
     assert experiment["status"] == "invalidated"
     assert evaluation["reason"] == "production_filter_version_changed"
     assert evaluation["disposition"] == "invalidated"
@@ -886,10 +879,7 @@ def _seed_ranker_cohort(
 
 
 def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
-    from extensions.counterfactual.filter_experiments import (
-        evaluate_active_shadow_experiments,
-        register_replay_ready_experiments,
-    )
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
     start = _anchor(minutes=1)
@@ -913,20 +903,16 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
             extra_params={"unrelated_bump": i + 1},  # → different filter_version
         )
 
-    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=2))
+    _evaluate_active(now=start + timedelta(hours=2))
     experiment_after = list_filter_shadow_observations()[0]
 
     assert experiment_after["status"] != "invalidated"
-    assert summary["invalidated"] == 0
     # Frozen units survive the version bump — provenance shifts but identity holds.
     assert experiment_after["frozen_units"] == 43
 
 
 def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze():
-    from extensions.counterfactual.filter_experiments import (
-        evaluate_active_shadow_experiments,
-        register_replay_ready_experiments,
-    )
+    from extensions.counterfactual.filter_experiments import register_replay_ready_experiments
     from extensions.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
     from extensions.observation_lab.db import get_lab_db
 
@@ -961,8 +947,7 @@ def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze()
     after = list_filter_shadow_observations()[0]
     assert after["status"] == "invalidated"
     assert after["latest_evaluation"]["reason"] == "adapter_causal_input_changed"
-    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    assert summary["evaluated"] == 0
+    assert _evaluate_active(now=start + timedelta(hours=1)) == 0
     assert list_filter_shadow_observations()[0]["latest_evaluation"]["evaluation_id"] == after["latest_evaluation"]["evaluation_id"]
 
 
@@ -987,9 +972,8 @@ def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
         ("not-json", "opportunity:mean_reversion:malformed-parameters"),
     )
 
-    summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    _evaluate_active(now=start + timedelta(hours=1))
     experiment = list_filter_shadow_observations()[0]
-    assert summary["invalidated"] == 1
     assert experiment["status"] == "invalidated"
     assert experiment["latest_evaluation"]["reason"] == "adapter_causal_input_changed"
 
@@ -1012,11 +996,10 @@ def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
         fe._ADAPTER_CAUSAL_IDENTITY, "ranker_confidence_gate", changed_identity
     )
 
-    summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    _evaluate_active(now=start + timedelta(hours=1))
     experiment_after = list_filter_shadow_observations()[0]
     evaluation = experiment_after["latest_evaluation"]
 
-    assert summary["invalidated"] == 1
     assert experiment_after["status"] == "invalidated"
     assert evaluation["reason"] == "adapter_causal_identity_changed"
     assert evaluation["disposition"] == "invalidated"

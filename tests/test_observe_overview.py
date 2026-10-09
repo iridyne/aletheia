@@ -58,9 +58,9 @@ def _register_ranker() -> None:
     from extensions.observation_lab.canonical import set_authority_source
     set_authority_source("lab", actor="test", reason="overview fixture")
 
-    from extensions.counterfactual.filter_experiments import register_observation_from_spec
+    from extensions.observation_lab.canonical import register_observation_spec
 
-    register_observation_from_spec(
+    register_observation_spec(
         {
             "filter_name": "ranker_confidence_gate",
             "filter_version": "overview-test-v1",
@@ -73,7 +73,8 @@ def _register_ranker() -> None:
             "treatment": {"minimum_confidence": "medium"},
             "min_samples": 20,
         },
-        now=datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc),
+        actor="learning_replay",
+        started_at=datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc).isoformat(timespec="microseconds"),
     )
 
 
