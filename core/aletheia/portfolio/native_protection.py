@@ -1,10 +1,11 @@
-"""Verify-or-close for entry-attached exchange-native protection (#3848).
+"""Bookkeeping read-back of entry-attached exchange-native protection (#3848).
 
-execution_contract.md §4: a Bitget futures entry carries its approved stop as a
-venue preset, and the acknowledgement returns no id for it. This scan reads the
-venue's open strategy orders back, persists only confirmed ids, and closes a
-Position whose complete read still shows no venue stop past the grace window.
-An incomplete, unavailable or ambiguous read writes nothing and closes nothing.
+execution_contract.md §4 (owner D1, 2026-10-09): the entry order's own venue
+acknowledgement confirms its attached SL/TP, because the pre-send guard refuses
+to send a body that does not carry them. The ACK returns no id for the presets,
+so this scan reads the venue's open strategy orders back only to persist the
+ids (needed for amend and fill recognition). When it cannot find them it writes
+an audit and reports an error; it never closes a Position.
 """
 
 from __future__ import annotations
@@ -15,8 +16,6 @@ import logging
 from datetime import datetime, timezone
 
 logger = logging.getLogger("aletheia.portfolio.native_protection")
-
-CLOSE_REASON = "protection_absent_closed"
 
 
 def _stored_ids(position: dict) -> dict | None:
@@ -41,7 +40,6 @@ def verify_native_protection() -> dict:
     from aletheia.execution.close_convergence import has_unresolved_close_claim
     from aletheia.execution.coordinator import _position_account
     from aletheia.execution.stops import PRESET_ORIGIN, classify_native_protection, native_tpsl_enabled
-    from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
     from aletheia.uta.identity import IdentityRelation, identity_relation
@@ -51,7 +49,7 @@ def verify_native_protection() -> dict:
     )
     from aletheia.uta.models import NativeProtectionOpenOrders
 
-    summary: dict = {"verified": [], "closed": [], "errors": []}
+    summary: dict = {"verified": [], "errors": []}
     trading = load_config().trading
     modes = [mode for mode in native_protection_execution_modes() if native_tpsl_enabled(trading, mode)]
     candidates = []
@@ -101,7 +99,6 @@ def verify_native_protection() -> dict:
 
     reads = asyncio.run(_read_all())
     now = datetime.now(timezone.utc)
-    absent: list[dict] = []
     for position in candidates:
         snapshot = reads[(position["execution_mode"], position["symbol"])]
         if not isinstance(snapshot, NativeProtectionOpenOrders):
@@ -120,7 +117,20 @@ def verify_native_protection() -> dict:
             summary["errors"].append(_error(position, type(exc).__name__))
             continue
         if state == "absent":
-            absent.append(position)
+            repo.insert_audit_event_once(AuditEvent(
+                id=f"native-protection-absent-{position['id']}",
+                actor="system",
+                source="native_protection_check",
+                event_type="native_protection_absent",
+                entity_type="position",
+                entity_id=position["id"],
+                after_state=json.dumps({
+                    "stop_price": position.get("stop_price"),
+                    "opened_at": position.get("opened_at"),
+                }, sort_keys=True, separators=(",", ":")),
+                message="A complete venue read shows no stop-loss for this Position; ids not recorded. No close is requested.",
+            ))
+            summary["errors"].append(_error(position, "native_protection_absent"))
         elif isinstance(detail, str):
             summary["errors"].append(_error(position, detail))
         else:
@@ -147,25 +157,4 @@ def verify_native_protection() -> dict:
             ))
             summary["verified"].append(position["id"])
 
-    for position in absent:
-        repo.insert_audit_event_once(AuditEvent(
-            id=f"native-protection-absent-{position['id']}",
-            actor="system",
-            source="native_protection_check",
-            event_type="native_protection_absent",
-            entity_type="position",
-            entity_id=position["id"],
-            after_state=json.dumps({
-                "stop_price": position.get("stop_price"),
-                "opened_at": position.get("opened_at"),
-                "close_reason": CLOSE_REASON,
-            }, sort_keys=True, separators=(",", ":")),
-            message="A complete venue read shows no stop-loss past the grace window; requesting a close.",
-        ))
-        try:
-            close_position_routed(position["id"], CLOSE_REASON, decision_source="native_protection_check")
-            summary["closed"].append(position["id"])
-        except Exception as exc:
-            logger.warning("protection_absent close failed for %s (%s)", position["id"], type(exc).__name__)
-            summary["errors"].append(_error(position, type(exc).__name__))
     return summary

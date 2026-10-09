@@ -12,8 +12,7 @@ driver:
                as such would let human decisions distort the AI's measured edge.
   • rule     — deterministic strategy rule fired (stop_loss / take_profit / max_hold /
                thesis_invalidated / market_signal_exit)
-  • safety   — Layer-0 hard control fired (catastrophic_stop / liquidation_proximity /
-               protection_absent_closed)
+  • safety   — Layer-0 hard control fired (catastrophic_stop / liquidation_proximity)
   • other    — administrative / maintenance / unclassified
 
 If a rule-driven category consistently beats the operator, that category
@@ -48,7 +47,7 @@ RULE_DRIVEN = frozenset(
         "market_signal_exit",
     }
 )
-SAFETY_DRIVEN = frozenset({"catastrophic_stop", "liquidation_proximity", "protection_absent_closed"})
+SAFETY_DRIVEN = frozenset({"catastrophic_stop", "liquidation_proximity"})
 
 
 def exit_driver(reason: str | None) -> str:

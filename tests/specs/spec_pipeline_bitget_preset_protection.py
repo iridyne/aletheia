@@ -164,6 +164,68 @@ def test_bitget_broker_gates_approved_proposal_protection(monkeypatch, native_tp
     assert captured[0].stop_loss_price == expected_stop
     assert captured[0].take_profit_price == expected_take
     assert audits[0]["after"]["native_tpsl_enabled"] is native_tpsl_enabled
+    # The accepted entry that carried the presets is the protection confirmation.
+    assert audits[0]["after"].get("protection_source") == (
+        "entry_preset_ack" if native_tpsl_enabled else None
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-BG-PRESET-08",
+        "pipeline_bitget_preset_protection",
+        "§4 pre-send preset guard",
+        "L2b",
+        "A futures entry whose approved command carries SL/TP is sent only when the "
+        "built venue request carries both as the exact approved strings; otherwise "
+        "it is refused before the venue call (native_tpsl_params_missing).",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize("fault", ["stop_dropped", "decimal_trigger", "take_profit_changed"])
+async def test_entry_whose_built_body_lost_its_presets_is_never_sent(monkeypatch, fault):
+    from decimal import Decimal
+
+    from aletheia.uta.models import CommandEvidence
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.uta.test_ccxt_adapter import _bitget_command
+
+    adapter, exchange = _bitget_adapter(monkeypatch)
+    assert exchange.markets is not None
+    exchange.markets["BTC/USDT:USDT"]["precision"]["price"] = 0.01
+    requests = []
+
+    async def uta(request):
+        requests.append(request)
+        return {"code": "00000", "data": {"orderId": "EX-PRESET-LOST"}}
+
+    monkeypatch.setattr(exchange, "privateUtaPostV3TradePlaceOrder", uta, raising=False)
+    built = adapter._profile.submit_request
+
+    def faulty(command):
+        args = built(command)
+        params = dict(args[-1])
+        if fault == "stop_dropped":
+            params.pop("stopLoss")
+        elif fault == "decimal_trigger":
+            # #3783: ccxt reads a Decimal trigger as None and the venue still ACKs.
+            params["stopLoss"] = {"triggerPrice": Decimal("59000.25")}
+        else:
+            params["takeProfit"] = {"triggerPrice": "62000.70"}
+        return (*args[:-1], params)
+
+    monkeypatch.setattr(adapter._profile, "submit_request", faulty)
+    try:
+        report = await adapter.submit_order(_bitget_command(
+            adapter.identity, quantity="1", leverage=None,
+            client_order_id="preset-guard", stop_loss_price="59000.25",
+            take_profit_price="62000.75",
+        ))
+        assert report.evidence is CommandEvidence.NOT_SENT
+        assert report.reason_code == "native_tpsl_params_missing"
+        assert requests == []
+    finally:
+        await adapter.close()
 
 def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
     from aletheia.execution import coordinator
@@ -400,13 +462,13 @@ def test_entry_preset_ids_are_read_back_and_persisted(tmp_path, monkeypatch):
     result = verify_native_protection()
 
     assert exchange.calls == [{"category": "USDT-FUTURES", "symbol": "BTCUSDT"}]
-    assert result == {"verified": [position_id], "closed": [], "errors": []}
+    assert result == {"verified": [position_id], "errors": []}
     assert stored_ids(position_id) == {"origin": "entry_preset", "sl": "PRESET-1", "tp": "PRESET-1"}
     assert audit_types(position_id) == ["native_protection_verified"]
     assert closes == []
     # Persisted ids leave the read-back scan: the next cycle reads nothing.
     exchange.calls.clear()
-    assert verify_native_protection() == {"verified": [], "closed": [], "errors": []}
+    assert verify_native_protection() == {"verified": [], "errors": []}
     assert exchange.calls == []
 
 
@@ -414,10 +476,11 @@ def test_entry_preset_ids_are_read_back_and_persisted(tmp_path, monkeypatch):
     SpecClaim(
         "PL-BG-PRESET-07",
         "pipeline_bitget_preset_protection",
-        "§4 verify-or-close",
+        "§4 read-back is bookkeeping only",
         "L2b",
-        "Only a complete venue read showing no stop past the grace window closes the "
-        "Position (protection_absent_closed); an incomplete read never closes or writes.",
+        "The read-back never closes a Position (owner D1 2026-10-09): a complete read "
+        "showing no stop past the grace window writes native_protection_absent and "
+        "reports an error; an incomplete read writes nothing. Neither persists ids.",
         status="implemented",
     )
 )
@@ -432,7 +495,7 @@ def test_entry_preset_ids_are_read_back_and_persisted(tmp_path, monkeypatch):
     ],
     ids=["complete_empty", "complete_tp_only", "rejected", "malformed", "full_page"],
 )
-def test_only_a_complete_read_proves_absence(tmp_path, monkeypatch, response):
+def test_read_back_that_finds_no_stop_audits_and_never_closes(tmp_path, monkeypatch, response):
     from aletheia.portfolio.native_protection import verify_native_protection
     from tests.test_bitget_uta_v3_switch import _strategy_row
     from tests.test_tpsl_native_protection_check import (
@@ -449,13 +512,13 @@ def test_only_a_complete_read_proves_absence(tmp_path, monkeypatch, response):
 
     result = verify_native_protection()
 
+    assert closes == []
+    assert "closed" not in result
+    assert len(result["errors"]) == 1
     complete = response["code"] == "00000" and isinstance(response["data"], list) and len(response["data"]) < 100
     if complete:
-        assert closes == [(position_id, "protection_absent_closed", {"decision_source": "native_protection_check"})]
         assert audit_types(position_id) == ["native_protection_absent"]
-        assert result["closed"] == [position_id]
+        assert result["errors"][0]["error_type"] == "native_protection_absent"
     else:
-        assert closes == []
         assert audit_types(position_id) == []
-        assert len(result["errors"]) == 1
     assert stored_ids(position_id) == {}

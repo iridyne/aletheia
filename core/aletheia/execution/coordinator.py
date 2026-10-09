@@ -643,6 +643,14 @@ def execute_order(
         report,
         audit_context={
             "native_tpsl_enabled": native_tpsl_enabled,
+            # The adapter sends presets only after checking the built body carries
+            # them, so this ACK confirms the protection (#3848, owner D1 2026-10-09).
+            **(
+                {"protection_source": "entry_preset_ack"}
+                if report.evidence is CommandEvidence.ACKNOWLEDGED
+                and (command.stop_loss_price is not None or command.take_profit_price is not None)
+                else {}
+            ),
         },
     )
     return entry_acknowledgement_result(acknowledgement)

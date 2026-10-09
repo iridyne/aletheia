@@ -168,7 +168,7 @@ def test_flag_off_touches_no_venue(tmp_path, monkeypatch):
         lambda: SimpleNamespace(trading=SimpleNamespace(exchange_tpsl_enabled=False)),
     )
 
-    assert native_protection.verify_native_protection() == {"verified": [], "closed": [], "errors": []}
+    assert native_protection.verify_native_protection() == {"verified": [], "errors": []}
     assert exchange.calls == []
     assert closes == []
 
