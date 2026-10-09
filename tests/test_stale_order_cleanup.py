@@ -139,6 +139,7 @@ def test_stale_close_order_on_closed_position_clears_pending(monkeypatch):
         pid="pos-closed", status="closed", pending_close_order_id="close-stale",
         pending_close_status="pending",
     ))
+    monkeypatch.setattr(soc, "_exchange_order_absent_unfilled", lambda order: True)
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 1
     assert summary["cleared_pending"] == 1
@@ -150,6 +151,23 @@ def test_stale_close_order_on_closed_position_clears_pending(monkeypatch):
     ).fetchone()
     assert pos["pending_close_order_id"] is None
     assert pos["pending_close_status"] is None
+
+
+def test_stale_close_order_on_closed_position_without_venue_proof_stays_unresolved():
+    """#1421: a closed local Position is not evidence that its close Order ended
+    on the venue; an unreachable venue leaves the Order and its marker untouched."""
+    _seed_order(_order(
+        oid="close-unproven", hours_ago=200, close_reason="take_profit",
+        execution_mode="bitget_demo",
+    ))
+    repo.insert_position(_position(
+        pid="pos-closed-unproven", status="closed", execution_mode="bitget_demo",
+        pending_close_order_id="close-unproven", pending_close_status="pending",
+    ))
+    summary = soc.cleanup_stale_orphan_orders()
+    assert summary["cancelled"] == 0
+    assert _status("close-unproven") == "submitted"
+    assert _audit_count("close-unproven") == 0
 
 
 def test_recent_order_below_soft_window_is_untouched():
