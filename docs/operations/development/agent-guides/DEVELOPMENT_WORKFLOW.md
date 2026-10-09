@@ -165,7 +165,7 @@ formatting migration.
 **Where tests run.** pytest does not run on the Mac. `scripts/dev/remote_pytest.sh <pytest args>`
 rsyncs the working tree, uncommitted edits included, to `~/remote-test/<repo>-<checkout>` on Fedora (`u7p`).
 There it runs pytest in a sandbox:
-- a systemd user scope caps CPU at 800% and memory at 4G (the host also runs the live runtime and other services; split big runs by `-m domain_*` with `-n 3` rather than raising the cap);
+- a systemd user scope caps CPU at 800%, throttles memory at 2G (`MemoryHigh`) and kills at 4G. The host also runs the live runtime, so the script refuses to start when under 1.5 GB is available (exit 75): retry later. Split big runs by `-m domain_*` with `-n 3` rather than raising the cap;
 - user, net and pid namespaces give the run a private loopback, no network, and no view of the live runtime;
 - `ALETHEIA_DATA_DIR` and `TMPDIR` point at a fresh directory.
 
