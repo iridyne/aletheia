@@ -52,6 +52,22 @@ def test_redact_log_text_covers_bare_secret_and_access_headers():
     assert "hello world" in redact_log_text("hello world")
 
 
+def test_redact_log_text_covers_signatures_and_credential_fields_echoed_by_venues():
+    """A venue error body or URL can echo the request signature; the append-only audit chain must never hold it."""
+    from aletheia.gateway.logs import redact_log_text
+
+    leaks = (
+        "signature=SIGBARE5 sign=SC2",
+        '{"signature":"SIGLEAK1","sign":"S7","listenKey":"LK8","secretKey":"SK9","password":"PW10"}',
+        "cause apiKey=KC1 signature=SC3",
+    )
+    for text in leaks:
+        out = redact_log_text(text)
+        for secret in ("SIGBARE5", "SC2", "SIGLEAK1", "S7", "LK8", "SK9", "PW10", "SC3"):
+            assert secret not in out, (text, out)
+    assert redact_log_text("design review: the signed-off plan") == "design review: the signed-off plan"
+
+
 def test_redact_short():
     assert redact("abc") == "***"
     assert redact("") == "***"

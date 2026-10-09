@@ -36,6 +36,9 @@ _SECRET_PATTERNS = [
     # Exchange auth headers ACCESS-KEY / ACCESS-SIGN (bitget/okx/coinbase HMAC signing).
     # ACCESS-PASSPHRASE value is already covered by the `passphrase` token above.
     re.compile(r"(?i)(access[_-]?(?:key|sign))(['\"\s:=]+)([^'\"\s,}]+)"),
+    # Request signatures and credential fields that venue error bodies and URLs echo back
+    # (`signature=…`, `{"sign":"…"}`, listenKey, secretKey, password). \b keeps `design` etc. intact.
+    re.compile(r"(?i)(\b(?:signature|sign|listen[_-]?key|secret[_-]?key|password|passwd))(['\"\s:=]+)([^'\"\s,}]+)"),
 ]
 
 
