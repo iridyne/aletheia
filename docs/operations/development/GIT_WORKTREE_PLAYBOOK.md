@@ -9,7 +9,7 @@
 
 ## 1. 为什么总在竞争
 
-多写者同抢 master：多 AI 会话、后台 job、Task Scheduler/launchd 生命周期、Gateway
+多写者同抢 master：多 AI 会话、后台 job、systemd user service 生命周期、Gateway
 lifecycle。实测 master HEAD 数十秒连跳多值，commit 被冲成悬空，Worktree 分支被 reset。
 
 Git 操作不再自动重启稳定 Gateway；PR merge 也不等于 Qualification deployment。部署新代码
@@ -45,7 +45,7 @@ Git 操作不再自动重启稳定 Gateway；PR merge 也不等于 Qualification
 4. commit 前只保留本任务文件：`jj commit <paths> -m ...` 只提交指定路径，其余留在 `@`；
 5. commit 后立即并隔几秒用 `jj log -r @-` / `jj op log` 复读，确认未被抢占；
 6. `jj git push --bookmark <name>` 后用 `jj git fetch` + `jj bookmark list -a <name>` 核对远端（`--dry-run` 可预览推送）；
-7. 通过正常 PR/CI 合并；不得把合并动作附带成 qualification host 自动部署。
+7. 通过 PR 合并：owner 人工 `gh pr merge <n> --rebase`（无远程 CI gate、无自动合并）；不得把合并动作附带成 qualification host 自动部署。
 
 ## 5. 后台工具故障应对
 

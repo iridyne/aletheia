@@ -9,8 +9,7 @@
 
 2026-06-17 的优化把 SQLite 从文件 DB 改为 per-test in-memory DB（blueprint + `backup()` 克隆，
 migration 从 ~38ms/用例降到 ~0.4ms），当时全量 1340 个测试约 49s。套件规模此后增长了一个
-数量级；当前全量耗时与并行度的实测见
-[DEVELOPMENT_WORKFLOW.md](agent-guides/DEVELOPMENT_WORKFLOW.md)。
+数量级；当前全量耗时与并行度的实测见 §六。
 
 ---
 
@@ -153,11 +152,39 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 # fast 层或单一 marker 选择
 uv run pytest -m fast -n auto -q
 
-# 全量只在 Fedora 测试环境跑；默认 -n 2（实测数据见 DEVELOPMENT_WORKFLOW.md）
+# 全量只在 Fedora 测试环境跑；默认 -n 2（实测见下）
 uv run pytest tests/ -n 2 --tb=line -q
 ```
 
 判断原则：如果并行失败、非并行通过，先把它当成测试隔离问题处理，不要直接改生产逻辑。
+
+**Fedora 实测（2026-09-28，原在 DEVELOPMENT_WORKFLOW.md）**
+
+Marker subsets are validated in parallel: `tests/conftest.py::_configure_xdist_runtime_dir`
+gives every worker its own runtime directory, and the same-selection A/B on the
+sandbox measured `tier_integration` at **502.8 s serial vs 178.0 s with `-n 4`**
+(191.6 s on a repeat; local `tier_spec` 51.3 s vs 26.5 s). The only counting
+difference is `tests/test_xdist_runtime_isolation.py`, which declares itself
+"only meaningful when pytest-xdist starts a worker" — skip serial, run parallel
+is its designed behaviour, not flakiness (8243 + 8 and 8244 + 7 both total 8251).
+
+The **full `tests/` tree runs at `-n 2` on this box, not at `-n 4`**. Measured
+on the same tree: serial 656.9 s, `-n 2` **398.8 s with zero failures**
+(11624 passed / 14 skipped — the same self-declared xdist-isolation test flips
+from skip to run, total preserved), `-n 4` **1006.6 s with 27 failures**. The
+`-n 4` failures are capacity, not test isolation: `subprocess.TimeoutExpired` in
+the optional-dependency probes, multiprocessing children exiting with code
+`None` (killed), and xdist workers crashing (`worker 'gw0' crashed`) — the box
+has 16 CPUs and ~14 GB of which the live runtime holds several GB, so four
+workers plus their children do not fit. Treat `-n 2` as the default for the
+full proof and re-run serially if a parallel run fails, before attributing any
+failure to the change.
+
+Do not split a proof into per-marker invocations when one selection is wanted:
+each invocation pays the full collection again (four markers cost 692.9 s
+against 646.1 s for one full run). Use one expression instead, e.g.
+`-m "tier_integration or tier_spec or tier_e2e"`.
+
 
 ---
 

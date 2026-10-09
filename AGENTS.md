@@ -135,7 +135,7 @@ Request path, under `core/aletheia/`: `main.py` → `cli/` (one module per comma
 
 ## Tool entry files and matched guides
 
-`CLAUDE.md`/`CODEX.md` (root and nested) only import the adjacent `AGENTS.md`; fix rules there.
+`CLAUDE.md` (root and nested) only imports the adjacent `AGENTS.md`; Codex reads `AGENTS.md` natively. Fix rules there.
 
 | Work area | Required guide |
 | --- | --- |

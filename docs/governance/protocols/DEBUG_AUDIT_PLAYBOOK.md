@@ -82,13 +82,11 @@
 
 **真实案例（2026-06-28）**：merge 期间 master 连续前进（ae382d1 → d728aa4），FF 失败两次。
 
-**SOP**：
-1. worktree 分支按功能**分段 commit**（Conventional + 详细 body）。
-2. 在 worktree：`git merge master --no-edit` 把最新 master 合进来，解决冲突（在熟悉自己改动的 worktree 里解最稳）。
-3. 主仓 FF：`git -C <主仓绝对路径> merge --ff-only <worktree分支>`（不 `cd` 主仓，用 `-C`）。
-4. **FF 失败 = master 又被超车** → 回第 2 步重复（重核 `git -C <主仓> log --oneline -1`）。
-5. 合并后**主仓** `aletheia gateway restart` + `aletheia doctor` 才生效——worktree 的 `data/` 为空，不要在 worktree 验运行态（见 memory: worktree-gateway-empty-data-trap）。
-6. 冲突解决后用 `git diff --check` 确认无残留 `<<<<`/`====`/`>>>>` 标记 + 跑 import/针对性测试。
+**SOP**：合并与 push 的现行步骤（jj workspace、`jj rebase -d master@origin`、复读
+`jj op log`、人工 `gh pr merge --rebase`）只在
+[GIT_WORKTREE_PLAYBOOK §4](../../operations/development/GIT_WORKTREE_PLAYBOOK.md) 维护。
+合并后才在**主仓** `aletheia gateway restart` + `aletheia doctor` 验运行态——workspace 的
+`data/` 为空，不要在 workspace 验运行态。
 
 ---
 
@@ -348,13 +346,14 @@ fail-open，效果完全相反。
 **陷阱**：新加的守卫看着合理、跑起来绿，但它其实什么都没测。
 
 **真实案例（2026-09-07）**三次都做了这一步并有一次救了场：
-- `RE-S09`（flat/nested 镜像）：`git stash` 掉 `schema.py` 后该测试
+- `RE-S09`（flat/nested 镜像）：临时撤掉 `schema.py` 的修复后该测试
   `assert 10.0 == 7.0` 红 ⇒ 非空。
 - 裸 `UPDATE positions` 守卫：塞回一条裸 SQL 后红并点名文件 ⇒ 非空。
 - `DCLS-S01` 收窄后：加一条 `execution.coordinator` 导入后红 ⇒ 非空。
 
 **SOP**：
 1. 每加一个守卫，**先把被守卫的修复临时撤掉，确认它红**，再恢复。
-   `git stash push -- <file>` / 临时插一行违规代码都可以。
+   在独立 jj workspace 里 `jj new` 后临时改回 / 临时插一行违规代码都可以，验完
+   `jj abandon` 该临时提交或 `jj restore <file>`（不要用共享的 `git stash` 栈）。
 2. 在 commit message 写明"verified non-vacuous by ..."。
 3. 这一步不可省。绿色的空测试比没有测试更坏，因为它让人以为这块有覆盖。

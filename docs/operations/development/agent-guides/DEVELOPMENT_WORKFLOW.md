@@ -12,7 +12,8 @@
   before mutating Orca state.
 - External orchestration owns agents, panes, worktrees, task state, and handoffs.
   Do not build repository task databases, worker leases, handoff ledgers, or an
-  orchestration CLI.
+  orchestration CLI. An inert `~/.aletheia/development/agent-tasks/` directory left
+  by old installations is never read by current code and may be removed manually.
 - Use a dedicated worktree/branch for non-trivial changes. In an explicitly
   requested shared checkout, re-check `jj st` before changing VCS state, commit
   only named files (`jj commit <paths>`), preserve unrelated edits, and never
@@ -86,14 +87,9 @@ uv run aletheia doctor
 
 Before changing code:
 
-1. **Identify the SDD depth**:
-   - **D0 = restore truth** — existing Contract / invariant already defines the target
-     behavior; current code, tests, docs, or runtime facts are non-conformant.
-     Repairing that gap is `Contract Delta: NONE`.
-   - **D1 = change semantics** — the target behavior semantics change while long-lived
-     structure and ownership remain stable.
-   - **D2 = change structure** — state ownership, mainline, subsystem topology,
-     authority, or product scope changes.
+1. **Identify the SDD depth** (D0 / D1 / D2, defined in root
+   [AGENTS.md](../../../../AGENTS.md#human-decision-sovereignty); D0 is
+   `Contract Delta: NONE`).
 2. **Identify the changed boundary** and what remains unchanged.
 3. **State current facts**: existing code paths, tests, durable data, runtime
    observations, or relevant Contract.
@@ -265,8 +261,7 @@ deep evidence for that head remains unchanged.
   progress, and defects belong in GitHub Issues/PRs. Create a Proposal only for
   major, cross-domain, or trust-boundary changes. Follow
   [documentation governance](../../../governance/policies/documentation_governance.md).
-- Commit only scoped files and publish through the normal PR workflow. Disable a broken
-  workflow; do not archive the repository.
+- Commit only scoped files and publish through the normal PR workflow.
 - Run focused local regression tests proportional to the change. If the owner
   explicitly requests a complete suite and the result cannot wait, use an
   isolated Fedora CI/Test process in a
@@ -281,33 +276,13 @@ deep evidence for that head remains unchanged.
   ```sh
   export ALETHEIA_DATA_DIR="$(mktemp -d /var/tmp/aletheia-ci.XXXXXX)"
   trap 'rm -rf "$ALETHEIA_DATA_DIR"' EXIT
-  uv run pytest tests/ -q --tb=line -n 4
+  uv run pytest tests/ -q --tb=line -n 2
   ```
 
-  Marker subsets are validated in parallel: `tests/conftest.py::_configure_xdist_runtime_dir`
-  gives every worker its own runtime directory, and the same-selection A/B on the
-  sandbox measured `tier_integration` at **502.8 s serial vs 178.0 s with `-n 4`**
-  (191.6 s on a repeat; local `tier_spec` 51.3 s vs 26.5 s). The only counting
-  difference is `tests/test_xdist_runtime_isolation.py`, which declares itself
-  "only meaningful when pytest-xdist starts a worker" — skip serial, run parallel
-  is its designed behaviour, not flakiness (8243 + 8 and 8244 + 7 both total 8251).
-
-  The **full `tests/` tree runs at `-n 2` on this box, not at `-n 4`**. Measured
-  on the same tree: serial 656.9 s, `-n 2` **398.8 s with zero failures**
-  (11624 passed / 14 skipped — the same self-declared xdist-isolation test flips
-  from skip to run, total preserved), `-n 4` **1006.6 s with 27 failures**. The
-  `-n 4` failures are capacity, not test isolation: `subprocess.TimeoutExpired` in
-  the optional-dependency probes, multiprocessing children exiting with code
-  `None` (killed), and xdist workers crashing (`worker 'gw0' crashed`) — the box
-  has 16 CPUs and ~14 GB of which the live runtime holds several GB, so four
-  workers plus their children do not fit. Treat `-n 2` as the default for the
-  full proof and re-run serially if a parallel run fails, before attributing any
-  failure to the change.
-
-  Do not split a proof into per-marker invocations when one selection is wanted:
-  each invocation pays the full collection again (four markers cost 692.9 s
-  against 646.1 s for one full run). Use one expression instead, e.g.
-  `-m "tier_integration or tier_spec or tier_e2e"`.
+  `-n 2` is the full-proof default; the serial / `-n 2` / `-n 4` measurements and
+  the one-selection rule are in
+  [PYTEST_OPTIMIZATION_GUIDE.md §六](../PYTEST_OPTIMIZATION_GUIDE.md). Re-run serially
+  if a parallel run fails, before attributing any failure to the change.
 
   A Worktree alone does not provide this isolation. Pytest rejects explicit
   data roots inside the default production root or checkout before collection,
@@ -319,16 +294,8 @@ deep evidence for that head remains unchanged.
   than from aggregate counts — "0 failures" next to a large skip count does not
   prove that a specific file passed (some files carry their own skip escapes).
 
-- `Prepare and tag releases` runs only after an owner selects the explicit
-  `operational_need` input for an accumulated batch. It may create or refresh a
-  held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
-  clear that hold without a separate explicit owner request.
-  Qualification runtimes remain pinned unless an owner explicitly selects a
-  deployment. The former release-bundle contract is retired; see
-  [its history record](../../../design/history/modular_monolith_release_bundle.md).
-- When owner-requested external validation is pending, inspect the available checks, any event state,
-  failing log once. Continue independent work and monitor non-blockingly at
-  intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
+- Release tagging and deployment follow [DEPLOYMENT.md](../../deployment/DEPLOYMENT.md);
+  qualification runtimes stay pinned unless an owner explicitly selects a deployment.
 - The gateway is global: do not restart it casually or from competing worktrees.
 - Owner updates lead with outcome, consequence, and current state.
 
@@ -369,11 +336,6 @@ recorded in
 - Environment self-check: `uv run aletheia doctor`; lint: `uv run ruff check core extensions ops tests`
 - Local validation plan / PR body preflight: `uv run python scripts/ci/ci_plan.py`;
   `uv run --no-sync python scripts/ci/ci_preflight.py --pr-body-file <file>`
-- CI Yield baseline (read-only GitHub facts):
-  `uv run --no-sync python scripts/ci/ci_yield.py --limit 20
-  --json-output /tmp/ci-yield.json --markdown-output /tmp/ci-yield.md`.
-  Historical failures remain `unknown` unless bounded evidence proves a unique
-  actionable repair; batch-size correlations are not policy thresholds.
 - Owner/Agent runtime truth: `uv run aletheia control status --json` (the JSON
   snapshot is authoritative for Runtime identity, UFC, profit-loop, Position
   Path observer, and durable pause owners; it is read-only and may report
