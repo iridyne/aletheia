@@ -999,22 +999,11 @@ async def test_settings_response_covers_sanitized_config_schema(client):
 
 @pytest.mark.anyio
 async def test_get_settings_masks_inline_secret_fields(client):
-    """GET /api/settings omits the retired key and redacts proxy credentials."""
-    from aletheia.config.loader import save_config
-    cfg = AletheiaConfig()
-    cfg.network.proxy_url = "http://myuser:mypassword@127.0.0.1:7890"
-    save_config(cfg)
-
+    """GET /api/settings omits the retired key."""
     resp = await client.get("/api/settings")
     assert resp.status_code == 200
-    raw = resp.text
-    assert "COINALYZESECRET12345" not in raw
-    assert "mypassword" not in raw and "myuser" not in raw
-
-    data = resp.json()
-    assert "coinalyze_api_key" not in data["market_data"]
-    # Proxy host/port kept for diagnostics; only the user:pass is stripped.
-    assert "127.0.0.1:7890" in data["network"]["proxy_url"]
+    assert "COINALYZESECRET12345" not in resp.text
+    assert "coinalyze_api_key" not in resp.json()["market_data"]
 
 
 @pytest.mark.anyio
@@ -1093,11 +1082,19 @@ async def test_settings_post_does_not_echo_secrets(client):
     assert "secret" not in event["after"]
     assert event["after"]["secret_configured"] is True
 
-    r2 = await client.post("/api/settings/network", json={"proxy_url": "http://uu:ppw@10.0.0.9:1080"})
-    assert r2.status_code == 200
-    assert "ppw" not in r2.text and "uu:ppw" not in r2.text
-    # host still surfaced
-    assert "10.0.0.9:1080" in r2.text
+
+
+@pytest.mark.anyio
+async def test_network_route_rejects_proxy_userinfo(client):
+    """#1642: proxy userinfo is a 422 that echoes nothing and saves nothing."""
+    from aletheia.config.loader import load_config
+
+    before = load_config().network.model_dump()
+    r = await client.post("/api/settings/network", json={"proxy_url": "http://uu:ppw@10.0.0.9:1080"})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "invalid_configuration"
+    assert "ppw" not in r.text
+    assert load_config().network.model_dump() == before
 
 
 @pytest.mark.anyio

@@ -517,3 +517,15 @@ def test_existing_config_yaml_is_not_overwritten(tmp_path):
         assert reloaded.models.default_provider == "anthropic_compatible"
         assert reloaded.health.require_llm_at_startup is True
         assert reloaded.models.providers["anthropic_compatible"].base_url == "https://example.internal/"
+
+
+def test_proxy_userinfo_is_rejected_without_echo():
+    """#1642: authenticated proxies are unsupported; the credential is never echoed."""
+    for network in (
+        {"proxy_host": "u:sentinel_pass@proxy.invalid"},
+        {"proxy_url": "http://u:sentinel_pass@proxy.invalid:8080"},
+    ):
+        with pytest.raises(ValidationError) as exc:
+            AletheiaConfig.model_validate({"network": network})
+        assert "sentinel_pass" not in str(exc.value)
+        assert "sentinel_pass" not in str(exc.value.errors(include_input=False))

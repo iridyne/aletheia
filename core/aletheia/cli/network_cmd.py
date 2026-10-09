@@ -117,27 +117,32 @@ def set_cmd(
         typer.echo("--port must be between 1 and 65535.", err=True)
         raise typer.Exit(1)
 
-    with edit_config() as cfg:
-        before = _network_snapshot(cfg.network)
-        changed: list[str] = []
+    try:
+        with edit_config() as cfg:
+            before = _network_snapshot(cfg.network)
+            changed: list[str] = []
 
-        if protocol is not None:
-            cfg.network.proxy_protocol = protocol
-            changed.append("proxy_protocol")
-        if host is not None:
-            cfg.network.proxy_host = host
-            changed.append("proxy_host")
-        if port is not None:
-            cfg.network.proxy_port = port
-            changed.append("proxy_port")
-        if enforce is not None:
-            cfg.network.enforce = enforce
-            changed.append("enforce")
-        if no_proxy is not None:
-            cfg.network.no_proxy = no_proxy
-            changed.append("no_proxy")
+            if protocol is not None:
+                cfg.network.proxy_protocol = protocol
+                changed.append("proxy_protocol")
+            if host is not None:
+                cfg.network.proxy_host = host
+                changed.append("proxy_host")
+            if port is not None:
+                cfg.network.proxy_port = port
+                changed.append("proxy_port")
+            if enforce is not None:
+                cfg.network.enforce = enforce
+                changed.append("enforce")
+            if no_proxy is not None:
+                cfg.network.no_proxy = no_proxy
+                changed.append("no_proxy")
 
-        cfg.network.recompose_proxy_url()
+            cfg.network.recompose_proxy_url()
+    except ValueError as exc:
+        # The schema error text never contains the rejected value (#1642).
+        typer.echo(f"Invalid proxy configuration: {exc}", err=True)
+        raise typer.Exit(1) from None
     apply_proxy_env()
     _write_network_audit(
         before,
