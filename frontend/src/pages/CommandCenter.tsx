@@ -1,7 +1,7 @@
 import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
 import { getOperatorDisplayStatus } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
@@ -12,6 +12,7 @@ import { Badge, Button, Card, ListRowButton, StatusText, SymbolLink, TableWrap, 
 import type {
   OperatorCommandAudit,
   OperatorCommandPreview,
+  OperatorCommandResponse,
   OperatorContextSnapshot,
   OperatorEvent,
   OperatorExtension,
@@ -427,22 +428,14 @@ export default function CommandCenter() {
   const statusSelectedSessionId =
     operatorStatus?.active_branch_id || operatorStatus?.session_id || 'operator-main'
 
-  useEffect(() => {
-    if (sessions.length === 0) return
-    if (!sessions.some(session => session.id === selectedSessionId)) {
-      const fallback = sessions[0].id
-      setSelectedSessionId(fallback)
-      setInspectorFocus({ kind: 'session', id: fallback })
-    }
-  }, [selectedSessionId, sessions])
-
+  // Follow the Operator's active branch by exact id. The session list is one
+  // page of the newest sessions, so it never decides which session is selected.
   useEffect(() => {
     if (!statusSelectedSessionId) return
-    if (!sessions.some(session => session.id === statusSelectedSessionId)) return
     if (statusSelectedSessionId === selectedSessionId) return
     setSelectedSessionId(statusSelectedSessionId)
     setInspectorFocus({ kind: 'session', id: statusSelectedSessionId })
-  }, [selectedSessionId, sessions, statusSelectedSessionId])
+  }, [selectedSessionId, statusSelectedSessionId])
 
   useEffect(() => {
     if (!inspectorFocus && selectedSessionId) {
@@ -452,11 +445,16 @@ export default function CommandCenter() {
     composerRef.current?.focus()
   }, [inspectorFocus, selectedSessionId])
 
-  const { data: sessionDetail } = useQuery<OperatorSessionDetail>({
+  const { data: sessionDetail, error: sessionDetailError } = useQuery<OperatorSessionDetail>({
     queryKey: ['operator-session', selectedSessionId],
     queryFn: () => api.getOperatorSession(selectedSessionId),
-    enabled: !!selectedSessionId && sessions.some(session => session.id === selectedSessionId),
+    enabled: !!selectedSessionId,
   })
+  // A missing branch is shown as missing and never re-targeted. The main
+  // session may legitimately not exist yet: the first command creates it.
+  const mainSessionId = operatorStatus?.session_id || 'operator-main'
+  const selectedSessionMissing =
+    sessionDetailError instanceof ApiError && sessionDetailError.status === 404 && selectedSessionId !== mainSessionId
 
   const { data: selectedSessionEvents = [] } = useQuery<OperatorEvent[]>({
     queryKey: ['operator-events', 'session', selectedSessionId],
@@ -518,10 +516,16 @@ export default function CommandCenter() {
 
   const { toast } = useToast()
   const commandMut = useMutation({
-    mutationFn: (confirmedCommand?: string) =>
-      api.sendOperatorCommand(input, { sessionId: selectedSessionId, confirmedCommand }),
-    onSuccess: () => {
-      setInput('')
+    // Snapshot of what was sent: the draft and selection may change while it is in flight.
+    mutationFn: (sent: { input: string; sessionId: string; confirmedCommand?: string }) =>
+      api.sendOperatorCommand(sent.input, { sessionId: sent.sessionId, confirmedCommand: sent.confirmedCommand }),
+    onSuccess: (resp: OperatorCommandResponse, sent) => {
+      if (resp.executed) {
+        // Clear only the draft that was sent, never one typed meanwhile.
+        setInput(current => (current === sent.input ? '' : current))
+      } else {
+        toast(resp.needs_confirmation ? 'warning' : 'error', `Not executed: ${safeErrorText(resp.response)}`)
+      }
       qc.invalidateQueries({ queryKey: ['operator-status'] })
       qc.invalidateQueries({ queryKey: ['operator-sessions'] })
       qc.invalidateQueries({ queryKey: ['operator-session'] })
@@ -822,6 +826,9 @@ export default function CommandCenter() {
                       : null
                 const permitted =
                   typeof content?.permitted === 'boolean' ? content.permitted : null
+                // Rows written before `executed` existed only recorded `permitted`.
+                const executed =
+                  typeof content?.executed === 'boolean' ? content.executed : permitted
                 const riskLevel =
                   typeof content?.risk_level === 'string' ? content.risk_level : null
                 const needsConfirmation =
@@ -866,8 +873,8 @@ export default function CommandCenter() {
                     {showResultCard && (
                       <div className="command-result-card">
                         <div className="command-result-head">
-                          <Badge tone={permitted === false ? 'red' : 'green'}>
-                            {permitted === false ? 'Blocked' : 'Executed'}
+                          <Badge tone={permitted === false ? 'red' : executed === false ? 'yellow' : 'green'}>
+                            {permitted === false ? 'Blocked' : executed === false ? 'Not executed' : 'Executed'}
                           </Badge>
                           <span className="mono">{commandName || 'response'}</span>
                           {riskLevel && <span className="mono">risk: {riskLevel}</span>}
@@ -889,6 +896,11 @@ export default function CommandCenter() {
           </div>
 
           <div className="command-composer">
+            {selectedSessionMissing && (
+              <div className="command-preview-warning">
+                Session {selectedSessionId} is not available. Commands are not sent to another session.
+              </div>
+            )}
             <textarea
               ref={composerRef}
               value={input}
@@ -955,7 +967,7 @@ export default function CommandCenter() {
               <span className="text-muted text-sm">Long-form interaction lives here. Ctrl+K is a launcher; child sessions carry specialist traces.</span>
               <Button
                 className="btn-control"
-                disabled={commandMut.isPending || input.trim().length === 0}
+                disabled={commandMut.isPending || input.trim().length === 0 || selectedSessionMissing}
                 onClick={async () => {
                   // The backend runs a confirmation-gated command only when
                   // confirmed_command names it; that field is the human
@@ -973,7 +985,7 @@ export default function CommandCenter() {
                       return
                     }
                   }
-                  commandMut.mutate(gated)
+                  commandMut.mutate({ input, sessionId: selectedSessionId, confirmedCommand: gated })
                 }}
               >
                 {commandMut.isPending ? 'Sending…' : 'Send'}

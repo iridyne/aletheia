@@ -724,7 +724,12 @@ export interface OperatorCommandResponse {
   risk_level: string
   response: string
   action: Record<string, unknown> | null
+  // True only when the command is waiting for the operator's confirmation.
   needs_confirmation: boolean
+  permitted: boolean
+  // The handler ran and succeeded; the only signal that anything happened.
+  executed: boolean
+  session_id: string | null
 }
 
 export interface OperatorEvent {
