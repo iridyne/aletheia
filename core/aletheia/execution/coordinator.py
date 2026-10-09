@@ -478,6 +478,7 @@ def _apply_report(
                 "after": {
                     "status": status,
                     "command_evidence": report.evidence.value,
+                    **({"error_code": report.error_code} if report.error_code else {}),
                     **(audit_context or {}),
                 },
             }

@@ -168,6 +168,39 @@ def test_command_evidence_keeps_distinct_business_state(
     assert status == expected
 
 
+def test_not_sent_report_keeps_adapter_reason_and_error_code(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator
+    from aletheia.storage import repositories as repo
+
+    _authority("proposal-ns", "risk-ns")
+
+    async def submit(command):
+        return SubmissionReport(
+            identity=command.expected_account,
+            command_id=command.command_id,
+            evidence=CommandEvidence.NOT_SENT,
+            received_at=datetime.now(timezone.utc),
+            client_order_id=command.client_order_id,
+            error_code="UTA_VENUE_REJECTED",
+            reason_code="command_not_sent_40797",
+            profile_version="1",
+        )
+
+    audit = []
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _Adapter(submit))
+    monkeypatch.setattr(coordinator, "write_post_commit_audit", lambda event, **kwargs: audit.append(event) or True)
+
+    with pytest.raises(RuntimeError, match="command_not_sent_40797"):
+        _execute("proposal-ns", "risk-ns")
+
+    [order] = repo.list_orders(limit=10)
+    assert (order["status"], order["error_reason"]) == ("error", "command_not_sent_40797")
+    [applied] = [event for event in audit if event["event_type"] == "uta_command_applied"]
+    assert applied["reason"] == "command_not_sent_40797"
+    assert applied["after"]["error_code"] == "UTA_VENUE_REJECTED"
+
+
 def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     proposal_id, risk_id = "proposal-1", "risk-1"

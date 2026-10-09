@@ -97,7 +97,7 @@ class FakeExchange:
         self.create_response: dict | Exception | None = None
         self.edit_response = None
         self.cancel_response = None
-        self.leverage_response = None
+        self.leverage_response: Exception | None = None
 
     def set_sandbox_mode(self, enabled):
         self.events.append(("sandbox", enabled))
@@ -1919,6 +1919,59 @@ async def test_bitget_exact_close_absence_codes_preserve_profile_and_purpose(mon
         )
         assert report.venue_order_id is None
         assert report.order is None
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure,reason,error_code", [
+    ("venue_40797", "command_not_sent_40797", "UTA_VENUE_REJECTED"),
+    ("timeout", "command_not_sent_timeouterror", "UTA_TIMEOUT"),
+    ("network", "command_not_sent_exchangenotavailable", "UTA_NETWORK"),
+])
+async def test_bitget_pre_request_failure_keeps_its_cause_in_the_reason(monkeypatch, failure, reason, error_code):
+    # Fedora 2026-10-09: the first uta_v3 entries failed before place-order and the
+    # bare `command_not_sent` left nothing to tell a leverage rejection from a timeout.
+    import ccxt
+    import json
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    if failure == "timeout":
+        exchange.leverage_response = TimeoutError()
+    elif failure == "network":
+        exchange.leverage_response = ccxt.ExchangeNotAvailable("bitget GET https://api.bitget.com/x")
+    else:
+        response = {"code": "40797", "msg": "leverage rejected"}
+        try:
+            ccxt.bitget().handle_errors(400, "Bad Request", "url", "POST", {}, json.dumps(response), response, {}, None)
+        except ccxt.ExchangeError as error:
+            exchange.leverage_response = error
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(adapter.identity))
+        assert report.evidence is CommandEvidence.NOT_SENT
+        assert (report.reason_code, report.error_code) == (reason, error_code)
+        assert not any(event[0] == "create_order" for event in exchange.events)
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_request_build_not_sent_error_keeps_its_own_reason(monkeypatch):
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    _install(monkeypatch, exchange)
+
+    def refuse(_command):
+        raise UTAError(UTAErrorCode.NOT_SUPPORTED, "trigger_purpose_unsupported", command_evidence=CommandEvidence.NOT_SENT)
+
+    monkeypatch.setattr(profile, "submit_request", refuse)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(adapter.identity))
+        assert report.evidence is CommandEvidence.NOT_SENT
+        assert (report.reason_code, report.error_code) == ("trigger_purpose_unsupported", "UTA_NOT_SUPPORTED")
     finally:
         await adapter.close()
 
