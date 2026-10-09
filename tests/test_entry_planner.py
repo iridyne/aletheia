@@ -1525,6 +1525,26 @@ def test_planning_history_uses_stable_bounded_cursor():
     assert client.get("/api/universe/workbench", params={"limit": 0}).status_code == 422
 
 
+def test_planning_history_list_omits_planner_blobs():
+    from fastapi.testclient import TestClient
+    from aletheia.server.app import app
+
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET planner_input_json=?, "
+        "requalification_source_json=?, validated_hypothesis_json=? WHERE id=?",
+        (json.dumps({"x": "x" * 100_000}), "{}", "{}", generation["id"]),
+    )
+
+    body = TestClient(app).get("/api/universe/planning-history").json()
+
+    [item] = body["items"]
+    assert item["id"] == generation["id"]
+    assert not {"planner_input_json", "requalification_source_json", "validated_hypothesis_json"} & item.keys()
+    assert len(json.dumps(body)) < 20_000
+
+
 def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     from aletheia.server.routes.universe import get_candidate
 

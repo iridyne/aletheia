@@ -249,7 +249,7 @@ class EntryLifecycleProjection(TypedDict):
     cycles: list[EntryLifecycleCycle]
 
 
-class CandidatePlanningFields(TypedDict):
+class CandidatePlanningSummaryFields(TypedDict):
     id: str
     planning_key: str
     planning_identity: str
@@ -278,16 +278,13 @@ class CandidatePlanningFields(TypedDict):
     attention_status: str
     attention_started_at: str | None
     last_requalified_at: str | None
-    requalification_source_json: str | None
     soft_expires_at: str | None
     hard_expires_at: str | None
     attention_max_age_sec: int | None
     attention_policy_version: str | None
     attention_terminal_at: str | None
     attention_terminal_reason: str | None
-    planner_input_json: str | None
     planner_input_hash: str | None
-    validated_hypothesis_json: str | None
     opportunity_mechanism: str | None
     candidate_selection_policy: str | None
     candidate_selection_policy_epoch: str | None
@@ -306,6 +303,12 @@ class CandidatePlanningFields(TypedDict):
     admission_basis: NotRequired[str | None]
     startup_reason: NotRequired[str | None]
     pessimistic_strength: NotRequired[float | None]
+
+
+class CandidatePlanningFields(CandidatePlanningSummaryFields):
+    requalification_source_json: str | None
+    planner_input_json: str | None
+    validated_hypothesis_json: str | None
 
 
 class CandidateAttention(CandidatePlanningFields):
@@ -364,7 +367,13 @@ class CandidateWorkbenchRow(CandidateLedgerFields, EntryLifecycleProjection):
     entry_plan_terminal_reason: str | None
 
 
-class PlanningHistoryItem(CandidatePlanningFields):
+class PlanningHistoryItem(CandidatePlanningSummaryFields):
+    """List read model: no planner input / requalification / hypothesis blobs (#3642).
+
+    Measured 20.4 MB per 200 rows, 92% `planner_input_json`. The columns stay in the
+    durable row and are served by `GET /api/universe/candidates/{id}`.
+    """
+
     identity_version: str | None
     planner_contract_version: str | None
     activation_identity: str | None
@@ -845,7 +854,10 @@ def get_planning_history(
     next_before = None
     if len(rows) > limit and page:
         next_before = f"{page[-1]['updated_at']}|{page[-1]['id']}"
-    return {"items": page, "next_before": next_before}
+    # Derived from the TypedDicts so the OpenAPI schema and the response cannot drift.
+    omitted = CandidatePlanningFields.__annotations__.keys() - PlanningHistoryItem.__annotations__.keys()
+    items = [{k: v for k, v in row.items() if k not in omitted} for row in page]
+    return {"items": items, "next_before": next_before}
 
 
 def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
