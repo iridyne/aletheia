@@ -851,6 +851,12 @@ def _probe_network(report: Report) -> None:
     # from a direct connection). A match means requests may NOT be routed through
     # the proxy despite it being reachable.
     proxy_ip = _egress_ip(proxy_opener)
+    if enforce:
+        # Enforce forbids direct egress, including this comparison probe.
+        report.add("network.proxy", "ok",
+                   f"proxy reachable [{mode}] ({latency_ms}ms); egress {proxy_ip or 'unknown'}; "
+                   "direct egress not probed: enforce")
+        return
     direct_ip = _egress_ip(urllib.request.build_opener(urllib.request.ProxyHandler({})))
     if proxy_ip and direct_ip and proxy_ip == direct_ip:
         report.add("network.proxy", "warn",

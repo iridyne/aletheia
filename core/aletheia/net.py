@@ -129,6 +129,10 @@ class NetworkPolicyUnavailable(RuntimeError):
     """
 
 
+class EnforcedProxyUnsupported(RuntimeError):
+    """Raised when enforce mode requires a proxy this client cannot speak (urllib + SOCKS)."""
+
+
 def _proxy_url() -> str | None:
     """Read proxy_url from config. Returns None if not configured; raises NetworkPolicyUnavailable on read error."""
     try:
@@ -634,11 +638,11 @@ async def close_ccxt(exchange, session) -> bool:
 def build_urllib_opener():
     """Return a urllib opener routing external requests through the managed proxy.
 
-    For the few SYNC callers (webhook POST, polymarket urllib fallback) that can't
-    use the async httpx_client. Honours enforce / reachability via _effective_proxy;
-    loopback stays direct. SOCKS is not supported by urllib without PySocks, so a
-    socks5 proxy degrades this opener to direct (only affects the best-effort
-    webhook — all primary egress uses httpx/aiohttp which DO support socks).
+    For the few SYNC callers (the webhook POST) that can't use the async
+    httpx_client. Honours enforce / reachability via _effective_proxy; loopback
+    stays direct. SOCKS is not supported by urllib without PySocks: in enforce
+    mode that raises EnforcedProxyUnsupported before any I/O (enforce never
+    connects direct); fail-open mode degrades to direct.
     """
     import urllib.request
 
@@ -646,7 +650,9 @@ def build_urllib_opener():
     if proxy and not proxy.lower().startswith("socks"):
         handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
     else:
-        # No proxy / non-enforce-unreachable / socks → explicit no-env-proxy handler
-        # so we never accidentally route through a stale env proxy.
+        if proxy and _enforce():
+            raise EnforcedProxyUnsupported("managed_proxy_unsupported_for_urllib")
+        # No proxy / non-enforce-unreachable / fail-open socks → explicit
+        # no-env-proxy handler so we never route through a stale env proxy.
         handler = urllib.request.ProxyHandler({})
     return urllib.request.build_opener(handler)
