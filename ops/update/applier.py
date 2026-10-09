@@ -917,7 +917,11 @@ def _apply_update(*, restart: bool, progress, preactivation_backup: str, attempt
             schema_backup = preactivation_backup
             if not schema_backup:
                 try:
-                    schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
+                    schema_backup = str(
+                        BackupService(get_data_dir()).create_backup(
+                            label="interactive_schema_activate", profile="authoritative"
+                        )
+                    )
                 except Exception as exc:
                     return _rollback_update(
                         old,
@@ -928,6 +932,21 @@ def _apply_update(*, restart: bool, progress, preactivation_backup: str, attempt
                         failure_reason="schema_activation_backup_failed",
                         failure_detail=type(exc).__name__,
                     )
+            # The rollback restore accepts only a verified recovery checkpoint (#1444);
+            # prove it before activation rather than discovering it on rollback.
+            from ops.update.auto import _recovery_checkpoint_problem
+
+            backup_problem = _recovery_checkpoint_problem(Path(schema_backup))
+            if backup_problem:
+                return _rollback_update(
+                    old,
+                    new,
+                    python_deps_changed=python_deps_changed,
+                    frontend_deps_changed=frontend_deps_changed,
+                    restart=False,
+                    failure_reason="schema_activation_backup_unverified",
+                    failure_detail=backup_problem,
+                )
         if dashboard_build_required:
             had_previous_static = _activate_frontend_build()
             frontend_built = True
