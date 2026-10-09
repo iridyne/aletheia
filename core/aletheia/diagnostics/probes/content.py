@@ -11,7 +11,6 @@ __all__ = [
     "_probe_content_lesson_guards",
     "_probe_content_memo_quality",
     "_probe_content_proposal_bias",
-    "_probe_content_shadow_trades",
     "_probe_content_signal_settlement",
 ]
 
@@ -223,74 +222,6 @@ def _probe_content_attribution(report: Report) -> None:
         report.add("content.attribution", "ok", detail)
 
 
-def _probe_content_shadow_trades(report: Report) -> None:
-    """Shadow trades whose counterfactual pnl never lands — edge-lab analysis
-    silently loses that sample.
-
-    The unresolved rows split by `outcome_candidate_key`, and the two halves need
-    DIFFERENT remedies, so a bare count would send the operator to the wrong tool:
-
-    * key IS NULL — pre-b9ad957 orphans whose parent position carries no
-      opportunity_id. `resolve_stale_shadows` (and `scripts/maintenance/backfill_shadow_trades.py`
-      on top of it) resolve these by their own historical horizon.
-    * key IS NOT NULL — was resolved by `settle_linked_shadow_outcomes()`, which
-      fired when the linked 24h `filter_candidate_outcomes` row settled. That
-      settler was retired with the rest of the shadow storage surface (#3708) and
-      the table is a tombstone awaiting its drop migration, so these rows have no
-      owner left. Both backfill paths SELECT `outcome_candidate_key IS NULL`, so
-      neither can move a single one of them either.
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        total = db.execute(
-            "SELECT COUNT(*) FROM shadow_trades WHERE invalidated_at IS NULL"
-        ).fetchone()[0]
-        if total == 0:
-            report.add("content.shadow_trades", "info", "no shadow trades yet")
-            return
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        row = db.execute(
-            "SELECT COUNT(*) AS stale, "
-            "SUM(CASE WHEN outcome_candidate_key IS NULL THEN 1 ELSE 0 END) AS orphaned "
-            "FROM shadow_trades "
-            "WHERE invalidated_at IS NULL AND resolved_at IS NULL AND created_at < ?",
-            (cutoff,),
-        ).fetchone()
-        stale = int(row["stale"] or 0)
-        orphaned = int(row["orphaned"] or 0)
-    except Exception as e:
-        report.add_probe_error("content.shadow_trades", e)
-        return
-    linked = stale - orphaned
-    stale_pct = stale / total if total else 0.0
-    if stale == 0:
-        report.add("content.shadow_trades", "ok", f"{total} shadow trades, none stale")
-        return
-    # Point at the remedy that can actually move the dominant half.
-    if linked > orphaned:
-        hint = ("these carry an outcome_candidate_key, so they resolve only when their "
-                "linked 24h filter_candidate_outcomes row settles — check "
-                "data.filter_evidence stale_overdue; the backfill script excludes them")
-    else:
-        hint = ("run scripts/maintenance/backfill_shadow_trades.py for the orphaned backlog; the "
-                "shadow_resolver job catches up new ones (resolve_stale_shadows)")
-    split = f"{orphaned} orphaned, {linked} awaiting 24h filter-outcome settlement"
-    if stale_pct > 0.25:
-        report.add("content.shadow_trades", "warn",
-                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}; "
-                   f"{split}) — counterfactual pnl never computed",
-                   hint)
-    else:
-        # Bounded residue: symbols that left the universe have no OHLCV to resolve
-        # against, so a small unresolved tail is honest, not a systemic failure.
-        report.add("content.shadow_trades", "info",
-                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}; "
-                   f"{split}) — bounded residue (delisted/out-of-universe symbols lack "
-                   "OHLCV to resolve)",
-                   hint)
-
-
 def _probe_content_signal_settlement(report: Report) -> None:
     """filter_candidate_outcomes that are past due_at but still pending — the outcome
     settler job is stalled, so signal effectiveness silently stops updating."""
@@ -374,7 +305,6 @@ _CONTENT_PROBES = (
     _probe_content_lesson_chain,
     _probe_content_lesson_guards,
     _probe_content_attribution,
-    _probe_content_shadow_trades,
     _probe_content_signal_settlement,
     _probe_content_proposal_bias,
 )

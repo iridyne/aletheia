@@ -177,57 +177,6 @@ def test_attribution_under_threshold_is_ok(db):
     assert _verdict(dx._probe_content_attribution).severity == "ok"
 
 
-# --- content.shadow_trades ---------------------------------------------------
-
-def test_shadow_trades_empty_is_info(db):
-    assert _verdict(dx._probe_content_shadow_trades).severity == "info"
-
-
-def test_shadow_trades_stale_warns(db):
-    _ins(db, "shadow_trades", id="sh1", opportunity_id="o1", symbol="BTC/USDT",
-         direction="long", created_at=_ago(days=2), resolved_at=None)
-    assert _verdict(dx._probe_content_shadow_trades).severity == "warn"
-
-
-def test_shadow_trades_resolved_is_ok(db):
-    _ins(db, "shadow_trades", id="sh2", opportunity_id="o2", symbol="BTC/USDT",
-         direction="long", created_at=_ago(days=2), resolved_at=_ago(days=1))
-    assert _verdict(dx._probe_content_shadow_trades).severity == "ok"
-
-
-def test_shadow_trades_with_outcome_key_do_not_recommend_the_backfill_script(db):
-    """The backfill script SELECTs `outcome_candidate_key IS NULL`, so recommending
-    it for keyed rows is a no-op that hides the stalled filter-outcome settler."""
-    for i in range(3):
-        _ins(db, "shadow_trades", id=f"sk{i}", opportunity_id=f"ok{i}", symbol="BTC/USDT",
-             direction="long", created_at=_ago(days=2), resolved_at=None,
-             outcome_candidate_key=f"key{i}")
-    check = _verdict(dx._probe_content_shadow_trades)
-    assert check.severity == "warn"
-    assert "backfill_shadow_trades" not in (check.fix_hint or "")
-    assert "filter_candidate_outcomes" in (check.fix_hint or "")
-
-
-def test_shadow_trades_orphans_still_recommend_the_backfill_script(db):
-    for i in range(3):
-        _ins(db, "shadow_trades", id=f"so{i}", opportunity_id=f"oo{i}", symbol="BTC/USDT",
-             direction="long", created_at=_ago(days=2), resolved_at=None)
-    check = _verdict(dx._probe_content_shadow_trades)
-    assert check.severity == "warn"
-    assert "backfill_shadow_trades" in (check.fix_hint or "")
-
-
-def test_shadow_trades_detail_reports_the_two_populations(db):
-    _ins(db, "shadow_trades", id="sm1", opportunity_id="om1", symbol="BTC/USDT",
-         direction="long", created_at=_ago(days=2), resolved_at=None)
-    _ins(db, "shadow_trades", id="sm2", opportunity_id="om2", symbol="ETH/USDT",
-         direction="long", created_at=_ago(days=2), resolved_at=None,
-         outcome_candidate_key="key1")
-    detail = _verdict(dx._probe_content_shadow_trades).detail
-    assert "1 orphaned" in detail
-    assert "1 awaiting 24h filter-outcome settlement" in detail
-
-
 # --- content.signal_settlement -----------------------------------------------
 
 def _ins_outcome(conn, oid, status, due_at):
@@ -280,13 +229,13 @@ def test_proposal_bias_mixed_is_ok(db):
     assert _verdict(dx._probe_content_proposal_bias).severity == "ok"
 
 
-# --- registration: all 6 content probes run inside build_report -------------
+# --- registration: all content probes run inside build_report -------------
 
 def test_all_content_probes_registered(db):
     names = {c.name for c in dx.build_report().checks}
     for expected in (
         "content.memo_quality", "content.lesson_chain",
-        "content.attribution", "content.shadow_trades", "content.signal_settlement",
+        "content.attribution", "content.signal_settlement",
         "content.proposal_bias",
     ):
         assert expected in names, f"content probe not registered: {expected}"
