@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 import threading
 from contextvars import ContextVar
-from typing import Literal
+from typing import Literal, cast
+
+from pydantic import BaseModel, ValidationError
 
 from aletheia.model_provider.base import (
     ModelRequest,
@@ -630,7 +632,45 @@ def _drop_null_fields(value):
     return value
 
 
-def _validate_structured_payload(data: dict, schema: object, schema_dict: dict) -> None:
+def _schema_error_path(exc: BaseException, schema_dict: dict) -> str:
+    """First failing location, named only with the caller's declared properties."""
+    if not isinstance(exc, ValidationError):
+        # The local subset validator builds its path from declared names only.
+        head = str(exc).split(":", 1)[0]
+        return head if head.startswith("$") else "$"
+    errors = exc.errors(include_input=False, include_url=False)
+    loc = errors[0]["loc"] if errors else ()
+    declared: set[str] = set()
+    stack: list[object] = [schema_dict]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if isinstance(node.get("properties"), dict):
+                declared.update(node["properties"])
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    path = "$"
+    for part in loc:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif part in declared:
+            path += f".{part}"
+        else:
+            break  # a model-supplied key or union tag is not schema vocabulary
+    return path
+
+
+def _validate_structured_payload(data: dict, schema: object, schema_dict: dict) -> dict:
+    """Return the object the caller receives: one validation semantics.
+
+    A Pydantic schema normalizes first (its before-validators complete the shapes
+    the contract tolerates, #3737); the declared JSON schema then bounds that
+    normalized dump, so caller-narrowed enums still hold (#3751).
+    """
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        # exclude_unset: normalize what the model said, never add schema defaults.
+        data = schema.model_validate(data).model_dump(mode="json", by_alias=True, exclude_unset=True)
     try:
         _validate_json_schema_value(data, schema_dict, root=schema_dict)
     except (TypeError, ValueError):
@@ -639,15 +679,12 @@ def _validate_structured_payload(data: dict, schema: object, schema_dict: dict) 
         # does not need to invent trade fields.
         if not ("allOf" in schema_dict or "oneOf" in schema_dict):
             raise
-        sparse = _drop_null_fields(data)
+        sparse = cast(dict, _drop_null_fields(data))
         if sparse == data:
             raise
         _validate_json_schema_value(sparse, schema_dict, root=schema_dict)
-        data.clear()
-        data.update(sparse)
-    validator = getattr(schema, "model_validate", None)
-    if callable(validator):
-        validator(data)
+        return sparse
+    return data
 
 
 async def llm_structured(
@@ -689,7 +726,8 @@ async def llm_structured(
         Structured calls request strict ``response_format=json_schema`` with a
         portable schema; providers that do not implement it use their own
         compatibility fallback. Structured calls keep the explicit model order
-        and skip a model that already returned unusable JSON for this logical call.
+        and skip a model that already returned unusable (empty/non-JSON) output for
+        this logical call; a schema-invalid object is repaired by the same model.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -702,6 +740,7 @@ async def llm_structured(
     last_response = None
     last_response_shape: str | None = None
     last_schema_error_code: str | None = None
+    last_schema_error_path: str | None = None
     last_semantic_error_code: str | None = None
     semantic_validator_exception: BaseException | None = None
     active_structured_attempt: int | None = None
@@ -745,6 +784,8 @@ async def llm_structured(
                 if error.startswith("structured_schema_invalid"):
                     if last_schema_error_code:
                         failure_diagnostics["schema_error_code"] = last_schema_error_code
+                    if last_schema_error_path:
+                        failure_diagnostics["schema_error_path"] = last_schema_error_path
             _record_call_finished(
                 inference_call,
                 status="error",
@@ -871,6 +912,7 @@ async def llm_structured(
             output_tokens = resp.output_tokens or 0
             finish_reason = resp.finish_reason
             last_schema_error_code = None
+            last_schema_error_path = None
             last_schema_error_text = ""
 
             if not content:
@@ -891,13 +933,15 @@ async def llm_structured(
             last_response_shape = _classify_structured_response(content, data)
             if isinstance(data, dict):
                 try:
-                    _validate_structured_payload(data, schema, schema_dict)
+                    data = _validate_structured_payload(data, schema, schema_dict)
                 except (TypeError, ValueError) as exc:
                     last_schema_error_code = _classify_schema_validation_error(exc)
+                    last_schema_error_path = _schema_error_path(exc, schema_dict)
                     last_schema_error_text = str(exc)
                     last_err = f"structured_schema_invalid: {last_schema_error_code}"
                     _record_structured_outcome("schema_invalid")
-                    _remember_failed_model(resp)
+                    # A schema miss is repaired by the same model with the exact
+                    # validator error; only unusable output excludes a model.
                     if attempt < max_attempts - 1:
                         logger.warning(
                             "LLM structured call: schema validation failed (attempt %d/%d) — retrying",

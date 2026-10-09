@@ -782,3 +782,135 @@ async def test_structured_failure_retains_content_free_completion_state(
     assert diagnostics["output_tokens"] == str(tokens)
     assert diagnostics["output_limit"] == "100"
     assert "private-provider-text" not in json.dumps(diagnostics)
+
+
+# --- #3751: Pydantic normalizes first; the declared schema checks its dump ---
+
+def _planner_entry_plan(**overrides) -> dict:
+    """The shape a strict-schema planner response takes in production.
+
+    The provider's portable schema drops ``minLength``/``minItems``, so a model
+    that holds the baseline posture legally returns an empty reason and no refs.
+    """
+    payload = {
+        "decision": "ENTRY_PLAN", "reason_code": "OK", "mechanism": "reversal",
+        "direction": "long", "primary_anchor_ref": "anchor:15m:swing_low:1",
+        "invalidation_anchor_ref": "anchor:15m:swing_low:2",
+        "entry_profile_id": "grounded-anchor-direct", "capture_priority": "PRICE_FIRST",
+        "capture_reason": "15m swing low reclaimed with rising OI",
+        "capture_evidence_refs": ["anchor:15m:swing_low:2"], "risk_tier": "LOW",
+        "horizon": "INTRADAY", "supporting_fact_refs": ["anchor:15m:swing_low:2"],
+        "opposing_fact_refs": [], "learning_evidence_refs": [],
+        "risk_intent": {"posture": "BASELINE", "reason": "", "evidence_refs": []},
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def _run_structured(monkeypatch, tmp_path, payloads, schema):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+
+    captured = []
+    responses = iter(payloads)
+
+    async def complete(request, **_kwargs):
+        captured.append(request)
+        return ModelResponse(content=json.dumps(next(responses)), model="m1", raw={"usage": {}})
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    data, error = await helpers.llm_structured(
+        "sys", "user", schema=schema, caller="agent_shell.entry_planner",
+    )
+    from aletheia.economics.schema import ensure_economics_schema
+
+    row = ensure_economics_schema().execute(
+        "SELECT metadata_json FROM llm_inference_calls WHERE logical_call_id=?",
+        (captured[-1].inference.logical_call_id,),
+    ).fetchone()
+    return data, error, captured, row[0] or "{}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "intent",
+    [
+        {"posture": "BASELINE", "reason": "", "evidence_refs": []},
+        {"posture": "REDUCED"},
+        "BASELINE",
+    ],
+)
+async def test_partial_risk_intent_is_normalized_before_the_declared_schema(monkeypatch, tmp_path, intent):
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    plan = _planner_entry_plan(risk_intent=intent)
+    data, error, captured, _ = await _run_structured(monkeypatch, tmp_path, [plan, plan], EntryHypothesis)
+
+    assert error is None and data is not None
+    assert len(captured) == 1
+    assert data["risk_intent"]["reason"] == "15m swing low reclaimed with rising OI"
+    assert data["risk_intent"]["evidence_refs"] == ["anchor:15m:swing_low:2"]
+    assert EntryHypothesis.model_validate(data).risk_intent is not None
+
+
+@pytest.mark.asyncio
+async def test_schema_failure_records_its_path_and_repairs_with_the_same_model(monkeypatch, tmp_path):
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    bad = _planner_entry_plan(risk_intent={"posture": "INCREASED", "reason": "x", "evidence_refs": ["r"]})
+    data, error, captured, metadata = await _run_structured(
+        monkeypatch, tmp_path, [bad, bad], EntryHypothesis,
+    )
+
+    assert data is None
+    assert error == "structured_schema_invalid: outside_enum"
+    diagnostics = json.loads(metadata)["structured_failure"]
+    assert diagnostics["schema_error_path"] == "$.risk_intent.posture"
+    assert "INCREASED" not in metadata
+    assert [request.exclude_models for request in captured] == [(), ()]
+
+
+@pytest.mark.asyncio
+async def test_declared_schema_still_bounds_the_normalized_dump(monkeypatch, tmp_path):
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    class ShortOnly(EntryHypothesis):
+        @classmethod
+        def model_json_schema(cls, **kwargs):
+            schema = super().model_json_schema(**kwargs)
+            schema["properties"]["direction"]["enum"] = ["short"]
+            return schema
+
+    plan = _planner_entry_plan()
+    data, error, _, metadata = await _run_structured(monkeypatch, tmp_path, [plan, plan], ShortOnly)
+
+    assert data is None
+    assert error == "structured_schema_invalid: outside_enum"
+    assert json.loads(metadata)["structured_failure"]["schema_error_path"] == "$.direction"
+
+
+@pytest.mark.asyncio
+async def test_schema_error_path_never_names_a_model_supplied_key(monkeypatch, tmp_path):
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    plan = _planner_entry_plan(SYNTHETIC_MODEL_KEY="x")
+    data, error, _, metadata = await _run_structured(monkeypatch, tmp_path, [plan, plan], EntryHypothesis)
+
+    assert data is None and error is not None and error.startswith("structured_schema_invalid")
+    assert json.loads(metadata)["structured_failure"]["schema_error_path"] == "$"
+    assert "SYNTHETIC_MODEL_KEY" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_normalized_dump_never_adds_defaults_the_model_did_not_send(monkeypatch, tmp_path):
+    class Read(BaseModel):
+        direction_bias: str = "neutral"
+        confidence_score: int = 50
+
+    data, error, _, _ = await _run_structured(monkeypatch, tmp_path, [{"direction_bias": "long"}], Read)
+
+    assert (data, error) == ({"direction_bias": "long"}, None)

@@ -80,6 +80,11 @@ def _safe_failure_diagnostics(value: dict[str, str] | None) -> dict[str, str]:
     schema_error_code = value.get("schema_error_code")
     if schema_error_code in _SAFE_SCHEMA_ERROR_CODES:
         safe["schema_error_code"] = schema_error_code
+    schema_error_path = value.get("schema_error_path")
+    if isinstance(schema_error_path, str) and re.fullmatch(
+        r"\$(?:\.[A-Za-z_][A-Za-z0-9_]{0,63}|\[[0-9]{1,6}\]){0,16}", schema_error_path,
+    ):
+        safe["schema_error_path"] = schema_error_path
     semantic_code = value.get("semantic_error_code")
     if isinstance(semantic_code, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", semantic_code):
         safe["semantic_error_code"] = semantic_code
