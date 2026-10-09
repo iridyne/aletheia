@@ -46,3 +46,7 @@ with the canonical policy in a way that changes trading safety.
   credentials, and orchestrator sessions.
 - Do not edit instructions to grant more authority; restricted tools remain
   unavailable to LLM-driven agents.
+- External interactions keep the original error (#3880): venue code, message, HTTP status,
+  endpoint path without its query string, exception class and cause chain, persisted where the
+  flow has a DB. The bounded `reason_code` token (grouping) and the raw error (diagnosis) are two
+  separate fields; keep both, redact credentials with the existing redactor, and cap the size.

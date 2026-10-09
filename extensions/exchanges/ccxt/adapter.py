@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any
 
+from aletheia.gateway.logs import redact_log_text
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.funding import (
     FUNDING_HISTORY_RETENTION_EXPIRED,
@@ -1069,6 +1070,7 @@ class CCXTUTAAdapter:
         venue_order_id=None,
         error_code=None,
         reason_code=None,
+        raw_error=None,
         order=None,
     ):
         values = dict(
@@ -1081,6 +1083,7 @@ class CCXTUTAAdapter:
             venue_order_id=venue_order_id or getattr(command, "target_venue_order_id", None),
             error_code=error_code,
             reason_code=reason_code,
+            raw_error=raw_error,
             profile_version=self._profile_version,
         )
         if report_type is SubmissionReport:
@@ -1170,12 +1173,31 @@ class CCXTUTAAdapter:
             current = current.__cause__ or current.__context__
         return "unknown"
 
+    def _raw_error(self, exc: BaseException) -> str:
+        """The original error for diagnosis (#3880): venue code, class chain and messages.
+
+        URL query strings (where venues put signatures and keys) are dropped, known
+        secret fragments redacted, and the result capped.
+        """
+        try:
+            code = self._profile.venue_rejection_code(exc)
+        except Exception:
+            code = None
+        parts, current = [], exc
+        while current is not None and len(parts) < 4:
+            parts.append(f"{type(current).__name__}: {current}")
+            current = current.__cause__ or current.__context__
+        text = (f"venue_code={code} " if code else "") + " <- ".join(parts)
+        text = re.sub(r"(https?://[^\s?\"']*)\?[^\s\"']*", r"\1", text)
+        return redact_log_text(text)[:1000]
+
     def _mutation_failure(self, command, report_type, exc, *, request_started):
+        raw_error = self._raw_error(exc)
         if not request_started and isinstance(exc, UTAError) and exc.command_evidence in {None, CommandEvidence.NOT_SENT}:
             return self._not_sent(command, report_type, reason=exc.reason, error_code=exc.code)
         error_kind = self._command_error_kind(exc)
         if request_started and command.purpose == "exit" and error_kind == "rejected" and self._profile.close_position_absent(exc):
-            return self._command_report(command, report_type, CommandEvidence.VENUE_REJECTED, error_code=UTAErrorCode.VENUE_REJECTED.value, reason_code="close_position_absence_unverified")
+            return self._command_report(command, report_type, CommandEvidence.VENUE_REJECTED, error_code=UTAErrorCode.VENUE_REJECTED.value, reason_code="close_position_absence_unverified", raw_error=raw_error)
         if request_started and error_kind != "rejected":
             return self._command_report(
                 command,
@@ -1183,6 +1205,7 @@ class CCXTUTAAdapter:
                 CommandEvidence.AMBIGUOUS,
                 error_code=UTAErrorCode.AMBIGUOUS_COMMAND.value,
                 reason_code="command_acknowledgement_unknown",
+                raw_error=raw_error,
             )
         if request_started:
             code = self._venue_error_code(exc)
@@ -1192,6 +1215,7 @@ class CCXTUTAAdapter:
                 CommandEvidence.VENUE_REJECTED,
                 error_code=code.value,
                 reason_code=self._venue_rejected_reason(exc),
+                raw_error=raw_error,
             )
         code = (
             self._venue_error_code(exc)
@@ -1208,6 +1232,7 @@ class CCXTUTAAdapter:
             # Suffixed (venue code, else exception class): a bare `command_not_sent`
             # cannot tell a set_leverage rejection from a timeout after the fact.
             reason_code=self._venue_rejected_reason(exc, "command_not_sent", class_fallback=True),
+            raw_error=raw_error,
         )
 
     def _validate_mutation(self, command, report_type, capability: bool):

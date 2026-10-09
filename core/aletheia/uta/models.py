@@ -591,6 +591,8 @@ class CommandReport(UTAModel):
     venue_order_id: str | None = None
     error_code: str | None = Field(default=None, pattern=r"^UTA_[A-Z_]+$")
     reason_code: ReasonCode | None = None
+    # Redacted, capped original venue/transport error (#3880); reason_code stays the bounded token.
+    raw_error: str | None = None
     profile_version: str = Field(min_length=1)
 
 
