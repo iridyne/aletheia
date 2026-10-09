@@ -126,11 +126,17 @@ class _BitgetDemoProfile(CCXTProfile):
             and prepared.leverage is not None
             and not prepared.reduce_only
         ):
-            await exchange.set_leverage(
-                int(prepared.leverage),
-                prepared.instrument.venue_symbol,
-                {"uta": True, **({"marginMode": prepared.margin_mode} if prepared.margin_mode else {})},
-            )
+            leverage = int(prepared.leverage)
+            params: dict[str, object] = {"uta": True}
+            if prepared.margin_mode:
+                params["marginMode"] = prepared.margin_mode
+            if prepared.margin_mode == "isolated":
+                # The account is in hedge mode: isolated leverage must name both sides, otherwise
+                # Bitget answers 25200 DOUBLE_SIDE_HOLD (measured on the demo account 2026-10-09;
+                # posSide / holdSide do not help). Every isolated entry failed here before.
+                params["longLeverage"] = str(leverage)
+                params["shortLeverage"] = str(leverage)
+            await exchange.set_leverage(leverage, prepared.instrument.venue_symbol, params)
         return prepared
 
     def submit_request(self, command):
