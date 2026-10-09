@@ -456,8 +456,18 @@ def _check_data_coverage() -> dict:
 def _check_model_health() -> dict:
     try:
         from aletheia.model_provider.fallback import get_model_health_snapshot
-        snap = get_model_health_snapshot()
-        if any(p.get("available") for p in snap.get("providers", [])):
+        # One record per provider/model; available = not cooling and its latest
+        # call succeeded. No record means no provider has been proven up (#1698).
+        available = [
+            record for record in get_model_health_snapshot()
+            if not record["cooling_down"]
+            and record["last_success_at"] is not None
+            and (
+                record["last_failure_at"] is None
+                or record["last_success_at"] > record["last_failure_at"]
+            )
+        ]
+        if available:
             return _criterion("model_health", "LLM Model Available", 100, 0.045, "at least one provider up")
         return _criterion("model_health", "LLM Model Available", 0, 0.045, "no providers available")
     except Exception:
