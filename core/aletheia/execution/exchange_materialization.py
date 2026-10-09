@@ -35,6 +35,7 @@ def claim_observed_tpsl_close(
 ):
     """Atomically register an observed native TPSL execution without placing it."""
     from aletheia.execution.coordinator import _position_account
+    from aletheia.uta.identity import IdentityRelation, identity_relation
     from aletheia.uta.models import UTAAccountIdentity
     from aletheia.uta.manager import native_protection_execution_modes
 
@@ -52,10 +53,11 @@ def claim_observed_tpsl_close(
             )
         # The observing reader is built from current configuration, but the claim
         # carries the entry Order's frozen identity. Only a reader authenticating
-        # as exactly that account may produce or advance this claim; reconcile()
-        # rejects the same mismatch, and this bridge must not be the softer door.
+        # as that same account (contract §3.0b identity_relation) may produce or
+        # advance this claim; reconcile() rejects the same mismatch, and this bridge
+        # must not be the softer door.
         entry_account = _position_account(position)
-        if expected_account is None or entry_account != expected_account:
+        if expected_account is None or identity_relation(entry_account, expected_account) is not IdentityRelation.SAME:
             raise ValueError("uta_account_identity_mismatch")
         pending_id = position.get("pending_close_order_id")
         if pending_id:
@@ -75,7 +77,7 @@ def claim_observed_tpsl_close(
                     )
                 except ValueError as exc:
                     raise ValueError("uta_account_identity_unavailable") from exc
-                if claimed != entry_account:
+                if identity_relation(claimed, entry_account) is not IdentityRelation.SAME:
                     raise ValueError("uta_account_identity_mismatch")
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
