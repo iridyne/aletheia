@@ -213,6 +213,11 @@ Consequences for every later section:
     account_cap 10。所以本决定对 demo 而言是**下调**每档上限，同时把每笔风险从 20% 降到 3%。
   - 执行：通过已有的 `PUT /api/settings/risk-policies/demo` 修改，该接口带 revision 校验和审计。
     `futures_cap` 与各档上限重复的问题，按"一件事一份实现"另开 issue 处理。
+  - **已执行（2026-10-09）**：Fedora 的 demo 策略从 revision 8 升到 **revision 9**。
+    - `loss.max_single_trade_risk_pct`：20 → 3
+    - `leverage.major/mid/alt_cap`：20/10/5 → 10/5/3
+    - 其余字段未改动；变更后健康检查为 healthy。
+    - 审计记录注意：audit.jsonl 里这条 `risk_policy_replaced` 记的是 `actor=human, source=dashboard`，因为接口把这两个值写死了。实际操作者是 AI，依据是 owner 在对话中的决定。
 - [ ] 决定 3 原文条目：：山寨币是否给更大的 r；500U 起步时的默认值
 - [ ] **决定 4：杠杆上限分档**：major/mid/alt 各档的 L 上限；`futures_cap` 与档位上限重复的问题
 - [ ] **决定 5：止损的确定方式**：AI 给结构失效点；系统加 ATR 缓冲、下限（按费用 ≤ 0.1R 推出）和
