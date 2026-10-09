@@ -138,9 +138,9 @@ cost-aware outcomes and separately validated owner/lifecycle authority may
 apply a supported treatment. The ledger grants no risk, execution, credential,
 or live authority.
 
-For current universe contribution measurement, `filter_candidate_outcomes` is the canonical
-full-arm source. `universe_forward_outcomes` is a selected-member legacy mirror/fallback; matching
-copies are deduplicated and economic disagreement fails closed. Exact-key reads are batched. One
+For current universe contribution measurement, `filter_candidate_outcomes` is the sole
+full-arm source (the selected-member `universe_forward_outcomes` mirror was dropped in v94,
+#3701). Exact-key reads are batched. One
 complete persisted `assignment_unit_key` cluster contributes one intent-to-treat allocation-utility
 observation: selected members contribute net return, dropped members contribute zero, and worst
 selected-member MAE is retained. `allocation_selected` is immutable and nullable only for legacy or
@@ -271,7 +271,7 @@ Opportunity rows and not an executable queue.
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, total_score (legacy compatibility), candidate_selection_policy, candidate_selection_policy_epoch, candidate_selection_utility_pct, opportunity_mechanism/version/source_component/source_cutoff/evidence_hash, scanner_direction |
-| `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
+| ~~`universe_forward_outcomes`~~ | Dropped in v94 (`20260929_0094_drop_universe_forward_outcomes_v94`, #3701); `filter_candidate_outcomes` carries fixed-horizon outcomes | — |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 | `universe_twin_shadow_batches` | Versioned prospective comparison evidence; Candidate Selection Utility samples its complete denominator at a 4h cadence and stops confirmatory writes after a terminal fixed look. Retention preserves the immutable prefix through first admission plus the global frozen training denominator; separately labelled later telemetry uses the ordinary 30d window. | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, 4h outcome contract, blockers, promotion/authority state, batch_hash |
 | `universe_twin_shadow_records` | Compact complete-population alternate-policy evidence and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, legacy/target/assigned selections, authority state, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
@@ -441,7 +441,6 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniverseScannerRun | universe_scanner_runs | Universe |
 | UniverseSnapshot | universe_snapshots | Universe |
 | Candidate / UniverseMember compatibility alias | universe_members | Universe |
-| UniverseForwardOutcome | universe_forward_outcomes | Universe |
 | UniversePolicy | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |
 | OperatorEvaluationEvent | operator_evaluation_events | System Operator |
@@ -512,7 +511,6 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `ohlcv_backfill_state` | 90d since last update | existing |
 | `macro_snapshots` | 90d | existing |
 | `coingecko_top_snapshots` | 3d (was 14d); `coingecko_top_n` default 50 (was 100) | `prune_coingecko_top_snapshots` |
-| `universe_forward_outcomes` | 30d + earliest-exposure guard for active open experiments | `prune_universe_forward_outcomes` |
 | `universe_snapshots` / `universe_members` | 30d + protected fallback-outcome guard | `prune_universe_snapshots` (cascade) |
 | `universe_scanner_runs` | 30d | `prune_universe_scanner_runs` |
 | `universe_twin_shadow_batches` / `universe_twin_shadow_records` | fixed 30d via `universe_scanner_runs_days`; admitted epochs additionally retain the prefix through first admission and global frozen training denominator, while post-admission telemetry expires normally; missing admission audit/unreadable policy fails closed; ≤1 batch/55min, records before batches | `prune_universe_twin_shadow_evidence` |

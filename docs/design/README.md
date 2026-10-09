@@ -10,7 +10,7 @@ This is the main implementation authority after governance and product scope. Re
 | `decisions/` | Durable architectural decisions: why long-lived choices were made and how they evolved |
 | `proposals/` | Substantial future designs before they become current contracts |
 | `data/` | Data model, data utilization, market data observability, collectors, source alignment |
-| `api/` | API reference and API compatibility rules |
+| `api/` | API reference and conventions |
 | `architecture/` | System map and architecture guides |
 | `operator/` | System Operator and PI Operator design |
 | `frontend/` | Web UI information architecture and design system |

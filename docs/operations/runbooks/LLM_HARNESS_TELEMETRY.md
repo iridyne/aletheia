@@ -9,13 +9,13 @@ cache-creation, total, and reasoning token fields.
 
 ## Runtime source of truth
 
-**CASI is the runtime source of truth.** Run every operational command below on
-the CASI host through SSH. The local macOS `~/.aletheia/` directory is an
-archive and must not be used to infer current gateway state, current model
+**The Fedora runtime host is the runtime source of truth.** Run every operational
+command below on Fedora through SSH. The local macOS `~/.aletheia/` directory is
+not a runtime and must not be used to infer current gateway state, current model
 usage, pricing, budgets, or observation-window evidence.
 
 ```sh
-ssh <casi-host>
+ssh fedora
 cd <aletheia-checkout>
 uv run aletheia gateway status
 ```

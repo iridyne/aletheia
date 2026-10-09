@@ -1,7 +1,7 @@
 # LLM Harness Research Index
 
-This directory is a living research record for Aletheia's framework-wide LLM
-harness. It is deliberately separate from the narrower tokenomics record:
+This directory is a dated research record for Aletheia's framework-wide LLM
+harness; each file is evidence as of its date. It is deliberately separate from the narrower tokenomics record:
 pricing and budgets are optional consumers of inference telemetry, not the
 purpose of the harness.
 

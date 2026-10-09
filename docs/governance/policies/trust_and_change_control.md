@@ -234,7 +234,6 @@ touch:
 - Live unlock or live execution.
 - Secret storage, redaction, or API responses.
 - Agent permission enforcement.
-- Strategy promotion gates.
 - Knowledge item type semantics.
 - Dashboard safety status display.
 - Telegram authorization.
@@ -614,11 +613,9 @@ Minimum verification for controlled-module changes:
 uv run pytest tests/<focused_test_file>.py -q
 ```
 
-For cross-boundary changes, also run:
-
-```text
-uv run pytest -q
-```
+For cross-boundary changes, also run the domain marker sets the change crosses
+(`uv run pytest tests -q -m "domain_<area>"`); the full suite is measured on Fedora
+only (see root `AGENTS.md`).
 
 If frontend operational state is affected, also run:
 
@@ -637,7 +634,6 @@ Use these defaults unless the user explicitly overrides them:
 
 - Missing operational data is `not available`, not healthy.
 - Empty Telegram `allowed_chat_ids` denies all chats.
-- A missing strategy metric fails promotion rather than passing by assumption.
 - A backend capability must exist before the dashboard displays it as available.
 - A safety regression test is required before changing risk, execution, live,
   secrets, or permissions.

@@ -1,8 +1,8 @@
 # tokenomics/ — LLM Harness and Cost-Control Research
 
-Frozen research notes that feed the `tokenomics` branch work: extending
+Frozen research notes behind the Tokenomics harness work: extending
 Aletheia's LLM control surface from the metering baseline established by
-PR #110 (`aletheia/economics/`) toward a full inference harness — budget
+PR #110 (`core/aletheia/economics/`) toward a full inference harness — budget
 enforcement, rate limiting, prompt/response guardrails, and a uniform
 harness environment for agent callers.
 
@@ -22,6 +22,9 @@ authoritative it moves into `design/proposals/`, `design/decisions/`, or
 | `system_prompt_patterns_2026-07-30.md` | Nine callers sampled: role → input contract → output contract → behavioural constraints. What every prompt is missing (time, run identity, budget-remaining, tool permissions) and a sketch of a Phase 5 harness environment header prepended in `helpers.py`. |
 | `existing_cli_audit_shape_2026-07-30.md` | Every `aletheia audit` subcommand, backing economics-module function, and exact JSON shape it emits. Sketches a straight-mirror Phase 1 endpoint layout that reuses the same functions the CLI does. |
 | `economics_test_fixtures_2026-07-30.md` | Autouse `conftest.py` fixtures every test inherits, the eight-step economics setup pattern from `test_economic_*.py`, the `httpx.AsyncClient` + `ASGITransport(app=app)` route test pattern, and what Phase 1 route tests should and should not assert. |
+| `phase2_design_decisions_2026-07-31.md` | Two owner decisions made while PR #480 (Phase 2) landed. |
+| `harness_header_ablation_2026-08-01.md` (+ `harness_header_blind_review_2026-08-01.json`) | Harness environment header ablation (#547) and its blind-review data. |
+| `prompt_guardrail_characterization_2026-08-01.md` | Detect-only prompt guardrail characterization (#546): stable rule IDs and match counts, no prompt text stored. |
 | `route_registration_conventions_2026-07-30.md` | Router-per-file pattern (prefix on the router, `app.include_router` no double-prefix), response conventions, tag taxonomy. Includes concrete boilerplate for the Phase 1 `routes/economics.py` module. |
 
 ## Related current documents

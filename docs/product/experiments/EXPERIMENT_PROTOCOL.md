@@ -8,8 +8,6 @@
 > progress live in runtime provenance/data and GitHub. The June 2026 "AI camera"
 > Round 1 protocol was terminated on 2026-06-27 and is historical Git evidence,
 > not a current active round.
->
-> Last aligned with current Learning code/contracts: 2026-08-08.
 
 The `paper_*` Learning stages describe bounded treatment influence, not an
 exchange or a local account. Trading uses explicitly configured external
@@ -252,8 +250,7 @@ delete artifacts or silently redefine the cohort.
 - Metric meanings: [METRICS.md](../gates/METRICS.md)
 - Current Learning behavior: [learning_contract.md](../../design/contracts/learning_contract.md)
 - Runtime/deployment isolation: [Qualification Development Protocol](../../operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md)
-- Current Learning roadmap and qualification progress: GitHub issue #470 and its
-  child issues, including #447 and #692
+- Learning work tracking: open GitHub Issues (the former #470 umbrella is closed)
 
 Historical experiment plans, dates, tags, and backlogs are evidence only. They do
 not create a current experiment or authorize a deployment.

@@ -1,10 +1,8 @@
 # 因果与反事实研究：全框架应用指引
 
 > 状态：**研究与治理指引，不是行为授权。**
-> 建立日期：2026-07-15
-> 当前分支边界：本指引说明全框架可复用的方法；本分支的任何后续工作只研究
-> System Operator（PI）的 `skip`，不改变 universe generation、选币、ranker、Risk、
-> Execution、Live 或配置。
+> 建立日期：2026-07-15。本指引说明全框架可复用的方法，不改变 universe generation、
+> 选币、Risk、Execution、Live 或配置。
 
 ## 1. 目的与用语边界
 
@@ -57,22 +55,20 @@ L5  人工治理：在风险与运行约束下决定是否另开 policy epoch。
 - **拒绝也必须可学习**：每个可评估 reject/skip 都要留下身份、原因、证据、版本与结果
   键；无身份的系统健康告警只能作为运行诊断，不能伪装成候选决策。
 
-## 4. 本分支与后续工作的分界
+## 4. 行为变化的分界
 
-本文件为 future agents 建立共同语言，并不把 universe 研究并入当前任务。
-当前 `skip-problem` 分支仅可：补齐/审计 PI `skip` 的证据与结果语义、诊断 liveness、
-并提出受控研究设计。Universe 生成、选币、ranker 或其他过滤器的行为变化应在独立任务中
-按上表建立其 own cohort、spec 与 policy epoch 后再讨论。
+本文件为 future agents 建立共同语言。Universe 生成、选币或任一过滤器的行为变化，应在独立
+任务中按上表建立其 own cohort、spec 与 policy epoch 后再讨论。
 
-相关的既有契约与当前 Skip 专项材料：
+相关的既有契约与历史 Skip 专项材料：
 
-- [反事实分析契约](../contracts/counterfactual_contract.md) — 本指引在 `aletheia/counterfactual/` 模块内的具体落法。
+- [反事实分析契约](../contracts/counterfactual_contract.md) — 本指引在 `extensions/counterfactual/` 模块内的具体落法。
 - [机会固定时点结果契约](../contracts/opportunity_outcome_contract.md)
 - [筛选证据契约](../contracts/filter_evidence_contract.md)
 - [Learning Contract](../contracts/learning_contract.md)
 - [PI Skip 反事实研究与恢复设计](../../archive/design-superseded/research/skip-remediation/README.md)
 
-实现代码：`aletheia/counterfactual/`：
+实现代码：`extensions/counterfactual/`：
 - `trades.py` — L1 固定 horizon Top-N shadow-trade 账本（含 `list_deduped_shadows` 去重 helper）；每行绑定当时的 `policy_epoch_id`；
 - `filter_replay.py` — L3 有界只读回放；
 - `filter_experiments.py` — L4 前瞻性观察实验；

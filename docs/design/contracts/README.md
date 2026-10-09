@@ -121,6 +121,15 @@ The [Configuration Loading Contract](configuration_contract.md) owns the
 strict persisted-config boundary, safe validation errors, and Doctor blocker
 projection.
 
+The [Macro Source-Time Contract](macro_source_time.md) owns TradFi/macro
+source-time freshness semantics (#1465).
+
+The [Profit-gradient evidence compiler contract](profit_gradient_evidence_contract.md)
+owns the read-only `profit_gradient_evidence/v2` compiler.
+
+The [Universe Baseline Integrity Contract](universe-baseline-integrity.md) owns the
+Universe economic baseline integrity boundary (#2556).
+
 The [Entry Plan Contract](entry-plan-contract.md) owns exact-venue Candidate
 eligibility, qualitative planner tactic authority, deterministic three-branch
 compilation, maker Order lifetime, and deep-tier provider admission.

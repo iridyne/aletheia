@@ -3,54 +3,58 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `core/aletheia/agent_runtime/scheduler.py`, `core/aletheia/agents/*.py` and optional `extensions/research/*.py`
-> Last updated: 2026-09-13 (D2 canonical entry; other domains unchanged)
+> Last updated: 2026-10-09 (§1 job table re-derived from `init_scheduler()`)
 
 ---
 
 ## 1. Scheduler Job Overview
 
-| # | Job ID | Interval | Executor | Description |
-|---|--------|----------|----------|-------------|
-| 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
-| 3 | prediction_observer | 30min | agents | Prediction market scan |
-| 6 | pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
-| 7 | position_manager | 30s | io | Manage open positions (trailing stop, exit) |
-| 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
-| 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
-| 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
-| 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
-| 11 | risk_critic | 6h | agents | Evaluate risk exposure and write an advisory research note |
-| 12 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
-| 13 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
-| 14 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
-| 15 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
-| 17 | health_check | 10min | io | Doctor health probe |
-| 18 | cleanup | cron 03:17 CST | io | Data retention cleanup |
-| 19 | exchange_sync | 5min | io | Refresh exchange account cache |
-| 20 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
-| 21 | reconciliation | 2min (live only) | io | Full state reconciliation |
-| 22 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
-| 23 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
-| 24 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
-| 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
-| 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
-| 26 | guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
-| 27 | universe_refresh | 10min | io | Universe composition refresh |
-| 28 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
-| 29 | ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
-| 30 | filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
-| 31 | persona_rollout | 8h | io | Rechecks durable exact Persona/policy/step evidence; advances at most one parameter or refreezes, never changes unrelated config |
-| 32 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
-| 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
-| 34 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
-| 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
-| 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
-| 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
-| 36b | broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
-| 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
-| 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 42a | funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in persisted funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
+| Job ID | Interval | Executor | Description |
+|--------|----------|----------|-------------|
+| market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
+| equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
+| prediction_observer | 30min | agents | Prediction market scan |
+| pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
+| position_manager | 30s | protective | Manage open positions (trailing stop, exit) |
+| position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
+| tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
+| position_reconcile | 5min | io | Reconcile local vs exchange positions |
+| post_trade_reviewer | 4h | agents | Review closed trades for lessons |
+| risk_critic | 6h | agents | Evaluate risk exposure and write an advisory research note |
+| dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
+| lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
+| insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
+| confidence_calibration | 6h | io | Compute ECE calibration metrics |
+| health_check | 10min | io | Doctor health probe |
+| cleanup | cron 03:17 CST | io | Data retention cleanup |
+| exchange_sync | 5min | io | Refresh exchange account cache |
+| portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
+| reconciliation | 2min (live only) | io | Full state reconciliation |
+| price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
+| daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
+| data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
+| data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
+| okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
+| guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
+| universe_refresh | 10min | maintenance_io | Universe composition refresh |
+| ohlcv_nightly_backfill | cron (configurable) CST | maintenance_io | Historical OHLCV gap fill |
+| ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | maintenance_io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
+| filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
+| persona_rollout | 8h | io | Rechecks durable exact Persona/policy/step evidence; advances at most one parameter or refreezes, never changes unrelated config |
+| connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
+| outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
+| news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
+| outcome_settler | 10min | maintenance_io | Settle due Filter Candidate Outcomes (`filter_candidate_outcomes`); `universe_forward_outcomes` was dropped in v94 (#3701) |
+| broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
+| serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
+| learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+| funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in persisted funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
+| pricing_reference_refresh | 6h | io | Refresh the LLM pricing reference (`aletheia.economics.pricing_sync`) |
+| universe_scanner_audit_reconciler | 5min | audit | Retry pending Universe scanner audit JSONL mirrors after DB-authoritative recovery |
+| observation_lab_bridge | 1min | audit | Drain Main delivery receipts and mirror Lab audit intents |
+| bitget_demo_capabilities | 4h | io | Refresh Bitget demo instrument capabilities |
+| venue_margin_facts | 5min | io | Maintain venue margin-tier facts for the Planner's live demand (#3741) |
 
 Learning behavior producers remain gated by `agent.autonomous_learning`.
 Outcome settlement, funding, durable outcome replay and the Observation Lab runner/bridge
@@ -427,26 +431,22 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 5. Scheduler `max_workers=3` (do not raise)
 6. Never `await` or do network I/O inside a `with transaction():` block — `_WRITE_LOCK` is held for the full transaction duration
 
-### Job Timeouts (hard wall-clock bound, per-job — `scheduler.py:25-50`)
+### Job Timeouts (hard wall-clock bound, per-job — `_ASYNC_JOB_TIMEOUT_SEC`)
 
-> Not a single 300s default — each job has its own cap. Timeout = listed value + 15s grace.
-
-| Job | Timeout | Job | Timeout |
-|-----|---------|-----|---------|
-| market_data | 90s | dreaming_agent | 300s |
-| pi_trading_decision | 300s | — | — |
-| post_trade_reviewer | 300s | exchange_sync | 60s |
-
-Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_sync_with_timeout` (`:141`). `misfire_grace_time` 60-300s per `add_job`.
+Not a single 300s default — each job has its own cap in `scheduler.py`'s
+`_ASYNC_JOB_TIMEOUT_SEC`, shared by `_run_async_with_timeout` and
+`_run_sync_with_timeout`. The per-job values are listed in the
+[scheduler contract §3](scheduler_contract.md) job table. `misfire_grace_time`
+is set per `add_job`.
 
 ### Error Handling & Failure Isolation
 
-- **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`scheduler.py:708-793`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
+- **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`_run_job_guarded`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
 - **Leaked-tx cleanup**: scheduler rolls back any leaked transaction before/after each job.
-- **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure` (`scheduler.py:67-79`). Non-cascading.
+- **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure`. Non-cascading.
 - **Entry stale-input expiry**: canonical attention deadlines, planning retry/claim and Plan expiry bound current work; old pending cannot extend market-data refresh demand or wake a retired evaluator.
 
-### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
+### LLM Fallback (request-level, unified — `complete_with_fallback` in `core/aletheia/model_provider/fallback.py`)
 
 - Every provider completion is admitted by the process-wide Inference Broker before
   fallback execution. Admission is Provider-scoped and enforces bounded priority
@@ -465,7 +465,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 - **Worker** (Agent Shell): `Observe < Paper < Full` (default `Paper`)
 - **Operator** (PI/Dashboard): `ReadOnly < Research < PaperAuto < AllowEditing < Auto` (default `ReadOnly`)
 
-`FORBIDDEN_INTENTS` (enable_live / bypass_risk / change_risk_limits / ...) are uncallable in ANY mode — `agent_shell/registry.py:415`.
+`FORBIDDEN_INTENTS` (enable_live / bypass_risk / change_risk_limits / ...) are uncallable in ANY mode — `FORBIDDEN_INTENTS` in `core/aletheia/agent_shell/registry.py`.
 
 ---
 

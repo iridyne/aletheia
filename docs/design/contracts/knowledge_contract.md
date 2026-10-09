@@ -18,36 +18,36 @@
 
 | 函数 | file:line | 返回类型 | 空返回条件 |
 |------|-----------|---------|-----------|
-| `create_research_note(title, content, confidence, metadata)` | `manager.py:63` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
-| `create_dreaming_log(title, content)` | `manager.py:90` | `KnowledgeItem \| None` | 质量门失败 / 6h 内相同标题已存在 / 内容重复 |
-| `create_daily_review(title, content)` | `manager.py:118` | `KnowledgeItem` | 不返回 None,直接 raise |
-| `create_post_trade_review(title, content, metadata, strategy_id, confidence)` | `manager.py:135` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
-| `create_strategy_memory(strategy_id, title, content)` | `manager.py:169` | `KnowledgeItem` | 不返回 None |
-| `create_trade_case_study(title, content, metadata, strategy_id, confidence, tags)` | `manager.py:186` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
-| `create_trading_guard(title, content, metadata, confidence, tags)` | `manager.py:224` | `KnowledgeItem` | 不返回 None |
-| `create_guard_candidate(title, content, metadata, strategy_id, tags)` | `manager.py:250` | `KnowledgeItem` | 不返回 None |
+| `create_research_note(title, content, confidence, metadata)` | `manager.py` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
+| `create_dreaming_log(title, content)` | `manager.py` | `KnowledgeItem \| None` | 质量门失败 / 6h 内相同标题已存在 / 内容重复 |
+| `create_daily_review(title, content)` | `manager.py` | `KnowledgeItem` | 不返回 None,直接 raise |
+| `create_post_trade_review(title, content, metadata, strategy_id, confidence)` | `manager.py` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
+| `create_strategy_memory(strategy_id, title, content)` | `manager.py` | `KnowledgeItem` | 不返回 None |
+| `create_trade_case_study(title, content, metadata, strategy_id, confidence, tags)` | `manager.py` | `KnowledgeItem \| None` | 质量门失败 / 内容重复 |
+| `create_trading_guard(title, content, metadata, confidence, tags)` | `manager.py` | `KnowledgeItem` | 不返回 None |
+| `create_guard_candidate(title, content, metadata, strategy_id, tags)` | `manager.py` | `KnowledgeItem` | 不返回 None |
 
 ### 1.2 生命周期函数
 
 | 函数 | file:line | 行为 |
 |------|-----------|------|
-| `archive_item(item_id)` | `manager.py:285` | 软删除:status → `archived`;并从 FTS 索引移除 |
-| `deprecate_item(item_id)` | `manager.py:291` | 标记过时:status → `deprecated`,confidence → `deprecated`;并从 FTS 索引移除 |
-| `delete_item(item_id)` | `manager.py:297` | 永远 raise `PermissionError`——硬删除在任何路径下均被禁止 |
-| `detect_contradictions(items)` | `manager.py:324` | 保守检测同 symbol/direction 下的 support-vs-block 冲突，返回需人工复核的列表 |
+| `archive_item(item_id)` | `manager.py` | 软删除:status → `archived`;并从 FTS 索引移除 |
+| `deprecate_item(item_id)` | `manager.py` | 标记过时:status → `deprecated`,confidence → `deprecated`;并从 FTS 索引移除 |
+| `delete_item(item_id)` | `manager.py` | 永远 raise `PermissionError`——硬删除在任何路径下均被禁止 |
+| `detect_contradictions(items)` | `manager.py` | 保守检测同 symbol/direction 下的 support-vs-block 冲突，返回需人工复核的列表 |
 
 ### 1.3 质量门（写入前置守卫）
 
-所有具备"可返回 None"的创建函数在写入前先通过 `_is_quality_pass()` (`manager.py:28`):
+所有具备"可返回 None"的创建函数在写入前先通过 `_is_quality_pass()` (`manager.py`):
 
 - 内容长度 < 80 字符 → 拒绝 (`_MIN_CONTENT_LENGTH = 80`)
-- 内容包含任何 `_PLACEHOLDER_PATTERNS`（`manager.py:15`）→ 拒绝
+- 内容包含任何 `_PLACEHOLDER_PATTERNS`（`manager.py`）→ 拒绝
 
 `create_trade_case_study` 的质量门失败使用 `logger.warning`（其他为 `logger.info`），因其失败表明内容生成出现问题。
 
 ### 1.4 去重机制
 
-- **哈希去重** (适用 `research_note` / `post_trade_review` / `trade_case_study`)：`_content_hash()` 计算 SHA-256 前 16 hex 位 (`manager.py:23`)；`knowledge_hash_exists()` 在写入前查询同 `item_type` 是否已存在相同 hash。
+- **哈希去重** (适用 `research_note` / `post_trade_review` / `trade_case_study`)：`_content_hash()` 计算 SHA-256 前 16 hex 位 (`manager.py`)；`knowledge_hash_exists()` 在写入前查询同 `item_type` 是否已存在相同 hash。
 - **标题时间窗口去重** (适用 `dreaming_log`)：`knowledge_title_exists_within("dreaming_log", title, hours=6)` 防止同名日志在 6h 内重复写入。
 
 ---
@@ -66,7 +66,7 @@
 | `trade_case_study` | 平仓触发的分析构建器 | 单笔交易结构化叙事，用于回溯与策略晋级门 |
 | `trading_guard` | 人工确认或 seed 流程 | 决策时实际执行的行为约束规则 |
 | `guard_candidate` | Dreaming Agent / Operator | 待确认的临时 guard，`medium_confidence`，不参与检索 |
-| `system_action` | Self-heal 层 (`commands._emit_self_heal_action`) | 无人工触发的自动修正操作审计记录 |
+| `system_action` | 历史 Self-heal 层（随 Python Operator 于 #3134 / d328005f1 退役，当前无生产者） | 历史自动修正记录；`prune_system_actions` 7 天后硬删除 |
 | `operator_assessment` | Historical Python Operator loop (retired under #3134) | 历史评估摘要只读；不再调度生产或授权配置写入 |
 | `trading_memo` | Insight Synthesizer (`insight_synthesizer.py`) | 近期信号滚动战术摘要，注入 AI 决策上下文 |
 | `reasoning_feedback` | Reasoning feedback tracker (`reasoning_feedback.py`) | 预测结果 vs 实际结果的校准记录 |
@@ -89,34 +89,34 @@
 
 检索核心实现于 `extensions/knowledge/retrieval.py`。
 
-### 3.1 `retrieve_lessons()` 管道 (`retrieval.py:185`)
+### 3.1 `retrieve_lessons()` 管道 (`retrieval.py`)
 
 ```
 query (free text)
     │
     ▼
-_fts_query()   — 字母数字分词 → "token1" OR "token2" OR ...   (retrieval.py:176)
+_fts_query()   — 字母数字分词 → "token1" OR "token2" OR ...   (retrieval.py)
     │
     ▼ (FTS5 match + confidence filter)
 knowledge_fts  — SQLite FTS5 virtual table
                — WHERE confidence = 'high_confidence'
                — optionally: AND item_type IN (...)
-               — ORDER BY bm25(knowledge_fts) LIMIT 50     (retrieval.py:200-209)
+               — ORDER BY bm25(knowledge_fts) LIMIT 50     (retrieval.py)
     │
     ▼ (status cross-check)
-repositories._select_one()  — 过滤已 archive/deprecate 但 FTS 行残留的条目  (retrieval.py:220)
+repositories._select_one()  — 过滤已 archive/deprecate 但 FTS 行残留的条目  (retrieval.py)
     │
     ▼ (scoring)
 score = relevance × recency × 1.0
     relevance = 1 / (1 + exp(bm25))       — logistic 映射,BM25 负值越小相关度越高
-    recency   = max(0.25, 0.5^(age_days/30))  — 半衰期 30 天,下限 0.25  (retrieval.py:163)
+    recency   = max(0.25, 0.5^(age_days/30))  — 半衰期 30 天,下限 0.25  (retrieval.py)
     │
     ▼
 sort descending → return top-k Lesson dataclass
 ```
 
 **关键质量门**: 只有 `confidence = "high_confidence"` + `status = "active"` 的条目才能被检索——
-噪声和推测性知识永远无法进入决策 prompt (`retrieval.py:31`, `retrieval.py:219-221`)。
+噪声和推测性知识永远无法进入决策 prompt (`retrieval.py`)。
 
 ### 3.2 `index_knowledge_item()` (`core/aletheia/storage/knowledge_index.py`)
 
@@ -127,17 +127,17 @@ sort descending → return top-k Lesson dataclass
 - 幂等:先 DELETE 再 INSERT，允许重建索引；已有事务的提交/回滚权保持由调用方持有，strict migration failure 不得被吞掉
 - Core `_clean_body()` 剥除 Markdown 头部/frontmatter，只索引正文；可选 retrieval 继续拥有 BM25/recency 评分和 advisory prompt 投影
 
-### 3.3 `format_memory_block()` (`retrieval.py:239`)
+### 3.3 `format_memory_block()` (`retrieval.py`)
 
 将 Lesson 列表渲染为带明确"ADVISORY"标注的 prompt 段落。空列表返回空字符串（agent 无增强运行）。
 advisory 标签是**负载关键**的——标明这些是建议而非指令，不能覆盖 risk limits 或解锁 live。
 
-### 3.4 `build_advisory_context()` (`router.py:32`)
+### 3.4 `build_advisory_context()` (`router.py`)
 
 上层路由，为每个 agent role 组合检索上下文：
-- 按 role 过滤 `item_types`（`router.py:22-29`）：
+- 按 role 过滤 `item_types`（`router.py`）：
   - `market_observer`: trade_case_study / research_note / dreaming_log / trading_guard
-  - 当前仅 `market_observer` 调用该 router；旧 paper_trader 角色不是消费者。
+  - `market_observer` 已于 #2933 退役，当前没有生产调用方；router 只保留该 role 定义（`extensions/knowledge/router.py`）。旧 paper_trader 角色不是消费者。
   - (#176) `post_trade_review` is DELIBERATELY excluded from every retrieval role — it
     is medium_confidence LLM narrative that once flooded retrieval ~1900:16; `router.py`
     forbids it and a test locks that. Do NOT re-add it here.
@@ -151,7 +151,7 @@ advisory 标签是**负载关键**的——标明这些是建议而非指令，�
 ### 4.1 数据源
 
 Guards 是 YAML frontmatter Markdown 文件，不是代码。文件目录：`data/knowledge/guards/`
-(`guards.py:97`)。`TradingGuard` Pydantic 模型从 frontmatter 解析（`guards.py:39`）。
+(`guards.py`)。`TradingGuard` Pydantic 模型从 frontmatter 解析（`guards.py`）。
 
 ### 4.2 Guard 字段
 
@@ -166,14 +166,14 @@ Guards 是 YAML frontmatter Markdown 文件，不是代码。文件目录：`dat
 | `applies_to` | GuardAppliesTo | 多维过滤：asset_class / scanner_family / symbol / direction / market_type / confidence_bucket / late_entry_bucket |
 | `predicates` | list[GuardPredicate] | AND 逻辑，操作符白名单 (eq/ne/gt/gte/lt/lte/in/contains) |
 
-### 4.3 evaluate_guards() (`guards.py:147`)
+### 4.3 evaluate_guards() (`guards.py`)
 
 评估是纯确定性的，无 LLM，无风控修改：
 
 1. 若 `guard_cfg.enabled = False`（config）→ 返回空 `GuardEvaluation`
 2. 按 `scope` + `status="active"` 加载 guards
 3. 对每个 guard：先 `_applies_to_context()`，再 `_predicates_match()`
-4. 谓词字段白名单 `ALLOWED_GUARD_FIELDS`（`guards.py:72`，含 market_type）——未知字段 → 谓词不匹配
+4. 谓词字段白名单 `ALLOWED_GUARD_FIELDS`（`guards.py`，含 market_type）——未知字段 → 谓词不匹配
 
 ### 4.4 Guard 来源层级 (Tier)
 
@@ -192,7 +192,7 @@ Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 ### 4.5 Guard 在决策流中的位置
 
 - **历史排序阻断（已退役）**：旧 `paper_trader_ranker` 曾按 `evaluate_guards(..., scope="paper_entry")` 剔除候选。该消费者已删除；历史命中不能授予或阻断当前入场，不为 Planner 新造替代消费者。
-- **软 advisory**（LLM prompt）: `build_advisory_context()` 注入 advisory-only guard 块，不硬阻断 (`router.py:90-101`)
+- **软 advisory**（LLM prompt）: `build_advisory_context()` 注入 advisory-only guard 块，不硬阻断 (`router.py`)
 
 ---
 
@@ -200,7 +200,7 @@ Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 
 ### 5.1 禁止硬删除
 
-`delete_item()` (`manager.py:297`) 永远 raise `PermissionError`。任何路径均不允许从 `knowledge_items` 表物理删除行。这与 `data_model.md §7.2` 的 NEVER-pruned 列表一致（`knowledge_items` 与交易因果链并列）。
+`delete_item()` (`manager.py`) 永远 raise `PermissionError`。任何路径均不允许从 `knowledge_items` 表物理删除行。这与 `data_model.md §7.2` 的 NEVER-pruned 列表一致（`knowledge_items` 与交易因果链并列）。
 
 替代操作：
 - `archive_item()` → status = `archived`，从 FTS 移除，不出现在默认视图
@@ -208,15 +208,15 @@ Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 
 ### 5.2 FTS 索引与 status 双轨
 
-FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`）。`retrieve_lessons()` 增加了二次校验（`retrieval.py:219`）以防 FTS 行残留导致已 archive 条目重现——两层独立守卫。
+FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py`）。`retrieve_lessons()` 增加了二次校验（`retrieval.py`）以防 FTS 行残留导致已 archive 条目重现——两层独立守卫。
 
 ### 5.3 写入→索引原子性保障
 
-`insert_knowledge_item()` 失败时，`path.unlink()` 删除已写磁盘文件（`manager.py:84, 111, 129`）以防止孤立 Markdown。Markdown 写磁盘在 DB 写入前完成，失败时回滚磁盘文件——不存在 DB 有记录但磁盘无文件的状态（反向则可能存在，由 `_read_body()` 容错处理）。
+`insert_knowledge_item()` 失败时，`path.unlink()` 删除已写磁盘文件（`manager.py`）以防止孤立 Markdown。Markdown 写磁盘在 DB 写入前完成，失败时回滚磁盘文件——不存在 DB 有记录但磁盘无文件的状态（反向则可能存在，由 `_read_body()` 容错处理）。
 
 ### 5.4 confidence 合法值
 
-`VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "deprecated"}` (`manager.py:44`)。传入无效值 → `ValueError`。
+`VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "deprecated"}` (`manager.py`)。传入无效值 → `ValueError`。
 
 ### 5.5 知识不变量与审计链
 
@@ -311,61 +311,30 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 | `confidence_calibration` | `calibration_report` | `agent_contracts.md:208` |
 | legacy `strategy_designer` | `strategy_memory` | Removed with rules engine Position C; historical rows may remain |
 | retired Python Operator | historical `operator_assessment` | Read-only retained history; no current producer (#3134) |
-| Self-heal layer | `system_action` | `commands._emit_self_heal_action` |
+| retired Self-heal layer | historical `system_action` | No current producer (#3134); rows pruned by `prune_system_actions` |
 
 ### 7.2 知识消费方（消费侧文件:行锚点）
 
 | 消费方 | 检索方式 | 代码锚点 |
 |--------|---------|---------|
-| `market_observer` | `build_advisory_context(role="market_observer", guard_context=..., ...)` | `agents/market_observer.py:386-393` |
 | Operator 只读诊断 | applied、未过期且已过 dry-run 的 `ps_lessons`，advisory-only | `agent_shell/context.py::_curated_learning_context` |
-| `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `agents/dreaming_agent.py` |
+| `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `extensions/research/dreaming_agent.py` |
 
-### 7.3 promotion_gates_contract 中的 knowledge 依赖
+### 7.3 promotion gates 依赖（已退役）
 
-`promotion_gates_contract.md §5.8` 要求至少一条 `item_type="post_trade_review"` 的 active knowledge_items 行通过 `post_trade_reviews_required` 门。这是 strategy lifecycle 中唯一对 knowledge_items 的强制依赖。
+原 `promotion_gates_contract.md §5.8` 对 `post_trade_review` 的强制依赖随该机制一起退役，
+见 [history/promotion_gates_contract.md](../history/promotion_gates_contract.md)。当前没有
+对 knowledge_items 的强制门禁依赖。
 
 ## §8 学习产出的可修改范围（产品定义 2026-06-30）
 
 知识子系统的学习产出在早期可以影响以下两个范围（由浅入深，风控阈值不在其中）：
 
-### 8.1 历史 Ranker 权重调整（消费者已退役）
+### 8.1 / 8.2 历史 Ranker 权重与 Operator 入场 prompt（已退役）
 
-以下为历史测量语义；Ranker 不再运行，这些实验 ID 或历史 exposure 不会自动接入当前 Planner。
-
-`paper_trader_ranker.py` 只检索可信的 `trade_case_study`，并另行读取最新的
-`trading_memo`。`ranker_case_score` 现在有独立的 candidate-level 4h
-`filter_candidate_outcomes` 因果合同，可通过统一 adapter 创建 Shadow
-hypothesis/experiment/exposure；它仍是 Shadow-only，实际 Ranker delta 固定为 0。
-`ranker_memo_score` 仍为 measurement-unsupported，不创建 formal exposure。
-- Ranker Case 的 prospective outcome 只允许 exact candidate identity、4h horizon、
-  policy/provenance 与成本完整的 settled outcome；
-- Ranker trace 可记录原始建议与实际零增量，但不得伪造实验/exposure id，也不得让两个来源互相冒领贡献；
-- **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing。
-
-### 8.2 历史 System Operator 入场 prompt 片段（已退役）
-
-以下三路 trading_context/trading_decision 注入及其旧 LP-S14 枚举属于历史契约，不再是当前入场路径；不得恢复旧 prompt 或据此为 Planner 新增消费权。当前 Operator 诊断 lesson 消费见 §7.2。
-
-System Operator 的 system prompt 分为两层：
-- **基础层**（宪法约束，人类专有）：角色定义、FORBIDDEN_INTENTS 提示、风格约定
-- **追加片段层**（学习可写入）：以下三条路径
-
-**学习内容注入 System Operator prompt 的三条合法路径**（完整枚举，由 LP-S14 spec claim 锁定）：
-
-| 路径 | 数据来源 | 代码锚点 |
-|------|---------|---------|
-| 1. 近期战术总结 | `trading_memo` item_type（Insight Synthesizer 写入） | `trading_context.py:406-422` → `trading_decision.py:716-719` |
-| 2. 推理质量反馈 | `reasoning_feedback` item_type（Reasoning feedback tracker 写入） | `trading_context.py:425-430` → `trading_decision.py:724-727` |
-| 3. 建议性事后教训 | `LessonStore` 的 applied 行（dreaming_agent 写入、lesson_reviewer 审核并应用） | `trading_context.py` Layer3 → `trading_decision.py` prompt |
-
-学习不能直接修改 prompt 基础层文件。上述三条仅为历史学习→入场推理注入路径；新增当前消费者须另行证明并更新对应契约，不继承旧 LP-S14 权威。
-
-> **历史修正**：本节原文写"这是'学习影响 System Operator 推理'的唯一合法路径"（指 `trading_memo`），
-> 实际代码同时存在 `reasoning_feedback` 和 `ps_lessons` 两条并行路径
->（`trading_context.py:427` 的 `layer['reasoning_feedback']` 和 `:597` 的 `layer['ps_lessons']`），
-> 均通过 `trading_decision.py` 渲染进 System Operator prompt。
-> 已于 2026-06-30 修正为三路完整枚举，并补 LP-S14 spec claim 锁住该枚举不变量。
+两者的消费者已退役，历史测量语义与 LP-S14 枚举见
+[history/knowledge_retired_entry_consumers.md](../history/knowledge_retired_entry_consumers.md)。
+不得据此为 Planner 新增消费权。
 
 ### 8.3 风控阈值（暂不开放）
 
@@ -403,7 +372,7 @@ memo tags。
 
 | item_type | 生产者 | 消费方式 | FTS 必要性 |
 |-----------|--------|---------|-----------|
-| `system_action` | `commands._emit_self_heal_action` | 结构化 JSON，operator 直接 SQL 查询 | ✗ 不需要 |
+| `system_action` | 无（历史 Self-heal 层已退役） | 结构化 JSON，直接 SQL 查询 | ✗ 不需要 |
 | `trading_memo` | `insight_synthesizer._persist_memo` | Observer 直接读取 memo；旧 `trading_context.py` 入场消费已退役 | ✗ 不需要 |
 | `reasoning_feedback` | `reasoning_feedback._persist_feedback` | 历史直接查询 `get_latest_reasoning_feedback()`；旧 `trading_context.py` 入场消费已退役 | ✗ 不需要 |
 | `calibration_report` | `confidence_calibration._persist_report` | `analytics_routes` 直接 `get_latest_calibration_report()` | ✗ 不需要 |
@@ -421,7 +390,7 @@ memo tags。
 
 ### 9.4 磁盘文件与 DB 行的生命周期耦合
 
-写入时：`write_*_file()` 先于 `insert_knowledge_item()` 执行；DB 失败时 `path.unlink()` 回滚磁盘（`manager.py:84`）。
+写入时：`write_*_file()` 先于 `insert_knowledge_item()` 执行；DB 失败时 `path.unlink()` 回滚磁盘（`manager.py`）。
 不存在"DB 有行但磁盘无文件"的正向路径，但历史 data/ 目录 reset 可以造成反向不一致（磁盘无文件，DB 有行）。
 
 **运营规则**：

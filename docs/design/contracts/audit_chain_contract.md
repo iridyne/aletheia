@@ -20,7 +20,7 @@
 
 轮转存档命名规则: `audit.jsonl.1`, `audit.jsonl.2`, … (数字递增，数字越小越旧)
 
-目录由 `_log_dir()` 在首次写入时自动创建 (`jsonl.py:21-24`):
+目录由 `_log_dir()` 在首次写入时自动创建 （`_log_dir()`）:
 
 ```python
 def _log_dir() -> Path:
@@ -29,7 +29,7 @@ def _log_dir() -> Path:
     return d
 ```
 
-**轮转策略**: 基于文件大小，阈值来自 `config.retention.jsonl_max_mb`（默认 50 MiB，`schema.py:299`）。不按时间/日期轮转。每次调用 `write_audit()` 前 `_rotate_jsonl_if_needed()` 检查当前文件大小；若 `>= threshold` 则立即轮转 (`jsonl.py:102-104`):
+**轮转策略**: 基于文件大小，阈值来自 `config.retention.jsonl_max_mb`（默认 50 MiB，`RetentionConfig.jsonl_max_mb`）。不按时间/日期轮转。每次调用 `write_audit()` 前 `_rotate_jsonl_if_needed()` 检查当前文件大小；若 `>= threshold` 则立即轮转 （`_rotate_jsonl_if_needed()`）:
 
 ```python
 def _rotate_jsonl_if_needed(path: Path) -> None:
@@ -37,7 +37,7 @@ def _rotate_jsonl_if_needed(path: Path) -> None:
         path.rename(_next_rotation_path(path))
 ```
 
-轮转是 best-effort：若 `OSError` 则跳过轮转，继续写入 (`jsonl.py:56-58`)。轮转后旧文件**不删除**，永久保留作为历史存档。
+轮转是 best-effort：若 `OSError` 则跳过轮转，继续写入 （`_rotate_jsonl_if_needed()`）。轮转后旧文件**不删除**，永久保留作为历史存档。
 
 ---
 
@@ -49,10 +49,10 @@ def _rotate_jsonl_if_needed(path: Path) -> None:
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `timestamp` | ISO-8601 字符串 | UTC 时间；`write_audit()` 若未提供则自动注入 (`jsonl.py:190-191`) |
+| `timestamp` | ISO-8601 字符串 | UTC 时间；`write_audit()` 若未提供则自动注入 （`write_audit()`） |
 | `actor` | 枚举字符串 | `human` / `agent` / `system` / `telegram` / `cli` |
 | `source` | 枚举字符串 | `dashboard` / `api` / `cli` / `scheduler` / `agent_runtime` / `telegram` / `execution_gateway` |
-| `event_type` | 字符串 | 事件类型，如 `live_unlocked`, `kill_switch_activated`, `secret_rotated` |
+| `event_type` | 字符串 | 事件类型，如 `live_unlocked`, `trading_brake_activated`, `secret_rotated` |
 | `entity_type` | 字符串 | 被操作对象类型，如 `live_state`, `kill_switch`, `secret`, `command` |
 | `entity_id` | 字符串 | 被操作对象的 ID（指向真实行/对象，不伪造） |
 | `message` | 字符串 | 人类可读的事件描述 |
@@ -60,13 +60,13 @@ def _rotate_jsonl_if_needed(path: Path) -> None:
 
 可选字段（有则包含）: `before`/`before_state`（变更前状态）、`after`/`after_state`（变更后状态）。
 
-序列化格式: `json.dumps(event, default=str, ensure_ascii=False)` (`jsonl.py:198`)，注意 `_prev_hash` 在序列化前已注入到 `event` 中，因此 `_prev_hash` **包含在**哈希计算的字节里（详见 §3）。
+序列化格式: `json.dumps(event, default=str, ensure_ascii=False)` （`_write_audit_row()`），注意 `_prev_hash` 在序列化前已注入到 `event` 中，因此 `_prev_hash` **包含在**哈希计算的字节里（详见 §3）。
 
 ---
 
 ## §3 链算法
 
-实现位于 `jsonl.py:182-200`：
+实现位于 `core/aletheia/files/jsonl.py` 的 `write_audit()` / `_write_audit_row()`：
 
 ```
 prev_hash = _get_last_audit_hash(use_cache=False)
@@ -76,7 +76,7 @@ _append_jsonl_line(...)
 _last_audit_hash = _hash_record(line)
 ```
 
-**哈希函数** (`jsonl.py:122-123`):
+**哈希函数**（`_hash_record()`）:
 
 ```python
 def _hash_record(line: str) -> str:
@@ -88,12 +88,12 @@ def _hash_record(line: str) -> str:
 
 **链接规则**:
 
-1. 第一条记录（整个 audit.jsonl 生命周期首条）: `_prev_hash = "0" * 64`（创世哈希，`jsonl.py:16`）
+1. 第一条记录（整个 audit.jsonl 生命周期首条）: `_prev_hash = "0" * 64`（创世哈希，`_GENESIS_HASH`）
 2. 后续每条: `_prev_hash = SHA-256(上一条完整行的 UTF-8 字节)`
 
 **验证方式**: 重新对每行计算 SHA-256，确认与下一行的 `_prev_hash` 字段一致。任何行内容被修改都会导致从该行起的所有后续 `_prev_hash` 校验失败。
 
-**并发安全** (`jsonl.py:153-179`): 每次写入持有两把锁:
+**并发安全**（`_exclusive_file_lock()`）: 每次写入持有两把锁:
 - `_audit_hash_lock`（进程内线程锁）
 - `_exclusive_file_lock`（跨进程文件锁，Windows 用 `msvcrt.LK_LOCK`，Unix 用 `fcntl.LOCK_EX`）
 
@@ -109,7 +109,7 @@ def _hash_record(line: str) -> str:
 
 ## §4 跨轮转链接
 
-当活跃文件被轮转（重命名为 `audit.jsonl.1` 等）后，下一条记录写入新的 `audit.jsonl` 时，`_get_last_audit_hash(use_cache=False)` 从**所有**历史文件按时间顺序读取最后一行 (`jsonl.py:139-150`, `jsonl.py:85-89`):
+当活跃文件被轮转（重命名为 `audit.jsonl.1` 等）后，下一条记录写入新的 `audit.jsonl` 时，`_get_last_audit_hash(use_cache=False)` 从**所有**历史文件按时间顺序读取最后一行 （`_get_last_audit_hash()`、`_jsonl_paths_chronological()`）:
 
 ```python
 def _jsonl_paths_chronological(path: Path) -> list[Path]:
@@ -137,7 +137,7 @@ def _last_non_empty_line(paths: list[Path]) -> str:
 
 ### aletheia doctor 集成
 
-`doctor.py:536-552` 定义 `_probe_audit_chain()` 检查项，挂入 `build_report()` 的探针列表 (`doctor.py:721`):
+`core/aletheia/diagnostics/probes/storage_trust.py` 定义 `_probe_audit_chain()` 检查项，由 `doctor.py` 的 `build_report()` 探针列表挂入:
 
 ```python
 def _probe_audit_chain(report: Report) -> None:
@@ -172,7 +172,7 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 
 ### 独立验证函数
 
-`verify_audit_chain()` (`jsonl.py:249-324`) 可独立调用，返回:
+`verify_audit_chain()`（`core/aletheia/files/jsonl.py`）可独立调用，返回:
 
 ```python
 {"valid": bool, "records": int, "errors": list[str], "reanchors": int}
@@ -192,12 +192,12 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 
 旧 Learning lifecycle stable-ID 审计保持历史证据；新实验事件只由 Observation Lab 事务与 outbox 产生。
 
-- 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")` (`jsonl.py:59`)，以 `"a"` 模式打开，操作系统级别追加。
+- 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")`，以 `"a"` 模式打开，操作系统级别追加。
 - ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
 
 ### §6.2 链中断必须报警
 
-链中断时 `aletheia doctor` 必须以 `warn` 级别上报（`_probe_audit_chain` 实现了此逻辑，`doctor.py:549-552`）。
+链中断时 `aletheia doctor` 必须以 `warn` 级别上报（`_probe_audit_chain` 实现了此逻辑）。
 
 ⚠️ **当前状态（已知缺陷）**: 报告级别为 `warn`（非 `blocker`）。doctor 在链断时不阻塞网关启动，仅文字告警。见 §7。
 
@@ -207,18 +207,18 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 
 | 操作 | event_type | 实现位置 |
 |------|-----------|----------|
-| live 解锁 | `live_unlocked` | `server/routes/live.py:35-43` |
-| live 加锁 | `live_locked` | `server/routes/live.py:56-65` |
-| kill switch 激活 | `kill_switch_activated` | `risk/kill_switch.py:27-36` |
-| kill switch 解除 | `kill_switch_deactivated` | `risk/kill_switch.py:45-54` |
-| 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py:46-50`；前端 Settings 路由另有审计 |
-| Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
-| 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
+| live 解锁 | `live_unlocked` | `server/routes/live.py` 的 `live_unlock` |
+| live 加锁 | `live_locked` | `server/routes/live.py` 的 `live_lock` |
+| trading brake（kill switch）激活 | `trading_brake_activated`（按 `global`/`demo`/`live` scope；#361 起取代 `kill_switch_activated`） | `risk/kill_switch.py` 的 `activate` |
+| trading brake（kill switch）解除 | `trading_brake_deactivated`（同上，取代 `kill_switch_deactivated`） | `risk/kill_switch.py` 的 `deactivate` |
+| 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py` 的 `set_cmd`；前端 Settings 路由另有审计 |
+| Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py` 的 `record_command` |
+| 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py` 的 `adopt_position`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Experiment lifecycle transition | Observation Lab lifecycle event/outbox | `observation_lab/canonical.py`；旧 Learning lifecycle 只读归档，不再推进 |
 | Funding settlement/correction/terminal history expiry | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py` + `portfolio/broker_funding_settlement.py`；会计或 terminal-state 事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
-`FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
+`FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py`）在 `agent_shell/commands.py` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
 
 ### §6.3a Retired Learning lifecycle evidence
 
@@ -287,7 +287,7 @@ ack 前崩溃时，重启通过所有轮转文件中的同一 stable ID 直接 a
 1. **自动填充**：`insert_trade_proposal()` 在 `p.commit_hash is None` 时强制计算并原地回写；调用方不传也不会破链。
 2. **哈希输入排除可变字段**：`status` 与 `commit_hash` 自身被显式 `model_dump(exclude=...)` 排除。`pending → executed/rejected` 是正常状态流转，**不得**因之失效。
 3. **全局单链**：跨 broker / strategy / execution_mode 共享一条链，按 `rowid DESC` + `commit_hash NOT NULL` 选 parent。`parent_hash = NULL` 仅合法出现在 ① 链首（表内首条已 hash 行）或 ② P0-1 上线前写入的 legacy 行。
-4. **审计事件链入**：所有 `position_adopted` 事件（§6.3 表新增行）必须在 `after_state` 携带 `commit_hash` + `parent_hash`，与 §6.4 同一节点同步；P1-2 在 `position_reconciler.py:372-379` 实施。
+4. **审计事件链入**：所有 `position_adopted` 事件（§6.3 表新增行）必须在 `after_state` 携带 `commit_hash` + `parent_hash`，与 §6.4 同一节点同步；P1-2 在 `position_reconciler.py` 的 `adopt_position` 实施。
 5. **架构等价**：未来其他合成提交路径（execution gateway / reject path）若需链入，沿用相同字段约定（不要发明新键名）。
 
 **SDD 锚点**
@@ -310,9 +310,9 @@ uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
 
 ### §7.1 哈希链中断（已知，未修复）
 
-**症状**: `aletheia doctor` 报告 `trust.audit_chain: warn — chain BROKEN — 8 error(s) in 3897 records`（2026-06-22 读数）。
+**症状**: 历史 JSONL 记录中存在少量 `_prev_hash` 断点，`aletheia doctor` 以 `trust.audit_chain: warn — chain BROKEN` 报告；具体断点数以当次 doctor 输出为准，不在契约中记录运行时读数。
 
-**严重程度**: 🟠 中等——chain 中断削弱审计的防篡改保证，但不影响新记录的写入和系统运行。错误数量（8/3897 ≈ 0.2%）极低，大概率来源于 file-lock 引入前（early 并发竞态）写入的历史记录，而非恶意篡改。
+**严重程度**: 🟠 中等——chain 中断削弱审计的防篡改保证，但不影响新记录的写入和系统运行。
 
 **可能根因**: `_exclusive_file_lock` 于后期引入；更早写入的若干记录在无锁并发条件下产生了 `_prev_hash` 冲突，其中少数不满足 Pattern 2（consecutive duplicate）的容忍条件。
 

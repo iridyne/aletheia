@@ -105,7 +105,7 @@ Question: do selected universe members outperform same-period tradable symbols?
 
 Current implementation:
 
-- Reads `universe_forward_outcomes`.
+- Reads `filter_candidate_outcomes` (`core/aletheia/analytics/alpha_attribution.py`; `universe_forward_outcomes` was dropped in v94, #3701).
 - Uses settled `1h`, `4h`, and `24h` outcomes.
 - Converts returns directionally: short signals benefit when raw forward return is negative.
 - Preferentially reads `alpha_control_observations`, which stores the selected

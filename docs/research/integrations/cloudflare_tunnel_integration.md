@@ -11,11 +11,11 @@
 
 ## 已实现的代码模块
 
-- `aletheia/config/schema.py` — `TunnelConfig`（enabled/tunnel_id/hostname/credentials_path/cloudflared_path/metrics_port）
-- `aletheia/gateway/tunnel.py` — 进程管理（start/stop/status/setup），pidfile 跟踪
-- `aletheia/cli/tunnel.py` — CLI 命令（setup/start/stop/status/enable/disable）
-- `aletheia/gateway/lifecycle.py` — gateway start/stop 自动联动 tunnel
-- `aletheia/server/routes/settings.py` — API 端点 `/tunnel/status`、`/tunnel/start`、`/tunnel/stop`
+- `core/aletheia/config/schema.py` — `TunnelConfig`（enabled/tunnel_id/hostname/credentials_path/cloudflared_path/metrics_port）
+- `core/aletheia/gateway/tunnel.py` — 进程管理（start/stop/status/setup），pidfile 跟踪
+- `core/aletheia/cli/tunnel.py` — CLI 命令（setup/start/stop/status/enable/disable）
+- `core/aletheia/gateway/lifecycle.py` — gateway start/stop 自动联动 tunnel
+- `core/aletheia/server/routes/settings.py` — API 端点 `/tunnel/status`、`/tunnel/start`、`/tunnel/stop`
 
 ## 关键设计决策（参考 hAPI tiann/hapi）
 
@@ -27,18 +27,30 @@
 
 ## 安全注意事项
 
-启用 tunnel（`enabled=True`）后，必须同时配置 `tunnel_api_token` secret，否则 gateway
-会对 `/api/settings/live-unlock` 和 `/api/risk/kill-switch` 等 trust-boundary 端点返回 401，
-拒绝所有请求（fail-closed 设计）。配置方式：
+> 2026-10-09 更新：下述鉴权策略按 `core/aletheia/server/app.py` 的 `_tunnel_auth_guard` 中间件转述。
 
-```powershell
-aletheia secrets set tunnel_api_token <强随机字符串>
+鉴权分三种模式：
+
+- **`tunnel.enabled=True` 或 `remote_control.require_token=True`**：除匿名白名单
+  `_PUBLIC_PATHS`（`/api/ready`、`/_infra/livez`、`/_infra/readyz`）外，所有 `/api/*` 与
+  `/_infra/*` 路由（包括读取）都要求有效的 `X-Aletheia-Token` owner 头；缺失时 owner 路由
+  fail closed。受监管的 Operator Shell 可以用独立的 service credential 认证，但只限
+  `server/operator_service_auth.py` 的路由/方法白名单，且不会获得 owner 权限。
+- **Remote Control 开启但未开 `require_token`**：私网 API 访问不鉴权（MVP 便利）。
+- **两者都关闭**：不鉴权，保持本地优先。
+
+期望的 token 值优先取 secret `remote_control_api_token`，未配置时退回 `tunnel_api_token`：
+
+```sh
+aletheia secrets set remote_control_api_token <强随机字符串>
 ```
 
 然后在 Cloudflare Access 策略里将同一 token 配置为允许通过的 Service Token，
 或者在调用端的请求头里加 `X-Aletheia-Token: <token>`。
 
 ## 用户配置流程
+
+> 下列 PowerShell / `winget` 步骤只适用于 Windows；Linux 上用发行版包管理器安装 `cloudflared`，其余 `cloudflared` 命令相同。
 
 ```powershell
 winget install Cloudflare.cloudflared

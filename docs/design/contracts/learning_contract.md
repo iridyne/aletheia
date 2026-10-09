@@ -59,14 +59,14 @@ results can influence a later trading judgment, even when it lives outside `exte
 | Role | Current implementation | Current authority |
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
-| Candidate counterfactuals | `counterfactual/trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the canonical full-arm fixed-horizon source; `universe_forward_outcomes` is a selected-member legacy mirror/fallback, and economic disagreement fails closed |
+| Candidate counterfactuals | `counterfactual/trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the sole full-arm fixed-horizon source (`universe_forward_outcomes` was dropped in v94, #3701) |
 | Outcome economics | `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `analytics/outcome_integrity.py`, `learning_window.py` | shared fail-closed cost/quality contract governs current Universe measurement. Other declared treatments remain static until they have an outcome the treatment can causally change. |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, owner admission, and a consumed fixed-look confirmatory verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
-| Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
+| Narrative review | `extensions/research/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
 | Risk critique and lesson constraint | `extensions/research/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | `risk_critic` writes a medium-confidence advisory research note only. Manual/owner/human Risk lessons remain static safety rules. The automatic-lesson experiment hook is measurement-unsupported, so automatic lessons currently remain advisory and cannot acquire blocking authority. |
-| Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
+| Lesson extraction/review | `extensions/research/dreaming_agent.py`, `extensions/research/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
 | Memo synthesis | `extensions/analytics/insight_synthesizer.py`, `extensions/analytics/memo_effectiveness.py` | memo reaches observer prompt; Ranker scoring and old Operator entry-prompt consumers are retired |
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic. The `ranker_factor_filter` hook is measurement-unsupported, creates no formal exposure, and returns the static watch/neutral behavior. |
 | Reasoning feedback | `extensions/analytics/reasoning_feedback.py` | retained feedback evidence; old Operator entry-prompt injection retired |
@@ -140,9 +140,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
   but its unsupported experiment hook emits no before/after exposure;
 - the scheduled contribution evaluator measures the sole supported path through its
   path-specific cohort adapter. The Universe adapter uses
-  `filter_candidate_outcomes` as the canonical full-arm source and
-  `universe_forward_outcomes` only as a selected-member legacy mirror/fallback; conflicting
-  economic copies invalidate the observation instead of choosing one;
+  `filter_candidate_outcomes` as the sole full-arm source (the selected-member
+  `universe_forward_outcomes` mirror was dropped in v94, #3701);
 - universe assignment is stable-randomized at the persisted `assignment_unit_key` cluster, not
   independently per surviving member. One complete cluster contributes one observation using
   intent-to-treat allocation utility: selected members contribute net return and dropped members

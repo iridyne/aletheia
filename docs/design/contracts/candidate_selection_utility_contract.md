@@ -65,7 +65,7 @@ The current chain is:
 4. `candidate-selection-utility/v2` chooses the highest available mechanism,
    never sums utilities, rejects unresolved Long/Short conflicts and applies
    `min_cost_covering_edge_pct` (the cost-covering floor carried on
-   `EconomicUtilityEstimateV2`, equal to full measured fee + spread/slippage +
+   `EconomicUtilityEstimate` (version `universe-economic-utility/v2`), equal to full measured fee + spread/slippage +
    funding plus the estimation-error margin) to measured estimates. When
    `min_cost_covering_edge_pct` is unavailable, the estimate falls back to a
    `0.05` floor rather than admitting unconditionally. The legacy

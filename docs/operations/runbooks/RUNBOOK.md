@@ -14,9 +14,9 @@ trading stays disabled until you explicitly unlock it — see [Live trading](#8-
 ## 1. Install
 
 ```bash
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-uv run aletheia version          # Aletheia Trading OS v0.5.0
+uv sync --locked
+uv run aletheia install          # optional: install the global `aletheia` command shim
+uv run aletheia version          # Aletheia Trading OS v0.8.6 (at the time of writing)
 ```
 
 ## 2. Start the gateway (dashboard)
@@ -44,7 +44,7 @@ uv run aletheia gateway service uninstall  # requires stopped; preserves data
 The gateway runs under a **supervisor**: if the inner server crashes it is
 respawned with backoff; after too many restarts in a window it gives up, writes a
 `gateway_supervisor_gave_up` audit event, and alerts through the operator
-notification sink (Windows toast and Telegram when configured). The inner
+notification sink (Telegram when configured). The inner
 server's stderr goes to `~/.aletheia/logs/errors.log` by default.
 
 `8787` is owned by a small local **front door**. The backend worker runs on an
@@ -55,8 +55,7 @@ connection failure.
 
 The front door reads its active backend from `~/.aletheia/frontdoor-route.json`
 by default. The
-supervisor refreshes that file on backend spawn, and runtime-continuity promotion
-can atomically switch it to a ready shadow backend without rebinding `:8787`.
+supervisor refreshes that file on backend spawn.
 Inspect `http://127.0.0.1:8787/_infra/status` to see the active
 `backend_base_url`, backend readiness, and route metadata.
 
@@ -139,17 +138,18 @@ effective Settings/Doctor projection rather than editing `config.yaml` manually:
 Once on, the active paper trading pipeline runs on a schedule with no dashboard clicks:
 
 ```
-market data → market_observer / universe scanners → durable opportunity
-  → paper ranker → signal_pending queue carrier
-  → System Operator: trade or evidenced skip
-  → immutable Proposal → Risk Engine → Execution Gateway
-  → paper Order + Fill + Position (one causal chain)
-  → position_manager: point mark + exact completed-1m protective barriers,
-     or Operator horizon review
-  → close Order + Fill + net PnL + paper cash ledger + eligible Outcome
+market data → Universe refresh → published Candidate
+  → Planning Generation → Entry Planner / Compiler → immutable Entry Plan
+  → RESTING_MAKER order or TRIGGERED watch → Proposal → Risk Engine → Execution Gateway
+  → Bitget Demo Order + private Fill + Position (one causal chain)
+  → position_manager: protective exits, or Operator horizon review
+  → verified close + net PnL + eligible Outcome
   → post-trade review / cases / counterfactuals / Learning measurement
-  → owner-gated bounded influence on a later Paper decision
+  → owner-gated bounded influence on a later decision
 ```
+
+The admitted route is defined only by
+[ACTIVE_RUNTIME_SCOPE.md](../../product/ACTIVE_RUNTIME_SCOPE.md).
 
 This proves lifecycle continuity, not profitability. Behavioural Learning influence
 is available by default only for the registry-declared measurement-supported path,
@@ -159,14 +159,9 @@ confirmatory verdict, clear harm state, and every authority gate are still requi
 Missing, harmful, invalid, monitoring-only, or underpowered evidence falls back to
 or retains the declared static behavior.
 
-New protected native Paper positions also receive an immutable exact-instrument 1m
-cursor. Missing bars remain visible gaps; the protective worker refreshes only the
-frozen venue and never substitutes another venue. The separate entry-lock exit
-experiment is prospective and read-only: it records paired net-PnL evidence for new
-eligible positions and never changes their real stop or target.
-
-Watch it on the **Agent Runs**, **Opportunities**, **Proposals**, **Positions**,
-and **Charts** dashboard pages.
+Watch it on the **Overview**, **Universe** (Entry Plans tab), **Trades &
+Positions**, and **Agent Activity** dashboard pages
+([page map](../../design/frontend/webui_page_map.md)).
 
 ## 6. Tuning (config.yaml)
 
@@ -175,7 +170,6 @@ trading:
   default_stop_loss_pct: 2.0       # protective stop distance
   default_take_profit_pct: 4.0     # take-profit distance
   max_position_hold_hours: 72.0    # time-based exit
-  min_confidence_to_trade: medium  # high | medium | speculative
 risk:                              # HARD limits — agent cannot change these
   max_daily_loss_pct: 0.0          # 0 = disabled (default, demo and live).
                                    # Set a positive percentage to enable:
@@ -221,9 +215,9 @@ as a human; the agent can propose changes in a report but cannot apply them.
 
 Live is `live_disabled` by default and the agent can never unlock it. Moving to
 `live_limited` requires explicit human action (Settings → Live State → unlock, or
-the live API route) and passes the strategy promotion gates (≥14 paper days, ≥30
-trades, positive expectancy, drawdown/consecutive-loss/risk-violation checks, a
-post-trade review). LIVE positions are **never** auto-closed by the position
+the live API route) and passes the selected-account preflight and the go-live
+scorecard gate ([live_unlock_contract](../../design/contracts/live_unlock_contract.md),
+[kill_conditions_contract K3](../../design/contracts/kill_conditions_contract.md)). LIVE positions are **never** auto-closed by the position
 manager. Treat enabling live as a separate, deliberate decision.
 
 ## 9. Updating the code
@@ -262,9 +256,8 @@ tracked dashboard build output. Use the default update path instead. If the
 dashboard is already absent, run
 `cd frontend && npm ci && npm run build && cd ..` before restarting the Gateway.
 
-The same bare command selects the safe path for the current runtime: source checkouts
-use the controlled Git deployment above, while packaged runtimes use the signed-release
-and Tray activation path. Dirty, wrong-branch, ahead, or diverged source checkouts fail
+Only source checkouts are supported (the packaged runtime lane was removed on
+2026-09-28). Dirty, wrong-branch, ahead, or diverged source checkouts fail
 closed rather than clobbering local work or inventing a deployment state.
 
 The Fedora Paper Candidate may instead follow strict stable Release Tags with
@@ -318,8 +311,8 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 [ ] (optional) Bitget demo creds + Test Connection
 [ ] permission_mode = Paper
 [ ] Scheduler is enabled, Gateway is not paused, and no pause owner blocks resume
-[ ] Agent Runs shows market_observer producing opportunities
-[ ] Positions shows a paper position open, then close with a realized PnL
+[ ] Universe shows published Candidates and Entry Plans
+[ ] Trades & Positions shows a Bitget Demo position open, then close with a realized PnL
 [ ] (optional) Telegram configured for health alerts
 [ ] Leave it running. Check back via dashboard / Telegram.
 ```

@@ -411,27 +411,12 @@ content preserves keyboard order and scrolls on narrow screens.
 
 ### Blotter primitives (`.bl-*`) — legacy, no active page owner
 
-The standalone Decision Blotter was removed by issue #2288. The CSS family below
-is documented only to identify legacy cleanup debt and must not be used by new
-or current owner-facing surfaces.
-
-引入自 2026-07-18 Blotter 迁移（`pages/Blotter.tsx`；参考 Bloomberg EMSX + IBKR TWS）。这套 primitives 只在决策工作站上下文使用，不应扩散到其他页面。CSS 定义在 `frontend/src/index.css`（`bl-token-strip` 段起）。
-
-| Class | 用途 | 关键 tokens |
-|---|---|---|
-| `.bl-token-strip` | 顶部 5 列状态计数条，`grid-template-columns: repeat(5, 1fr)`。窄屏（<1100px）3 列，<640px 2 列 | `--space-2` gap |
-| `.bl-token` + `.bl-token-{muted\|accent\|green\|yellow\|red}` | 单个状态方块。大写小 label + 大号 tabular-nums 数字。tone 只染数字，不染整块 —— 保持扫视稳定 | `--r`, 1.5rem count |
-| `.bl-mid-band` | 中段两栏 `grid-template-columns: 7fr 5fr`，`<1100px` 折叠单列 | — |
-| `.bl-panel` + `.bl-panel-ledger` (`margin-bottom` 单独设) | 面板容器，等同 `.rail-card` 视觉重量 | `--surface` |
-| `.bl-panel-head` | 面板头部：`h3` + 副标题；`border-bottom` 分隔 | 0.9rem h3 |
-| `.bl-side` + `.bl-side-{l\|s}` (span 包裹) | L/S 方向 chip。**必须**放在 `<td class="bl-cell-side">` 内的 `<span>` 里，不要直接给 td 加 `.bl-side`（会破坏 table-cell 布局） | mono, 0.72rem |
-| `.bl-cand-table` | Candidates 表格，行高 ~28px、cell padding 6/10 | — |
-| `.bl-gate` + `.bl-gate-{ok\|block}` | Pre-trade check chip。PASS 用紧凑绿 chip；block 用红色正文（无 badge） + `.bl-gate-tip` hover popover | mono 0.7rem (ok) / sans 0.78rem (block) |
-| `.bl-signoff-list` / `.bl-signoff-row` (+ `-traceable`) | Awaiting Sign-off 每行 3 行布局：symbol/meta/actions。整行 click → `DecisionTraceDrawer` | `--surface-2` |
-| `.bl-toolbar` + `.bl-facet` / `.bl-side-btn` / `.bl-time-btn` / `.bl-reset-btn` | Ledger toolbar：Search / 6 outcome facet chips / L-S 切换 / 1h-6h-24h-7D 切换 / Reset | uppercase label 0.66rem |
-| `.bl-outcome-{green\|yellow\|red\|muted}` | Ledger 行 outcome chip。tone 语义: green=Filled, red=UserReject/AutoReject, yellow=Watch/RejectUnknown, muted=OpSkip | — |
-| `.bl-cand-skeleton{-row,-diag,-footer}` | 冷启动 shimmer 骨架屏。`@keyframes bl-shimmer` + `prefers-reduced-motion` 保护 | — |
-| `.ov-blotter-strip` | Overview 上的 1 行 Blotter 摘要（不在 Blotter 页面内，故用 `.ov-` 前缀）。`onMouseEnter` 触发 Blotter queryKey prefetch | — |
+The standalone Decision Blotter was removed by issue #2288. The remaining `.bl-*`
+CSS in `frontend/src/index.css` is legacy cleanup debt and must not be used by new
+or current owner-facing surfaces; the former class table is in
+[`history/blotter_design.md`](../history/blotter_design.md). `.ov-blotter-strip`
+(the one-line Overview summary) keeps its `.ov-` prefix because it lives outside
+the Blotter page.
 
 **反模式**：不要给同一 tone 用完整方块底色（会让扫视疲劳）——只染数字/文字/边框。
 
@@ -726,58 +711,7 @@ UI 改动 commit 前必须过完：
 
 ---
 
-## 附录 A：死代码清理记录
+## 附录
 
-经 `grep -r "class-name" frontend/src/ --include="*.tsx"` 确认无引用后删除：
-
-| 类名 | 原用途 | 删除 commit |
-|------|--------|------------|
-| `.cockpit-grid`, `.cockpit-panel` | 旧 2-col 布局 | 6fa0f69 |
-| `.cockpit-hero`, `.hero-zone`, `.hero-label` 等 | 旧 v2 hero section | 6fa0f69 |
-| `.cockpit-grid-3` + media | 旧 3-col grid | 6fa0f69 |
-| `.market-watch`, `.market-watch-*` | 旧 mini-watchlist | 6fa0f69 |
-| `.panel-divider`, `.recent-runs-strip` | 旧面板分割线/badge strip | 6fa0f69 |
-| `.pill-*`, `.ticker-token-pending` | 旧 topbar pill | 早期 commit |
-| body grid texture `background-image` | 旧网格纹理 | 6d2f557 |
-| `.card-head-space{margin-bottom:0}` (重复定义) | 被 @2120 完整定义覆盖 | UI review |
-| `.signals-row-long/short` + `td` 修饰 | 旧 Signals tab 行着色 | UI review |
-| `.exchange-tiles`, `.exchange-tile*`（7 行） | 交易所 tile 卡片（改为 select 下拉） | 3b9ffff |
-| `.entry-*`, `.human-approval-*`, `.funnel-*`, `.approval-list`, `.desk-*`, `.proposal-*`, `.dir-*`（~241 行） | Overview 决策卡 → 迁移至 Blotter | Blotter migration |
-
----
-
-## 附录 B：变更历史
-
-| 日期 | Commit | 摘要 |
-|------|--------|------|
-| 2026-06-15 | 88a46be | Command Center radius 统一 (12/14px → var(--r)) |
-| 2026-06-15 | 74bf57a | WCAG AA contrast: th/labels faint→muted |
-| 2026-06-15 | 33a47d4 | Charts timeframe: dropdown→segmented toggle |
-| 2026-06-15 | 311f5c2 | lens/CC tabs 字号对齐 0.78rem |
-| 2026-06-15 | de7a9b4 | 微交互扩展: card/row/watchlist press feedback |
-| 2026-06-15 | 6fa0f69 | 删除 ~70 行 dead CSS |
-| 2026-06-15 | 56ae379 | button press/focus/transition 80ms |
-| 2026-06-15 | 6d2f557 | tables/nav/bg/buttons 终极打磨 |
-| 2026-06-15 | 08dc3b8 | drawer/tabs/scrollbar/color discipline |
-| 2026-06-15 | 675dc80 | controls/metrics/sections 紧凑 |
-| 2026-06-15 | 2ac849c | Bloomberg-density pass 1 |
-| 2026-06-26 | (多次) | UI 重构：风险控制 / Learning / Overview / 多页一致性 |
-| 2026-06-29 | bcdcebd | Settings 搜索框从 shell 外移入 panel 内 |
-| 2026-06-29 | 3b9ffff | Universe Board Toggle 加 Row 标签；Exchange Connection tile→select；删 exchange-tile* CSS |
-| 2026-07-18 | (多次) | Blotter 工作站：Overview 决策卡迁移 + Proposals 合并；`fmtCompact` PnL tile 格式化；响应式布局精修（cockpit-rail 禁 column-count → grid/flex）；Settings API key 掩码 + 折叠；cc-heartbeat-zone flex→grid 修复坍塌；全局暗色 scrollbar（color-scheme:dark）；全站表格 `noWrap` 默认开启 |
-| 2026-08-12 | pending | Usage 信息架构：消费优先、父子 token 不重复、三阶段加载、coverage list 替代 radar、所有明细表有界分页 |
-
----
-
-## 附录 C：优化 Backlog
-
-1. **响应式断点精修** — 700-900px 区间在 density pass 后可能过挤，需实机验证
-2. **暗模式色彩微调** — `--surface-2` hover 在 OLED 上可能与 `--surface` 不可区分
-3. **动画 reduced-motion** — 尚未添加 `prefers-reduced-motion` 媒体查询
-4. **Command Center terminal 化** — message body 已切 monospace，可进一步加 prompt prefix / syntax highlighting
-5. **表格 sticky header** — 长列表 `position: sticky` 列头
-6. **Code-split** — JS bundle ~900KB，应拆分 lightweight-charts 为 dynamic import
-7. **键盘快捷键提示** — 按钮旁显示 shortcut badge（`⌘K` 等）
-8. **侧栏 icon-only 折叠** — 折叠为 48px icon rail，给 chart 更多空间
-9. **Volume 子图** — PriceChart 下方联动 volume 柱图，lightweight-charts 原生支持
-10. **PnL 归因热力图** — treemap 按持仓权重 + PnL 着色
+死代码清理记录、2026-06 至 2026-08 变更历史与当时的优化 Backlog 已于 2026-10-09 移到
+[`ui_design_system_appendices_2026-10-09.md`](../../archive/design-superseded/frontend/ui_design_system_appendices_2026-10-09.md)。

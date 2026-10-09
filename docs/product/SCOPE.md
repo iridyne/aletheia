@@ -90,7 +90,7 @@ and cannot qualify an external-account path.
 | Exchange-backed qualification | Route registration is not acceptance; qualification names the exact account, instrument, tested commit, private Fill and verified-close evidence |
 | Additional measured Learning paths | Require a causal unit, outcome adapter, behavior contract, failure semantics, focused tests, and a fresh observation window |
 | Authoritative learned exit policy | Current exit advice and the prospective entry-lock treatment are read-only evidence; any real ExitPlan mutation requires a separately reviewed treatment and fresh window |
-| Full Learning owner workbench | Proposal exists; delivery is tracked by GitHub issue #614 |
+| Full Learning owner workbench | Proposal exists; unplanned (#614 closed) — a new Issue is required to restart it |
 | Multiple long-lived managed Runtimes | Requires the approved multi-instance Runtime design; manual directory copies are not supported |
 | New agents, assets, markets, data sources, or self-evolution tiers | Separate scope and evidence required; they do not enter the MVP by implication |
 
