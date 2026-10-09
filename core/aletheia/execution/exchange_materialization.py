@@ -1203,10 +1203,13 @@ def materialize_bitget_entry(
             error_reason = None
             filled_at = None
         else:
+            # #2084 (owner 2026-10-09): the real exposure is an ordinary Position;
+            # the Order keeps `overfilled` and the Position carries the flag.
             state = "overfilled"
-            proposal_state = "error"
+            proposal_state = "executed"
             error_reason = "exchange_quantity_exceeds_authoritative_order"
             filled_at = max(item.filled_at for item in evidence)
+            _flag_entry_quantity_divergence(position_id, order_id, requested_quantity, exchange_quantity)
         repo.transition_order(
             order_id,
             exchange_order_id=exchange_order_id,
@@ -1222,6 +1225,40 @@ def materialize_bitget_entry(
             position_id=position_id,
             exchange_order_id=exchange_order_id,
         )
+
+
+def _flag_entry_quantity_divergence(
+    position_id: str, order_id: str, planned: float, filled: float
+) -> None:
+    """Mark an overfilled entry's Position as not exact (#2084); once per Order."""
+    position = repo._select_one("positions", position_id) or {}
+    current = position.get("entry_quantity_divergence")
+    if current and json.loads(current).get("order_id") == order_id:
+        return
+    divergence = json.dumps(
+        {"order_id": order_id, "planned_quantity": planned, "filled_quantity": filled},
+        sort_keys=True,
+    )
+    repo.update_open_position_materialization(position_id, entry_quantity_divergence=divergence)
+    repo.insert_audit_event(
+        AuditEvent(
+            actor="system",
+            source="exchange_materialization",
+            event_type="entry_fill_quantity_diverged",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps({"entry_quantity_divergence": current}, sort_keys=True),
+            after_state=divergence,
+            message=(
+                f"Entry Order {order_id} filled {filled} against planned {planned}; "
+                "the Position is open but its quantity is not the planned quantity."
+            ),
+        )
+    )
+    logger.warning(
+        "entry fill quantity diverged: position=%s order=%s planned=%s filled=%s",
+        position_id, order_id, planned, filled,
+    )
 
 
 def _position_for_close_order(order: dict) -> dict | None:

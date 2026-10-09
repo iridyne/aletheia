@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v96"
+SCHEMA_VERSION = "aletheia-sqlite-v97"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7852,6 +7852,13 @@ def _apply_planning_attempt_outcomes_v96(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+def _apply_entry_quantity_divergence_v97(db: sqlite3.Connection) -> None:
+    """Additive nullable flag for an overfilled entry (#2084); no backfill."""
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(positions)").fetchall()}
+    if "entry_quantity_divergence" not in columns:
+        db.execute("ALTER TABLE positions ADD COLUMN entry_quantity_divergence TEXT")
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -9126,6 +9133,14 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_PLANNING_ATTEMPT_OUTCOMES_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v96",
         apply=_apply_planning_attempt_outcomes_v96,
+    ),
+    MigrationStep(
+        migration_id="20261009_0097_entry_quantity_divergence_v97",
+        checksum=hashlib.sha256(
+            b"entry_quantity_divergence_v97:positions.entry_quantity_divergence:nullable_no_backfill"
+        ).hexdigest(),
+        schema_version="aletheia-sqlite-v97",
+        apply=_apply_entry_quantity_divergence_v97,
     ),
 )
 

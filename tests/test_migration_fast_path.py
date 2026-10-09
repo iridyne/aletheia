@@ -2177,5 +2177,5 @@ def test_planning_attempt_outcomes_v96_is_additive_idempotent_and_append_only():
             "INSERT INTO candidate_planning_attempt_outcomes "
             "(generation_id, attempt_index, outcome_class, created_at) VALUES ('g1', 1, 'no_plan', 'x')"
         )
-    assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION == "aletheia-sqlite-v96"
+    assert "aletheia-sqlite-v96" in {step.schema_version for step in migrations._MIGRATIONS}
     connection.close()

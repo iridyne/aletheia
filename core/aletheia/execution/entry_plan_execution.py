@@ -480,7 +480,9 @@ def _capture_facts(plan: EntryPlan, *, bid: float | None, ask: float | None, now
             quantity = sum(float(item["fill_quantity"]) for item in fills)
             if (any(not math.isfinite(float(item[key])) or float(item[key]) <= 0
                     for item in fills for key in ("fill_quantity", "fill_price"))
-                or quantity > float(order["quantity"]) + 1e-12
+                # #2084: only a materialized `overfilled` Order may exceed its quantity.
+                or (quantity > float(order["quantity"]) + 1e-12 and order["status"] != "overfilled")
+                or (order["status"] == "overfilled" and quantity <= float(order["quantity"]))
                 or (order["status"] == "filled" and not math.isclose(quantity, float(order["quantity"]), rel_tol=1e-9, abs_tol=1e-12))
                 or (order["status"] in {"partial", "partially_filled"} and quantity == 0)):
                 filled = None

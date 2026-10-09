@@ -1937,6 +1937,11 @@ def _build_review_request(
             f"{_position_review_value(_position_holding_age_hours(position))} "
             f"expected_horizon_hours="
             f"{_position_review_value(position.get('expected_horizon_hours'))}"
+            + (
+                f" entry_quantity_divergence={position['entry_quantity_divergence']}"
+                if position.get("entry_quantity_divergence")
+                else ""
+            )
         )
     pos_summary = "\n".join(position_lines)
     total_unrealized_text = (

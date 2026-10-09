@@ -1695,6 +1695,7 @@ _POSITION_MATERIALIZATION_FIELDS = frozenset({
     "quantity", "entry_price", "current_price", "entry_fee", "slippage_cost",
     "liquidation_price", "entry_fill_verified", "entry_price_source", "leverage",
     "trade_school", "reconciliation_identity", "reconciliation_evidence",
+    "entry_quantity_divergence",
 })
 
 

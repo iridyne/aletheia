@@ -667,6 +667,10 @@ class Position(_Provenanced):
     pending_close_order_id: str | None = None
     pending_close_status: str | None = None
     pending_close_requested_at: str | None = None
+    # #2084: JSON {order_id, planned_quantity, filled_quantity} when an entry
+    # Order filled more than planned. The Position stays ordinary; the flag keeps
+    # AI review and humans from reading its quantity as the planned one.
+    entry_quantity_divergence: str | None = None
     # Resting locally-watched limit exit and who authored it. exit_limit_source is
     # 'human' (dashboard manual close) or 'system_operator' (AI proactive exit); it
     # selects the honest close_reason when the level is crossed so a human's manual
