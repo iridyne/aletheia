@@ -643,6 +643,45 @@ def test_account_fingerprint_mismatch_blocks_identity(tmp_path, monkeypatch):
 # --- P3 tests: orphan close + run_reconcile orchestration ---
 
 
+@pytest.mark.parametrize("exchange_rows", [[], [_ex("ETHUSDT", "long", 2.0, 3000.0)]])
+def test_credential_generation_drift_never_classifies_local_positions(
+    tmp_path, monkeypatch, exchange_rows,
+):
+    """#1952 / execution_contract §3.0b: credentials replaced A→B, then B's first
+    sync makes the cache current. A's Position must not be orphaned (absence) nor
+    matched to B's venue row without venue continuity proof."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import position_reconciler as pr
+    from aletheia.storage.models import Order
+
+    account_a = current_account()
+    account_b = account_a.model_copy(update={"credential_generation": 2})
+    entry = Order(
+        uta_account_identity_json=account_a.model_dump_json(), symbol="ETH/USDT",
+        market_type="usdt_futures", direction="long", order_type="limit", quantity=2.0,
+        price=3000.0, execution_mode="bitget_demo", status="filled", source="native",
+    )
+    repo._insert("orders", repo._stamp_provenance(entry.model_dump()))
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long", quantity=2.0,
+        entry_price=3000.0, execution_mode="bitget_demo", order_id=entry.id,
+    ))
+    cached = {
+        "positions": [{"broker_id": "bitget_demo", **row} for row in exchange_rows],
+        "accounts": [{"broker_id": "bitget_demo", "identity": account_b.model_dump(mode="json")}],
+        "age_seconds": 1.0, "fetched_at": "2026-06-12T00:00:00+00:00",
+    }
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda **kwargs: cached)
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    result = pr.classify_positions()
+
+    assert result.orphaned == []
+    assert result.managed == []
+    assert result.external == []
+    assert [issue.reason for issue in result.integrity_issues] == ["local_account_identity_not_current"]
+
+
 def test_legacy_fallback_orphan_close_is_removed():
     """No caller can turn current/entry fallback price into a synthetic close."""
     import inspect

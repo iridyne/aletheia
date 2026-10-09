@@ -240,6 +240,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     result = ReconcileResult()
 
     cached = None
+    view_identity = None
     # View-completeness gate (P0, 2026-07-02): only trust the unified view for
     # classification when the ACTIVE broker is actually in it. A unified cache can
     # be FRESH yet MISSING the active broker (e.g. OKX API 50001 → UTA drops okx,
@@ -313,6 +314,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         for _acct in ((unified or {}).get("accounts") or []):
             if _acct.get("broker_id") == target_execution_mode:
                 _endpoint_family = (_acct.get("identity") or {}).get("profile") or None
+                view_identity = _acct.get("identity")
                 break
         result.view_evidence = build_view_evidence(
             cached,
@@ -363,9 +365,40 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
             row_count=row_count,
         ))
 
+    from aletheia.storage.repositories import get_order
+    from aletheia.uta.identity import IdentityRelation, identity_relation
+    from aletheia.uta.models import UTAAccountIdentity
+
+    try:
+        current_identity = UTAAccountIdentity.model_validate(view_identity) if view_identity else None
+    except ValueError:
+        current_identity = None
+
+    def local_identity_is_current(row: dict) -> bool:
+        """§3.0b: a local Position joins the view only under the view's SAME account identity.
+
+        Drift (or any other relation) needs venue continuity proof, which the
+        re-anchor paths own; until then the row is neither managed nor orphaned.
+        """
+        entry = get_order(row["order_id"]) if row.get("order_id") else None
+        raw = (entry or {}).get("uta_account_identity_json")
+        if not raw:
+            return True  # unbound legacy row: only the fingerprint check below applies
+        try:
+            persisted = UTAAccountIdentity.model_validate_json(raw)
+        except ValueError:
+            persisted = None
+        if persisted is None or current_identity is None \
+                or identity_relation(persisted, current_identity) is not IdentityRelation.SAME:
+            add_issue(reason="local_account_identity_not_current", source="local", row=row)
+            return False
+        return True
+
     def account_matches(row: dict, source: str) -> bool:
         fingerprint = ""
         if source == "local":
+            if not local_identity_is_current(row):
+                return False
             raw_identity = row.get("reconciliation_identity")
             if raw_identity:
                 try:
