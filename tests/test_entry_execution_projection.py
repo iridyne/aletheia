@@ -129,3 +129,12 @@ def test_ioc_limit_is_frozen_while_current_bbo_moves_inside_envelope(monkeypatch
     assert 100.15 <= later <= plan.worst_price
     with pytest.raises(ValueError, match="entry_ioc_outside_frozen_bounds"):
         bounded_entry_ioc_price(plan, bid=later+.01, ask=later+.02)
+
+
+def test_filled_leg_below_unrounded_target_is_target_filled(monkeypatch):
+    # Gateway rounds each leg down to the venue step, so a fully filled leg
+    # leaves a sub-step residue below the unrounded fixed target.
+    plan = plan_for(monkeypatch, "FILL_FIRST")
+    result = resolve_entry_execution(plan, facts(order_status="filled", order_tactic="OPPOSING_BBO_IOC",
+        filled_quantity=plan.target_quantity * .99))
+    assert (result.action, result.reason) == ("DONE", "entry_target_filled")
