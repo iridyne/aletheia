@@ -217,6 +217,18 @@ def classify_verified_exit(
             pages=pages,
             source_endpoint=source_endpoint,
         )
+    if total_quantity > request.quantity + tolerance:
+        # Close fills beyond the local quantity (e.g. partial closes already
+        # netted locally) are a quantity ambiguity; the verified closer requires
+        # an exact match, so this must never be reported as verified_fill.
+        return inconclusive_verified_exit(
+            request,
+            "excess_close_evidence",
+            position_absent=True,
+            history_complete=True,
+            pages=pages,
+            source_endpoint=source_endpoint,
+        )
     if any(
         not fill.fill_id
         or not fill.order_id
