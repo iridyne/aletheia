@@ -2194,12 +2194,6 @@ def get_guard_stats():
         raise HTTPException(503, "guard_stats_read_failed") from e
 
 
-@router.get("/knowledge/case-studies")
-def get_case_studies():
-    _ensure_db()
-    return repo.list_knowledge_items(item_type="trade_case_study")
-
-
 def _proposal_commit_matches(decision: dict, proposal: dict | None) -> bool:
     expected = decision.get("proposal_commit_hash")
     if not expected:
@@ -3066,17 +3060,3 @@ def _parse_brief_to_profile(brief: str) -> dict:
         "time_horizon": time_horizon,
         "_warnings": warnings,
     }
-
-
-# ── Edge Lab: analytics endpoints ───────────────────────────────────────────
-
-
-@router.get("/analytics/family-scorecard")
-def get_family_scorecard():
-    """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
-    _ensure_db()
-    from aletheia.analytics.family_scorecard import compute_family_scorecard_with_epoch
-    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-
-    scorecard = compute_family_scorecard_with_epoch()
-    return {**scorecard, **build_outcome_cohort_summary()}

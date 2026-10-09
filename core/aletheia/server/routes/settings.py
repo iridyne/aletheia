@@ -1933,14 +1933,6 @@ def get_risk_policies():
     return _policy_payload(load_config())
 
 
-@router.post("/risk-policies/compare")
-def compare_risk_policies(req: RiskPolicyCopyRequest):
-    cfg = load_config()
-    source = getattr(cfg.risk, req.source).model_dump(mode="json")
-    target = getattr(cfg.risk, req.target).model_dump(mode="json")
-    return {"source": req.source, "target": req.target, "diff": _policy_diff(source, target)}
-
-
 @router.post("/risk-policies/copy")
 def copy_risk_policy(req: RiskPolicyCopyRequest):
     if req.source == req.target:
