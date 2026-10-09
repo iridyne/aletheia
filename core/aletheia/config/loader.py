@@ -534,30 +534,59 @@ def _sync_config_directory() -> None:
         os.close(directory_fd)
 
 
+@contextmanager
+def _config_permit():
+    """Hold the process lock plus the cross-process config writer permit."""
+    with _config_write_lock:
+        file_fd = _acquire_config_file_lock()
+        try:
+            yield
+        finally:
+            _release_config_file_lock(file_fd)
+
+
 def save_config(
     cfg: AletheiaConfig,
     *,
     expected_hash: "str | None" = None,
 ) -> None:
-    """Persist config to disk (atomic write + cross-process lock).
+    """Persist a whole config snapshot (atomic write + cross-process lock).
 
-    Pass expected_hash (from config_file_hash()) to enable CAS: raises
-    ConfigConflictError if the file was modified by another writer since load.
+    The snapshot was read before the permit, so a concurrent writer's change is
+    lost unless expected_hash (from config_file_hash()) enables CAS. A targeted
+    change to the live config uses edit_config()/mutate_config() instead.
     """
-    with _config_write_lock:
-        file_fd = _acquire_config_file_lock()
-        try:
-            if expected_hash is not None:
-                current = config_file_hash()
-                if current != expected_hash:
-                    raise ConfigConflictError(
-                        f"config modified by another writer "
-                        f"(expected {expected_hash[:8]}, got {current and current[:8]})"
-                    )
-            _save_config_locked(cfg)
-        finally:
-            _release_config_file_lock(file_fd)
+    with _config_permit():
+        if expected_hash is not None:
+            current = config_file_hash()
+            if current != expected_hash:
+                raise ConfigConflictError(
+                    f"config modified by another writer "
+                    f"(expected {expected_hash[:8]}, got {current and current[:8]})"
+                )
+        _save_config_locked(cfg)
     _emit_consistency_events(cfg)
+
+
+@contextmanager
+def edit_config():
+    """Yield the latest committed config with the writer permit held.
+
+    The read happens under the permit, so the edit cannot revert a concurrent
+    writer. Changes persist when the block exits normally and something
+    changed; an exception discards them. The permit is not reentrant: never
+    call save_config/edit_config/mutate_config inside the block.
+    """
+    with _config_permit():
+        _invalidate_config_cache()
+        cfg = load_config(persist_migrations=False)
+        before = cfg.model_dump(mode="json")
+        yield cfg
+        changed = cfg.model_dump(mode="json") != before
+        if changed:
+            _save_config_locked(cfg)
+    if changed:
+        _emit_consistency_events(cfg)
 
 
 def mutate_config(mutator):
@@ -566,16 +595,12 @@ def mutate_config(mutator):
     Acquires the filesystem permit before reading so the mutation base is always
     the latest committed revision — not a process-local cached snapshot.
     """
-    with _config_write_lock:
-        file_fd = _acquire_config_file_lock()
-        try:
-            _invalidate_config_cache()
-            cfg = load_config(persist_migrations=False)
-            changed = bool(mutator(cfg))
-            if changed:
-                _save_config_locked(cfg)
-        finally:
-            _release_config_file_lock(file_fd)
+    with _config_permit():
+        _invalidate_config_cache()
+        cfg = load_config(persist_migrations=False)
+        changed = bool(mutator(cfg))
+        if changed:
+            _save_config_locked(cfg)
     if changed:
         _emit_consistency_events(cfg)
     return changed

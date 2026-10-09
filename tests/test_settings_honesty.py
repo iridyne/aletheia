@@ -17,6 +17,8 @@ What remains here is the Event Triggers half of the same honesty rule: a removed
 field must be REJECTED, not silently accepted.
 """
 
+from contextlib import nullcontext
+
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
@@ -151,7 +153,7 @@ def event_trigger_app():
 
     with (
         patch.object(settings_mod, "load_config", return_value=cfg),
-        patch.object(settings_mod, "save_config"),
+        patch.object(settings_mod, "edit_config", lambda: nullcontext(cfg)),
         patch("aletheia.files.jsonl.write_audit"),
     ):
         yield TestClient(app, raise_server_exceptions=False), cfg

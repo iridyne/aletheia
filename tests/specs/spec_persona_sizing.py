@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.helpers.config_stub import stub_config_edits
 
 _PAPER_TRADING_SETTINGS = (
     Path(__file__).resolve().parents[2]
@@ -190,8 +191,7 @@ def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeyp
     from aletheia.server.routes import settings as settings_routes
 
     cfg = AletheiaConfig()
-    monkeypatch.setattr(settings_routes, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings_routes, "save_config", lambda _cfg: None)
+    stub_config_edits(monkeypatch, settings_routes, cfg)
 
     for field, value in (
         ("default_notional_usdt", 0),
@@ -718,8 +718,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     from aletheia.server.routes import settings as settings_routes
 
     saved_configs = []
-    monkeypatch.setattr(settings_routes, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings_routes, "save_config", lambda c: saved_configs.append(c))
+    stub_config_edits(monkeypatch, settings_routes, cfg, lambda c: saved_configs.append(c))
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_a, **_k: None)
 
     cfg.trading.persona_pyramid_enabled = False

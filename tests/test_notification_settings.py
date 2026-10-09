@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from aletheia.config.schema import AletheiaConfig, TelegramConfig, WebhookConfig
 from aletheia.server.routes import settings
+from tests.helpers.config_stub import stub_config_edits
 
 
 @pytest.mark.parametrize("value", [-1, 24])
@@ -108,8 +109,7 @@ def test_invalid_webhook_candidate_has_no_persistence_or_audit(monkeypatch):
     cfg = AletheiaConfig()
     saved = []
     audited = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda value: saved.append(value))
+    stub_config_edits(monkeypatch, settings, cfg, lambda value: saved.append(value))
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda event: audited.append(event))
 
     with pytest.raises(HTTPException) as exc_info:
@@ -142,8 +142,7 @@ def test_invalid_telegram_candidate_has_no_persistence_audit_or_reconcile(monkey
     audited = []
     reconciled = []
 
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda value: saved.append(value))
+    stub_config_edits(monkeypatch, settings, cfg, lambda value: saved.append(value))
     monkeypatch.setattr(
         "aletheia.files.jsonl.write_audit",
         lambda event: audited.append(event),
@@ -174,10 +173,8 @@ def test_telegram_reschedule_failure_restores_previous_config(monkeypatch):
     saved_hours = []
     audited = []
 
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(
-        settings,
-        "save_config",
+    stub_config_edits(
+        monkeypatch, settings, cfg,
         lambda value: saved_hours.append(value.telegram.daily_summary_hour_cst),
     )
     monkeypatch.setattr(

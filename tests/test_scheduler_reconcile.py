@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
+from tests.helpers.config_stub import stub_config_edits
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -455,8 +456,7 @@ def test_historical_data_settings_route_calls_reconcile(monkeypatch):
 
     cfg = _make_cfg()
     reconciled = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
     monkeypatch.setattr(
         scheduler, "reconcile_historical_data_jobs",
@@ -477,8 +477,7 @@ def test_historical_data_settings_route_no_scheduler_fields_skips(monkeypatch):
 
     cfg = _make_cfg()
     reconciled = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
 
     # A field not in the scheduler-relevant set should skip reconciliation
@@ -497,8 +496,7 @@ def test_news_settings_route_calls_reschedule(monkeypatch):
 
     cfg = _make_cfg()
     calls = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
     monkeypatch.setattr(
         scheduler, "reschedule_news_fetch",
@@ -521,8 +519,7 @@ def test_controller_settings_route_calls_reconcile(monkeypatch):
 
     cfg = _make_cfg()
     calls = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
     monkeypatch.setattr(
         scheduler, "reconcile_filter_controller",
@@ -546,8 +543,7 @@ def test_telegram_settings_route_calls_reschedule(monkeypatch):
 
     cfg = _make_cfg()
     calls = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
     monkeypatch.setattr(
         scheduler, "reschedule_telegram_summary",
@@ -569,8 +565,7 @@ def test_telegram_settings_route_same_hour_skips_reschedule(monkeypatch):
 
     cfg = _make_cfg()
     calls = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda c: None)
+    stub_config_edits(monkeypatch, settings, cfg)
     monkeypatch.setattr(jsonl, "write_audit", lambda _e: None)
     # Same hour as old value (8) — should not reschedule
     cfg.telegram.daily_summary_hour_cst = 8

@@ -3,6 +3,7 @@
 Critical security invariant: no GET ever returns a raw secret value.
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest  # pyright: ignore[reportMissingImports]
@@ -1589,18 +1590,20 @@ async def test_tunnel_guard_protects_learning_mutations_before_side_effects(
 
     saved = []
     audited = []
-    real_save_config = settings_routes.save_config
+    real_edit_config = settings_routes.edit_config
     real_write_audit = jsonl.write_audit
 
-    def tracked_save_config(updated):
+    @contextmanager
+    def tracked_edit_config():
+        with real_edit_config() as updated:
+            yield updated
         saved.append(updated.agent.autonomous_learning)
-        return real_save_config(updated)
 
     def tracked_write_audit(event):
         audited.append(event)
         return real_write_audit(event)
 
-    monkeypatch.setattr(settings_routes, "save_config", tracked_save_config)
+    monkeypatch.setattr(settings_routes, "edit_config", tracked_edit_config)
     monkeypatch.setattr(jsonl, "write_audit", tracked_write_audit)
 
     config = await client.post("/api/settings/learning", json={})

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from tests.helpers.config_stub import stub_config_edits
 
 
 def _member(symbol: str, asset_id: str, rank: int = 1) -> dict:
@@ -449,8 +450,7 @@ async def test_historical_settings_route_persists_active_backfill_controls(monke
 
     cfg = AletheiaConfig()
     saved: list[AletheiaConfig] = []
-    monkeypatch.setattr(settings, "load_config", lambda: cfg)
-    monkeypatch.setattr(settings, "save_config", lambda value: saved.append(value))
+    stub_config_edits(monkeypatch, settings, cfg, lambda value: saved.append(value))
     monkeypatch.setattr(jsonl, "write_audit", lambda event: None)
 
     response = await settings.update_historical_data_config(
