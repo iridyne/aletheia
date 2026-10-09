@@ -948,6 +948,9 @@ class RiskCheckResult:
             "demo_entry_quality_unavailable",
             "unresolved_entry_exposure_unavailable", "entry_risk_reservation_unavailable",
             "lesson_check_error", "correlation_check_error",
+            # Raised only by the tier cache TTL; the refresh job makes it current.
+            # VENUE_MARGIN_TIERS_UNAVAILABLE also covers malformed rows: terminal.
+            "VENUE_MARGIN_TIERS_STALE",
         }
         if self.violations and all(str(value).partition(":")[0] in temporary for value in self.violations):
             return "DEFER"
@@ -1498,7 +1501,8 @@ def _evaluate_proposal_locked(
         # 12. Total live exposure limit (open positions + proposed notional).
         if proposal.price and proposal.quantity:
             try:
-                current_exposure = _current_live_exposure(
+                current_exposure = _current_account_exposure(
+                    proposal.execution_mode,
                     unresolved_entries,
                     pre_order_entries,
                 )
@@ -2019,7 +2023,7 @@ def _check_lesson_constraints(proposal) -> list[str]:
 
             elif action == "block_scanner":
                 blocked_scanner = rec.get("scanner", "")
-                if blocked_scanner and getattr(proposal, "scanner_family", None) == blocked_scanner:
+                if blocked_scanner and _resolve_proposal_family(proposal) == blocked_scanner:
                     token = f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}"
                     if in_dry_run:
                         logger.info("dry-run advisory (would block): %s", token)
@@ -2178,19 +2182,6 @@ def _current_account_exposure(
                 {"id": entry.proposal_id}, "account_exposure"
             )
     return total
-
-
-def _current_live_exposure(
-    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
-    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
-) -> float:
-    """Backward-compatible live-pool exposure projection."""
-    live_mode = next(iter(sorted(LIVE_EXECUTION_MODE_SET)))
-    return _current_account_exposure(
-        live_mode,
-        unresolved_entries,
-        pre_order_entries,
-    )
 
 
 def _check_correlation_exposure(
@@ -2388,7 +2379,21 @@ def _lookup_beta(symbol: str, venue: str | None, market_type: str) -> float | No
 
 
 def _resolve_proposal_family(proposal) -> str | None:
-    """Resolve a proposal's scanner_family via its opportunity (mirrors check #16)."""
+    """Resolve a proposal's scanner_family (#14/#14b/#15).
+
+    An Entry Plan Proposal reads the durable Plan's ``candidate_family``: a
+    universe Plan Proposal carries no opportunity_id by construction (#1a).
+    Other Proposals resolve via their opportunity.
+    """
+    if getattr(proposal, "entry_plan_id", None):
+        row = get_entry_plan(proposal.entry_plan_id)
+        if row is None:
+            return None
+        try:
+            return decode_entry_plan(str(row["plan_json"])).candidate_family or None
+        except Exception:
+            # #1a already rejects an undecodable Plan; an unknown family stays unknown.
+            return None
     if not getattr(proposal, "opportunity_id", None):
         return None
     try:
@@ -2826,10 +2831,12 @@ def account_sizing_state(
     """Fresh account/portfolio facts for one entry sizing decision (#3729).
 
     ``open_pool_notional_usdt`` carries everything already committed in the same
-    demo/live pool (open Positions, unresolved entry Orders, pre-Order Risk
-    reservations), which is what makes a sequence of entries shrink instead of
-    re-spending the same exposure. ``symbol_projected_stop_risk_usdt`` is the
-    same-symbol loss-at-stop already projected by existing exposure.
+    account pool as #12/#17 (``_account_pool_matches``: each exchange demo mode
+    alone, live merged): open Positions, unresolved entry Orders, pre-Order Risk
+    reservations. That is what makes a sequence of entries shrink instead of
+    re-spending the same exposure. ``symbol_projected_stop_risk_usdt`` (#20) is
+    the same-symbol loss-at-stop already projected in the live/demo class, the
+    same scope as #19 which it replaces for financed Plans.
 
     Authority that cannot be read is a typed failure, never a zero.
     """
@@ -2885,7 +2892,8 @@ def account_sizing_state(
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid") from None
         if not all(math.isfinite(value) for value in (quantity, entry_price, mark)):
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "position_exposure_invalid")
-        open_pool_notional += abs(mark * quantity)
+        if _account_pool_matches(str(row.get("execution_mode") or ""), execution_mode):
+            open_pool_notional += abs(mark * quantity)
         if row.get("symbol") != symbol:
             continue
         stop_raw = row.get("stop_price")
@@ -2907,7 +2915,8 @@ def account_sizing_state(
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid") from None
         if not all(math.isfinite(value) for value in (price, quantity)):
             raise SizingUnavailable(REASON_CAPITAL_UNAVAILABLE, "reservation_invalid")
-        open_pool_notional += abs(price * quantity)
+        if _account_pool_matches(entry.execution_mode, execution_mode):
+            open_pool_notional += abs(price * quantity)
         if entry.symbol == symbol:
             symbol_stop_risk += abs(price * quantity)
 
