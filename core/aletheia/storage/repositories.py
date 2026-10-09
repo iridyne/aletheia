@@ -3035,6 +3035,7 @@ def _resolve_ohlcv_scope(db, symbol: str, timeframe: str, exchange: str, market_
 
 # --- Universe Generator ---
 
+from aletheia.storage import order_states
 from aletheia.storage.models import (
     CandidatePlanningGeneration,
     EntryPlanRecord,
@@ -3554,12 +3555,11 @@ def _candidate_planning_existing_state(candidate_id: str, candidate: dict, conte
             ).fetchone()
             or get_db().execute(
                 "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
-                "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
-                "'submission_unknown','materialization_missing') OR "
+                f"o.status IN ({','.join('?' for _ in order_states.NON_TERMINAL_ORDER_STATES)}) OR "
                 "EXISTS (SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='open') OR "
                 "EXISTS (SELECT 1 FROM fills f WHERE f.order_id=o.id AND NOT EXISTS "
                 "(SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='closed'))) LIMIT 1",
-                (existing_plan["id"],),
+                (existing_plan["id"], *order_states.NON_TERMINAL_ORDER_STATES),
             ).fetchone()
         )
     )

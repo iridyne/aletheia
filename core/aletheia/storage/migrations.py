@@ -7748,8 +7748,13 @@ def _apply_entry_cancel_retry_v90(db: sqlite3.Connection) -> None:
     `entry_cancel_retry_after` gates the next one. Nothing is backfilled: an
     Order that never needed a retry keeps NULL (no retry scheduled) and 0.
     """
-    db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_attempts INTEGER")
-    db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_retry_after TEXT")
+    # Re-runnable (data_model.md §6.5): each ALTER autocommits, so a run killed
+    # before the ledger row lands must not fail the retry on a duplicate column.
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(orders)").fetchall()}
+    if "entry_cancel_attempts" not in columns:
+        db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_attempts INTEGER")
+    if "entry_cancel_retry_after" not in columns:
+        db.execute("ALTER TABLE orders ADD COLUMN entry_cancel_retry_after TEXT")
 
 
 def _apply_drop_backtest_tables_v91(db: sqlite3.Connection) -> None:
@@ -8404,7 +8409,12 @@ def _apply_cost_covering_edge_v88(db: sqlite3.Connection) -> None:
         for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     for table in ("universe_forward_outcomes", "filter_candidate_outcomes", "shadow_trades"):
-        if table in existing:
+        if table not in existing:
+            continue
+        # Re-runnable (data_model.md §6.5): an interrupted run may have added the
+        # column to some tables before the ledger row landed.
+        columns = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "min_cost_covering_edge_pct" not in columns:
             db.execute(f"ALTER TABLE {table} ADD COLUMN min_cost_covering_edge_pct REAL")
 
 
