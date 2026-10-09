@@ -1298,6 +1298,30 @@ def test_circuit_break_auto_reset_clears_ownerless_marker_without_enabling(
     assert not cb_path.exists()
 
 
+@pytest.mark.parametrize("content", [
+    "{not json",
+    '{"source": "circuit_breaker", "recovery_owner": "session"}',
+    '{"tripped_at": "yesterday", "recovery_owner": "session"}',
+])
+def test_unreadable_circuit_break_state_keeps_breaker_engaged(tmp_path, monkeypatch, caplog, content):
+    """#1394: malformed state is not stability evidence; never delete it or re-enable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.gateway import service_control as _service_control
+
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(content, encoding="utf-8")
+    enabled: list[str] = []
+    monkeypatch.setattr(_service_control, "enable", lambda source="api": enabled.append(source) or {"ok": True})
+
+    with caplog.at_level("WARNING", logger=lifecycle.logger.name):
+        lifecycle._check_circuit_break_auto_reset()
+
+    assert cb_path.read_text(encoding="utf-8") == content
+    assert enabled == []
+    assert "breaker kept engaged" in caplog.text
+
+
 def test_circuit_break_does_not_reset_within_window(tmp_path, monkeypatch):
     """Within the 30-min protection window the circuit-break file must not be removed."""
     setup_env(tmp_path, monkeypatch)

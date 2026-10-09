@@ -423,7 +423,11 @@ def _check_circuit_break_auto_reset() -> None:
             tripped_ts = data.get("tripped_at", "")
             tripped_at = _dt.datetime.fromisoformat(tripped_ts.replace("Z", "+00:00"))
         except Exception:
-            path.unlink(missing_ok=True)
+            # Unreadable state is not proof of stability: keep the file (and its
+            # recovery_owner) and the breaker engaged until `gateway enable` (#1394).
+            logger.warning(
+                "lifecycle: circuit-breaker state unreadable; breaker kept engaged", exc_info=True,
+            )
             return
 
         now = _dt.datetime.now(_dt.timezone.utc)
