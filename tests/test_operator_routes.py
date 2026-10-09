@@ -1215,7 +1215,8 @@ async def test_operator_internal_context_query_defaults_to_session_kind_profile(
     assert data["profile"] == "trading_context"
     assert "trading" in data["sections"]
     assert "risk" in data["sections"]
-    assert "strategies" in data["sections"]
+    # #3702 retired the Current Strategy surfaces; the context no longer carries them.
+    assert "strategies" not in data["sections"]
     assert "operator_state" in data["context"]
     assert data["summary"]
 
