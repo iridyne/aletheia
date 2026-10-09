@@ -155,3 +155,19 @@ def test_unreadable_sizing_outcomes_is_a_probe_error_not_zero_samples(monkeypatc
     dx._probe_sizing_policy(report)
     (check,) = report.checks
     assert check.severity == "warn" and "outcome_integrity unreadable" in check.detail
+
+
+def test_service_and_config_probe_errors_warn_without_leaking_text(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.gateway import service_control
+
+    def boom():
+        raise RuntimeError("http://user:secret@proxy")
+
+    monkeypatch.setattr(service_control, "status", boom)
+    monkeypatch.setattr(loader, "load_config", boom)
+    report = dx.Report()
+    dx._probe_gateway_service(report)
+    dx._probe_network(report)
+    assert [c.severity for c in report.checks] == ["warn", "warn"]
+    assert all("secret" not in c.detail for c in report.checks)

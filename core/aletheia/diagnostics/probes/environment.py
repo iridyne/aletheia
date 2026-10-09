@@ -137,7 +137,7 @@ def _probe_gateway_service(report: Report) -> None:
         from aletheia.gateway import service_control
         state = service_control.status()
     except Exception as exc:
-        report.add("process.gateway_service", "info", f"service state not available: {type(exc).__name__}")
+        report.add("process.gateway_service", "warn", f"service state not available: {type(exc).__name__}")
         return
     detail = (
         f"backend={state.get('backend')} registration={state.get('registration')} "
@@ -806,7 +806,7 @@ def _probe_network(report: Report) -> None:
         enforce = bool(getattr(net, "enforce", False))
         protocol = getattr(net, "proxy_protocol", "http")
     except Exception as e:
-        report.add("network.proxy", "info", f"could not read config: {type(e).__name__}")
+        report.add("network.proxy", "warn", f"could not read config: {type(e).__name__}")
         return
 
     mode = "ENFORCE/fail-closed" if enforce else "fail-open"
