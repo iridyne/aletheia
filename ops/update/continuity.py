@@ -957,7 +957,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "applied": False, "mode": "development", "reason": "deployment_busy",
                 "message": "Another update or deployment holds the deployment lock; nothing was changed.",
             }
-        if os.environ.get(auto._RUNTIME_ROLE_ENV, "").strip().lower() == auto._AUTO_DEPLOY_ROLE:
+        if auto.paper_role_configured():
             gate = auto._runtime_gate()
             failed = gate.get("failed")
             # Unreachable status cannot prove the mode: fail closed.

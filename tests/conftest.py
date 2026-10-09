@@ -531,6 +531,14 @@ def api_only_runtime(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_auto_update_units(tmp_path, monkeypatch):
+    """Never read the real systemd user units: on Fedora they carry the paper role."""
+    from ops.update import auto
+
+    monkeypatch.setattr(auto, "_unit_dir", lambda: tmp_path / "systemd-user-units")
+
+
+@pytest.fixture(autouse=True)
 def _block_real_exchange_orders(monkeypatch):
     from ccxt.async_support.base.exchange import Exchange
 

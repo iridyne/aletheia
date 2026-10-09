@@ -79,7 +79,8 @@ HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，�
 preflight），按可独立复核的批次合并，再部署一次；门禁失败不会改变已部署的 commit，重试前
 先读 `update status` 与门禁原因，不要因为「可能没执行」就反复重跑。
 
-已明确配置为 `paper` 角色的 runtime，只允许以下精确部署组合：
+已明确配置为 `paper` 角色的 runtime（当前 shell 或已安装的 `aletheia-auto-update.service`
+设置了 `ALETHEIA_RUNTIME_ROLE=paper`），只允许以下精确部署组合：
 `bitget_demo` / `external_exchange`，并且必须为 `live_disabled`。
 其他模式和交叉组合均拒绝。此准入同时
 适用于人工更新、自动更新及重启后的验证，不改变交易模式、Risk、凭据、
