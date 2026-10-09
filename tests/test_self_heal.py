@@ -7,7 +7,7 @@ Self-heal ACTS on the issue strings compute_health() produces — no LLM. It mus
   - never restart on LLM-down / kill-switch / bad-strategy (alert-only);
   - never silently do nothing — a suppressed restart still alerts + audits.
 
-Every test patches health._os_exit so nothing actually exits the test process.
+Every test patches health._request_restart so nothing signals the test process.
 """
 
 import sqlite3
@@ -56,7 +56,7 @@ def _patch_health(monkeypatch, issues):
     """Make compute_health() return a fixed unhealthy verdict and capture alerts.
 
     Returns (exits, sent): exits is the list of codes passed to the patched
-    _os_exit (which here returns instead of terminating); sent is alert messages.
+    _request_restart (recorded as 42, the controlled-restart exit code); sent is alert messages.
     """
     from aletheia.agent_runtime import health
     exits: list[int] = []
@@ -64,7 +64,7 @@ def _patch_health(monkeypatch, issues):
     monkeypatch.setattr(health, "compute_health",
                         lambda: {"healthy": issues == [], "issues": issues})
     monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
-    monkeypatch.setattr(health, "_os_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(health, "_request_restart", lambda: exits.append(42))
     return exits, sent
 
 

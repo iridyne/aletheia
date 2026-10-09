@@ -58,8 +58,8 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
     Strategy depends on the runtime mode:
     - Under --reload (dev mode): touch a sentinel .py file to trigger uvicorn's
       file-watcher reload. Worker stays alive until the reloader kills it cleanly.
-    - Without --reload: os._exit(42) kills this process; the managed supervisor
-      owns the normal restart path.
+    - Without --reload: a controlled restart (#1454) runs the graceful lifespan
+      shutdown, then exits 42; the supervisor respawns it outside the crash budget.
     """
     _reject_preview_gateway_control()
     has_supervisor = not getattr(request.app.state, "_owns_pid", True)
@@ -82,7 +82,7 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
 
         # The env var alone is not the gate (DECISIONS: dev reload requires
         # ALETHEIA_DEV_RELOAD=1 AND live_disabled, re-read now — live may have been
-        # enabled after boot). Never fall through to os._exit under --reload.
+        # enabled after boot). Never fall through to a process exit under --reload.
         if not is_dev_reload_enabled():
             from fastapi import HTTPException
 
@@ -112,10 +112,13 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
         return {"mode": "warm", "ok": True,
                 "message": "Reload triggered. Worker restarting in ~1s."}
 
-    async def _delayed_exit():
-        await asyncio.sleep(0.5)
-        os._exit(42)
+    async def _delayed_restart():
+        await asyncio.sleep(0.5)  # let this response reach the client first
+        from aletheia.server.controlled_restart import request_controlled_restart
 
-    asyncio.create_task(_delayed_exit())
+        request_controlled_restart()
+
+    # Keep a strong reference so the pending task cannot be collected.
+    request.app.state.controlled_restart_task = asyncio.create_task(_delayed_restart())
     return {"mode": "cold", "ok": True,
             "message": "Restarting. Page will reconnect in ~10s."}

@@ -824,6 +824,11 @@ async def lifespan(app: FastAPI):
         # In supervised mode the PID belongs to the supervisor — don't touch it.
         _clear_owned_gateway_pid(app)
         logger.info("Aletheia shutting down")
+        # Last step, after every owner above stopped: a controlled restart hands
+        # exit 42 to the supervisor (#1454). No-op on any other shutdown.
+        from aletheia.server.controlled_restart import exit_if_restart_requested
+
+        exit_if_restart_requested()
 
 
 app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespan)

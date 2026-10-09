@@ -83,7 +83,7 @@ def test_self_heal_restart_never_reloads_once_live_is_enabled(monkeypatch):
     audits: list = []
     monkeypatch.setattr(health, "write_audit", audits.append)
     monkeypatch.setattr(health, "_send_alert", lambda _msg: None)
-    monkeypatch.setattr(health, "_os_exit", lambda code: pytest.fail(f"os._exit({code})"))
+    monkeypatch.setattr(health, "_request_restart", lambda: pytest.fail("controlled restart requested"))
 
     with _live_enabled_after_boot(monkeypatch, sentinel):
         health._trigger_restart("code_drift")

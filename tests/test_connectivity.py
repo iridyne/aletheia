@@ -796,7 +796,7 @@ def test_self_heal_no_restart_when_exchange_down(tmp_path, monkeypatch):
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     exits: list[int] = []
-    monkeypatch.setattr(health, "_os_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(health, "_request_restart", lambda: exits.append(42))
     monkeypatch.setattr(health, "_send_alert", lambda msg: None)
 
     # Simulate: data is stale AND exchange is unreachable
@@ -827,7 +827,7 @@ def test_self_heal_restarts_when_exchange_up_but_data_stale(tmp_path, monkeypatc
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     exits: list[int] = []
-    monkeypatch.setattr(health, "_os_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(health, "_request_restart", lambda: exits.append(42))
     monkeypatch.setattr(health, "_send_alert", lambda msg: None)
 
     monkeypatch.setattr(

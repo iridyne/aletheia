@@ -29,6 +29,7 @@ from aletheia.gateway.pidfile import (
     find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
 )
 from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
+from aletheia.server.controlled_restart import RESTART_EXIT_CODE
 
 
 logger = logging.getLogger("aletheia.gateway.supervisor")
@@ -525,7 +526,8 @@ def run_supervised(spawn_fn=None) -> dict:
     """Supervise the inner server. Respawns on abnormal exit with backoff.
 
     spawn_fn() runs one server lifetime and returns its exit code (0 = clean
-    shutdown → stop supervising). Injectable for tests.
+    shutdown → stop supervising; RESTART_EXIT_CODE = controlled restart →
+    respawn outside the crash budget; anything else = crash). Injectable for tests.
 
     SIGTERM/SIGINT (a managed stop, a deploy, Ctrl-C) unwinds the supervisor loop
     through the finally block — the single, idempotent teardown path that kills
@@ -562,6 +564,7 @@ def run_supervised(spawn_fn=None) -> dict:
     cap = h.supervisor_backoff_cap_sec
 
     restarts = 0
+    controlled_restarts = 0
     restart_times: list[float] = []
     restart_history: list[dict] = []   # T5: per-restart details for persistent log
     gave_up_flag: list[bool] = [False]  # T4: skip frontdoor kill on gave_up
@@ -601,7 +604,16 @@ def run_supervised(spawn_fn=None) -> dict:
                     code = 1
 
                 if code == 0:
-                    return {"gave_up": False, "restarts": restarts}  # clean shutdown
+                    return {"gave_up": False, "restarts": restarts, "controlled_restarts": controlled_restarts}  # clean shutdown
+
+                if code == RESTART_EXIT_CODE:
+                    # #1454: the worker finished its graceful lifespan shutdown on
+                    # purpose (dashboard or self-heal). Respawn at once, outside
+                    # the crash window, history, give-up count and backoff; the
+                    # persisted self-heal rate limit is the only throttle.
+                    controlled_restarts += 1
+                    _record_controlled_restart(controlled_restarts)
+                    continue
 
                 # Abnormal exit — decide whether to respawn.
                 import time as _time
@@ -615,7 +627,7 @@ def run_supervised(spawn_fn=None) -> dict:
                     _record_give_up(restarts + 1)
                     _write_restart_history(restart_history)
                     gave_up_flag[0] = True  # T4: keep frontdoor alive on gave_up
-                    return {"gave_up": True, "restarts": restarts + 1}
+                    return {"gave_up": True, "restarts": restarts + 1, "controlled_restarts": controlled_restarts}
 
                 restarts += 1
                 backoff = min(2 ** (restarts - 1), cap) if cap else 0
@@ -624,7 +636,10 @@ def run_supervised(spawn_fn=None) -> dict:
             # A shutdown signal (our SIGTERM/SIGINT handler) or a genuine Ctrl-C
             # unwound the loop. The finally below is the single cleanup path; here
             # we only turn the unwind into a clean return so main() exits quietly.
-            return {"gave_up": False, "restarts": restarts, "stopped_by_signal": True}
+            return {
+                "gave_up": False, "restarts": restarts,
+                "controlled_restarts": controlled_restarts, "stopped_by_signal": True,
+            }
     finally:
         # Neutralize the shutdown signals FIRST: children share this supervisor's
         # process group, so kill_pid_tree() below signals the group — which would
@@ -694,6 +709,20 @@ def _record_supervisor_exception(exc: Exception) -> None:
         })
     except Exception:
         logger.warning("gateway_runner: supervisor exception record failed", exc_info=True)
+
+
+def _record_controlled_restart(count: int) -> None:
+    try:
+        from aletheia.files.jsonl import write_audit
+
+        write_audit({
+            "actor": "system", "source": "gateway",
+            "event_type": "gateway_controlled_restart",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": f"Gateway backend exited {RESTART_EXIT_CODE} after a controlled restart; respawning (#{count} this supervisor)",
+        })
+    except Exception:
+        logger.warning("gateway_runner: controlled restart record failed", exc_info=True)
 
 
 def _record_give_up(attempts: int) -> None:
