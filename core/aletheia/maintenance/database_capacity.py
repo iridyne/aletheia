@@ -214,39 +214,6 @@ def passive_wal_checkpoint(
     }
 
 
-def optimize_query_planner(db: sqlite3.Connection) -> dict:
-    """Run one bounded ``PRAGMA optimize`` and report what it did.
-
-    SQLite >= 3.46 self-limits the ANALYZE subcommands, so this stays fast even
-    on a multi-GiB database and needs no ``analysis_limit``. Usually a no-op; it
-    occasionally reanalyzes a table that grew since its last statistics.
-
-    Return value's ``analyzed`` is a lower-bound indicator: reanalysis of an
-    existing table may leave ``sqlite_stat1`` row count unchanged, so
-    ``analyzed=False`` does not prove ANALYZE did nothing.
-    """
-
-    def _stat1_rows() -> int:
-        exists = db.execute(
-            "SELECT count(*) FROM sqlite_master "
-            "WHERE type='table' AND name='sqlite_stat1'"
-        ).fetchone()[0]
-        if not exists:
-            return 0
-        return int(db.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0])
-
-    started = time.perf_counter()
-    before = _stat1_rows()
-    db.execute("PRAGMA optimize")
-    after = _stat1_rows()
-    return {
-        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
-        "stat1_rows_before": before,
-        "stat1_rows_after": after,
-        "analyzed": after != before,
-    }
-
-
 def database_capacity_history(*, limit: int = 90) -> list[dict]:
     from aletheia.files.jsonl import read_jsonl
 
