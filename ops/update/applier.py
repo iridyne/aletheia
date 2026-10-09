@@ -626,7 +626,35 @@ def rollback_applied_update(result: dict) -> dict:
 
 
 def apply_update(*, restart: bool = False, progress=None, preactivation_backup: str = "") -> dict:
-    """Apply an update to the source checkout."""
+    """Apply an update to the source checkout; an unexpected error never strands it (#3856).
+
+    Before activation the pulled source is rolled back through ``_rollback_update``;
+    the caller restarts a stopped runtime on any unapplied result.
+    """
+    attempt: dict = {}
+    try:
+        return _apply_update(
+            restart=restart, progress=progress, preactivation_backup=preactivation_backup, attempt=attempt
+        )
+    except Exception as exc:
+        reason = f"unexpected_{type(exc).__name__}"
+        detail = f"{type(exc).__name__}: {exc}"
+        old, new = attempt.get("old", ""), attempt.get("new", "")
+        if old and new and not attempt.get("activating"):
+            return _rollback_update(
+                old,
+                new,
+                python_deps_changed=attempt.get("python_deps_changed", False),
+                frontend_deps_changed=attempt.get("frontend_deps_changed", False),
+                restart=restart,
+                failure_reason=reason,
+                failure_detail=detail,
+            )
+        _record_update_failure(old, reason, attempted=new or None, detail=detail)
+        return {"applied": False, "rolled_back": False, "reason": reason, "message": detail, "mode": "development"}
+
+
+def _apply_update(*, restart: bool, progress, preactivation_backup: str, attempt: dict) -> dict:
     # This object is PRE-PULL ONLY. It is used for eligibility and branch
     # selection, then deliberately never written after source switches.
     cfg = load_config()
@@ -691,6 +719,13 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             "reason": "current_commit_unavailable",
             "mode": "development",
         }
+    # Bind every updater module the schema path needs while the disk still holds this
+    # process's own code: after the pull, a lazy import would load the candidate's
+    # module against the already-imported pre-pull ones (#3856).
+    from ops.backup.service import BackupService
+    from ops.update.auto import AutoUpdateError, _candidate_preflight, _remove_candidate
+
+    attempt["old"] = old
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
         _record_update_failure(
@@ -711,6 +746,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
     if not new:
         _record_update_failure(old, "new_commit_unavailable")
         return {"applied": False, "reason": "new_commit_unavailable", "mode": "development"}
+    attempt["new"] = new
     try:
         changed_files = git_facts.changed_files(old, new)
     except Exception as exc:
@@ -731,6 +767,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
         )
     python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
     frontend_deps_changed = _frontend_deps_changed(changed_files)
+    attempt.update(python_deps_changed=python_deps_changed, frontend_deps_changed=frontend_deps_changed)
     frontend_changed = any(path.startswith("frontend/") for path in changed_files)
     deps_reinstalled = False
 
@@ -748,9 +785,6 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             )
         if progress:
             progress("Preflighting schema migration")
-        from ops.backup.service import BackupService
-        from ops.update.auto import AutoUpdateError, _candidate_preflight, _remove_candidate
-
         reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
             # A single retry covers a transient Git/index lock without leaving the
@@ -879,8 +913,6 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
     had_previous_static = False
     if restart:
         if schema_changed:
-            from ops.backup.service import BackupService
-
             schema_backup = preactivation_backup
             if not schema_backup:
                 try:
@@ -900,6 +932,7 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
             frontend_built = True
         if progress:
             progress("Restarting gateway")
+        attempt["activating"] = True
         restarted = _restart_gateway()
         if not restarted.get("ok"):
             if schema_changed:

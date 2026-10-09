@@ -526,11 +526,6 @@ def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypa
     root = tmp_path / "candidates"
     monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
     monkeypatch.setattr(git_ops, "_git", lambda *_args: SimpleNamespace(returncode=0, stdout="", stderr=""))
-    monkeypatch.setattr(
-        auto,
-        "RestoreService",
-        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
-    )
     monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
     monkeypatch.setattr(
         auto,
@@ -560,11 +555,6 @@ def test_candidate_preflight_cleans_external_data_on_success_and_failure(tmp_pat
     root = tmp_path / "candidates"
     monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
     monkeypatch.setattr(git_ops, "_git", lambda *_args: SimpleNamespace(returncode=0, stdout="", stderr=""))
-    monkeypatch.setattr(
-        auto,
-        "RestoreService",
-        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
-    )
     observed_data = []
 
     def run(command, **kwargs):
@@ -612,6 +602,8 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
             "ops/__init__.py": "",
             "ops/update/__init__.py": "",
             "ops/update/smoke.py": "def validate_current_data():\n    print(__file__)\n    return {'ok': True}\ndef run_smoke_check():\n    print(__file__)\n    return {'ok': True}\n",
+            "ops/backup/__init__.py": "",
+            "ops/backup/restore.py": "from types import SimpleNamespace\nclass RestoreService:\n    def restore(self, archive, target):\n        print(__file__)\n        return SimpleNamespace(success=True, errors=[])\n",
         }
         for name, content in files.items():
             if root == candidate and missing and (name.startswith("core/") if missing == "core" else name.startswith("ops/")):
@@ -625,7 +617,8 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
         TemporaryDirectory=auto.tempfile.TemporaryDirectory,
     ))
     monkeypatch.setattr(git_ops, "_git", lambda *a: SimpleNamespace(returncode=0, stdout="", stderr=""))
-    monkeypatch.setattr(auto, "RestoreService", lambda: SimpleNamespace(restore=lambda *a: SimpleNamespace(success=True, errors=[])))
+    # #3856: the restore (and its verify_backup) must run on candidate code, never in-process.
+    monkeypatch.setattr(auto, "RestoreService", lambda: pytest.fail("updater restored the backup in-process"))
     monkeypatch.setattr(auto, "_safe_env", lambda: {**os.environ, "PYTHONPATH": str(active)})
     observed = []
 
@@ -644,6 +637,7 @@ def test_candidate_preflight_executes_only_candidate_sources(tmp_path, monkeypat
     assert len(observed) == 1
     if not missing:
         assert observed[0].stdout.splitlines() == [
+            str(candidate.resolve() / "ops/backup/restore.py"),
             str(candidate.resolve() / "core/aletheia/storage/migrations.py"),
             str(candidate.resolve() / "ops/update/smoke.py"),
             str(candidate.resolve() / "ops/update/smoke.py"),

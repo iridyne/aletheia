@@ -1076,11 +1076,15 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             progress=mark_phase,
             preactivation_backup=preactivation_backup,
         )
-    except Exception:
-        if barrier is not None:
-            barrier.__exit__(None, None, None)
-            barrier = None
-        raise
+    except Exception as exc:
+        # Never let an exception escape while this function holds the runtime stopped
+        # (#3856): report it as unapplied so the branch below restarts the runtime.
+        result = {
+            "applied": False,
+            "mode": "development",
+            "reason": f"unexpected_{type(exc).__name__}",
+            "message": str(exc)[-500:],
+        }
     if not result.get("applied"):
         if barrier is not None:
             barrier.__exit__(None, None, None)
