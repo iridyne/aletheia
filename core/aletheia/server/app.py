@@ -748,9 +748,10 @@ async def lifespan(app: FastAPI):
                 await _cancel_background_task(fast_trigger_task, "Fast Trigger watcher")
         except Exception:
             logger.warning("fast-trigger watcher stop failed during shutdown", exc_info=True)
+        scheduler_drained = False
         if background_services_enabled:
             try:
-                stop_scheduler()
+                scheduler_drained = stop_scheduler()
             except Exception:
                 logger.warning("scheduler stop failed during shutdown", exc_info=True)
             if agent_job_manager is not None:
@@ -809,13 +810,14 @@ async def lifespan(app: FastAPI):
             logger.warning("PI daemon stop failed during shutdown", exc_info=True)
         _lifespan_tasks.clear()
         # Mark the Runtime Session ended: clean only after an orderly lifespan
-        # exit; a startup failure before yield is recorded unclean. A hard kill
-        # skips this, leaving ended_at NULL + shutdown_clean=0.
+        # exit whose scheduler sync lanes drained (#1456); a startup failure
+        # before yield or a sync call still running is recorded unclean. A hard
+        # kill skips this, leaving ended_at NULL + shutdown_clean=0.
         if background_services_enabled:
             try:
                 from aletheia.agent_runtime.runtime_session import end_runtime_session
 
-                end_runtime_session(clean=reached_yield)
+                end_runtime_session(clean=reached_yield and scheduler_drained)
             except Exception as e:
                 logger.debug("Runtime session end failed: %s", e)
         # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
