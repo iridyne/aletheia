@@ -22,6 +22,11 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Where AstraQuant and VergeX make money — 2026-10-09](trading-strategy/COMPETITOR_PNL_SOURCE_ASTRAQUANT_VERGEX_2026-10-09.md)
+  finds no verifiable net-of-cost user profit for either; decomposes the only ledger (an owner-run AstraQuant demo,
+  43 trades) into market beta, demo-price distortion and concentration; documents that platform revenue comes from
+  referral/broker tags, builder fees and data resale, independent of user PnL; lists retail-scale edges that fit our
+  product and a track-record checklist. Evidence only.
 - [Five-pattern disconnection sweep — 2026-10-09](audits/FIVE_PATTERN_DISCONNECTION_SWEEP_2026-10-09.md)
   verifies 66 disconnections across six subsystems (orphaned producer/consumer, unused features, silent healthy
   fallbacks, untested-in-runtime paths), groups the fixable ones into 19 PR-sized batches, and lists the owner
