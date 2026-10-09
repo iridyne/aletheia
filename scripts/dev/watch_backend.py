@@ -34,16 +34,18 @@ def log(msg: str) -> None:
 
 
 def check_live_guard() -> bool:
+    """The shared dev-reload gate (env AND live_disabled); fail closed (#2845)."""
     try:
-        sys.path[:0] = [str(PROJECT_ROOT / "core"), str(PROJECT_ROOT)]
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        if cfg.live.state != "live_disabled":
-            log("REFUSED: live trading is not disabled. Exiting.")
-            return False
+        for path in (str(PROJECT_ROOT), str(PROJECT_ROOT / "core")):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+        from aletheia.server.dev_reload import is_dev_reload_enabled
+        if is_dev_reload_enabled():
+            return True
+        log("REFUSED: dev reload needs ALETHEIA_DEV_RELOAD=1 and live trading disabled.")
     except Exception as e:
-        log(f"WARNING: could not check live state: {e}")
-    return True
+        log(f"REFUSED: could not check live state: {e}")
+    return False
 
 
 def preflight(changed_files: list[str]) -> bool:
@@ -167,6 +169,10 @@ def main():
 
         if not preflight(changed):
             log("Skipping restart due to preflight failure.")
+            continue
+
+        if not check_live_guard():
+            log("Skipping restart: dev reload is no longer permitted.")
             continue
 
         if trigger_restart(changed):

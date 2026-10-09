@@ -77,6 +77,24 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
             },
         )
 
+    if reload_mode:
+        from aletheia.server.dev_reload import is_dev_reload_enabled
+
+        # The env var alone is not the gate (DECISIONS: dev reload requires
+        # ALETHEIA_DEV_RELOAD=1 AND live_disabled, re-read now — live may have been
+        # enabled after boot). Never fall through to os._exit under --reload.
+        if not is_dev_reload_enabled():
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "dev_reload_blocked",
+                    "reason_code": "dev_reload_blocked",
+                    "message": "Dev reload is blocked: live trading is not disabled or config is unreadable.",
+                },
+            )
+
     reason = body.reason if body else "manual"
     changed = body.changed_files[:10] if body and body.changed_files else []
     # Derive actor/source from the trigger, not a hardcoded "human" (#132).
