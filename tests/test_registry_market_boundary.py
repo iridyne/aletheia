@@ -6,14 +6,17 @@ import pytest
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.providers import MarketInstrument
-from aletheia.data.symbols import build_instrument_background
+from aletheia.data.symbols import build_instrument_background, instrument_background_rejection_reason
 from aletheia.universe import registry
 
 
-def _fact(base="BTC", **kwargs):
+def _fact(base="BTC", market_type="perp", **kwargs):
     return MarketInstrument(
-        "bitget", f"{base}/USDT", base, "USDT", "spot",
-        build_instrument_background(symbol=f"{base}/USDT", venue="bitget", market_type="spot", market_info={}),
+        "bitget", f"{base}/USDT", base, "USDT", market_type,
+        build_instrument_background(
+            symbol=f"{base}/USDT", venue="bitget", market_type=market_type,
+            market_info={"info": {"isRwa": "NO"}},
+        ),
         **kwargs,
     )
 
@@ -58,12 +61,10 @@ async def test_unavailable_market_facts_never_write_registry(monkeypatch, failur
 async def test_registry_retains_admission_blacklist_and_cleanup(monkeypatch):
     cfg = AletheiaConfig()
     cfg.market_data.ccxt_exchange = "bitget"
-    cfg.exchange.enabled_markets = {"usdt_futures": False}
     cfg.universe.blacklist = ["SCAM/USDT"]
     closed, stored = [], []
-    perp = _fact("ETH")
-    perp = replace(perp, market_type="perp", background=perp.background | {"market_type": "perp", "physical_market_type": "perp"})
-    facts = [_fact(), _fact("SCAM"), _fact("BTC3L"), _fact("TEST", is_test_or_dated=True), perp]
+    # Spot is outside the product scope (owner 2026-10-09): never registered.
+    facts = [_fact(), _fact("SCAM"), _fact("BTC3L"), _fact("TEST", is_test_or_dated=True), _fact("ETH", "spot")]
 
     class Provider:
         async def get_market_instruments(self):
@@ -86,6 +87,21 @@ async def test_registry_retains_admission_blacklist_and_cleanup(monkeypatch):
     assert await registry.sync_registry(cfg) == 2
     assert [(asset.symbol, asset.blacklist_reason) for asset in stored] == [("BTC/USDT", None), ("SCAM/USDT", "config_blacklist")]
     assert closed == [True]
+
+
+def test_bitget_rwa_perpetual_is_not_crypto():
+    def reason(is_rwa):
+        background = build_instrument_background(
+            symbol="NVDA/USDT:USDT", venue="bitget", market_type="perp",
+            market_info={"info": {} if is_rwa is None else {"isRwa": is_rwa}},
+        )
+        return instrument_background_rejection_reason(
+            background, symbol="NVDA/USDT", market_type="perp", venue="bitget",
+        )
+
+    assert reason("YES") == "unsupported_analysis_context:tradifi_perpetual"
+    assert reason("NO") is None
+    assert reason(None) == "instrument_background_unresolved"
 
 
 @pytest.mark.asyncio

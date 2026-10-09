@@ -17,7 +17,6 @@ instrument_profiles:
   crypto:
     asset_class: crypto
     market_types:
-      - spot
       - perp
 execution_modes:
   - bitget_demo
@@ -50,7 +49,8 @@ compatibility path in the repository.
 The accepted [Slim Product boundary](CAPABILITY_GROUND_TRUTH.md), under
 [#3134](https://github.com/iridyne/aletheia/issues/3134), is exchange/provider-agnostic
 Core plus the active Bitget Exchange Extension and configured HTTP Model Endpoints.
-Crypto spot/perpetuals on Bitget Demo are the current qualification route.
+Crypto USDT perpetuals on Bitget Demo are the current qualification route; spot
+is outside the product scope and is not planned (owner decision 2026-10-09).
 OKX/Binance and the formerly registered stock-linked profile are frozen, not
 active Runtime support. Their historical account/instrument identities remain
 readable and retain their original economics; this declaration does not rewrite

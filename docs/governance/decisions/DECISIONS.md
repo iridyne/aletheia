@@ -1,5 +1,26 @@
 # Architecture Decision Log
 
+## 2026-10-09 — 产品只做 USDT 永续合约；现货不在范围内，非加密永续不进候选（#3440）
+
+**Decision:** 产品范围是加密资产的 USDT 本位永续合约。现货不在范围内，也不在计划内
+（owner 2026-10-09：「我们这边主要是做合约」「不打算在有生之年去做支持」）。
+唯一的 universe 入口 `core/aletheia/universe/registry.py::sync_registry` 不再登记现货；
+交易所标记为现实世界资产的永续（Bitget 合约元数据 `isRwa=YES`：股票代币、贵金属、原油、指数）
+在 `build_instrument_background` 里不再默认归为 crypto，登记为 `blacklist_reason=
+unsupported_analysis_context:tradifi_perpetual`，不进扫描与规划。Bitget 永续缺少 `isRwa`
+时归为 unresolved（fail closed），不再走“默认是 crypto”。
+
+**Reason:** Bitget 永续此前在 `_DEFAULT_CRYPTO_MARKETS` 里被一律当成 crypto。Fedora 2026-10-08
+起的 universe_members 中约四成是 TradFi 永续（NVDA、XAU 等，`source=supported_market_default`）。
+`isRwa` 是 Bitget 第一方字段（CCXT 4.5.84 `market["info"]["isRwa"]` 原样透传），能自动跟上新上市
+品种，不需要手工维护代码黑名单。
+
+**Guardrail:**
+- 本决策只收窄 universe 入口；现货的 adapter 能力、执行代码与历史行不在本次范围内，历史数据保持原样可读。
+- 反事实与选择证据跨代码版本累积，不因本次收窄而重置或按部署分区（owner 2026-10-09）。
+
+---
+
 ## 2026-10-09 — 本地版本控制改用 jj（colocated），本地门禁不再依赖 git hook（#3815 / PR #3816）
 
 **Decision:** 开发 checkout 是 jj-colocated（`.jj` 与 `.git` 并存），日常版本控制一律用 `jj`；

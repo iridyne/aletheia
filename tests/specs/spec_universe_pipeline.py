@@ -36,7 +36,7 @@ def test_target_publication_failure_preserves_previous_authority(tmp_path, monke
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "bitget"
     _controlled_admitted_target_candidate(
-        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="perp",
     )
     db = repo.get_db()
     before_snapshots = [tuple(row) for row in db.execute("SELECT * FROM universe_snapshots")]

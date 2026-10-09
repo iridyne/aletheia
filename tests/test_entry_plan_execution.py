@@ -136,7 +136,7 @@ def test_holding_horizon_requires_positive_finite_value(holding):
 
 @pytest.mark.real_db
 @pytest.mark.parametrize("mechanism,family,direction,market_type,school", [
-    ("continuation", "momentum", "long", "spot", "short_term"),
+    ("continuation", "momentum", "long", "perp", "short_term"),
     ("reversal", "mean_reversion", "short", "perp", "short_term"),
     ("continuation", "momentum", "long", "spot", "serenity"),
 ])

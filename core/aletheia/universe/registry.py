@@ -88,7 +88,8 @@ def _invalidate_stale_pipeline_data() -> None:
 async def sync_registry(cfg: AletheiaConfig) -> int:
     """Sync the universe_registry from the configured exchange.
 
-    Reads normalized active USDT-quoted pairs from the configured venue.
+    Reads normalized active USDT perpetuals from the configured venue; spot
+    listings are outside the product scope and are not registered.
     When in demo mode with a restricted symbol set (e.g. OKX demo),
     only symbols actually executable on demo are registered.
 
@@ -133,7 +134,9 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
         for instrument in instruments:
             canonical = instrument.symbol
             market_type = instrument.market_type
-            if market_type == "perp" and not include_futures:
+            # USDT perpetuals are the only product (owner 2026-10-09, CAPABILITY
+            # _GROUND_TRUTH): spot never enters scanning or planning.
+            if market_type != "perp" or not include_futures:
                 continue
             background = instrument.background
             asset_class = background["asset_class"]
