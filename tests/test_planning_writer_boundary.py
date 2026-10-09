@@ -29,7 +29,11 @@ _OWNERS = {
     "complete_candidate_planning_with_plan": {"agent_shell/entry_planner.py"},
     "bind_entry_trigger_activation": {"agent_runtime/fast_trigger_watch.py"},
     "record_entry_plan_monitoring": {"agent_runtime/fast_trigger_watch.py"},
-    "transition_entry_plan": {"agent_runtime/fast_trigger_watch.py", "execution/entry_plan_execution.py", "execution/gateway.py"},
+    # execution_contract.md §6.1: stale_order_cleanup ends the Plan whose latest leg it cancels.
+    "transition_entry_plan": {
+        "agent_runtime/fast_trigger_watch.py", "execution/entry_plan_execution.py",
+        "execution/gateway.py", "execution/stale_order_cleanup.py",
+    },
 }
 _DELEGATIONS = {
     (caller, "expire_candidate_attention") for caller in (
