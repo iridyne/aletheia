@@ -11,14 +11,16 @@
 #   - user+net+pid namespaces give the run a private loopback with no network
 #     and no view of host processes, so a test can neither reach a live service
 #     on the host nor signal one of its processes;
-#   - ALETHEIA_DATA_DIR and TMPDIR point at a fresh directory, never at ~/.aletheia.
-# Requirements: ssh, rsync and git locally; uv, systemd (user session) and unshare remotely.
+#   - ALETHEIA_DATA_DIR and TMPDIR point at a fresh directory, never at ~/.aletheia;
+#   - the remote tree is a throwaway git repo with one snapshot commit, for code that reads
+#     the commit or `git ls-files`. Tests that need the local jj workspace still run locally.
+# Requirements: ssh, rsync and git locally; uv, git, systemd (user session) and unshare remotely.
 set -euo pipefail
 
 HOST="${REMOTE_TEST_HOST:-${ALETHEIA_TEST_HOST:-u7p}}"
 ROOT="${REMOTE_TEST_ROOT:-remote-test}"
 CPU="${REMOTE_TEST_CPU_QUOTA:-800%}"
-MEM="${REMOTE_TEST_MEMORY_MAX:-3G}"
+MEM="${REMOTE_TEST_MEMORY_MAX:-4G}"
 
 top="$(git rev-parse --show-toplevel)"
 repo="$(basename "$(dirname "$(git -C "$top" rev-parse --path-format=absolute --git-common-dir)")")"
@@ -43,10 +45,14 @@ exec 9>.remote-test.lock
 flock 9
 eval "set -- \$(echo '$args' | base64 -d)"
 uv sync --frozen --quiet
+[ -d .git ] || git init -q
+git add -A
+git -c user.name=remote-test -c user.email=remote-test@localhost commit -q --allow-empty --no-verify --amend -m remote-test-snapshot 2>/dev/null \\
+  || git -c user.name=remote-test -c user.email=remote-test@localhost commit -q --allow-empty --no-verify -m remote-test-snapshot
 run=\$(mktemp -d /var/tmp/remote-test.XXXXXX)
 trap 'rm -rf "\$run"' EXIT
 systemd-run --user --scope --quiet -p CPUQuota=$CPU -p MemoryMax=$MEM -- \\
   unshare --user --map-root-user --net --pid --fork --mount-proc \\
   env ALETHEIA_DATA_DIR="\$run/data" TMPDIR="\$run" \\
-  bash -c 'ip link set lo up && exec uv run --no-sync pytest "\$@"' _ "\$@"
+  bash -c 'ip link set lo up && { uv run --no-sync pytest "\$@"; rc=\$?; exit \$rc; }' _ "\$@"  # not exec'd: bash stays PID 1 and reaps orphans
 EOF

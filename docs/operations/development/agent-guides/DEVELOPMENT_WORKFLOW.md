@@ -165,13 +165,14 @@ formatting migration.
 **Where tests run.** pytest does not run on the Mac. `scripts/dev/remote_pytest.sh <pytest args>`
 rsyncs the working tree, uncommitted edits included, to `~/remote-test/<repo>-<checkout>` on Fedora (`u7p`).
 There it runs pytest in a sandbox:
-- a systemd user scope caps CPU at 800% and memory at 3G;
+- a systemd user scope caps CPU at 800% and memory at 4G (the host also runs the live runtime and other services; split big runs by `-m domain_*` with `-n 3` rather than raising the cap);
 - user, net and pid namespaces give the run a private loopback, no network, and no view of the live runtime;
 - `ALETHEIA_DATA_DIR` and `TMPDIR` point at a fresh directory.
 
 Each checkout gets its own remote directory and lock, so parallel workspaces don't collide. With
 `ALETHEIA_TEST_HOST=u7p` exported, `dev_check` sends its pytest steps there too. Pass `-n 4` for
-anything bigger than a handful of files. Tests that need the local jj/git checkout, such as
+anything bigger than a handful of files. The remote tree is a throwaway git repo with one snapshot commit, so
+code that reads the commit or `git ls-files` works; tests that need the local jj workspace, such as
 `tests/test_dev_check.py`, still run locally.
 
 Repair order — stop at the first red and fix it before widening:
