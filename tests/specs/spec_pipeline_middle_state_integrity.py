@@ -629,12 +629,10 @@ def test_open_position_working_set_is_unbounded(tmp_path, monkeypatch):
     all_open = repo.list_all_open_positions()
     assert len(all_open) == 501
     assert target.id in {row["id"] for row in all_open}
-    monkeypatch.setattr(
-        "aletheia.execution.stops.replace_exchange_protective_stop",
-        lambda *_args: True,
-    )
+    monkeypatch.setattr(position_manager, "_fresh_adjustment_mark", lambda *_args: 10.0)
+    monkeypatch.setattr(position_manager, "_sync_exchange_stop", lambda *_args: True)
 
-    adjusted = position_manager.adjust_stop(target.id, 9.0)
+    adjusted = position_manager.apply_operator_adjustment(target.id, new_stop=9.0)
     assert adjusted["updated"] is True
     assert repo.get_position(target.id)["stop_price"] == pytest.approx(9.0)
 

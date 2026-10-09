@@ -1556,49 +1556,6 @@ def evaluate_open_positions() -> dict:
     }
 
 
-def adjust_stop(position_id: str, new_stop_price: float) -> dict:
-    """Update the stop-loss price for an open position.
-
-    PI instruction 'adjust stop to X' lands here (RE-S05). Writes stop_price to
-    DB through the ExitPlan owner and syncs the exchange TPSL bracket when applicable.
-    Returns {"updated": True} on success, {"error": str} on failure.
-    """
-    from aletheia.storage.repositories import get_position
-
-    pos = get_position(position_id)
-    if pos is None or pos.get("status") != "open":
-        return {"error": f"position {position_id} not found or not open"}
-
-    from aletheia.portfolio.exit_plan import save_exit_plan
-
-    plan = load_exit_plan(pos)
-    plan.stop_price = round(float(new_stop_price), 8)
-    try:
-        save_exit_plan(
-            position_id,
-            plan,
-        )
-    except ValueError:
-        return {"error": "exit_plan_conflict", "position_id": position_id}
-    logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
-
-    try:
-        from aletheia.execution.stops import replace_exchange_protective_stop
-        exchange_synced = replace_exchange_protective_stop(
-            position_id, float(new_stop_price),
-        )
-    except Exception as e:
-        logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
-        exchange_synced = False
-
-    return {
-        "updated": True,
-        "position_id": position_id,
-        "new_stop_price": new_stop_price,
-        "exchange_synced": exchange_synced,
-    }
-
-
 def _sync_exchange_stop(position_id: str, new_stop: float, position: dict, cfg) -> bool:
     """Replace the broker-native stop and report only a confirmed dispatch."""
     try:

@@ -2,7 +2,7 @@
 
 ## Purpose and current scope
 
-Aletheia durably records local metadata, events, artifacts, order identities,
+Aletheia durably records local metadata, events, order identities,
 and selected policy/learning state. These stores survive a normal process
 restart. This Contract does not claim automatic Gateway recovery, exchange
 reconciliation before startup, or `SAFE_FREEZE` enforcement.
@@ -27,7 +27,6 @@ their old lifecycle states do not grant or deny current startup/trading authorit
 
 - SQLite repositories and model stores provide durable application state.
 - `EventStore` appends machine-local JSONL events.
-- `ArtifactStore` persists immutable artifacts and manifests.
 - `/api/persistence/*` exposes the currently registered persistence API.
 - Exchange adapters send deterministic client order identifiers where their
   current implementation supports them.
@@ -38,18 +37,17 @@ their old lifecycle states do not grant or deny current startup/trading authorit
 |---|---|
 | SQLite application tables | runtime services, API routes, analytics, and reconciliation |
 | Append-only event log | reconciliation and learning/policy readers |
-| Artifact store | lessons, skills, policies, and operator-facing readers |
 | Deterministic client order ids | supported exchange adapter submission paths |
 | `position_exit_plan_versions` / `position_protection_state` / `position_protection_triggers` | read-only historical protection and qualification reports |
 | `exit_breakeven_shadow_assignments` / `exit_breakeven_shadow_outcomes` | read-only historical paired-exit reports |
 
 An in-memory object is never promoted to durable fact merely because a class or
-test exists.
+test exists. The former consumer-less `ArtifactStore` is [retired](../history/artifact_store.md).
 
 ## Observable result
 
-After a normal application restart, committed SQLite rows, appended events, and
-stored artifacts remain readable by their existing consumers. Repeating an
+After a normal application restart, committed SQLite rows and appended events
+remain readable by their existing consumers. Repeating an
 order intent through a currently wired adapter uses its deterministic identity.
 Explicitly written protection rows survive restart without being inferred or replayed.
 
@@ -57,7 +55,6 @@ Explicitly written protection rows survive restart without being inferred or rep
 
 - SQLite is the authoritative local metadata store.
 - Event records are append-only.
-- Artifact manifests identify immutable persisted content.
 - Secrets and dirty runtime state are excluded from sync/export artifacts.
 - Archived simulation evidence retains its immutable storage and original identity;
   readers do not restore its retired execution or settlement authority.
