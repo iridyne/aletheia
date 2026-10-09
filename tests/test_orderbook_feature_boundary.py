@@ -113,3 +113,91 @@ async def test_orderbook_failure_preserves_safe_acquisition_phase(monkeypatch, p
     assert caught.value.phase == phase
     assert caught.value.exception_type == "ConnectionError"
     assert "private provider response" not in str(caught.value)
+
+
+_OKX_SWAP = {
+    "id": "BTC-USDT-SWAP", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT",
+    "settle": "USDT", "baseId": "BTC", "quoteId": "USDT", "settleId": "USDT",
+    "type": "swap", "spot": False, "margin": False, "swap": True, "future": False,
+    "option": False, "active": True, "contract": True, "linear": True, "inverse": False,
+    "contractSize": 0.01, "precision": {"amount": 0.01, "price": 0.1},
+    "limits": {"amount": {"min": 0.01}}, "info": {"instId": "BTC-USDT-SWAP"},
+}
+
+
+@pytest.fixture
+def okx_metadata(monkeypatch):
+    """Real ccxt okx clients whose two cold-load REST reads are counted, not sent."""
+    import ccxt.async_support as ccxt_async
+
+    loads = []
+
+    async def fetch_markets(self, params={}):  # noqa: B006 — ccxt signature
+        loads.append(bool(self.isSandboxModeEnabled))
+        return [dict(_OKX_SWAP)]
+
+    async def fetch_currencies(self, params={}):  # noqa: B006 — ccxt signature
+        return {}
+
+    async def fetch_order_book(self, symbol, limit=None, params={}):  # noqa: B006
+        return {"symbol": symbol, "bids": [[99.99, 100]], "asks": [[100.01, 100]]}
+
+    monkeypatch.setattr(ccxt_async.okx, "fetch_markets", fetch_markets)
+    monkeypatch.setattr(ccxt_async.okx, "fetch_currencies", fetch_currencies)
+    monkeypatch.setattr(ccxt_async.okx, "fetch_order_book", fetch_order_book)
+    return loads
+
+
+async def _observe_okx_perp():
+    from extensions.data.ccxt_provider import CCXTProvider
+
+    provider = CCXTProvider("okx", "okx")
+    try:
+        row = await provider.get_orderbook_observation("BTC/USDT", market_type="perp")
+        return row, provider._ensure_primary("perp")._candidate_markets_snapshot[1]
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_provider_reuses_markets_snapshot_and_its_acquisition_time(okx_metadata):
+    # Each planner acquisition builds a fresh provider; the cold load must not repeat.
+    first_row, first_acquired_at = await _observe_okx_perp()
+    second_row, second_acquired_at = await _observe_okx_perp()
+
+    assert okx_metadata == [False]
+    assert first_row and second_row
+    assert first_row["symbol"] == second_row["symbol"] == "BTC/USDT"
+    assert second_acquired_at == first_acquired_at  # restore never re-stamps (#3786)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_client_never_reads_live_cached_markets(okx_metadata):
+    from aletheia.net import close_ccxt, make_ccxt
+    from extensions.data.ccxt_provider import _install_market_id_guard, _load_markets_cached
+
+    await _observe_okx_perp()
+    exchange, session = make_ccxt("okx")
+    _install_market_id_guard(exchange, "okx")
+    exchange.set_sandbox_mode(True)
+    exchange.options["defaultType"] = "swap"  # same options as the live perp read
+    try:
+        await _load_markets_cached(exchange)
+    finally:
+        await close_ccxt(exchange, session)
+
+    assert okx_metadata == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_order_rules_always_read_the_venue_not_the_markets_cache(okx_metadata, monkeypatch):
+    from extensions.exchanges.ccxt import order_rules
+
+    await _observe_okx_perp()
+    monkeypatch.setattr(order_rules, "_listing_view", lambda mode: (False, {}, ""))
+    constraints = await order_rules.read_order_constraints(
+        "okx_live", "okx", "BTC/USDT", "usdt_futures",
+    )
+
+    assert constraints is not None
+    assert okx_metadata == [False, False]
