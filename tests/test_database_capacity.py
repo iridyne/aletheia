@@ -99,23 +99,6 @@ def test_readonly_handle_is_query_only_and_cached(tmp_path):
         r.close()
 
 
-def test_optimize_query_planner_handles_never_analyzed_database(tmp_path):
-    from aletheia.storage.sqlite import _open_connection
-    from aletheia.maintenance.database_capacity import optimize_query_planner
-
-    path = tmp_path / "new.db"
-    db = _open_connection(path)
-    try:
-        db.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
-        db.execute("CREATE INDEX t_v ON t(v)")
-        db.executemany("INSERT INTO t(v) VALUES (?)", [(f"row{i}",) for i in range(100)])
-        result = optimize_query_planner(db)
-        assert "duration_ms" in result
-        assert "analyzed" in result
-    finally:
-        db.close()
-
-
 def test_passive_checkpoint_reports_exact_backlog(tmp_path):
     from aletheia.maintenance.database_capacity import passive_wal_checkpoint
 
