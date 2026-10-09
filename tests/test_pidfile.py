@@ -63,6 +63,31 @@ def test_pid_alive_for_bogus_pid(tmp_path, monkeypatch):
     assert pidfile._pid_alive(2_000_000_000) is False
 
 
+def test_is_running_keeps_pidfile_when_identity_unverifiable(tmp_path, monkeypatch):
+    """#1196: alive-but-unreadable is neither ours nor dead — not running, record kept."""
+    setup_data(tmp_path, monkeypatch)
+    from aletheia.gateway import pidfile
+    pidfile.pid_path().write_text("4242", encoding="utf-8")
+    monkeypatch.setattr(pidfile, "_pid_alive", lambda pid: None)
+    assert pidfile.is_running() is False
+    assert pidfile.read_pid() == 4242
+
+
+def test_pid_alive_requires_gateway_markers_not_bare_uvicorn(monkeypatch):
+    import os
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(pidfile.os, "kill", lambda pid, sig: None)
+    for cmdline, expected in [
+        ("python -m uvicorn someones.other.app:app --port 9000", False),
+        ("python -m uvicorn aletheia.server.app:app --port 8787", True),
+        ("python /x/aletheia/_gateway_runner.py --no-browser", True),
+        (None, None),
+    ]:
+        monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid, c=cmdline: c)
+        assert pidfile._pid_alive(os.getpid() + 1) is expected, cmdline
+
+
 # --- Process-tree teardown + port utilities (gateway restart leak fix) ---
 
 def test_port_in_use_false_when_free():
