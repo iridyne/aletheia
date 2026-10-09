@@ -314,3 +314,49 @@ def test_reasoning_feedback_does_not_persist_an_unavailable_cohort(monkeypatch):
     assert reasoning_feedback.build_reasoning_feedback(
         execution_mode="bitget_demo"
     ) is None
+
+
+def _commit_a_close_after_each_read(monkeypatch, prefix: str) -> None:
+    """Simulate a Position closing between two outcome reads of one builder."""
+    from aletheia.analytics import outcome_integrity
+
+    real_read = outcome_integrity.raw_account_events
+    calls = {"n": 0}
+
+    def read_then_close(**filters):
+        rows = real_read(**filters)
+        calls["n"] += 1
+        _insert_closed(f"{prefix}-late-{calls['n']}", 4.0, eligible=True)
+        return rows
+
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", read_then_close)
+
+
+def test_trade_stats_totals_families_and_cohort_come_from_one_snapshot(monkeypatch, optional_evidence_jobs):
+    """#1262: a close committed mid-build must not make one response disagree."""
+    from aletheia.analytics.trade_stats import build_trade_stats
+
+    _insert_closed("snapshot-win", 10.0, eligible=True)
+    _insert_closed("snapshot-loss", -5.0, eligible=True)
+    _commit_a_close_after_each_read(monkeypatch, "stats")
+
+    stats = build_trade_stats(execution_mode="bitget_demo")
+
+    family_total = sum(family["trade_count"] for family in stats["by_family"])
+    assert stats["totals"]["trade_count"] == 2
+    assert family_total == 2
+    assert stats["eligible_outcome_count"] == 2
+
+
+def test_cost_summary_verified_raw_and_cohort_come_from_one_snapshot(monkeypatch):
+    """#1262: verified costs, raw costs and the cohort summary share one read."""
+    from aletheia.server.routes.analytics import get_cost_summary
+
+    _insert_closed("cost-win", 10.0, eligible=True)
+    _insert_closed("cost-admin", -1.0, eligible=False)
+    _commit_a_close_after_each_read(monkeypatch, "cost")
+
+    payload = get_cost_summary(execution_mode="bitget_demo")
+
+    assert payload["raw_event_count"] == 2
+    assert payload["eligible_outcome_count"] == 1

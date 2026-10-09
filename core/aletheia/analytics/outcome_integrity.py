@@ -114,6 +114,14 @@ class CompleteOutcomeCohort:
     ordered_source_digest: str | None
     identity: dict[str, str | None]
 
+    @property
+    def eligible_rows(self) -> list[dict[str, Any]]:
+        """Rows the central semantics proved eligible, oldest close first."""
+        return [
+            row for row, assessment in zip(self.rows, self.assessments, strict=True)
+            if assessment.eligible
+        ]
+
 
 class AttributionReadError(RuntimeError):
     """The attribution chain could not be read, so absence is not proven."""

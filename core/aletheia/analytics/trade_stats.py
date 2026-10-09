@@ -208,17 +208,15 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
     Scoped to a single ``execution_mode`` when provided (#1939).
     """
     from aletheia.analytics.family_scorecard import compute_family_scorecard
-    from aletheia.storage import repositories as repo
-    import json
 
-    rows = []
-    for position in outcome_integrity.eligible_strategy_outcomes(
+    # One snapshot feeds totals, families and the cohort summary (#1262).
+    cohort = outcome_integrity.read_complete_outcome_cohort(
         execution_mode=execution_mode,
-    ):
-        rows.append({
-            **position,
-            "source_type": "opportunity",
-        })
+    )
+    if cohort.cohort_state != "available":
+        raise RuntimeError("trade stats outcome cohort unavailable")
+    eligible = cohort.eligible_rows
+    rows = [{**position, "source_type": "opportunity"} for position in eligible]
 
     source_agg: dict[str, dict] = {}
     all_hold_hours: list[float] = []
@@ -272,7 +270,7 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
             "total_pnl": round(a["total_pnl"], 4) if tc else None,
         })
 
-    by_family = compute_family_scorecard(execution_mode=execution_mode)
+    by_family = compute_family_scorecard(execution_mode=execution_mode, rows=eligible)
 
     hold_distribution = _bucket_hold_times(all_hold_hours)
     total_count = len(rows)
@@ -287,7 +285,6 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         "total_pnl": round(total_pnl, 4) if total_count else None,
     }
 
-    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     return {
         "by_source": by_source,
         "by_family": by_family,
@@ -296,7 +293,7 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         "outcome_status": "available" if total_count else "insufficient",
         **execution_mode_identity(execution_mode),
         **outcome_window_metadata(),
-        **build_outcome_cohort_summary(execution_mode=execution_mode),
+        **outcome_integrity.build_outcome_cohort_summary(cohort=cohort),
     }
 
 

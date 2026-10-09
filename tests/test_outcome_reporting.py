@@ -126,12 +126,14 @@ def test_cost_summary_keeps_signed_funding_and_marks_incomplete_raw_costs(monkey
             "slippage_cost": 0.1,
         },
     ]
-    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda **_: verified)
-    monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **_: raw)
+    from tests.helpers.outcome_cohort import available_cohort
+
+    cohort = available_cohort(verified, raw[len(verified):])
     monkeypatch.setattr(
-        outcome_integrity,
-        "build_outcome_cohort_summary",
-        lambda **_: {"outcome_status": "available"},
+        outcome_integrity, "read_complete_outcome_cohort", lambda **_: cohort,
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "build_outcome_cohort_summary", lambda **_: {},
     )
 
     payload = get_cost_summary(execution_mode="bitget_demo")
@@ -232,11 +234,11 @@ def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
         "funding_cost": 0.0,
         "slippage_cost": 0.2,
     }
+    from tests.helpers.outcome_cohort import available_cohort
+
     monkeypatch.setattr(
-        outcome_integrity, "eligible_strategy_outcomes", lambda **_: [complete]
-    )
-    monkeypatch.setattr(
-        outcome_integrity, "raw_account_events", lambda **_: [complete, unknown_exit]
+        outcome_integrity, "read_complete_outcome_cohort",
+        lambda **_: available_cohort([complete], [unknown_exit]),
     )
     monkeypatch.setattr(
         outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}
@@ -278,11 +280,11 @@ def test_cost_summary_keeps_explicit_zero_fees_numeric(monkeypatch):
         "funding_cost": 0.0,
         "slippage_cost": 0.0,
     }
+    from tests.helpers.outcome_cohort import available_cohort
+
     monkeypatch.setattr(
-        outcome_integrity, "eligible_strategy_outcomes", lambda **_: [zero]
-    )
-    monkeypatch.setattr(
-        outcome_integrity, "raw_account_events", lambda **_: [zero]
+        outcome_integrity, "read_complete_outcome_cohort",
+        lambda **_: available_cohort([zero]),
     )
     monkeypatch.setattr(
         outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}

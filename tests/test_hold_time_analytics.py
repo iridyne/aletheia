@@ -52,10 +52,12 @@ def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch, optio
     import aletheia.storage.repositories as repo
 
     rows = _mixed_hold_rows()
+    from tests.helpers.outcome_cohort import available_cohort
+
     monkeypatch.setattr(
         trade_stats.outcome_integrity,
-        "eligible_strategy_outcomes",
-        lambda **_kwargs: rows,
+        "read_complete_outcome_cohort",
+        lambda **_kwargs: available_cohort(rows),
     )
     monkeypatch.setattr(
         trade_stats.outcome_integrity,
@@ -100,10 +102,12 @@ def test_trade_stats_even_hold_samples_use_conventional_median(monkeypatch, opti
             closed_at="2026-08-05T05:00:00+00:00",
         ),
     ]
+    from tests.helpers.outcome_cohort import available_cohort
+
     monkeypatch.setattr(
         trade_stats.outcome_integrity,
-        "eligible_strategy_outcomes",
-        lambda **_kwargs: rows,
+        "read_complete_outcome_cohort",
+        lambda **_kwargs: available_cohort(rows),
     )
     monkeypatch.setattr(trade_stats, "execution_mode_identity", lambda _mode: {})
     monkeypatch.setattr(trade_stats, "outcome_window_metadata", lambda: {})
