@@ -200,6 +200,24 @@ def test_persisted_stale_release_never_resumes(tmp_path, monkeypatch) -> None:
     assert rejected[-1]["metadata"]["requested_pause_generation"] == "outage-1"
 
 
+def test_release_rejected_audit_runs_outside_the_config_permit(tmp_path, monkeypatch) -> None:
+    """write_audit mirrors to SQLite; holding the config permit there inverts lock order."""
+    _isolated_config(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    from aletheia.agent_runtime.pause_ownership import acquire_pause, release_pause
+
+    acquire_pause("exchange_connectivity", reason="outage", generation="outage-2")
+    in_permit: list[bool] = []
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit",
+        lambda _event: in_permit.append(loader._READ_ONLY_CONFIG.get()),
+    )
+
+    release_pause("exchange_connectivity", generation="outage-1")
+
+    assert in_permit == [False]
+
+
 def test_scheduler_resume_failure_restores_owner_lease(tmp_path, monkeypatch) -> None:
     """A scheduler failure cannot leave config claiming the gateway resumed."""
     _isolated_config(tmp_path, monkeypatch)

@@ -262,26 +262,28 @@ def release_pauses(
                 if cfg.runtime.release_pause(owner, generation=generation):
                     released_leases.append((owner, lease))
 
-            for owner, generation, current in rejected:
-                _audit_release_rejected(
-                    owner=owner,
-                    requested_generation=generation,
-                    current=current,
-                    actor=actor,
-                    source=source,
-                )
-
-            if not released_leases:
-                blocking = active_pause_blocker_names(cfg)
-                return PauseReleaseResult(
-                    released=False,
-                    resumed=False,
-                    remaining_owners=_active_owner_names(cfg),
-                    blocking_owners=blocking,
-                )
-
             remaining = _active_owner_names(cfg)
             blocking = active_pause_blocker_names(cfg)
+
+        # Audit after the config permit is released: write_audit mirrors to
+        # SQLite, and other writers take the DB lock before the config permit.
+        for owner, generation, current in rejected:
+            _audit_release_rejected(
+                owner=owner,
+                requested_generation=generation,
+                current=current,
+                actor=actor,
+                source=source,
+            )
+
+        if not released_leases:
+            return PauseReleaseResult(
+                released=False,
+                resumed=False,
+                remaining_owners=remaining,
+                blocking_owners=blocking,
+            )
+
         resumed = False
         if resume_when_clear and not blocking:
             from aletheia.agent_runtime.scheduler import resume_scheduler
