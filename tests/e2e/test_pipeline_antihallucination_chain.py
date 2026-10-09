@@ -11,9 +11,12 @@ from aletheia.storage import repositories as repo
 
 
 class TestAntiHallucinationChain:
-    def test_full_chain_reaches_pool_broken_chain_excluded(self, e2e_db):
+    def test_full_chain_reaches_pool_broken_chain_excluded(self, e2e_db, monkeypatch):
         from aletheia.config.loader import load_config, save_config
         from tests.test_outcome_closure import _insert_closed_position_via_producer
+        from tests.test_position_reconciler import install_uta_registry
+
+        install_uta_registry(monkeypatch)
 
         cfg = load_config()
         cfg.exchange.paper_execution_mode = "bitget_demo"

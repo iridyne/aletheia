@@ -1146,6 +1146,28 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         market_type=market_type,
         direction=direction,
     )
+    # execution_contract §12: the entry Order carries the exact current account
+    # identity — the anchor every close, funding and disappearance path reads.
+    # The unified view this Position was classified from was already proven to
+    # match this registry identity; without exactly one, nothing is adopted.
+    from aletheia.config.loader import load_config as _load_cfg
+    from aletheia.uta.manager import build_uta_registry
+
+    accounts = [
+        account
+        for account in build_uta_registry(
+            _load_cfg(), execution_modes=(execution_mode,)
+        ).configured_identities()
+        if account.execution_mode == execution_mode
+    ]
+    if len(accounts) != 1:
+        raise _adoption_error(
+            field="account_identity",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    account_identity_json = accounts[0].model_dump_json()
 
     # Attribution recovery (P2-2): if this external matches a position we just
     # thrash-closed (reconciled_gone), inherit its strategy_id/opportunity_id so a
@@ -1203,6 +1225,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         status="filled",
         source="adopted",
         filled_at=now,
+        uta_account_identity_json=account_identity_json,
         # position_id backfilled below after Position is constructed (#189).
     )
     # Compute default protective stop and take-profit at adoption time so the
@@ -1210,7 +1233,6 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     # the config defaults (same percentages position_manager uses at runtime) but
     # are written once and locked — if the user later changes the defaults the
     # adopted position keeps its original levels, preventing silent SL drift.
-    from aletheia.config.loader import load_config as _load_cfg
     _cfg = _load_cfg()
     _sl_pct = _cfg.trading.default_stop_loss_pct   # e.g. 2.0
     _tp_pct = _cfg.trading.default_take_profit_pct  # e.g. 4.0

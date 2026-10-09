@@ -705,6 +705,8 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     instead of forbidding entry. See docs/governance/decisions/DECISIONS.md
     (2026-06-12)."""
     setup_env(tmp_path, monkeypatch)
+    from tests.test_position_reconciler import install_uta_registry
+    install_uta_registry(monkeypatch)
     # Select paper_execution_mode = "bitget_demo" explicitly
     # so that adopt_position("demo") maps to bitget_demo execution_mode, matching the
     # assertion below (demo account → bitget_demo so position_manager auto-manages it).
@@ -741,6 +743,8 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
 
 def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from tests.test_position_reconciler import install_uta_registry
+    install_uta_registry(monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.config.loader import load_config, save_config
 
@@ -765,6 +769,8 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     """An adopted LIVE position must get execution_mode=bitget_live_limited, which
     position_manager skips — so live stays human-only by construction."""
     setup_env(tmp_path, monkeypatch)
+    from tests.test_position_reconciler import install_uta_registry
+    install_uta_registry(monkeypatch)
     # The explicitly selected exchange determines the live account identity.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()

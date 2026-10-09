@@ -10,6 +10,7 @@ tests pin the load-bearing behavior:
 
 import json
 import sqlite3
+from typing import Literal
 
 import pytest
 
@@ -37,6 +38,7 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    install_uta_registry(monkeypatch)
 
 
 def _stub_cache(monkeypatch, positions, status="ok"):
@@ -805,3 +807,57 @@ def test_adoption_ignores_completed_reverse_linked_native_entry(tmp_path, monkey
     adopted = adopt_position(_ex("DOGEUSDT", "long", 10, entry=0.09), "demo")
     assert adopted["position_id"] != old.id
     assert len(repo.list_positions(status="open")) == 1
+
+
+
+def current_account(mode="bitget_demo"):
+    from aletheia.uta.models import UTAAccountIdentity
+
+    environment: Literal["demo", "testnet", "live"] = (
+        "live" if "live" in mode else "testnet" if "testnet" in mode else "demo"
+    )
+    return UTAAccountIdentity(
+        account_id=mode, execution_mode=mode, venue=mode.split("_")[0],
+        environment=environment, profile=mode, credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter", adapter_version="1",
+    )
+
+
+def install_uta_registry(monkeypatch, modes=None):
+    """Registry stand-in: one current account per requested mode (or only ``modes``)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry",
+        lambda cfg=None, *, execution_modes=(): SimpleNamespace(
+            configured_identities=lambda: tuple(
+                current_account(mode) for mode in execution_modes
+                if modes is None or mode in modes
+            )
+        ),
+    )
+
+def test_adopted_entry_order_carries_current_account_identity(tmp_path, monkeypatch):
+    """execution_contract §12: the synthetic entry Order is the account anchor
+    every later close/settlement path reads; an adopted Position must be closable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import _position_account
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    account = current_account()
+    adopted = adopt_position(_ex("DOGEUSDT", "long", 204, entry=0.08689), "demo")
+    position = repo._select_one("positions", adopted["position_id"])
+    assert position is not None
+    assert _position_account(position) == account
+
+
+def test_adoption_without_current_account_identity_fails_closed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position, PositionAdoptionIntegrityError
+
+    install_uta_registry(monkeypatch, modes=())
+    with pytest.raises(PositionAdoptionIntegrityError) as exc:
+        adopt_position(_ex("DOGEUSDT", "long", 204, entry=0.08689), "demo")
+    assert exc.value.field == "account_identity"
+    assert repo.list_positions(status="open") == []
+    assert repo.get_db().execute("SELECT count(*) FROM orders").fetchone()[0] == 0
