@@ -163,7 +163,9 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
   const [executionFeePct, setExecutionFeePct] = useState('')
   const [autoAdopt, setAutoAdopt] = useState(true)
   const [trailEnabled, setTrailEnabled] = useState(false)
-  const [exchangeTpslEnabled, setExchangeTpslEnabled] = useState(false)
+  // null = unset: the backend default applies (on for bitget_demo only, #3848).
+  const [exchangeTpslEnabled, setExchangeTpslEnabled] = useState<boolean | null>(null)
+  const tpslDefaultOn = settings?.exchange?.paper_execution_mode === 'bitget_demo'
   const [trailAtrMult, setTrailAtrMult] = useState('1.5')
   const [trailPct, setTrailPct] = useState('1.0')
   const [breakevenTriggerPct, setBreakevenTriggerPct] = useState('1.5')
@@ -197,7 +199,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       execution_fee_pct: parseFloat(executionFeePct),
       auto_adopt_enabled: autoAdopt,
       trail_enabled: trailEnabled,
-      exchange_tpsl_enabled: exchangeTpslEnabled,
+      exchange_tpsl_enabled: exchangeTpslEnabled ?? undefined,
       trail_atr_mult: parseFloat(trailAtrMult),
       trail_pct: parseFloat(trailPct),
       breakeven_trigger_pct: parseFloat(breakevenTriggerPct),
@@ -235,7 +237,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
     || executionFeePct !== String(trading.execution_fee_pct ?? 0.1)
     || autoAdopt !== (trading.auto_adopt_enabled !== false)
     || trailEnabled !== !!trading.trail_enabled
-    || exchangeTpslEnabled !== !!trading.exchange_tpsl_enabled
+    || exchangeTpslEnabled !== (trading.exchange_tpsl_enabled ?? null)
     || trailAtrMult !== String(trading.trail_atr_mult ?? 1.5)
     || trailPct !== String(trading.trail_pct ?? 1.0)
     || breakevenTriggerPct !== String(trading.breakeven_trigger_pct ?? 1.5)
@@ -273,7 +275,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
       setAutoAdopt(trading.auto_adopt_enabled !== false)
       setTrailEnabled(!!trading.trail_enabled)
-      setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
+      setExchangeTpslEnabled(trading.exchange_tpsl_enabled ?? null)
       setMaeEnabled(!!mae.enabled)
       setMaeUrgentScore(String(mae.urgent_exit_score ?? 80))
       setMaeTightenScore(String(mae.tighten_stop_score ?? 60))
@@ -421,14 +423,15 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         </p>
         <div className="settings-inline-note">
           <Toggle
-            checked={exchangeTpslEnabled}
+            checked={exchangeTpslEnabled ?? tpslDefaultOn}
             persistence="staged"
             label="Exchange-native TPSL bracket (Bitget demo/live)"
             onChange={v => { setExchangeTpslEnabled(v); setMsg(null) }}
           />
           <p className="hint mt-1">
-            When ON, stop-loss and take-profit orders are placed directly on Bitget at position open.
-            The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
+            When ON, stop-loss and take-profit orders are placed directly on the exchange at position open.
+            The local polling loop remains active as a fallback. Unset, this is on for Bitget demo only;
+            once toggled, the choice applies to every venue.
           </p>
         </div>
       </Collapsible>

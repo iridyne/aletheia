@@ -212,7 +212,7 @@ def _run_gateway_with_captured_broker(
     *,
     execution_mode: str,
     take_profit: float | None,
-    native_tpsl_enabled: bool = False,
+    native_tpsl_enabled: bool | None = False,
     position_id: str | None = None,
 ) -> tuple[dict, list[dict]]:
     from aletheia.execution import coordinator, gateway
@@ -314,11 +314,12 @@ def _run_gateway_with_captured_broker(
         "gateway approved-value routing",
         "L2c",
         "Gateway snapshots the native-TPSL toggle with the authoritative Proposal "
-        "values for Bitget demo and limited-live dispatch.",
+        "values for Bitget demo and limited-live dispatch; unset, it is on for "
+        "bitget_demo only (#3848).",
         status="implemented",
     )
 )
-@pytest.mark.parametrize("native_tpsl_enabled", [False, True])
+@pytest.mark.parametrize("native_tpsl_enabled", [False, True, None])
 def test_gateway_passes_native_tpsl_policy(
     monkeypatch, execution_mode, native_tpsl_enabled
 ):
@@ -333,7 +334,8 @@ def test_gateway_passes_native_tpsl_policy(
     assert len(captured) == 1
     assert captured[0]["stop_price"] == 59_000.0
     assert captured[0]["take_profit_price"] == 62_000.0
-    assert captured[0]["native_tpsl_enabled"] is native_tpsl_enabled
+    expected = (execution_mode == "bitget_demo") if native_tpsl_enabled is None else native_tpsl_enabled
+    assert captured[0]["native_tpsl_enabled"] is expected
 
 
 
@@ -399,7 +401,7 @@ def test_entry_preset_ids_are_read_back_and_persisted(tmp_path, monkeypatch):
 
     assert exchange.calls == [{"category": "USDT-FUTURES", "symbol": "BTCUSDT"}]
     assert result == {"verified": [position_id], "closed": [], "errors": []}
-    assert stored_ids(position_id) == {"sl": "PRESET-1", "tp": "PRESET-1"}
+    assert stored_ids(position_id) == {"origin": "entry_preset", "sl": "PRESET-1", "tp": "PRESET-1"}
     assert audit_types(position_id) == ["native_protection_verified"]
     assert closes == []
     # Persisted ids leave the read-back scan: the next cycle reads nothing.

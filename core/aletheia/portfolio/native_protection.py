@@ -40,7 +40,7 @@ def verify_native_protection() -> dict:
     from aletheia.config.loader import load_config
     from aletheia.execution.close_convergence import has_unresolved_close_claim
     from aletheia.execution.coordinator import _position_account
-    from aletheia.execution.stops import classify_native_protection
+    from aletheia.execution.stops import PRESET_ORIGIN, classify_native_protection, native_tpsl_enabled
     from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
@@ -52,9 +52,8 @@ def verify_native_protection() -> dict:
     from aletheia.uta.models import NativeProtectionOpenOrders
 
     summary: dict = {"verified": [], "closed": [], "errors": []}
-    if not load_config().trading.exchange_tpsl_enabled:
-        return summary
-    modes = native_protection_execution_modes()
+    trading = load_config().trading
+    modes = [mode for mode in native_protection_execution_modes() if native_tpsl_enabled(trading, mode)]
     candidates = []
     for position in repo.list_all_open_positions():
         ids = _stored_ids(position)
@@ -126,7 +125,8 @@ def verify_native_protection() -> dict:
             summary["errors"].append(_error(position, detail))
         else:
             repo.update_open_position_exit_plan(
-                position["id"], exchange_tpsl_order_id=json.dumps(detail, sort_keys=True),
+                position["id"],
+                exchange_tpsl_order_id=json.dumps({**detail, "origin": PRESET_ORIGIN}, sort_keys=True),
             )
             triggers = {leg.kind: str(leg.trigger_price) for leg in snapshot.legs if leg.plan_order_id in detail.values()}
             repo.insert_audit_event_once(AuditEvent(
@@ -160,7 +160,7 @@ def verify_native_protection() -> dict:
                 "opened_at": position.get("opened_at"),
                 "close_reason": CLOSE_REASON,
             }, sort_keys=True, separators=(",", ":")),
-            message="A complete venue read shows no stop-loss past the grace window; closing.",
+            message="A complete venue read shows no stop-loss past the grace window; requesting a close.",
         ))
         try:
             close_position_routed(position["id"], CLOSE_REASON, decision_source="native_protection_check")
