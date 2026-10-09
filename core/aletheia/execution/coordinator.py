@@ -856,14 +856,28 @@ def close_position(
         )
         if venue_position_id is None:
             _close_adapter(adapter)
-            finalize_exchange_acknowledgement(
-                order.id,
-                exchange_order_id=None,
-                status="error",
-                error_reason="uta_account_identity_mismatch",
-                close_position_id=position_id,
-                pending_close_status="error",
+            # #3507: an unprovable identity is not retryable per cycle; the zero-
+            # submission Order is finalized and the claim parked owner-unlock-only
+            # (execution_contract §10.2).
+            from aletheia.execution.pending_close_recovery import (
+                ACCOUNT_IDENTITY_UNPROVEN_STATUS,
+                audit_account_identity_unproven_park,
             )
+
+            with transaction(immediate=True):
+                claimed = repo._select_one("positions", position_id) or {}
+                ack = finalize_exchange_acknowledgement(
+                    order.id,
+                    exchange_order_id=None,
+                    status="error",
+                    error_reason="uta_account_identity_mismatch",
+                    close_position_id=position_id,
+                    pending_close_status=ACCOUNT_IDENTITY_UNPROVEN_STATUS,
+                )
+                if ack["applied"]:
+                    audit_account_identity_unproven_park(
+                        order.id, position_id, before_status=claimed.get("pending_close_status")
+                    )
             raise ValueError("uta_account_identity_mismatch")
         _reanchor_order_identity(
             order_id=row["order_id"] or order.id,

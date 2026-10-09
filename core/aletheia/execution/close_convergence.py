@@ -28,6 +28,10 @@ CLOSE_CLAIM_STATES = frozenset({
     # It is a close claim — the fence keeps holding and no second close may be
     # claimed — but it is released only by an owner unlock, never by reconciliation.
     "venue_trade_rate_limited",
+    # Unprovable UTA account identity before close submission (#3507,
+    # ``pending_close_recovery.ACCOUNT_IDENTITY_UNPROVEN_STATUS``). Same
+    # owner-unlock-only park: the fence holds and no close is re-claimed each cycle.
+    "account_identity_unproven",
 })
 
 # Compatibility name used by the existing Position Manager and broker tests.
@@ -72,12 +76,19 @@ _STATE_LABELS = {
         "venue_trade_rate_limited",
         "venue rate limited; owner unlock required",
     ),
+    "account_identity_unproven": (
+        "account_identity_unproven",
+        "account identity unproven; owner unlock required",
+    ),
     "error": ("manual_attention_required", "manual attention required"),
 }
 
 # Owner-unlock-only claims: age does not change what the owner must do, so the
 # generic stale text must not erase the only statement of that action.
-_OWNER_UNLOCK_ONLY_STATES = frozenset({"venue_trade_rate_limited"})
+_OWNER_UNLOCK_ONLY_STATES = frozenset({
+    "venue_trade_rate_limited",
+    "account_identity_unproven",
+})
 
 _IMMEDIATE_RECONCILIATION_STATES = frozenset({
     "submission_unknown",

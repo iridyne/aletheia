@@ -491,6 +491,15 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   文案不随 claim 年龄被通用 stale 文案覆盖。停泊 claim 仍按普通 stale claim 升级（超过 stale
   时限后进入 `stale:venue_trade_rate_limited` 的启动阻挡与 `position_manager` 升级，owner 必须
   知道存在平不掉的 Position），但该升级绝不释放、绝不重发、绝不伪造成交。
+- **账户身份无法证明的平仓停泊只能由 owner 授权解锁（#3507，owner 2026-10-09）**：close 在提交前
+  因 `uta_account_identity_mismatch` 失败、且 venue 无法证明该精确 Position 在当前身份下存在（含
+  venue 持仓读取本身失败）时，唯一的零提交 Close Order 记为 `error`/`uta_account_identity_mismatch`
+  （无 exchange order id），Position 以 `pending_close_status=account_identity_unproven` 停泊，不再
+  每个周期新建失败 Order。与 `venue_trade_rate_limited` 同一 fence、同一 owner read model
+  （`account identity unproven; owner unlock required`，不被 stale 文案覆盖）、同一 stale 升级、
+  同一解锁通道 `POST /api/positions/{id}/recover-parked-close`；解锁前置条件为 Order 仍是
+  `error` + `uta_account_identity_mismatch` + 无 exchange id，解锁只给一次 `close-{id}-rN` 重试，
+  身份仍不成立则再次停泊。停泊与解锁各写一次审计，不制造 Fill、价格或 PnL。
 - **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
   撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
   按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
@@ -515,7 +524,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
   `overfilled` 立即阻挡新的
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态与 owner-unlock-only 的
-  `venue_trade_rate_limited` 停泊只在超过 Position Manager 既有
+  `venue_trade_rate_limited` / `account_identity_unproven` 停泊只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
 - **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
@@ -595,6 +604,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 |---|---|---|
 | `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
 | `venue_trade_rate_limited` | Bitget 40725 park, owner-unlock-only | In `CLOSE_CLAIM_STATES` (the fence holds and every second close returns `already_pending`); not in `IMMEDIATE_RECONCILIATION_STATES`. The convergence view names the owner unlock and that owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close` (`pending_close_recovery.release_rate_limited_close_claim`); machine recovery never releases it. |
+| `account_identity_unproven` | unprovable UTA account identity before close submission (#3507), owner-unlock-only | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close`, which requires the close Order to still be `error`/`uta_account_identity_mismatch` with no exchange id; machine recovery never releases it. |
 
 **INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
 raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`

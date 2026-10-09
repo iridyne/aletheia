@@ -1444,16 +1444,18 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
 
 
 class ParkedCloseRecoveryRequest(BaseModel):
-    """Payload for an owner-authorized release of a Bitget 40725-parked close."""
+    """Payload for an owner-authorized release of an owner-unlock-only parked close."""
     reason: str
 
 
 @router.post("/positions/{position_id}/recover-parked-close")
 async def recover_parked_close_position(position_id: str, req: ParkedCloseRecoveryRequest):
-    """Owner-authorized release of a venue_trade_rate_limited pending close.
+    """Owner-authorized release of an owner-unlock-only parked pending close.
 
-    The manual close endpoint deliberately refuses to bypass the 40725 park;
-    this is the explicit owner unlock the park's audit message promises. It
+    Parked states: venue_trade_rate_limited (Bitget 40725) and
+    account_identity_unproven (#3507). The manual close endpoint deliberately
+    refuses to bypass a park; this is the explicit owner unlock the park's
+    audit message promises. It
     releases the parked claim only — protective exits retry the close with a
     fresh close-{id}-rN client order id on their next evaluation. No fill,
     price, or PnL is fabricated here. Audit records actor='human' and the
@@ -1476,7 +1478,7 @@ async def recover_parked_close_position(position_id: str, req: ParkedCloseRecove
                 {
                     "code": result.get("code", "not_recoverable"),
                     "position_id": position_id,
-                    "message": "Parked close claim is not in the recoverable 40725-parked state",
+                    "message": "Close claim is not in an owner-unlock-only parked state",
                 },
             )
         return result
