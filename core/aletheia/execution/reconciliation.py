@@ -1248,9 +1248,10 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
             inconclusive += 1
             errors.append("bitget_demo: historical local materialization rejected")
             logger.warning(
-                "reconcile: historical materialization rejected for order %s (%s)",
+                "reconcile: historical materialization rejected for order %s (%s: %s)",
                 order["id"],
                 type(exc).__name__,
+                exc,
             )
             _write_filled_gap_event(
                 order,
@@ -1849,9 +1850,10 @@ def _materialize_native_order(
             f"{execution_mode}/{market_type}: local materialization rejected"
         )
         logger.warning(
-            "reconcile: materialization rejected for order %s (%s)",
+            "reconcile: materialization rejected for order %s (%s: %s)",
             order["id"],
             type(exc).__name__,
+            exc,
         )
         _write_reconcile_event(
             order,
