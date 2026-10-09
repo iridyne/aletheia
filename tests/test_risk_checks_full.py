@@ -581,6 +581,29 @@ def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
     assert not any("exceeds_single_trade_risk:" in v for v in result.violations)
 
 
+@pytest.mark.parametrize(("quantity", "rejected"), [
+    # 0.0004893333... = cap / stop distance: the product rounds 1 ulp above the
+    # cap (2.9360000000000004 > 2.936), the PEPE preflight reject of 2026-10-09.
+    (2.936 / 6000, False),
+    (2.936 / 6000 * (1 + 1e-6), True),
+])
+def test_demo_single_trade_risk_sized_at_budget_passes(tmp_path, monkeypatch, quantity, rejected):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.max_demo_single_trade_risk_pct = 2.936
+    save_config(cfg)
+    assert abs(60000 - 54000) * (2.936 / 6000) > 100 * (2.936 / 100.0)
+    p = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_demo", quantity=quantity, price=60000,
+        stop_price=54000,
+    )
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    assert any("exceeds_demo_single_trade_risk" in v for v in result.violations) is rejected
+
+
 def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
     """A normal small external Demo trade with a sane stop is still approved."""
     setup_env(tmp_path, monkeypatch)
