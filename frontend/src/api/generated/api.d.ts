@@ -5777,6 +5777,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/universe/planning-generations/{generation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Planning Generation
+         * @description One planning generation with its planner input / requalification / hypothesis blobs.
+         */
+        get: operations["get_planning_generation_api_universe_planning_generations__generation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/universe/planning-history": {
         parameters: {
             query?: never;
@@ -6763,6 +6783,121 @@ export interface components {
             universe_snapshot_id: string | null;
             /** Valid Until */
             valid_until: string | null;
+        };
+        /** CandidatePlanningFields */
+        CandidatePlanningFields: {
+            /** Admission Basis */
+            admission_basis?: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Attention Max Age Sec */
+            attention_max_age_sec: number | null;
+            /** Attention Policy Version */
+            attention_policy_version: string | null;
+            /** Attention Started At */
+            attention_started_at: string | null;
+            /** Attention Status */
+            attention_status: string;
+            /** Attention Terminal At */
+            attention_terminal_at: string | null;
+            /** Attention Terminal Reason */
+            attention_terminal_reason: string | null;
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Family */
+            candidate_family: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string | null;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Claim Expires At */
+            claim_expires_at: string | null;
+            /** Compiler Invoked At */
+            compiler_invoked_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Cycle Number */
+            cycle_number: number | null;
+            /** Cycle Reason */
+            cycle_reason: string | null;
+            /** Direction */
+            direction: string;
+            /** Entry Behavior Fingerprint */
+            entry_behavior_fingerprint: string | null;
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Hard Expires At */
+            hard_expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Is Current */
+            is_current: number;
+            /** Last Candidate Id */
+            last_candidate_id: string;
+            /** Last Requalified At */
+            last_requalified_at: string | null;
+            /** Market Type */
+            market_type: string;
+            /** Mechanism Version */
+            mechanism_version: string | null;
+            /** Model Invoked At */
+            model_invoked_at: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Owner Token */
+            owner_token: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength?: number | null;
+            /** Planner Input Hash */
+            planner_input_hash: string | null;
+            /** Planner Input Json */
+            planner_input_json: string | null;
+            /** Planning Identity */
+            planning_identity: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Planning Started At */
+            planning_started_at: string | null;
+            /** Previous Generation Id */
+            previous_generation_id: string | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Requalification Candidate Id */
+            requalification_candidate_id: string | null;
+            /** Requalification Source Json */
+            requalification_source_json: string | null;
+            /** Result Json */
+            result_json: string | null;
+            /** Result Kind */
+            result_kind: string | null;
+            /** Retry Not Before */
+            retry_not_before: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Schema Fingerprint */
+            schema_fingerprint: string | null;
+            /** Soft Expires At */
+            soft_expires_at: string | null;
+            /** Startup Reason */
+            startup_reason?: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Updated At */
+            updated_at: string;
+            /** Validated Hypothesis Json */
+            validated_hypothesis_json: string | null;
+            /** Venue */
+            venue: string;
         };
         /** CandidateRow */
         CandidateRow: {
@@ -10225,7 +10360,8 @@ export interface components {
          * @description List read model: no planner input / requalification / hypothesis blobs (#3642).
          *
          *     Measured 20.4 MB per 200 rows, 92% `planner_input_json`. The columns stay in the
-         *     durable row and are served by `GET /api/universe/candidates/{id}`.
+         *     durable row and are served for any generation, current or superseded, by
+         *     `GET /api/universe/planning-generations/{generation_id}`.
          */
         PlanningHistoryItem: {
             /** Activation Identity */
@@ -22343,6 +22479,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_planning_generation_api_universe_planning_generations__generation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                generation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatePlanningFields"];
                 };
             };
             /** @description Validation Error */
