@@ -121,7 +121,7 @@ def next_close_client_oid(position_id: str) -> str:
     writer lock of ``sqlite.transaction(immediate=True)``; a read-then-compute
     outside that lock would race with any concurrent close-claim allocation on the
     same position (safe today under Fedora's single-process uvicorn, guarded by
-    tests/audit/close_client_oid_transaction_guard.py).
+    tests/audit/test_close_client_oid_transaction_guard.py).
     """
     base = f"close-{position_id}"
     row = get_db().execute(

@@ -106,7 +106,7 @@ class TestSymbolFilter:
         assert isinstance(mod.get_supported_symbols("okx_demo", "usdt_futures"), frozenset)
 
     def test_refresh_builds_dict_of_frozensets_from_markets(self):
-        """refresh_okx_demo_symbols builds {"usdt_futures": frozenset, "spot": frozenset}."""
+        """refresh_demo_capabilities builds {"usdt_futures": frozenset, "spot": frozenset}."""
         import aletheia.execution.venue_capabilities as mod
 
         fake_result = {
@@ -117,7 +117,7 @@ class TestSymbolFilter:
             "aletheia.execution.venue_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner(fake_result),
         ):
-            count = mod.refresh_okx_demo_symbols()
+            count = mod.refresh_demo_capabilities("okx_demo")
 
         assert count == 5  # 3 usdt_futures + 2 spot
         assert mod._demo_capabilities_cache[mod._capability_cache_key("okx_demo")][0] == fake_result
@@ -143,8 +143,8 @@ class TestSymbolFilter:
             fake_result, RuntimeError("redundant refresh failed"),
         ))
         with patch("aletheia.execution.venue_capabilities.run_coro_from_sync", runner):
-            first = mod.refresh_okx_demo_symbols()
-            second = mod.refresh_okx_demo_symbols()
+            first = mod.refresh_demo_capabilities("okx_demo")
+            second = mod.refresh_demo_capabilities("okx_demo")
 
         assert first == second == 2
         assert runner.call_count == 1
@@ -156,7 +156,7 @@ class TestSymbolFilter:
             "aletheia.execution.venue_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner({}),
         ):
-            assert mod.refresh_okx_demo_symbols() == 0
+            assert mod.refresh_demo_capabilities("okx_demo") == 0
 
         assert mod.get_supported_symbols("okx_demo", "usdt_futures") == frozenset()
         assert mod.get_supported_symbols("okx_demo", "spot") == frozenset()

@@ -173,16 +173,6 @@ def refresh_demo_capabilities(execution_mode: str) -> int:
     return total
 
 
-def refresh_okx_demo_symbols() -> int:
-    """Refresh OKX demo capabilities.  Thin wrapper kept for scheduler compat.
-
-    The scheduler job ``okx_demo_symbols`` calls this every 4 h.  It now
-    delegates to the generic ``refresh_demo_capabilities`` so both OKX and
-    Bitget demo modes share one code path.
-    """
-    return refresh_demo_capabilities("okx_demo")
-
-
 def _is_sandbox_mode(execution_mode: str) -> bool:
     """Return True iff *execution_mode* uses a restricted sandbox listing.
 
