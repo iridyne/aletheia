@@ -2109,3 +2109,43 @@ def test_selection_floor_is_cost_covering_not_just_margin():
     )
     assert decision.admission_status == "below_floor"
     assert decision.utility_floor_pct == 0.25
+
+
+@pytest.mark.parametrize("terminal", ["failed", "invalidated"])
+def test_a_terminal_unmeasurable_row_lowers_coverage_instead_of_reading_overdue(terminal):
+    """A failed/invalidated row will never settle; it is not overdue evidence.
+
+    Reading it as `settlement_overdue` pinned the cohort to Startup forever.
+    """
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = _outcomes(60)
+    rows[30] = {**rows[30], "status": terminal, "net_return_pct": None, "mae_pct": None}
+    if terminal == "invalidated":
+        rows[30]["settled_at"] = None
+    result = estimate_economic_utility(
+        candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+        market_type="perp", strength_percentile=0.9,
+        outcomes=[{**row, "market_type": "perp"} for row in rows],
+        source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=rows[0]["cost_assumptions"],
+    )
+    assert result.unavailable_reason is None
+    assert result.estimate_status == "available"
+    assert result.outcome_coverage == pytest.approx(59 / 60)
+
+
+def test_overdue_settlement_cannot_hide_a_measured_tail_harm():
+    """Tail harm is a measured refusal and outranks a not-yet-measured reason."""
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = _outcomes(60)
+    rows[10] = {**rows[10], "net_return_pct": -20.0}
+    rows[30] = {**rows[30], "status": "pending", "settled_at": None, "net_return_pct": None}
+    result = estimate_economic_utility(
+        candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+        market_type="perp", strength_percentile=0.9,
+        outcomes=[{**row, "market_type": "perp"} for row in rows],
+        source_cutoff_at="2026-09-02T00:00:00+00:00", cost_assumptions=rows[0]["cost_assumptions"],
+    )
+    assert result.unavailable_reason == "tail_harm"
+    assert result.economic_utility_pct is None

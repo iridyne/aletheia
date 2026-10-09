@@ -22,6 +22,11 @@ INDEPENDENT_UNIT_VERSION = "scanner-t0-cross-section-nonoverlap-4h/v1"
 INDEPENDENT_UNIT_INTERVAL = timedelta(hours=4)
 _SHRINKAGE_K = 50
 _TAIL_HARM_FLOOR_PCT = -15.0
+# Settler verdicts that end a row without a measurement.
+_TERMINAL_UNMEASURED = frozenset({"failed", "invalidated"})
+# Integrity faults, then measured refusal, then not-yet-measured: a weaker reason
+# must never mask a stronger one in the cohort's single failure_reason.
+_FAILURE_PRECEDENCE = ("history_time_invalid", "tail_harm", "settlement_overdue")
 
 # Every reason this module can attach to an estimate, classified by what the
 # reason actually proves. Admission policy reads this classification; it must
@@ -254,6 +259,10 @@ def build_economic_utility_cohort_index(
         if entry is None or (settled is not None and settled < entry + INDEPENDENT_UNIT_INTERVAL):
             failures.setdefault(key, set()).add("history_time_invalid")
             row = {**row, "status": "invalid"}
+        elif row.get("status") in _TERMINAL_UNMEASURED and (settled is None or settled <= cutoff):
+            # Terminal and never measurable: not overdue, since nothing will settle
+            # it. It stays out of the sample and in the coverage denominator.
+            pass
         elif row.get("status") != "settled" or (settled is not None and settled > cutoff):
             if entry + INDEPENDENT_UNIT_INTERVAL <= cutoff:
                 failures.setdefault(key, set()).add("settlement_overdue")
@@ -354,7 +363,7 @@ def build_economic_utility_cohort_index(
             next(iter(edges)) if len(edges) == 1 else None,
             canonical_fingerprint(source_material) if complete else None,
             key in invalid,
-            min(failures.get(key, ()), default=None),
+            next((reason for reason in _FAILURE_PRECEDENCE if reason in failures.get(key, ())), None),
             next(iter(cost_edges)) if len(cost_edges) == 1 else None,
         )
     return EconomicUtilityCohortIndex(source_cutoff_at, expected_costs, summaries)
