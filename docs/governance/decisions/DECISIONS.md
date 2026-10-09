@@ -9,6 +9,8 @@
 - #1441「回滚：只追加不删，补回缺失文件，保留新增文件。」`events/`、`artifacts/`、`logs/`（审计家族除外）、
   `observation-lab/archives/`：缺的写回，已有的不覆盖，checkpoint 之后新增的不删。这推翻了 #1441 issue
   正文要求的“精确替换并删除多余文件”。
+- #1621「选 (a)：config.yaml 回滚时永不覆盖，留用当前配置。」live 已有 `config.yaml` 时不写，结果报
+  `config_disposition=preserved_live`；备份里的脱敏字段永远不会回填进 live 配置。
 
 ---
 

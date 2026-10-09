@@ -107,6 +107,13 @@ target is written from the checkpoint, an existing target file is left unchanged
 and a file created after the checkpoint is never deleted. The restore result lists
 every preserved path in `preserved_files`.
 
+`config.yaml` is never overwritten by a restore: an existing live configuration is
+kept and the result reports `config_disposition=preserved_live`; only a target
+without one (such as the empty candidate-preflight root) receives the archive's
+redacted copy, reported as `restored_redacted`, and an archive without a config
+reports `absent_in_checkpoint`. Redacted fields are never rehydrated into a live
+configuration.
+
 ## Bundle imports do not create trading authority
 
 Under the accepted [research bundle boundary](../proposals/slim_core_research_bundle_import.md),

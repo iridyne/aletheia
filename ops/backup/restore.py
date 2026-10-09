@@ -29,7 +29,7 @@ def _is_audit_generation(path: Path) -> bool:
 
 
 def _append_only(rel: Path) -> bool:
-    if rel in _ROLLBACK_POINT or rel == Path("config.yaml"):
+    if rel in _ROLLBACK_POINT:
         return False
     return not (rel.parent == Path("logs") and _is_audit_generation(rel))
 
@@ -44,6 +44,10 @@ class RestoreResult:
         self.errors: list[str] = []
         # Archived paths left untouched because the target already had them (#1441).
         self.preserved_files: list[str] = []
+        # #1621: a live config.yaml is never overwritten, so redacted fields are
+        # never rehydrated into it. "preserved_live" | "restored_redacted"
+        # (target had none) | "absent_in_checkpoint".
+        self.config_disposition: str = "absent_in_checkpoint"
         # Rollback actions that failed after a failed restore: the target is mixed.
         self.rollback_failures: list[dict[str, str]] = []
 
@@ -58,6 +62,7 @@ class RestoreResult:
             "target_dir": self.target_dir,
             "errors": self.errors,
             "preserved_files": self.preserved_files,
+            "config_disposition": self.config_disposition,
             "rollback_complete": self.rollback_complete,
             "rollback_failures": self.rollback_failures,
         }
@@ -238,6 +243,10 @@ class RestoreService:
                                 f"restore target is a symlink and would redirect the write: {rel}"
                             )
 
+                        if rel == Path("config.yaml"):
+                            result.config_disposition = (
+                                "preserved_live" if dst.exists() else "restored_redacted"
+                            )
                         if dst.exists() and _append_only(rel):
                             result.preserved_files.append(rel.as_posix())
                             continue
