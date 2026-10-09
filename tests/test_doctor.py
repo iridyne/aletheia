@@ -2333,3 +2333,30 @@ def test_webui_static_probe_resolves_dashboard_assets(tmp_path, monkeypatch):
     assert [(check.name, check.severity, check.detail) for check in report.checks] == [
         ("webui.static", "ok", "100 bytes index, 1 JS bundles")
     ]
+
+
+def test_enforce_doctor_never_opens_a_direct_egress_probe(monkeypatch):
+    """#1086: enforce forbids direct egress, including the leak-comparison probe."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    import urllib.request
+    import aletheia.config.loader as loader
+
+    built: list[dict] = []
+    real_handler = urllib.request.ProxyHandler
+
+    def handler(proxies=None):
+        built.append(dict(proxies or {}))
+        return real_handler(proxies or {})
+
+    monkeypatch.setattr(urllib.request, "ProxyHandler", handler)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *args: MagicMock())
+    monkeypatch.setattr(environment, "_egress_ip", lambda opener: "203.0.113.7")
+    monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+        network=SimpleNamespace(proxy_url="http://127.0.0.1:7890",
+                                proxy_protocol="http", enforce=True),
+    ))
+    report = dx.Report()
+    dx._probe_network(report)
+    assert {} not in built
+    assert "direct egress not probed" in repr(report)

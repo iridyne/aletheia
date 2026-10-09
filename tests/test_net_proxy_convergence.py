@@ -167,3 +167,29 @@ def test_aiohttp_session_socks_uses_proxy_connector(clean_proxy_env, monkeypatch
                 pass
 
     mock_connector_cls.from_url.assert_called_once_with(socks_url)
+
+
+# ── #1086: urllib opener never degrades enforce + SOCKS to direct ────────────
+
+
+def test_urllib_opener_refuses_socks_in_enforce_mode(clean_proxy_env, monkeypatch):
+    from aletheia import net
+
+    monkeypatch.setattr(net, "_proxy_url", lambda: "socks5://127.0.0.1:7890")
+    monkeypatch.setattr(net, "_enforce", lambda: True)
+    with pytest.raises(net.EnforcedProxyUnsupported):
+        net.build_urllib_opener()
+
+
+def test_urllib_opener_socks_fail_open_stays_direct(clean_proxy_env, monkeypatch):
+    import urllib.request
+
+    from aletheia import net
+
+    monkeypatch.setattr(net, "_proxy_url", lambda: "socks5://127.0.0.1:7890")
+    monkeypatch.setattr(net, "_enforce", lambda: False)
+    monkeypatch.setattr(net, "_is_proxy_reachable", lambda _url: True)
+    opener = net.build_urllib_opener()
+    handlers = getattr(opener, "handlers", [])
+    proxies = [h for h in handlers if isinstance(h, urllib.request.ProxyHandler)]
+    assert not any(getattr(h, "proxies", None) for h in proxies)
