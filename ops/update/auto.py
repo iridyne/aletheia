@@ -431,7 +431,11 @@ def _uv() -> str:
 
 
 def _candidate_preflight(target: str, backup: Path) -> Path:
-    """Restore into a temporary root and migrate it using the pinned candidate."""
+    """Restore into a temporary root and migrate it using the pinned candidate.
+
+    Restore, ``verify_backup``, migration and smoke all run in one child process on the
+    candidate worktree's code; the updater never imports candidate modules (#3856).
+    """
     root = _paths()["root"]
     root.mkdir(parents=True, exist_ok=True)
     worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=root)).resolve()
@@ -445,9 +449,6 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
         # data dir, which the smoke's pytest data-root guard requires.
         with tempfile.TemporaryDirectory(prefix="aletheia-auto-preflight-", dir=large_temp_dir()) as temporary_data_root:
             data_copy = Path(temporary_data_root)
-            restored = RestoreService().restore(backup, data_copy)
-            if not restored.success:
-                raise AutoUpdateError("preflight_restore_failed", "; ".join(restored.errors))
             env = _safe_env()
             env["ALETHEIA_DATA_DIR"] = str(data_copy)
             env["ALETHEIA_BACKUP_PATH"] = str(backup.resolve())
@@ -464,6 +465,9 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
                 "def _require(value, detail):\n"
                 "    if value is not True:\n"
                 "        raise RuntimeError(detail)\n"
+                "from ops.backup.restore import RestoreService\n"
+                f"restored=RestoreService().restore(Path({str(backup.resolve())!r}), Path({str(data_copy)!r}))\n"
+                "_require(restored.success, 'preflight_restore_failed: ' + '; '.join(restored.errors))\n"
                 "from aletheia.storage.migrations import apply_migrations, migration_status\n"
                 "status=migration_status()\n"
                 "if status.get('current') is not True:\n"
@@ -476,7 +480,9 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
                 "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
             )
             # ponytail: reuse active venv Python with PYTHONPATH instead of spawning uv to build a fresh venv
-            result = _run([sys.executable, "-c", check], cwd=worktree, env=env, timeout=120)
+            # The child now also restores the multi-GB backup, which used to run untimed
+            # in-process; 120s covered only migration and smoke.
+            result = _run([sys.executable, "-c", check], cwd=worktree, env=env, timeout=1800)
             if result.returncode:
                 raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
             return worktree
@@ -543,14 +549,15 @@ def _install_source_dependencies() -> bool:
 
 
 def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, restore_static: bool) -> dict[str, Any]:
-    # Bind before reset_hard may replace the currently running source tree.
-    from extensions.observation_lab.kernel import invalidate_active_for_restore
-    from extensions.observation_lab.worker_lock import worker_cycle_exclusion
-
     try:
         reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
             return {"ok": False, "reason": "source_restore_failed"}
+        # Import only once the disk again holds this process's own (old) code: before the
+        # reset it holds the candidate, whose modules may need names ours lack (#3856).
+        from extensions.observation_lab.kernel import invalidate_active_for_restore
+        from extensions.observation_lab.worker_lock import worker_cycle_exclusion
+
         if not _install_source_dependencies():
             return {"ok": False, "reason": "dependency_restore_failed"}
         if restore_static:

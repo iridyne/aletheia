@@ -609,6 +609,134 @@ def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_pat
     )
 
 
+def _stopped_runtime_update(tmp_path, monkeypatch, *, changed_files):
+    """Drive the real CLI update path with the runtime stopped and record lifecycle calls."""
+    setup_env(tmp_path, monkeypatch)
+    from extensions.observation_lab import runner
+    from ops.update import applier, continuity, git_ops as git_mutations
+
+    class _Barrier:
+        def __enter__(self):
+            return {"ok": True, "checkpoint": {"current_fingerprint": "trusted"}}
+
+        def __exit__(self, *_exc):
+            return False
+
+    _stub_clean_pull(monkeypatch, changed_files=changed_files)
+    calls = []
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: {})
+    monkeypatch.setattr(continuity, "evaluate_preflight", lambda _before: {"ok": True, "failures": []})
+    monkeypatch.setattr(runner, "observation_settlement_barrier", _Barrier)
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: calls.append(("stop",)) or {"ok": True})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append(("restart",)) or {"ok": True})
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
+    monkeypatch.setattr(applier, "_persist_current_commit_fresh", lambda commit: {"ok": True})
+    return calls
+
+
+def test_candidate_adding_a_name_to_an_imported_module_cannot_strand_the_runtime(tmp_path, monkeypatch):
+    """#3856: Fedora 1cea7366 -> aa09a87c stopped the runtime, pulled, then imported
+    pulled `aletheia/backup/verify.py` (which needs `runtime_paths.large_temp_dir`, added by
+    #3835) into a process whose `aletheia.runtime_paths` was the pre-pull module. The
+    ImportError escaped and left the Gateway stopped while status still said up_to_date."""
+    import importlib.abc
+    import importlib.util
+    import sys
+
+    from aletheia import runtime_paths
+    from ops.update import auto, continuity
+
+    calls = _stopped_runtime_update(tmp_path, monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
+    assert not hasattr(runtime_paths, "candidate_only_temp_dir")
+
+    class _CandidateCheckout(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        """What the source tree holds after the pull: a verify.py that needs a new name."""
+
+        def find_spec(self, name, path=None, target=None):
+            return importlib.util.spec_from_loader(name, self) if name == "aletheia.backup.verify" else None
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            exec("from aletheia.runtime_paths import candidate_only_temp_dir\n", module.__dict__)
+
+    def pull(branch="master"):
+        # A fresh `aletheia update` process has not imported the preflight modules yet.
+        for name in ("ops.update.auto", "ops.backup.restore", "aletheia.backup.verify"):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+        monkeypatch.setattr(sys, "meta_path", [_CandidateCheckout(), *sys.meta_path])
+        return {"ok": True}
+
+    from ops.backup import service as backup_service
+    from ops.update import git_ops as git_mutations
+
+    monkeypatch.setattr(git_mutations, "pull", pull)
+    monkeypatch.setattr(
+        backup_service,
+        "BackupService",
+        lambda _data_dir: type("Backup", (), {"create_backup": lambda self, *, label: tmp_path / label})(),
+    )
+    monkeypatch.setattr(
+        auto,
+        "_candidate_preflight",
+        lambda *_args: (_ for _ in ()).throw(auto.AutoUpdateError("candidate_preflight_failed", "candidate smoke failed")),
+    )
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "candidate_preflight_failed"
+    assert calls == [("stop",), ("reset", "old111"), ("restart",)]
+    from aletheia.files.jsonl import read_jsonl
+
+    assert any(
+        event.get("event_type") == "update_failed" and "candidate smoke failed" in event.get("message", "")
+        for event in read_jsonl("audit.jsonl")
+    )
+
+
+def test_unexpected_exception_after_the_pull_rolls_back_and_restarts_the_old_runtime(tmp_path, monkeypatch):
+    """#3856: no exception between the pull and activation may leave the stopped runtime down."""
+    from ops.update import applier, continuity
+
+    calls = _stopped_runtime_update(tmp_path, monkeypatch, changed_files=["frontend/src/App.tsx"])
+
+    def candidate_import(_tree):
+        raise ImportError("cannot import name 'candidate_only_name' from 'aletheia.runtime_paths'")
+
+    monkeypatch.setattr(applier, "_dashboard_build_required", candidate_import)
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: pytest.fail("must not build after the failure"))
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
+    assert result["reason"] == "unexpected_ImportError"
+    assert calls == [("stop",), ("reset", "old111"), ("restart",)]
+    from aletheia.files.jsonl import read_jsonl
+
+    assert any(
+        event.get("event_type") == "update_rolled_back" and "candidate_only_name" in event.get("message", "")
+        for event in read_jsonl("audit.jsonl")
+    )
+
+
+def test_continuity_restarts_the_stopped_runtime_when_the_applier_raises(tmp_path, monkeypatch):
+    from ops.update import applier, continuity
+
+    calls = _stopped_runtime_update(tmp_path, monkeypatch, changed_files=[])
+    monkeypatch.setattr(
+        applier, "apply_update", lambda **_kwargs: (_ for _ in ()).throw(OSError("audit disk full"))
+    )
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "unexpected_OSError"
+    assert calls == [("stop",), ("restart",)]
+
+
 def test_cli_update_runs_full_source_deployment_without_subcommand(monkeypatch):
     from aletheia.cli import update_cmd
     from ops.update import continuity
