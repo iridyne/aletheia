@@ -228,6 +228,14 @@ def start_pi_daemon(
     return _daemon_task
 
 
+def _reset_wake_state() -> None:
+    """Drop accepted wake state on a full stop (never on a controlled restart)."""
+    global _coalescer, _generic_wake_pending
+    _coalescer = None
+    _pending_events.clear()
+    _generic_wake_pending = False
+
+
 def stop_pi_daemon() -> None:
     global _daemon_task, _uvicorn_loop, _started_at, _active_params
     if _daemon_task is not None and not _daemon_task.done():
@@ -237,6 +245,7 @@ def stop_pi_daemon() -> None:
     _uvicorn_loop = None
     _started_at = None
     _active_params = None
+    _reset_wake_state()
 
 
 async def reconfigure_pi_daemon(
@@ -272,6 +281,7 @@ async def reconfigure_pi_daemon(
             _uvicorn_loop = None
             _started_at = None
             _active_params = None
+            _reset_wake_state()
             logger.info("pi_daemon: stopped via settings reconfigure (enabled=false)")
         return {"configured": False, "running": False, "blocker": None}
 
@@ -355,13 +365,16 @@ async def _pi_daemon_loop(
     global _signal_event, _eval_lock, _coalescer, _generic_wake_pending
     _signal_event = asyncio.Event()
     _eval_lock = asyncio.Lock()
-    _coalescer = WakeCoalescer(
-        capacity=wake_capacity,
-        refill_per_hour=wake_refill_per_hour,
-        coalesce_window_sec=coalesce_window_sec,
-    )
-    _pending_events.clear()
-    _generic_wake_pending = False
+    # Accepted wake state is module-level and survives a controlled restart
+    # (reconfigure_pi_daemon); only a full stop resets it (#1410).
+    if _coalescer is None:
+        _coalescer = WakeCoalescer(
+            capacity=wake_capacity,
+            refill_per_hour=wake_refill_per_hour,
+            coalesce_window_sec=coalesce_window_sec,
+        )
+    if _pending_events or _generic_wake_pending or _coalescer.pending_count():
+        _signal_event.set()
 
     logger.info("pi_daemon: loop started")
     # A process restart clears in-memory producer notifications.  Re-arm one

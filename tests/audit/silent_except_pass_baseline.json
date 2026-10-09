@@ -56,12 +56,12 @@
     },
     {
       "file": "core/aletheia/agent_runtime/pi_daemon.py",
-      "line": 267,
+      "line": 276,
       "reason": "awaiting the pi-daemon task we just cancelled on stop()"
     },
     {
       "file": "core/aletheia/agent_runtime/pi_daemon.py",
-      "line": 324,
+      "line": 334,
       "reason": "awaiting the pi-daemon task we just cancelled for restart"
     },
     {
