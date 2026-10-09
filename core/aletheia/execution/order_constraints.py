@@ -78,6 +78,8 @@ def _decimal(value: Any, field: str, *, required: bool = False) -> Decimal | Non
         parsed = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ConstraintUnavailable(f"exchange rule has invalid {field}", reason_code="exchange_rule_field_invalid") from exc
+    if not parsed.is_finite():
+        raise ConstraintUnavailable(f"exchange rule has non-finite {field}", reason_code="exchange_rule_field_invalid")
     if parsed <= 0:
         if required:
             raise ConstraintUnavailable(f"exchange rule has non-positive {field}", reason_code="exchange_rule_field_non_positive")

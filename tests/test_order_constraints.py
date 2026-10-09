@@ -88,6 +88,48 @@ def test_missing_price_or_unsupported_precision_rejects_fail_closed():
         )
 
 
+_NON_FINITE = ["NaN", "Infinity", "-Infinity", float("nan"), float("inf")]
+
+
+@pytest.mark.parametrize("value", _NON_FINITE)
+@pytest.mark.parametrize("field", ["contractSize", "amount.min", "cost.min"])
+def test_non_finite_market_rule_is_unavailable_not_an_order_constraint(value, field):
+    """#1481: a NaN/Infinity venue rule must never become an OrderConstraints."""
+    from aletheia.execution.order_constraints import ConstraintUnavailable
+    from extensions.exchanges.ccxt.order_rules import constraints_from_market
+
+    market = _market()
+    if field == "contractSize":
+        market["contractSize"] = value
+    elif field == "amount.min":
+        market["limits"] = {"amount": {"min": value, "max": 1000}, "cost": {"min": 5}}
+    else:
+        market["limits"] = {"amount": {"min": 1, "max": 1000}, "cost": {"min": value}}
+    with pytest.raises(ConstraintUnavailable) as raised:
+        constraints_from_market(
+            venue="bitget", symbol="BTC/USDT", market_type="usdt_futures",
+            market=market, precision_mode="decimal_places",
+        )
+    assert raised.value.reason_code == "exchange_rule_field_invalid"
+
+
+@pytest.mark.parametrize("value", _NON_FINITE)
+def test_non_finite_quantity_or_minimum_never_yields_a_quantity(value):
+    from aletheia.execution.order_constraints import (
+        ConstraintUnavailable, OrderConstraints, normalize_quantity,
+    )
+
+    constraints = OrderConstraints(
+        venue="bitget", symbol="BTC/USDT", market_type="usdt_futures",
+        min_quantity=Decimal("0.001"), max_quantity=None,
+        amount_step=Decimal("0.001"), min_notional=Decimal("5"),
+    )
+    with pytest.raises(ConstraintUnavailable):
+        normalize_quantity(value, 2000, constraints)
+    with pytest.raises(ConstraintUnavailable):
+        normalize_quantity(0.01, value, constraints)
+
+
 def test_execution_mode_uses_its_own_venue_not_market_data_venue():
     from aletheia.execution.order_constraints import venue_for_execution_mode
 
