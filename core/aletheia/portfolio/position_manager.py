@@ -2027,9 +2027,8 @@ def proactive_exit(
     ONLY thing that decides attribution: ``system_operator`` is the AI's own
     discretionary exit (``operator_close`` / ``operator_limit_exit``), ``human`` is an
     owner-initiated dashboard close (``human_manual_close`` / ``human_limit_exit``).
-    A human close must never be recorded as AI exit discretion, because
-    ``analytics/exit_driver_comparison.py`` reads ``close_reason`` to judge whether
-    AI-discretionary exits beat deterministic rules.
+    A human close must never be recorded as AI exit discretion: ``close_reason`` is
+    the attribution evidence for whether AI-discretionary exits beat deterministic rules.
     """
     from aletheia.storage.repositories import get_position
 

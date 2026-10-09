@@ -304,20 +304,17 @@ def test_holding_duration_uses_the_shared_owner_and_rejects_reversed_intervals()
     and returned a negative float, which factor_feedback averaged into
     `_avg_holding_hours` as if it were a real holding time.
     """
-    from aletheia.analytics.exit_driver_comparison import _hold_hours
     from aletheia.analytics.holding_time import holding_hours
     from aletheia.analytics.trade_attribution import _compute_holding_hours
 
     reversed_pair = ("2026-09-01T05:00:00Z", "2026-09-01T01:00:00Z")
     assert holding_hours(*reversed_pair) is None
     assert _compute_holding_hours(*reversed_pair) is None
-    assert _hold_hours({"opened_at": reversed_pair[0], "closed_at": reversed_pair[1]}) is None
 
     # Space-separated timestamps were measurable for the other two implementations
     # but dropped by the local strptime patterns; the shared owner reads them.
     spaced = ("2026-09-01 00:00:00", "2026-09-01 04:00:00")
     assert _compute_holding_hours(*spaced) == 4.0
-    assert _hold_hours({"opened_at": spaced[0], "closed_at": spaced[1]}) == 4.0
 
     # Presentation stays with this surface (two decimals) while the value is shared.
     assert _compute_holding_hours("2026-09-01T00:00:00Z", "2026-09-01T00:07:07Z") == 0.12
