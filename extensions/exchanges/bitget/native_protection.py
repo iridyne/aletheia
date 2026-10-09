@@ -45,7 +45,13 @@ class BitgetNativeProtectionReader:
         venue_symbol = to_bitget(symbol)
         legs: list[NativeProtectionLeg] = []
         for row in await self._client.get_open_tpsl_orders(symbol=venue_symbol):
-            if not isinstance(row, dict) or str(row.get("symbol") or "") != venue_symbol:
+            # A row we cannot attribute (not an object, or no symbol) voids the read: dropping
+            # it could turn a protected position into "no stop found" and close it. A row that
+            # names another instrument is simply not this symbol's protection.
+            row_symbol = str(row.get("symbol") or "").strip() if isinstance(row, dict) else ""
+            if not row_symbol:
+                raise ValueError("native_protection_row_malformed")
+            if row_symbol != venue_symbol:
                 continue
             order_id = str(row.get("orderId") or "").strip()
             side = str(row.get("posSide") or "").strip().lower()
@@ -55,9 +61,9 @@ class BitgetNativeProtectionReader:
             try:
                 quantity = Decimal(raw_qty) if raw_qty else None
             except InvalidOperation:
-                quantity = None
+                raise ValueError("native_protection_row_malformed") from None
             if quantity is not None and not (quantity.is_finite() and quantity > 0):
-                quantity = None
+                raise ValueError("native_protection_row_malformed")
             for kind, field in (("sl", "stopLoss"), ("tp", "takeProfit")):
                 trigger = str(row.get(field) or "").strip()
                 if trigger:
