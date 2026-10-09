@@ -126,7 +126,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 |------|---------|------|------|------|
 | risk_engine.evaluate_proposal() | 被 gateway.submit_proposal() 调用 | TradeProposal + config | RiskDecision(持久化) | ✅ |
 | execution/gateway.submit_proposal() | 被 Entry Plan execution / position_manager 调用 | symbol/direction/qty/price | proposal→decision→order→fill 因果链 | ✅ |
-| execution/reconciliation.reconcile() | reconciliation job(2min,仅live) | exchange state vs local | convergence_records | ✅ |
+| execution/reconciliation.reconcile() | reconciliation job(2min)；覆盖 Bitget demo/live 与其他 UTA 交易所账户模式（`bitget_demo` 也在内） | 未决 Order vs 交易所精确 Order/Fill 报告 | Order 状态、已证私有 Fill 物化、`order_reconciled` / `order_reconciliation_inconclusive` 审计事件 | ✅ |
 | kill_switch | risk_engine check#8(日损触发) | daily_loss > threshold | kill_switch_active=True | ✅ |
 
 ---
