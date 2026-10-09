@@ -229,6 +229,21 @@ def test_epoch_detection_failure_scorecard_does_not_use_legacy_aggregate(monkeyp
     reader.assert_not_called()
 
 
+def test_scorecard_shadow_read_db_error_is_unavailable_not_all_null(optional_evidence_jobs):
+    """A failing shadow_trades query is an unavailable source, never a legitimate zero."""
+    import aletheia.analytics.family_scorecard as family_scorecard
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute("DROP TABLE shadow_trades")
+    db.commit()
+
+    result = family_scorecard.compute_family_scorecard_with_epoch()
+
+    assert result["shadow_epoch_status"] == "unavailable"
+    assert result["shadow_epoch_error"] == "policy_epoch_detection_failed"
+
+
 def test_successful_all_null_epoch_detection_keeps_legacy_reader(monkeypatch):
     import extensions.counterfactual.calibration as calibration
 

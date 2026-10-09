@@ -109,6 +109,7 @@ estimand。不同 estimand
 
 - **已退役（#3704 / #3708）**：shadow 写入路径整体删除，其失败与恢复语义不再存在——`persist_shadow_batch` 的批级容错、`resolve_shadow_trades_for_position` 的 batch `RuntimeError` + `outcome_hooks` hook failure + `outcome_hook_replay`、`anchor_shadow_trade_exit_price_if_pending` 的 `_current_price` CAS 锚点幂等，以及 `resolve_stale_shadows` 的 `skipped_no_ohlcv` / `skipped_bad_entry` backfill 结算。`shadow_trades` 表是等待 DROP 迁移的墓碑，不再有 owner 结算它。
 - `build_calibration` 在 DB 未初始化 / 查询错误时返回带 `errors` 字段的 report，不 raise；这是只读诊断的一贯语义。
+- `shadow_trades` 读取出错（含表缺失）时，`_detect_window_epochs` 记 warning 并抛出，`build_calibration`、`build_propensity_report` 与 family scorecard 的 shadow cohort 因此报 `policy_epoch_status` / `shadow_epoch_status = "unavailable"` + `policy_epoch_detection_failed`，不把读取失败当成 `all_null` 的合法 0。
 - `evaluate_active_shadow_experiments` 检测到 `filter_version` 中途换代时把实验 `status="invalidated"` 并落一条空 evaluation；不做部分归因。
 
 ## 7. Executable evidence

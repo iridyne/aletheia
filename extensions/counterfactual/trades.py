@@ -6,8 +6,9 @@ commit 2e69baae9 (#2945). The physical shadow_trades table will be dropped in a 
 migration (#3701 Batch E).
 
 Remaining surface: list_deduped_shadows and _detect_window_epochs, used by advisories,
-calibration, propensity, and family_scorecard.  Both return empty/null gracefully when
-the table no longer exists.
+calibration, propensity, and family_scorecard.  _detect_window_epochs raises on a failed
+read (including a missing table) so callers report "unavailable"; list_deduped_shadows
+logs and returns [].
 """
 
 from __future__ import annotations
@@ -188,7 +189,8 @@ def list_deduped_shadows(
     params = [*time_params, *scope_params]
     try:
         return [dict(r) for r in connection.execute(sql, params).fetchall()]
-    except Exception:
+    except Exception as exc:
+        logger.warning("shadow_cohort_read_failed error=%s", exc)
         return []
 
 
@@ -237,8 +239,11 @@ def _detect_window_epochs(
     """
     try:
         row = connection.execute(sql, params).fetchone()
-    except Exception:
-        return None, "all_null"
+    except Exception as exc:
+        # A failed read is an unavailable source, not "pure legacy data": callers
+        # map the raise to status "unavailable" + policy_epoch_detection_failed.
+        logger.warning("shadow_epoch_detection_failed error=%s", exc)
+        raise
     if not row:
         return None, "all_null"
     distinct = row["distinct_epochs"] or 0
