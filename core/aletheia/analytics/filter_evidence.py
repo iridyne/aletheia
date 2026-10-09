@@ -491,7 +491,11 @@ def filter_feedback_stats(
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
     from aletheia.storage.sqlite import get_db, register_instant_us
 
-    from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
+    from aletheia.analytics.outcome_semantics import (
+        MISSED_ALPHA,
+        candidate_outcome_temporal_reason,
+        classify_counterfactual,
+    )
 
     observed_end = (
         as_of_at.isoformat()
@@ -520,7 +524,6 @@ def filter_feedback_stats(
         "fd.direction, fd.market_type, fd.outcome_candidate_key, "
         "fo.horizon, fo.cost_model_version, fo.status, fo.entry_ts, "
         "fo.due_at, fo.settled_at, fo.net_return_pct, fo.min_tradable_edge_pct, "
-        "fo.min_cost_covering_edge_pct, "
         f"CASE WHEN {complete_net} THEN 1 ELSE 0 END AS economics_complete "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
@@ -617,7 +620,7 @@ def filter_feedback_stats(
         if row.get("decision") == "rejected":
             if net < 0:
                 group["blocked_avoided_loss_count"] += 1
-            if net > float(row.get("min_cost_covering_edge_pct") or 0.0):
+            if classify_counterfactual(net, None, row.get("min_tradable_edge_pct")) == MISSED_ALPHA:
                 group["blocked_missed_alpha_count"] += 1
             group["blocked_net_sum"] += net
     if current_group is not None:

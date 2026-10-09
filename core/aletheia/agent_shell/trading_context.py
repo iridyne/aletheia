@@ -15,6 +15,7 @@ def _get_data_health_summary() -> dict[str, Any]:
         from aletheia.config.loader import load_config
         from aletheia.storage.repositories import (
             complete_outcome_economics_sql,
+            net_clears_tradable_edge_sql,
             get_active_universe_members,
             get_universe_asset,
         )
@@ -49,7 +50,7 @@ def _get_data_health_summary() -> dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
             f"""SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
+                      SUM(CASE WHEN {net_clears_tradable_edge_sql()}
                                THEN 1 ELSE 0 END)
                FROM filter_candidate_outcomes
                WHERE status = 'settled' AND horizon = '24h'

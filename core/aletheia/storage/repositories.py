@@ -5066,6 +5066,17 @@ def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
 SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 
+def net_clears_tradable_edge_sql(table_alias: str = "") -> str:
+    """The single "cleared its edge" predicate (#3483/#3486).
+
+    ``net_return_pct`` is already after fee, spread/slippage and funding, so it is
+    compared against the estimation-error margin alone, never the cost-covering
+    floor. Python twin: ``outcome_semantics.classify_counterfactual``.
+    """
+    prefix = f"{table_alias}." if table_alias else ""
+    return f"{prefix}net_return_pct > {prefix}min_tradable_edge_pct"
+
+
 def complete_outcome_economics_sql(table_alias: str = "") -> str:
     """Return the shared SQLite predicate for decision-grade net outcomes."""
     prefix = f"{table_alias}." if table_alias else ""

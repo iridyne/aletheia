@@ -284,3 +284,18 @@ def test_sql_and_python_enforce_the_same_settlement_price_provenance():
     for field, value in invalid_mutations:
         assert eligibility({**base, field: value}) == (False, 0), (field, value)
     assert validated_outcome_economics({**base, "settlement_lag_sec": True}) is None
+
+
+def test_win_counts_clear_the_margin_not_the_cost_floor():
+    """Net return is already after cost, so a win clears min_tradable_edge_pct
+    alone; comparing it to the cost-covering floor deducts cost twice (#3483)."""
+    from aletheia.analytics.candidate_outcome_projection import calibration_cohort
+
+    # net 0.10 = directional 0.30 - fee 0.20; margin 0.05; cost floor 0.25.
+    _insert_outcome(
+        "net-above-margin", 0.05, net_return_pct=0.10,
+        directional_return_pct=0.30, estimated_fee_pct=0.20,
+    )
+
+    [row] = calibration_cohort(cost_model_version="v1", cutoff="2000-01-01T00:00:00+00:00")
+    assert row["win_count"] == 1

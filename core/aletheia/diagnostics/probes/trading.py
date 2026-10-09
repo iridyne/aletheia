@@ -981,7 +981,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
     try:
         from datetime import timedelta
 
-        from aletheia.storage.repositories import complete_outcome_economics_sql
+        from aletheia.storage.repositories import complete_outcome_economics_sql, net_clears_tradable_edge_sql
         from aletheia.storage.sqlite import get_db
         from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
@@ -991,7 +991,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
         # 24h horizon — most meaningful for strategy effectiveness
         row = db.execute(
             f"""SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
+                      SUM(CASE WHEN {net_clears_tradable_edge_sql()}
                                THEN 1 ELSE 0 END),
                       AVG(net_return_pct)
                FROM filter_candidate_outcomes

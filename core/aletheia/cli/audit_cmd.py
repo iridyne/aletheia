@@ -45,6 +45,7 @@ def data(
     from aletheia.config.loader import load_config
     from aletheia.storage.repositories import (
         complete_outcome_economics_sql,
+        net_clears_tradable_edge_sql,
         get_active_universe_members,
     )
     from aletheia.storage.sqlite import get_db
@@ -78,7 +79,7 @@ def data(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     row = db.execute(
         f"""SELECT COUNT(*),
-                  SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct
+                  SUM(CASE WHEN {net_clears_tradable_edge_sql()}
                            THEN 1 ELSE 0 END),
                   AVG(net_return_pct)
            FROM filter_candidate_outcomes
