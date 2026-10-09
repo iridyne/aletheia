@@ -1127,67 +1127,6 @@ async def test_operator_command_persists_blocked_result_metadata_for_result_card
 
 
 @pytest.mark.anyio
-async def test_operator_internal_repair_decision_route_persists_typed_artifact(client):
-    created = await client.post(
-        "/api/operator/internal/repair-decisions",
-        json={
-            "task_id": None,
-            "session_id": "operator-main",
-            "title": "Repair decision",
-            "content": {
-                "decision_id": "repair-health-1",
-                "classification": "auto_execute",
-                "command": "create_diagnostic_todo",
-            },
-        },
-    )
-
-    assert created.status_code == 200
-    artifact = created.json()
-    assert artifact["artifact_type"] == "repair_decision"
-    assert artifact["content"]["command"] == "create_diagnostic_todo"
-
-
-@pytest.mark.anyio
-async def test_operator_internal_decision_and_command_intent_routes_persist_structured_artifacts(client):
-    decision = await client.post(
-        "/api/operator/internal/decisions",
-        json={
-            "task_id": None,
-            "session_id": "operator-main",
-            "title": "Operator decision",
-            "content": {
-                "decision_type": "promotion_review",
-                "summary": "human review is required",
-            },
-        },
-    )
-    assert decision.status_code == 200
-    assert decision.json()["artifact_type"] == "operator_decision"
-
-    intent = await client.post(
-        "/api/operator/internal/command-intents",
-        json={
-            "task_id": None,
-            "session_id": "operator-main",
-            "command_name": "propose_strategy_promotion",
-            "user_input": "prepare strategy promotion proposal",
-            "classification": "proposal_only",
-            "parameters": {
-                "strategy_id": "strat-1",
-                "target_state": "paper_passed",
-            },
-        },
-    )
-
-    assert intent.status_code == 200
-    artifact = intent.json()
-    assert artifact["artifact_type"] == "command_intent"
-    assert artifact["content"]["command_name"] == "propose_strategy_promotion"
-    assert artifact["content"]["classification"] == "proposal_only"
-
-
-@pytest.mark.anyio
 async def test_operator_internal_context_query_defaults_to_session_kind_profile(client):
     created = await client.post(
         "/api/operator/internal/sessions",

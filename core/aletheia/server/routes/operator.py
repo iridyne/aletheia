@@ -339,23 +339,6 @@ class OperatorExtensionEnableRequest(BaseModel):
     session_id: str | None = None
 
 
-class OperatorDecisionCreate(BaseModel):
-    task_id: str | None = None
-    session_id: str | None = None
-    title: str
-    content: Any
-
-
-class OperatorCommandIntentCreate(BaseModel):
-    task_id: str | None = None
-    session_id: str | None = None
-    command_name: str
-    user_input: str | None = None
-    classification: str | None = None
-    summary: str | None = None
-    parameters: dict[str, Any] | list[Any] | None = None
-
-
 class OperatorInternalCommandRequest(BaseModel):
     session_id: str | None = None
     user_input: str | None = None
@@ -487,32 +470,6 @@ def _write_active_branch_selection(
     if heartbeat is None:
         raise HTTPException(500, "Active branch write failed")
     return _apply_stale_status(heartbeat)
-
-
-def _create_typed_artifact(
-    *,
-    artifact_type: str,
-    title: str,
-    content: Any,
-    task_id: str | None,
-    session_id: str | None,
-) -> dict[str, Any]:
-    artifact_id = create_artifact(
-        task_id=task_id,
-        session_id=session_id,
-        artifact_type=artifact_type,
-        title=title,
-        content=content,
-    )
-    artifacts = list_artifacts(
-        task_id=task_id,
-        session_id=session_id,
-        limit=200,
-    )
-    artifact = next((item for item in artifacts if item["id"] == artifact_id), None)
-    if artifact is None:
-        raise HTTPException(500, "Artifact write failed")
-    return artifact
 
 
 def _resolve_context_query(
@@ -1235,45 +1192,6 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
     return result.model_dump()
 
 
-@router.post("/internal/decisions")
-def operator_create_decision(payload: OperatorDecisionCreate):
-    return _create_typed_artifact(
-        artifact_type="operator_decision",
-        title=payload.title,
-        content=payload.content,
-        task_id=payload.task_id,
-        session_id=payload.session_id,
-    )
-
-
-@router.post("/internal/repair-decisions")
-def operator_create_repair_decision(payload: OperatorDecisionCreate):
-    return _create_typed_artifact(
-        artifact_type="repair_decision",
-        title=payload.title,
-        content=payload.content,
-        task_id=payload.task_id,
-        session_id=payload.session_id,
-    )
-
-
-@router.post("/internal/command-intents")
-def operator_create_command_intent(payload: OperatorCommandIntentCreate):
-    return _create_typed_artifact(
-        artifact_type="command_intent",
-        title=payload.summary or f"Command intent: {payload.command_name}",
-        content={
-            "command_name": payload.command_name,
-            "user_input": payload.user_input,
-            "classification": payload.classification,
-            "summary": payload.summary,
-            "parameters": payload.parameters or {},
-        },
-        task_id=payload.task_id,
-        session_id=payload.session_id,
-    )
-
-
 @router.post("/internal/commands/execute")
 async def operator_execute_internal_command(payload: OperatorExecuteCommandRequest):
     return await _execute_internal_command(
@@ -1284,11 +1202,6 @@ async def operator_execute_internal_command(payload: OperatorExecuteCommandReque
             parameters=payload.parameters,
         ),
     )
-
-
-@router.post("/internal/commands/{command_name}")
-async def operator_internal_command(command_name: str, payload: OperatorInternalCommandRequest):
-    return await _execute_internal_command(command_name, payload)
 
 
 @router.post("/internal/context/query")

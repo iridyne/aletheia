@@ -179,8 +179,9 @@ async def test_operator_internal_typed_command_executes_with_existing_registry_a
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
-            "/api/operator/internal/commands/create_diagnostic_todo",
+            "/api/operator/internal/commands/execute",
             json={
+                "command_name": "create_diagnostic_todo",
                 "session_id": "diagnostic-session-1",
                 "user_input": "Create a diagnostic todo for stale market data.",
                 "parameters": {
@@ -241,8 +242,9 @@ async def test_operator_internal_typed_command_reports_permission_denial_without
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
-            "/api/operator/internal/commands/create_diagnostic_todo",
+            "/api/operator/internal/commands/execute",
             json={
+                "command_name": "create_diagnostic_todo",
                 "session_id": "diagnostic-session-denied",
                 "user_input": "Create a diagnostic todo for stale market data.",
                 "parameters": {
@@ -391,8 +393,8 @@ async def test_machine_caller_gated_command_is_pending_not_executed(operator_env
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
-            "/api/operator/internal/commands/rerun_failed_agent_task",
-            json={"session_id": "s-rerun", "parameters": {"agent_name": "post_trade_reviewer"}},
+            "/api/operator/internal/commands/execute",
+            json={"command_name": "rerun_failed_agent_task", "session_id": "s-rerun", "parameters": {"agent_name": "post_trade_reviewer"}},
         )
     data = resp.json()
     assert data["permitted"] is True
@@ -416,8 +418,8 @@ async def test_handler_error_is_recorded_as_failed_not_executed(operator_env):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
-            "/api/operator/internal/commands/explain_agent_run",
-            json={"session_id": "s-missing-run", "parameters": {"run_id": "run-does-not-exist"}},
+            "/api/operator/internal/commands/execute",
+            json={"command_name": "explain_agent_run", "session_id": "s-missing-run", "parameters": {"run_id": "run-does-not-exist"}},
         )
     data = resp.json()
     assert data["permitted"] is True

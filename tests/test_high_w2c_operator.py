@@ -24,7 +24,6 @@ def test_operator_routes_no_blocking_async():
         "operator_command_preview",  # await _preview_operator_command(...)
         "operator_command",  # has awaits
         "operator_execute_internal_command",  # await _execute_internal_command(...)
-        "operator_internal_command",  # await _execute_internal_command(...)
         "operator_llm_session",  # async with awaits
     }
     
