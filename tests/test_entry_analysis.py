@@ -545,3 +545,138 @@ def test_macd_ma_and_trend_labels_at_their_boundaries():
     assert trend_regime(30, 30, 10, "mixed") == "transition"
     assert trend_regime(19.99, 30, 10, "bullish") == "range"
     assert trend_regime(20, 10, 30, "bullish") == "transition"
+
+
+def _structure_bars(count: int, interval_ms: int, cutoff_ms: int, instant, *,
+                    closes: dict[int, float] | None = None, lows: dict[int, float] | None = None) -> list[dict]:
+    """Closed bars ranging at 100 (low 99.5, high 100.5) with chosen closes and wick lows."""
+    bars = []
+    for index in range(count):
+        close = (closes or {}).get(index, 100.0)
+        bars.append({
+            "ts": cutoff_ms - (count - index) * interval_ms, "open": close,
+            "high": close + 0.5, "low": (lows or {}).get(index, close - 0.5), "close": close,
+            "volume": 10.0, "provider": "fixture", "exchange": "bitget", "market_type": "perp",
+            "first_persisted_at": instant(0), "last_mutated_at": instant(0),
+        })
+    return bars
+
+
+def _structure_context(windows: dict[str, dict], candidate_price: float) -> EntryAnalysisContext:
+    from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, build_entry_analysis_context
+
+    cutoff_ms = 1_000 * 4 * 3600 * 1000
+    instant = lambda value: datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+    interval = {"4h": 4 * 3600 * 1000, "1h": 3600 * 1000, "15m": 15 * 60 * 1000}
+    generation, candidate = _planner_inputs(instant)
+    candidate["entry_price_usd"] = candidate_price
+    return build_entry_analysis_context(
+        generation, candidate, {},
+        {tf: _structure_bars(ENTRY_WINDOW_BARS[tf], interval[tf], cutoff_ms, instant, **spec)
+         for tf, spec in windows.items()},
+        cutoff_at=datetime.fromtimestamp(cutoff_ms / 1000, tz=timezone.utc),
+        candidate_detected_at=instant(2), positions=[],
+    )
+
+
+# A 15m range whose one swing low (98.0, bar 60) price later closed through:
+# the last 16 bars close at 97.5. The 1h window holds a wick low at 95.0 that
+# every later 1h close stays above.
+_BROKEN_15M = {"lows": {60: 98.0}, "closes": {i: 97.5 for i in range(80, 96)}}
+_HELD_1H = {"lows": {30: 95.0}}
+
+
+def _invalidation_prices(context: EntryAnalysisContext) -> dict[float, str]:
+    return {
+        anchor.price: anchor.timeframe for anchor in context.anchors
+        if anchor.directional_role in {"invalidation_candidate", "both"}
+    }
+
+
+def test_long_does_not_offer_a_15m_low_price_has_broken_below():
+    """#3850: roles came from swing type alone, so a long was offered the 15m low
+    price had already closed through (216 of 217 wrong-side generations)."""
+    context = _structure_context({"15m": _BROKEN_15M, "1h": _HELD_1H}, candidate_price=97.5)
+
+    assert 98.0 not in _invalidation_prices(context)
+    assert context.market_structure["15m"]["swings"][0]["price"] == 98.0  # the fact itself remains
+
+
+def test_long_offers_the_correct_side_1h_low_as_invalidation():
+    context = _structure_context({"15m": _BROKEN_15M, "1h": _HELD_1H}, candidate_price=97.5)
+
+    assert _invalidation_prices(context) == {95.0: "1h"}
+    anchor = next(item for item in context.anchors if item.price == 95.0)
+    assert anchor.kind == "confirmed_swing" and anchor.directional_role == "invalidation_candidate"
+    assert anchor.zone is not None and (anchor.zone.low, anchor.zone.high, anchor.zone.touches) == (95.0, 95.0, 1)
+    view: dict[str, Any] = entry_model_view(context)
+    assert {"timeframe": "1h", "zone": {"low": 95.0, "high": 95.0, "touches": 1}}.items() <= next(
+        item for item in view["anchors"] if item["anchor_id"] == anchor.anchor_id
+    ).items()
+
+
+def test_a_low_closed_through_then_reclaimed_is_still_breached():
+    """Price back above the level is not enough: a close beyond it broke it."""
+    closes = {70: 97.0, 71: 97.0}
+    context = _structure_context({"15m": {"lows": {60: 98.0}, "closes": closes}}, candidate_price=100.0)
+
+    assert 98.0 not in _invalidation_prices(context)
+
+
+def test_short_offers_only_highs_above_price():
+    from aletheia.trading.entry_analysis import structural_anchors
+
+    def section(kind: str, price: float, known: int) -> dict:
+        return {"id": f"{kind}:{price}", "kind": kind, "price": price, "known_at_ms": known}
+
+    bars = [{"ts": i * 900_000, "close": 100.0} for i in range(4)]
+    anchors = structural_anchors(
+        "bitget", "BTC/USDT", "perp", "short",
+        {"15m": {"bars": bars}},
+        {"15m": {"availability": "available", "atr14": 1.0, "geometry_fingerprint": "g",
+                 "swings": [section("high", 103.0, 0), section("high", 99.0, 0), section("low", 97.0, 0)],
+                 "events": []}},
+        (100.0,),
+    )
+
+    assert {(a.price, a.directional_role) for a in anchors} == {
+        (103.0, "invalidation_candidate"), (97.0, "entry_candidate"),
+    }
+
+
+def test_nearby_same_timeframe_levels_merge_into_one_band():
+    """Lows within 0.5 x ATR14(1h) of the band's first level are one band; the
+    anchor price is the band's outer (lowest) edge, so the stop clears it."""
+    context = _structure_context(
+        {"15m": {}, "1h": {"lows": {20: 95.3, 26: 95.0, 32: 93.0}}}, candidate_price=100.0,
+    )
+
+    bands = sorted(
+        (a.price, a.zone.low, a.zone.high, a.zone.touches) for a in context.anchors
+        if a.directional_role == "invalidation_candidate" and a.zone is not None
+    )
+    assert bands == [(93.0, 93.0, 93.0, 1), (95.0, 95.0, 95.3, 2)]
+    merged = next(a for a in context.anchors if a.price == 95.0)
+    assert len(merged.source_fact_refs) == 2
+
+
+def test_registry_is_bounded_by_proximity_and_keeps_pinned_anchors():
+    from aletheia.trading.entry_analysis import _MAX_ANCHORS, select_anchors
+
+    reference = _anchor("candidate_reference", 100.0, "candidate:c1")
+    near = [_anchor("broken_structure_level", 100.0 - step * 0.1, f"near:{step}") for step in range(1, _MAX_ANCHORS)]
+    far = [_anchor("broken_structure_level", 50.0 + step, f"far:{step}") for step in range(5)]
+
+    kept = select_anchors([*far, reference, *near], 100.0)
+
+    assert len(kept) == _MAX_ANCHORS and kept[0] is reference
+    assert {a.source_fingerprint for a in kept[1:]} == {a.source_fingerprint for a in near}
+    with pytest.raises(ValueError, match="anchor_registry_too_large"):
+        _context(tuple([reference, *near, *far]))
+
+
+def test_unset_zone_keeps_frozen_anchor_identity():
+    """Anchors frozen before bands existed carry no zone key; their ID must not move."""
+    anchor = _anchor("confirmed_swing", 100.0, "swing:1")
+    assert "zone" not in anchor.model_dump(mode="json")
+    assert EntryAnchor.model_validate(anchor.model_dump(mode="json")).anchor_id == anchor.anchor_id

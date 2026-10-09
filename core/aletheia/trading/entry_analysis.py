@@ -29,6 +29,25 @@ def fingerprint(value: object) -> str:
 # with one prior histogram; 1h=50 is the EMA50/SMA50 minimum (#3785).
 ENTRY_WINDOW_BARS = {"4h": 35, "1h": 50, "15m": 96}
 
+# Entry anchor registry (#3850 item 5). Structural levels come from every admitted
+# timeframe; same-timeframe levels of one class merge into one band; invalidation
+# candidates must sit on the correct, unbroken side of price; the registry is then
+# bounded by proximity to price, because higher-timeframe levels are older by
+# construction and a recency cap evicts exactly them.
+_ZONE_MERGE_ATR = 0.5
+_MAX_ANCHORS = 26
+# The Candidate's own price reference and the compiled breakout level: kept
+# regardless of proximity.
+_PINNED_ANCHOR_KINDS = frozenset({"candidate_reference", "causal_breakout"})
+_INVALIDATION_ROLES = frozenset({"invalidation_candidate", "both"})
+ANCHOR_REGISTRY_MATERIAL = {
+    "timeframes": tuple(ENTRY_WINDOW_BARS),
+    "zone_merge_atr": _ZONE_MERGE_ATR,
+    "max_anchors": _MAX_ANCHORS,
+    "selection": "pinned-then-proximity/v1",
+    "invalidation_side": "below-long-above-short-no-close-beyond/v1",
+}
+
 
 def _candidate_opportunity_evidence_refs(opportunity: dict[str, Any]) -> tuple[str, ...]:
     refs = list(opportunity.get("primary_evidence_refs") or ())
@@ -45,6 +64,26 @@ def _aware_utc(value: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
+class AnchorZone(BaseModel):
+    """The support/resistance band one structural anchor stands for (#3850).
+
+    Same-timeframe levels of one class within ``_ZONE_MERGE_ATR x ATR14`` of the
+    band's first level are one band, so the model selects one anchor ID per band.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    low: float
+    high: float
+    touches: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "AnchorZone":
+        if not (math.isfinite(self.low) and math.isfinite(self.high) and 0 < self.low <= self.high):
+            raise ValueError("anchor_zone_invalid")
+        return self
+
+
 class EntryAnchor(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -53,7 +92,7 @@ class EntryAnchor(BaseModel):
     symbol: str = Field(min_length=1)
     market_type: Literal["spot", "perp"]
     kind: Literal["candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"]
-    timeframe: Literal["15m"] = "15m"
+    timeframe: Literal["15m", "1h", "4h"] = "15m"
     price: float
     directional_role: Literal["entry_candidate", "invalidation_candidate", "both"]
     known_at_ms: int = Field(ge=0)
@@ -61,6 +100,9 @@ class EntryAnchor(BaseModel):
     source_fingerprint: str = Field(min_length=1)
     geometry_fingerprint: str | None = None
     aliases: tuple[str, ...] = ()
+    # Absent (not null) when unset, so anchors frozen before bands existed keep
+    # their anchor_id and their EntryAnalysisContext keeps its fingerprint.
+    zone: AnchorZone | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("price")
     @classmethod
@@ -114,7 +156,7 @@ class EntryAnalysisContext(BaseModel):
                 raise ValueError(f"candle_window_{timeframe}_unavailable_with_bars")
             if len(bars) > limit:
                 raise ValueError(f"candle_window_{timeframe}_too_large")
-        if len(self.anchors) > 12:
+        if len(self.anchors) > _MAX_ANCHORS:
             raise ValueError("anchor_registry_too_large")
         if len({anchor.anchor_id for anchor in self.anchors}) != len(self.anchors):
             raise ValueError("duplicate_anchor")
@@ -329,6 +371,7 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
                     "directional_role",
                     "known_at_ms",
                     "source_fact_refs",
+                    "zone",
                 )
             }
             for anchor in data["anchors"]
@@ -435,9 +478,9 @@ def entry_orderbook_available(orderbook: dict | None, cutoff: datetime) -> bool:
 
 
 def entry_causal_windows(
-    venue: str, symbol: str, market_type: str, direction: str,
+    venue: str, symbol: str, market_type: str,
     candle_windows: dict, cutoff: datetime,
-) -> tuple[dict, dict, list[EntryAnchor], list[str]]:
+) -> tuple[dict, dict, list[str]]:
     """Share the Planner's exact causal admission and structure kernel."""
     from aletheia.data.market_structure import (
         CONTRACT_VERSION,
@@ -452,7 +495,6 @@ def entry_causal_windows(
     cutoff_ms = int(cutoff.timestamp() * 1000)
     serialized: dict[str, Any] = {}
     structures: dict[str, Any] = {}
-    anchors: list[EntryAnchor] = []
     fact_refs: list[str] = []
     instrument_id = InstrumentId.from_parts(venue, symbol, market_type)
     for timeframe, limit in ENTRY_WINDOW_BARS.items():
@@ -559,45 +601,89 @@ def entry_causal_windows(
             },
             "fact_refs": section_refs,
         }
-        if timeframe == "15m" and geometry.availability == "available":
-            for item in swings:
-                anchors.append(
-                    EntryAnchor(
-                        venue=venue,
-                        symbol=symbol,
-                        market_type=market_type,
-                        kind="confirmed_swing",
-                        price=item.price,
-                        directional_role=(
-                            "invalidation_candidate"
-                            if (direction == "long" and item.kind == "low")
-                            or (direction == "short" and item.kind == "high")
-                            else "entry_candidate"
-                        ),
-                        known_at_ms=item.known_at_ms,
-                        source_fact_refs=(item.id,),
-                        source_fingerprint=fingerprint(asdict(item)),
-                        geometry_fingerprint=geometry.geometry_fingerprint,
-                        aliases=("price_action", "smc"),
-                    )
-                )
-            for item in events:
-                anchors.append(
-                    EntryAnchor(
-                        venue=venue,
-                        symbol=symbol,
-                        market_type=market_type,
-                        kind="broken_structure_level",
-                        price=item.broken_level,
-                        directional_role="both",
-                        known_at_ms=item.known_at_ms,
-                        source_fact_refs=(item.id, item.broken_swing_id),
-                        source_fingerprint=fingerprint(asdict(item)),
-                        geometry_fingerprint=geometry.geometry_fingerprint,
-                        aliases=("price_action", "smc"),
-                    )
-                )
-    return serialized, structures, anchors, fact_refs
+    return serialized, structures, fact_refs
+
+
+def structural_anchors(
+    venue: str, symbol: str, market_type: str, direction: str,
+    serialized: dict, structures: dict, reference_prices: tuple[float, ...],
+) -> list[EntryAnchor]:
+    """Structural S/R bands from every admitted timeframe (#3850 item 5).
+
+    A level can invalidate the trade only on the correct side of every reference
+    price (long: below, short: above) and only while no closed bar of its own
+    timeframe has closed beyond it since it became known. A swing that fails is
+    dropped; a broken-structure level that fails keeps only its entry role.
+    Surviving levels of one class merge into bands whose anchor price is the
+    band's outer edge on that role's side.
+    """
+    from aletheia.data.providers import timeframe_ms
+
+    long = direction == "long"
+    anchors: list[EntryAnchor] = []
+    for timeframe in ENTRY_WINDOW_BARS:
+        section = structures.get(timeframe) or {}
+        if section.get("availability") != "available":
+            continue
+        interval = timeframe_ms(timeframe)
+        bars = serialized[timeframe]["bars"]
+
+        def holds(level: float, known_at_ms: int, bars=bars, interval=interval) -> bool:
+            closes = [float(bar["close"]) for bar in bars if bar["ts"] + interval > known_at_ms]
+            if long:
+                return level < min(reference_prices) and all(close >= level for close in closes)
+            return level > max(reference_prices) and all(close <= level for close in closes)
+
+        classes: dict[tuple[str, str], list[tuple[float, dict, tuple[str, ...]]]] = {}
+        for swing in section["swings"]:
+            invalidates = swing["kind"] == ("low" if long else "high")
+            if invalidates and not holds(swing["price"], swing["known_at_ms"]):
+                continue
+            role = "invalidation_candidate" if invalidates else "entry_candidate"
+            classes.setdefault(("confirmed_swing", role), []).append((swing["price"], swing, (swing["id"],)))
+        for event in section["events"]:
+            role = "both" if holds(event["broken_level"], event["known_at_ms"]) else "entry_candidate"
+            classes.setdefault(("broken_structure_level", role), []).append(
+                (event["broken_level"], event, (event["id"], event["broken_swing_id"]))
+            )
+        width = _ZONE_MERGE_ATR * float(section["atr14"])
+        for (kind, role), levels in classes.items():
+            bands: list[list[tuple[float, dict, tuple[str, ...]]]] = []
+            for level in sorted(levels, key=lambda item: item[0]):
+                if bands and level[0] - bands[-1][0][0] <= width:
+                    bands[-1].append(level)
+                else:
+                    bands.append([level])
+            for band in bands:
+                low, high = band[0][0], band[-1][0]
+                facts = [item[1] for item in band]
+                anchors.append(EntryAnchor.model_validate({
+                    "venue": venue,
+                    "symbol": symbol,
+                    "market_type": market_type,
+                    "kind": kind,
+                    "timeframe": timeframe,
+                    "price": (low if long else high) if role in _INVALIDATION_ROLES else (high if long else low),
+                    "directional_role": role,
+                    "known_at_ms": max(fact["known_at_ms"] for fact in facts),
+                    "source_fact_refs": tuple(ref for item in band for ref in item[2]),
+                    "source_fingerprint": fingerprint(facts[0] if len(facts) == 1 else facts),
+                    "geometry_fingerprint": section["geometry_fingerprint"],
+                    "aliases": ("price_action", "smc"),
+                    "zone": {"low": low, "high": high, "touches": len(band)},
+                }))
+    return anchors
+
+
+def select_anchors(anchors: list[EntryAnchor], price: float) -> tuple[EntryAnchor, ...]:
+    """Pinned anchors first, then structural anchors nearest to price, capped."""
+    pinned = [anchor for anchor in anchors if anchor.kind in _PINNED_ANCHOR_KINDS]
+    rest = sorted(
+        (anchor for anchor in anchors if anchor.kind not in _PINNED_ANCHOR_KINDS),
+        key=lambda anchor: (abs(anchor.price - price), -anchor.known_at_ms, anchor.anchor_id),
+    )
+    return tuple(pinned + rest[: _MAX_ANCHORS - len(pinned)])
+
 
 def planning_structure_material(structures: dict) -> dict | None:
     """Only the latest confirmed 15m high, low and break can requalify a thesis.
@@ -777,8 +863,15 @@ def build_entry_analysis_context(
         or candidate.get("scanner_direction") != generation.get("direction")
     ):
         raise ValueError("candidate_generation_identity_mismatch")
-    serialized, structures, anchors, fact_refs = entry_causal_windows(
-        venue, symbol, market_type, str(generation["direction"]), candle_windows, cutoff,
+    serialized, structures, fact_refs = entry_causal_windows(venue, symbol, market_type, candle_windows, cutoff)
+    candidate_price = float(candidate["entry_price_usd"])
+    # Invalidation must hold against the Candidate price and the latest closed
+    # 15m close: price may have moved through a level since detection.
+    reference_prices = (candidate_price, *(
+        float(bar["close"]) for bar in (serialized.get("15m") or {}).get("bars", ())[-1:]
+    ))
+    anchors = structural_anchors(
+        venue, symbol, market_type, str(generation["direction"]), serialized, structures, reference_prices,
     )
     if opportunity_context is not None:
         candidate_detected_at = str(opportunity_context.source["detected_at"])
@@ -798,7 +891,7 @@ def build_entry_analysis_context(
             symbol=symbol,
             market_type=market_type,
             kind="candidate_reference",
-            price=float(candidate["entry_price_usd"]),
+            price=candidate_price,
             directional_role="entry_candidate",
             known_at_ms=detected_ms,
             source_fact_refs=(candidate_ref,),
@@ -841,7 +934,7 @@ def build_entry_analysis_context(
                 )
             )
     unique = {item.anchor_id: item for item in anchors if item.known_at_ms <= cutoff_ms}
-    selected = tuple(sorted(unique.values(), key=lambda item: (item.known_at_ms, item.anchor_id), reverse=True)[:12])
+    selected = select_anchors(list(unique.values()), candidate_price)
     orderbook_available = entry_orderbook_available(orderbook, cutoff)
     # Top-10-level signed size share computed once by the orderbook parser
     # (extensions/data/collectors/microstructure.py) and stored with the book.

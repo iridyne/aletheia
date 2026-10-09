@@ -475,6 +475,17 @@ async def plan_next_candidate(
                             retry_seconds=60,
                         )
                         return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
+                    if not any(anchor.directional_role in {"invalidation_candidate", "both"}
+                               for anchor in context_model.anchors):
+                        # #3850: no correct-side, unbroken level can invalidate this
+                        # direction, so no stop can be grounded. Do not ask the model;
+                        # retry once price or structure has moved.
+                        repo.release_candidate_planning_claim(
+                            generation["id"], owner, "NO_INVALIDATION_STRUCTURE", retry_seconds=60,
+                        )
+                        return {"status": "unavailable", "planning_generation_id": generation["id"],
+                                "reason": "NO_INVALIDATION_STRUCTURE",
+                                "model_invoked": False, "compiler_invoked": False}
                     from aletheia.trading.entry_plan_compiler import require_entry_market_quality
 
                     try:

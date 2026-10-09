@@ -41,14 +41,14 @@ _REGISTRY = (
         ("market_structure", "execution_context"),
         ("candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"),
         ("confirmed_swing", "broken_structure_level"),
-        ("15m",), "grounded-anchor-compiler", None, None,
+        ("15m", "1h", "4h"), "grounded-anchor-compiler", None, None,
     ),
     EntryProfileCapability(
         "grounded-anchor-retrace-reclaim", _SUPPORTED,
         ("market_structure", "execution_context"),
         ("causal_breakout", "confirmed_swing", "broken_structure_level"),
         ("confirmed_swing", "broken_structure_level"),
-        ("15m",), "grounded-anchor-compiler", "anchor-retrace-reclaim", 2_000,
+        ("15m", "1h", "4h"), "grounded-anchor-compiler", "anchor-retrace-reclaim", 2_000,
     ),
 )
 

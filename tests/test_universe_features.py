@@ -807,7 +807,7 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         cutoff = datetime.now(timezone.utc)
         windows = {tf: repo.get_ohlcv_candles("ETH/USDT", tf, n, "okx", market, include_provenance=True)
                    for tf, n in ENTRY_WINDOW_BARS.items()}
-        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", windows, cutoff)
+        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, windows, cutoff)
         assert all(window["availability"] == "available" for window in admitted.values())
         repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=NULL, last_mutated_at=NULL WHERE exchange=? AND symbol=? AND market_type=?",
                            ("okx", "ETH/USDT", market))
@@ -817,7 +817,7 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         )
         assert repeated["feature_snapshot_id"] == feature["feature_snapshot_id"]
         recovered = repo.get_ohlcv_candles("ETH/USDT", "15m", 96, "okx", market, include_provenance=True)
-        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", {"15m": recovered}, datetime.now(timezone.utc))
+        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, {"15m": recovered}, datetime.now(timezone.utc))
         assert admitted["15m"]["availability"] == "available"
         assert all(datetime.fromisoformat(bar["first_persisted_at"]) >= cutoff for bar in recovered)
         current_id = features.persist_feature_snapshot_for_emission(repeated)

@@ -3452,7 +3452,7 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
         rows = get_ohlcv_candles(candidate["symbol"], "15m", 96, candidate["venue"],
             candidate["market_type"], int(cutoff.timestamp()*1000) - 900_000 + 1, include_provenance=True)
         book = latest_orderbook(candidate["symbol"], candidate["venue"], candidate["market_type"])
-    windows, structures, _, _ = entry_causal_windows(*instrument, candidate["scanner_direction"], {"15m": rows}, cutoff)
+    windows, structures, _ = entry_causal_windows(instrument[0], instrument[1], instrument[2], {"15m": rows}, cutoff)
     material = planning_structure_material(structures)
     if material is None:
         return None

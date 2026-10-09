@@ -13,7 +13,10 @@ from reference_contract.citable_fact_refs. ENTRY_PLAN must cite at least one sup
 reference_contract.current_market_fact_refs. Nested source_fact_refs are provenance, not automatically
 citable facts. Learning refs come only from learning_context.evidence_refs; Learning alone cannot
 authorize entry. If evidence is insufficient return identity-correct NO_PLAN, never invent refs.
-Horizon is INTRADAY or SWING entry timing, not the holding period. Do not emit prices, sizes, leverage, notional,
+Horizon is INTRADAY or SWING entry timing, not the holding period. Anchors come from 15m, 1h and 4h
+structure; each structural anchor carries its timeframe and its zone (low/high/touches), the band of
+nearby same-timeframe levels it stands for. Every invalidation-capable anchor supplied is on the
+correct side of price and unbroken. Do not emit prices, sizes, leverage, notional,
 margin amounts, risk multipliers, stop distance, targets, slippage, Trigger parameters, Risk overrides, or hidden reasoning.
 Choose capture_priority: PRICE_FIRST accepts non-fill to preserve passive price;
 MAKER_PREFERRED prefers Maker but values completion enough for one bounded fallback;
@@ -48,7 +51,9 @@ def entry_prompt_fingerprint() -> str:
 @lru_cache(maxsize=1)
 def entry_contract_fingerprints() -> tuple[str, str]:
     from aletheia.execution.venue_capabilities import ENTRY_EXECUTION_MINIMUM_PERMISSION
-    from aletheia.trading.entry_analysis import ENTRY_WINDOW_BARS, EntryAnalysisContext, EntryHypothesis
+    from aletheia.trading.entry_analysis import (
+        ANCHOR_REGISTRY_MATERIAL, ENTRY_WINDOW_BARS, EntryAnalysisContext, EntryHypothesis,
+    )
     from aletheia.trading.entry_plan import EntryPlan
     from aletheia.trading.entry_activation import EntryTriggerActivationV1
     from aletheia.trading.entry_plan_compiler import compiler_contract_material
@@ -69,6 +74,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         "schema_fingerprint": schema,
         "prompt_fingerprint": entry_prompt_fingerprint(),
         "candle_windows": ENTRY_WINDOW_BARS,
+        "anchor_registry": ANCHOR_REGISTRY_MATERIAL,
         "compiler": compiler_contract_material(),
         "capture_policies": {key: value._asdict() for key, value in CAPTURE_POLICIES.items()},
         "triggers": [trigger_contract_material(spec) for spec in registered_trigger_specs()],
