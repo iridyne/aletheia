@@ -407,9 +407,10 @@ def _check_risk_violations() -> dict:
         if not mode:
             return _criterion("risk_clean", "Zero Risk Violations (24h)", 0, 0.09, "execution account unavailable")
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        # The target is the whole 24h window, not its newest rows (#1696).
         rows = db.execute(
             "SELECT violations FROM risk_decisions WHERE created_at >= ? "
-            "AND proposal_execution_mode=? ORDER BY created_at DESC LIMIT 20",
+            "AND proposal_execution_mode=?",
             (cutoff, mode),
         ).fetchall()
         violation_count = 0
@@ -463,20 +464,35 @@ def _check_model_health() -> dict:
         return _criterion("model_health", "LLM Model Available", 50, 0.045, "cannot verify")
 
 
+# Audit facts the reconciliation paths write when they cannot prove exchange state.
+_RECONCILIATION_ERROR_EVENTS = (
+    "order_reconciliation_inconclusive",
+    "proposal_execution_reconciliation_required",
+    "pending_close_reconciliation_required",
+)
+
+
 def _check_reconciliation() -> dict:
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        row = db.execute(
+        placeholders = ", ".join("?" for _ in _RECONCILIATION_ERROR_EVENTS)
+        errors = db.execute(
             "SELECT COUNT(*) FROM audit_events "
-            "WHERE event_type = 'reconciliation_error' AND timestamp >= ?",
-            (cutoff,),
-        ).fetchone()
-        errors = row[0] if row else 0
-        score = 100.0 if errors == 0 else 0.0
-        return _criterion("reconciliation", "No Reconciliation Errors (7d)", score, 0.045,
-                          f"{errors} errors in 7 days" if errors else "clean")
+            f"WHERE event_type IN ({placeholders}) AND timestamp >= ?",
+            (*_RECONCILIATION_ERROR_EVENTS, cutoff),
+        ).fetchone()[0]
+        # An active integrity incident is unresolved whenever it was detected.
+        incidents = db.execute(
+            "SELECT COUNT(*) FROM reconciliation_integrity_incidents WHERE status = 'active'"
+        ).fetchone()[0]
+        score = 100.0 if errors == 0 and incidents == 0 else 0.0
+        return _criterion(
+            "reconciliation", "No Reconciliation Errors (7d)", score, 0.045,
+            f"{errors} errors in 7 days, {incidents} active integrity incidents"
+            if errors or incidents else "clean",
+        )
     except Exception:
         # Same fail-open scorecard 50/100 fallback as `risk_clean`
         # above; log so the underlying `audit_events` query failure or
