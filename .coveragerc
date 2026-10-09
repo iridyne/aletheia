@@ -23,6 +23,7 @@ include =
     */core/aletheia/analytics/profit_gradient_evidence_utils.py
     */core/aletheia/analytics/position_replay.py
     */core/aletheia/analytics/momentum_geometry_replay.py
+    */core/aletheia/analytics/signal_replay.py
     */extensions/counterfactual/filter_replay.py
     */core/aletheia/economics/context_artifacts.py
     */core/aletheia/execution/reconciliation.py

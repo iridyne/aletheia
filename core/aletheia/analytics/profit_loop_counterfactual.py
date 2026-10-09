@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 logger = logging.getLogger("aletheia.analytics.profit_loop_counterfactual")
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
+from .signal_replay import Signal, replay_signal
 
 
 COUNTERFACTUAL_CONTRACT_VERSION = "profit_loop_counterfactual/v1"
@@ -324,14 +325,8 @@ def _rows(fact: Mapping[str, Any]) -> list[dict[str, float]]:
     return rows
 
 
-def _return_pct(direction: str, entry: float, exit_price: float) -> float:
-    return (exit_price - entry) / entry * 100.0 if direction == "long" else (entry - exit_price) / entry * 100.0
-
-
-def _adverse_slippage(price: float, direction: str, bps: float, *, entry: bool) -> float:
-    adverse_up = (direction == "long") == entry
-    multiplier = 1.0 + bps / 10_000.0 if adverse_up else 1.0 - bps / 10_000.0
-    return price * multiplier
+_REPLAY_REASONS = {"time": "fixed_horizon", "invalidation": "hypothesis_invalidation"}
+_EXIT_STATES = {"invalidated": "exit", "not_evaluable": "not_evaluable"}
 
 
 def _simulate(
@@ -355,71 +350,44 @@ def _simulate(
             return {"status": "not_evaluable", "reason": "delay_invalidation_not_evaluable"}
         if delay_state == "invalidated":
             return {"status": "no_trade", "reason": "hypothesis_invalidated_before_delayed_entry"}
-    stop_crossed = any(
-        bar["low"] <= initial_stop if direction == "long" else bar["high"] >= initial_stop for bar in delay_prefix
+    signal = Signal(
+        instrument="",
+        direction=direction,
+        decision_ts=int(rows[0]["ts"]),
+        stop_price=initial_stop,
+        delay_bars=delay_bars,
+        time_barrier_bars=_FIXED_HORIZON_BARS,
+        entry_fee_bps=cost_model.entry_fee_bps,
+        exit_fee_bps=cost_model.exit_fee_bps,
+        slippage_bps=cost_model.slippage_bps_per_side,
+        funding_bps_per_hour=cost_model.funding_bps_per_hour,
+        breakeven_after_r=1.0 if breakeven_after_1r else None,
     )
-    if stop_crossed:
+
+    def exit_check(completed: int) -> str:
+        return _EXIT_STATES.get(evaluator(hypothesis, completed_bars=rows[:completed]), "hold")
+
+    replay = replay_signal(signal, rows, exit_check=exit_check if exit_on_invalidation else None)
+    if replay.exit_reason == "unfilled":
         return {"status": "no_trade", "reason": "frozen_stop_crossed_before_delayed_entry"}
-    raw_entry = rows[delay_bars]["open"]
-    entry = _adverse_slippage(
-        raw_entry,
-        direction,
-        cost_model.slippage_bps_per_side,
-        entry=True,
-    )
-    if (direction == "long" and entry <= initial_stop) or (direction == "short" and entry >= initial_stop):
-        return {"status": "no_trade", "reason": "frozen_stop_crossed_before_delayed_entry"}
-    initial_r = abs(entry - initial_stop)
-    if initial_r <= 0:
-        return {"status": "not_evaluable", "reason": "initial_risk_unavailable"}
-    active_stop = initial_stop
-    exit_price = rows[delay_bars + _FIXED_HORIZON_BARS]["open"]
-    exit_reason = "fixed_horizon"
-    prefix = list(delay_prefix)
-    for index in range(delay_bars, delay_bars + _FIXED_HORIZON_BARS):
-        bar = rows[index]
-        prefix.append(bar)
-        stop_hit = bar["low"] <= active_stop if direction == "long" else bar["high"] >= active_stop
-        if stop_hit:
-            gap_through = bar["open"] < active_stop if direction == "long" else bar["open"] > active_stop
-            exit_price = bar["open"] if gap_through else active_stop
-            exit_reason = "stop"
-            break
-        favorable = bar["high"] >= entry + initial_r if direction == "long" else bar["low"] <= entry - initial_r
-        breakeven_touched = bar["low"] <= entry if direction == "long" else bar["high"] >= entry
-        if breakeven_after_1r and favorable and breakeven_touched:
-            exit_price = entry
-            exit_reason = "breakeven_same_bar_ambiguous"
-            break
-        state = evaluator(hypothesis, completed_bars=prefix)
-        if state == "not_evaluable" and exit_on_invalidation:
-            return {"status": "not_evaluable", "reason": "hypothesis_state_not_evaluable"}
-        if state == "invalidated" and exit_on_invalidation:
-            exit_price = rows[index + 1]["open"]
-            exit_reason = "hypothesis_invalidation"
-            break
-        if breakeven_after_1r and favorable:
-            active_stop = entry
-    exit_price = _adverse_slippage(
-        exit_price,
-        direction,
-        cost_model.slippage_bps_per_side,
-        entry=False,
-    )
-    gross_pct = _return_pct(direction, entry, exit_price)
-    held_bars = max(1, len(prefix) - delay_bars)
-    explicit_cost_pct = (
-        cost_model.entry_fee_bps + cost_model.exit_fee_bps + cost_model.funding_bps_per_hour * held_bars / 60.0
-    ) / 100.0
+    if replay.status != "evaluated":
+        reason = replay.exit_reason
+        return {
+            "status": "not_evaluable",
+            "reason": "hypothesis_state_not_evaluable" if reason == "exit_check_not_evaluable" else reason,
+        }
+    reason = _REPLAY_REASONS.get(replay.exit_reason, replay.exit_reason)
+    if "breakeven_same_bar" in replay.ambiguity:
+        reason = "breakeven_same_bar_ambiguous"
     return {
         "status": "evaluated",
-        "reason": exit_reason,
-        "entry_price": entry,
-        "exit_price": exit_price,
-        "held_bars": held_bars,
-        "gross_return_pct": gross_pct,
-        "explicit_cost_pct": explicit_cost_pct,
-        "net_return_pct": gross_pct - explicit_cost_pct,
+        "reason": reason,
+        "entry_price": replay.entry_price,
+        "exit_price": replay.exit_price,
+        "held_bars": replay.held_bars,
+        "gross_return_pct": replay.gross_return_pct,
+        "explicit_cost_pct": replay.explicit_cost_pct,
+        "net_return_pct": replay.net_return_pct,
         "slippage_embedded_in_gross": True,
         "pessimistic_same_bar_ordering": True,
     }
