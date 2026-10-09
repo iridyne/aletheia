@@ -251,6 +251,14 @@ def _insert_entry_chain(
         created_at=entry_at,
     )
     repo.insert_trade_proposal(proposal)
+    # An approved native decision always carries its policy identity (#1911).
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+
+    try:
+        resolved = resolve_risk_policy(AletheiaConfig(), execution_mode)
+    except UnknownRiskExecutionMode:
+        resolved = None
     decision = RiskDecision(
         id=f"risk-{position_id}",
         proposal_id=proposal.id,
@@ -260,9 +268,19 @@ def _insert_entry_chain(
         decision_role="authoritative",
         evaluated_quantity=quantity,
         proposal_commit_hash=proposal.commit_hash,
+        risk_mode=resolved.mode if resolved else None,
+        policy_id=resolved.policy.policy_id if resolved else None,
+        policy_revision=resolved.policy.revision if resolved else None,
+        policy_hash=resolved.policy_hash if resolved else None,
         created_at=entry_at,
     )
     repo.insert_risk_decision(decision)
+    if resolved:
+        repo.insert_risk_policy_snapshot(
+            policy_hash=resolved.policy_hash, risk_mode=resolved.mode,
+            policy_id=resolved.policy.policy_id, policy_revision=resolved.policy.revision,
+            policy_json=resolved.policy.model_dump_json(),
+        )
     repo.insert_order(Order(
         id=order_id,
         proposal_id=proposal.id,
