@@ -200,6 +200,7 @@ def _exit_fee_from_report(position: dict, report) -> tuple[float, dict]:
     from aletheia.execution.exchange_materialization import _fill_totals
     from aletheia.portfolio.pnl import fee_in_quote
     from aletheia.uta.compat import utc
+    from aletheia.uta.identity import IdentityRelation, identity_relation
     from aletheia.uta.models import FillListReport, ReadCompleteness, UTAAccountIdentity
 
     report = FillListReport.model_validate(report.model_dump())
@@ -207,7 +208,8 @@ def _exit_fee_from_report(position: dict, report) -> tuple[float, dict]:
     identity = UTAAccountIdentity.model_validate_json((entry_order or {}).get("uta_account_identity_json") or "")
     instrument = report.scope.instrument
     if (
-        report.completeness is not ReadCompleteness.COMPLETE or report.identity != identity
+        report.completeness is not ReadCompleteness.COMPLETE
+        or identity_relation(identity, report.identity) is not IdentityRelation.SAME
         or identity.execution_mode != position["execution_mode"] or instrument is None
         or instrument.canonical_symbol != position["symbol"]
         or instrument.market_type != position["market_type"]

@@ -2692,6 +2692,7 @@ def _tpsl_fill_check_body():
             if not account_candidates:
                 return {"materialized": [], "errors": []}
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
+            from aletheia.uta.identity import IdentityRelation, identity_relation
             reader_identity = _configured_identity(execution_mode)
             if reader_identity is None:
                 # No proven account for this mode: touch the venue for nothing and
@@ -2736,7 +2737,10 @@ def _tpsl_fill_check_body():
                             )
                             if not isinstance(history, NativeProtectionHistory):
                                 raise ValueError("native_protection_history_invalid")
-                            if history.identity != reader_identity or history.plan_order_id != str(plan_order_id):
+                            if (
+                                identity_relation(reader_identity, history.identity) is not IdentityRelation.SAME
+                                or history.plan_order_id != str(plan_order_id)
+                            ):
                                 raise ValueError("native_protection_history_identity_mismatch")
                             execute_ids = set(history.execute_order_ids)
                             if len(execute_ids) != 1:
@@ -2786,7 +2790,10 @@ def _tpsl_fill_check_body():
                                 market_type=pos["market_type"],
                                 identity=reader_identity,
                             )
-                            if _configured_identity(execution_mode) != reader_identity:
+                            current_identity = _configured_identity(execution_mode)
+                            if current_identity is None or identity_relation(
+                                reader_identity, current_identity
+                            ) is not IdentityRelation.SAME:
                                 raise ValueError("uta_account_identity_mismatch")
                             result = materialize_bitget_close(
                                 close_order["id"], private_fills

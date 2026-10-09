@@ -1004,7 +1004,23 @@ def test_late_fee_rejects_conflicting_or_incomplete_observation(field, value):
     assert list_outcome_hook_jobs(position_id=position.id) == []
 
 
-@pytest.mark.parametrize("fault", ("account", "scope", "partial", "time", "duplicate", "known_fee"))
+def test_late_fee_accepts_same_account_after_ccxt_upgrade():
+    """§3.0b: a library upgrade alone is provenance, not a different account."""
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
+
+    position, report = _seed_late_exit_fee()
+    identity = report.identity.model_copy(update={"ccxt_version": "4.5.99", "adapter_version": "2"})
+    report = report.model_copy(update={
+        "identity": identity,
+        "fills": tuple(fill.model_copy(update={"identity": identity}) for fill in report.fills),
+    })
+    before = repo.get_position(position.id)
+    assert before is not None
+    assert materialize_exchange_close_costs(before, fee_report=report)["status"] == "settled"
+    assert (repo.get_position(position.id) or {})["exit_fee"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("fault", ("account", "generation", "scope", "partial", "time", "duplicate", "known_fee"))
 def test_late_fee_preserves_account_scope_and_original_known_cost(fault):
     from decimal import Decimal
     from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
@@ -1012,8 +1028,9 @@ def test_late_fee_preserves_account_scope_and_original_known_cost(fault):
 
     position, report = _seed_late_exit_fee(missing_component="currency" if fault == "known_fee" else "amount")
     before = repo.get_position(position.id)
-    if fault == "account":
-        identity = report.identity.model_copy(update={"account_id": "other-account"})
+    if fault in {"account", "generation"}:
+        change = {"account_id": "other-account"} if fault == "account" else {"credential_generation": 2}
+        identity = report.identity.model_copy(update=change)
         report = report.model_copy(update={
             "identity": identity,
             "fills": tuple(fill.model_copy(update={"identity": identity}) for fill in report.fills),
