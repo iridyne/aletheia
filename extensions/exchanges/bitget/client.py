@@ -204,6 +204,32 @@ class BitgetClient:
         finally:
             await close_ccxt(exchange, session)
 
+    async def get_open_tpsl_orders(self, *, symbol: str) -> list[dict]:
+        """Every unfilled UTA strategy (SL/TP) order for one USDT-futures symbol.
+
+        An entry's attached preset stop/take-profit lives here; one row may carry
+        both ``stopLoss`` and ``takeProfit`` under a single strategy ``orderId``.
+        The UTA trigger response's ``data`` is a bare list (no ``{list, cursor}``).
+        """
+        exchange, session = self._make_exchange()
+        try:
+            payload = await exchange.privateUtaGetV3TradeUnfilledStrategyOrders(
+                {"category": "USDT-FUTURES", "symbol": symbol}
+            )
+        finally:
+            await close_ccxt(exchange, session)
+        if payload.get("code") != "00000":
+            raise RuntimeError("Bitget UTA unfilled strategy orders rejected")
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            raise ValueError("Bitget UTA unfilled strategy orders malformed")
+        # ponytail: a full page is treated as an incomplete read because the
+        # documented response carries no cursor; add cursor paging once demo
+        # evidence shows the venue's pagination semantics.
+        if len(rows) >= 100:
+            raise RuntimeError("Bitget UTA unfilled strategy orders may be truncated")
+        return rows
+
     async def get_order_fills(
         self,
         *,

@@ -121,3 +121,100 @@ def test_funding_recovery_has_no_venue_client_compatibility_layer():
 
     assert not hasattr(settlement, "_client_for_mode")
     assert not hasattr(settlement, "_UTAFundingProjection")
+
+
+class _FakeOpenStrategyExchange:
+    """CCXT transport double for /api/v3/trade/unfilled-strategy-orders."""
+
+    def __init__(self, response):
+        self._response = response
+        self.calls: list[dict] = []
+
+    def set_sandbox_mode(self, enabled):
+        return None
+
+    async def privateUtaGetV3TradeUnfilledStrategyOrders(self, params):
+        self.calls.append(dict(params))
+        return self._response
+
+
+def _strategy_row(**overrides):
+    # Field set of ccxt 4.5.84's documented UTA trigger response (bitget.py:7053-7076).
+    row = {
+        "orderId": "1330984742276198400", "clientOid": "1330984742276198400",
+        "symbol": "BTCUSDT", "category": "USDT-FUTURES", "qty": "0.01",
+        "posSide": "long", "tpTriggerBy": "market", "slTriggerBy": "mark",
+        "takeProfit": "62000.75", "stopLoss": "59000.25", "tpOrderType": "market",
+        "slOrderType": "market", "tpLimitPrice": "", "slLimitPrice": "",
+        "createdTime": "1753057411736", "updatedTime": "1753057411747",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_get_open_tpsl_orders_reads_uta_strategy_orders_for_one_symbol(monkeypatch):
+    exchange = _FakeOpenStrategyExchange({"code": "00000", "data": [_strategy_row()]})
+    _install_ccxt(monkeypatch, exchange)
+
+    rows = asyncio.run(_client().get_open_tpsl_orders(symbol="BTCUSDT"))
+
+    assert exchange.calls == [{"category": "USDT-FUTURES", "symbol": "BTCUSDT"}]
+    assert rows == [_strategy_row()]
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        ({"code": "40001", "data": []}, RuntimeError),
+        ({"code": "00000", "data": {"list": []}}, ValueError),
+        ({"code": "00000", "data": None}, ValueError),
+        ({"code": "00000", "data": [_strategy_row(orderId=str(i)) for i in range(100)]}, RuntimeError),
+    ],
+    ids=["rejected", "wrong_shape", "missing", "full_page"],
+)
+def test_get_open_tpsl_orders_fails_closed_on_incomplete_reads(monkeypatch, response, error):
+    _install_ccxt(monkeypatch, _FakeOpenStrategyExchange(response))
+    with pytest.raises(error):
+        asyncio.run(_client().get_open_tpsl_orders(symbol="BTCUSDT"))
+
+
+def _native_reader(monkeypatch, rows):
+    from extensions.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+    from tests.specs.uta_private_history import _identity
+
+    exchange = _FakeOpenStrategyExchange({"code": "00000", "data": rows})
+    _install_ccxt(monkeypatch, exchange)
+    return BitgetNativeProtectionReader(_identity("bitget_demo")), exchange
+
+
+def test_open_protection_splits_a_shared_strategy_order_into_two_legs(monkeypatch):
+    from decimal import Decimal
+
+    reader, exchange = _native_reader(monkeypatch, [
+        _strategy_row(),
+        _strategy_row(orderId="OTHER-SYMBOL", symbol="ETHUSDT"),
+        _strategy_row(orderId="SL-ONLY", posSide="short", takeProfit="", stopLoss="61000", qty=""),
+    ])
+    snapshot = asyncio.run(reader.get_open_protection(symbol="BTC/USDT", market_type="usdt_futures"))
+
+    assert exchange.calls == [{"category": "USDT-FUTURES", "symbol": "BTCUSDT"}]
+    assert snapshot.identity == reader.identity
+    assert [(leg.plan_order_id, leg.kind, leg.position_side, leg.trigger_price, leg.quantity) for leg in snapshot.legs] == [
+        ("1330984742276198400", "sl", "long", Decimal("59000.25"), Decimal("0.01")),
+        ("1330984742276198400", "tp", "long", Decimal("62000.75"), Decimal("0.01")),
+        ("SL-ONLY", "sl", "short", Decimal("61000"), None),
+    ]
+
+
+@pytest.mark.parametrize("override", [{"posSide": ""}, {"posSide": "net"}, {"orderId": ""}, {"stopLoss": "abc"}])
+def test_open_protection_malformed_row_voids_the_whole_read(monkeypatch, override):
+    reader, _exchange = _native_reader(monkeypatch, [_strategy_row(), _strategy_row(**override)])
+    with pytest.raises(ValueError):
+        asyncio.run(reader.get_open_protection(symbol="BTC/USDT", market_type="usdt_futures"))
+
+
+def test_open_protection_is_futures_only(monkeypatch):
+    reader, exchange = _native_reader(monkeypatch, [])
+    with pytest.raises(ValueError, match="native_protection_market_unsupported"):
+        asyncio.run(reader.get_open_protection(symbol="BTC/USDT", market_type="spot"))
+    assert exchange.calls == []

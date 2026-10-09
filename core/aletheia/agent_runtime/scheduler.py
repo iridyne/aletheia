@@ -2631,18 +2631,22 @@ def _run_tpsl_fill_check():
         return None
 
 
-def _configured_identity(execution_mode: str):
-    """The account the current configuration would authenticate as, or None."""
-    from aletheia.uta.manager import build_uta_registry
+def _shared_tpsl_close_reason(position: dict, fills) -> str:
+    """Attribute a trigger of a strategy order carrying both SL and TP.
 
-    return next(
-        (
-            identity
-            for identity in build_uta_registry(execution_modes=(execution_mode,)).configured_identities()
-            if identity.execution_mode == execution_mode
-        ),
-        None,
-    )
+    ponytail: nearest-trigger heuristic on the fill VWAP; replace it with the
+    venue's own tp/sl discriminator once demo samples show the child row has one.
+    Slippage beyond half the stop-to-target distance misattributes.
+    """
+    quantity = sum(float(fill.quantity) for fill in fills)
+    if quantity <= 0:
+        raise ValueError("native_protection_fill_evidence_missing")
+    vwap = sum(float(fill.price) * float(fill.quantity) for fill in fills) / quantity
+    stop = position.get("stop_price")
+    target = position.get("take_profit_price")
+    if stop is None or target is None:
+        return "stop_loss" if stop is not None else "take_profit"
+    return "stop_loss" if abs(vwap - float(stop)) <= abs(vwap - float(target)) else "take_profit"
 
 
 def _tpsl_fill_check_body():
@@ -2658,9 +2662,22 @@ def _tpsl_fill_check_body():
             claim_observed_tpsl_close, materialize_bitget_close,
         )
         from aletheia.uta.manager import (
-            create_native_protection_reader, native_protection_execution_modes,
+            configured_identity, create_native_protection_reader,
+            native_protection_execution_modes,
         )
         from aletheia.uta.models import NativeProtectionHistory
+        from aletheia.portfolio.native_protection import verify_native_protection
+
+        # Read back entry-attached venue protection first, so the plan scan below
+        # sees ids written this cycle (execution_contract.md §4, #3848).
+        try:
+            protection_errors = list(verify_native_protection()["errors"])
+        except Exception as exc:
+            logger.warning("native protection verification failed (%s)", type(exc).__name__)
+            protection_errors = [{
+                "execution_mode": None, "position_id": None,
+                "plan_order_id": None, "error_type": type(exc).__name__,
+            }]
 
         positions = list_all_open_positions()
         supported_modes = native_protection_execution_modes()
@@ -2681,7 +2698,11 @@ def _tpsl_fill_check_body():
                 candidates.append((p, tpsl_ids))
 
         if not candidates:
-            return {"materialized": [], "failed_count": 0, "errors": []}
+            return {
+                "materialized": [],
+                "failed_count": len(protection_errors),
+                "errors": protection_errors,
+            }
 
         grouped = {
             mode: [item for item in candidates if item[0]["execution_mode"] == mode]
@@ -2693,7 +2714,7 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
             from aletheia.uta.identity import IdentityRelation, identity_relation
-            reader_identity = _configured_identity(execution_mode)
+            reader_identity = configured_identity(execution_mode)
             if reader_identity is None:
                 # No proven account for this mode: touch the venue for nothing and
                 # claim nothing. Reported so the job goes red rather than quiet.
@@ -2725,10 +2746,14 @@ def _tpsl_fill_check_body():
             errors = []
             try:
                 for pos, tpsl_ids in account_candidates:
-                    for plan_type, plan_order_id in (
-                        ("sl", tpsl_ids.get("sl")),
-                        ("tp", tpsl_ids.get("tp")),
-                    ):
+                    plans = (
+                        # One strategy order can carry both legs of an entry
+                        # preset; its single trigger must be claimed once.
+                        (("shared", tpsl_ids["sl"]),)
+                        if tpsl_ids.get("sl") and tpsl_ids.get("sl") == tpsl_ids.get("tp")
+                        else (("sl", tpsl_ids.get("sl")), ("tp", tpsl_ids.get("tp")))
+                    )
+                    for plan_type, plan_order_id in plans:
                         if not plan_order_id:
                             continue
                         try:
@@ -2749,6 +2774,7 @@ def _tpsl_fill_check_body():
                             reason = (
                                 "stop_loss" if plan_type == "sl" else "take_profit"
                             )
+                            private_fills = None
                             # The discovered child ID alone is not account proof.
                             # Nothing durable may be written for an execute Order
                             # this account cannot be shown to own: the claim sets
@@ -2772,6 +2798,14 @@ def _tpsl_fill_check_body():
                                 raise ValueError(
                                     "uta_account_order_membership_unproven"
                                 )
+                            if plan_type == "shared":
+                                private_fills = await client.get_order_fill_reports(
+                                    order_id=execute_order_id,
+                                    symbol=pos["symbol"],
+                                    market_type=pos["market_type"],
+                                    identity=reader_identity,
+                                )
+                                reason = _shared_tpsl_close_reason(pos, private_fills)
                             close_order, _ = claim_observed_tpsl_close(
                                 pos["id"],
                                 execute_order_id=execute_order_id,
@@ -2784,13 +2818,14 @@ def _tpsl_fill_check_body():
                             # endpoint: complete, and with no time window to get
                             # wrong. Re-resolve once more so nothing is persisted
                             # across a configuration change.
-                            private_fills = await client.get_order_fill_reports(
-                                order_id=execute_order_id,
-                                symbol=pos["symbol"],
-                                market_type=pos["market_type"],
-                                identity=reader_identity,
-                            )
-                            current_identity = _configured_identity(execution_mode)
+                            if private_fills is None:
+                                private_fills = await client.get_order_fill_reports(
+                                    order_id=execute_order_id,
+                                    symbol=pos["symbol"],
+                                    market_type=pos["market_type"],
+                                    identity=reader_identity,
+                                )
+                            current_identity = configured_identity(execution_mode)
                             if current_identity is None or identity_relation(
                                 reader_identity, current_identity
                             ) is not IdentityRelation.SAME:
@@ -2823,7 +2858,7 @@ def _tpsl_fill_check_body():
 
         async def _check_all():
             materialized = []
-            errors = []
+            errors = list(protection_errors)
             for execution_mode, account_candidates in grouped.items():
                 try:
                     account_result = await _check_account(

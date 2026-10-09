@@ -1051,17 +1051,23 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
         return False
     if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
         return False
+    # An entry preset can carry SL and TP on one strategy order: cancelling the
+    # stop cancelled the target too, so its id no longer names venue protection.
+    if identifiers.get("tp") == old_stop:
+        identifiers.pop("tp")
     try:
-        new_stop = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
+        identifiers["sl"] = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
     except Exception as exc:
         logger.warning(
             "replace_protective_stop: submit of new stop for %s failed after cancel (%s)",
             position_id, type(exc).__name__,
         )
-        return False
-    identifiers["sl"] = new_stop
+        # The old stop is gone at the venue. Dropping its id lets the native
+        # protection check prove the absence and close (§4) instead of the row
+        # claiming venue protection that no longer exists.
+        identifiers.pop("sl")
     repo.update_open_position_exit_plan(
         position_id,
         exchange_tpsl_order_id=json.dumps(identifiers, sort_keys=True),
     )
-    return True
+    return "sl" in identifiers

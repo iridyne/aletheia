@@ -1490,3 +1490,55 @@ def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch
         "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
         (other.id,),
     ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-11",
+        "pipeline_tpsl_private_materialization",
+        "§4 shared preset strategy order",
+        "L2b",
+        "A trigger of one strategy order carrying both SL and TP is claimed once and "
+        "attributed to the trigger price nearest its private fill VWAP.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(("fill_price", "expected"), [("59010.5", "stop_loss"), ("61990.0", "take_profit")])
+def test_shared_preset_plan_is_claimed_once_by_nearest_trigger(tmp_path, monkeypatch, fill_price, expected):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from extensions.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        "bitget_demo", suffix="shared", plan_ids={"sl": "PRESET-1", "tp": "PRESET-1"},
+    )
+    repo.update_open_position_exit_plan(position.id, stop_price=59000.25, take_profit_price=62000.75)
+    fill_row = {**_private_close_fill("EXEC-PRESET"), "fillPrice": fill_price}
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
+    _patch_evidence_reader(monkeypatch, [fill_row])
+    plan_reads: list[str] = []
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            pass
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            plan_reads.append(order_id)
+            return [{"orderId": order_id, "planStatus": "executed", "executeOrderId": "EXEC-PRESET"}]
+
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
+            return reports([fill_row], identity=identity)
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert plan_reads == ["PRESET-1"]
+    close_orders = db.execute(
+        "SELECT close_reason, status FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
+    ).fetchall()
+    assert [tuple(row) for row in close_orders] == [(expected, "filled")]
+    assert (repo.get_position(position.id) or {}).get("status") == "closed"

@@ -12897,7 +12897,7 @@ export interface components {
             default_take_profit_pct: number;
             /**
              * Exchange Tpsl Enabled
-             * @default false
+             * @default true
              */
             exchange_tpsl_enabled: boolean;
             /**

@@ -370,3 +370,90 @@ def test_gateway_does_not_invent_take_profit_from_config(monkeypatch):
     assert result["status"] == "submitted"
     assert captured[0]["take_profit_price"] is None
     assert position_updates == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-BG-PRESET-06",
+        "pipeline_bitget_preset_protection",
+        "§4 entry-attached protection read-back",
+        "L2b",
+        "The venue ids of an entry's attached SL/TP are read back from the open "
+        "strategy orders and persisted in the place_protection shape, with audit.",
+        status="implemented",
+    )
+)
+def test_entry_preset_ids_are_read_back_and_persisted(tmp_path, monkeypatch):
+    from aletheia.portfolio.native_protection import verify_native_protection
+    from tests.test_bitget_uta_v3_switch import _strategy_row
+    from tests.test_tpsl_native_protection_check import (
+        audit_types, install_venue, record_closes, seed_unverified_position, stored_ids,
+    )
+
+    position_id = seed_unverified_position(tmp_path, monkeypatch)
+    # Bitget returns one strategy order carrying both preset legs.
+    exchange = install_venue(monkeypatch, {"code": "00000", "data": [_strategy_row(orderId="PRESET-1")]})
+    closes = record_closes(monkeypatch)
+
+    result = verify_native_protection()
+
+    assert exchange.calls == [{"category": "USDT-FUTURES", "symbol": "BTCUSDT"}]
+    assert result == {"verified": [position_id], "closed": [], "errors": []}
+    assert stored_ids(position_id) == {"sl": "PRESET-1", "tp": "PRESET-1"}
+    assert audit_types(position_id) == ["native_protection_verified"]
+    assert closes == []
+    # Persisted ids leave the read-back scan: the next cycle reads nothing.
+    exchange.calls.clear()
+    assert verify_native_protection() == {"verified": [], "closed": [], "errors": []}
+    assert exchange.calls == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-BG-PRESET-07",
+        "pipeline_bitget_preset_protection",
+        "§4 verify-or-close",
+        "L2b",
+        "Only a complete venue read showing no stop past the grace window closes the "
+        "Position (protection_absent_closed); an incomplete read never closes or writes.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"code": "00000", "data": []},
+        {"code": "00000", "data": "TP_ONLY"},
+        {"code": "40001", "data": []},
+        {"code": "00000", "data": None},
+        {"code": "00000", "data": "FULL_PAGE"},
+    ],
+    ids=["complete_empty", "complete_tp_only", "rejected", "malformed", "full_page"],
+)
+def test_only_a_complete_read_proves_absence(tmp_path, monkeypatch, response):
+    from aletheia.portfolio.native_protection import verify_native_protection
+    from tests.test_bitget_uta_v3_switch import _strategy_row
+    from tests.test_tpsl_native_protection_check import (
+        audit_types, install_venue, record_closes, seed_unverified_position, stored_ids,
+    )
+
+    position_id = seed_unverified_position(tmp_path, monkeypatch)
+    if response["data"] == "TP_ONLY":
+        response = {"code": "00000", "data": [_strategy_row(stopLoss="")]}
+    elif response["data"] == "FULL_PAGE":
+        response = {"code": "00000", "data": [_strategy_row(orderId=str(i)) for i in range(100)]}
+    install_venue(monkeypatch, response)
+    closes = record_closes(monkeypatch)
+
+    result = verify_native_protection()
+
+    complete = response["code"] == "00000" and isinstance(response["data"], list) and len(response["data"]) < 100
+    if complete:
+        assert closes == [(position_id, "protection_absent_closed", {"decision_source": "native_protection_check"})]
+        assert audit_types(position_id) == ["native_protection_absent"]
+        assert result["closed"] == [position_id]
+    else:
+        assert closes == []
+        assert audit_types(position_id) == []
+        assert len(result["errors"]) == 1
+    assert stored_ids(position_id) == {}

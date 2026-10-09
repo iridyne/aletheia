@@ -125,6 +125,18 @@ def build_uta_registry(
     return _registry_factory(cfg, execution_modes=execution_modes)
 
 
+def configured_identity(execution_mode: str) -> UTAAccountIdentity | None:
+    """The account the current configuration would authenticate as, or None."""
+    return next(
+        (
+            identity
+            for identity in build_uta_registry(execution_modes=(execution_mode,)).configured_identities()
+            if identity.execution_mode == execution_mode
+        ),
+        None,
+    )
+
+
 def funding_history_retention_contract(
     execution_mode: str, *, cfg=None,
 ) -> tuple[int, str]:
