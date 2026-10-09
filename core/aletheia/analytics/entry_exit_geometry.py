@@ -148,9 +148,7 @@ def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
         "net_target_gain": None,
         "net_stop_loss": None,
         "initial_risk_status": "unavailable",
-        "initial_risk_reason": "initial_plan_unavailable",
-        "initial_plan_version": None,
-        "initial_plan_hash": None,
+        "initial_risk_reason": "proposal_snapshot_unverified",
         "initial_stop_price": None,
         "initial_target_price": None,
         "initial_risk_amount": None,
@@ -174,7 +172,7 @@ def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
     result.update(_entry_atr(proposal, geometry))
     history = _plan_history(plans, position)
     result.update(history)
-    initial = _initial_risk(path_row, position, proposal, plans, geometry, db=db)
+    initial = _initial_risk(position, proposal, geometry, db=db)
     result.update(initial)
     result.update(_cost_assumptions(path_row, assignment, state, plans, initial))
     result.update(_path_normalization(path_row, initial))
@@ -438,39 +436,26 @@ def _plan_history(plans: list[dict[str, Any]] | None, position: dict[str, Any] |
 
 
 def _initial_risk(
-    row: dict[str, Any],
     position: dict[str, Any] | None,
     proposal: dict[str, Any] | None,
-    plans: list[dict[str, Any]] | None,
     proposal_geometry: dict[str, Any],
     *,
     db: Any = None,
 ) -> dict[str, Any]:
-    base = {"initial_risk_status": "unavailable", "initial_risk_reason": "initial_plan_unavailable"}
-    if proposal_geometry.get("proposal_geometry_status") != "available":
-        return {**base, "initial_risk_reason": "proposal_snapshot_unverified"}
-    if not plans or position is None or proposal is None:
+    """R = |verified entry fill - Proposal stop| * entry quantity.
+
+    The hash-verified Proposal stop/target is the immutable plan at open; the
+    mutable Position stop moves with trailing and is never consulted.
+    """
+    base = {"initial_risk_status": "unavailable", "initial_risk_reason": "proposal_snapshot_unverified"}
+    if proposal_geometry.get("proposal_geometry_status") != "available" or position is None or proposal is None:
         return base
-    # Version one is independently immutable evidence. Later revision integrity
-    # is reported separately and never retroactively erases verified entry risk.
-    first = plans[0]
-    if first.get("version") != 1 or first.get("position_id") != position.get("id"):
-        return {**base, "initial_risk_reason": "initial_plan_identity_mismatch"}
-    if _plan_payload(first) is None:
-        return {**base, "initial_risk_reason": "initial_plan_json_or_hash_invalid"}
-    opened = _utc(position.get("opened_at"))
-    effective = _utc(first.get("effective_at"))
-    if opened is None or effective != opened:
-        return {**base, "initial_risk_reason": "initial_plan_not_effective_at_entry"}
-    state = _safe_read(repo.get_position_protection_state, position.get("id"), db=db, table="position_protection_state", id_column="position_id")
-    if state is None or _utc(state.get("activated_at")) != opened:
-        return {**base, "initial_risk_reason": "forward_adopted_or_unlinked_initial_plan"}
     order = _safe_read(repo.get_order, position.get("order_id"), db=db, table="orders")
     fill = _entry_fill(position, db=db)
     entry = _positive(position.get("entry_price"))
     quantity = _positive(position.get("quantity"))
-    stop = _positive(first.get("stop_price"))
-    target = _positive(first.get("take_profit_price"))
+    stop = _positive(proposal_geometry.get("proposal_stop_price"))
+    target = _positive(proposal_geometry.get("proposal_target_price"))
     direction = _direction(position.get("direction"))
     if (
         order is None
@@ -500,19 +485,13 @@ def _initial_risk(
         return {**base, "initial_risk_reason": "entry_fill_linkage_mismatch"}
     if not _barriers(direction, entry, stop, target):
         return {**base, "initial_risk_reason": "initial_plan_barriers_invalid"}
-    # Version one must represent the Proposal's entry contract; mutable Position
-    # projections are intentionally not consulted.
-    if not _same(stop, proposal.get("stop_price")) or not _same(target, proposal.get("take_profit")):
-        return {**base, "initial_risk_reason": "initial_plan_proposal_mismatch"}
     risk_amount = abs(entry - stop) * quantity
     realized = _finite(position.get("realized_pnl"))
     if risk_amount <= 0 or realized is None:
         return {**base, "initial_risk_reason": "initial_risk_or_realized_pnl_invalid"}
     return {
         "initial_risk_status": "available",
-        "initial_risk_reason": "verified_version_1_entry_plan",
-        "initial_plan_version": 1,
-        "initial_plan_hash": first.get("plan_hash"),
+        "initial_risk_reason": "verified_proposal_entry_stop",
         "initial_stop_price": stop,
         "initial_target_price": target,
         "initial_risk_amount": risk_amount,

@@ -154,6 +154,19 @@ def test_calculates_only_verified_historical_geometry(monkeypatch):
     assert result["path_ratio_precision"] == "derived_from_rounded_4dp_excursion_pct"
 
 
+def test_exchange_position_net_r_uses_the_verified_proposal_stop(monkeypatch):
+    # Exchange Positions never write the retired Paper barrier's ExitPlan or
+    # protection state; the hash-verified Proposal stop is the stop at open.
+    row, *_ = _evidence(monkeypatch)
+    monkeypatch.setattr(geometry, "_read_plans", lambda _id, **_kwargs: [])
+    monkeypatch.setattr(geometry.repo, "get_position_protection_state", lambda _id: None)
+
+    result = geometry._build_row(row)
+
+    assert result["initial_risk_amount"] == pytest.approx(10.0)
+    assert result["realized_net_r"] == pytest.approx(0.9)
+
+
 def test_proposal_geometry_uses_the_shared_rounded_risk_reward_contract(monkeypatch):
     row, proposal, position, *_ = _evidence(monkeypatch)
     proposal.update(take_profit=112.345, risk_reward=2.47)
@@ -196,8 +209,6 @@ def test_malformed_plan_and_mismatched_cost_contract_do_not_leak_metrics(monkeyp
     result = geometry._build_row(row)
 
     assert result["revision_history_reason"] == "exit_plan_json_or_hash_invalid"
-    assert result["initial_risk_amount"] is None
-    assert result["realized_net_r"] is None
     assert result["round_trip_cost"] is None
     assert result["cost_assumptions_status"] == "unavailable"
 

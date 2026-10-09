@@ -491,7 +491,8 @@ def _hold_duration_buckets(rows) -> list[dict]:
 def _r_multiple_distribution(rows) -> dict:
     """R-Multiple distribution (risk-normalized returns).
 
-    #1256: Only uses frozen verified initial risk from the position plan.
+    #1256: Only uses verified initial risk (entry fill vs the hash-verified
+    Proposal stop, see ``entry_exit_geometry._initial_risk``).
     Rows without verified initial risk are counted as unavailable; 2%-of-notional
     proxy is explicitly removed.
     """
@@ -513,7 +514,7 @@ def _r_multiple_distribution(rows) -> dict:
     unavailable_r_count = 0
 
     def _get_initial_risk_verified(row, db):
-        """Try to get verified initial risk from frozen plan evidence."""
+        """Try to get verified initial risk from the frozen Proposal stop."""
         if db is None:
             return None, "readonly_database_unavailable"
         try:
@@ -532,17 +533,11 @@ def _r_multiple_distribution(rows) -> dict:
                 ).fetchone()
                 if p_row:
                     proposal = dict(p_row)
-            plans_rows = db.execute(
-                "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version ASC",
-                (position_id,),
-            ).fetchall()
-            plans = [dict(r) for r in plans_rows] if plans_rows else None
-
             # Build a minimal geometry dict (we only need proposal_geometry_status)
             # Use a simple proxy: if proposal fields are present, mark available
             from aletheia.analytics.entry_exit_geometry import _proposal_geometry
             geometry = _proposal_geometry(row if isinstance(row, dict) else dict(row), proposal, position, db=db)
-            result = _compute_initial_risk(row if isinstance(row, dict) else dict(row), position, proposal, plans, geometry, db=db)
+            result = _compute_initial_risk(position, proposal, geometry, db=db)
             if result.get("initial_risk_status") == "available":
                 return result.get("initial_risk_amount"), None
             return None, result.get("initial_risk_reason", "unavailable")
