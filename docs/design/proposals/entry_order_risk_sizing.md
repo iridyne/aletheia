@@ -58,9 +58,22 @@ It does two things:
 7. **Write it down.** The design must live in `docs/`. It must record both the owner's
    ideas and the final engineering choice, as at least one complete original design.
 
-### Owner's trading model (verbatim intent, 2026-10-09, second statement)
+### Owner's working summary (2026-10-09, second statement — **not a final design**)
 
-The owner expected this to be simple and described the intended model in standard R terms:
+The owner clarified that this is a **summary** of their own idea combined with the
+interim answer. It is not a final scheme. **What "best" means is not defined yet**, and
+it must come from broad reference to competitors and established quant platforms. In
+the owner's words, the reference set is AstraQuant, VergeX, and other platforms that
+did AI-automated trading earlier.
+
+The owner also noted that **leverage must vary**:
+- BTC and ETH can take higher leverage.
+- Altcoins may also take higher leverage, to capture their upside.
+- Other cases should use lower leverage.
+
+So the flat "10x" below is a placeholder, not a rule.
+
+The summary, in standard R terms:
 
 - **Stop.** Take a price-action reference point from minutes, 1h or 4h structure. It is
   a support line or a similar level. Add an ATR buffer to it. The distance from the
