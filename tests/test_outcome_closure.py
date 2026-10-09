@@ -1437,6 +1437,67 @@ def test_ready_candidate_settles_across_view_qualified_account_fingerprint(monke
     )
 
 
+def test_ready_candidate_with_excess_close_fills_stays_pending(monkeypatch):
+    """Partial closes already netted from the local quantity reappear in the
+    history window; their sum exceeds the remaining quantity.  That is a
+    quantity ambiguity (execution_contract §11.2) and must stay inconclusive
+    instead of raising out of the settlement round."""
+    from aletheia.portfolio import disappearance_settlement
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+    from aletheia.storage.models import PositionDisappearanceCandidate
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import (
+        FillReport, QueryScope, ReadCompleteness, VerifiedExitReport, VerifiedExitState,
+    )
+    from tests.uta.test_execution_coordinator import _identity
+    from decimal import Decimal
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    fingerprint = logical_account_fingerprint(
+        broker_id="bitget_demo", account_environment="demo", execution_mode="bitget_demo",
+    )
+    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": fingerprint})
+    repo.update_order_metadata(str(position.order_id), uta_account_identity_json=identity.model_dump_json())
+    candidate = PositionDisappearanceCandidate(
+        id="candidate-excess", position_id=position.id, identity_key="identity-excess",
+        broker_id="bitget_demo", account_environment="demo",
+        account_fingerprint=fingerprint, execution_mode="bitget_demo",
+        symbol=position.symbol, market_type=position.market_type,
+        direction=position.direction, first_observed_at=position.opened_at,
+        last_observed_at=position.opened_at, confirmation_count=2,
+        semantics_version="oi-v1",
+    )
+    repo.insert_position_disappearance_candidate(candidate)
+    instrument = instrument_from_local(position.symbol, position.market_type)
+    now = datetime.now(timezone.utc)
+
+    async def query_account(mode, method, query, *, expected_account):
+        assert method == "verify_position_exit"
+        # Local quantity is 2.0; an earlier 1.0 partial close plus the final
+        # 2.0 TPSL close sum to 3.0.
+        return VerifiedExitReport(
+            identity=identity, completeness=ReadCompleteness.COMPLETE,
+            scope=QueryScope(instrument=instrument), received_at=now,
+            profile_version="1", local_position_id=position.id,
+            state=VerifiedExitState.VERIFIED_FILL_EXIT,
+            exit_fills=tuple(FillReport(
+                identity=identity, instrument=instrument, venue_order_id=f"close-{i}",
+                venue_fill_id=f"close-fill-{i}", side="sell", quantity=Decimal(qty),
+                price=Decimal("110"), fee=Decimal("0.1"), fee_currency="USDT", executed_at=now, received_at=now,
+            ) for i, qty in enumerate(("1", "2"))),
+        )
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query_account)
+    results = disappearance_settlement.settle_ready_disappearance_candidates([candidate.id])
+
+    assert results[0]["closed"] is False, results
+    assert results[0]["reason"] == "excess_close_evidence", results
+    stored = repo.get_position(position.id)
+    assert stored is not None and stored["status"] == "open"
+    assert repo.list_position_disappearance_candidates(limit=10)[0]["status"] == "pending"
+
+
 def test_ready_candidate_refuses_a_foreign_account_identity(monkeypatch):
     """A candidate recorded for another account still fails closed."""
     from aletheia.portfolio import disappearance_settlement

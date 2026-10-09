@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from aletheia.execution.verified_exit import VerifiedExitRequest
 
 
 NOW_MS = int(time.time() * 1000)
@@ -17,7 +21,7 @@ def _request(
     *,
     environment: str,
     known_entry_order_ids: tuple[str, ...] = (),
-) -> object:
+) -> VerifiedExitRequest:
     from aletheia.execution.verified_exit import VerifiedExitRequest
 
     return VerifiedExitRequest(
@@ -95,6 +99,20 @@ def test_protocol_classification_requires_absence_complete_history_and_full_quan
             **changes,
         }
         assert classify_verified_exit(request, **kwargs).state == "inconclusive"
+
+    # Close fills exceeding the local quantity (pre-existing partial closes in
+    # the history window) are a quantity ambiguity, not a verified exit (#T4).
+    excess = classify_verified_exit(
+        request,
+        position_absent=True,
+        history_complete=True,
+        close_fills=(fill, replace(fill, fill_id="fill-2", quantity=0.25)),
+        ambiguous_activity=False,
+        pages=1,
+        source_endpoint="private-fills",
+    )
+    assert excess.state == "inconclusive"
+    assert excess.reason == "excess_close_evidence"
 
 
 @pytest.mark.anyio
