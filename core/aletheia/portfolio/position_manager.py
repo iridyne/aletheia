@@ -932,15 +932,20 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
             return "take_profit", tp
 
     # Hard time-stop. The school-aware max_hold (serenity max_hold_days*24, else
-    # trading.max_position_hold_hours) is the legacy absolute cap. When the Operator
-    # authored an expected_horizon, the AUTO-CLOSE moves out to the far backstop
-    # min(horizon * N, school_max); hitting the horizon itself only WAKES the Operator
-    # (see _maybe_wake_on_horizon) — it no longer auto-closes (D3).
+    # trading.max_position_hold_hours) is the legacy absolute cap. When the Position
+    # has a horizon, the AUTO-CLOSE moves out to the far backstop
+    # min(planned horizon * N, school_max); hitting the current horizon itself only
+    # WAKES the Operator (see _maybe_wake_on_horizon) — it no longer auto-closes (D3).
+    # The backstop is anchored to the Risk-approved Proposal's planned horizon so an
+    # Operator extension never moves it (execution_contract §10.1).
+    # ponytail: no readable Proposal horizon (adopted/legacy) falls back to the
+    # current horizon; persist an original-horizon column if those need the anchor.
     if position.get("trade_school") == "serenity":
         school_max = (cfg.serenity.max_hold_days or 0) * 24
     else:
         school_max = cfg.trading.max_position_hold_hours
-    horizon = plan.expected_horizon_hours
+    _, planned_horizon = _native_proposal_protection(position, "expected_horizon_hours")
+    horizon = planned_horizon or plan.expected_horizon_hours
     if horizon and horizon > 0:
         risk = _position_risk(position, cfg)
         mult = getattr(risk, "horizon_hard_backstop_mult", 3.0) or 3.0

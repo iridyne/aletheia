@@ -58,6 +58,16 @@ def test_backstop_capped_by_school_max():
     assert pm._decide_exit(_pos(horizon=40, age_hours=71), 100.0, cfg) is None
 
 
+def test_backstop_uses_planned_horizon_not_the_extended_one(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.get_trade_proposal",
+        lambda _id: {"expected_horizon_hours": 4.0},
+    )
+    # Planned 4h, extended to 34h: the backstop stays 3 x 4 = 12h.
+    pos = {**_pos(horizon=34.0, age_hours=12.5), "proposal_id": "p1"}
+    assert pm._decide_exit(pos, 100.0, _cfg(mult=3.0)) == ("max_hold", 100.0)
+
+
 def test_no_horizon_uses_legacy_school_max():
     cfg = _cfg(max_hold_hours=72.0)
     assert pm._decide_exit(_pos(horizon=None, age_hours=73), 100.0, cfg) == ("max_hold", 100.0)

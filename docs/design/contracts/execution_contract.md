@@ -397,7 +397,7 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 |--------|--------|------|------|
 | 1 | stop-loss | `price` 越过 `stop_price`(多头跌破/空头升破) | `_decide_exit` |
 | 2 | take-profit | `price` 越过 `take_profit_price` | `_decide_exit` |
-| 3 | max-hold | 持仓时长 > `max_position_hold_hours`(serenity school 用 `max_hold_days`) | `_decide_exit` |
+| 3 | max-hold | 持仓时长 ≥ 硬兜底。无 horizon 时为 school 上限 `max_position_hold_hours`(serenity school 用 `max_hold_days`);有 horizon 时为 min(**原始计划** horizon × `horizon_hard_backstop_mult`, school 上限),原始计划 horizon 取 Risk 批准 Proposal 的 `expected_horizon_hours`。Operator 延长 horizon 只推迟复核唤醒,不移动硬兜底;读不到 Proposal horizon(adopted / 历史行)时退回当前 horizon | `_decide_exit` |
 | 4 | market-aware review | **仅当 1–3 都未触发**且 `market_aware_exits.enabled`;评估 `urgent_exit` / `tighten_stop`,但只唤醒 System Operator 复核，不直接平仓或修改止损 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
 
 > 当前实现不授予 market-aware evaluator 自动执行权限。action 名称是复核建议，
