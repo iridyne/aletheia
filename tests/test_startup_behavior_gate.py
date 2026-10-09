@@ -255,15 +255,14 @@ def test_legacy_unresolved_orders_are_history_not_startup_authority(tmp_path, mo
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PSOrderIntent
 
-    repo._insert("ps_order_intents",
-        PSOrderIntent(
-            proposal_id="p1", strategy_id="s1", mode="demo", venue="bitget_demo",
-            symbol="BTC/USDT", side="buy", order_type="market", quantity="1",
-            status="created", client_order_id="c1", idempotency_key="k1",
-        ).model_dump()
-    )
+    repo._insert("ps_order_intents", {
+        "intent_id": "legacy-intent", "proposal_id": "p1", "strategy_id": "s1",
+        "mode": "demo", "venue": "bitget_demo", "symbol": "BTC/USDT", "side": "buy",
+        "order_type": "market", "quantity": "1", "status": "created",
+        "client_order_id": "c1", "idempotency_key": "k1",
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+    })
     repo.get_db().execute(
         "INSERT INTO ps_orders (order_id,intent_id,mode,venue,client_order_id,symbol,side,order_type,quantity,status,updated_at) "
         "VALUES ('legacy-order',(SELECT intent_id FROM ps_order_intents LIMIT 1),'demo','bitget','legacy-client',"

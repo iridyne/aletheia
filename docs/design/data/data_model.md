@@ -392,7 +392,6 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | AuditEvent | audit_events | Runtime |
 | AgentRun | agent_runs | Runtime |
 | Opportunity | opportunities | Trading |
-| ShadowTrade | shadow_trades | Trading |
 | FilterDecision | filter_decisions | Analytics |
 | FilterDecisionBatch | filter_decision_batches | Analytics |
 | FilterCandidateOutcome | filter_candidate_outcomes | Analytics |
@@ -406,7 +405,6 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | PositionDisappearanceObservation | position_disappearance_observations | Trading integrity |
 | ReconciliationIntegrityIncident | reconciliation_integrity_incidents | Trading integrity |
 | MarketRegimeRecord | market_regimes | Data |
-| StrategyRecord | strategy_records | Strategy |
 | KnowledgeItem | knowledge_items | Knowledge |
 | MarketSnapshot | market_snapshots | Data |
 | PortfolioSnapshot | portfolio_snapshots | Portfolio |
@@ -424,12 +422,9 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | SerenityClaim | serenity_claims | Serenity |
 | PSEvent | ps_event_log | PS |
 | PSArtifactRef | (transient) | PS |
-| PSGatewaySession | ps_gateway_sessions | PS |
 | PSGatewayLock | ps_gateway_locks | PS |
 | PSReconciliationDiff | (transient) | PS |
-| PSReconciliationReport | ps_reconciliation_reports | PS |
 | PSExecutionIntent | ps_execution_intents | PS |
-| PSOrderIntent | ps_order_intents | PS |
 | PSOrder | ps_orders | PS |
 | PSFill | ps_fills | PS |
 | PSPosition | ps_positions | PS |
@@ -444,7 +439,6 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | Candidate / UniverseMember compatibility alias | universe_members | Universe |
 | (no model; retained table, no writer or reader) | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |
-| OperatorEvaluationEvent | operator_evaluation_events | System Operator |
 
 ---
 

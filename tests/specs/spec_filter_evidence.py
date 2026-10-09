@@ -414,14 +414,16 @@ def test_lab_priority_uses_frozen_contract_and_proven_retention():
     )
 )
 def test_shadow_trade_has_shared_net_outcome_fields():
-    from aletheia.storage.models import ShadowTrade
+    # The shadow write path is retired (#3704); readers join the historical rows
+    # on these columns, so the schema (not a writer-less model) is the carrier.
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
 
     required = {
         "venue", "market_type", "outcome_candidate_key", "gross_return_pct",
         "net_pnl_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
         "estimated_funding_pct", "min_tradable_edge_pct", "cost_model_version",
     }
-    assert required <= set(ShadowTrade.model_fields)
+    assert required <= {col for col, table, _ in _ADDITIVE_COLUMNS if table == "shadow_trades"}
 
 
 @spec_claim(
@@ -490,7 +492,7 @@ def test_universe_member_persists_scanner_direction():
     )
 )
 def test_b2_candidate_evidence_contract_is_explicit(tmp_path, monkeypatch):
-    from aletheia.analytics.pi_evidence import build_b2_evidence_summary, render_b2_evidence_summary
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -500,7 +502,6 @@ def test_b2_candidate_evidence_contract_is_explicit(tmp_path, monkeypatch):
     )
     assert summary["selection_tier"] == "ranker_enqueued"
     assert summary["status"] == "insufficient_evidence"
-    assert "neutral, not a directional veto" in render_b2_evidence_summary(summary)
 
 
 

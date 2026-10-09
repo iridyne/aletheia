@@ -651,22 +651,20 @@ def test_pi_decision_debate_trace_fields_and_migrations_exist():
 @spec_claim(
     SpecClaim(
         "DM-S29", "data_model", "§K System Operator Decisions and Observations", "L2a",
-        "No-target System Operator wakeups use the dedicated append-only observation model/table, "
+        "No-target System Operator wakeups use the dedicated append-only observation table, "
         "rather than pretending to be unscoped PiDecisions.",
         status="implemented",
     ),
 )
-def test_operator_evaluation_event_carrier_and_schema_exist():
-    from aletheia.storage.models import OperatorEvaluationEvent
+def test_operator_evaluation_event_schema_exists():
     from aletheia.storage import migrations
 
-    fields = OperatorEvaluationEvent.model_fields
     for name in (
         "dedup_key", "event_kind", "trigger", "pending_unresolved_total",
         "pending_visible_count", "queue_snapshot_json", "data_health_json",
         "policy_epoch_id",
     ):
-        assert name in fields
+        assert f"    {name} " in migrations._OPERATOR_EVALUATION_EVENTS_DDL
     assert "operator_evaluation_events" in migrations._OPERATOR_EVALUATION_EVENTS_DDL
     assert "dedup_key TEXT NOT NULL UNIQUE" in migrations._OPERATOR_EVALUATION_EVENTS_DDL
 
