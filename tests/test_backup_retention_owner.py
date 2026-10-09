@@ -68,3 +68,37 @@ assert "ops" not in sys.modules
     result = subprocess.run([sys.executable, "-c", script, str(tmp_path)],
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
+
+
+def _old_migration(root: Path) -> Path:
+    import json
+
+    (root / ".runtime-home-migration.json").write_text(json.dumps({"completed_at": "2026-01-01T00:00:00Z"}))
+    backup = root / "app.db.pre-migration-backup"
+    backup.write_bytes(b"rollback copy")
+    return backup
+
+
+@pytest.mark.parametrize("current_db", ["missing", "corrupt"])
+def test_pre_migration_backup_kept_when_current_db_is_not_ok(tmp_path, current_db):
+    from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
+
+    backup = _old_migration(tmp_path)
+    if current_db == "corrupt":
+        (tmp_path / "app.db").write_bytes(b"not a sqlite database" * 100)
+    assert prune_pre_migration_backup(30, tmp_path) == 0
+    assert backup.read_bytes() == b"rollback copy"
+
+
+def test_pre_migration_backup_removed_when_old_and_current_db_is_ok(tmp_path):
+    import sqlite3
+
+    from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
+
+    backup = _old_migration(tmp_path)
+    conn = sqlite3.connect(tmp_path / "app.db")
+    conn.execute("CREATE TABLE t (x)")
+    conn.commit()
+    conn.close()
+    assert prune_pre_migration_backup(30, tmp_path) == 1
+    assert not backup.exists()

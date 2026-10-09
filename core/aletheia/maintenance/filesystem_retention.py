@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import closing
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -143,12 +145,31 @@ def prune_pre_migration_backup(
     age_days = (datetime.now(timezone.utc) - completed).total_seconds() / 86400.0
     if age_days < max(0, int(days)):
         return 0
+    if not _current_db_is_healthy(root / "app.db"):
+        return 0
     try:
         backup.unlink()
     except OSError as exc:
         logger.debug("pre-migration backup unlink failed: %s", exc)
         return 0
     return 1
+
+
+def _current_db_is_healthy(db_path: Path) -> bool:
+    """RETENTION_POLICY.md §4: the pre-migration copy goes only while app.db checks ``ok``."""
+    if not db_path.is_file():
+        logger.warning("pre-migration backup kept: %s is missing", db_path)
+        return False
+    try:
+        with closing(sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)) as conn:
+            result = conn.execute("PRAGMA integrity_check").fetchone()
+    except sqlite3.Error as exc:
+        logger.warning("pre-migration backup kept: %s integrity_check failed: %s", db_path, exc)
+        return False
+    if not result or result[0] != "ok":
+        logger.warning("pre-migration backup kept: %s integrity_check=%r", db_path, result)
+        return False
+    return True
 
 
 def prune_knowledge_subdirs(
