@@ -321,26 +321,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/family-scorecard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Family Scorecard
-         * @description Per-scanner_family performance statistics (win_rate, expectancy, alpha).
-         */
-        get: operations["get_family_scorecard_api_analytics_family_scorecard_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/filter-controller": {
         parameters: {
             query?: never;
@@ -664,29 +644,6 @@ export interface paths {
          *     Scoped to the resolved (or explicit) ``execution_mode`` (#1939).
          */
         get: operations["get_reasoning_feedback_api_analytics_reasoning_feedback_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/round1-progress": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Round1 Progress
-         * @description Round 1 experiment progress vs the Go/Kill thresholds.
-         *
-         *     Read-only aggregation of `positions` since the Round 1 start date.
-         *     Designed so `aletheia doctor` and the UI share one source of truth.
-         */
-        get: operations["get_round1_progress_api_analytics_round1_progress_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1517,23 +1474,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/knowledge/case-studies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Case Studies */
-        get: operations["get_case_studies_api_knowledge_case_studies_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/knowledge/dreaming-logs": {
         parameters: {
             query?: never;
@@ -2347,23 +2287,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/operator/internal/command-intents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Operator Create Command Intent */
-        post: operations["operator_create_command_intent_api_operator_internal_command_intents_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/operator/internal/commands/execute": {
         parameters: {
             query?: never;
@@ -2375,23 +2298,6 @@ export interface paths {
         put?: never;
         /** Operator Execute Internal Command */
         post: operations["operator_execute_internal_command_api_operator_internal_commands_execute_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/internal/commands/{command_name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Operator Internal Command */
-        post: operations["operator_internal_command_api_operator_internal_commands__command_name__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2426,23 +2332,6 @@ export interface paths {
         put?: never;
         /** Operator Context Query */
         post: operations["operator_context_query_api_operator_internal_context_query_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/internal/decisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Operator Create Decision */
-        post: operations["operator_create_decision_api_operator_internal_decisions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2517,23 +2406,6 @@ export interface paths {
         put?: never;
         /** Operator Create Message */
         post: operations["operator_create_message_api_operator_internal_messages_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/internal/repair-decisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Operator Create Repair Decision */
-        post: operations["operator_create_repair_decision_api_operator_internal_repair_decisions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5214,23 +5086,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/risk-policies/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Compare Risk Policies */
-        post: operations["compare_risk_policies_api_settings_risk_policies_compare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/risk-policies/copy": {
         parameters: {
             query?: never;
@@ -5532,29 +5387,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/stability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stability
-         * @description Quantified stability report — orphan counts, 24h failure
-         *     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
-         *     between 'process alive' (health) and 'data internally consistent' (north-star
-         *     stage 0). Operator can poll this through 7-14 day stage-0 run.
-         */
-        get: operations["stability_api_stability_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/status": {
         parameters: {
             query?: never;
@@ -5825,7 +5657,7 @@ export interface paths {
         };
         /**
          * Get Current Policy
-         * @description Return the current active universe policy.
+         * @description Return the universe policy derived from config (the only policy source).
          */
         get: operations["get_current_policy_api_universe_policy_get"];
         put?: never;
@@ -6359,8 +6191,6 @@ export interface components {
             scanner_direction?: string | null;
             /** Scanner Family */
             scanner_family: string | null;
-            /** Setup State */
-            setup_state?: string | null;
             /** Snapshot Id */
             snapshot_id: string | null;
             /** Spread Bps */
@@ -6375,8 +6205,6 @@ export interface components {
             total_score: number | null;
             /** Tradability Score */
             tradability_score: number | null;
-            /** Triggered Opportunity Id */
-            triggered_opportunity_id?: string | null;
             /** Ttl Sec */
             ttl_sec: number;
             /** Venue */
@@ -9600,25 +9428,6 @@ export interface components {
             /** User Input */
             user_input?: string | null;
         };
-        /** OperatorCommandIntentCreate */
-        OperatorCommandIntentCreate: {
-            /** Classification */
-            classification?: string | null;
-            /** Command Name */
-            command_name: string;
-            /** Parameters */
-            parameters?: {
-                [key: string]: unknown;
-            } | unknown[] | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** Summary */
-            summary?: string | null;
-            /** Task Id */
-            task_id?: string | null;
-            /** User Input */
-            user_input?: string | null;
-        };
         /** OperatorCommandPreviewRequest */
         OperatorCommandPreviewRequest: {
             /** Input */
@@ -9695,17 +9504,6 @@ export interface components {
             sections?: string[] | null;
             /** Session Id */
             session_id?: string | null;
-        };
-        /** OperatorDecisionCreate */
-        OperatorDecisionCreate: {
-            /** Content */
-            content: unknown;
-            /** Session Id */
-            session_id?: string | null;
-            /** Task Id */
-            task_id?: string | null;
-            /** Title */
-            title: string;
         };
         /** OperatorDecisionItem */
         OperatorDecisionItem: {
@@ -9867,17 +9665,6 @@ export interface components {
             session_id?: string | null;
             /** Status */
             status: string;
-        };
-        /** OperatorInternalCommandRequest */
-        OperatorInternalCommandRequest: {
-            /** Parameters */
-            parameters?: {
-                [key: string]: unknown;
-            } | unknown[] | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** User Input */
-            user_input?: string | null;
         };
         /** OperatorMessageCreate */
         OperatorMessageCreate: {
@@ -13411,35 +13198,6 @@ export interface components {
             members: components["schemas"]["CandidateRow"][];
             snapshot: components["schemas"]["UniverseSnapshot"];
         };
-        /** UniverseStoredPolicy */
-        UniverseStoredPolicy: {
-            /** Active */
-            active: number | null;
-            /** Change Reason */
-            change_reason: string | null;
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by: string;
-            /** Explore Ratio */
-            explore_ratio: number;
-            /** Family Quota */
-            family_quota: string;
-            /** Filters */
-            filters: string;
-            /** Id */
-            id: string;
-            /** Market Type */
-            market_type: string;
-            /** Max Weight Step */
-            max_weight_step: number | null;
-            /** Previous Policy Id */
-            previous_policy_id: string | null;
-            /** Scoring Weights */
-            scoring_weights: string;
-            /** Ttl Policy */
-            ttl_policy: string;
-        };
         /** UpdateConfig */
         UpdateConfig: {
             /**
@@ -13987,26 +13745,6 @@ export interface operations {
             };
         };
     };
-    get_family_scorecard_api_analytics_family_scorecard_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     get_filter_controller_api_analytics_filter_controller_get: {
         parameters: {
             query?: never;
@@ -14292,26 +14030,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_round1_progress_api_analytics_round1_progress_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -15519,26 +15237,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_case_studies_api_knowledge_case_studies_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -16761,39 +16459,6 @@ export interface operations {
             };
         };
     };
-    operator_create_command_intent_api_operator_internal_command_intents_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OperatorCommandIntentCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     operator_execute_internal_command_api_operator_internal_commands_execute_post: {
         parameters: {
             query?: never;
@@ -16804,41 +16469,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OperatorExecuteCommandRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    operator_internal_command_api_operator_internal_commands__command_name__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                command_name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OperatorInternalCommandRequest"];
             };
         };
         responses: {
@@ -16903,39 +16533,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OperatorContextQueryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    operator_create_decision_api_operator_internal_decisions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OperatorDecisionCreate"];
             };
         };
         responses: {
@@ -17068,39 +16665,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OperatorMessageCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    operator_create_repair_decision_api_operator_internal_repair_decisions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OperatorDecisionCreate"];
             };
         };
         responses: {
@@ -21650,39 +21214,6 @@ export interface operations {
             };
         };
     };
-    compare_risk_policies_api_settings_risk_policies_compare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RiskPolicyCopyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     copy_risk_policy_api_settings_risk_policies_copy_post: {
         parameters: {
             query?: never;
@@ -22196,26 +21727,6 @@ export interface operations {
             };
         };
     };
-    stability_api_stability_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     status_api_status_get: {
         parameters: {
             query?: never;
@@ -22571,7 +22082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UniverseStoredPolicy"] | components["schemas"]["UniverseDefaultPolicy"];
+                    "application/json": components["schemas"]["UniverseDefaultPolicy"];
                 };
             };
         };

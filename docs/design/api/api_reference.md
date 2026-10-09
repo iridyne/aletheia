@@ -80,7 +80,6 @@ also exposes `execution_exchange`, `market_data_exchange`,
 `exchange_alignment` (`aligned|diverged|not_configured|unavailable`), and `exchange_diverged` so
 operators do not infer the real order target from the retained exchange preference.
 | GET | `/version` | Build version info |
-| GET | `/stability` | Uptime and restart history |
 | GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors); connectivity loss is one root-cause warning, recovery and dependent Collector effects are informational. |
 | POST | `/gateway/pause` | Pause scheduler (requires permission >= Operator) |
 | POST | `/gateway/resume` | Resume scheduler |
@@ -109,7 +108,6 @@ operators do not infer the real order target from the retained exchange preferen
 | Method | Path | Description |
 |---|---|---|
 | GET | `/settings/risk-policies` | Demo/Live policy values, revisions and canonical hashes |
-| POST | `/settings/risk-policies/compare` | Read-only field diff |
 | POST | `/settings/risk-policies/copy` | Copy common fields with source/target revision guards and explicit confirmation |
 | PUT | `/settings/risk-policies/{demo\|live}` | Replace one future-evaluation policy; target identity and Live eligibility remain target-owned; already-open Positions keep the exit guards of their entry policy (risk_engine_contract §1.1) |
 | POST | `/settings/risk-policies/{demo\|live}/reset-defaults` | Reset only the selected policy with a revision guard and explicit confirmation |
@@ -188,13 +186,11 @@ route remains; `strategy_records` was dropped in schema v92 (#3702/#3703).
 | GET | `/analytics/filter-controller/persistent` | Fast Learning-page projection of persisted cross-run recommendations, run count/time, schedule state, and an explicit empty reason; never recomputes cohorts, diagnostics, or replays and never mutates config |
 | GET | `/analytics/alpha-attribution` | Read-only five-layer alpha attribution audit (`?days=7/14/30`) |
 | GET | `/analytics/thesis-lineage` | Read-only thesis lineage records layered over the trade causal chain (`?position_id=...&order_id=...&days=90`) |
-| GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
 | GET | `/analytics/pipeline-funnel` | Pipeline conversion funnel for the distinct Opportunities created inside the rolling `hours` window. Downstream signal, PI, authoritative Risk, and entry-fill counts remain linked to that Opportunity cohort; carrier generations and integrity exceptions are reported separately, and close fills are excluded from entry conversion. `signal_without_terminal` excludes Opportunities already terminal as `reviewed`/`expired`; those remain visible under `source_terminal_without_pi_terminal` and its status breakdown. Stored ISO/SQLite timestamps are parsed as instants rather than compared as text. |
 | GET | `/analytics/opportunity-funnel` | Deterministic Opportunity → Operator funnel. The cumulative section is one causal cohort: Opportunities emitted inside the parsed UTC rolling window, split into open/queued/reviewed/expired, with `proposed_count` counting only linked Opportunities from that cohort. `setup_count`/`active_setup_count` deduplicate rows by `symbol + market + direction + scanner_family`; `emitted_count` remains the per-snapshot generation count. `terminal_breakdown` makes expired/reviewed exits explicit, including `snapshot_superseded`, true `ttl_expired`, Operator trade/skip/watch, deterministic review and unknown legacy remainder—raw `expired_count` is compatibility total only. The latest ranker snapshot is a separate point-in-time object with `freshness`, `age_sec`, `stale_after_sec`, executable_count and exclusions; stale/missing snapshots cannot be shown as current health. `current` is the authoritative read-only entry-status projection: it exposes the exact primary stage, stable reason/next trigger, per-candidate durable Ranker blocker, passed-filter count, run id and retry time; `ranker.last_run` exposes the persisted trigger/result and `ranker.wake` exposes bounded in-process wake telemetry. It never re-runs Ranker. Emits `Server-Timing` header with per-phase durations (cohort/snapshot/universe/build_current/total, 2026-07-18). See `/analytics/opportunity-funnel/current-snapshot` for a faster subset when only `current.*` is needed. |
 | GET | `/analytics/opportunity-funnel/current-snapshot` | Compatibility projection for the legacy Opportunity funnel. It is not the Entry Workbench Candidate or summary source. |
 | GET | `/analytics/operator-decisions` | Terminal Candidate Ledger projection companion to the funnel. Uses parsed UTC decision/rejection timestamps for windowing and ordering, prefers the latest `proposal_rejected` audit time, and classifies only `human+dashboard` as `user_reject` and `system+execution_gateway` as `auto_reject`; missing/inconsistent attribution is `reject_unknown`. A rejected Proposal supersedes its earlier trade-intent row. Administrative `system_cascade` cleanup rows and non-terminal conviction deferrals are not presented as Operator decisions; defer lifecycle facts remain available from `/analytics/opportunity-trace/{opportunity_id}`. Each item has additive `attribution` for the `system_operator_skip_remediation` policy epoch and producing runtime session/commit; manifest attribution wins, while legacy decisions use the durable epoch time window. `current_context`, `current_policy_counts`, and `historical_policy_counts` prevent old-runtime decisions from being presented as current behavior. `counts` and `total_count` cover the FULL window; when the optional `outcome` (comma-separated) / `symbol` (canonicalized) filters are applied, filtered rows go into `items` while `matched_count` reports how many rows survived the filter pre-truncation. Filter never lies about totals (2026-07-18). Read-only. |
 | GET | `/analytics/opportunity-trace/{opportunity_id}` | Compatibility lifecycle trace for a legacy opportunity — emit → filter_trace → pi_decision → risk_decision → proposal → order → fill → position → close. Read-only and not the canonical Candidate → Entry Plan detail path. |
-| GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume activity visibility. Optional PI windows, Lesson, Serenity and contradiction reads expose stable `query_errors`; failed optional counts are `null`/unchecked rather than genuine zero. This remains activity context, not contribution evidence. |
 | GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health, lifecycle readiness and the existing resolver's effective treatment-authority decision. GET performs no authority mutation. `path_states` keeps each measurement-supported path's availability, empty/active state and cadence-aware freshness separate. Operations exposes its own availability/error map and preserves config plus whichever evaluator/audit health sections succeeded. Uses a 30-second monotonic process-local cache and emits `Server-Timing` (`ledger` or `cache_hit`, plus `total`). Legacy activity aggregates remain compatibility context, not contribution evidence; `legacy_query_errors` and nullable counts distinguish read failure from genuine empty or zero activity. No evaluation or mutation is run. |
@@ -233,7 +229,7 @@ prospective contribution verdict.
 
 ### Analytics outcome-integrity responses（OI-C04, implemented）
 
-The existing trade-statistics, strategy-KPI, family-scorecard, confidence-calibration, cost-summary,
+The existing trade-statistics, strategy-KPI, confidence-calibration, cost-summary,
 and equity-curve endpoints remain present. Their response contract adds explicit cohort
 metadata instead of silently changing one unlabelled number:
 
@@ -317,7 +313,6 @@ fresh, since each window is distinct.
 | GET | `/knowledge/guard-candidates` | Guard candidates with the same authority projection; candidate status never implies enforcement. Read failure returns stable `503 guard_read_failed`, never HTTP 200 with an empty collection. |
 | POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually move a candidate to active storage; a shadow learned Guard becomes `active_observe` and gains no enforcement authority |
 | GET | `/knowledge/guards/stats` | Guard activation statistics; read failure returns stable `503 guard_stats_read_failed` rather than an empty success payload |
-| GET | `/knowledge/case-studies` | Case study analyses |
 | GET | `/knowledge/{item_id}/content` | Full knowledge content; file-backed Markdown is authoritative when present, with persisted inline `content` used for DB-native knowledge types or missing legacy files |
 | GET | `/dreaming/summary` | Dreaming session summary; recent knowledge collections contain active items only, `recent_knowledge_items/total/returned/truncated` cover every active produced type with an explicit 100-item bound, each recent run includes its persisted artifact relations, scheduler job health remains distinct from recorded agent sessions, and archived/deprecated memories are returned separately |
 | GET | `/reviews/summary` | Post-trade review summary |
@@ -448,7 +443,7 @@ fresh, since each window is distinct.
 | GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`), using the same effective attention-expiry projection as Candidate detail |
 | GET | `/universe/members/{id}` | Member detail (features, outcomes) |
 | POST | `/universe/refresh` | Trigger universe refresh |
-| GET | `/universe/policy` | Active universe policies |
+| GET | `/universe/policy` | Config-derived universe policy |
 | GET | `/universe/calibration` | Cost-aware scanner calibration keyed by family + direction + market type + horizon (`by_cohort_horizon`, `by_cohort`) |
 | GET | `/universe/registry/stats` | Registry statistics |
 
@@ -577,17 +572,13 @@ fresh, since each window is distinct.
 | POST | `/operator/command-preview` | Preview operator command effects |
 | POST | `/operator/command` | Execute operator command |
 | POST | `/operator/internal/artifacts` | Internal: attach artifact to session |
-| POST | `/operator/internal/command-intents` | Internal: record a classified command intent |
 | POST | `/operator/internal/commands/execute` | Internal: execute a resolved command |
-| POST | `/operator/internal/commands/{command_name}` | Internal: dispatch a typed command by name |
 | POST | `/operator/internal/compact` | Internal: compact operator memory into an artifact |
 | POST | `/operator/internal/context/query` | Internal: query operator context builder |
-| POST | `/operator/internal/decisions` | Internal: record a repair decision |
 | POST | `/operator/internal/events` | Internal: append an operator event |
 | POST | `/operator/internal/heartbeat` | Internal: operator agent heartbeat |
 | POST | `/operator/internal/llm-session` | Internal: multi-turn operator LLM session |
 | POST | `/operator/internal/messages` | Internal: append a message to a session |
-| POST | `/operator/internal/repair-decisions` | Internal: record a repair decision (typed) |
 | POST | `/operator/internal/sessions` | Internal: create an operator session |
 | POST | `/operator/internal/tasks` | Internal: create an operator task |
 | PATCH | `/operator/internal/tasks/{task_id}` | Internal: update an operator task |
@@ -688,7 +679,6 @@ fresh, since each window is distinct.
 | GET | `/analytics/equity-curve` | Portfolio equity curve data |
 | GET | `/analytics/exit-policy-advice` | Exit strategy diagnostics |
 | GET | `/analytics/trade-paths` | MFE/MAE path analysis |
-| GET | `/analytics/family-scorecard` | Strategy family scorecard |
 
 ## Infrastructure (internal)
 
@@ -701,7 +691,6 @@ fresh, since each window is distinct.
 | GET | `/_infra/doctor` | Full diagnostic report (JSON of doctor probes) |
 | GET | `/_infra/status` | Infra-only status snapshot |
 | GET | `/version` | Build version info |
-| GET | `/stability` | System stability metrics |
 
 ### Dev-only (environment-gated)
 
