@@ -27,6 +27,7 @@ or bypasses a check — nothing else.
 | Position replay | `aletheia/analytics/position_replay.py` |
 | Filter replay | `aletheia/counterfactual/filter_replay.py` |
 | Momentum geometry replay | `aletheia/analytics/momentum_geometry_replay.py` |
+| Signal replay (fills, exits, costs) | `aletheia/analytics/signal_replay.py` |
 | Cost / order reconciliation | `aletheia/execution/reconciliation.py` |
 
 Measurement is **branch coverage on top of line coverage** — the same
@@ -68,6 +69,7 @@ uv run pytest \
   tests/test_filter_replay.py \
   tests/test_position_replay.py \
   tests/test_momentum_geometry_replay.py \
+  tests/test_signal_replay.py \
   tests/test_reconciliation.py \
   tests/test_oco_reconcile.py \
   tests/test_cr_ex01_reconcile.py \
