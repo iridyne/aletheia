@@ -1085,8 +1085,8 @@ async def test_operator_command_persists_structured_response_metadata_for_result
     # #67 fix: the first call is permitted-but-non-executing when confirmation is
     # required. `permitted` reflects that the AUTHORIZATION check passed; the
     # absence of `action` reflects that no state changed (previously this would
-    # have set paused=False under the LLM's nose). A follow-up call with
-    # confirm=true is required to actually resume — see B7-trust regression.
+    # have set paused=False under the LLM's nose). Only a follow-up call whose
+    # confirmed_command names the command actually resumes.
     assert assistant_response["content"]["permitted"] is True
     assert assistant_response["content"].get("action") in (None, {})
 

@@ -518,7 +518,8 @@ export default function CommandCenter() {
 
   const { toast } = useToast()
   const commandMut = useMutation({
-    mutationFn: () => api.sendOperatorCommand(input, { sessionId: selectedSessionId }),
+    mutationFn: (confirmedCommand?: string) =>
+      api.sendOperatorCommand(input, { sessionId: selectedSessionId, confirmedCommand }),
     onSuccess: () => {
       setInput('')
       qc.invalidateQueries({ queryKey: ['operator-status'] })
@@ -956,20 +957,15 @@ export default function CommandCenter() {
                 className="btn-control"
                 disabled={commandMut.isPending || input.trim().length === 0}
                 onClick={async () => {
-                  // #71 fix: the preview shows a "confirmation" badge when the
-                  // resolved command requires it, but Send used to fire
-                  // mutate() unconditionally — the badge was cosmetic. Now
-                  // gate the Send with the shared confirmation modal mirror of the
-                  // pattern the runtime buttons already use. This matches the
-                  // backend contract from #67 (execute_typed_command with
-                  // requires_confirmation returns a non-executing response
-                  // unless params.confirm=true is set); the wrapper here
-                  // catches the intent BEFORE that round-trip so a confirmed
-                  // command actually executes on the first send.
-                  if (commandPreview?.command?.requires_confirmation) {
-                    const label = commandPreview?.command?.name || commandPreview?.intent || 'this command'
+                  // The backend runs a confirmation-gated command only when
+                  // confirmed_command names it; that field is the human
+                  // confirmation and is sent only after this modal.
+                  const gated = commandPreview?.command?.requires_confirmation
+                    ? commandPreview.command.name
+                    : undefined
+                  if (gated) {
                     if (!(await confirm({
-                      title: `Run ${label}?`,
+                      title: `Run ${gated}?`,
                       description: 'This command requires confirmation. Review the preview before sending.',
                       confirmLabel: 'Run command',
                       variant: 'warning',
@@ -977,7 +973,7 @@ export default function CommandCenter() {
                       return
                     }
                   }
-                  commandMut.mutate()
+                  commandMut.mutate(gated)
                 }}
               >
                 {commandMut.isPending ? 'Sending…' : 'Send'}

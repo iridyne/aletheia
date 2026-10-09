@@ -299,6 +299,9 @@ class OperatorCommandRequest(BaseModel):
     input: str
     context: dict[str, Any] | None = None
     session_id: str | None = None
+    # Command name the operator confirmed in the preview modal. Human-only signal:
+    # internal/LLM routes never set it.
+    confirmed_command: str | None = None
 
 
 class OperatorCommandPreviewRequest(BaseModel):
@@ -1103,6 +1106,7 @@ async def operator_command(req: OperatorCommandRequest):
         permission_mode=cfg.operator.permission_mode,
         permission_scope="operator",
         session_id=target_session_id,
+        confirmed_command=req.confirmed_command,
     )
     if not isinstance(result, CommandResponse):
         raise HTTPException(

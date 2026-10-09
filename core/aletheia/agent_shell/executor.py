@@ -19,20 +19,10 @@ class TypedCommandExecutionResult(BaseModel):
     session_id: str
 
 
-def _params_confirm(params: dict[str, Any] | None) -> bool:
-    """Return True when the caller supplied an explicit confirm=true parameter.
-
-    Accepts bool True or the case-insensitive strings 'true'/'yes'/'1'. Anything
-    else — including missing, None, or the string 'false' — is not a confirmation.
-    """
-    if not params:
-        return False
-    val = params.get("confirm")
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, str):
-        return val.strip().lower() in {"true", "yes", "1"}
-    return False
+CONFIRMATION_REQUIRED_RESPONSE = (
+    "'{command}' requires operator confirmation and was not executed. "
+    "Only the operator can confirm it from the Command Center."
+)
 
 
 def build_action(command: str) -> dict[str, Any] | None:
@@ -59,6 +49,11 @@ async def execute_typed_command(
     user_input: str | None = None,
     inference_call_id: str | None = None,
 ) -> TypedCommandExecutionResult:
+    """Run one registry command for a machine caller (operator-shell, llm-session).
+
+    Every caller here is an agent or model, so nothing it sends can confirm a
+    confirmation-gated command; only the human /operator/command route can.
+    """
     from aletheia.agent_shell.audit import record_command
     from aletheia.agent_shell.commands import HANDLERS
     from aletheia.agent_shell.operator_store import create_session_record, get_session
@@ -153,17 +148,8 @@ async def execute_typed_command(
             session_id=session_id,
         )
 
-    # #67 fix: confirmation gate. requires_confirmation was previously metadata-only —
-    # the handler ran regardless of any confirm flag, so pause_agents/resume_agents/
-    # rerun_failed_agent_task/set_symbol_observe_only/reconcile_positions
-    # mutated state on the first call while the response merely *labelled* itself
-    # `needs_confirmation=True`. Now the first call is non-executing when confirmation
-    # is required; callers must re-send with `confirm=True` in params to actually run.
-    if cmd_def.requires_confirmation and not _params_confirm(params):
-        response = (
-            f"'{command_name}' requires confirmation. Re-send the command with "
-            f"parameter confirm=true to execute."
-        )
+    if cmd_def.requires_confirmation:
+        response = CONFIRMATION_REQUIRED_RESPONSE.format(command=command_name)
         record(False, response)
         close_session(
             session_id,

@@ -2263,12 +2263,17 @@ export const api = {
 		post<any>("/command", { input, context }),
 	sendOperatorCommand: (
 		input: string,
-		params?: { context?: Record<string, string>; sessionId?: string },
+		params?: {
+			context?: Record<string, string>;
+			sessionId?: string;
+			confirmedCommand?: string;
+		},
 	) =>
 		post<any>("/operator/command", {
 			input,
 			context: params?.context,
 			session_id: params?.sessionId,
+			confirmed_command: params?.confirmedCommand,
 		}),
 	previewOperatorCommand: (body: { input: string; sessionId?: string }) =>
 		post<any>("/operator/command-preview", {
