@@ -112,3 +112,60 @@ def test_financing_tier_is_selected_from_this_symbol_position(monkeypatch, held_
     assert financing.projected_position_notional_usdt == pytest.approx(
         held_same_symbol + financing.execution_notional_usdt
     )
+
+
+@pytest.mark.parametrize("exposure_kind", ["position", "pre_order", "unresolved_order"])
+def test_sector_concentration_counts_existing_plan_exposure_in_its_family(monkeypatch, exposure_kind):
+    """#16 resolves an existing Plan exposure's family through its Plan (#3846).
+
+    Exposure: a 100 USDT momentum Plan exposure, a 50 USDT mean_reversion
+    opportunity Position and a 100 USDT incoming momentum Plan Proposal. Counting
+    the existing Plan exposure gives momentum 200/250 = 80% > 60%; leaving it
+    unknown gives 40% and no breach.
+    """
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import Opportunity, Position
+
+    run_migrations()
+    incoming = _plan_proposal(monkeypatch, family="momentum")
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_sector_concentration_pct = 60.0
+    cfg.risk.demo.correlation.min_positions_for_concentration = 1
+    monkeypatch.setattr(engine, "_lookup_beta", lambda *_args: None)
+
+    repo.insert_opportunity(Opportunity(
+        id="mr-opportunity", symbol="SOL/USDT", market="usdt_futures", direction_bias="long",
+        source_agent="market_observer", scanner_family="mean_reversion",
+    ))
+    positions = [Position(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long", quantity=1.0,
+        entry_price=50.0, current_price=50.0, execution_mode="bitget_demo",
+        opportunity_id="mr-opportunity", status="open",
+    )]
+    existing = TradeProposal(
+        id="existing-plan-proposal", symbol="ETH/USDT", market_type="usdt_futures",
+        direction="long", execution_mode="bitget_demo", order_type="limit", price=100.0,
+        quantity=1.0, entry_plan_id="existing-momentum-plan", entry_leg_index=0,
+    )
+    repo.insert_trade_proposal(existing)
+    snapshot = {f"risk_proposal__{key}": value for key, value in existing.model_dump().items()}
+    row = {**snapshot, "id": "existing-order", "proposal_id": existing.id, "symbol": existing.symbol,
+           "market_type": existing.market_type, "execution_mode": existing.execution_mode,
+           "price": 100.0, "quantity": 1.0, "leverage": 1.0}
+    if exposure_kind == "position":
+        positions.append(Position(
+            symbol=existing.symbol, market_type=existing.market_type, direction="long", quantity=1.0,
+            entry_price=100.0, current_price=100.0, execution_mode="bitget_demo",
+            proposal_id=existing.id, status="open",
+        ))
+    monkeypatch.setattr(engine, "list_active_entry_risk_reservations_for_risk",
+                        lambda **_: [row] if exposure_kind == "pre_order" else [])
+    monkeypatch.setattr(engine, "list_unresolved_native_entry_orders_for_risk",
+                        lambda: [row] if exposure_kind == "unresolved_order" else [])
+    for position in positions:
+        repo.insert_position(position)
+
+    assert engine._check_correlation_exposure(incoming, cfg) == [
+        "sector_concentration:momentum:80%>60%",
+    ]

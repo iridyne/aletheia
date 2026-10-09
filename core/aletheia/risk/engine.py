@@ -10,6 +10,7 @@ import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from aletheia.config.exchanges import (
@@ -540,6 +541,7 @@ class _UnresolvedEntryReservation:
     reserved_quantity: float | None
     has_open_position: bool
     invalid_reasons: tuple[str, ...] = ()
+    entry_plan_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -555,6 +557,7 @@ class _PreOrderEntryReservation:
     leverage: float | None
     reserved_quantity: float | None
     invalid_reasons: tuple[str, ...] = ()
+    entry_plan_id: str | None = None
 
 
 def _is_live(execution_mode: str) -> bool:
@@ -734,6 +737,7 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
                 if row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id")
                 else None
             ),
+            entry_plan_id=row.get(f"{_RISK_PROPOSAL_PREFIX}entry_plan_id") or None,
             price=price,
             leverage=leverage,
             order_quantity=order_quantity,
@@ -805,6 +809,7 @@ def _pre_order_entry_reservations(
                 if row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id")
                 else None
             ),
+            entry_plan_id=row.get(f"{_RISK_PROPOSAL_PREFIX}entry_plan_id") or None,
             price=price,
             leverage=leverage,
             reserved_quantity=quantity,
@@ -2217,10 +2222,28 @@ def _check_correlation_exposure(
             if _is_live(entry.execution_mode) == proposal_is_live
         ]
 
-        # (symbol, notional, opportunity_id, execution_mode, market_type). Keep
-        # each position/reservation as an independent row instead of collapsing
-        # repeated symbols.
-        existing_exposures: list[tuple[str, float, str | None, str | None, str]] = []
+        # A Position's Plan identity lives on the hash-covered Proposal that opened it.
+        position_proposal_ids = sorted({
+            str(pos["proposal_id"]) for pos in open_positions if pos.get("proposal_id")
+        })
+        position_plan_ids: dict[str, str] = {}
+        if position_proposal_ids:
+            placeholders = ",".join("?" for _ in position_proposal_ids)
+            position_plan_ids = {
+                str(row[0]): str(row[1])
+                for row in get_db().execute(
+                    f"SELECT id, entry_plan_id FROM trade_proposals WHERE id IN ({placeholders})",
+                    position_proposal_ids,
+                ).fetchall()
+                if row[1]
+            }
+
+        # (symbol, notional, (entry_plan_id, opportunity_id), execution_mode,
+        # market_type). Keep each position/reservation as an independent row
+        # instead of collapsing repeated symbols.
+        existing_exposures: list[
+            tuple[str, float, tuple[str | None, str | None], str | None, str]
+        ] = []
         for pos in open_positions:
             try:
                 quantity = float(pos.get("quantity") or 0.0)
@@ -2232,7 +2255,10 @@ def _check_correlation_exposure(
                 existing_exposures.append((
                     str(pos.get("symbol") or ""),
                     notional,
-                    str(pos.get("opportunity_id")) if pos.get("opportunity_id") else None,
+                    (
+                        position_plan_ids.get(str(pos.get("proposal_id"))),
+                        str(pos.get("opportunity_id")) if pos.get("opportunity_id") else None,
+                    ),
                     pos.get("execution_mode"),
                     str(pos.get("market_type") or ""),
                 ))
@@ -2245,7 +2271,7 @@ def _check_correlation_exposure(
                 existing_exposures.append((
                     entry.symbol,
                     notional,
-                    entry.opportunity_id,
+                    (entry.entry_plan_id, entry.opportunity_id),
                     entry.execution_mode,
                     entry.market_type,
                 ))
@@ -2263,41 +2289,33 @@ def _check_correlation_exposure(
         all_exposures = [
             *existing_exposures,
             (
-                proposal.symbol, prop_notional, proposal.opportunity_id,
+                proposal.symbol, prop_notional,
+                (proposal.entry_plan_id, proposal.opportunity_id),
                 proposal.execution_mode, proposal.market_type,
             ),
         ]
 
         # ── Sector concentration ──────────────────────────────────────────────
         if len(existing_exposures) >= min_n:
-            # Resolve all families in one read so a reservation cannot disappear
-            # between per-row lookups and a database failure cannot look like "none".
-            opportunity_ids = sorted({
-                opportunity_id
-                for _, _, opportunity_id, *_ in all_exposures
-                if opportunity_id
-            })
-            families: dict[str, str] = {}
-            if opportunity_ids:
-                placeholders = ",".join("?" for _ in opportunity_ids)
-                rows = get_db().execute(
-                    f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
-                    opportunity_ids,
-                ).fetchall()
-                families = {
-                    str(row[0]): str(row[1])
-                    for row in rows
-                    if row[0] and row[1]
-                }
+            # Every exposure resolves its family exactly as the incoming Proposal
+            # does (Plan first, then opportunity). A read failure raises into the
+            # safe-reject below instead of looking like "unknown family".
+            families = {
+                identity: _resolve_proposal_family(
+                    SimpleNamespace(entry_plan_id=identity[0], opportunity_id=identity[1]),
+                    fail_open=False,
+                )
+                for identity in {identity for _, _, identity, *_ in all_exposures}
+            }
 
-            prop_family = families.get(str(proposal.opportunity_id))
+            prop_family = families[all_exposures[-1][2]]
             if prop_family:
                 total_notional = sum(e[1] for e in all_exposures)
                 if total_notional > 0:
                     family_notional = sum(
                         notional
-                        for _, notional, opportunity_id, *_ in all_exposures
-                        if families.get(str(opportunity_id)) == prop_family
+                        for _, notional, identity, *_ in all_exposures
+                        if families[identity] == prop_family
                     )
                     sector_pct = (family_notional / total_notional) * 100
                     max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
@@ -2367,12 +2385,14 @@ def _lookup_beta(symbol: str, venue: str | None, market_type: str) -> float | No
     return None
 
 
-def _resolve_proposal_family(proposal) -> str | None:
-    """Resolve a proposal's scanner_family (#14/#14b/#15).
+def _resolve_proposal_family(proposal, *, fail_open: bool = True) -> str | None:
+    """Resolve a proposal's scanner_family (#14/#14b/#15/#16).
 
     An Entry Plan Proposal reads the durable Plan's ``candidate_family``: a
     universe Plan Proposal carries no opportunity_id by construction (#1a).
-    Other Proposals resolve via their opportunity.
+    Other Proposals resolve via their opportunity. #16 passes each existing
+    exposure's (entry_plan_id, opportunity_id) and sets ``fail_open=False`` so
+    an unreadable opportunity store is not mistaken for an unknown family.
     """
     if getattr(proposal, "entry_plan_id", None):
         row = get_entry_plan(proposal.entry_plan_id)
@@ -2393,6 +2413,8 @@ def _resolve_proposal_family(proposal) -> str | None:
         ).fetchone()
         return row[0] if row and row[0] else None
     except Exception:
+        if not fail_open:
+            raise
         return None
 
 
@@ -2432,27 +2454,6 @@ def _family_live_edge(
         if not fail_open:
             raise
         return None
-    return None
-
-
-def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
-    """Look up scanner_family for a symbol via its open position's opportunity_id."""
-    for pos in positions:
-        if pos.get("symbol") != symbol:
-            continue
-        opp_id = pos.get("opportunity_id")
-        if not opp_id:
-            continue
-        try:
-            from aletheia.storage.sqlite import get_db
-            db = get_db()
-            row = db.execute(
-                "SELECT scanner_family FROM opportunities WHERE id = ?", (opp_id,)
-            ).fetchone()
-            if row and row[0]:
-                return row[0]
-        except Exception:
-            logger.warning("risk.engine: opportunity family lookup failed (returning None)", exc_info=True)
     return None
 
 
