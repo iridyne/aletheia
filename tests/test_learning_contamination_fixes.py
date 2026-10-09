@@ -109,6 +109,36 @@ def _reviewer_db(tmp_path, monkeypatch):
     return sq
 
 
+def _insert_failing_btc_long_outcomes(db) -> None:
+    """10 settled 24h BTC/USDT long outcomes at a 30% win rate (< 35% demote floor).
+
+    Timestamps sit after the clean-window anchor; earlier rows are excluded as dirty.
+    """
+    from datetime import timedelta
+
+    entry_at = (_ANCHOR + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    due_at = (_ANCHOR + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    settled_at = (_ANCHOR + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+    for i in range(10):
+        ret = 2.0 if i < 3 else -2.0
+        db.execute(
+            "INSERT INTO filter_candidate_outcomes "
+                "(id, outcome_candidate_key, symbol, venue, scanner_family, direction, horizon, "
+                " market_type, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+                " settlement_price_source, settlement_lag_sec, "
+                " gross_return_pct, directional_return_pct, net_return_pct, "
+                " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+                " min_tradable_edge_pct, cost_model_version, status) "
+                "VALUES (?, ?, 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
+                " 'spot', 100.0, ?, ?, ?, ?, "
+                " 'horizon_ohlcv', 0, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
+                (f"fo-{i}", f"candidate-fo-{i}", 100.0 * (1.0 + ret / 100.0),
+                 entry_at, due_at, settled_at,
+                 ret, ret, ret - 0.2),
+        )
+    db.commit()
+
+
 def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch):
     """#130: the overturn pass re-reviews APPLIED lessons and demotes a failing one.
 
@@ -138,28 +168,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     # v1 anchor), so they silently crossed the v2 floor and all rows were excluded
     # as "dirty_or_missing_entry_time" — the evidence query saw 0 total, and the
     # overturn pass deferred instead of demoting. Anchoring them post-floor fixed.
-    entry_at = (_ANCHOR + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-    due_at = (_ANCHOR + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
-    settled_at = (_ANCHOR + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-    db = sq.get_db()
-    for i in range(10):
-        ret = 2.0 if i < 3 else -2.0
-        db.execute(
-            "INSERT INTO filter_candidate_outcomes "
-                "(id, outcome_candidate_key, symbol, venue, scanner_family, direction, horizon, "
-                " market_type, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
-                " settlement_price_source, settlement_lag_sec, "
-                " gross_return_pct, directional_return_pct, net_return_pct, "
-                " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
-                " min_tradable_edge_pct, cost_model_version, status) "
-                "VALUES (?, ?, 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
-                " 'spot', 100.0, ?, ?, ?, ?, "
-                " 'horizon_ohlcv', 0, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
-                (f"fo-{i}", f"candidate-fo-{i}", 100.0 * (1.0 + ret / 100.0),
-                 entry_at, due_at, settled_at,
-                 ret, ret, ret - 0.2),
-        )
-    db.commit()
+    _insert_failing_btc_long_outcomes(sq.get_db())
 
     asyncio.run(run_lesson_reviewer(run_id="test"))
     assert store.get(les.lesson_id).status == "rejected"   # applied lesson overturned
@@ -289,3 +298,59 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     cutoffs = {as_of_at for _, as_of_at in assessed}
     assert len(cutoffs) == 1
     assert next(iter(cutoffs)).tzinfo is timezone.utc
+
+
+def test_oldest_of_many_applied_lessons_is_still_overturned(tmp_path, monkeypatch):
+    """#2865: Risk enforces every applied lesson, so overturn must reach the oldest.
+
+    With 101 applied lessons the newest-100 review set never re-checked the oldest
+    one, yet Risk kept enforcing it.
+    """
+    import asyncio
+
+    sq = _reviewer_db(tmp_path, monkeypatch)
+    from extensions.research.lesson_reviewer import run_lesson_reviewer
+    from extensions.learning.lessons import LessonStore
+
+    store = LessonStore()
+
+    def applied(summary, recommendation):
+        lesson = store.create(summary, source_type="test", source_id="t",
+                              category="risk", severity="high", recommendation=recommendation)
+        store.accept(lesson.lesson_id)
+        store.mark_applied(lesson.lesson_id, "pv-test")
+        return lesson
+
+    oldest = applied("block BTC/USDT longs",
+                     {"action": "block_symbol", "symbol": "BTC/USDT", "direction": "long"})
+    db = sq.get_db()
+    db.execute("UPDATE ps_lessons SET created_at = '2026-09-24T00:00:00+00:00' WHERE lesson_id = ?",
+               (oldest.lesson_id,))
+    db.commit()
+    for index in range(100):
+        applied(f"block COIN{index}/USDT shorts",
+                {"action": "block_symbol", "symbol": f"COIN{index}/USDT", "direction": "short"})
+    _insert_failing_btc_long_outcomes(db)
+
+    asyncio.run(run_lesson_reviewer(run_id="test"))
+
+    reviewed = store.get(oldest.lesson_id)
+    assert reviewed is not None
+    assert reviewed.status == "rejected"
+
+
+def test_rejudge_window_reaches_every_lesson_within_bounded_runs():
+    from datetime import timedelta
+
+    from extensions.research import lesson_reviewer
+
+    ids = [f"lesson-{index}" for index in range(lesson_reviewer._MAX_REJUDGED_PER_RUN * 2 + 1)]
+    day = datetime(2026, 10, 9)
+    runs = -(-len(ids) // lesson_reviewer._MAX_REJUDGED_PER_RUN)
+    reached: set[str] = set()
+    for offset in range(runs):
+        window = lesson_reviewer._rejudge_window(ids, day + timedelta(days=offset))
+        assert len(window) == lesson_reviewer._MAX_REJUDGED_PER_RUN
+        reached |= window
+    assert reached == set(ids)
+    assert lesson_reviewer._rejudge_window(ids[:5], day) == set(ids[:5])

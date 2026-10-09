@@ -48,6 +48,9 @@ logger = logging.getLogger("aletheia.agents.lesson_reviewer")
 _MIN_SETTLED_EVIDENCE = 20
 # Bound LLM cost per run; the backlog drains over successive daily runs (logged).
 _MAX_PROPOSED_PER_RUN = 40
+# Bound LLM re-judgements of consumed lessons per run. The deterministic demote
+# check still covers every consumed lesson each run, as Risk enforces every one.
+_MAX_REJUDGED_PER_RUN = 200
 # Overturn guard: a clearly-failing symbol-specific basis demotes deterministically
 # even if the LLM would keep it (belt-and-suspenders for the overturn requirement).
 _DEMOTE_MIN_SAMPLES = 10
@@ -286,6 +289,19 @@ def _deterministic_demote(evidence: dict) -> bool:
     )
 
 
+def _rejudge_window(lesson_ids: list[str], now: datetime) -> set[str]:
+    """Pick this run's LLM re-judgement slice, rotating daily over every lesson.
+
+    The slice start advances by the cap each UTC day, so with N consumed lessons
+    each one is re-judged at least once every ceil(N / cap) daily runs.
+    """
+    if len(lesson_ids) <= _MAX_REJUDGED_PER_RUN:
+        return set(lesson_ids)
+    start = (now.date().toordinal() * _MAX_REJUDGED_PER_RUN) % len(lesson_ids)
+    rotated = lesson_ids[start:] + lesson_ids[:start]
+    return set(rotated[:_MAX_REJUDGED_PER_RUN])
+
+
 @register_agent("lesson_reviewer")
 async def run_lesson_reviewer(
     permission_mode: str = "Observe",
@@ -305,9 +321,14 @@ async def run_lesson_reviewer(
     # #130: 'accepted' is transient (accept + mark_applied happen in the same run), so
     # the consumed stable state is 'applied'. Re-review BOTH, so an applied lesson with
     # contradictory settled evidence is demoted rather than left active until expiry.
+    # #2865: Risk enforces every applied lesson (limit=-1), so the overturn pass
+    # must reach every one too, not only the newest 100 of each status.
     demoted = 0
-    _to_review = (store.list_all(status="accepted", limit=100)
-                  + store.list_all(status="applied", limit=100))
+    _to_review = (store.list_all(status="accepted", limit=-1, oldest_first=True)
+                  + store.list_all(status="applied", limit=-1, oldest_first=True))
+    _judge_ids = _rejudge_window(
+        [lesson.lesson_id for lesson in _to_review], datetime.now(timezone.utc),
+    )
     for lesson in _to_review:
         try:
             evidence = _fetch_evidence(lesson)
@@ -332,6 +353,8 @@ async def run_lesson_reviewer(
             )
             continue
         if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
+            continue
+        if lesson.lesson_id not in _judge_ids:
             continue
         decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
         if decision == "reject":
