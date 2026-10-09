@@ -1828,14 +1828,37 @@ def resume_scheduler() -> bool:
             logger.info("Scheduler resumed (from blanket pause)")
         # Also resume any selectively-paused jobs
         if _selectively_paused_jobs:
-            for job_id in list(_selectively_paused_jobs):
+            from apscheduler.jobstores.base import JobLookupError
+
+            # A job leaves the tracked set only once it is resumed (or no longer
+            # exists). A partial failure re-pauses this attempt's jobs and raises,
+            # so release_pauses restores the exact leases (scheduler contract:
+            # resume failure stays fail-closed) instead of reporting success.
+            resumed_now: list[str] = []
+            failed: list[str] = []
+            for job_id in sorted(_selectively_paused_jobs):
                 try:
                     _scheduler.resume_job(job_id)
+                except JobLookupError:
+                    logger.info("scheduler: paused job %s no longer exists; nothing to resume", job_id)
                 except Exception:
-                    logger.warning('scheduler: resume_job failed')
+                    logger.warning("scheduler: resume_job failed for %s", job_id, exc_info=True)
+                    failed.append(job_id)
+                    continue
+                resumed_now.append(job_id)
+            if failed:
+                for job_id in resumed_now:
+                    try:
+                        _scheduler.pause_job(job_id)
+                    except JobLookupError:
+                        continue
+                    except Exception:
+                        logger.warning("scheduler: re-pause after partial resume failed for %s", job_id, exc_info=True)
+                        _selectively_paused_jobs.discard(job_id)  # it is running; do not claim it paused
+                raise RuntimeError(f"scheduler_resume_partial:{','.join(failed)}")
             logger.info(
                 "Scheduler resumed %d selectively-paused jobs",
-                len(_selectively_paused_jobs),
+                len(resumed_now),
             )
             _selectively_paused_jobs.clear()
         if _scheduler.state != STATE_RUNNING:
