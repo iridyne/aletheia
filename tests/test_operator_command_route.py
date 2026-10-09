@@ -48,6 +48,8 @@ async def test_operator_command_uses_existing_agent_shell_runtime(operator_env):
         response="System healthy",
         action=None,
         needs_confirmation=False,
+        permitted=True,
+        executed=True,
     )
 
     transport = ASGITransport(app=app)
@@ -77,6 +79,8 @@ async def test_operator_command_persists_main_session_messages(operator_env):
         response="System healthy",
         action=None,
         needs_confirmation=False,
+        permitted=True,
+        executed=True,
     )
 
     transport = ASGITransport(app=app)
@@ -123,6 +127,8 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
         response="Strategy session continued",
         action=None,
         needs_confirmation=False,
+        permitted=True,
+        executed=True,
         session_id="strategy-session-1",
     )
 
@@ -323,3 +329,123 @@ async def test_operator_command_route_executes_enabled_extension_from_command_ce
 
     event_types = [event["event_type"] for event in list_events(limit=20)]
     assert "extension_invoked" in event_types
+
+
+def _event_types(session_id: str) -> list[str]:
+    from aletheia.agent_shell.operator_store import list_events
+
+    return [event["event_type"] for event in list_events(limit=50, session_id=session_id)]
+
+
+@pytest.mark.anyio
+async def test_unconfirmed_pause_is_recorded_as_pending_not_executed(operator_env, monkeypatch):
+    """#1607: the gate answer is 200 + not run; it must not be logged as command_executed."""
+    import aletheia.agent_shell.intent as intent_mod
+    import aletheia.config.loader as loader
+    from aletheia.agent_shell.operator_store import list_commands
+
+    cfg = loader.load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.operator.permission_mode = "PaperAuto"
+    cfg.runtime.paused = False
+    loader.save_config(cfg)
+
+    async def fake_classify(text, summary):
+        return intent_mod.CommandIntent(command="pause_agents", parameters={}, confidence=0.9)
+
+    monkeypatch.setattr(intent_mod, "classify_intent", fake_classify)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        pending = await client.post(
+            "/api/operator/command", json={"input": "pause agents", "session_id": "s-pending"}
+        )
+        assert pending.status_code == 200
+        assert pending.json()["executed"] is False
+        assert pending.json()["needs_confirmation"] is True
+        assert loader.load_config().runtime.paused is False
+        assert _event_types("s-pending").count("command_executed") == 0
+        assert "command_confirmation_required" in _event_types("s-pending")
+        assert [c["permitted"] for c in list_commands("s-pending")] == [False]
+
+        confirmed = await client.post(
+            "/api/operator/command",
+            json={"input": "pause agents", "session_id": "s-pending", "confirmed_command": "pause_agents"},
+        )
+    body = confirmed.json()
+    assert body["executed"] is True
+    assert body["needs_confirmation"] is False
+    assert loader.load_config().runtime.paused is True
+    assert _event_types("s-pending").count("command_executed") == 1
+
+
+@pytest.mark.anyio
+async def test_machine_caller_gated_command_is_pending_not_executed(operator_env):
+    """#1974: a machine caller's gated command is permitted but never run."""
+    import aletheia.config.loader as loader
+
+    cfg = loader.load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.operator.permission_mode = "PaperAuto"
+    loader.save_config(cfg)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/operator/internal/commands/rerun_failed_agent_task",
+            json={"session_id": "s-rerun", "parameters": {"agent_name": "post_trade_reviewer"}},
+        )
+    data = resp.json()
+    assert data["permitted"] is True
+    assert data["executed"] is False
+    assert data["needs_confirmation"] is True
+    assert "command_executed" not in _event_types("s-rerun")
+    assert "command_confirmation_required" in _event_types("s-rerun")
+
+
+@pytest.mark.anyio
+async def test_handler_error_is_recorded_as_failed_not_executed(operator_env):
+    """#1974: a handler that ran and returned a top-level error did not succeed."""
+    import aletheia.config.loader as loader
+    from aletheia.agent_shell.operator_store import list_commands
+
+    cfg = loader.load_config()
+    cfg.agent.permission_mode = "Observe"
+    cfg.operator.permission_mode = "ReadOnly"
+    loader.save_config(cfg)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/operator/internal/commands/explain_agent_run",
+            json={"session_id": "s-missing-run", "parameters": {"run_id": "run-does-not-exist"}},
+        )
+    data = resp.json()
+    assert data["permitted"] is True
+    assert data["executed"] is False
+    assert data["result"] == {"error": "Agent run 'run-does-not-exist' not found."}
+    assert "command_executed" not in _event_types("s-missing-run")
+    assert "command_failed" in _event_types("s-missing-run")
+    assert [c["permitted"] for c in list_commands("s-missing-run")] == [False]
+
+
+@pytest.mark.anyio
+async def test_reconcile_handler_reports_suspended_run_as_error(monkeypatch):
+    """#1974: detector-unavailable reconcile is suspended with errors, not 'complete'."""
+    import aletheia.portfolio.position_reconciler as reconciler
+    from aletheia.agent_shell.commands import reconcile_positions
+    from aletheia.agent_shell.executor import handler_succeeded
+
+    summary = {
+        "account_mode": "bitget_demo",
+        "sync_status": "degraded",
+        "counts": {"managed": 2, "external": 0, "orphaned": 0, "degraded": 0},
+        "adopted": [],
+        "closed_orphans": [],
+        "errors": ["reconciliation integrity detector unavailable"],
+        "suspended": True,
+    }
+    monkeypatch.setattr(reconciler, "run_reconcile", lambda: summary)
+    result = await reconcile_positions({})
+    assert not handler_succeeded(result)
+    assert "incomplete" in result["error"]
+    assert result["summary"] is summary

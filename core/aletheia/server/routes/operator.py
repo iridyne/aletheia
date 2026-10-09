@@ -166,18 +166,15 @@ def _task_event_type(status: str) -> str | None:
     return None
 
 
-def _looks_like_command_rejection(intent: str, response: str | None) -> bool:
-    if intent in {"forbidden", "error"}:
-        return True
-    text = (response or "").lower()
-    markers = [
-        "requires worker permission mode",
-        "requires operator permission mode",
-        "permission denied",
-        "unknown command",
-        "permanently forbidden",
-    ]
-    return any(marker in text for marker in markers)
+def _command_event_type(*, permitted: bool, executed: bool, needs_confirmation: bool) -> str:
+    """One event per command outcome; ``command_executed`` only when it ran and succeeded."""
+    if executed:
+        return "command_executed"
+    if needs_confirmation:
+        return "command_confirmation_required"
+    if not permitted:
+        return "command_rejected"
+    return "command_failed"
 
 
 def _sse_block(event_name: str, data: dict[str, Any]) -> str:
@@ -1119,7 +1116,6 @@ async def operator_command(req: OperatorCommandRequest):
     if isinstance(intent_name, str) and _command_def_payload(intent_name) is not None:
         command_name = intent_name
     command_meta = _command_def_payload(command_name) if command_name else None
-    permitted = not _looks_like_command_rejection(payload.get("intent", ""), payload.get("response"))
     append_message(
         session_id=target_session_id,
         role="assistant",
@@ -1132,19 +1128,20 @@ async def operator_command(req: OperatorCommandRequest):
             "needs_confirmation": (
                 bool(command_meta.get("requires_confirmation"))
                 if isinstance(command_meta, dict)
-                else bool(payload.get("needs_confirmation"))
+                else result.needs_confirmation
             ),
-            "permitted": permitted,
+            "permitted": result.permitted,
+            "executed": result.executed,
             "action": payload.get("action"),
         },
         message_type="response",
         related_event_id=None,
     )
     create_event(
-        event_type=(
-            "command_rejected"
-            if not permitted
-            else "command_executed"
+        event_type=_command_event_type(
+            permitted=result.permitted,
+            executed=result.executed,
+            needs_confirmation=result.needs_confirmation,
         ),
         source="operator_command_route",
         session_id=target_session_id,
@@ -1203,13 +1200,18 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
             "text": result.response,
             "command": command_name,
             "permitted": result.permitted,
+            "executed": result.executed,
             "result": result.result,
         },
         message_type="response",
         related_event_id=None,
     )
     create_event(
-        event_type="command_executed" if result.permitted else "command_rejected",
+        event_type=_command_event_type(
+            permitted=result.permitted,
+            executed=result.executed,
+            needs_confirmation=result.needs_confirmation,
+        ),
         source="operator_internal_command_route",
         session_id=target_session_id,
         related_entity_type="command",
@@ -1218,6 +1220,7 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
             "input": _truncate_event_field(command_text),
             "command": command_name,
             "permitted": result.permitted,
+            "executed": result.executed,
             "response": _truncate_event_field(result.response),
         },
     )
@@ -1592,6 +1595,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
             commands_executed.append({
                 "command": cmd_name,
                 "permitted": result.permitted,
+                "executed": result.executed,
                 "response": result.response[:500],
             })
             messages.append({"role": "assistant", "content": content})

@@ -370,6 +370,7 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
       return {
         command: commandName,
         permitted: true,
+        executed: true,
         response: 'created: true',
         result: {
           created: true,
@@ -4200,6 +4201,7 @@ test('operator loop marks a repeatedly rejected symbol observe-only through type
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'BTC/USDT is now observe-only.',
       result: {
         updated: true,
@@ -4292,6 +4294,7 @@ test('operator loop reruns a recent failed agent task through typed rerun_failed
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response:
         'Reran failed agent task for post_trade_reviewer. Original run run-review-failed, new run run-review-rerun-1 is completed.',
       result: {
@@ -4350,6 +4353,93 @@ test('operator loop reruns a recent failed agent task through typed rerun_failed
   )
 })
 
+test('operator loop does not complete a rerun task the backend did not execute (#1974)', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+  backend.getAgentRuns = async () =>
+    [
+      {
+        id: 'run-market-observer-fresh',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: fiveMinutesAgo,
+        ended_at: fiveMinutesAgo,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+      {
+        id: 'run-review-failed',
+        agent_name: 'post_trade_reviewer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: twentyMinutesAgo,
+        ended_at: twentyMinutesAgo,
+        status: 'failed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '["timeout"]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  // #1974: what the backend answers a machine caller for a confirmation-gated
+  // command — permitted by mode, never run.
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      executed: false,
+      response:
+        "'rerun_failed_agent_task' requires operator confirmation and was not executed. Only the operator can confirm it from the Command Center.",
+      result: null,
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: true,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'rerun_failed_agent_task')
+  const eventTypes = calls.createdEvents.map(event => event.event_type)
+  assert.ok(!eventTypes.includes('failed_agent_rerun_requested'))
+  assert.ok(eventTypes.includes('failed_agent_rerun_failed'))
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'failed')
+})
+
 test('operator loop refreshes the non-critical daily review report through typed create_daily_review', async () => {
   const snapshot = makeSnapshot()
   const { backend, calls } = makeFakeBackend(snapshot)
@@ -4386,6 +4476,7 @@ test('operator loop refreshes the non-critical daily review report through typed
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: `Created daily review Operator Daily Review ${today}.`,
       result: {
         created: true,
@@ -4470,6 +4561,7 @@ test('operator loop refreshes the non-critical agent performance report through 
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created agent performance review report.',
       result: {
         created: true,
@@ -4548,6 +4640,7 @@ test('operator loop refreshes the system health diagnostic report through typed 
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created system health diagnostic report.',
       result: {
         created: true,
@@ -4647,6 +4740,7 @@ test('operator loop refreshes the worker health diagnostic report through typed 
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created worker health diagnostic report.',
       result: {
         created: true,
@@ -4771,6 +4865,7 @@ test('operator loop re-enters a recovered in-flight repair proposal task from ta
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created a prompt-change proposal for market_observer from recovered task context.',
       result: {
         proposed: true,
@@ -5476,6 +5571,7 @@ test('operator loop materializes proposal-only prompt change decisions through t
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created a prompt-change proposal for market_observer.',
       result: {
         proposed: true,
@@ -5568,6 +5664,7 @@ test('operator loop materializes proposal-only schedule change decisions through
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created a schedule-change proposal for paper_trader.',
       result: {
         proposed: true,
@@ -5666,6 +5763,7 @@ test('operator loop materializes proposal-only risk boundary decisions through t
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created a risk-boundary change proposal.',
       result: {
         proposed: true,
@@ -5757,6 +5855,7 @@ test('operator loop materializes proposal-only Command Center behavior decisions
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created a Command Center behavior proposal.',
       result: {
         proposed: true,
@@ -5842,6 +5941,7 @@ test('operator loop materializes extension enablement proposals after a passing 
     return {
       command: commandName,
       permitted: true,
+      executed: true,
       response: 'Created an extension enablement proposal.',
       result: {
         proposed: true,

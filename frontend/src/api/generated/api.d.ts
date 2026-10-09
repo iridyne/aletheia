@@ -7175,6 +7175,11 @@ export interface components {
             action?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Executed
+             * @default false
+             */
+            executed: boolean;
             /** Intent */
             intent: string;
             /**
@@ -7182,6 +7187,11 @@ export interface components {
              * @default false
              */
             needs_confirmation: boolean;
+            /**
+             * Permitted
+             * @default false
+             */
+            permitted: boolean;
             /** Response */
             response: string;
             /** Risk Level */

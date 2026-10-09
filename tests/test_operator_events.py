@@ -1199,6 +1199,8 @@ async def test_operator_command_route_emits_command_events(client):
         response="System healthy",
         action=None,
         needs_confirmation=False,
+        permitted=True,
+        executed=True,
     )
 
     with patch(
