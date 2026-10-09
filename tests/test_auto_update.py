@@ -110,6 +110,7 @@ def _configured_candidate_run(tmp_path, monkeypatch, events: list[str]):
     service = MagicMock()
     service.create_backup.side_effect = [tmp_path / "preflight", tmp_path / "activation"]
     monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: None)
     monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: tmp_path / "candidate")
     monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
     monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
@@ -306,6 +307,7 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
     service = MagicMock()
     service.create_backup.side_effect = backups
     monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: None)
     candidate = tmp_path / "candidate"
     monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: candidate)
     monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
@@ -353,6 +355,7 @@ def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monk
     service = MagicMock()
     service.create_backup.side_effect = [tmp_path / "preflight", tmp_path / "activation"]
     monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: None)
     monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: tmp_path / "candidate")
     monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
     monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
@@ -784,6 +787,7 @@ def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
     service = MagicMock()
     service.create_backup.side_effect = [tmp_path / "preflight", tmp_path / "activation"]
     monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: None)
     monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: tmp_path / "candidate")
     monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
     monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
@@ -1068,7 +1072,7 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
         auto,
         "RestoreService",
         lambda: SimpleNamespace(
-            restore=lambda *_args: calls.append("restore") or SimpleNamespace(success=True),
+            restore=lambda *_args, **kwargs: calls.append(f"restore:{kwargs}") or SimpleNamespace(success=True),
         ),
     )
     monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
@@ -1084,7 +1088,12 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
     result = auto._restore_old_runtime("old", tmp_path / "backup", False, restore_static=False)
 
     assert result == {"ok": True, "reason": "restored"}
-    assert calls == ["lock-enter", "restore", "invalidate:False", "lock-exit"]
+    assert calls == [
+        "lock-enter",
+        "restore:{'require_recovery_checkpoint': True}",
+        "invalidate:False",
+        "lock-exit",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1109,3 +1118,17 @@ def test_source_restore_names_an_incomplete_data_rollback(monkeypatch, tmp_path,
     result = auto._restore_old_runtime("old", tmp_path / "backup", False, restore_static=False)
 
     assert result == {"ok": False, "reason": reason, "detail": "boom"}
+
+
+def test_unverified_activation_backup_stops_before_the_source_switch(tmp_path, monkeypatch):
+    """#1444: the rollback point is proven before switching; the old runtime restarts."""
+    events: list[str] = []
+    auto, _, _service = _configured_candidate_run(tmp_path, monkeypatch, events)
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: "backup profile online is not a recovery checkpoint")
+
+    result = auto.run()
+
+    assert result["reason"] == "activation_backup_unverified"
+    assert "source:activate" not in events
+    assert events[-1] == "gateway:start"
+    assert result["state"]["failed_tags"] == {}  # runtime-local: the candidate is not blacklisted

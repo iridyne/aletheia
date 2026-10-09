@@ -368,3 +368,29 @@ def test_restore_requires_authoritative_profile(tmp_path):
 
     assert not result.success
     assert any("authoritative recovery checkpoint" in error for error in result.errors)
+
+
+def test_authoritative_backup_refuses_a_data_root_without_app_db(tmp_path):
+    """#1444: a recovery checkpoint that holds no database cannot be published."""
+    _seed_workspace(tmp_path)
+    (tmp_path / "app.db").unlink()
+
+    from ops.backup.service import BackupService
+
+    with pytest.raises(RuntimeError, match="authoritative_backup_requires_app_db"):
+        BackupService(data_dir=tmp_path).create_backup(label="no-db", profile="authoritative")
+    assert not list((tmp_path / "backups").glob("*.tar.gz"))
+    # The online profile stays an explicit non-recovery snapshot.
+    BackupService(data_dir=tmp_path).create_backup(label="no-db-online")
+
+
+def test_update_rollback_point_check_rejects_online_and_accepts_authoritative(tmp_path):
+    _seed_workspace(tmp_path)
+
+    from ops.backup.service import BackupService
+    from ops.update.auto import _recovery_checkpoint_problem
+
+    service = BackupService(data_dir=tmp_path)
+    online = service.create_backup(label="online")
+    assert "not a recovery checkpoint" in (_recovery_checkpoint_problem(online) or "")
+    assert _recovery_checkpoint_problem(service.create_backup(label="auth", profile="authoritative")) is None

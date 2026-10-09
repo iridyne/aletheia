@@ -27,6 +27,7 @@ try:  # Windows supports the rest of the update CLI, but not Fedora auto deploym
 except ImportError:  # pragma: no cover - exercised only on Windows
     fcntl = None
 
+from aletheia.backup.verify import verify_backup
 from ops.backup.restore import RestoreService
 from ops.backup.service import BackupService
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
@@ -48,7 +49,8 @@ _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _SYSTEMCTL_TIMEOUT_SEC = 30
-_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed", "observation_settlement_failed"}
+# Runtime-local failures: the candidate is not at fault, so it is not blacklisted.
+_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed", "observation_settlement_failed", "activation_backup_unverified"}
 _RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
 _AUTO_DEPLOY_ROLE = "paper"
 _ROLE_MIGRATION_DETAIL = (
@@ -548,6 +550,20 @@ def _install_source_dependencies() -> bool:
         return False
 
 
+def _recovery_checkpoint_problem(backup: Path) -> str | None:
+    """Why ``backup`` cannot serve as an update rollback point, or None if it can.
+
+    persistence_recovery_contract.md: restore paths used for update rollback
+    reject an online, legacy, malformed, or mismatched checkpoint.
+    """
+    verified = verify_backup(backup)
+    if not verified.valid:
+        return "; ".join(verified.errors + verified.mismatches) or "backup_verification_failed"
+    if not verified.recovery_eligible:
+        return f"backup profile {verified.profile or 'unknown'} is not a recovery checkpoint"
+    return None
+
+
 def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, restore_static: bool) -> dict[str, Any]:
     try:
         reset = git_ops.reset_hard(old)
@@ -563,7 +579,7 @@ def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, r
         if restore_static:
             _restore_frontend_build(had_previous_static)
         with worker_cycle_exclusion():
-            restored = RestoreService().restore(backup, get_data_dir())
+            restored = RestoreService().restore(backup, get_data_dir(), require_recovery_checkpoint=True)
             if not restored.success:
                 # A rollback that could not put the old files back leaves a mixed data root.
                 reason = "data_restore_failed" if restored.rollback_complete else "data_restore_rollback_incomplete"
@@ -758,6 +774,9 @@ def _release_transaction(*, deploy: bool) -> dict[str, Any]:
             final_backup = BackupService(get_data_dir()).create_backup(
                 label=f"auto_activate_{tag[1:]}", profile="authoritative"
             )
+            backup_problem = _recovery_checkpoint_problem(final_backup)
+            if backup_problem:
+                raise AutoUpdateError("activation_backup_unverified", backup_problem)
 
             state = _write_state(state, phase="activating", status="running")
             merged = git_ops.merge_fast_forward(target)

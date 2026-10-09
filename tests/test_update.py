@@ -1462,6 +1462,7 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
         lambda commit, backup: calls.append(("preflight", commit, backup)) or (tmp_path / "candidate"),
     )
     monkeypatch.setattr(auto, "_remove_candidate", lambda candidate: calls.append(("remove", candidate)))
+    monkeypatch.setattr(auto, "_recovery_checkpoint_problem", lambda backup: calls.append(("verify", backup)))
     monkeypatch.setattr(
         applier,
         "run_smoke_check",
@@ -1476,9 +1477,10 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     assert result["schema_backup"] == str(tmp_path / "activation.tar")
     assert ("preflight", "new222", tmp_path / "preflight.tar") in calls
     assert calls.index(("preflight", "new222", tmp_path / "preflight.tar")) < calls.index(("advance", "new222"))
-    assert calls.index(("backup", "interactive_schema_activate", "online", tmp_path / "activation.tar")) < calls.index(
-        ("restart",)
-    )
+    # The rollback point is an authoritative checkpoint, verified before activation (#1444).
+    assert calls.index(
+        ("backup", "interactive_schema_activate", "authoritative", tmp_path / "activation.tar")
+    ) < calls.index(("verify", tmp_path / "activation.tar")) < calls.index(("restart",))
 
 
 @pytest.mark.integration

@@ -223,6 +223,9 @@ class BackupService:
                 with audit_lock:
                     # Copy app.db via WAL-safe SQLite snapshot (#59, #287).
                     db_path = self._data_dir / "app.db"
+                    if profile == "authoritative" and not db_path.is_file():
+                        # A recovery checkpoint without the database cannot recover it (#1444).
+                        raise RuntimeError("authoritative_backup_requires_app_db")
                     if db_path.exists():
                         dst = staging / "app.db"
                         self._snapshot_sqlite_db(db_path, dst)
