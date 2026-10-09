@@ -210,7 +210,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: Set
               variant: next === 'Full' ? 'danger' : 'warning',
             }))) return
             permMut.mutate(next)
-          }} className="w-auto">
+          }} disabled={permMut.isPending} aria-busy={permMut.isPending} className="w-auto">
             {PERMISSION_MODES.map(m => <option key={m}>{m}</option>)}
           </select>
         </Row>
