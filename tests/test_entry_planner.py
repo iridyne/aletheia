@@ -1544,6 +1544,17 @@ def test_planning_history_list_omits_planner_blobs():
     assert not {"planner_input_json", "requalification_source_json", "validated_hypothesis_json"} & item.keys()
     assert len(json.dumps(body)) < 20_000
 
+    # #3642 acceptance: the blobs stay reachable for this generation by id, even after
+    # it is superseded (the candidate endpoint only returns the current one).
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET is_current=0, status='superseded' WHERE id=?",
+        (generation["id"],),
+    )
+    detail = TestClient(app).get(f"/api/universe/planning-generations/{generation['id']}")
+    assert detail.status_code == 200
+    assert json.loads(detail.json()["planner_input_json"]) == {"x": "x" * 100_000}
+    assert TestClient(app).get("/api/universe/planning-generations/missing").status_code == 404
+
 
 def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     from aletheia.server.routes.universe import get_candidate

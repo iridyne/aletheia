@@ -371,7 +371,8 @@ class PlanningHistoryItem(CandidatePlanningSummaryFields):
     """List read model: no planner input / requalification / hypothesis blobs (#3642).
 
     Measured 20.4 MB per 200 rows, 92% `planner_input_json`. The columns stay in the
-    durable row and are served by `GET /api/universe/candidates/{id}`.
+    durable row and are served for any generation, current or superseded, by
+    `GET /api/universe/planning-generations/{generation_id}`.
     """
 
     identity_version: str | None
@@ -858,6 +859,15 @@ def get_planning_history(
     omitted = CandidatePlanningFields.__annotations__.keys() - PlanningHistoryItem.__annotations__.keys()
     items = [{k: v for k, v in row.items() if k not in omitted} for row in page]
     return {"items": items, "next_before": next_before}
+
+
+@router.get("/planning-generations/{generation_id}", responses={200: {"model": CandidatePlanningFields}})
+def get_planning_generation(generation_id: str):
+    """One planning generation with its planner input / requalification / hypothesis blobs."""
+    generation = repo.get_candidate_planning_generation(generation_id)
+    if generation is None:
+        raise HTTPException(404, "Planning generation not found")
+    return generation
 
 
 def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
