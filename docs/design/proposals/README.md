@@ -26,6 +26,10 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Entry, stop, target and position sizing](entry_order_risk_sizing.md): the
+  owner's original intent for a 500 USDT starting account and the evidence-selected
+  design for stop placement, sizing, leverage and stop execution.
+
 - [V2/V3 residue and dual-mainline convergence](v2_v3_convergence_plan.md):
   delete the retired V2 entry authority and the dead profit-gradient branch,
   collapse the flat Risk fields that shadow the nested mode policy, and list the
