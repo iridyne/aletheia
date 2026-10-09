@@ -353,3 +353,33 @@ def test_backfill_archive_failure_aborts_before_any_delete(tmp_path, monkeypatch
         drb.run(args)
     assert conn.execute("SELECT COUNT(*) FROM agent_shell_tasks").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM agent_shell_events").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("probe", [True, OSError("pidfile unreadable")])
+def test_apply_aborts_unless_gateway_is_proven_stopped(tmp_path, monkeypatch, probe):
+    """#1384: a running gateway OR a failed probe aborts --apply before the baseline/backup."""
+    import aletheia.gateway.pidfile as pidfile
+    from ops.maintenance import data_retention_backfill as drb
+
+    def is_running():
+        if isinstance(probe, Exception):
+            raise probe
+        return probe
+
+    monkeypatch.setattr(pidfile, "is_running", is_running)
+    monkeypatch.setattr(drb, "_backups_dir", lambda: pytest.fail("baseline/backup step reached"))
+    db_file = tmp_path / "app.db"
+    db = sqlite3.connect(db_file)
+    with pytest.raises(SystemExit, match="gateway"):
+        drb._preflight(_minimal_args(), db, db_file)
+
+
+def test_apply_proceeds_past_gateway_check_when_probe_returns_false(tmp_path, monkeypatch):
+    import aletheia.gateway.pidfile as pidfile
+    from ops.maintenance import data_retention_backfill as drb
+
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+    monkeypatch.setattr(drb, "_backups_dir", lambda: tmp_path / "backups")
+    db_file = tmp_path / "app.db"
+    db = sqlite3.connect(db_file)
+    assert drb._preflight(_minimal_args(), db, db_file)["gateway_running"] is False

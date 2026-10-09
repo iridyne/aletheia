@@ -529,16 +529,23 @@ def _preflight(args: argparse.Namespace, db: sqlite3.Connection, db_file: Path) 
     """
     report: dict[str, Any] = {}
 
-    # 1) Gateway must not be running.
+    # 1) Gateway must be proven stopped (RETENTION_POLICY.md §12.1): apply
+    #    proceeds only on a successful probe that returned False.
     try:
         from aletheia.gateway.pidfile import is_running as _is_running
-        report["gateway_running"] = bool(_is_running())
-    except Exception as exc:  # pragma: no cover - defensive
-        report["gateway_running"] = f"probe_failed: {exc}"
-    if report["gateway_running"] is True and args.apply:
-        raise SystemExit(
-            "ABORT: gateway is running. Stop it first with `aletheia gateway stop`."
-        )
+        running = _is_running()
+    except Exception as exc:
+        if args.apply:
+            raise SystemExit(
+                f"ABORT: gateway state unknown: {type(exc).__name__}: {exc}"
+            ) from exc
+        report["gateway_running"] = "unavailable"
+    else:
+        report["gateway_running"] = running
+        if running is not False and args.apply:
+            raise SystemExit(
+                "ABORT: gateway is running. Stop it first with `aletheia gateway stop`."
+            )
 
     # 2) Free disk space > 2 * app.db size.
     size_mb = _db_size_mb(db_file)
