@@ -206,7 +206,7 @@ def test_open_protection_splits_a_shared_strategy_order_into_two_legs(monkeypatc
     ]
 
 
-@pytest.mark.parametrize("override", [{"posSide": ""}, {"posSide": "net"}, {"orderId": ""}, {"stopLoss": "abc"}])
+@pytest.mark.parametrize("override", [{"posSide": ""}, {"posSide": "net"}, {"orderId": ""}, {"stopLoss": "abc"}, {"symbol": ""}, {"qty": "abc"}, {"qty": "-1"}])
 def test_open_protection_malformed_row_voids_the_whole_read(monkeypatch, override):
     reader, _exchange = _native_reader(monkeypatch, [_strategy_row(), _strategy_row(**override)])
     with pytest.raises(ValueError):
