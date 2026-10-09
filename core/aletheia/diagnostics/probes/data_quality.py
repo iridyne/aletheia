@@ -26,7 +26,7 @@ def _probe_market_data(report: Report) -> None:
         from aletheia.storage.repositories import list_market_snapshots
         rows = list_market_snapshots(limit=1)
     except Exception as e:
-        report.add("data.market", "info", f"could not read snapshots: {e}")
+        report.add_probe_error("data.market", e, "could not read snapshots")
         return
     if not rows:
         report.add("data.market", "info", "no market snapshots yet (feed never started)")
@@ -66,7 +66,7 @@ def _probe_collector_health(report: Report) -> None:
 
         state = get_collector_health_report()
     except Exception as e:
-        report.add("data.collectors", "info", f"collector status unavailable: {e}")
+        report.add_probe_error("data.collectors", e, "collector status unavailable")
         return
 
     domains = state["domains"]
@@ -178,7 +178,7 @@ def _probe_universe_market_coverage(report: Report) -> None:
         ).fetchall()
         member_counts = {str(row["market_type"]): int(row["n"]) for row in active_rows}
     except Exception as e:
-        report.add("data.universe_market_coverage", "info", f"probe error: {e}")
+        report.add_probe_error("data.universe_market_coverage", e)
         return
 
     detail = (
@@ -215,7 +215,7 @@ def _probe_orderbook(report: Report) -> None:
             "ORDER BY observed_at DESC LIMIT 1"
         ).fetchone()
     except Exception as e:
-        report.add("data.orderbook", "info", f"could not read orderbook snapshots: {e}")
+        report.add_probe_error("data.orderbook", e, "could not read orderbook snapshots")
         return
 
     if not row:
@@ -266,7 +266,7 @@ def _probe_perp_structure(report: Report) -> None:
                 "a trustworthy export is available",
             )
             return
-        report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
+        report.add_probe_error("data.perp_structure", e, "could not read perp structure")
         return
 
     if not row:
@@ -338,7 +338,7 @@ def _probe_macro_signals(report: Report) -> None:
                 report.add("data.lsr", "info",
                            "no LSR rows yet — enable in Settings → Market Data Sources")
         except Exception as e:
-            report.add("data.lsr", "info", f"could not read LSR: {e}")
+            report.add_probe_error("data.lsr", e, "could not read LSR")
 
         # --- F&G: latest macro snapshot's fng_value + age ---
         try:
@@ -361,7 +361,7 @@ def _probe_macro_signals(report: Report) -> None:
                 report.add("data.fear_greed", "info",
                            "no F&G rows yet — enable in Settings → Macro & Sentiment Signals")
         except Exception as e:
-            report.add("data.fear_greed", "info", f"could not read F&G: {e}")
+            report.add_probe_error("data.fear_greed", e, "could not read F&G")
 
         # --- CoinGecko top: count + newest observed_at ---
         try:
@@ -383,7 +383,7 @@ def _probe_macro_signals(report: Report) -> None:
                            "check CoinGecko reachability (429? rate limit?)"
                            if sev == "warn" else None)
         except Exception as e:
-            report.add("data.coingecko_top", "info", f"could not read CoinGecko top: {e}")
+            report.add_probe_error("data.coingecko_top", e, "could not read CoinGecko top")
 
         # --- Hyperliquid: newest cross-venue OI row (exchange='hyperliquid') ---
         try:
@@ -403,7 +403,7 @@ def _probe_macro_signals(report: Report) -> None:
                 report.add("data.hyperliquid", "info",
                            "no Hyperliquid rows yet — enable in Settings → Macro & Sentiment Signals")
         except Exception as e:
-            report.add("data.hyperliquid", "info", f"could not read Hyperliquid: {e}")
+            report.add_probe_error("data.hyperliquid", e, "could not read Hyperliquid")
 
         # --- DefiLlama on-chain: row count + newest observed_at ---
         try:
@@ -424,10 +424,10 @@ def _probe_macro_signals(report: Report) -> None:
                            "check DefiLlama (api.llama.fi) reachability if stale > 45m"
                            if sev == "warn" else None)
         except Exception as e:
-            report.add("data.onchain", "info", f"could not read on-chain: {e}")
+            report.add_probe_error("data.onchain", e, "could not read on-chain")
 
     except Exception as e:
-        report.add("data.macro_signals", "info", f"macro signals probe failed: {e}")
+        report.add_probe_error("data.macro_signals", e, "macro signals probe failed")
 
 
 def _probe_coinalyze(report: Report) -> None:
@@ -502,7 +502,7 @@ def _probe_coinalyze(report: Report) -> None:
                 "event-driven feed is idle until a real liquidation occurs",
             )
     except Exception as e:
-        report.add("data.coinalyze", "info", f"could not read Coinalyze state: {e}")
+        report.add_probe_error("data.coinalyze", e, "could not read Coinalyze state")
 
 
 def _probe_prediction_markets(report: Report) -> None:
@@ -523,7 +523,7 @@ def _probe_prediction_markets(report: Report) -> None:
             "ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
     except Exception as e:
-        report.add("data.prediction_markets", "info", f"could not read prediction market state: {e}")
+        report.add_probe_error("data.prediction_markets", e, "could not read prediction market state")
         return
 
     market_age = _age_minutes(market_row["updated_at"]) if market_row else None
@@ -727,7 +727,7 @@ def _probe_serenity_pipeline(report: Report) -> None:
             "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
         ).fetchone()[0]
     except Exception as e:
-        report.add("data.serenity_pipeline", "info", f"probe error: {e}")
+        report.add_probe_error("data.serenity_pipeline", e)
         return
     if not successful:
         attempt_detail = ""
@@ -770,7 +770,7 @@ def _probe_volume_ranking(report: Report) -> None:
             "SELECT MAX(observed_at) newest FROM volume_ranking_snapshots"
         ).fetchone()
     except Exception as e:
-        report.add("data.volume_ranking", "info", f"probe error: {e}")
+        report.add_probe_error("data.volume_ranking", e)
         return
     if not row["newest"]:
         report.add("data.volume_ranking", "warn",

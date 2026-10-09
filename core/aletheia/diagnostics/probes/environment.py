@@ -314,7 +314,7 @@ def _probe_gateway_restart_history(report: Report) -> None:
         from aletheia.files.jsonl import read_jsonl
         events = read_jsonl("audit.jsonl", limit=500)
     except Exception as e:
-        report.add("process.restart_history", "info", f"probe error: {e}")
+        report.add_probe_error("process.restart_history", e)
         return
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -639,7 +639,7 @@ def _probe_llm_inference(
     try:
         evidence = _llm_call_evidence()
     except Exception as e:
-        report.add("llm.inference", "info", f"LLM call ledger unreadable: {e}")
+        report.add_probe_error("llm.inference", e, "LLM call ledger unreadable")
         evidence = None
 
     if evidence is not None:
@@ -705,7 +705,7 @@ def _probe_llm_inference_active(report: Report) -> None:
             cfg = load_config(persist_migrations=False)
             result = asyncio.run(probe_llm_providers_at_startup(cfg, max_retries=1))
     except Exception as e:
-        report.add("llm.inference.probe", "info", f"active probe could not run: {e}")
+        report.add_probe_error("llm.inference.probe", e, "active probe could not run")
         return
 
     if not result.get("checked"):

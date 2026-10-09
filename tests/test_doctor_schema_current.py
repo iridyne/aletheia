@@ -52,7 +52,7 @@ def test_current_schema_reports_ok(monkeypatch):
     assert "aletheia-sqlite-v89" in check.detail
 
 
-def test_unreadable_migration_state_degrades_to_info(monkeypatch):
+def test_unreadable_migration_state_is_a_warn(monkeypatch):
     import aletheia.storage.migrations as migrations
 
     def explode() -> dict:
@@ -62,5 +62,5 @@ def test_unreadable_migration_state_degrades_to_info(monkeypatch):
     report = Report()
     _probe_infra_schema_current(report)
     (check,) = report.checks
-    assert check.severity == "info"
+    assert check.severity == "warn"
     assert "ledger unreadable" in check.detail

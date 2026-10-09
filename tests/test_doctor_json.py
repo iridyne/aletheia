@@ -127,3 +127,19 @@ def test_infra_status_reports_effective_runtime_port(api_only_runtime, monkeypat
         response = client.get("/_infra/status")
 
     assert response.json()["port"] == 8791
+
+
+def test_raising_probe_is_unhealthy_but_missing_table_is_not(monkeypatch):
+    import sqlite3
+
+    def broken(report):
+        raise RuntimeError("database disk image is malformed")
+
+    def fresh(report):
+        raise sqlite3.OperationalError("no such table: signal_outcomes")
+
+    monkeypatch.setattr(dx, "_CONTENT_PROBES", (broken,))
+    assert dx.build_content_report().to_dict()["healthy"] is False
+    monkeypatch.setattr(dx, "_CONTENT_PROBES", (fresh,))
+    assert dx.build_content_report().to_dict()["healthy"] is True
+

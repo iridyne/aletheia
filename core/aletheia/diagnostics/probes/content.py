@@ -31,7 +31,7 @@ def _probe_content_memo_quality(report: Report) -> None:
     try:
         from aletheia.storage.repositories import list_knowledge_items
     except Exception as e:
-        report.add("content.memo_quality", "info", f"probe error: {e}")
+        report.add_probe_error("content.memo_quality", e)
         return
     memo = None
     try:
@@ -119,7 +119,7 @@ def _probe_content_lesson_chain(report: Report) -> None:
             (cutoff,),
         ).fetchone()[0]
     except Exception as e:
-        report.add("content.lesson_chain", "info", f"probe error: {e}")
+        report.add_probe_error("content.lesson_chain", e)
         return
     total = sum(cnt.values())
     if total == 0:
@@ -162,7 +162,7 @@ def _probe_content_lesson_guards(report: Report) -> None:
             "SELECT lesson_id, dry_run_until, expires_at FROM ps_lessons WHERE status = 'accepted'"
         ).fetchall()
     except Exception as e:
-        report.add("content.lesson_guards", "info", f"probe error: {e}")
+        report.add_probe_error("content.lesson_guards", e)
         return
     if not lessons:
         report.add("content.lesson_guards", "ok", "no accepted lessons (no active risk guards)")
@@ -204,7 +204,7 @@ def _probe_content_attribution(report: Report) -> None:
             "ORDER BY created_at DESC LIMIT 200"
         ))
     except Exception as e:
-        report.add("content.attribution", "info", f"probe error: {e}")
+        report.add_probe_error("content.attribution", e)
         return
     total = len(rows)
     if total < 20:
@@ -260,7 +260,7 @@ def _probe_content_shadow_trades(report: Report) -> None:
         stale = int(row["stale"] or 0)
         orphaned = int(row["orphaned"] or 0)
     except Exception as e:
-        report.add("content.shadow_trades", "info", f"probe error: {e}")
+        report.add_probe_error("content.shadow_trades", e)
         return
     linked = stale - orphaned
     stale_pct = stale / total if total else 0.0
@@ -315,7 +315,7 @@ def _probe_content_signal_settlement(report: Report) -> None:
                 (now_iso,),
             ).fetchone()[0]
     except Exception as e:
-        report.add("content.signal_settlement", "info", f"probe error: {e}")
+        report.add_probe_error("content.signal_settlement", e)
         return
     if overdue > 0:
         oldest_age = _age_minutes(oldest_due)
@@ -349,7 +349,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
             (cutoff,),
         ))
     except Exception as e:
-        report.add("content.proposal_bias", "info", f"probe error: {e}")
+        report.add_probe_error("content.proposal_bias", e)
         return
     total = sum(r["n"] for r in rows)
     if total < 20:
