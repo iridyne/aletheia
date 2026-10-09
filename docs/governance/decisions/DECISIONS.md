@@ -1228,3 +1228,36 @@ account_fingerprint` 是出处,不参与相等。入场闸门在"只有在途订
 - 读取未完成/不可用、身份连续性无法证明、有 Fill 或开放 Position:一律不终止。
 - 不新增阈值,复用 48 小时与 `_has_real_economics`。
 - 平仓侧 Order 不走这条级联(只有 `kind="cancel"` 的入场路径)。
+
+## 2026-10-09 — Lifecycle capability map：文档只放稳定定义，当前级别由 AI 盘点贴到路线图 issue
+
+**Decision:** 新增 [`docs/product/CAPABILITY_MAP.md`](../../product/CAPABILITY_MAP.md)：按一笔交易机会 / 一个持仓的
+11 个生命周期阶段，登记主线上的 `CAP-<阶段>-nn` 能力（结果、契约、目标级别、探针、L4 资格标准）和
+L0–L4 成熟度判据。文档**不写**任何能力的当前级别、缺口或优先级。当前级别由 AI 按固定流程
+[`.claude/commands/capability-review.md`](../../../.claude/commands/capability-review.md) 盘点，
+结果作为带日期的评论贴在一个路线图总 issue 上。缺口一个 issue 一条，打 `cap/CAP-XXX-nn` 标签；
+优先级沿用 `priority/*`，只有 owner 能设置或移除 `priority/now`。不写生成脚本，不自动判定 L4。
+（owner 2026-10-09 批准提案 [`lifecycle_capability_map.md`](../../design/proposals/lifecycle_capability_map.md)。）
+
+这是 [documentation_governance.md](../policies/documentation_governance.md#authority-and-conflict-resolution)
+"没有具体失败证明必要，就不新增元数据登记表"规则下的一次显式例外（例外的写法按
+[stable-content rule](../policies/documentation_governance.md#stable-content-rule)：写明理由、权威和退出条件）。登记表本身不含实时状态。
+
+**Reason（具体失败，2026-10-09 实测）：**
+- open issue 615 个，其中 `priority/now` 52 个、`priority/soon` 242 个，owner 的优先级信号被冲淡；
+- 没有任何"生命周期阶段"或"能力"维度的标签，`area/runtime` 一个标签覆盖 299 个 issue；
+- 标签重复（`admission` 与 `area/admission`）、部分描述过时；原生父子 issue 使用量为 0；
+- 同日一次 14 个代理的能力追踪，对"每一段现在能做什么、缺什么"在三处给出三种分段口径，引用了
+  7 个已关闭或错号的 issue，且运行基线在写作当天就过时——没有一份稳定的能力定义可供对照。
+
+**Authority:** 登记表只定义"应该能做什么"和"怎样算做到"；它不扩大
+[Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) 或
+[Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)，也不替代契约。增删能力、
+调整目标级别是 owner 的 D1 决定。
+
+**Exit condition:** 如果连续两个月的周评审都没有用上这份地图，就删除 `CAPABILITY_MAP.md`、
+`capability-review.md` 和 `cap/*` 标签，并把本条记为已退出。
+
+**Guardrail:**
+- 盘点评论只是带日期的观察，不是支持声明、不是工作队列；AGENTS.md 的"AI 不得自选无关积压工作"不变。
+- 盘点 AI 只在路线图 issue 上发评论，不改登记表。
