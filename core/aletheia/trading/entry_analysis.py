@@ -18,14 +18,11 @@ from aletheia.trading.entry_learning import (
 )
 from aletheia.trading.entry_contract import entry_prompt_fingerprint
 from aletheia.trading.risk_intent import RiskIntent
-
-
-def canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+from aletheia.utils.json_utils import canonical_json_strict
 
 
 def fingerprint(value: object) -> str:
-    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+    return hashlib.sha256(canonical_json_strict(value).encode()).hexdigest()
 
 
 # Exact closed-bar window per timeframe. 4h=35 is the MACD(12,26,9) minimum

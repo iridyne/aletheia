@@ -22,6 +22,7 @@ from aletheia.trading.entry_plan import EntryPlan
 from aletheia.model_provider.base import portable_json_schema_payload
 
 from aletheia.trading.entry_analysis import EntryHypothesis
+from aletheia.utils.json_utils import canonical_json_strict
 from aletheia.trading.risk_intent import RiskIntent
 
 
@@ -188,8 +189,9 @@ def _no_plan_hypothesis(reason_code: str = "INSUFFICIENT_EVIDENCE") -> EntryHypo
 def _plan(generation: dict, *, profiles=None) -> EntryPlan:
     from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
-        EntryAnalysisContext, EntryAnchor, EntryHypothesis, canonical_json, fingerprint,
+        EntryAnalysisContext, EntryAnchor, EntryHypothesis, fingerprint,
     )
+    from aletheia.utils.json_utils import canonical_json_strict
 
     now = datetime.now(timezone.utc)
     primary = EntryAnchor(
@@ -250,7 +252,7 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
             "caller": "agent_shell.entry_planner", "prompt_fingerprint": "f" * 64, "model_provider": "test",
         },
     )
-    context_json = canonical_json(context.model_dump(mode="json"))
+    context_json = canonical_json_strict(context.model_dump(mode="json"))
     repo.execute_write(
         "UPDATE candidate_planning_generations SET planner_input_json=?, planner_input_hash=? WHERE id=?",
         (context_json, fingerprint(context.model_dump(mode="json")), generation["id"]),
@@ -827,8 +829,9 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
         EntryAnalysisContext, EntryAnchor, EntryHypothesis,
-        canonical_json, fingerprint,
+        fingerprint,
     )
+    from aletheia.utils.json_utils import canonical_json_strict
     from aletheia.trading.entry_contract import entry_prompt_fingerprint
 
     cfg = load_config()
@@ -906,7 +909,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         supporting_fact_refs=(invalidation.anchor_id,),
         risk_intent=RiskIntent(posture="BASELINE", reason="fixture baseline posture", evidence_refs=(invalidation.anchor_id,)),
     )
-    input_payload = canonical_json(context.model_dump(mode="json"))
+    input_payload = canonical_json_strict(context.model_dump(mode="json"))
     repo.execute_write(
         "UPDATE candidate_planning_generations SET planner_input_json=?, "
         "planner_input_hash=? WHERE id=?",
@@ -958,7 +961,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
                     changed = hypothesis.model_copy(update={
                         "supporting_fact_refs": (invalidation.anchor_id, primary.anchor_id),
                     })
-                    payload = canonical_json(changed.model_dump(mode="json"))
+                    payload = canonical_json_strict(changed.model_dump(mode="json"))
                     return plan.model_copy(update={"entry_hypothesis_json": payload,
                         "entry_hypothesis_hash": hashlib.sha256(payload.encode()).hexdigest()})
                 monkeypatch.setattr("aletheia.trading.entry_contract.entry_contract_fingerprints",
@@ -1095,7 +1098,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
 def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypatch):
     from aletheia.config.loader import load_config
     from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
-    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, fingerprint
     from tests.test_entry_analysis import _anchor, _context_v2
 
     cfg = load_config()
@@ -1120,7 +1123,7 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     data["execution_context"].update(availability="available", bid=99.89, ask=99.9,
         spread_bps=1.01, depth_10bps_usd=100000, estimated_costs=0.1)
     context = EntryAnalysisContext.model_validate(data)
-    frozen = canonical_json(context.model_dump(mode="json"))
+    frozen = canonical_json_strict(context.model_dump(mode="json"))
     repo.execute_write("UPDATE candidate_planning_generations SET planner_input_json=?,planner_input_hash=? WHERE id=?",
                        (frozen, fingerprint(context.model_dump(mode="json")), generation["id"]))
     calls = []

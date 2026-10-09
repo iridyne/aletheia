@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
-import json
 from typing import Mapping, Sequence
 
 from aletheia.config.schema import UniverseConfig
+from aletheia.utils.json_utils import canonical_json_strict
 from extensions.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
 from aletheia.universe.twin_persistence import (
@@ -40,10 +40,6 @@ TWIN_EXPERIMENT_TREATMENT_POLICY = "continuous_pessimistic"
 TWIN_EXPERIMENT_CONTROL_POLICY = "universe_step_v1"
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
 def twin_behavior_contract_hash(policy_hash: str) -> str:
     payload = {
         "schema": "universe-shadow-behavior-contract/v1",
@@ -55,7 +51,7 @@ def twin_behavior_contract_hash(policy_hash: str) -> str:
         "cost_model_version": TWIN_EXPERIMENT_COST_MODEL_VERSION,
         "metric_version": TWIN_EXPERIMENT_METRIC_VERSION,
     }
-    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_strict(payload).encode("utf-8")).hexdigest()
 
 
 def assign_twin_shadow_cluster(

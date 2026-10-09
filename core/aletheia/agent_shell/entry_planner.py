@@ -19,12 +19,12 @@ from aletheia.trading.entry_analysis import (
     EntryAnalysisContext,
     EntryHypothesis,
     build_entry_analysis_context,
-    canonical_json,
     entry_model_view,
     entry_orderbook_available,
     fingerprint,
     validate_hypothesis_references,
 )
+from aletheia.utils.json_utils import canonical_json_strict
 from aletheia.universe.fast_stream import (
     fast_market_data_unavailability_reason,
 )
@@ -225,7 +225,7 @@ def _validate_and_bind_hypothesis(
         return {"status": "failed" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": False}
     if not generation.get("validated_hypothesis_json"):
         if not repo.bind_candidate_planning_hypothesis(
-            generation["id"], owner, canonical_json(intent.model_dump(mode="json")),
+            generation["id"], owner, canonical_json_strict(intent.model_dump(mode="json")),
         ):
             return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched}
     return (intent,)
@@ -487,7 +487,7 @@ async def plan_next_candidate(
                         return {"status": "unavailable", "planning_generation_id": generation["id"],
                                 "reason": "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
                                 "model_invoked": False, "compiler_invoked": False}
-                    payload = canonical_json(context_model.model_dump(mode="json"))
+                    payload = canonical_json_strict(context_model.model_dump(mode="json"))
                     if not repo.bind_candidate_planner_input(
                         generation["id"], owner, payload,
                         fingerprint(context_model.model_dump(mode="json")),
@@ -643,14 +643,14 @@ async def system_operator_entry_planner(
                 "trust_class": "internal_fact",
                 "freshness_status": "fresh",
                 "observed_at": model_view.get("analysis_cutoff_at"),
-                "rendered_chars": len(canonical_json(model_view)),
+                "rendered_chars": len(canonical_json_strict(model_view)),
             }]
             if planning_generation_id else None
         ),
         "reasoning_effort": "medium",
         "semantic_validator": _validate_semantics,
     }
-    prompt_payload = canonical_json(model_view)
+    prompt_payload = canonical_json_strict(model_view)
     with inference_priority(InferencePriority.DEFAULT):
         result, error = await llm_structured(
             CANONICAL_ENTRY_SYSTEM_PROMPT, prompt_payload,

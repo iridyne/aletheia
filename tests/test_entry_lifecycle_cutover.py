@@ -160,7 +160,8 @@ def _insert_expired_plan(repo, generation: dict, candidate_id: str, plan_id: str
 
 
 def _bind_test_context(repo, generation: dict) -> None:
-    from aletheia.trading.entry_analysis import canonical_json, fingerprint
+    from aletheia.trading.entry_analysis import fingerprint
+    from aletheia.utils.json_utils import canonical_json_strict
     from tests.test_entry_analysis import _anchor, _context_v2
 
     context = _context_v2((
@@ -170,7 +171,7 @@ def _bind_test_context(repo, generation: dict) -> None:
     repo.execute_write(
         "UPDATE candidate_planning_generations SET planner_input_json=?,planner_input_hash=? WHERE id=?",
         (
-            canonical_json(context.model_dump(mode="json")),
+            canonical_json_strict(context.model_dump(mode="json")),
             fingerprint(context.model_dump(mode="json")),
             generation["id"],
         ),

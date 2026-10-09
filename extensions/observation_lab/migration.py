@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from aletheia.storage.table_utils import table_exists
 from extensions.observation_lab.db import get_lab_db, lab_transaction, readonly_lab_db
 from aletheia.storage.time_utils import utcnow_iso_us as _now
 
@@ -46,14 +47,8 @@ def _legacy_source_cutoff(value: Any, *, source_kind: str) -> str:
     })
 
 
-def _table_exists(db: sqlite3.Connection, table: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone() is not None
-
-
 def _rows(db: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
-    if not _table_exists(db, table):
+    if not table_exists(db, table):
         return []
     return [dict(row) for row in db.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()]
 

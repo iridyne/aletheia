@@ -4560,7 +4560,8 @@ def bind_candidate_planning_hypothesis(
     *, now: datetime | None = None,
 ) -> bool:
     """Checkpoint one validated model result under the existing claim and frozen input."""
-    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint, validate_hypothesis_references
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, fingerprint, validate_hypothesis_references
+    from aletheia.utils.json_utils import canonical_json_strict
 
     generation = get_candidate_planning_generation(generation_id)
     if generation is None or not generation.get("planner_input_json"):
@@ -4570,7 +4571,7 @@ def bind_candidate_planning_hypothesis(
         raise ValueError("planner_input_hash_mismatch")
     hypothesis = EntryHypothesis.model_validate_json(payload)
     validate_hypothesis_references(hypothesis, context)
-    payload = canonical_json(hypothesis.model_dump(mode="json"))
+    payload = canonical_json_strict(hypothesis.model_dump(mode="json"))
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
     updated = execute_write(
         "UPDATE candidate_planning_generations SET validated_hypothesis_json=?, "

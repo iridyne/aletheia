@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from aletheia.storage.table_utils import table_exists
+
 
 # --- Audit-chain + learning invariants -------------------------------------
 #
@@ -136,18 +138,11 @@ def _select_min_open_experiment_exposure_at(db: sqlite3.Connection) -> str | Non
     return str(value) if value else None
 
 
-def _table_exists(db: sqlite3.Connection, table: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone()
-    return row is not None
-
-
 def _row_counts(db: sqlite3.Connection, tables: tuple[str, ...]) -> dict[str, int]:
     """Return ``{table: rowcount}`` for the subset of tables that actually exist."""
     counts: dict[str, int] = {}
     for table in tables:
-        if not _table_exists(db, table):
+        if not table_exists(db, table):
             continue
         cur = db.execute(f"SELECT COUNT(*) FROM {table}")
         counts[table] = int(cur.fetchone()[0])
@@ -740,7 +735,7 @@ def _estimate_eligible(
     args: argparse.Namespace,
 ) -> tuple[int, float]:
     """Return ``(rows, est_mb)`` for a target's DELETE predicate."""
-    if not _table_exists(db, target.table):
+    if not table_exists(db, target.table):
         return (0, 0.0)
     params = target.predicate_params_factory(args, db)
     count_sql = f"SELECT COUNT(*) FROM {target.table} WHERE {target.predicate_sql}"
@@ -917,7 +912,7 @@ def _retro_strip_message_context(
     """
     cutoff = _cutoff_iso(days_context)
     result: dict[str, Any] = {"cutoff": cutoff, "days_context": days_context}
-    if not _table_exists(db, "agent_shell_messages"):
+    if not table_exists(db, "agent_shell_messages"):
         result["skipped"] = "agent_shell_messages not present"
         return result
     was_in_tx = db.in_transaction
