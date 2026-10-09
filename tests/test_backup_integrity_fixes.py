@@ -411,68 +411,6 @@ def test_restore_rollback_restores_overwritten_file(tmp_path):
     )
 
 
-def test_restore_replaces_the_audit_generation_set(tmp_path, monkeypatch):
-    source = tmp_path / "source"
-    source_logs = source / "logs"
-    source_logs.mkdir(parents=True)
-    import aletheia.files.jsonl as jsonl
-
-    monkeypatch.setattr(jsonl, "_log_dir", lambda: source_logs)
-    monkeypatch.setattr(jsonl, "_last_audit_hash", None)
-    jsonl.write_audit({"action": "archived-old"}, mirror_db=False)
-    (source_logs / "audit.jsonl").rename(source_logs / "audit.jsonl.1")
-    jsonl.write_audit({"action": "archived-current"}, mirror_db=False)
-    archive = _make_valid_archive(source, label="audit-set")
-
-    target = tmp_path / "target"
-    target_logs = target / "logs"
-    target_logs.mkdir(parents=True)
-    (target_logs / "audit.jsonl.1").write_text("target-old\n", encoding="utf-8")
-    (target_logs / "audit.jsonl.2").write_text("target-newer\n", encoding="utf-8")
-    (target_logs / "audit.jsonl").write_text("target-current\n", encoding="utf-8")
-
-    from ops.backup.restore import RestoreService
-
-    result = RestoreService().restore(archive, target)
-
-    assert result.success, result.errors
-    assert {path.name for path in target_logs.glob("audit.jsonl*")} == {
-        "audit.jsonl.1",
-        "audit.jsonl",
-    }
-    monkeypatch.setattr(jsonl, "_log_dir", lambda: target_logs)
-    assert jsonl.verify_audit_chain()["valid"] is True
-
-
-def test_restore_rolls_back_removed_audit_generation(tmp_path):
-    source = tmp_path / "source"
-    source_logs = source / "logs"
-    source_logs.mkdir(parents=True)
-    (source_logs / "audit.jsonl").write_text("archived-current\n", encoding="utf-8")
-    archive = _make_valid_archive(source, label="audit-rollback")
-
-    target = tmp_path / "target"
-    target_logs = target / "logs"
-    target_logs.mkdir(parents=True)
-    stale_generation = target_logs / "audit.jsonl.2"
-    stale_generation.write_text("target-newer\n", encoding="utf-8")
-
-    original_copy2 = shutil.copy2
-
-    def _fail_target_db_copy(src, dst, **kwargs):
-        if Path(dst) == target / "app.db":
-            raise OSError("injected target copy failure")
-        return original_copy2(src, dst, **kwargs)
-
-    from ops.backup.restore import RestoreService
-
-    with patch("ops.backup.restore.shutil.copy2", side_effect=_fail_target_db_copy):
-        result = RestoreService().restore(archive, target)
-
-    assert not result.success
-    assert stale_generation.read_text() == "target-newer\n"
-
-
 # ---------------------------------------------------------------------------
 # #291 — atomic archive creation
 # ---------------------------------------------------------------------------

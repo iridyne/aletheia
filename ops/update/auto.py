@@ -33,6 +33,7 @@ from ops.backup.service import BackupService
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.runtime_paths import large_temp_dir
 from aletheia.files.jsonl import write_audit
+from aletheia.storage import sqlite as storage_sqlite
 from aletheia.update import git_ops as git_facts
 from ops.update import git_ops
 from ops.update.applier import (
@@ -579,11 +580,28 @@ def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, r
         if restore_static:
             _restore_frontend_build(had_previous_static)
         with worker_cycle_exclusion():
+            # Drop this process's handles on the app.db about to be replaced, so
+            # later writes (the lineage event below) open the restored file.
+            storage_sqlite.shutdown_writer()
+            storage_sqlite.close_db()
             restored = RestoreService().restore(backup, get_data_dir(), require_recovery_checkpoint=True)
             if not restored.success:
                 # A rollback that could not put the old files back leaves a mixed data root.
                 reason = "data_restore_failed" if restored.rollback_complete else "data_restore_rollback_incomplete"
                 return {"ok": False, "reason": reason, "detail": "; ".join(restored.errors)}
+            # #1910: the live audit family was kept; record where app.db (and its
+            # audit_events mirror, which is not rebuilt from JSONL) now ends.
+            _record_audit(
+                "update_rollback_restored",
+                old,
+                "In-place rollback restored the checkpoint; post-checkpoint audit kept",
+                source="update_rollback",
+                backup=backup.name,
+                checkpoint_identity=restored.checkpoint_identity,
+                restored_files=restored.restored_files,
+                preserved_files=len(restored.preserved_files),
+                config_disposition=restored.config_disposition,
+            )
             invalidate_active_for_restore(joint_cut_proven=False)
         started = _gateway_command("start")
         if not started.get("ok"):

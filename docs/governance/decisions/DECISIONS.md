@@ -11,6 +11,11 @@
   正文要求的“精确替换并删除多余文件”。
 - #1621「选 (a)：config.yaml 回滚时永不覆盖，留用当前配置。」live 已有 `config.yaml` 时不写，结果报
   `config_disposition=preserved_live`；备份里的脱敏字段永远不会回填进 live 配置。
+- #1910「回滚时保留审计记录并追加'已回滚'事件。」live 审计家族（`audit.jsonl` 与轮转代次）整组保留，回滚后追加
+  `update_rollback_restored`。这取代 #2712 的“还原 checkpoint 的精确审计代次集合”。SQLite `audit_events`
+  不从 JSONL 重建：其行与所描述的业务状态同事务提交，往回滚后的 `app.db` 补写 checkpoint 之后的行会声明已不存在的业务事实。
+
+**Not decided (open):** live 没有 `config.yaml` 时回滚仍写入脱敏副本；`update_rollback_restored` 写入失败不改变回滚结果。
 
 ---
 

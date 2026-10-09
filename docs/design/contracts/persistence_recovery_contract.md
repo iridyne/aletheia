@@ -114,6 +114,16 @@ redacted copy, reported as `restored_redacted`, and an archive without a config
 reports `absent_in_checkpoint`. Redacted fields are never rehydrated into a live
 configuration.
 
+The rotated `logs/audit.jsonl` family is restored only into a target that has no
+audit generation; otherwise the live family is kept byte for byte, because
+filling a single missing generation after a rotation would splice a duplicate
+checkpoint prefix into the hash chain. After the data restore, the rollback
+appends one `update_rollback_restored` audit event carrying the backup name,
+checkpoint identity, restored and preserved counts, and config disposition. The
+restored `audit_events` table is not rebuilt from the preserved JSONL: its rows
+are committed with the business state they describe, so it ends at the
+checkpoint and the mirrored recovery event marks that boundary.
+
 ## Bundle imports do not create trading authority
 
 Under the accepted [research bundle boundary](../proposals/slim_core_research_bundle_import.md),
