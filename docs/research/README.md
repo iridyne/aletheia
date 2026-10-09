@@ -30,6 +30,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
   records how price-action schools, competitors and open-source frameworks place entry, stop and target. It
   includes a Fedora MAE/MFE study of the planner's hypotheses, three candidate geometry designs and an
   evaluation protocol. A critic reviewed it; it is unapproved evidence.
+- [Selection alpha table — 2026-10-09](audits/SELECTION_ALPHA_TABLE_2026-10-09.md)
+  is read-only Fedora evidence of net-of-cost 4h/15m/1h/24h outcomes by opportunity family, direction, regime
+  and horizon for USDT perpetuals, pooled across every code version. No cell has a 95% CI lower bound above
+  zero. It also records why `family_scorecard` and measured admission produce no usable result.
 - [Opportunity lifecycle capability tracking — 2026-10-09](audits/OPPORTUNITY_LIFECYCLE_CAPABILITY_TRACKING_2026-10-09.md)
   is frozen read-only evidence of what each of the eleven lifecycle stages could and could not do on Fedora that day,
   plus a position-management chapter and end-to-end traces. Its gap list, owner-decision list and ordering live in
