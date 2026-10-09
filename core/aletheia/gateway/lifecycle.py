@@ -11,7 +11,7 @@ import typer
 
 from aletheia.config.loader import bootstrap, load_config, save_config, get_data_dir
 from aletheia.gateway.pidfile import (
-    is_running, read_pid, write_pid, clear_pid, pid_path,
+    gateway_proven_stopped, is_running, read_pid, write_pid, clear_pid, pid_path,
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
     find_port_holders,
 )
@@ -1000,10 +1000,18 @@ def resume_running_gateway_via_api_if_running() -> bool:
     the exact false-recovery state this guard prevents.
     """
     cfg = load_config()
-    if not (is_running() and port_in_use(cfg.app.dashboard_port, local_frontdoor_host())):
-        return False
-    _post_gateway_resume_api(cfg)
-    return True
+    running = is_running()
+    if running and port_in_use(cfg.app.dashboard_port, local_frontdoor_host()):
+        _post_gateway_resume_api(cfg)
+        return True
+    # An unverifiable live PID may be this gateway; a CLI-only resume would then
+    # leave its scheduler paused (#1196, #3884).
+    if not running and not gateway_proven_stopped():
+        raise GatewayResumeApiError(
+            f"Gateway state unknown: recorded PID {read_pid()} is alive but cannot be "
+            "verified. Refusing a CLI-only resume; run `aletheia gateway status`."
+        )
+    return False
 
 
 def pause_running_gateway_via_api_if_running() -> dict | None:

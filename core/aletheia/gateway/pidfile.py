@@ -253,6 +253,16 @@ def is_running() -> bool:
     return False
 
 
+def gateway_proven_stopped() -> bool:
+    """True only when no pidfile remains or its PID is proven dead/foreign.
+
+    ``is_running() is False`` is not proof of a stop: an alive PID whose identity
+    cannot be read keeps the pidfile (#1196). Destructive or exclusive actions that
+    require a stopped gateway gate on this instead (#3884).
+    """
+    return not is_running() and read_pid() is None
+
+
 # --- Process-tree teardown + port helpers (gateway restart hygiene) ---
 
 def kill_pid_tree(pid: int) -> None:

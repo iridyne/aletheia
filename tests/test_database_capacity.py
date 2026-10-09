@@ -448,3 +448,21 @@ def test_compaction_refusal_restores_original_wal_mode(tmp_path, monkeypatch):
         assert verify.execute("SELECT rowid FROM market_ohlcv").fetchone() is not None
     finally:
         verify.close()
+
+
+def test_compaction_refuses_unverifiable_live_gateway_pid(tmp_path, monkeypatch):
+    """#3884: a live PID whose identity cannot be read is not a proven stop."""
+    import os
+
+    import aletheia.config.loader as loader
+    from aletheia.gateway import pidfile
+    from ops.maintenance.database_capacity import compact_database
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    pidfile.pid_path().write_text(str(os.getppid()), encoding="utf-8")
+    monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: None)
+    path = tmp_path / "app.db"
+    sqlite3.connect(path).close()
+
+    with pytest.raises(RuntimeError, match="cannot be verified"):
+        compact_database(path=path, apply=True)
