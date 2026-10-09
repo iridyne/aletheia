@@ -46,10 +46,6 @@ def _cache_provider(name: str, provider: ModelProvider) -> ModelProvider:
     return _cache.setdefault(name, provider)
 
 
-_MODEL_DIRECTORY_TTL_SEC = 15 * 60
-_model_directory_cache: dict[str, tuple[float, list[dict]]] = {}
-_model_directory_inflight: dict[str, Future[list[dict]]] = {}
-_model_directory_lock = threading.Lock()
 _HEALTH_TTL_SEC = MODEL_HEALTH_STALE_AFTER_SECONDS
 _health_cache: tuple[float, list[ModelHealth]] | None = None
 _health_inflight: Future[list[ModelHealth]] | None = None
@@ -278,16 +274,6 @@ async def get_provider_async(name: str | ModelSelection | None = None) -> ModelP
     return await asyncio.to_thread(get_provider, name)
 
 
-def invalidate_model_directory(name: str | None = None) -> None:
-    """Invalidate cached remote model catalogues after config changes."""
-
-    with _model_directory_lock:
-        if name is None:
-            _model_directory_cache.clear()
-        else:
-            _model_directory_cache.pop(name, None)
-
-
 def invalidate_health_cache() -> None:
     global _health_cache
 
@@ -295,61 +281,10 @@ def invalidate_health_cache() -> None:
         _health_cache = None
 
 
-async def list_models_cached(
-    name: str,
-    provider: ModelProvider | None = None,
-    *,
-    force: bool = False,
-) -> list[dict]:
-    """Return one Provider catalogue with a 15-minute cross-loop single-flight."""
-
-    now = time.monotonic()
-    leader = False
-    with _model_directory_lock:
-        cached = _model_directory_cache.get(name)
-        if not force and cached is not None and cached[0] > now:
-            return [dict(item) for item in cached[1]]
-        inflight = _model_directory_inflight.get(name)
-        if inflight is None:
-            inflight = Future()
-            _model_directory_inflight[name] = inflight
-            leader = True
-
-    if not leader:
-        result = await asyncio.wrap_future(inflight)
-        return [dict(item) for item in result]
-
-    try:
-        resolved = provider or await get_provider_async(name)
-        from aletheia.model_provider.broker import inference_broker
-
-        models = await inference_broker.run_auxiliary(resolved.list_models)
-        sanitized = [dict(item) for item in models if isinstance(item, dict)]
-        with _model_directory_lock:
-            _model_directory_cache[name] = (
-                time.monotonic() + _MODEL_DIRECTORY_TTL_SEC,
-                sanitized,
-            )
-        inflight.set_result(sanitized)
-        return [dict(item) for item in sanitized]
-    except asyncio.CancelledError:
-        error = RuntimeError(f"model directory refresh cancelled for {name}")
-        inflight.set_exception(error)
-        raise
-    # pi-lens-ignore: bare-except — BaseException settles shared Future before re-raising.
-    except BaseException as exc:
-        inflight.set_exception(exc)
-        raise
-    finally:
-        with _model_directory_lock:
-            _model_directory_inflight.pop(name, None)
-
-
 def clear_cache() -> None:
-    """Drop provider routing and catalogue caches; async callers should close clients too."""
+    """Drop provider routing and health caches; async callers should close clients too."""
 
     _cache.clear()
-    invalidate_model_directory()
     invalidate_health_cache()
 
 

@@ -254,21 +254,6 @@ async def structured_via_complete(
     return json.loads(response.content)
 
 
-async def health_from_catalogue_probe(provider: "ModelProvider") -> "ModelHealth":
-    """Report health from the model catalogue without spending an inference call."""
-    try:
-        models = await provider.list_models()
-        if models:
-            return health_from_model_catalogue(provider.name, provider.model, models)
-        return ModelHealth(
-            provider=provider.name,
-            available=False,
-            error="model catalogue unavailable; use explicit Ping to test inference",
-        )
-    except Exception as exc:
-        return ModelHealth(provider=provider.name, available=False, error=str(exc))
-
-
 @dataclass
 class ModelRequest:
     messages: list[dict[str, str]]

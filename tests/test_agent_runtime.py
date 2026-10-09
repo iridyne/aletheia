@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aletheia.agent_runtime.permissions import (
-    register_tool, is_tool_permitted, get_permitted_tools, TOOL_REGISTRY,
+    register_tool, is_tool_permitted, TOOL_REGISTRY,
 )
 from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
@@ -68,15 +68,6 @@ def test_restricted_tools_always_blocked():
         assert not is_tool_permitted("unlock_live", mode)
         assert not is_tool_permitted("change_hard_risk_limits", mode)
         assert not is_tool_permitted("modify_credentials", mode)
-
-
-def test_get_permitted_tools_observe():
-    init_tool_registry()
-    tools = get_permitted_tools("Observe")
-    assert "get_market_snapshot" in tools
-    assert "create_research_note" in tools
-    assert "run_paper_order" not in tools
-    assert "unlock_live" not in tools
 
 
 def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkeypatch):

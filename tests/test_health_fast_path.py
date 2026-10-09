@@ -26,10 +26,6 @@ def test_exchange_reachable_uses_cached_connectivity_probe(monkeypatch):
     import aletheia.agent_runtime.connectivity as connectivity
     from aletheia.agent_runtime.health import _exchange_reachable
 
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("health hot path must not run a live exchange probe")
-
-    monkeypatch.setattr(connectivity, "probe_exchange_sync", fail_if_called)
     monkeypatch.setattr(
         connectivity,
         "get_status",

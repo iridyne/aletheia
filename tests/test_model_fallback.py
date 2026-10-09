@@ -235,10 +235,6 @@ async def test_complete_with_fallback_never_uses_discovery_when_config_list_empt
         fail_models={"claude-primary": "502 Bad Gateway"},
         detected=["claude-primary", "claude-detected"],
     )
-    from unittest.mock import AsyncMock
-
-    discovery = AsyncMock(return_value=[{"slug": "claude-detected"}])
-    monkeypatch.setattr(fallback.provider_router, "list_models_cached", discovery)
     with pytest.raises(RuntimeError, match="502 Bad Gateway"):
         await fallback.complete_with_fallback(
             ModelRequest(messages=[{"role": "user", "content": "x"}]),
@@ -246,7 +242,6 @@ async def test_complete_with_fallback_never_uses_discovery_when_config_list_empt
         )
 
     assert provider.calls == ["claude-primary"]
-    discovery.assert_not_awaited()
 
 
 @pytest.mark.anyio

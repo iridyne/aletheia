@@ -114,11 +114,6 @@ def clear_gate_state() -> None:
         logger.warning("startup gate: could not clear durable state: %s", e)
 
 
-def _gate_owns_pause() -> bool:
-    owns, _generation = _gate_pause_identity()
-    return owns
-
-
 def _gate_pause_identity() -> tuple[bool, str | None]:
     """Return gate ownership and an exact release token, including orphan recovery."""
     state = read_gate_state()
