@@ -246,8 +246,9 @@ def test_exact_terminal_order_with_fill_is_not_treated_as_absent(monkeypatch):
     ).model_dump()
     report = SimpleNamespace(
         completeness=ReadCompleteness.COMPLETE,
-        fills=(SimpleNamespace(venue_fill_id="fill-1"),),
-        orders=(SimpleNamespace(state=OrderLifecycle.CANCELED),),
+        fills=(_fill(venue_order_id="ex-1", client_order_id="cli-1"),),
+        orders=(SimpleNamespace(state=OrderLifecycle.CANCELED, venue_order_id="ex-1",
+                                client_order_id="cli-1"),),
     )
 
     def fake_run(coro):
@@ -287,3 +288,44 @@ def test_unbound_historical_order_cannot_supply_cleanup_evidence(monkeypatch):
     assert pcr._exchange_fill_rows(order) is None
     assert pcr._uta_history_lookup(order) is pcr._HISTORY_FAILED
     assert calls == []
+
+
+def _fill(*, venue_order_id: str | None, client_order_id: str | None):
+    return SimpleNamespace(
+        venue_fill_id="fill-x", venue_order_id=venue_order_id, client_order_id=client_order_id,
+    )
+
+
+@pytest.mark.parametrize(
+    ("fills", "orders", "local_venue_id", "expected"),
+    [
+        # Another SOLUSDT order (a later leg / Plan / close) filled in the window: not ours.
+        ((_fill(venue_order_id="ex-other", client_order_id="cli-other"),), (), "ex-1", True),
+        # Our own fill, matched by client id or venue id: never absent.
+        ((_fill(venue_order_id=None, client_order_id="cli-1"),), (), "ex-1", False),
+        ((_fill(venue_order_id="ex-1", client_order_id=None),), (), "ex-1", False),
+        # submission_unknown: no local venue id, but the exact read found the order.
+        (
+            (_fill(venue_order_id="ex-found", client_order_id=None),),
+            (SimpleNamespace(state=OrderLifecycle.CANCELED, venue_order_id="ex-found",
+                             client_order_id="cli-1"),),
+            None, False,
+        ),
+        # A fill the venue does not attribute to any order cannot be ruled out.
+        ((_fill(venue_order_id=None, client_order_id=None),), (), "ex-1", False),
+    ],
+)
+def test_only_fills_of_this_order_block_absence(monkeypatch, fills, orders, local_venue_id, expected):
+    order = _order(
+        oid="sol-leg-0", hours_ago=300, execution_mode="bitget_demo",
+        exchange_order_id=local_venue_id,
+    ).model_dump()
+    report = SimpleNamespace(completeness=ReadCompleteness.COMPLETE, fills=fills, orders=orders)
+
+    def fake_run(coro):
+        coro.close()
+        return report
+
+    monkeypatch.setattr(soc, "run_coro_from_sync", fake_run)
+
+    assert soc._exchange_order_absent_unfilled(order) is expected

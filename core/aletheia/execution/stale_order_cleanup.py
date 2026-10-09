@@ -26,6 +26,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import logging
+from typing import cast
 
 from aletheia.storage import repositories as repo
 from aletheia.async_utils import run_coro_from_sync
@@ -126,7 +127,9 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
     try:
         from aletheia.uta.compat import scope_from_local
         from aletheia.uta.manager import query_uta
-        from aletheia.uta.models import OrderLifecycle, ReadCompleteness, ReconciliationQuery, UTAAccountIdentity
+        from aletheia.uta.models import (
+            ExecutionMassStatus, OrderLifecycle, ReadCompleteness, ReconciliationQuery, UTAAccountIdentity,
+        )
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
@@ -135,7 +138,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
         from aletheia.execution.coordinator import reanchor_drifted_orders
 
         reanchor_drifted_orders(execution_mode, [order])
-        report = run_coro_from_sync(query_uta(
+        report = cast(ExecutionMassStatus, run_coro_from_sync(query_uta(
             execution_mode,
             "get_mass_status",
             ReconciliationQuery(
@@ -148,7 +151,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
                 venue_order_ids=(venue_id,) if venue_id else (),
             ),
             expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
-        ))
+        )))
     except Exception as exc:
         logger.warning(
             "stale_order_cleanup: exact UTA evidence unavailable for %s (%s)",
@@ -157,8 +160,16 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
         return None
     if report.completeness is not ReadCompleteness.COMPLETE:
         return None
+    # The mass-status fill read is instrument-scoped: another order on the same
+    # symbol filling in the window is not a fill of this Order (§6.1 item 3). A fill
+    # the venue attributes to no order at all cannot be ruled out, so it still blocks.
     if report.fills:
-        return False
+        client_ids = ({client_id} | {o.client_order_id for o in report.orders}) - {"", None}
+        venue_ids = ({venue_id} | {o.venue_order_id for o in report.orders}) - {"", None}
+        for fill in report.fills:
+            if (not fill.client_order_id and not fill.venue_order_id) \
+                    or fill.client_order_id in client_ids or fill.venue_order_id in venue_ids:
+                return False
     if not report.orders:
         return True
     # Only explicit terminal states prove that the exact order is no longer live.
