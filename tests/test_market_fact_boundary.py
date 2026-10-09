@@ -33,12 +33,12 @@ for value, venue in ((ticker, "okx"), (ticker, ""), (object(), "bitget"),
         pass
     else:
         raise AssertionError("unknown/mismatched venue must remain rejected")
-windows, structures, anchors, refs = entry_causal_windows(
-    "bitget", "BTC/USDT", "perp", "long", {}, datetime.now(timezone.utc),
+windows, structures, refs = entry_causal_windows(
+    "bitget", "BTC/USDT", "perp", {}, datetime.now(timezone.utc),
 )
 assert all(row["availability"] == "unavailable" for row in windows.values())
 assert all(row["availability"] == "unavailable" for row in structures.values())
-assert not anchors and not refs
+assert not refs
 assert "extensions.data.ccxt_provider" not in sys.modules
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=20)

@@ -89,8 +89,9 @@ cohort gate, or activation identity.
 
 The Planner binds one immutable canonical `planner_input_json/hash` per cycle.
 It contains bounded completed exact-instrument windows (35×4h, 50×1h, 96×15m;
-`ENTRY_WINDOW_BARS`), existing causal Market Structure facts, at most 12
-canonical 15m Anchors, and explicit unavailable sections. The model emits one
+`ENTRY_WINDOW_BARS`), existing causal Market Structure facts, at most 26
+canonical Anchors (see *Entry anchor registry*), and explicit unavailable
+sections. The model emits one
 canonical `EntryHypothesis`:
 controlled enums and supplied references only, with no price, size, leverage, ATR
 multiplier, slippage, or other numeric execution authority. `NO_PLAN` clears every
@@ -134,7 +135,51 @@ A field whose input is missing, too short, or a 0/0 reading is absent from its
 Labels describe market data; they carry no execution authority and do not
 change Anchor, Profile, Compiler or Risk behavior.
 
-Before the first bind, the Planner requires available 15m candles, anchors, and
+### Entry anchor registry (#3850 item 5)
+
+Owner-approved D1 (2026-10-09). The registry answers one question: which
+supplied levels may the model cite as the primary (entry) anchor and as the
+invalidation anchor.
+
+- **Timeframes.** Structural anchors (`confirmed_swing`,
+  `broken_structure_level`) come from every admitted 15m, 1h and 4h window, and
+  each carries its `timeframe`. `candidate_reference` and `causal_breakout`
+  stay 15m.
+- **Side.** A level may carry an invalidation role (`invalidation_candidate`,
+  or `both` for a broken-structure level) only if it is on the correct side of
+  every reference price, the Candidate price and the latest closed 15m close
+  (long: strictly below; short: strictly above), and no closed bar of its own
+  timeframe has closed beyond it since the level became known. A swing low (long)
+  or swing high (short) that fails is removed. A broken-structure level that
+  fails keeps only `entry_candidate`. The opposite-kind swing stays
+  `entry_candidate`. Roles are never assigned from swing type alone.
+- **Bands.** Surviving levels of one timeframe, kind and role merge when they
+  lie within `0.5 × ATR14(timeframe)` of the band's first (lowest) level. The
+  anchor carries `zone = {low, high, touches}`. Its `price` is `low` (long) or
+  `high` (short) for an invalidation role, so the Compiler's stop clears the
+  whole band, and `high` (long) or `low` (short) for an entry role. A one-level
+  band has `low = high = price`. Its `known_at_ms` is the newest member's, and
+  its `source_fact_refs` cover every member. An anchor without a band carries no
+  `zone` key, so anchors frozen before this rule keep their `anchor_id`.
+- **Cap.** Side filtering and band merging happen before the cap. The cap keeps
+  `candidate_reference` and `causal_breakout`, then the structural anchors
+  nearest the Candidate price (ties: newer first), up to 26 in total. It does
+  not keep the most recent, because higher-timeframe levels are older by
+  construction.
+- **No invalidation structure.** If no anchor with an invalidation role is left,
+  the Planner does not bind the input or call the model. It releases the claim
+  with the typed reason `NO_INVALIDATION_STRUCTURE` and the existing 60-second
+  retry, with no model attempt consumed. This is a missing-input wait, not an
+  economic `NO_PLAN`, and Learning does not count it.
+- **Defence in depth.** The Compiler's `INVALIDATION_ANCHOR_WRONG_SIDE` check
+  against the primary anchor is unchanged. Stop/target geometry is unchanged:
+  the Compiler still reads `anchor.price` and the 15m ATR tolerance.
+
+The registry parameters are part of `entry_behavior_fingerprint`
+(`anchor_registry` material), so this rule opens one compatibility-cutover cycle.
+
+Before the first bind, the Planner requires available 15m candles, anchors
+(including at least one correct-side invalidation anchor), and
 an exact-venue/symbol/market orderbook observed no later than the cutoff and at
 most two seconds earlier. It reuses a qualified stored book or acquires one via
 the existing normalized Data provider orderbook capability with a five-second total

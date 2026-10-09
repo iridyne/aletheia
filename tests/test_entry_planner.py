@@ -1621,7 +1621,8 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
     end = int(datetime.now(timezone.utc).timestamp() * 1000) // interval * interval
     repo.upsert_ohlcv_candles(
         "BTC/USDT", "15m",
-        [Candle(end - (96 - i) * interval, 100, 102, 98, 100, 1000) for i in range(96)],
+        # One confirmed 15m swing low below price: the correct-side invalidation (#3850).
+        [Candle(end - (96 - i) * interval, 100, 102, 96 if i == 60 else 98, 100, 1000) for i in range(96)],
         exchange="bitget", market_type="perp",
     )
     known = datetime.fromtimestamp((end - 1000) / 1000, timezone.utc).isoformat()
@@ -1893,7 +1894,7 @@ def test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypa
     interval = 15 * 60 * 1000
     end = int(datetime.now(timezone.utc).timestamp() * 1000) // interval * interval
     repo.upsert_ohlcv_candles("BTC/USDT", "15m",
-        [Candle(end - (96-i)*interval, 100, 102, 98, 100, 1000) for i in range(96)],
+        [Candle(end - (96-i)*interval, 100, 102, 96 if i == 60 else 98, 100, 1000) for i in range(96)],
         exchange="bitget", market_type="perp")
     known = datetime.fromtimestamp((end-1000)/1000, timezone.utc).isoformat()
     repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?,last_mutated_at=?", (known, known))
@@ -1963,6 +1964,44 @@ def test_unbound_candidate_refresh_preserves_birth_context_owner():
     assert source["candidate_id"] == candidate.id
     assert source["context_hash"] == repo.get_candidate(same["last_candidate_id"])["candidate_opportunity_context_hash"]
     assert repo.get_candidate_planning_for_candidate(replacement.id)["id"] == generation["id"]
+
+
+def test_no_correct_side_invalidation_anchor_stops_before_the_model():
+    """#3850: a long detected at 100 whose only 15m swing low (98) price has since
+    closed through has no level that can invalidate it; the model is not asked."""
+    from extensions.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.providers import Candle
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    interval = 15 * 60 * 1000
+    end = int(datetime.now(timezone.utc).timestamp() * 1000) // interval * interval
+    candles = []
+    for i in range(96):
+        close = 97.5 if i >= 80 else 100
+        candles.append(Candle(end - (96 - i) * interval, close, close + 0.5, 98 if i == 60 else close - 0.5, close, 1000))
+    repo.upsert_ohlcv_candles("BTC/USDT", "15m", candles, exchange="bitget", market_type="perp")
+    known = datetime.fromtimestamp((end - 1000) / 1000, timezone.utc).isoformat()
+    repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?,last_mutated_at=?", (known, known))
+    book = _parse_orderbook(
+        "BTC/USDT", "bitget", {"bids": [[99.99, 200]], "asks": [[100.01, 200]]}, 0, market_type="perp",
+    )
+    assert book is not None
+    repo.insert_orderbook_snapshot(book.model_dump())
+    calls = []
+
+    async def planner(context):
+        calls.append(context)
+        raise PlannerBackpressure("busy")
+
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored is not None and not calls
+    assert result["reason"] == "NO_INVALIDATION_STRUCTURE"
+    assert result["model_invoked"] is False and result["compiler_invoked"] is False
+    assert stored["outcome_reason"] == "NO_INVALIDATION_STRUCTURE"
+    assert stored["outcome_class"] == "planning_unavailable" and stored["attempt_count"] == 0
+    assert stored["planner_input_json"] is None and stored["attention_status"] == "active"
 
 
 def test_spot_short_blocks_before_market_model_and_compiler(monkeypatch):
