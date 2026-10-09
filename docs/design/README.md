@@ -14,7 +14,7 @@ This is the main implementation authority after governance and product scope. Re
 | `architecture/` | System map and architecture guides |
 | `operator/` | System Operator and PI Operator design |
 | `frontend/` | Web UI information architecture and design system |
-| `market-systems/` | Equity, prediction market, freshness, filters, and market-related subsystem designs |
+| `market-systems/` | Decision-context freshness and filter replay designs |
 | `history/` | Retired mechanisms and superseded designs, kept as history |
 | `process/` | SDD methodology |
 | `subsystems/` | Smaller subsystem designs without a larger folder yet |

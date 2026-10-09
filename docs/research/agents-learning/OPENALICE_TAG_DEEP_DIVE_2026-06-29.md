@@ -5,7 +5,7 @@
 > **方法**：13 agent 工作流（三层 ground truth + 5 镜头分析 + 5 轮对抗核查）
 > **三层地面真相**：博客原文 / 本地 `_refs/OpenAlice` 完整 TypeScript 源码（`services/uta/src/domain/trading/git/TradingGit.ts` 等）/ 本项目 Aletheia 自身的实现对照
 > **核查纪律**：博客与源码冲突时一律以源码为准；任何无源码佐证的"代码事实"都被对抗 agent 标红剔除
-> **关联文档**：`docs/references/external-systems/openalice_prism_review.md`（更详细的源码深拆）、`docs/references/INDEX.md §4`（红线/借鉴清单）
+> **关联文档**：`docs/references/external-systems/openalice_prism_review.md`（更详细的源码深拆）
 
 ---
 

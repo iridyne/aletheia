@@ -42,7 +42,7 @@
 | filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
 | persona_rollout | 8h | io | Rechecks durable exact Persona/policy/step evidence; advances at most one parameter or refreezes, never changes unrelated config |
 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
-| outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
+| outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete Serenity post-mortem delivery |
 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | outcome_settler | 10min | maintenance_io | Settle due Filter Candidate Outcomes (`filter_candidate_outcomes`); `universe_forward_outcomes` was dropped in v94 (#3701) |

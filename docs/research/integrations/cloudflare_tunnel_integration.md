@@ -31,7 +31,7 @@
 
 鉴权分三种模式：
 
-- **`tunnel.enabled=True` 或 `remote_control.require_token=True`**：除匿名白名单
+- **`tunnel.enabled=True`，或 `remote_control.enabled=True` 且 `require_token=True`**：除匿名白名单
   `_PUBLIC_PATHS`（`/api/ready`、`/_infra/livez`、`/_infra/readyz`）外，所有 `/api/*` 与
   `/_infra/*` 路由（包括读取）都要求有效的 `X-Aletheia-Token` owner 头；缺失时 owner 路由
   fail closed。受监管的 Operator Shell 可以用独立的 service credential 认证，但只限
