@@ -696,6 +696,42 @@ def test_candidate_adding_a_name_to_an_imported_module_cannot_strand_the_runtime
     )
 
 
+def test_dashboard_build_check_does_not_import_the_pulled_preflight(tmp_path, monkeypatch):
+    """#3856 follow-up: the post-pull dashboard check must use the preflight bound before
+    the pull, not import the candidate's `aletheia.gateway.preflight` against pre-pull modules."""
+    import importlib.abc
+    import importlib.util
+    import sys
+
+    from ops.update import applier
+
+    static = tmp_path / "dashboard_static"
+    (static / ".vite").mkdir(parents=True)
+    (static / "assets").mkdir()
+    (static / ".aletheia-frontend-tree").write_text("tree-aa09a87c\n", encoding="utf-8")
+    (static / ".vite" / "manifest.json").write_text("{}", encoding="utf-8")
+    (static / "performance.json").write_text("{}", encoding="utf-8")
+    (static / "assets" / "index.js").write_text("x", encoding="utf-8")
+    (static / "index.html").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(applier, "_DASHBOARD_STATIC", static)
+
+    class _CandidatePreflight(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        def find_spec(self, name, path=None, target=None):
+            return importlib.util.spec_from_loader(name, self) if name == "aletheia.gateway.preflight" else None
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            exec("from aletheia.runtime_paths import candidate_only_temp_dir\n", module.__dict__)
+
+    # What the process looks like right after the pull.
+    monkeypatch.delitem(sys.modules, "aletheia.gateway.preflight", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_CandidatePreflight(), *sys.meta_path])
+
+    assert applier._dashboard_build_required("tree-aa09a87c") is False
+
+
 def test_unexpected_exception_after_the_pull_rolls_back_and_restarts_the_old_runtime(tmp_path, monkeypatch):
     """#3856: no exception between the pull and activation may leave the stopped runtime down."""
     from ops.update import applier, continuity

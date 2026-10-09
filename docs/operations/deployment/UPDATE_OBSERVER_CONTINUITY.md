@@ -95,6 +95,35 @@ Normal Observation business progress is not a Main deployment gate. The followin
 - joint-checkpoint fingerprint movement caused only by normal manifest lifecycle;
 - joint-checkpoint movement after activation caused by the expected Main migration or independent Worker progress.
 
+## Acknowledging a known checkpoint drift
+
+A migration applied outside the updater (for example `aletheia gateway start`
+after a manual recovery, #3856) leaves the joint checkpoint behind, and the next
+update refuses with `observer_preflight_failed` /
+`observation_checkpoint_app_migration_drift`. Plain `aletheia observe checkpoint`
+cannot clear it: it saves only when verification already passes.
+
+When the operator can explain every drifted component, record that explicitly:
+
+```bash
+uv run aletheia observe checkpoint --verify-only --json   # read mismatch_components
+uv run aletheia observe checkpoint --acknowledge app_migration,main_outbox
+```
+
+The command saves a new checkpoint only when the verifier's
+`mismatch_components` are all named in `--acknowledge`. Otherwise it refuses
+(exit 1), prints the actual components and saves nothing. A verdict with no
+components (`lab_unavailable`, `main_outbox_unavailable`) cannot be acknowledged.
+Before saving, it writes an `observation_checkpoint_drift_acknowledged` audit
+event naming the acknowledged components and both fingerprints; if that audit
+cannot be written, it saves nothing. The saved row carries
+`notes="acknowledged:<components>"`. Without `--acknowledge` the command is
+unchanged.
+
+Acknowledge only drift whose cause is known. An unexplained `lab_state`,
+`lab_schema`, `active_manifests` or `checkpoint_ledger` mismatch may be a partial
+restore; diagnose it with `aletheia observe overview --json` first.
+
 ## Diagnostic surfaces
 
 Deployment proof and diagnostic projection are separate boundaries. Update continuity proves only target commit, data-root identity, Observation owner/exclusivity, Worker signature, durable Observation IDs, manifest generations, and the joint checkpoint. The independent commands remain authoritative for full diagnosis and are not run automatically after an update failure:

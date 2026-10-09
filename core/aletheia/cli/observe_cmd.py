@@ -331,6 +331,14 @@ def observation_checkpoint(
         False, "--verify-only",
         help="Only verify without appending; useful when diagnosing drift.",
     ),
+    acknowledge: str | None = typer.Option(
+        None, "--acknowledge",
+        help=(
+            "Comma-separated drift components the operator has explained "
+            "(e.g. app_migration,main_outbox). Saves a new checkpoint only if "
+            "every mismatched component is named; the acknowledgement is audited."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run one joint app.db + lab.db + manifest checkpoint pass."""
@@ -341,8 +349,49 @@ def observation_checkpoint(
     )
     verdict = verify_joint_checkpoint()
     saved = False
+    acknowledged: list[str] = []
     if not verify_only and verdict.ok:
         save_joint_checkpoint(compute_joint_checkpoint())
+        saved = True
+    elif not verify_only and acknowledge is not None:
+        named = {part.strip() for part in acknowledge.split(",") if part.strip()}
+        actual = set(verdict.mismatch_components)
+        # A verdict without components (lab/outbox unavailable) has nothing an
+        # operator can acknowledge; it stays fail-closed.
+        if not actual or not actual <= named:
+            typer.echo(
+                f"refusing to acknowledge: actual mismatch components="
+                f"{sorted(actual) or '(none)'} reason={verdict.reason}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        acknowledged = sorted(actual)
+        from aletheia.files.jsonl import write_audit
+
+        # Audit before saving: an acknowledgement that cannot be recorded must
+        # not create a new baseline.
+        if not write_audit({
+            "actor": "human",
+            "source": "cli",
+            "event_type": "observation_checkpoint_drift_acknowledged",
+            "entity_type": "observation_joint_checkpoint",
+            "entity_id": verdict.last.checkpoint_id if verdict.last else "none",
+            "before": {
+                "joint_fingerprint": verdict.last.joint_fingerprint if verdict.last else None,
+            },
+            "after": {
+                "acknowledged_components": acknowledged,
+                "named_components": sorted(named),
+                "current_fingerprint": verdict.current_fingerprint,
+                "reason": verdict.reason,
+            },
+            "message": f"observation checkpoint drift acknowledged: {','.join(acknowledged)}",
+        }):
+            typer.echo("refusing to acknowledge: audit write unavailable", err=True)
+            raise typer.Exit(code=1)
+        save_joint_checkpoint(
+            compute_joint_checkpoint(notes=f"acknowledged:{','.join(acknowledged)}")
+        )
         saved = True
     payload = {
         "ok": verdict.ok,
@@ -353,6 +402,7 @@ def observation_checkpoint(
             verdict.last.joint_fingerprint if verdict.last is not None else None
         ),
         "saved": saved,
+        "acknowledged_components": acknowledged,
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -362,6 +412,8 @@ def observation_checkpoint(
     typer.echo(f"current_fingerprint={verdict.current_fingerprint[:16]}…")
     if verdict.last is not None:
         typer.echo(f"last_fingerprint   ={verdict.last.joint_fingerprint[:16]}…")
+    if acknowledged:
+        typer.echo(f"acknowledged drift: {','.join(acknowledged)}")
     if saved:
         typer.echo("appended new checkpoint row (idempotent no-op if unchanged)")
 

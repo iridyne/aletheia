@@ -128,7 +128,7 @@ Once `verify_joint_checkpoint().ok is False` returns:
 
 ## 6. What this contract does NOT do
 
-- No generic automatic recovery, reset, or fallback. Only the explicitly proven applied-delivery suffix above may enter update settlement; all other mismatches require separate owner resolution and must not create a replacement baseline.
+- No generic automatic recovery, reset, or fallback. Only the explicitly proven applied-delivery suffix above may enter update settlement; all other mismatches require separate owner resolution and must not create a replacement baseline. The one owner resolution path is the explicit, audited `aletheia observe checkpoint --acknowledge <components>`, which saves only when every mismatched component is named ([runbook](../../operations/deployment/UPDATE_OBSERVER_CONTINUITY.md#acknowledging-a-known-checkpoint-drift)).
 - No incremental/Merkle checkpoint ledger. Checkpoint computation remains the current canonical full-state proof; performance work may remove redundant computations but may not replace strict evidence with an unverified cache.
 - No permission to skip, delete or force-acknowledge a blocking receipt. The contiguous importer remains fail-closed.
 

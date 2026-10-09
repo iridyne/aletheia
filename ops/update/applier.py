@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
+# Bound at import, before any pull: a lazy import inside the post-pull dashboard check
+# would load the candidate's preflight against pre-pull modules (#3856).
+from aletheia.gateway.preflight import dashboard_artifact_errors
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops as git_facts
 from ops.update import git_ops, target_fresh
@@ -184,8 +187,6 @@ def _dashboard_build_required(frontend_tree: str) -> bool:
         and any((_DASHBOARD_STATIC / "assets").iterdir())
     ):
         return True
-    from aletheia.gateway.preflight import dashboard_artifact_errors
-
     return bool(dashboard_artifact_errors(_DASHBOARD_STATIC))
 
 
