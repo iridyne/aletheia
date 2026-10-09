@@ -179,6 +179,9 @@ Knowledge subdirs:
 
 ## 5. Write-side guardrails
 
+Time-based retention composes with the per-pair bar caps (row 9). A global
+row-count hard cap must never prune inside an active experiment's data window.
+
 Each guardrail stops a dead-write pattern at the source. File references
 below name the writer touched by each guardrail (paths as of 2026-07-17; resolve by symbol).
 
