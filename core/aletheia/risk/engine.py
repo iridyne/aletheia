@@ -1518,7 +1518,9 @@ def _evaluate_proposal_locked(
         elif proposal.price and proposal.quantity:
             risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
             max_risk = capital_base * (risk.max_single_trade_risk_pct / 100.0)
-            if max_risk > 0 and risk_amount > max_risk:
+            # A plan sized exactly at budget recomputes to it within float rounding;
+            # only a real excess (beyond the engine's 1e-9 relative tolerance) rejects.
+            if max_risk > 0 and risk_amount > max_risk and not math.isclose(risk_amount, max_risk, rel_tol=1e-9):
                 violations.append(f"exceeds_single_trade_risk:{risk_amount}>{max_risk}")
 
         # 14. Scanner-family evidence gate — live needs a family with a proven
@@ -1557,7 +1559,11 @@ def _evaluate_proposal_locked(
         if proposal.stop_price and proposal.price and proposal.quantity:
             demo_risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
             demo_max_risk = capital_base * (risk.max_demo_single_trade_risk_pct / 100.0)
-            if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
+            if (
+                demo_max_risk > 0
+                and demo_risk_amount > demo_max_risk
+                and not math.isclose(demo_risk_amount, demo_max_risk, rel_tol=1e-9)
+            ):
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
         # Demo orders require fresh venue data (see _MAX_DEMO_DATA_AGE_SECONDS).
