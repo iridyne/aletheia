@@ -270,23 +270,43 @@ class BitgetClient:
         )
 
     async def _get_order_fills_uta_v3(self, *, order_id: str, symbol: str) -> list[dict]:
-        """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id."""
-        params: dict[str, object] = {
-            "category": "USDT-FUTURES",
-            "symbol": symbol,
-            "orderId": order_id,
-            "limit": "100",
-        }
+        """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id.
+
+        A full 100-row page continues on the response ``cursor`` (the cursor
+        ccxt 4.5.84 ``fetch_my_trades(uta=True, paginate=True)`` sends and
+        receives); a missing or repeated cursor after a full page fails closed.
+        """
         exchange, session = self._make_exchange()
         try:
-            payload = await exchange.privateUtaGetV3TradeFills(params)
+            cursor: str | None = None
+            rows: list[dict] = []
+            for _ in range(100):
+                params: dict[str, object] = {
+                    "category": "USDT-FUTURES",
+                    "symbol": symbol,
+                    "orderId": order_id,
+                    "limit": "100",
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                payload = await exchange.privateUtaGetV3TradeFills(params)
+                if payload.get("code") != "00000":
+                    raise RuntimeError("Bitget UTA exact private fill history rejected")
+                data = payload.get("data") or {}
+                page = data.get("list") or []
+                rows.extend(
+                    row for row in page
+                    if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+                )
+                if len(page) < 100:
+                    return rows
+                next_cursor = str(data.get("cursor") or "").strip()
+                if not next_cursor or next_cursor == cursor:
+                    raise RuntimeError("Bitget UTA exact private fill pagination incomplete")
+                cursor = next_cursor
+            raise RuntimeError("Bitget UTA exact private fill history incomplete")
         finally:
             await close_ccxt(exchange, session)
-        if payload.get("code") != "00000":
-            raise RuntimeError("Bitget UTA exact private fill history rejected")
-        data = payload.get("data") or {}
-        raw = data.get("list") or []
-        return [row for row in raw if isinstance(row, dict) and str(row.get("orderId") or "") == order_id]
 
     async def get_plan_order_history(self, symbol: str | None = None, order_id: str | None = None) -> list[dict]:
         """Query triggered/filled TPSL order history for USDT-FUTURES.
