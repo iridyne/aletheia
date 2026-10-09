@@ -1,7 +1,9 @@
 """One-shot data-retention backfill that reclaims dead writes accumulated before
-Phase 3 retention windows existed. Runs with the gateway stopped; every DELETE
-goes through the module-level ``prune_*`` functions so the same code path is
-exercised by the recurring nightly cleanup afterwards.
+Phase 3 retention windows existed. Runs with the gateway stopped. Hard-delete
+targets go through the module-level ``prune_*`` functions so the same code path
+is exercised by the recurring nightly cleanup afterwards. Archive targets select
+through the same predicate (``repositories.agent_shell_prune_where``), archive
+that exact id set, and delete only those ids (#1382).
 """
 
 from __future__ import annotations
@@ -68,8 +70,12 @@ class RetentionTarget:
     table: str
     prune_fn: str
     kwargs_factory: Callable[[argparse.Namespace, sqlite3.Connection], dict[str, Any]]
-    predicate_sql: str  # For dry-run row/byte estimation only.
-    predicate_params_factory: Callable[[argparse.Namespace, sqlite3.Connection], tuple[Any, ...]]
+    # Hard-delete targets: dry-run row/byte estimation only. Archive targets
+    # leave these unset and select through repositories.agent_shell_prune_where.
+    predicate_sql: str = ""
+    predicate_params_factory: Callable[[argparse.Namespace, sqlite3.Connection], tuple[Any, ...]] = (
+        lambda _a, _db: ()
+    )
     archive: bool = False
     byte_col: str | None = None  # Optional column used to estimate archived bytes.
     notes: str = ""
@@ -185,9 +191,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
     def _basic_params(days_attr: str) -> Callable[[argparse.Namespace, sqlite3.Connection], tuple[Any, ...]]:
         return lambda a, _db: (_cutoff_iso(getattr(a, days_attr)),)
 
-    # Type-tiered predicates for agent_shell_messages / agent_shell_artifacts /
-    # agent_shell_tasks live inside prune_* fns; dry-run only needs eligible
-    # rows for the archive counter, so we approximate with the longest window.
     plan.targets = [
         # --- Operator-shell telemetry -------------------------------------
         RetentionTarget(
@@ -202,8 +205,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             table="agent_shell_events",
             prune_fn="prune_agent_shell_events",
             kwargs_factory=_basic("agent_shell_events_days"),
-            predicate_sql="created_at < ?",
-            predicate_params_factory=_basic_params("agent_shell_events_days"),
             archive=True,
             notes="14d — semi-interesting operator telemetry, archive before delete",
         ),
@@ -214,14 +215,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
                 "days_context": a.agent_shell_messages_context_days,
                 "days_other": a.agent_shell_messages_other_days,
             },
-            predicate_sql=(
-                "(message_type='context' AND created_at < ?) OR "
-                "(message_type<>'context' AND created_at < ?)"
-            ),
-            predicate_params_factory=lambda a, _db: (
-                _cutoff_iso(a.agent_shell_messages_context_days),
-                _cutoff_iso(a.agent_shell_messages_other_days),
-            ),
             archive=True,
             byte_col="content",
             notes="type-tiered: context=3d hard delete, other=14d archived",
@@ -234,14 +227,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
                 "days_proposal": a.agent_shell_artifacts_proposal_days,
                 "days_other": a.agent_shell_artifacts_other_days,
             },
-            predicate_sql="created_at < ?",  # widest window bound for size estimate
-            predicate_params_factory=lambda a, _db: (
-                _cutoff_iso(max(
-                    a.agent_shell_artifacts_strategy_days,
-                    a.agent_shell_artifacts_proposal_days,
-                    a.agent_shell_artifacts_other_days,
-                )),
-            ),
             archive=True,
             byte_col="content",
             notes="type-tiered per spec Agent 2",
@@ -253,16 +238,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
                 "days_completed": a.agent_shell_tasks_completed_days,
                 "days_failed": a.agent_shell_tasks_failed_days,
             },
-            predicate_sql=(
-                "status IN ('completed','failed','cancelled') AND "
-                "completed_at IS NOT NULL AND completed_at < ?"
-            ),
-            predicate_params_factory=lambda a, _db: (
-                _cutoff_iso(max(
-                    a.agent_shell_tasks_completed_days,
-                    a.agent_shell_tasks_failed_days,
-                )),
-            ),
             archive=True,
             notes="never touches status IN ('running','pending')",
         ),
@@ -270,8 +245,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             table="agent_shell_commands",
             prune_fn="prune_agent_shell_commands",
             kwargs_factory=_basic("agent_shell_commands_days"),
-            predicate_sql="created_at < ?",
-            predicate_params_factory=_basic_params("agent_shell_commands_days"),
             archive=True,
         ),
         # Sessions LAST inside the operator-shell family — parent table; the
@@ -280,8 +253,6 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             table="agent_shell_sessions",
             prune_fn="prune_agent_shell_sessions",
             kwargs_factory=_basic("agent_shell_sessions_days"),
-            predicate_sql="created_at < ?",
-            predicate_params_factory=_basic_params("agent_shell_sessions_days"),
             archive=True,
             notes="parent — Agent 2 cascade-deletes messages/events/artifacts/commands/tasks first",
         ),
@@ -675,50 +646,75 @@ def _archive_dir(args: argparse.Namespace) -> Path:
     return root / f"data_retention_archive_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
 
 
-def _archive_rows_for(
-    db: sqlite3.Connection,
-    target: RetentionTarget,
-    args: argparse.Namespace,
+def _target_where(
+    target: RetentionTarget, args: argparse.Namespace, db: sqlite3.Connection
+) -> tuple[str, tuple[Any, ...]]:
+    if target.archive:
+        from aletheia.storage.repositories import agent_shell_prune_where
+        return agent_shell_prune_where(target.table, **target.kwargs_factory(args, db))
+    return target.predicate_sql, target.predicate_params_factory(args, db)
+
+
+def _write_archive(
+    db: sqlite3.Connection, table: str, column: str, ids: list[Any], final: Path
 ) -> tuple[int, Path]:
-    """Stream rows matching ``target.predicate_sql`` into ``<table>.jsonl.gz``.
-
-    Rows are streamed row-by-row to avoid loading the whole set into memory.
-    Column names are captured from the cursor description so schema drift does
-    not break the archive.
-
-    If the SELECT itself fails (schema drift — column renamed or table
-    missing), the archive is skipped and the caller proceeds with the prune.
-    A silent abort mid-apply would leave the DB half-mutated; degrading to
-    "archive skipped, prune still runs" is the safer path — the recurring
-    scheduler will pick up any leftover rows on its next pass.
-    """
-    out_dir = _archive_dir(args)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{target.table}.jsonl.gz"
-
-    params = target.predicate_params_factory(args, db)
-    try:
-        cur = db.execute(
-            f"SELECT * FROM {target.table} WHERE {target.predicate_sql}",
-            params,
-        )
-    except sqlite3.OperationalError as exc:
-        print(
-            f"  WARN: archive SELECT on {target.table} failed ({exc}); "
-            "proceeding with prune WITHOUT archive.",
-            file=sys.stderr,
-        )
-        return 0, out_path
-    columns = [c[0] for c in cur.description] if cur.description else []
-
+    """Write rows whose ``column`` is in ``ids`` to a verified, fsynced gzip, then publish it."""
+    if final.exists():
+        final = final.with_name(f"{final.name.removesuffix('.jsonl.gz')}.{_stamp()}.jsonl.gz")
+    tmp = final.with_name(final.name + ".tmp")
     written = 0
-    with gzip.open(out_path, "at", encoding="utf-8") as gz:
-        for row in cur:
-            record = {col: row[idx] for idx, col in enumerate(columns)}
-            gz.write(json.dumps(record, default=_json_default, sort_keys=True))
-            gz.write("\n")
-            written += 1
-    return written, out_path
+    try:
+        with open(tmp, "wb") as raw:
+            with gzip.GzipFile(fileobj=raw, mode="wb") as gz:
+                for start in range(0, len(ids), 500):
+                    batch = ids[start:start + 500]
+                    cur = db.execute(
+                        f"SELECT * FROM {table} WHERE {column} IN ({','.join('?' * len(batch))})", batch
+                    )
+                    columns = [c[0] for c in cur.description]
+                    for row in cur:
+                        record = dict(zip(columns, row, strict=True))
+                        gz.write((json.dumps(record, default=_json_default, sort_keys=True) + "\n").encode())
+                        written += 1
+            raw.flush()
+            os.fsync(raw.fileno())
+        with gzip.open(tmp, "rt", encoding="utf-8") as check:
+            if sum(1 for _ in check) != written:
+                raise OSError(f"archive read-back count differs from {written}")
+        os.replace(tmp, final)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return written, final
+
+
+def _archive_ids(
+    db: sqlite3.Connection, target: RetentionTarget, ids: list[Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    """Archive ``ids`` of ``target.table`` and every cascade child BEFORE delete.
+
+    RETENTION_POLICY.md §12.3 step 2 requires the archive before the delete:
+    any SELECT, write or verify failure aborts the run before this target's DELETE.
+    """
+    from aletheia.storage.repositories import AGENT_SHELL_PRUNE_CASCADE
+
+    out_dir = _archive_dir(args)
+    summary: dict[str, Any] = {}
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for table, column in ((target.table, "id"), *AGENT_SHELL_PRUNE_CASCADE.get(target.table, ())):
+            name = target.table if table == target.table else f"{target.table}.{table}"
+            written, path = _write_archive(db, table, column, ids, out_dir / f"{name}.jsonl.gz")
+            summary[table] = {"rows": written, "path": str(path)}
+    except (sqlite3.Error, OSError) as exc:
+        raise SystemExit(
+            f"ABORT: archive of {target.table} failed ({type(exc).__name__}: {exc}); nothing deleted."
+        ) from exc
+    if summary[target.table]["rows"] != len(ids):
+        raise SystemExit(
+            f"ABORT: archive of {target.table} holds {summary[target.table]['rows']} rows, "
+            f"selected {len(ids)}; nothing deleted."
+        )
+    return summary
 
 
 def _json_default(value: Any) -> Any:
@@ -737,8 +733,8 @@ def _estimate_eligible(
     """Return ``(rows, est_mb)`` for a target's DELETE predicate."""
     if not table_exists(db, target.table):
         return (0, 0.0)
-    params = target.predicate_params_factory(args, db)
-    count_sql = f"SELECT COUNT(*) FROM {target.table} WHERE {target.predicate_sql}"
+    where, params = _target_where(target, args, db)
+    count_sql = f"SELECT COUNT(*) FROM {target.table} WHERE {where}"
     try:
         rows = int(db.execute(count_sql, params).fetchone()[0])
     except sqlite3.OperationalError:
@@ -750,7 +746,7 @@ def _estimate_eligible(
         try:
             byte_sql = (
                 f"SELECT COALESCE(SUM(LENGTH({byte_col})), 0) FROM {target.table} "
-                f"WHERE {target.predicate_sql}"
+                f"WHERE {where}"
             )
             est_bytes = int(db.execute(byte_sql, params).fetchone()[0])
         except sqlite3.OperationalError:
@@ -1079,15 +1075,22 @@ def run(args: argparse.Namespace) -> int:
     total_pruned: dict[str, int] = {}
     archive_summary: dict[str, dict[str, Any]] = {}
     for target, rows, _est_mb in per_table_estimate:
+        ids: list[Any] = []
+        if target.archive and table_exists(db, target.table):
+            # One id set drives the confirmation, the archive and the delete.
+            where, params = _target_where(target, args, db)
+            ids = [row[0] for row in db.execute(f"SELECT id FROM {target.table} WHERE {where}", params)]
+            rows = len(ids)
         if rows == 0:
             total_pruned[target.table] = 0
             continue
         _confirm_or_abort(target, rows, args)
         if target.archive:
-            written, path = _archive_rows_for(db, target, args)
-            archive_summary[target.table] = {"rows": written, "path": str(path)}
-        deleted = _dispatch_prune(target, args, db)
-        total_pruned[target.table] = deleted
+            from aletheia.storage.repositories import delete_agent_shell_rows
+            archive_summary[target.table] = _archive_ids(db, target, ids, args)
+            total_pruned[target.table] = delete_agent_shell_rows(target.table, ids)
+            continue
+        total_pruned[target.table] = _dispatch_prune(target, args, db)
 
     # Retro-strip content.context from surviving <days_context> rows so the
     # Day-0 app.db size target is not undermined by pre-guardrail context
