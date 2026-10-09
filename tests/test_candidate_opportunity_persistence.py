@@ -351,3 +351,29 @@ def test_requalification_ownership_reads_the_one_non_terminal_order_registry(mon
     monkeypatch.setattr(order_states, "NON_TERMINAL_ORDER_STATES",
                         tuple(s for s in order_states.NON_TERMINAL_ORDER_STATES if s != "open"))
     assert publish_serenity_candidates(theme.id, [second.id])
+
+
+def test_serenity_publication_refuses_a_stale_hourly_anchor():
+    """#2986: a two-day-old 1h close must not become the Candidate's entry price."""
+    theme, opportunity = _serenity_publication_source()
+    stale_ms = 2 * 24 * 3_600_000
+    repo.execute_write("UPDATE market_ohlcv SET ts = ts - ? WHERE timeframe = '1h'", (stale_ms,))
+
+    with pytest.raises(ValueError, match="serenity_instrument_ineligible"):
+        publish_serenity_candidates(theme.id, [opportunity.id])
+    assert repo.get_db().execute("SELECT COUNT(*) FROM universe_members").fetchone()[0] == 0
+
+
+def test_serenity_publication_anchors_on_the_last_closed_hourly_bar():
+    theme, opportunity = _serenity_publication_source()
+    row = repo.get_db().execute(
+        "SELECT close FROM market_ohlcv WHERE timeframe = '1h' ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    close = row[0]
+
+    candidate_id = publish_serenity_candidates(theme.id, [opportunity.id])[0]
+
+    candidate = repo.get_candidate(candidate_id)
+    assert candidate is not None
+    assert candidate["entry_price_usd"] == close
