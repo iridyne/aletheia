@@ -1320,6 +1320,8 @@ class CCXTUTAAdapter:
             return self._mutation_failure(command, SubmissionReport, exc, request_started=request_started)
 
     async def modify_order(self, command: ModifyOrderCommand) -> CommandReport:
+        if command.purpose == "protective_stop" and command.trigger_price is not None:
+            return await self._amend_protection(command)
         denied = self._validate_mutation(command, CommandReport, self._profile.mutation_modify_order)
         if denied:
             return denied
@@ -1360,6 +1362,28 @@ class CCXTUTAAdapter:
             )
         except (Exception, TimeoutError) as exc:
             return self._mutation_failure(command, CommandReport, exc, request_started=request_started)
+
+    async def _amend_protection(self, command: ModifyOrderCommand) -> CommandReport:
+        """Move a live venue stop in place; never cancel-then-place (#3848 PR-B)."""
+        denied = self._validate_mutation(command, CommandReport, self._profile.protection_replace)
+        if denied:
+            return denied
+        try:
+            exchange = await self._connected_exchange()
+            request = await self._request(self._profile.protection_amend_request(exchange, command))
+        except UTAError as exc:
+            if exc.command_evidence is CommandEvidence.NOT_SENT:
+                return self._not_sent(command, CommandReport, reason=exc.reason, error_code=exc.code)
+            return self._mutation_failure(command, CommandReport, exc, request_started=False)
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(command, CommandReport, exc, request_started=False)
+        try:
+            venue_order_id = await self._request(self._profile.amend_protection(exchange, request))
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(command, CommandReport, exc, request_started=True)
+        return self._command_report(
+            command, CommandReport, CommandEvidence.ACKNOWLEDGED, venue_order_id=venue_order_id,
+        )
 
     async def cancel_order(self, command: CancelOrderCommand) -> CommandReport:
         denied = self._validate_mutation(command, CommandReport, self._profile.mutation_cancel_order)

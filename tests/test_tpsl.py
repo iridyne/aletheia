@@ -90,26 +90,3 @@ async def test_get_order_fills_uta_treats_null_list_as_empty():
         market_type="usdt_futures",
     )
     assert result == []
-
-
-def test_uta_protection_failure_preserves_position_without_fabricating_ids(tmp_path, monkeypatch):
-    from tests.uta.test_execution_coordinator import _setup_db, _insert_bound_position, _Adapter
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
-    from aletheia.uta.models import UTACapabilities, CapabilitySupport
-    from aletheia.execution import gateway, coordinator
-    _setup_db(tmp_path, monkeypatch)
-    position = Position(symbol="BTC/USDT", market_type="usdt_futures", direction="long", quantity=0.01, entry_price=100, execution_mode="bitget_demo", stop_price=95, take_profit_price=110)
-    _insert_bound_position(position)
-    async def submit(command):
-        raise RuntimeError("exchange unavailable")
-    adapter = _Adapter(submit, "bitget_demo")
-    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
-    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
-    assert gateway.place_exchange_protection(position.id) == {}
-    stored = repo.get_position(position.id)
-    assert stored["status"] == "open"
-    assert stored["exchange_tpsl_order_id"] is None
-    assert repo.list_fills() == []
-    protection = [order for order in repo.list_orders() if order["position_id"] == position.id]
-    assert {order["close_reason"]: order["status"] for order in protection} == {"protective_stop": "submission_unknown", "take_profit": "submission_unknown"}

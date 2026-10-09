@@ -26,7 +26,6 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
-    transition_order,
     update_order_metadata,
 )
 from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
@@ -927,107 +926,14 @@ def cancel_order(command: CancelOrderCommand):
     return run_coro_from_sync(_command(command.expected_account.execution_mode, "cancel_order", command))
 
 
-def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -> str:
-    """Persist one protection child before submitting it through the selected UTA."""
-    identity = _position_account(position)
-    suffix = "sl" if purpose == "protective_stop" else "tp"
-    order = Order(
-        uta_account_identity_json=identity.model_dump_json(),
-        proposal_id=position.get("proposal_id"),
-        client_order_id=f"protect-{position['id']}-{suffix}",
-        position_id=position["id"],
-        close_reason=purpose,
-        symbol=position["symbol"],
-        market_type=position["market_type"],
-        direction=position["direction"],
-        order_type="market",
-        quantity=float(position["quantity"]),
-        price=trigger_price,
-        execution_mode=position["execution_mode"],
-        status="pending",
-    )
-    insert_order(order)
-    adapter = None
-    command = None
-    try:
-        adapter = _create_bound_adapter(position["execution_mode"], identity)
-        command = SubmitOrderCommand(
-            command_id=str(uuid4()),
-            expected_account=adapter.identity,
-            instrument=instrument_from_local(position["symbol"], position["market_type"]),
-            purpose=purpose,
-            position_id=position["id"],
-            parent_order_id=None,
-            client_order_id=order.client_order_id,
-            side="sell" if position["direction"] in {"long", "buy"} else "buy",
-            quantity=Decimal(str(position["quantity"])),
-            order_type="market",
-            trigger_price=Decimal(str(trigger_price)),
-            reduce_only=True,
-        )
-        report = run_coro_from_sync(_call_and_close(adapter, "submit_order", command))
-    except Exception:
-        if adapter is None or command is None:
-            transition_order(order.id, status="error", error_reason="protection_not_sent")
-            raise
-        report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
-    acknowledgement = _apply_report(order, report)
-    venue_order_id = acknowledgement.get("exchange_order_id")
-    if not venue_order_id:
-        raise SubmissionUnknownError(client_oid=order.client_order_id)
-    return str(venue_order_id)
-
-
-def place_protection(position_id: str) -> dict[str, str]:
-    """Place configured protection children through the selected UTA."""
-    from aletheia.storage import repositories as repo
-
-    position = repo.get_position(position_id)
-    if position is None or position.get("status") != "open":
-        raise ValueError(f"open position not found: {position_id}")
-    requested = (
-        ("sl", "protective_stop", position.get("stop_price")),
-        ("tp", "take_profit", position.get("take_profit_price")),
-    )
-    placed: dict[str, str] = {}
-    for key, purpose, price in requested:
-        if price is None:
-            continue
-        try:
-            placed[key] = _submit_protection_leg(position, purpose, float(price))
-        except Exception:
-            # A failing leg used to be silently skipped, which left the
-            # caller with an incomplete `placed` dict and no way to know
-            # whether the required stop-loss was actually sent to the
-            # venue. execution_contract.md §4 requires "未决 child 保留"
-            # (pending children must be retained) and "失败不报告替换成功"
-            # (do not report a replacement as successful on failure). A
-            # silent `continue` here failed both: it did not retain any
-            # trace of the failed leg, and the caller received a partial
-            # `placed` map as if it were complete. Keeping the fail-open
-            # semantics for now (do not close the main position on a
-            # protection failure — that is a separate D1 decision — see
-            # followup in `project_shit_cleanup_batch1_2026-09-26.md`
-            # segment 3 #5), but a real defect (wrong price, adapter
-            # bug, credentials revoked) is now visible.
-            logger.error(
-                "Protection leg submission failed: position=%s purpose=%s (main position remains open without this leg)",
-                position.get("id"),
-                purpose,
-                exc_info=True,
-            )
-            continue
-    if placed:
-        repo.update_open_position_exit_plan(
-            position_id,
-            exchange_tpsl_order_id=json.dumps(placed, sort_keys=True),
-        )
-    return placed
-
-
 def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
-    """Cancel the proven old stop before creating its tighter replacement."""
+    """Amend the stored venue stop in place; True only on the venue's ACK (#3848 PR-B).
+
+    Never cancel-then-place: a failed amend leaves the previous venue stop live,
+    so its id (and a take-profit sharing that order) stays stored.
+    """
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
 
     position = repo.get_position(position_id)
     if position is None or position.get("status") != "open":
@@ -1036,49 +942,45 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
         identifiers = json.loads(position.get("exchange_tpsl_order_id") or "{}")
     except (TypeError, ValueError):
         return False
-    old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
-    if not old_stop:
-        return False
-    # A read-back entry preset keeps its approved venue stop until #3848 PR-B
-    # amends it in place: cancel-then-submit would resend the fixed
-    # `protect-<id>-sl` clientOid and is unproven against Bitget presets.
-    from aletheia.execution.stops import PRESET_ORIGIN
-
-    if identifiers.get("origin") == PRESET_ORIGIN:
+    stop_id = identifiers.get("sl") if isinstance(identifiers, dict) else None
+    if not stop_id:
         return False
     adapter = _create_bound_adapter(position["execution_mode"], _position_account(position))
-    command = CancelOrderCommand(
+    command = ModifyOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
         instrument=instrument_from_local(position["symbol"], position["market_type"]),
         purpose="protective_stop",
         position_id=position_id,
-        target_venue_order_id=str(old_stop),
-        reason="replace_protective_stop",
+        target_venue_order_id=str(stop_id),
+        trigger_price=Decimal(str(new_stop_price)),
     )
     try:
-        cancelled = run_coro_from_sync(_call_and_close(adapter, "cancel_order", command))
+        report = run_coro_from_sync(_call_and_close(adapter, "modify_order", command))
+        evidence, reason = report.evidence.value, report.reason_code
     except Exception as exc:
+        evidence, reason = CommandEvidence.AMBIGUOUS.value, type(exc).__name__
+    amended = evidence == CommandEvidence.ACKNOWLEDGED.value
+    repo.insert_audit_event(AuditEvent(
+        actor="system",
+        source="native_protection_amend",
+        event_type="native_protection_amended" if amended else "native_protection_amend_failed",
+        entity_type="position",
+        entity_id=position_id,
+        before_state=json.dumps({"stop_price": position.get("stop_price"), "sl": stop_id}, sort_keys=True),
+        after_state=json.dumps(
+            {"stop_price": str(command.trigger_price), "evidence": evidence, "reason_code": reason},
+            sort_keys=True,
+        ),
+        message=(
+            "Venue stop amended in place."
+            if amended
+            else "Venue stop amend failed; the previous venue stop stays live and its id stays stored."
+        ),
+    ))
+    if not amended:
         logger.warning(
-            "replace_protective_stop: cancel of old stop %s failed for %s (%s)",
-            old_stop, position_id, type(exc).__name__,
+            "replace_protective_stop: amend of venue stop %s failed for %s (%s, %s)",
+            stop_id, position_id, evidence, reason,
         )
-        return False
-    if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
-        return False
-    try:
-        identifiers["sl"] = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
-    except Exception as exc:
-        logger.warning(
-            "replace_protective_stop: submit of new stop for %s failed after cancel (%s)",
-            position_id, type(exc).__name__,
-        )
-        # The old stop is gone at the venue. Dropping its id lets the native
-        # protection check prove the absence and close (§4) instead of the row
-        # claiming venue protection that no longer exists.
-        identifiers.pop("sl")
-    repo.update_open_position_exit_plan(
-        position_id,
-        exchange_tpsl_order_id=json.dumps(identifiers, sort_keys=True),
-    )
-    return "sl" in identifiers
+    return amended

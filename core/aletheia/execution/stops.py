@@ -42,41 +42,10 @@ def native_tpsl_enabled(trading, execution_mode: str | None) -> bool:
     return execution_mode in NATIVE_TPSL_DEFAULT_MODES
 
 
-def place_exchange_protective_orders(position: dict) -> dict:
-    """Execution-owned dispatch of reduce-only SL/TP for an existing position.
-
-    Gating (both must hold, else no-op returning {}):
-      1. native_tpsl_enabled(cfg.trading, execution_mode) is True.
-      2. execution_mode is a DEMO mode. Live is deliberately excluded: the
-         placing an exchange order on a live position would be an AUTONOMOUS
-         LIVE ORDER (forbidden by the safety rules).
-
-    Reconciliation/adoption must not invoke this mutation path. Returns placed
-    ids ({} if none); Gateway and the coordinator retain execution authority.
-    """
-    from aletheia.config.exchanges import execution_mode_environment
-    from aletheia.config.loader import load_config
-
-    cfg = load_config()
-    mode = position.get("execution_mode") or ""
-    if not native_tpsl_enabled(cfg.trading, mode):
-        return {}
-
-    stop = position.get("stop_price")
-    tp = position.get("take_profit_price")
-    if not stop and not tp:
-        return {}
-
-    if execution_mode_environment(mode) == "demo":
-        from aletheia.execution.gateway import place_exchange_protection
-        return place_exchange_protection(position["id"])
-    return {}
-
-
 def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> bool:
-    """Broker-agnostic dispatch: replace the exchange-side protective SL for a
-    position whose trailed stop just tightened. Returns True only after a
-    supported broker replacement call completes; otherwise returns False.
+    """Broker-agnostic dispatch: amend the exchange-side protective SL in place for a
+    position whose stop just tightened. Returns True only after the venue
+    acknowledged the amend; otherwise returns False (#3848 PR-B).
 
     #139 fix: the trail loop previously only reached Bitget — okx_demo and
     binance_testnet positions could see their DB stop_price tighten while the
@@ -85,7 +54,7 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     `native_tpsl_enabled`; where it is on, all supported brokers must honour it
     consistently. Non-fatal.
 
-    Gating repeats the same rules as `place_exchange_protective_orders`:
+    Gating:
       1. native_tpsl_enabled(cfg.trading, execution_mode) True
       2. execution_mode is a DEMO/TESTNET mode (never an autonomous live order).
     """
@@ -126,8 +95,8 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
 # to be readable before the bookkeeping read-back audits it as not found (#3848).
 # The read-back never closes a Position (owner D1, 2026-10-09).
 PROTECTION_GRACE_SECONDS = 180
-# Marks ids read back from an entry preset. `replace_protective_stop` refuses
-# them until #3848 PR-B amends the preset in place (modify-strategy-order).
+# Marks ids read back from an entry preset; `replace_protective_stop` amends that
+# strategy order in place (modify-strategy-order, #3848 PR-B).
 PRESET_ORIGIN = "entry_preset"
 
 

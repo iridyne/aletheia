@@ -798,83 +798,10 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# The dispatcher remains demo-gated for execution-owned callers, but reconciliation
-# cannot invoke it: adoption records an already-existing external position and must
-# never create new exchange orders as a side effect (trust §1.3 / execution §6).
+# Reconciliation never dispatches exchange orders: adoption records an
+# already-existing external position and must never create or amend exchange
+# orders as a side effect (trust §1.3 / execution §6).
 # ===========================================================================
-
-
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-ADOPT-13", "pipeline_adopted_position", "§13 protective_order_dispatch_gating", "L2b",
-        "execution.stops.place_exchange_protective_orders: no-op when "
-        "exchange_tpsl_enabled=False (dormant) OR the mode is not a supported DEMO "
-        "mode (live never gets an autonomous exchange order); places + persists the "
-        "bracket id when enabled AND okx_demo.",
-    ),
-)
-def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
-    conn = _setup_db(tmp_path, monkeypatch)
-    _stub_audit(monkeypatch, tmp_path)
-
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
-    from aletheia.execution import coordinator
-    from tests.uta.test_execution_coordinator import _Adapter, _insert_bound_position, _ack
-    from aletheia.uta.models import UTACapabilities, CapabilitySupport
-    captured = []
-    async def submit(command):
-        captured.append(command)
-        suffix = "sl" if command.purpose == "protective_stop" else "tp"
-        return _ack(command).model_copy(update={"venue_order_id": f"algo-{suffix}-1"})
-    adapter = _Adapter(submit, "okx_demo")
-    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
-    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
-
-    def _insert_okx_short():
-        p = Position(symbol="BNB/USDT", market_type="usdt_futures", direction="short",
-                     quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
-                     status="open", stop_price=573.98, take_profit_price=540.22)
-        _insert_bound_position(p)
-        return p
-
-    from aletheia.execution.stops import place_exchange_protective_orders
-
-    # 1. flag OFF → dormant no-op (even okx_demo)
-    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=False)
-    p1 = _insert_okx_short()
-    assert place_exchange_protective_orders({
-        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
-        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
-        "take_profit_price": 540.22, "execution_mode": "okx_demo",
-    }) == {}, "flag OFF must be a dormant no-op"
-    assert captured == [], "no exchange call when flag off"
-
-    # 2. flag ON + LIVE mode → never an autonomous live order
-    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=True)
-    assert place_exchange_protective_orders({
-        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
-        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
-        "take_profit_price": 540.22, "execution_mode": "bitget_live_limited",
-    }) == {}, "live mode must never place an autonomous exchange order"
-    assert captured == [], "no exchange call for live mode"
-
-    # 3. flag ON + okx_demo → places bracket + persists id (RESULT, not just call)
-    ids = place_exchange_protective_orders({
-        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
-        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
-        "take_profit_price": 540.22, "execution_mode": "okx_demo",
-    })
-    assert ids == {"sl": "algo-sl-1", "tp": "algo-tp-1"}
-    # short → close side is BUY (reduce the short)
-    assert [command.side for command in captured] == ["buy", "buy"]
-    import json
-    row = conn.execute("SELECT exchange_tpsl_order_id FROM positions WHERE id=?", (p1.id,)).fetchone()
-    assert json.loads(row["exchange_tpsl_order_id"]) == {"sl": "algo-sl-1", "tp": "algo-tp-1"}, (
-        "placed bracket ids must be persisted to positions.exchange_tpsl_order_id"
-    )
 
 
 @spec_claim(
@@ -901,10 +828,10 @@ def test_adopt_never_dispatches_exchange_orders(
         exchange_name="okx",
     )
 
-    exchange_dispatches: list[dict] = []
+    exchange_dispatches: list[tuple] = []
     monkeypatch.setattr(
-        "aletheia.execution.stops.place_exchange_protective_orders",
-        lambda position: exchange_dispatches.append(position) or {"sl": "forbidden"},
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda *args: exchange_dispatches.append(args) or True,
     )
 
     from aletheia.portfolio.position_reconciler import adopt_position

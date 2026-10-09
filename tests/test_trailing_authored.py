@@ -164,4 +164,61 @@ def test_atr_revision_persists_exact_runtime_observation(monkeypatch):
     assert captured[0].trailing["last_runtime_observation"] == {
         "distance_source": "atr",
         **observation,
+        "exchange_synced": False,
     }
+
+
+def _venue_down():
+    raise RuntimeError("venue down")
+
+
+@pytest.mark.parametrize(
+    ("amend", "synced"),
+    [(lambda: True, True), (lambda: False, False), (_venue_down, False)],
+    ids=["amended", "amend_failed", "amend_raised"],
+)
+def test_trailing_reports_the_venue_amend_honestly_and_keeps_the_local_backstop(monkeypatch, amend, synced):
+    """#3848 PR-B: the trailed stop is amended at the venue first; whatever the venue
+    answers, the tighter local stop is kept as the backstop and `exchange_synced`
+    records the venue's actual answer (it used to read True after a failed replace)."""
+    import aletheia.portfolio.exit_plan as exit_plan
+
+    order = []
+    saved = []
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda position_id, stop: order.append(("amend", position_id, stop)) or amend(),
+    )
+    monkeypatch.setattr(
+        exit_plan, "save_exit_plan",
+        lambda _pid, plan, **_kwargs: order.append(("save",)) or saved.append(plan) or plan,
+    )
+    pos = _pos(
+        execution_mode="bitget_demo", market_type="usdt_futures",
+        trailing_json=json.dumps({"mode": "pct", "distance": 1.0, "floor_at_breakeven": False}),
+        stop_price=95.0, exit_plan_version=1,
+    )
+
+    assert pm._maybe_update_trailing_stop(pos, 110.0, _cfg()) is True
+
+    assert order == [("amend", "t1", 108.9), ("save",)]
+    assert saved[0].stop_price == 108.9
+    assert pos["stop_price"] == 108.9
+    assert saved[0].trailing["last_runtime_observation"]["exchange_synced"] is synced
+
+
+def test_trailing_never_loosens_the_stop(monkeypatch):
+    calls = _capture_writes(monkeypatch)
+    amends = []
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda *args: amends.append(args) or True,
+    )
+    pos = _pos(
+        direction="short", entry_price=100.0, stop_price=100.5, trail_high_water=99.5,
+        trailing_json=json.dumps({"mode": "pct", "distance": 1.0, "floor_at_breakeven": False}),
+    )
+    # A short's trail at 110 would sit at 99.5 + 1.1 = 100.6, looser than the 100.5 stop.
+    pm._maybe_update_trailing_stop(pos, 110.0, _cfg())
+    assert [kw for _, kw in calls if "stop_price" in kw] == []
+    assert amends == []
