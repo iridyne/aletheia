@@ -357,6 +357,7 @@ def test_collector_starts_only_after_backend_listens(tmp_path, monkeypatch):
     assert holder[0] is not None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX child-only termination (#1594)")
 def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
@@ -364,9 +365,16 @@ def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch
 
     now = {"value": 0.0}
     killed: list[int] = []
+    terminated: list[int] = []
 
     class FakeProc:
         pid = 12345
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+        def wait(self, timeout=None):
+            return -15
 
         def poll(self):
             return None
@@ -382,9 +390,12 @@ def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch
     code = runner._spawn_server(load_config())
 
     assert code == 1
-    assert killed == [12345]
+    # #1594: only the backend child is signalled, never the shared process group.
+    assert terminated == [12345]
+    assert killed == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX child-only termination (#1594)")
 def test_inner_server_is_restarted_when_port_is_lost_after_start(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
@@ -392,10 +403,17 @@ def test_inner_server_is_restarted_when_port_is_lost_after_start(tmp_path, monke
 
     now = {"value": 0.0}
     killed: list[int] = []
+    terminated: list[int] = []
     port_checks = {"count": 0}
 
     class FakeProc:
         pid = 23456
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+        def wait(self, timeout=None):
+            return -15
 
         def poll(self):
             return None
@@ -415,7 +433,9 @@ def test_inner_server_is_restarted_when_port_is_lost_after_start(tmp_path, monke
     code = runner._spawn_server(load_config())
 
     assert code == 1
-    assert killed == [23456]
+    # #1594: only the backend child is signalled, never the shared process group.
+    assert terminated == [23456]
+    assert killed == []
 
 
 def test_frontdoor_unhealthy_does_not_kill_backend(tmp_path, monkeypatch):
@@ -877,3 +897,43 @@ def test_linux_source_requires_standard_checkout_interpreter(tmp_path, monkeypat
     assert runner._spawn_server(cfg) == 0
     assert captured["command"][0] == str(interpreter)
     assert captured["cwd"] == str(root)
+
+
+_FRONTDOOR_RECOVERY_SCRIPT = """
+import subprocess, sys
+from types import SimpleNamespace
+from aletheia import _gateway_runner as runner
+
+def sleeper():
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+backend = sleeper()
+frontdoor = sleeper()
+replacement = []
+runner._frontdoor_listening = lambda cfg: False  # live frontdoor lost its port
+runner._record_frontdoor_restart = lambda *a, **k: None
+runner._spawn_frontdoor = lambda cfg, port: replacement.append(sleeper()) or replacement[-1]
+runner._wait_frontdoor_listening = lambda cfg, proc: True
+cfg = SimpleNamespace(app=SimpleNamespace(dashboard_port=0))
+new = runner._ensure_frontdoor_running(cfg, 0, frontdoor)
+frontdoor.wait(timeout=10)
+ok = new.pid != frontdoor.pid and backend.poll() is None and new.poll() is None
+print("SURVIVED" if ok else "BROKEN", flush=True)
+for p in (backend, new):
+    p.kill()
+"""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics (#1594)")
+def test_frontdoor_recovery_does_not_signal_the_supervisor_process_group():
+    """#1594: the supervisor leads its group and children share it; recovering a
+    live frontdoor that lost its port must replace only that frontdoor."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", _FRONTDOOR_RECOVERY_SCRIPT],
+        start_new_session=True, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (result.returncode, result.stderr[-2000:])
+    assert result.stdout.strip() == "SURVIVED"
