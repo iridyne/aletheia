@@ -289,3 +289,54 @@ def test_preview_mode_blocks_secret_deletion(monkeypatch):
     monkeypatch.setattr(secrets, "is_preview_mode", lambda: True)
     with pytest.raises(secrets.PreviewSecretAccessError, match="preview mode"):
         secrets.delete_secret("model.profile.alpha.api_key")
+
+
+def test_locked_keyring_prompt_cannot_hang_a_reader(tmp_path, monkeypatch):
+    """A Secret Service collection that waits for an unlock prompt must read as unavailable, not block."""
+    import threading
+    import time
+
+    from aletheia.config import secrets
+
+    release = threading.Event()
+
+    class PromptingKeyring:
+        def get_password(self, _service, _key):
+            release.wait(3)
+
+    monkeypatch.setattr(secrets, "_KEYRING_TIMEOUT_SEC", 0.2)
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=PromptingKeyring()):
+        started = time.monotonic()
+        assert get_secret("bitget.demo.api_key") is None
+        assert get_secret("bitget.demo.api_key") is None  # second read must not queue behind the first
+        with pytest.raises(RuntimeError, match="secret_store_unavailable"):
+            get_secret("bitget.demo.api_key", strict=True)
+        assert time.monotonic() - started < 2
+    release.set()
+
+
+def test_concurrent_reads_on_a_healthy_slow_keyring_are_not_reported_unavailable(tmp_path):
+    """Two threads reading at once must both get the keyring's answer; only a call that really stalls is unavailable."""
+    import threading
+    import time
+
+    results: list[object] = []
+
+    class SlowKeyring:
+        def get_password(self, _service, _key):
+            time.sleep(0.05)
+            return None
+
+    def read():
+        try:
+            results.append(get_secret("bitget.demo.api_key", strict=True))
+        except RuntimeError as exc:
+            results.append(str(exc))
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=SlowKeyring()):
+        threads = [threading.Thread(target=read) for _ in range(2)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    assert results == [None, None]

@@ -173,6 +173,48 @@ def _get_keyring():
         return None
 
 
+# The Secret Service backend (GNOME Keyring) answers a locked collection with an interactive
+# unlock prompt and blocks until a person answers it. A service must never wait on that.
+_KEYRING_TIMEOUT_SEC = 3.0
+_keyring_lock = threading.Lock()
+_keyring_stuck: threading.Thread | None = None
+
+
+def _keyring_call(fn, *args):
+    """Run one keyring call with a bounded wait.
+
+    Calls are serialized, so a healthy keyring is never reported unavailable just because another
+    thread is mid-call. Only a call that really exceeds the bound marks the keyring stuck; later
+    calls then fail at once as "keyring_stalled" (unavailable) until that call returns, so at most
+    one thread is ever parked on the prompt. The call runs on a daemon thread, so a stuck prompt
+    cannot keep the interpreter from exiting.
+    """
+    global _keyring_stuck
+    with _keyring_lock:
+        if _keyring_stuck is not None:
+            if _keyring_stuck.is_alive():
+                raise RuntimeError("keyring_stalled")
+            _keyring_stuck = None
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["value"] = fn(*args)
+            except Exception as exc:
+                box["error"] = exc
+
+        worker = threading.Thread(target=run, name="keyring", daemon=True)
+        worker.start()
+        worker.join(_KEYRING_TIMEOUT_SEC)
+        if worker.is_alive():
+            _keyring_stuck = worker
+            logger.warning("secrets: OS keyring did not answer in %ss (locked and waiting for an unlock prompt?); treating it as unavailable", _KEYRING_TIMEOUT_SEC)
+            raise RuntimeError("keyring_stalled")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 def _fallback_path() -> Path:
     return get_data_dir() / "secrets.enc"
 
@@ -236,7 +278,7 @@ def set_secret(key: str, value: str) -> None:
     kr = _get_keyring()
     if kr:
         try:
-            kr.set_password(_SERVICE_NAME, key, value)
+            _keyring_call(kr.set_password, _SERVICE_NAME, key, value)
         except Exception:
             logger.debug("secrets: OS keyring mirror write failed; encrypted file remains the reliable source of truth", exc_info=True)
 
@@ -258,7 +300,7 @@ def get_secret(key: str, *, strict: bool = False) -> str | None:
     kr = _get_keyring()
     if kr:
         try:
-            value = kr.get_password(_SERVICE_NAME, key)
+            value = _keyring_call(kr.get_password, _SERVICE_NAME, key)
             if value is not None:
                 return value
         except Exception:
@@ -282,13 +324,13 @@ def delete_secret(key: str) -> None:
     existing = None
     if kr:
         try:
-            existing = kr.get_password(_SERVICE_NAME, key)
+            existing = _keyring_call(kr.get_password, _SERVICE_NAME, key)
         except Exception as exc:
             raise RuntimeError("failed to inspect secret in OS keyring") from exc
     _file_delete(key, force_generation=existing is not None)
     if kr and existing is not None:
         try:
-            kr.delete_password(_SERVICE_NAME, key)
+            _keyring_call(kr.delete_password, _SERVICE_NAME, key)
         except Exception as exc:
             raise RuntimeError("failed to delete secret from OS keyring") from exc
 

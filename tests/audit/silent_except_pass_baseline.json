@@ -91,12 +91,12 @@
     },
     {
       "file": "core/aletheia/config/secrets.py",
-      "line": 219,
+      "line": 261,
       "reason": "best-effort fd close on an already-failing write path before fdopen took ownership; original exception is re-raised"
     },
     {
       "file": "core/aletheia/config/secrets.py",
-      "line": 303,
+      "line": 345,
       "reason": "FileExistsError from O_EXCL exclusive creation: expected loser side of a first-start key-creation race"
     },
     {
