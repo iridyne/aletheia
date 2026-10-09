@@ -2692,7 +2692,10 @@ async def start_tunnel_api():
 async def stop_tunnel_api():
     from aletheia.gateway.tunnel import stop_tunnel
     from starlette.concurrency import run_in_threadpool
-    return await run_in_threadpool(stop_tunnel)
+    result = await run_in_threadpool(stop_tunnel)
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("reason", result.get("status", "tunnel stop failed")))
+    return result
 
 
 # ---------------------------------------------------------------------------
