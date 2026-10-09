@@ -18,8 +18,4 @@ Concrete implementations of the framework's counterfactual capability
 Storage-layer helpers for the shadow_trades / filter_shadow_experiments
 tables remain in ``aletheia.storage.repositories``; this package is the
 application layer.
-
-Realized exit-driver comparison lives in ``aletheia.analytics.exit_driver_comparison``
-— it is attribution over actual closes, not a counterfactual, and was moved
-out of this package to reflect that distinction.
 """

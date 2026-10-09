@@ -355,33 +355,3 @@ def test_protected_method_prefixes_includes_positions_post():
 # ---------------------------------------------------------------------------
 
 
-def test_exit_driver_human_reasons_classified_correctly():
-    from aletheia.analytics.exit_driver_comparison import exit_driver, HUMAN_DRIVEN
-
-    assert "human_manual_close" in HUMAN_DRIVEN
-    assert "human_limit_exit" in HUMAN_DRIVEN
-    assert exit_driver("human_manual_close") == "human"
-    assert exit_driver("human_limit_exit") == "human"
-    # Ensure they are NOT in the operator bucket
-    assert exit_driver("human_manual_close") != "operator"
-    assert exit_driver("human_limit_exit") != "operator"
-
-
-def test_exit_driver_human_does_not_inflate_operator_stats():
-    """A profitable human close must not be counted as AI exit discretion."""
-    from aletheia.analytics.exit_driver_comparison import compare_exit_outcomes
-
-    rows = [
-        {"close_reason": "human_manual_close", "realized_pnl": 100.0},
-        {"close_reason": "operator_close", "realized_pnl": -5.0},
-        {"close_reason": "stop_loss", "realized_pnl": -3.0},
-    ]
-    stats = compare_exit_outcomes(rows)
-    # human is its own bucket
-    assert "human" in stats
-    assert stats["human"].count == 1
-    assert stats["human"].total_pnl == pytest.approx(100.0)
-    # operator bucket does NOT include the human close
-    assert "operator" in stats
-    assert stats["operator"].count == 1
-    assert stats["operator"].total_pnl == pytest.approx(-5.0)
