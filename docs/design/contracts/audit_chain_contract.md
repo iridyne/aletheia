@@ -188,6 +188,8 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 
 runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，禁止任何路径对文件执行 `truncate`、`overwrite`、或删除行。
 
+更新回滚同样受此约束：原地回滚保留 live `audit.jsonl` 及全部轮转代次，不以 checkpoint 副本覆盖或删除任何一代，并在数据还原后追加一条 `update_rollback_restored` 记录；SQLite `audit_events` 随 `app.db` 回到 checkpoint，不从 JSONL 重建（见 [persistence recovery contract](persistence_recovery_contract.md)）。
+
 Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：完整 JSON 仅追加换行；只有当尾部字节能由稳定 event payload 证明为同一记录前缀时才追加缺失后缀；否则 fail-closed 并保留 outbox backlog，不猜测或截断审计数据。
 
 旧 Learning lifecycle stable-ID 审计保持历史证据；新实验事件只由 Observation Lab 事务与 outbox 产生。
@@ -216,6 +218,7 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py` 的 `adopt_position`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Experiment lifecycle transition | Observation Lab lifecycle event/outbox | `observation_lab/canonical.py`；旧 Learning lifecycle 只读归档，不再推进 |
 | Funding settlement/correction/terminal history expiry | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py` + `portfolio/broker_funding_settlement.py`；会计或 terminal-state 事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
+| 原地更新回滚数据还原 | `update_rollback_restored` | `ops/update/auto.py` 的 `_restore_old_runtime`（自动更新与 schema 更新回滚共用） |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py`）在 `agent_shell/commands.py` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。

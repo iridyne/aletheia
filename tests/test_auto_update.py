@@ -1072,9 +1072,13 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
         auto,
         "RestoreService",
         lambda: SimpleNamespace(
-            restore=lambda *_args, **kwargs: calls.append(f"restore:{kwargs}") or SimpleNamespace(success=True),
+            restore=lambda *_args, **kwargs: calls.append(f"restore:{kwargs}") or SimpleNamespace(
+                success=True, checkpoint_identity="c", restored_files=1, preserved_files=[],
+                config_disposition="preserved_live",
+            ),
         ),
     )
+    monkeypatch.setattr(auto, "_record_audit", lambda event_type, *_a, **_k: calls.append(event_type))
     monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
     monkeypatch.setattr(auto, "_version_from_ref", lambda old: "1.0.0")
     monkeypatch.setattr(auto, "_wait_for_runtime", lambda *_args: {"ok": True, "reason": "restored"})
@@ -1091,9 +1095,47 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
     assert calls == [
         "lock-enter",
         "restore:{'require_recovery_checkpoint': True}",
+        "update_rollback_restored",
         "invalidate:False",
         "lock-exit",
     ]
+
+
+def test_source_restore_appends_rollback_lineage_event(monkeypatch, tmp_path):
+    """#1910: in-place recovery keeps post-checkpoint audit and appends one lineage event."""
+    import json
+    import sqlite3
+    from contextlib import nullcontext
+
+    import aletheia.files.jsonl as jsonl
+    from aletheia.config import loader
+    from extensions.observation_lab import kernel, worker_lock
+    from ops.backup.service import BackupService
+    from ops.update import auto, git_ops as git_mutations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(jsonl, "_last_audit_hash", None)
+    sqlite3.connect(str(tmp_path / "app.db")).close()
+    jsonl.write_audit({"action": "A"}, mirror_db=False)
+    backup = BackupService(data_dir=tmp_path).create_backup(label="rb", profile="authoritative")
+    jsonl.write_audit({"action": "B"}, mirror_db=False)
+
+    monkeypatch.setattr(git_mutations, "reset_hard", lambda old: {"ok": True})
+    monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
+    monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
+    monkeypatch.setattr(auto, "_version_from_ref", lambda old: "1.0.0")
+    monkeypatch.setattr(auto, "_wait_for_runtime", lambda *_args: {"ok": True, "reason": "restored"})
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", nullcontext)
+    monkeypatch.setattr(kernel, "invalidate_active_for_restore", lambda *, joint_cut_proven: 0)
+
+    assert auto._restore_old_runtime("old", backup, False, restore_static=False)["ok"] is True
+
+    records = [json.loads(line) for line in (tmp_path / "logs" / "audit.jsonl").read_text().splitlines()]
+    assert [r.get("action") for r in records[:2]] == ["A", "B"]
+    assert records[-1].get("event_type") == "update_rollback_restored"
+    assert records[-1]["checkpoint_identity"]
+    assert records[-1]["config_disposition"] == "absent_in_checkpoint"
+    assert jsonl.verify_audit_chain()["valid"] is True
 
 
 @pytest.mark.parametrize(

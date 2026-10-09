@@ -712,3 +712,41 @@ def test_audit_dedup_ignores_non_string_historical_id(audit_tmp):
     }
 
     assert jsonl_mod.write_audits_deduplicated([event]) == {event["id"]}
+
+
+@spec_claim(
+    SpecClaim(
+        "AU-S07", "audit_chain_contract", "§6.1 append-only update rollback", "L2b",
+        "An in-place restore keeps every live audit.jsonl generation; post-checkpoint "
+        "records survive a rotation and the hash chain still verifies (#1910).",
+    ),
+)
+def test_rollback_restore_preserves_the_live_audit_family(tmp_path, monkeypatch):
+    import sqlite3
+
+    import aletheia.files.jsonl as jsonl
+    from ops.backup.restore import RestoreService
+    from ops.backup.service import BackupService
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    monkeypatch.setattr(jsonl, "_log_dir", lambda: logs)
+    _reset_audit_hash_cache()
+    sqlite3.connect(str(tmp_path / "app.db")).close()
+    jsonl.write_audit({"action": "A"}, mirror_db=False)
+    archive = BackupService(data_dir=tmp_path).create_backup(label="audit-family")
+    jsonl.write_audit({"action": "B"}, mirror_db=False)
+    (logs / "audit.jsonl").rename(logs / "audit.jsonl.1")
+    jsonl.write_audit({"action": "C"}, mirror_db=False)
+
+    result = RestoreService().restore(archive, tmp_path)
+
+    assert result.success, result.errors
+    records = [
+        json.loads(line)
+        for path in (logs / "audit.jsonl.1", logs / "audit.jsonl")
+        if path.exists()
+        for line in path.read_text().splitlines()
+    ]
+    assert [r["action"] for r in records] == ["A", "B", "C"]
+    assert jsonl.verify_audit_chain()["valid"] is True

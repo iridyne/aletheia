@@ -13,7 +13,8 @@ from aletheia.runtime_paths import large_temp_dir
 # Every other root in the backup manifest (ops/backup/service.py) — events/,
 # artifacts/, logs/ other than the audit family, observation-lab/archives/ —
 # restores append-only: a missing file is written, an existing one is kept,
-# nothing is deleted (owner decision 2026-10-09, #3765 / #1441).
+# nothing is deleted (owner decision 2026-10-09, #3765 / #1441). config.yaml
+# (#1621) and the logs/audit.jsonl family (#1910) are never overwritten either.
 _ROLLBACK_POINT = frozenset({Path("app.db"), Path("observation-lab/lab.db")})
 
 
@@ -26,12 +27,6 @@ def _is_audit_generation(path: Path) -> bool:
         return True
     prefix = "audit.jsonl."
     return path.name.startswith(prefix) and path.name[len(prefix):].isdigit()
-
-
-def _append_only(rel: Path) -> bool:
-    if rel in _ROLLBACK_POINT:
-        return False
-    return not (rel.parent == Path("logs") and _is_audit_generation(rel))
 
 
 class RestoreResult:
@@ -48,6 +43,7 @@ class RestoreResult:
         # never rehydrated into it. "preserved_live" | "restored_redacted"
         # (target had none) | "absent_in_checkpoint".
         self.config_disposition: str = "absent_in_checkpoint"
+        self.checkpoint_identity: str | None = None
         # Rollback actions that failed after a failed restore: the target is mixed.
         self.rollback_failures: list[dict[str, str]] = []
 
@@ -63,6 +59,7 @@ class RestoreResult:
             "errors": self.errors,
             "preserved_files": self.preserved_files,
             "config_disposition": self.config_disposition,
+            "checkpoint_identity": self.checkpoint_identity,
             "rollback_complete": self.rollback_complete,
             "rollback_failures": self.rollback_failures,
         }
@@ -154,6 +151,7 @@ class RestoreService:
                     f"archive profile is {verify.profile or 'unknown'}"
                 )
                 return result
+            result.checkpoint_identity = verify.checkpoint_identity
 
             with tempfile.TemporaryDirectory(dir=large_temp_dir()) as tmp:
                 tmp_path = Path(tmp)
@@ -179,15 +177,9 @@ class RestoreService:
                 rollback_dir.mkdir()
                 overwrites: list[tuple[Path, Path]] = []  # (dst, backup_copy)
                 new_files: list[Path] = []
-                removed_files: list[tuple[Path, Path]] = []
+                removed_files: list[tuple[Path, Path]] = []  # WAL sidecars set aside
 
                 try:
-                    archived_audit_paths = {
-                        item.relative_to(bundle_dir)
-                        for item in files_to_restore
-                        if item.parent.relative_to(bundle_dir) == Path("logs")
-                        and _is_audit_generation(item)
-                    }
                     # #1598: a restored standalone .db snapshot must not meet a
                     # -wal/-shm left by the runtime it replaces; set them aside
                     # (rolled back with the rest on failure).
@@ -211,25 +203,18 @@ class RestoreService:
                         removed_files.append((stale, bk))
                         stale.unlink()
 
+                    # #1910: the audit family is all-or-nothing. A target holding
+                    # any generation keeps its whole family byte for byte; filling
+                    # one missing generation would splice a duplicate checkpoint
+                    # prefix into the hash chain after a rotation.
                     target_logs = target_dir / "logs"
                     if target_logs.is_symlink():
                         raise RestoreSecurityError(
                             "restore target logs directory is a symlink"
                         )
-                    if target_logs.exists():
-                        for stale in target_logs.glob("audit.jsonl*"):
-                            rel = stale.relative_to(target_dir)
-                            if not _is_audit_generation(stale) or rel in archived_audit_paths:
-                                continue
-                            if stale.is_symlink():
-                                raise RestoreSecurityError(
-                                    f"restore target is a symlink and would redirect the write: {rel}"
-                                )
-                            bk = rollback_dir / "_removed" / rel
-                            bk.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(stale, bk)
-                            removed_files.append((stale, bk))
-                            stale.unlink()
+                    live_audit = target_logs.is_dir() and any(
+                        _is_audit_generation(p) for p in target_logs.glob("audit.jsonl*")
+                    )
 
                     for item in files_to_restore:
                         rel = item.relative_to(bundle_dir)
@@ -247,7 +232,9 @@ class RestoreService:
                             result.config_disposition = (
                                 "preserved_live" if dst.exists() else "restored_redacted"
                             )
-                        if dst.exists() and _append_only(rel):
+                        if (dst.exists() and rel not in _ROLLBACK_POINT) or (
+                            live_audit and rel.parent == Path("logs") and _is_audit_generation(rel)
+                        ):
                             result.preserved_files.append(rel.as_posix())
                             continue
                         if dst.exists():
@@ -279,7 +266,7 @@ class RestoreService:
                     # Remove files that didn't exist before this call
                     for p in new_files:
                         undo(p, "remove_new", lambda p=p: p.unlink(missing_ok=True))
-                    # Restore removed audit generations and WAL sidecars
+                    # Restore set-aside WAL sidecars
                     for dst, bk in removed_files:
                         def put_back(dst=dst, bk=bk):
                             dst.parent.mkdir(parents=True, exist_ok=True)
