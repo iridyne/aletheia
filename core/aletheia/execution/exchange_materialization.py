@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.position_enrichment import liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
@@ -445,6 +446,8 @@ def _private_fill_from_report(report: FillReport) -> PrivateFill:
         raise PrivateFillEvidenceInvalid("private fill report has incomplete or non-finite economics") from exc
     if not item.fill_id or not item.exchange_order_id or item.filled_at_ms <= 0:
         raise PrivateFillEvidenceInvalid("private fill report identity or timestamp is incomplete")
+    if report.executed_at > datetime.now(timezone.utc) + MAX_FUTURE_SKEW:
+        raise PrivateFillEvidenceInvalid("private fill report timestamp is in the future")
     return item
 
 

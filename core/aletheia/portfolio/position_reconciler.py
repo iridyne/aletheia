@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio import exchange_sync
 from aletheia.storage.repositories import list_all_open_positions, list_positions
@@ -1180,20 +1181,31 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         entry_price,
         execution_mode,
     )
-    now = datetime.now(timezone.utc).isoformat()
-    # Prefer exchange-provided open time for accurate max_hold calculation
+    takeover = datetime.now(timezone.utc)
+    now = takeover.isoformat()
+    # Prefer exchange-provided open time for accurate max_hold calculation; a time
+    # beyond the declared clock skew is not a holding origin (#1599).
     ctime_ms = exchange_pos.get("cTime") or exchange_pos.get("created_at")
+    opened_at = now
+    opened_at_provenance = "takeover_clock"
     if ctime_ms:
         try:
-            opened_at = datetime.fromtimestamp(int(ctime_ms) / 1000, tz=timezone.utc).isoformat()
+            venue_opened = datetime.fromtimestamp(int(ctime_ms) / 1000, tz=timezone.utc)
         except (ValueError, TypeError, OSError):
-            opened_at = now
-    else:
-        opened_at = now
+            venue_opened = None
+        if venue_opened is not None and venue_opened > takeover + MAX_FUTURE_SKEW:
+            logger.warning(
+                "position_reconciler: %s %s exchange open time %s is in the future; "
+                "holding clock starts at takeover", execution_mode, symbol, venue_opened.isoformat(),
+            )
+        elif venue_opened is not None:
+            opened_at = venue_opened.isoformat()
+            opened_at_provenance = "exchange"
     rationale = (
         f"Adopted pre-existing {execution_mode} position {symbol} {direction} "
         f"qty={quantity} @ {entry_price} into management (source=adopted). Not a "
-        f"newly-decided trade; brought under management at takeover/reconcile."
+        f"newly-decided trade; brought under management at takeover/reconcile. "
+        f"opened_at provenance={opened_at_provenance}."
     )
 
     proposal = TradeProposal(
