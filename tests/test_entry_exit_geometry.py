@@ -512,6 +512,27 @@ def test_chain_skips_only_leading_legacy_rows_and_requires_hashed_target(tmp_pat
     assert geometry._validate_proposal_chain(later.model_dump(), db=db) is False
     unhashed = target.model_copy(update={"commit_hash": None}).model_dump()
     assert geometry._validate_proposal_chain(unhashed, db=db) is False
+def test_unreproducible_historical_row_does_not_poison_later_proposals():
+    import sqlite3
+
+    root = TradeProposal(id="root", symbol="OLD/USDT", market_type="spot", direction="long", quantity=1.0, execution_mode="bitget_demo")
+    root.commit_hash = repo._compute_proposal_hash(root)
+    child = TradeProposal(id="child", symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0,
+                          parent_hash=root.commit_hash, execution_mode="bitget_demo")
+    child.commit_hash = repo._compute_proposal_hash(child)
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE trade_proposals (" + ",".join(child.model_dump()) + ")")
+    for model in (root, child):
+        data = model.model_dump()
+        db.execute("INSERT INTO trade_proposals (" + ",".join(data) + ") VALUES (" + ",".join("?" * len(data)) + ")", tuple(data.values()))
+    # Rows hashed before later nullable Proposal fields existed no longer
+    # re-hash under current code; their commit/parent links still hold.
+    db.execute("UPDATE trade_proposals SET quantity=2.0 WHERE id='root'")
+
+    assert geometry._validate_proposal_chain(child.model_dump(), db=db) is True
+
+
 def test_unknown_source_truncation_and_unavailable_absent_database(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
