@@ -43,10 +43,13 @@ def compact_database(
     if not apply or not before.get("available"):
         return result
 
-    from aletheia.gateway.pidfile import is_running
+    from aletheia.gateway.pidfile import gateway_proven_stopped
 
-    if is_running():
-        raise RuntimeError("Gateway is running; stop it with `uv run aletheia gateway stop` before compaction.")
+    if not gateway_proven_stopped():
+        raise RuntimeError(
+            "Gateway is running or its recorded PID cannot be verified; stop it with "
+            "`uv run aletheia gateway stop` before compaction."
+        )
     free_bytes = shutil.disk_usage(db_file.parent).free
     required_free = 2 * int(before["database_bytes"]) + 512 * _MIB
     if free_bytes < required_free:

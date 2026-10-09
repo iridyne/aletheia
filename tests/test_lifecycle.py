@@ -1404,6 +1404,28 @@ def test_do_resume_prefers_running_gateway_api(tmp_path, monkeypatch):
     assert calls == ["api"]
 
 
+def test_do_resume_refuses_cli_only_resume_for_unverifiable_live_pid(tmp_path, monkeypatch):
+    """#3884: a live PID whose identity cannot be read may be the paused gateway."""
+    import os
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.gateway import lifecycle, pidfile
+
+    pidfile.pid_path().write_text(str(os.getppid()), encoding="utf-8")
+    monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: None)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(
+        resume_gate,
+        "resume_if_llm_available_sync",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("CLI-only resume ran")),
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        lifecycle.do_resume()
+    assert exc.value.exit_code == 1
+
+
 def test_do_pause_prefers_running_gateway_api(tmp_path, monkeypatch, capsys):
     """CLI pause must acknowledge the scheduler state from the gateway process."""
     setup_env(tmp_path, monkeypatch)

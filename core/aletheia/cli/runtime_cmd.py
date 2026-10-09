@@ -46,14 +46,14 @@ def retire_experiment_schema(
     backup: Path = typer.Option(..., "--backup", exists=True, dir_okay=False, resolve_path=True),
 ):
     """Offline: retire registry tables after verified same-SHA directory migration."""
-    from aletheia.gateway.pidfile import find_gateway_orphans, is_running
+    from aletheia.gateway.pidfile import find_gateway_orphans, gateway_proven_stopped
     from aletheia.storage.migrations import MigrationStateError, retire_runtime_continuity_tables
     from aletheia.storage.sqlite import acquire_write_lock, get_db, release_write_lock
     from ops.update.auto import _deployment_lock
 
     with _deployment_lock() as acquired:
-        if not acquired or is_running() or find_gateway_orphans():
-            typer.echo("Retirement rejected: deployment busy or Gateway running")
+        if not acquired or not gateway_proven_stopped() or find_gateway_orphans():
+            typer.echo("Retirement rejected: deployment busy or Gateway not proven stopped")
             raise typer.Exit(1)
         acquire_write_lock()
         try:
