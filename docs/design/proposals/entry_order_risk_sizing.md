@@ -108,6 +108,10 @@ Owner 的原话：开仓时同时提交 TPSL，交易所会返回执行回执，
 
 这条决定取代 #3849 中"读回后平仓"的行为。
 
+**接管仓位（acknowledged，不做）**：模拟盘自动接管来的外部仓位，开仓时没有附带止损，这一点我们已知并接受。
+Owner 的判断：模拟盘上的仓位都是我们自己主动开的，接管外部仓位很少发生，属于长尾情况，不值得投入时间。
+所以不为接管仓位补挂止损。读回时发现它们没有止损，只告警，不平仓。
+
 ### Owner decision 1 (2026-10-09): exchange-native stops first
 
 Protective stops **must be exchange-native orders** and take **top priority**. A local
