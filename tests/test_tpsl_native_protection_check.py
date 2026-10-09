@@ -117,7 +117,7 @@ def test_separate_venue_ids_are_persisted(tmp_path, monkeypatch):
     closes = record_closes(monkeypatch)
 
     assert verify_native_protection()["verified"] == [position_id]
-    assert stored_ids(position_id) == {"sl": "SL-1", "tp": "TP-1"}
+    assert stored_ids(position_id) == {"origin": "entry_preset", "sl": "SL-1", "tp": "TP-1"}
     assert closes == []
 
 
@@ -135,6 +135,26 @@ def test_fresh_position_with_no_venue_stop_waits_out_the_grace(tmp_path, monkeyp
     assert closes == []
     assert [e["error_type"] for e in result["errors"]] == ["native_protection_pending"]
     assert stored_ids(position_id) == {}
+
+
+@pytest.mark.parametrize(
+    ("explicit", "mode", "expected"),
+    [
+        (None, "bitget_demo", True),
+        (None, "bitget_live_limited", False),
+        (None, "okx_demo", False),
+        (None, "okx_live_limited", False),
+        (False, "bitget_demo", False),
+        (True, "okx_demo", True),
+    ],
+)
+def test_unset_flag_enables_native_protection_on_bitget_demo_only(explicit, mode, expected):
+    """#3848 PR-A item 4: the default is on for bitget_demo only; an explicit value is global."""
+    from aletheia.config.schema import TradingConfig
+    from aletheia.execution.stops import native_tpsl_enabled
+
+    assert TradingConfig().exchange_tpsl_enabled is None
+    assert native_tpsl_enabled(SimpleNamespace(exchange_tpsl_enabled=explicit), mode) is expected
 
 
 def test_flag_off_touches_no_venue(tmp_path, monkeypatch):

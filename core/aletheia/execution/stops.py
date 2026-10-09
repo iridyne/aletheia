@@ -30,12 +30,23 @@ def merge_protective_stop(
     return min(new_stop, old_stop)
 
 
+# #3848 PR-A item 4: with the flag unset, native protection is on for bitget_demo
+# only. An explicit true/false applies to every execution mode.
+NATIVE_TPSL_DEFAULT_MODES = frozenset({"bitget_demo"})
+
+
+def native_tpsl_enabled(trading, execution_mode: str | None) -> bool:
+    explicit = trading.exchange_tpsl_enabled
+    if explicit is not None:
+        return bool(explicit)
+    return execution_mode in NATIVE_TPSL_DEFAULT_MODES
+
+
 def place_exchange_protective_orders(position: dict) -> dict:
     """Execution-owned dispatch of reduce-only SL/TP for an existing position.
 
     Gating (both must hold, else no-op returning {}):
-      1. cfg.trading.exchange_tpsl_enabled is True (the global feature switch;
-         defaults False → this is dormant until the operator opts in).
+      1. native_tpsl_enabled(cfg.trading, execution_mode) is True.
       2. execution_mode is a DEMO mode. Live is deliberately excluded: the
          placing an exchange order on a live position would be an AUTONOMOUS
          LIVE ORDER (forbidden by the safety rules).
@@ -47,10 +58,10 @@ def place_exchange_protective_orders(position: dict) -> dict:
     from aletheia.config.loader import load_config
 
     cfg = load_config()
-    if not cfg.trading.exchange_tpsl_enabled:
+    mode = position.get("execution_mode") or ""
+    if not native_tpsl_enabled(cfg.trading, mode):
         return {}
 
-    mode = position.get("execution_mode") or ""
     stop = position.get("stop_price")
     tp = position.get("take_profit_price")
     if not stop and not tp:
@@ -70,12 +81,12 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     #139 fix: the trail loop previously only reached Bitget — okx_demo and
     binance_testnet positions could see their DB stop_price tighten while the
     exchange bracket stayed at the OLD level, so a gateway outage would let the
-    original (looser) stop close them. The trail feature is gated behind the
-    default-off `exchange_tpsl_enabled` flag; when the operator opts in, all
-    supported brokers must honour it consistently. Non-fatal.
+    original (looser) stop close them. The trail feature is gated behind
+    `native_tpsl_enabled`; where it is on, all supported brokers must honour it
+    consistently. Non-fatal.
 
     Gating repeats the same rules as `place_exchange_protective_orders`:
-      1. cfg.trading.exchange_tpsl_enabled True (default False)
+      1. native_tpsl_enabled(cfg.trading, execution_mode) True
       2. execution_mode is a DEMO/TESTNET mode (never an autonomous live order).
     """
     from aletheia.config.exchanges import execution_mode_environment
@@ -86,10 +97,10 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     if row is None:
         return False
     cfg = load_config()
-    if not cfg.trading.exchange_tpsl_enabled:
+    mode = row.get("execution_mode") or ""
+    if not native_tpsl_enabled(cfg.trading, mode):
         return False
 
-    mode = row.get("execution_mode") or ""
     environment = execution_mode_environment(mode)
     if environment == "demo":
         from aletheia.execution.gateway import replace_exchange_protective_stop
@@ -114,6 +125,9 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
 # Two tpsl_fill_check cycles (90s): time for an accepted entry's attached preset
 # to be readable before its absence is treated as proven (#3848).
 PROTECTION_GRACE_SECONDS = 180
+# Marks ids read back from an entry preset. `replace_protective_stop` refuses
+# them until #3848 PR-B amends the preset in place (modify-strategy-order).
+PRESET_ORIGIN = "entry_preset"
 
 
 def classify_native_protection(position: dict, legs, *, now) -> tuple[str, dict[str, str] | str]:

@@ -1632,12 +1632,12 @@ class TradingConfig(BaseModel):
     # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.
     thesis_auto_close: bool = True
     # Exchange-native protection (#3848, owner 2026-10-09: venue-side stops take
-    # priority over local polling). Global switch: an eligible futures entry on
-    # any venue that supports native TPSL carries its approved stop/take-profit
-    # (Bitget presets, OKX attachAlgoOrds; live paths stay behind live unlock).
-    # On Bitget the venue SL is read back and a Position proven to have none is
-    # closed (execution_contract.md §4). An explicit config value overrides this.
-    exchange_tpsl_enabled: bool = True
+    # priority over local polling). Unset (None) = on for bitget_demo only
+    # (`execution.stops.native_tpsl_enabled`); an explicit true/false applies to
+    # every execution mode. Where on, an eligible futures entry carries its
+    # approved stop/take-profit, and on Bitget the venue SL is read back and a
+    # Position proven to have none is closed (execution_contract.md §4).
+    exchange_tpsl_enabled: bool | None = None
     # Market-aware exit intelligence: uses Market Observer signals to dynamically
     # tighten stops or exit early when market conditions deteriorate.
     market_aware_exits: "MarketAwareExitsConfig" = Field(default_factory=lambda: MarketAwareExitsConfig())

@@ -211,8 +211,9 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 | SL / TP | 使用 Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `place_protection` |
 | 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `extensions/exchanges/{venue}/profile.py` |
 | 持久化 | 仅已确认的 venue IDs 写入 position.exchange_tpsl_order_id；未决 child 保留 | `execution/coordinator.py` |
-| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功；撤单确认后新 stop 提交失败时删除持久化的 `sl` id(交易所侧已无该单),交由下方回读判定;SL/TP 共用同一策略单时撤 SL 同时删除 `tp` id | `replace_protective_stop` |
-| 入场附带保护回读(#3848 owner D1, 2026-10-09) | Bitget futures 入场以 preset 携带已批准的 SL/TP,受理回执不含其 id。`tpsl_fill_check` 每轮先读取 venue 未成交策略单(UTA `unfilled-strategy-orders`),只把**同账户、同方向、恰好一个**的 SL(以及恰好一个的 TP)id 写入 `exchange_tpsl_order_id`,并写 `native_protection_verified` 审计(含 venue 触发价);SL/TP 可能共用同一 id,其触发按成交均价最近的触发价归因为 `stop_loss` / `take_profit` | `portfolio/native_protection.py`、`execution/stops.py::classify_native_protection` |
+| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功；撤单确认后新 stop 提交失败时删除持久化的 `sl` id(交易所侧已无该单),交由下方回读判定。回读得到的入场 preset id(`origin=entry_preset`)不做撤单重下,保留已批准的 venue stop,直到 #3848 PR-B 以原地修改替代 | `replace_protective_stop` |
+| 开关默认 | `trading.exchange_tpsl_enabled` 未设置时仅对 `bitget_demo` 生效(#3848 PR-A 第 4 项);显式 true/false 对所有 execution mode 生效 | `execution/stops.py::native_tpsl_enabled` |
+| 入场附带保护回读(#3848 owner D1, 2026-10-09) | Bitget futures 入场以 preset 携带已批准的 SL/TP,受理回执不含其 id。`tpsl_fill_check` 每轮先读取 venue 未成交策略单(UTA `unfilled-strategy-orders`),只把**同账户、同方向、恰好一个**的 SL(以及恰好一个的 TP)id 连同 `origin=entry_preset` 写入 `exchange_tpsl_order_id`,并写 `native_protection_verified` 审计(含 venue 触发价);SL/TP 可能共用同一 id,其触发按成交均价最近的触发价归因为 `stop_loss` / `take_profit` | `portfolio/native_protection.py`、`execution/stops.py::classify_native_protection` |
 | 保护缺失即平仓(#3848 owner D1) | 仅当 venue 读取**完整**且仓位开仓超过 grace(`PROTECTION_GRACE_SECONDS`)仍无本仓 SL(只有 TP 也算缺失)时,写 `native_protection_absent` 审计并经 `close_position_routed` 平仓,`close_reason=protection_absent_closed`(live 仍受 `allow_live` 守卫)。读取失败、不完整(含满页)、身份非 `SAME`、多个 SL 或 SL 数量小于持仓时**不写库、不平仓**,job 变红,本地保护继续生效 | `portfolio/native_protection.py` |
 
 ---

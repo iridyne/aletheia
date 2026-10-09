@@ -19,6 +19,7 @@ from aletheia.utils.dt import parse_utc
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.errors import is_transient_dependency_error
+from aletheia.execution.stops import native_tpsl_enabled
 from aletheia.execution import venue_capabilities as _venue_capabilities
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
@@ -1751,7 +1752,7 @@ def _execute_proposal(
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
                     take_profit_price=execution_proposal.take_profit,
-                    native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
+                    native_tpsl_enabled=native_tpsl_enabled(cfg.trading, allowed_mode),
                     leverage=execution_proposal.leverage,
                     margin_mode=_entry_plan_submission_margin_mode(execution_proposal),
                     opportunity_id=execution_proposal.opportunity_id,
@@ -1975,7 +1976,7 @@ def _execute_proposal(
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
                     take_profit_price=execution_proposal.take_profit,
-                    native_tpsl_enabled=cfg.trading.exchange_tpsl_enabled,
+                    native_tpsl_enabled=native_tpsl_enabled(cfg.trading, allowed_mode),
                     leverage=execution_proposal.leverage,
                     margin_mode=_entry_plan_submission_margin_mode(execution_proposal),
                     opportunity_id=execution_proposal.opportunity_id,

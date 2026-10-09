@@ -1031,6 +1031,13 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
     if not old_stop:
         return False
+    # A read-back entry preset keeps its approved venue stop until #3848 PR-B
+    # amends it in place: cancel-then-submit would resend the fixed
+    # `protect-<id>-sl` clientOid and is unproven against Bitget presets.
+    from aletheia.execution.stops import PRESET_ORIGIN
+
+    if identifiers.get("origin") == PRESET_ORIGIN:
+        return False
     adapter = _create_bound_adapter(position["execution_mode"], _position_account(position))
     command = CancelOrderCommand(
         command_id=str(uuid4()),
@@ -1051,10 +1058,6 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
         return False
     if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
         return False
-    # An entry preset can carry SL and TP on one strategy order: cancelling the
-    # stop cancelled the target too, so its id no longer names venue protection.
-    if identifiers.get("tp") == old_stop:
-        identifiers.pop("tp")
     try:
         identifiers["sl"] = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
     except Exception as exc:

@@ -12895,11 +12895,8 @@ export interface components {
              * @default 4
              */
             default_take_profit_pct: number;
-            /**
-             * Exchange Tpsl Enabled
-             * @default true
-             */
-            exchange_tpsl_enabled: boolean;
+            /** Exchange Tpsl Enabled */
+            exchange_tpsl_enabled?: boolean | null;
             /**
              * Execution Fee Pct
              * @default 0.06

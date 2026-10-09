@@ -707,18 +707,24 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
 
 
 @pytest.mark.parametrize(
-    ("stored", "submit_fails", "expected", "result"),
+    ("stored", "submit_fails", "expected", "result", "cancelled"),
     [
-        ('{"sl":"PRESET-1","tp":"PRESET-1"}', False, {"sl": "new-sl"}, True),
-        ('{"sl":"PRESET-1","tp":"PRESET-1"}', True, {}, False),
-        ('{"sl":"old-sl","tp":"old-tp"}', True, {"tp": "old-tp"}, False),
+        ('{"sl":"old-sl","tp":"old-tp"}', True, {"tp": "old-tp"}, False, ["old-sl"]),
+        (
+            '{"origin":"entry_preset","sl":"PRESET-1","tp":"PRESET-1"}', False,
+            {"origin": "entry_preset", "sl": "PRESET-1", "tp": "PRESET-1"}, False, [],
+        ),
     ],
-    ids=["shared_parent_drops_tp", "shared_parent_submit_fails", "separate_submit_fails"],
+    ids=["submit_fails_after_cancel", "entry_preset_kept_until_pr_b"],
 )
 def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
-    tmp_path, monkeypatch, stored, submit_fails, expected, result,
+    tmp_path, monkeypatch, stored, submit_fails, expected, result, cancelled,
 ):
-    """#3848: after the old stop is cancelled, a persisted id must name live venue protection."""
+    """#3848: after the old stop is cancelled, a persisted id must name live venue protection.
+
+    A read-back entry preset is never cancel-and-replaced (the fixed clientOid
+    would be resent); its approved venue stop stays until PR-B amends it.
+    """
     import json
 
     _setup_db(tmp_path, monkeypatch)
@@ -733,8 +739,11 @@ def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
     )
     _insert_bound_position(position)
 
+    cancels = []
+
     class Adapter(_Adapter):
         async def cancel_order(self, command):
+            cancels.append(command.target_venue_order_id)
             return CommandReport(
                 identity=command.expected_account, command_id=command.command_id,
                 evidence=CommandEvidence.ACKNOWLEDGED,
@@ -756,6 +765,7 @@ def test_bitget_stop_replacement_never_keeps_a_cancelled_venue_id(
     stored_position = repo.get_position(position.id)
     assert stored_position is not None
     assert json.loads(stored_position["exchange_tpsl_order_id"]) == expected
+    assert cancels == cancelled
 
 
 @pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
