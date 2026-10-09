@@ -1344,6 +1344,20 @@ def insert_risk_decision(d: RiskDecision) -> None:
     _insert("risk_decisions", _stamp_provenance(d.model_dump()))
 
 
+def insert_risk_policy_snapshot(
+    *, policy_hash: str, risk_mode: str, policy_id: str, policy_revision: int, policy_json: str
+) -> None:
+    """Keep the content behind one existing policy_hash (#1911); first write wins."""
+    from aletheia.storage.models import _utcnow
+
+    get_db().execute(
+        "INSERT OR IGNORE INTO risk_policy_snapshots "
+        "(policy_hash, risk_mode, policy_id, policy_revision, policy_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (policy_hash, risk_mode, policy_id, policy_revision, policy_json, _utcnow()),
+    )
+
+
 def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
     """Insert one authoritative snapshot decision, or return its prior result.
 

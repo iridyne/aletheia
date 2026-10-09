@@ -111,7 +111,7 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/settings/risk-policies` | Demo/Live policy values, revisions and canonical hashes |
 | POST | `/settings/risk-policies/compare` | Read-only field diff |
 | POST | `/settings/risk-policies/copy` | Copy common fields with source/target revision guards and explicit confirmation |
-| PUT | `/settings/risk-policies/{demo\|live}` | Replace one future-evaluation policy; target identity and Live eligibility remain target-owned |
+| PUT | `/settings/risk-policies/{demo\|live}` | Replace one future-evaluation policy; target identity and Live eligibility remain target-owned; already-open Positions keep the exit guards of their entry policy (risk_engine_contract §1.1) |
 | POST | `/settings/risk-policies/{demo\|live}/reset-defaults` | Reset only the selected policy with a revision guard and explicit confirmation |
 | GET | `/risk/brakes` | Global, Demo and Live brake states |
 | POST | `/risk/brakes/{global\|demo\|live}` | Engage or explicitly confirmed release of one brake scope |

@@ -117,3 +117,45 @@ def resolve_risk_policy(cfg, execution_mode: str) -> ResolvedRiskPolicy:
         policy=policy,
         policy_hash=risk_policy_hash(policy),
     )
+
+
+class EntryRiskPolicyUnresolved(ValueError):
+    """An open Position's entry Risk Policy cannot be proven (#1911)."""
+
+
+def resolve_entry_risk_policy(cfg, position: dict) -> ResolvedRiskPolicy:
+    """Resolve the policy an open Position was entered under (#1911).
+
+    The identity is the existing ``policy_hash`` on the entry Order's
+    RiskDecision. The current policy is used only when its hash is that hash;
+    otherwise the immutable snapshot is loaded. Anything else raises: callers
+    must not silently substitute the current policy.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    current = resolve_risk_policy(cfg, str(position.get("execution_mode") or ""))
+    if not position.get("order_id"):
+        raise EntryRiskPolicyUnresolved("entry_order_missing")
+    row = get_db().execute(
+        "SELECT d.policy_hash, s.policy_json FROM orders o "
+        "JOIN risk_decisions d ON d.id = o.risk_decision_id "
+        "LEFT JOIN risk_policy_snapshots s ON s.policy_hash = d.policy_hash "
+        "WHERE o.id = ?",
+        (str(position.get("order_id") or ""),),
+    ).fetchone()
+    if row is None:
+        raise EntryRiskPolicyUnresolved("entry_risk_decision_missing")
+    entry_hash = row["policy_hash"]
+    if not entry_hash:
+        raise EntryRiskPolicyUnresolved("entry_policy_hash_missing")
+    if entry_hash == current.policy_hash:
+        return current
+    if not row["policy_json"]:
+        raise EntryRiskPolicyUnresolved("entry_policy_snapshot_missing")
+    # The snapshot is bound to its hash at write time (PK + immutable trigger);
+    # re-hashing would break on any later additive policy-schema field.
+    try:
+        policy = ModeRiskPolicy.model_validate_json(row["policy_json"])
+    except ValueError as exc:
+        raise EntryRiskPolicyUnresolved("entry_policy_snapshot_invalid") from exc
+    return ResolvedRiskPolicy(mode=current.mode, policy=policy, policy_hash=entry_hash)

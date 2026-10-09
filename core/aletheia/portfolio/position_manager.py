@@ -838,20 +838,66 @@ def _position_risk(position: dict, cfg):
         # approval.
         return cfg.risk
     from aletheia.risk.policy import (
+        EntryRiskPolicyUnresolved,
         UnknownRiskExecutionMode,
+        resolve_entry_risk_policy,
         resolve_risk_policy,
     )
     try:
-        resolved = resolve_risk_policy(
-            cfg,
-            str(position.get("execution_mode") or ""),
-        )
+        # #1911: guards stay frozen at the entry policy. An adopted Position never
+        # had one; an unresolved entry policy is reported by evaluate_open_positions
+        # and the guards keep the current policy rather than none.
+        try:
+            if position.get("source") == "adopted":
+                raise EntryRiskPolicyUnresolved("adopted")
+            resolved = resolve_entry_risk_policy(cfg, position)
+        except EntryRiskPolicyUnresolved:
+            resolved = resolve_risk_policy(
+                cfg,
+                str(position.get("execution_mode") or ""),
+            )
         return resolved.legacy_view(cfg.risk)
     except UnknownRiskExecutionMode:
         # Historical rows with unknown authority receive the conservative Live
         # policy rather than silently falling into Demo.
         from aletheia.risk.policy import RiskPolicyView
         return RiskPolicyView(cfg.risk.live, cfg.risk)
+
+
+def _report_entry_policy_unresolved(position: dict, cfg) -> str | None:
+    """Return why a native Position's entry policy is unresolved; audit it once (#1911)."""
+    if position.get("source") == "adopted" or not hasattr(getattr(cfg, "risk", None), "live"):
+        return None
+    from aletheia.risk.policy import (
+        EntryRiskPolicyUnresolved,
+        UnknownRiskExecutionMode,
+        resolve_entry_risk_policy,
+    )
+    try:
+        resolve_entry_risk_policy(cfg, position)
+        return None
+    except UnknownRiskExecutionMode:
+        return None
+    except EntryRiskPolicyUnresolved as exc:
+        reason = str(exc)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    if repo.insert_audit_event_once(AuditEvent(
+        id=f"entry-risk-policy-unresolved-{position['id']}",
+        actor="system",
+        source="position_manager",
+        event_type="entry_risk_policy_unresolved",
+        entity_type="position",
+        entity_id=position["id"],
+        after_state=json.dumps({"reason": reason}, sort_keys=True),
+        message=(
+            f"Entry Risk Policy of open Position {position['id']} cannot be resolved "
+            f"({reason}); its guards run on the current policy until resolved."
+        ),
+    )):
+        logger.warning("entry risk policy unresolved: position=%s reason=%s", position["id"], reason)
+    return reason
 
 
 def _catastrophic_stop_pct(position: dict, cfg) -> float:
@@ -1402,6 +1448,9 @@ def evaluate_open_positions() -> dict:
         # #1468 fix: wrap entire position evaluation in try/except so one position
         # exception doesn't abort the whole loop
         try:
+            unresolved = _report_entry_policy_unresolved(p, cfg)
+            if unresolved:
+                record_error(p, f"entry_risk_policy_unresolved:{unresolved}")
             # Layer-0 hard safety (catastrophic stop, liquidation proximity) runs FIRST
             # and pre-empts trailing / strategy / market-aware. Not relaxable by intent.
             decision = _layer0_safety_exit(p, float(price), cfg)

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v97"
+SCHEMA_VERSION = "aletheia-sqlite-v98"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7859,6 +7859,23 @@ def _apply_entry_quantity_divergence_v97(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE positions ADD COLUMN entry_quantity_divergence TEXT")
 
 
+# Immutable Risk Policy content per existing policy_hash (#1911): an open
+# Position's guards resolve its entry RiskDecision's hash to this content.
+_RISK_POLICY_SNAPSHOTS_SQL = (
+    "CREATE TABLE IF NOT EXISTS risk_policy_snapshots ("
+    "policy_hash TEXT PRIMARY KEY, risk_mode TEXT NOT NULL, policy_id TEXT NOT NULL, "
+    "policy_revision INTEGER NOT NULL, policy_json TEXT NOT NULL, created_at TEXT NOT NULL)",
+    "CREATE TRIGGER IF NOT EXISTS trg_risk_policy_snapshots_immutable "
+    "BEFORE UPDATE ON risk_policy_snapshots "
+    "BEGIN SELECT RAISE(ABORT,'risk policy snapshot is immutable'); END",
+)
+
+
+def _apply_risk_policy_snapshots_v98(db: sqlite3.Connection) -> None:
+    for statement in _RISK_POLICY_SNAPSHOTS_SQL:
+        db.execute(statement)
+
+
 # Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
 SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
 
@@ -9141,6 +9158,12 @@ _MIGRATIONS = (
         ).hexdigest(),
         schema_version="aletheia-sqlite-v97",
         apply=_apply_entry_quantity_divergence_v97,
+    ),
+    MigrationStep(
+        migration_id="20261009_0098_risk_policy_snapshots_v98",
+        checksum=hashlib.sha256("\n".join(_RISK_POLICY_SNAPSHOTS_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v98",
+        apply=_apply_risk_policy_snapshots_v98,
     ),
 )
 

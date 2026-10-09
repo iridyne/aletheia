@@ -39,6 +39,16 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 与 `max_per_symbol_entries=0` 保留其明确的 disable 语义；Demo 超出 Live ceiling 的合法
 容量值仍可存在，但复制到 Live 时必须失败。
 
+**在途仓位守护冻结在开仓策略（#1911，owner 2026-10-09）**：已开 native Position 的 Layer-0
+catastrophic stop（含 serenity 变体与开关）、runtime liquidation buffer 与 horizon hard backstop
+一律按其入场 Order 的 RiskDecision `policy_hash` 所标识的策略评估；Risk Policy 替换、复制、reset
+只作用于之后的新入场评估，不改变在途仓位的规则。策略内容按既有 `policy_hash` 不可变留存于
+`risk_policy_snapshots`（RiskDecision 持久化时写入，不新增第二个 policy identity）。入场策略无法
+解析（无入场 Order/RiskDecision、hash 为空、快照缺失或无效）时不得静默：该 Position 在
+`evaluate_open_positions().errors` 中每轮报告 `entry_risk_policy_unresolved:<reason>`，并写一次
+`entry_risk_policy_unresolved` 审计；守护在此期间按当前策略继续运行，绝不撤除保护。adopted
+Position 没有入场策略，按当前策略守护。
+
 ---
 
 ## 2. 检查关卡（主关卡与 Entry Plan 子关）

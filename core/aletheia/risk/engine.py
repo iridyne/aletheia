@@ -47,6 +47,7 @@ from aletheia.storage.repositories import (
     has_order_for_proposal,
     insert_authoritative_risk_decision,
     insert_risk_decision,
+    insert_risk_policy_snapshot,
     list_active_entry_risk_reservations_for_risk,
     list_all_open_positions,
     list_lessons,
@@ -1894,6 +1895,16 @@ def _persist_risk_result(
         execution_receipt_json=(execution_receipt.model_dump_json() if execution_receipt else None),
         message=result.message,
     )
+    if identity_complete and resolved_policy is not None and policy is not None:
+        # #1911: retain the content behind this policy_hash so an open Position's
+        # guards can stay at its entry policy after the policy is replaced.
+        insert_risk_policy_snapshot(
+            policy_hash=resolved_policy.policy_hash,
+            risk_mode=resolved_policy.mode,
+            policy_id=policy.policy_id,
+            policy_revision=policy.revision,
+            policy_json=policy.model_dump_json(),
+        )
     created = True
     if decision_role == "authoritative":
         stored, created = insert_authoritative_risk_decision(decision)
