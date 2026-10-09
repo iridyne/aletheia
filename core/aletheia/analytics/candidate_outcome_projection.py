@@ -27,7 +27,7 @@ def family_edge_stats(
     preserved from the retired universe_forward_outcomes query.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import complete_outcome_economics_sql
+    from aletheia.storage.repositories import complete_outcome_economics_sql, net_clears_tradable_edge_sql
 
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
@@ -38,7 +38,7 @@ def family_edge_stats(
         "cost_model_version, "
         "COUNT(*) AS n, "
         "AVG(net_return_pct) AS avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
+        f"SUM(CASE WHEN {net_clears_tradable_edge_sql()} "
         "  THEN 1 ELSE 0 END) AS win_count "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
@@ -67,7 +67,7 @@ def calibration_cohort(
     included so the denominator is the full filter arm.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import complete_outcome_economics_sql
+    from aletheia.storage.repositories import complete_outcome_economics_sql, net_clears_tradable_edge_sql
 
     db = get_db()
     economics = complete_outcome_economics_sql()
@@ -77,7 +77,7 @@ def calibration_cohort(
         "cost_model_version, "
         "COUNT(*) AS n, "
         "AVG(net_return_pct) AS avg_return, "
-        "SUM(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
+        f"SUM(CASE WHEN {net_clears_tradable_edge_sql()} "
         "  THEN 1 ELSE 0 END) AS win_count, "
         "MIN(net_return_pct) AS min_return, "
         "MAX(net_return_pct) AS max_return "

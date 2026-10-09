@@ -2076,11 +2076,10 @@ def test_allowlist_is_visible_in_the_tradability_funnel_with_a_complete_denomina
     )
 
 
-def test_selection_floor_is_cost_covering_not_just_margin():
-    """A candidate whose economic_utility_pct clears the old 0.05% margin but not
-    full measured cost must be 'below_floor', not 'admitted' (issue #3461)."""
-    from dataclasses import replace
-
+def test_admission_floor_is_the_estimation_margin_only():
+    """Utility is already net of cost, so the floor is min_tradable_edge_pct alone:
+    utility at the margin is admitted, below it is not (#3483/#3486; the fixture's
+    0.25 cost-covering floor must not be applied a second time)."""
     from aletheia.universe.candidate_eligibility import evaluate_hard_gate
     from aletheia.universe.candidate_selection_utility import build_candidate_selection_utility
     from aletheia.universe.economic_utility import estimate_economic_utility
@@ -2091,24 +2090,21 @@ def test_selection_floor_is_cost_covering_not_just_margin():
     gate = evaluate_hard_gate(feature, UniverseConfig(), candidate_key="edge-floor", evaluated_at=cutoff)
     evidence = build_opportunity_evidence(feature, candidate_key="edge-floor", source_cutoff_at=cutoff)
 
-    outcomes = [{**item, "net_return_pct": 0.10} for item in _outcomes()]
-    estimate = estimate_economic_utility(
-        candidate_key="edge-floor", mechanism_id="continuation", direction="long",
-        venue="okx", market_type="spot", strength_percentile=0.9, outcomes=outcomes,
-        source_cutoff_at=cutoff, cost_assumptions=outcomes[0]["cost_assumptions"],
-    )
-    # Real cost (0.25, from the fixture's fee+spread+funding+margin) exceeds the
-    # measured 0.10 net return, but the old 0.05 margin would have admitted it.
-    assert estimate.min_cost_covering_edge_pct == 0.25
-    assert estimate.economic_utility_pct is not None
-    assert estimate.economic_utility_pct > 0.05  # clears the old (wrong) floor
-    assert estimate.economic_utility_pct < estimate.min_cost_covering_edge_pct  # fails the real floor
+    def decide(net):
+        outcomes = [{**item, "net_return_pct": net} for item in _outcomes()]
+        estimate = estimate_economic_utility(
+            candidate_key="edge-floor", mechanism_id="continuation", direction="long",
+            venue="okx", market_type="spot", strength_percentile=0.9, outcomes=outcomes,
+            source_cutoff_at=cutoff, cost_assumptions=outcomes[0]["cost_assumptions"],
+        )
+        return build_candidate_selection_utility(
+            hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(estimate,),
+        )
 
-    decision = build_candidate_selection_utility(
-        hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(estimate,),
-    )
-    assert decision.admission_status == "below_floor"
-    assert decision.utility_floor_pct == 0.25
+    at_margin = decide(0.05)
+    assert at_margin.admission_status == "admitted"
+    assert at_margin.utility_floor_pct == 0.05
+    assert decide(0.04).admission_status == "below_floor"
 
 
 @pytest.mark.parametrize("terminal", ["failed", "invalidated"])

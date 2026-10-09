@@ -1282,3 +1282,21 @@ L0–L4 成熟度判据。文档**不写**任何能力的当前级别、缺口�
 **Guardrail:**
 - 盘点评论只是带日期的观察，不是支持声明、不是工作队列；AGENTS.md 的"AI 不得自选无关积压工作"不变。
 - 盘点 AI 只在路线图 issue 上发评论，不改登记表。
+
+## 2026-10-09 — 准入门槛只用估算误差余量，不再重复扣成本
+
+**Decision:** 候选的效用（`economic_utility_pct`）和结果的 `net_return_pct` 都已扣除手续费、
+点差/滑点和资金费率，所以准入门槛只取 `min_tradable_edge_pct`（估算误差余量），效用恰好等于
+余量即准入。"越过门槛"（胜率、missed-alpha、过滤压力）全部改用同一个比较：
+`net_return_pct > min_tradable_edge_pct`（SQL 为 `net_clears_tradable_edge_sql`，Python 为
+`classify_counterfactual`）。`min_cost_covering_edge_pct` 保留为描述性列，不再有准入或胜率消费者。
+这推翻 #3477 引入的"净值对比成本覆盖底线"。owner 在 #3765（comment 6079617472）批准：
+"门槛只保留 min_tradable_edge，不重复扣成本"。#3483、#3486 一并解决。
+
+**Reason:** 净值再和"成本 + 余量"比，等于成本扣两次；资金费率收入又能让成本覆盖底线为负，
+让负净值被算成胜（Fedora 2026-10-09 只读：12 行）。
+
+**Guardrail:**
+- 测试：`test_admission_floor_is_the_estimation_margin_only`、
+  `test_win_counts_clear_the_margin_not_the_cost_floor`。
+- 不手动升 `CANDIDATE_SELECTION_UTILITY_VERSION`（#3484 已被 owner 关闭为 superseded）。

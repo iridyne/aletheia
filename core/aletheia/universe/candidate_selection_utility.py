@@ -99,20 +99,20 @@ def build_candidate_selection_utility(
     }
     candidates = [item for item in best_by_direction.values() if item is not None]
     primary = max(candidates, key=lambda item: (item.economic_utility_pct, item.mechanism_id), default=None)
-    floor = (
-        primary.min_cost_covering_edge_pct
-        if primary and primary.min_cost_covering_edge_pct is not None
-        else 0.05
-    )
+    # Utility is already net of cost, so the floor is the estimation-error margin
+    # alone; `available` guarantees both values are finite (#3483/#3486).
+    floor = float(primary.min_tradable_edge_pct or 0.0) if primary else 0.05
     long = best_by_direction["long"]
     short = best_by_direction["short"]
-    direction_conflict = bool(
-        long and short
-        and long.economic_utility_pct >= (long.min_cost_covering_edge_pct or 0.05)
-        and short.economic_utility_pct >= (short.min_cost_covering_edge_pct or 0.05)
-        and abs(long.economic_utility_pct - short.economic_utility_pct)
-        < max(long.min_cost_covering_edge_pct or 0.05, short.min_cost_covering_edge_pct or 0.05)
-    )
+    direction_conflict = False
+    if long and short:
+        long_utility, long_margin = float(long.economic_utility_pct or 0.0), float(long.min_tradable_edge_pct or 0.0)
+        short_utility, short_margin = float(short.economic_utility_pct or 0.0), float(short.min_tradable_edge_pct or 0.0)
+        direction_conflict = (
+            long_utility >= long_margin
+            and short_utility >= short_margin
+            and abs(long_utility - short_utility) < max(long_margin, short_margin)
+        )
     if hard_gate.status == "ineligible":
         status = "ineligible"
     elif hard_gate.status == "unavailable":

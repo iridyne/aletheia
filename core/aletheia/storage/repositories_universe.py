@@ -1673,7 +1673,7 @@ def filter_pressure_stats(
     family's rejected candidates produce positive net returns?
     """
     from aletheia.analytics.candidate_outcome_projection import _MARKET_SQL
-    from aletheia.storage.repositories import complete_outcome_economics_sql, get_db
+    from aletheia.storage.repositories import complete_outcome_economics_sql, get_db, net_clears_tradable_edge_sql
 
     from aletheia.analytics.learning_window import clean_window_cutoff
 
@@ -1688,7 +1688,7 @@ def filter_pressure_stats(
         "AVG(net_return_pct) AS avg_net, "
         "MIN(net_return_pct) AS min_net, "
         "MAX(net_return_pct) AS max_net, "
-        "AVG(CASE WHEN net_return_pct > min_cost_covering_edge_pct "
+        f"AVG(CASE WHEN {net_clears_tradable_edge_sql()} "
         "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
