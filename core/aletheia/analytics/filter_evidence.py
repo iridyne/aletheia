@@ -8,17 +8,11 @@ import json
 import logging
 import zlib
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from aletheia.utils.dt import parse_utc
-from aletheia.data.symbols import (
-    instrument_analysis_context,
-    instrument_analysis_context_from_metadata,
-    instrument_background_from_metadata,
-    instrument_background_rejection_reason,
-)
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     FilterCandidateOutcome,
@@ -239,119 +233,6 @@ def record_filter_decision(
             exc,
         )
     return decision_id
-
-
-def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, str]:
-    """Verify the deterministic producer authority for a Universe Opportunity.
-
-    Non-Universe producers are outside this contract. Universe-linked crypto
-    carriers must be scanner-owned and match both their immutable T0 manifest
-    and an exact persisted ``signal_emitter`` pass fact.
-    """
-    source_agent = str(opportunity.get("source_agent") or "").strip().lower()
-    snapshot_id = str(opportunity.get("universe_snapshot_id") or "").strip()
-    member_id = str(opportunity.get("universe_member_id") or "").strip()
-    in_scope = bool(snapshot_id or member_id) or source_agent in {
-        "universe_scanner",
-        "market_observer",
-    }
-    if not in_scope:
-        return True, "producer_eligibility_not_applicable"
-    if source_agent != "universe_scanner":
-        return False, "producer_not_authorized"
-    opportunity_id = str(opportunity.get("id") or "").strip()
-    if not opportunity_id or not snapshot_id or not member_id:
-        return False, "producer_eligibility_lineage_incomplete"
-
-    raw_metadata = opportunity.get("metadata") or {}
-    try:
-        metadata = (
-            raw_metadata
-            if isinstance(raw_metadata, dict)
-            else json.loads(raw_metadata)
-        )
-    except (TypeError, ValueError):
-        metadata = {}
-    background = instrument_background_from_metadata(metadata)
-    background_reason = instrument_background_rejection_reason(
-        background,
-        symbol=str(opportunity.get("symbol") or ""),
-        market_type=_normalize_market(
-            opportunity.get("market") or opportunity.get("market_type")
-        ),
-        venue=(background or {}).get("venue") if isinstance(background, dict) else None,
-    )
-    if background_reason:
-        return False, background_reason
-    if opportunity.get("asset_class") != background.get("asset_class"):
-        return False, "instrument_background_identity_conflict"
-    expected_subclass = (
-        "stock_linked_perp"
-        if (instrument_analysis_context(background) or {}).get("kind")
-        == "stock_linked_perp"
-        else ""
-    )
-    if str(opportunity.get("asset_subclass") or "") != expected_subclass:
-        return False, "instrument_background_identity_conflict"
-    if instrument_analysis_context_from_metadata(metadata) != instrument_analysis_context(
-        background
-    ):
-        return False, "instrument_analysis_context_conflict"
-    manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
-    t0 = manifest.get("t0") if isinstance(manifest, dict) else None
-    if not isinstance(t0, dict) or t0.get("status") != "available":
-        return False, "producer_eligibility_manifest_missing"
-    if manifest.get("policy_epoch") != POLICY_EPOCH_LABEL:
-        return False, "producer_eligibility_epoch_mismatch"
-
-    symbol = str(opportunity.get("symbol") or "")
-    market = _normalize_market(opportunity.get("market") or opportunity.get("market_type"))
-    direction = str(opportunity.get("direction_bias") or "").strip().lower()
-    manifest_matches = (
-        str(t0.get("trigger_type") or "").strip().lower() == "universe_scanner"
-        and str(t0.get("universe_snapshot_id") or "") == snapshot_id
-        and str(t0.get("universe_member_id") or "") == member_id
-        and str(t0.get("symbol") or "") == symbol
-        and _normalize_market(t0.get("market_type")) == market
-        and _normalize_venue(t0.get("venue"))
-        == _normalize_venue(background.get("venue"))
-        and str(t0.get("direction") or "").strip().lower() == direction
-    )
-    if not manifest_matches:
-        return False, "producer_eligibility_manifest_conflict"
-
-    from aletheia.storage.sqlite import get_db
-
-    try:
-        rows = get_db().execute(
-            "SELECT opportunity_id, universe_snapshot_id, universe_member_id, venue, symbol, "
-            "market_type, direction FROM filter_decisions "
-            "WHERE opportunity_id=? AND filter_name='opportunity_emission' "
-            "AND stage='signal_emitter' AND decision='passed'",
-            (opportunity_id,),
-        ).fetchall()
-    except Exception as exc:
-        logger.warning(
-            "signal emitter admission fact unavailable opportunity=%s: %s",
-            opportunity_id,
-            exc,
-        )
-        return False, "producer_attestation_unavailable"
-    if not rows:
-        return False, "producer_eligibility_fact_missing"
-    for row in rows:
-        fact = dict(row)
-        if (
-            str(fact.get("universe_snapshot_id") or "") == snapshot_id
-            and str(fact.get("universe_member_id") or "") == member_id
-            and str(fact.get("symbol") or "") == symbol
-            and _normalize_market(fact.get("market_type")) == market
-            and _normalize_venue(fact.get("venue"))
-            == _normalize_venue(background.get("venue"))
-            and str(fact.get("direction") or "").strip().lower() == direction
-        ):
-            return True, "signal_emitter_admission_verified"
-    return False, "producer_eligibility_fact_conflict"
 
 
 def record_filter_decision_batch(
@@ -923,64 +804,6 @@ def filter_version_status(filter_name: str) -> dict[str, Any]:
     }
 
 
-def record_observer_pre_filter_evidence(
-    *,
-    run_id: str | None,
-    symbol: str,
-    venue: str | None,
-    market_type: str,
-    scanner_direction: str | None,
-    scanner_family: str | None,
-    universe_snapshot_id: str | None,
-    universe_member_id: str | None,
-    decision: str,
-    reason_code: str,
-    inputs: dict[str, Any],
-    parameters: dict[str, Any],
-    entry_price_usd: float | None = None,
-    entry_spread_bps: float | None = None,
-    funding_rate_at_entry: float | None = None,
-) -> str:
-    """Record an Observer pre-filter without persisting raw market context."""
-    market = _normalize_market(market_type)
-    exact_venue = _normalize_venue(venue)
-    evaluation_id = run_id or f"direct-{uuid4().hex[:12]}"
-    candidate_key = (
-        f"observer:{evaluation_id}:{exact_venue or 'unknown'}:{symbol}:{market}"
-    )
-    snapshot = _exact_snapshot(symbol, market)
-    snapshot_price = (
-        _positive_float((snapshot or {}).get("price"))
-        if _normalize_venue((snapshot or {}).get("exchange")) == exact_venue
-        else None
-    )
-    return record_filter_decision(
-        candidate_key=candidate_key,
-        candidate_kind="observer_evaluation",
-        parent_candidate_key=(
-            f"universe_member:{universe_member_id}" if universe_member_id else None
-        ),
-        run_id=run_id,
-        universe_snapshot_id=universe_snapshot_id,
-        universe_member_id=universe_member_id,
-        venue=exact_venue,
-        symbol=symbol,
-        market_type=market,
-        direction=scanner_direction,
-        scanner_family=scanner_family,
-        filter_name="observer_pre_filter",
-        stage="observer_pre_filter",
-        decision=decision,
-        reason_code=reason_code,
-        inputs=inputs,
-        parameters=parameters,
-        outcome_candidate_key=candidate_key,
-        entry_price_usd=snapshot_price or _positive_float(entry_price_usd),
-        entry_spread_bps=entry_spread_bps,
-        funding_rate_at_entry=funding_rate_at_entry,
-    )
-
-
 def ensure_candidate_outcomes(
     *,
     outcome_candidate_key: str,
@@ -1014,114 +837,6 @@ def ensure_candidate_outcomes(
         funding_rate_at_entry=funding_rate_at_entry,
         entry_ts=entry_ts,
     )
-
-
-def record_operator_filter_trace(
-    decision_id: str,
-    decision_result: dict[str, Any],
-    *,
-    raise_on_error: bool = False,
-    require_trace: bool = False,
-    require_outcome_seed: bool = False,
-) -> int:
-    """Persist System Operator gates for one authoritative PiDecision.
-
-    General observations retain the historical best-effort default.  A terminal
-    candidate skip calls this inside its claim transaction with ``require_trace``,
-    ``require_outcome_seed`` and ``raise_on_error`` so no queue carrier can be
-    consumed without its exact operator evidence and fixed-outcome cohort.
-    """
-    trace = decision_result.get("filter_trace") or []
-    symbol = decision_result.get("symbol")
-    direction = str(decision_result.get("direction") or "").lower()
-    if not trace or not symbol:
-        if require_trace:
-            raise ValueError("terminal_operator_evidence_incomplete")
-        return 0
-    opportunity_id = decision_result.get("opportunity_id")
-    opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
-    member = None
-    if opportunity and opportunity.get("universe_member_id"):
-        try:
-            member = repo.get_universe_member(opportunity["universe_member_id"])
-        except Exception:
-            member = None
-    market = _normalize_market(
-        decision_result.get("market_type")
-        or (opportunity or {}).get("market")
-        or "spot"
-    )
-    entry_snapshot = _exact_snapshot(str(symbol), market, max_age_seconds=120)
-    venue = _normalize_venue((entry_snapshot or {}).get("exchange"))
-    entry_price = (
-        _positive_float((entry_snapshot or {}).get("price"))
-        if venue is not None
-        else None
-    )
-    outcome_entry_ts = evaluated_at = decision_result.get("evaluated_at") or _utcnow()
-    entry_spread_bps = _optional_float((member or {}).get("spread_bps"))
-    funding_rate_at_entry = _optional_float((opportunity or {}).get("funding_rate"))
-    outcome_seed_source = "live_snapshot"
-    if entry_price is None and opportunity_id:
-        queued_seed = _queued_candidate_outcome_seed(
-            opportunity_id=str(opportunity_id),
-            symbol=str(symbol),
-            market_type=market,
-            direction=str(direction or "").lower(),
-        )
-        if queued_seed is not None:
-            entry_price = queued_seed["entry_price_usd"]
-            outcome_entry_ts = queued_seed["entry_ts"]
-            venue = queued_seed["venue"]
-            entry_spread_bps = queued_seed["entry_spread_bps"]
-            funding_rate_at_entry = queued_seed["funding_rate_at_entry"]
-            outcome_seed_source = "queued_candidate_fixed"
-    if require_outcome_seed and (
-        direction not in _VALID_DIRECTIONS or venue is None or entry_price is None
-    ):
-        raise ValueError("terminal_operator_outcome_unavailable")
-    candidate_key = f"pi_decision:{decision_id}"
-    count = 0
-    for sequence, step in enumerate(trace, start=1):
-        inputs = dict(step.get("inputs") or {})
-        inputs["outcome_seed_source"] = outcome_seed_source
-        if outcome_seed_source == "live_snapshot" and entry_snapshot is not None:
-            inputs["entry_snapshot_id"] = entry_snapshot.get("id")
-            inputs["entry_snapshot_at"] = entry_snapshot.get("snapshot_at")
-            inputs["entry_price_usd"] = entry_price
-        record_filter_decision(
-            candidate_key=candidate_key,
-            candidate_kind="pi_decision",
-            parent_candidate_key=(
-                f"opportunity:{opportunity_id}" if opportunity_id else None
-            ),
-            opportunity_id=opportunity_id,
-            universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
-            universe_member_id=(opportunity or {}).get("universe_member_id"),
-            venue=venue,
-            symbol=str(symbol),
-            market_type=market,
-            direction=direction,
-            scanner_family=decision_result.get("scanner_family")
-            or (opportunity or {}).get("scanner_family"),
-            regime_tag=(opportunity or {}).get("regime_tag"),
-            filter_name=str(step["filter_name"]),
-            stage=str(step.get("stage") or "system_operator"),
-            sequence_no=sequence,
-            decision=str(step["decision"]),
-            reason_code=str(step.get("reason_code") or step["decision"]),
-            inputs=inputs,
-            parameters=step.get("parameters") or {},
-            evaluated_at=evaluated_at,
-            outcome_candidate_key=candidate_key,
-            entry_price_usd=entry_price,
-            entry_spread_bps=entry_spread_bps,
-            funding_rate_at_entry=funding_rate_at_entry,
-            entry_ts=outcome_entry_ts,
-            raise_on_error=raise_on_error,
-        )
-        count += 1
-    return count
 
 
 def _queued_candidate_outcome_seed(
@@ -1429,48 +1144,6 @@ def _cohort_key(row: dict[str, Any]) -> tuple:
         row.get("horizon"),
         row.get("cost_model_version"),
     )
-
-
-def _exact_snapshot(
-    symbol: str,
-    market_type: str,
-    *,
-    max_age_seconds: float | None = None,
-) -> dict[str, Any] | None:
-    """Read one exact typed snapshot, optionally requiring bounded freshness."""
-    try:
-        from aletheia.data.symbols import to_canonical
-
-        rows = repo.list_market_snapshots(
-            symbol=to_canonical(symbol),
-            market_type=market_type,
-            limit=1,
-        )
-        snapshot = rows[0] if rows else None
-        if snapshot is None or _positive_float(snapshot.get("price")) is None:
-            return None
-        if max_age_seconds is not None:
-            snapshot_at = parse_utc(str(snapshot.get("snapshot_at") or ""))
-            now = datetime.now(timezone.utc)
-            if (
-                snapshot_at is None
-                or snapshot_at > now
-                or (now - snapshot_at).total_seconds() > max_age_seconds
-            ):
-                return None
-        return snapshot
-    except Exception:
-        # Snapshot lookup: `to_canonical()` on the symbol, DB call, and
-        # freshness maths are all wrapped here. A caller passing a bad
-        # symbol type, a schema drift on `filter_state_snapshots`, and a
-        # legitimate "no snapshot within freshness window" all end here.
-        # Callers already handle None; log with a stack so real defects
-        # are visible.
-        logger.warning(
-            "filter_evidence: snapshot lookup failed",
-            exc_info=True,
-        )
-        return None
 
 
 def _member_asset_venue(

@@ -22,21 +22,6 @@ _EVIDENCE_HORIZON = "24h"
 _HORIZON_HOURS: dict[str, float] = {"1h": 1.0, "4h": 4.0, "24h": 24.0}
 
 
-def horizon_bucket(hours: float) -> str:
-    """Map an intended holding period (hours) to the nearest settled evidence horizon bucket."""
-    if hours <= 2:
-        return "1h"
-    if hours <= 8:
-        return "4h"
-    return "24h"
-
-
-def b2_horizon_status(evidence_horizon: str, expected_hours: float) -> str:
-    """Deterministic provenance label: 'compatible' or 'mismatched_neutral'."""
-    evid_hours = _HORIZON_HOURS.get(evidence_horizon, 24.0)
-    return "compatible" if horizon_bucket(expected_hours) == horizon_bucket(evid_hours) else "mismatched_neutral"
-
-
 def score_bucket(trade_score: Any) -> str:
     """Return the stable B2 quality bucket for a Ranker-selected candidate."""
     try:
@@ -155,30 +140,3 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "shrunk_avg_net_pct": shrunk,
         "status": status, "directional_verdict": verdict,
     }
-
-
-def render_b2_evidence_summary(summary: dict[str, Any] | None) -> str:
-    """Render the exact, role-neutral B2 evidence block shared by all LLM roles."""
-    if not summary:
-        return "B2 candidate evidence: unavailable; neutral, not a directional veto."
-    horizon = summary.get("horizon", _EVIDENCE_HORIZON)
-    if summary.get("status") in {"insufficient_evidence", "data_quality_incident"}:
-        reason = "data-quality incident" if summary.get("status") == "data_quality_incident" else "insufficient same-epoch settled evidence"
-        return (
-            f"B2 candidate evidence (evidence_horizon={horizon}): {reason} "
-            f"(n_net={summary.get('n_net', 0)}/{summary.get('n_total', 0)}, "
-            f"coverage={float(summary.get('outcome_coverage') or 0):.0%}); "
-            "neutral, not a directional veto."
-        )
-    profitable = summary.get("status") == "qualified_positive"
-    return (
-        f"B2 same-direction outcome evidence (evidence_horizon={horizon}): comparable candidate outcomes were "
-        f"{'profitable and support' if profitable else 'unprofitable and oppose'} "
-        "this candidate "
-        f"(n_net={summary.get('n_net')}/{summary.get('n_total')}, "
-        f"coverage={float(summary.get('outcome_coverage') or 0):.0%}, "
-        f"avg_net={float(summary.get('avg_net_pct') or 0):+.3f}%, "
-        f"shrunk={float(summary.get('shrunk_avg_net_pct') or 0):+.3f}%); "
-        "negative means losing net outcome, not bearish price direction; "
-        "one input, not an automatic trade or veto."
-    )

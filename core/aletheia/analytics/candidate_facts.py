@@ -96,18 +96,6 @@ def _one(db: Any, table: str, identity: object) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def _parsed(value: object, expected: type) -> object:
-    if isinstance(value, expected):
-        return value
-    if not isinstance(value, str):
-        return expected()
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return expected()
-    return parsed if isinstance(parsed, expected) else expected()
-
-
 def _batch_facts(
     db: Any,
     cutoff: datetime,

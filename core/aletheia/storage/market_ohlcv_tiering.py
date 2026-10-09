@@ -185,17 +185,3 @@ class OHLCVTierManager:
         if any(chunk.chunk_id not in receipt_map for chunk in plan.cold_chunks):
             return None
         return max((chunk.last_ts for chunk in plan.cold_chunks), default=None)
-
-
-class MemoryColdOHLCVBackend:
-    """Deterministic test/reference backend, not a production format choice."""
-
-    def __init__(self) -> None:
-        self._chunks: dict[str, OHLCVColdChunk] = {}
-
-    def put(self, chunk: OHLCVColdChunk) -> ColdWriteReceipt:
-        self._chunks[chunk.chunk_id] = chunk
-        return ColdWriteReceipt(chunk.chunk_id, chunk.content_hash, chunk.row_count, True)
-
-    def get(self, chunk_id: str) -> OHLCVColdChunk | None:
-        return self._chunks.get(chunk_id)

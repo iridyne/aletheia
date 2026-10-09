@@ -189,13 +189,6 @@ def _insert_rows(rows: list[dict]) -> int:
 
 
 
-def _deterministic_pick(items: list[dict], *, seed: str, limit: int) -> list[dict]:
-    return sorted(
-        items,
-        key=lambda item: hashlib.sha256(f"{seed}:{item.get('symbol')}".encode("utf-8")).hexdigest(),
-    )[:limit]
-
-
 def _observable_controls(*, exclude_symbol: str, entry_ts: str, equity_like: bool, limit: int) -> list[str]:
     try:
         from aletheia.storage.sqlite import get_db

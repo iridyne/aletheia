@@ -5,11 +5,25 @@ import sqlite3
 
 from aletheia.storage.market_ohlcv_tiering import (
     ColdWriteReceipt,
-    MemoryColdOHLCVBackend,
+    OHLCVColdChunk,
     OHLCVSeriesIdentity,
     OHLCVTierManager,
     OHLCVTieringPolicy,
 )
+
+
+class MemoryColdOHLCVBackend:
+    """Deterministic in-test cold backend; no production backend exists yet."""
+
+    def __init__(self) -> None:
+        self._chunks: dict[str, OHLCVColdChunk] = {}
+
+    def put(self, chunk: OHLCVColdChunk) -> ColdWriteReceipt:
+        self._chunks[chunk.chunk_id] = chunk
+        return ColdWriteReceipt(chunk.chunk_id, chunk.content_hash, chunk.row_count, True)
+
+    def get(self, chunk_id: str) -> OHLCVColdChunk | None:
+        return self._chunks.get(chunk_id)
 
 
 def _rows(count: int) -> list[dict]:

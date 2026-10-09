@@ -307,45 +307,6 @@ def get_latest_reasoning_feedback(
         return None
 
 
-def render_feedback_for_pi(fb: dict) -> str:
-    """Render compact text block for System Operator Layer 2 prompt injection."""
-    n_prop = fb.get("sample_proposals", 0)
-    n_exec = fb.get("sample_executed", 0)
-    lines = [f"\n## Reasoning Quality Feedback ({fb.get('window_days', 30)}d, {n_prop} proposals → {n_exec} executed)"]
-    if fb.get("cohort_complete") is True and fb.get("ordered_source_digest"):
-        lines.append(
-            "Cohort: complete "
-            f"{fb.get('loaded_raw_event_count')}/{fb.get('source_raw_event_count')} "
-            f"digest={str(fb['ordered_source_digest'])[:12]}"
-        )
-
-    pursue = fb.get("recommended_pursue", [])
-    if pursue:
-        lines.append("Pursue patterns (high win rate):")
-        for p in fb.get("approval_outcomes", []):
-            if p["pattern_label"] in pursue:
-                lines.append(f"  - {p['pattern_label']}: {p['win_rate']*100:.0f}% wr ({p['sample_size']} trades, avg {p['avg_pnl']:+.3f})")
-
-    avoid = fb.get("recommended_avoid", [])
-    if avoid:
-        lines.append("Avoid patterns (high rejection rate):")
-        for p in fb.get("rejection_patterns", []):
-            if p["pattern_label"] in avoid:
-                lines.append(f"  - {p['pattern_label']}: {p['rejection_rate']*100:.0f}% rejection ({p['rejection_count']}/{p['proposal_count']})")
-
-    hc = fb.get("high_conviction_win_rate")
-    lc = fb.get("low_conviction_win_rate")
-    if hc is not None or lc is not None:
-        parts = []
-        if hc is not None:
-            parts.append(f"≥80 conviction wins {hc*100:.0f}%")
-        if lc is not None:
-            parts.append(f"<60 conviction wins {lc*100:.0f}%")
-        lines.append("Conviction calibration: " + "; ".join(parts))
-
-    return "\n".join(lines)
-
-
 def _persist_feedback(fb: dict) -> None:
     """Persist feedback as a knowledge item (rate-limited to 6h)."""
     try:

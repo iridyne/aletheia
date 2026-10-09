@@ -398,18 +398,6 @@ def _closed_after(row: dict, cutoff_ts: float) -> bool:
         return False
 
 
-def _opened_after(row: dict, cutoff_ts: float) -> bool:
-    """Check if position was opened after cutoff timestamp."""
-    opened = row.get("opened_at")
-    if not opened:
-        return False
-    try:
-        dt = datetime.fromisoformat(opened.replace("Z", "+00:00"))
-        return dt.timestamp() >= cutoff_ts
-    except (ValueError, TypeError):
-        return False
-
-
 def _get_existing_case_position_ids() -> set[str]:
     """Get position IDs that already have case studies (from file frontmatter)."""
     try:

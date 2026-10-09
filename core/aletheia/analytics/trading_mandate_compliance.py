@@ -163,14 +163,6 @@ def _row(db: Any, table: str, identity: object) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def _fit_status(proposal: dict[str, Any] | None) -> str:
-    return _proposal_mandate(proposal)["status"]
-
-
-def _fit_reasons(proposal: dict[str, Any] | None) -> list[str]:
-    return _proposal_mandate(proposal)["reason_codes"]
-
-
 def _proposal_integrity_unavailable(evidence: dict[str, Any]) -> bool:
     return "proposal_integrity_mismatch" in evidence.get("reason_codes", ())
 

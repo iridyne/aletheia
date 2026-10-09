@@ -11,9 +11,8 @@
   (`extensions/counterfactual/trades.py:46`) 在生产侧的最后一个调用者
   (`agents/paper_trader.py`) 已在 `2e69baae9` 删除 —— 表变成了墓碑。
 - `System Operator Alpha` 需要 `filter_decisions` 里
-  `candidate_kind='pi_decision' AND stage='system_operator'` 的行，而这些行只由
-  `record_operator_filter_trace` (`analytics/filter_evidence.py:1015`) 写入，
-  该函数在生产侧**零调用者**。
+  `candidate_kind='pi_decision' AND stage='system_operator'` 的行，而这些行唯一的
+  写入者 `record_operator_filter_trace` 在生产侧**零调用者**，已于 2026-10-09 删除。
 
 单元测试看不见这一类缺陷，因为它们自己把 join 两侧都写进夹具：夹具自洽，缺生产者与
 缺保留窗口都无法暴露（`tests/test_alpha_attribution.py` 30/30 全绿即是此故）。这正是
@@ -91,8 +90,8 @@ _COHORTS: dict[str, Cohort] = {
         joined=("filter_candidate_outcomes", "pi_decisions"),
         retired=(
             "PRODUCER GAP AT PREDICATE LEVEL, which this table-level gate cannot "
-            "detect: the required rows come only from record_operator_filter_trace "
-            "(analytics/filter_evidence.py:1015, zero production callers), and the "
+            "detect: the required rows' sole writer record_operator_filter_trace "
+            "had zero production callers and was deleted 2026-10-09, and the "
             "predicate also needs the retired signal_source='market_observer'. The "
             "exemption is declared here precisely because the automatic check cannot "
             "reach a row-subset gap — see the module docstring's blind-spot note"

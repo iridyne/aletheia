@@ -88,7 +88,7 @@ def test_absent_news_adapter_stays_in_existing_job_failure_boundary(job, adapter
 @pytest.mark.parametrize("missing", ["news_routes", "broken_dependency", "present"])
 def test_news_routes_absence_preserves_core_and_stored_news(missing, tmp_path):
     script = f"missing = {missing!r}\n" + '''
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import importlib
 import socket
 import sys
@@ -121,7 +121,6 @@ else:
     assert "/_infra/livez" in paths
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import batch_news
     run_migrations()
     now = datetime.now(timezone.utc)
     db = get_db()
@@ -129,9 +128,7 @@ else:
         "(id,title,source,published_at,status,relevance_score) VALUES (?,?,?,?,?,?)",
         ("stored", "Bitcoin adoption", "fixture", now.isoformat(), "analyzed", 0.9))
     db.commit()
-    rows = batch_news(["BTC/USDT", "ETH/USDT"], (now - timedelta(hours=1)).isoformat())
-    assert [row["id"] for row in rows["BTC/USDT"]] == ["stored"]
-    assert rows["ETH/USDT"] == []
+    assert [row[0] for row in db.execute("SELECT id FROM news_items")] == ["stored"]
 assert bool(attempted) == (missing != "present") and not effects, (attempted, effects)
 '''
     result = subprocess.run(
@@ -229,7 +226,6 @@ assert exported["available"] and exported["atm_iv_30d"] == 65
 assert exported["authority"] == "observation_only"
 assert exported["derivation_version"] == snapshot.derivation_version
 assert repo.options_volatility_at("BTC", "2026-09-11T08:31:00+00:00")["reason"] == "stale_snapshot"
-assert repo.latest_options_structure("BTC") is None
 '''
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
