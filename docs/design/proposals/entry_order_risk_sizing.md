@@ -97,6 +97,21 @@ Arithmetic that follows directly from the model, with 500 USDT starting capital:
     e.g. 5% × 10 × 2% = 1% of equity (5 USDT); target 3R = +3% (15 USDT)
     break-even win rate at 1:3 = 25% before costs (≈30% after measured friction)
 
+### Owner decision 1 (2026-10-09): exchange-native stops first
+
+Protective stops **must be exchange-native orders** and take **top priority**. A local
+poller that detects the trigger and then sends a market order loses money, and loses a
+lot of it. The measured evidence: on Fedora's 41 closed demo trades, the average
+losing trade lost **1.41R instead of 1R**, and the worst lost 4.77R.
+
+Consequences for every later section:
+- R-based sizing is only meaningful once the stop executes on the venue.
+- Taking the competitor patterns that protect this guarantee, a position must never
+  be left without venue-side protection:
+  - OpenAlice refuses to open a position whose protection did not attach;
+  - nofx closes immediately when the protective order fails;
+  - AstraQuant uses native OCO.
+
 ## Current fact (2026-10-09, master `1cea7366`, Fedora read-only)
 
 - **Stop placement.** The Compiler derives the stop as anchor ∓ ≈0.05 × ATR(15m). It
