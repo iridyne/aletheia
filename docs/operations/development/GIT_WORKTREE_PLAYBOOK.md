@@ -17,7 +17,8 @@ Git 操作不再自动重启稳定 Gateway；PR merge 也不等于 Qualification
 
 ## 2. 铁律：非平凡改动一律用 Worktree 隔离
 
-- 任何写文件任务 → 先开隔离工作区（Orca/EnterWorktree，或 `jj workspace add .claude/worktrees/<name> --name <name> -r master@origin`）；工作区一律放在已被 `.gitignore` 忽略的 `.claude/worktrees/` 下，不建到仓库外的兄弟目录；
+- 任何写文件任务 → 先开隔离工作区：`jj workspace add .claude/worktrees/<name> --name <name> -r master@origin`；工作区一律放在已被 `.gitignore` 忽略的 `.claude/worktrees/` 下，不建到仓库外的兄弟目录；
+- 只有 jj workspace 能跑本地门禁（`dev_check` / `check_docs` / `ci_preflight`）。Orca 或 EnterWorktree 建的是普通 Git worktree，没有自己的 `.jj`；门禁在那里会拒绝运行（`vcs.py` 校验 `jj workspace root`），否则 jj 会向上找到主 checkout，读错改动集。需要跑门禁的任务不要用 Git worktree；
 - 纯只读/查询 → 可在原地；
 - 让 master 长期无人争抢，只在确认并发已停、master 稳定的窗口短暂触碰；
 - 每个 Agent Prompt 必须写明 goal、allowed paths、excluded paths、acceptance checks；
