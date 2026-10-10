@@ -253,6 +253,8 @@ def test_list_processes_posix_no_creationflags(monkeypatch):
     monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
     pidfile._list_processes()
     assert calls["argv"][0] == "ps"
+    # Without -ww procps truncates at 80 columns off a tty and the markers vanish.
+    assert "-ww" in calls["argv"]
     assert "creationflags" not in calls["kwargs"]
 
 

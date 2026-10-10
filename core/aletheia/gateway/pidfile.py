@@ -203,7 +203,7 @@ def _process_cmdline(pid: int) -> str | None:
     except OSError:
         logger.debug("pidfile: /proc cmdline unavailable for pid %s; falling back to ps", pid)
     try:
-        proc = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+        proc = subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
     out = proc.stdout.strip()
@@ -332,7 +332,7 @@ def _list_processes() -> list[tuple[int, str]]:
         return list_processes_win32()
 
     out = subprocess.run(
-        ["ps", "-eo", "pid=,args="],
+        ["ps", "-ww", "-eo", "pid=,args="],  # -ww: procps cuts at 80 cols off a tty, losing markers
         capture_output=True, text=True, timeout=20,
     ).stdout
     procs: list[tuple[int, str]] = []
