@@ -102,6 +102,9 @@ Both winning and losing decisions are reviewed.
 
 ### Measurement (LL-R16, R17, R18)
 
+Inference, interference and epoch rules follow [spec 0002](../0002-causal-evidence/spec.md)
+(CE-R07, R08, R10, R14).
+
 - New Observation Lab adapter `playbook_bundle`: unit = `planning_identity`, arm = hash(salt,
   unit), outcome contract = judgment R; exclusive with the `entry_learning` adapter on the same
   interference key; stratified by model identity; format failures stay as units.

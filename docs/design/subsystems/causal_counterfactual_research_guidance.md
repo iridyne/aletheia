@@ -1,5 +1,8 @@
 # 因果与反事实研究：全框架应用指引
 
+> **将被取代**：[spec 0002-causal-evidence](../specs/0002-causal-evidence/spec.md)（draft，2026-10-10）
+> 用"四类反事实 × 证据等级"替代下面的 L0–L5 阶梯；spec 批准后本文转入历史。
+
 > 状态：**研究与治理指引，不是行为授权。**
 > 建立日期：2026-07-15。本指引说明全框架可复用的方法，不改变 universe generation、
 > 选币、Risk、Execution、Live 或配置。

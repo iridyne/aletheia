@@ -81,3 +81,4 @@ requirement-id uniqueness and the zero-marker rule for `approved`.
 | Spec | Status | Summary |
 |---|---|---|
 | [0001-learning-loop](0001-learning-loop/spec.md) | approved | Decision-level learning from own mistakes: replay labels, process review, one playbook, advisory vs authority tiers, bundle on/off measurement |
+| [0002-causal-evidence](0002-causal-evidence/spec.md) | draft | Causal inference and counterfactual analysis: four counterfactual classes, cheapest identifying method, one replay/assignment/inference implementation, claim declaration and multiplicity registry |
