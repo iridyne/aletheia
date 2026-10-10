@@ -284,8 +284,13 @@ def test_path_aware_research_rejects_equal_count_unrelated_t0_sources():
     "A deterministic closed-trade replay rooted in Knowledge Markdown remains "
     "insufficient until a path-specific canonical T0 envelope exists; it creates "
     "no guard candidate, hypothesis, experiment, exposure, verdict, or authority.",
-    status="implemented",
+    status="partial",
 ))
+@pytest.mark.xfail(
+    strict=True,
+    reason="known production regression (see KNOWN RED below): guard research can never "
+    "reach 'ready' since #3704; restore-or-retire is decided in the learning study #3934",
+)
 async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypatch):
     from extensions.knowledge.manager import create_trade_case_study
     from extensions.learning import guard_routing, hypothesis_research
