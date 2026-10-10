@@ -1,6 +1,6 @@
 ---
 id: slim-core-native-data-collectors
-status: accepted
+status: implemented
 github_issue: 3134
 ---
 

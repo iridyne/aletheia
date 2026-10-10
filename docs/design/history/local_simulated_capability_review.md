@@ -16,7 +16,7 @@ merge/delivery state does not change what the current code implements.
 It is generated from current code and executable evidence, not copied from an
 SDD. The inventory, audit rules, detailed fact cards, coverage ledger, and
 issue-ready findings live under
-[`capability-integrity/`](../../product/capability-integrity/README.md).
+[`capability-integrity/`](../../research/audits/capability-integrity-2026-09/README.md).
 
 ## Interpretation
 
@@ -343,4 +343,4 @@ joins:
 4. Serenity More/Less feedback is recorded but does not adapt later research.
 
 These are specified narrowly in
-[`ISSUE_CANDIDATES.md`](../../product/capability-integrity/ISSUE_CANDIDATES.md).
+[`ISSUE_CANDIDATES.md`](../../research/audits/capability-integrity-2026-09/ISSUE_CANDIDATES.md).

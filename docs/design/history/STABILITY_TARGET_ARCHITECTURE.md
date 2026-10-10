@@ -1,5 +1,7 @@
 # Aletheia stability target architecture
 
+> **History (moved 2026-10-10 from `docs/operations/architecture/`).** A target stability roadmap, not an operating procedure. Current probes and runbook: [RUNBOOK §10](../../operations/runbooks/RUNBOOK.md).
+
 This plan turns the current gateway/UI/operator infra into a bounded,
 observable, self-healing local runtime. It is intentionally local-first: no
 Docker, Redis, Postgres, remote deployment, or multi-user control plane is added.

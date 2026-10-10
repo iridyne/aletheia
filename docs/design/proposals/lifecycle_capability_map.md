@@ -1,6 +1,6 @@
 ---
 id: lifecycle-capability-map
-status: accepted
+status: implemented
 related_contracts: []
 supersedes: []
 ---

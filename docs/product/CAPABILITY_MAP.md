@@ -31,8 +31,13 @@ the owner also updates it.
 ## Maturity ladder
 
 A review assigns each capability the highest level whose criterion is fully met.
-Evidence classes E1/E2/E3 are defined in
-[AUDIT_METHOD.md](capability-integrity/AUDIT_METHOD.md).
+Evidence classes:
+
+| Class | Meaning |
+|---|---|
+| E1 Static | Reviewed code contains the necessary entry, data flow, consumer, and error path. |
+| E2 Executable | A focused test or bounded local reproduction crosses the important seams and asserts the final result. |
+| E3 Runtime observation | The capability occurred naturally and produced the expected durable/user-visible result. This increases operational confidence but is not a support gate. |
 
 | Level | Name | Criterion |
 |---|---|---|
@@ -90,8 +95,9 @@ production caller, focused test), and the L4 qualification criterion.
 #### CAP-CAND-01 — Venue-scoped crypto instrument universe
 
 - **Outcome:** only instruments that are exactly tradable on the active venue and
-  are crypto spot/perp enter scanning; non-crypto perps (equity, metal, index)
-  and unknown profiles are excluded fail-closed.
+  are USDT-margined crypto perpetuals enter scanning; spot never enters the
+  registry, and real-world-asset perps (venue `isRwa`: equity, metal, index) and
+  unknown profiles are excluded fail-closed.
 - **Contract:** [candidate_selection_utility_contract.md](../design/contracts/candidate_selection_utility_contract.md) (Boundary); [Capability Ground Truth](CAPABILITY_GROUND_TRUTH.md) instrument scope.
 - **Target (proposed):** L3.
 - **Probes:** code `core/aletheia/universe/registry.py` `_is_excluded`; caller `sync_registry` in the same module; test `tests/test_registry_market_boundary.py`.
@@ -181,7 +187,7 @@ production caller, focused test), and the L4 qualification criterion.
 
 - **Outcome:** the plan uses the lowest leverage that finances its notional
   within per-asset caps and current venue margin tiers, in isolated margin, with
-  the stop proven to trigger before liquidation and spot never exceeding cash.
+  the stop proven to trigger before liquidation.
 - **Contract:** [entry_sizing_and_financing_contract.md](../design/contracts/entry_sizing_and_financing_contract.md) (Contract C; Margin mode and liquidation safety).
 - **Target (proposed):** L3.
 - **Probes:** code `core/aletheia/trading/leverage_resolution.py` `resolve_execution_financing`; callers `core/aletheia/trading/entry_plan_compiler.py` and `core/aletheia/risk/engine.py`; test `tests/test_leverage_resolution.py`.

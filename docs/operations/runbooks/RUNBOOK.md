@@ -1,8 +1,9 @@
 # Aletheia Trading OS — Operations Runbook
 
-How to take the system live for **paper trading** and run it unattended for long
-stretches, accumulating real paper PnL and strategy lessons. Live (real-money)
-trading stays disabled until you explicitly unlock it — see [Live trading](#8-live-trading-stays-locked).
+How to run the system unattended on the **Bitget Demo** account (USDT-margined
+crypto perpetuals only), accumulating demo PnL and post-trade reviews. Live
+(real-money) trading stays disabled until you explicitly unlock it — see
+[Live trading](#8-live-trading-stays-locked).
 
 > Safety posture (always true): live is `live_disabled` by default; the agent
 > cannot unlock live, place live orders, modify risk limits, credentials, or the
@@ -91,7 +92,7 @@ directional signals once a provider is configured.
 
 ```bash
 # Dashboard: Settings → Model Provider → base URL + model + API key → Test  (primary)
-# or CLI (deprecated — still works, dashboard is the maintained surface):
+# or CLI:
 uv run aletheia model set --provider openai_compatible --base-url URL --model NAME --api-key
 uv run aletheia model status
 uv run aletheia model test
@@ -101,32 +102,41 @@ API keys are write-only: they are stored encrypted (keyring / `secrets.enc`) and
 never returned by any GET endpoint, never written to logs, never put in agent
 prompts.
 
-## 4. (Optional) Bitget demo credentials
+## 4. Bitget Demo credentials (required to trade)
 
-Market data (BTC/ETH/SOL tickers/candles) works **without** credentials via public
-endpoints, so the observe/research/paper loop runs out of the box. Demo
-credentials are only needed if you want authenticated demo calls.
+Public market data works without credentials, so the dashboard, Universe and
+diagnostics run out of the box. **No order, Fill or Position can exist without
+Bitget Demo credentials**: the only admitted execution route is `bitget_demo`
+([Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md)), and the retired
+local simulator no longer provides a fallback account.
 
 ```bash
 # Dashboard: Settings → Exchange Credentials → demo → keys → Test Connection  (primary)
-# or CLI (deprecated — still works, dashboard is the maintained surface):
+# or CLI:
 uv run aletheia secrets set bitget.demo.api_key
 uv run aletheia secrets set bitget.demo.api_secret
 uv run aletheia secrets set bitget.demo.passphrase
 uv run aletheia exchange test   # tests the configured trading account
 ```
 
-## 5. Run the autonomous paper loop
+## 5. Run the autonomous demo loop
 
-The current supported permission mode is `Paper` and is the default. There is no
-separate `autonomous_paper_trading` switch. Before expecting entries, verify the
+Entry permission is decided per execution route, not by a separate trading
+switch. The `bitget_demo` route requires permission mode **`Full`**
+(`core/aletheia/config/exchanges.py::ENTRY_ROUTE_POLICIES`). The shipped default
+`Paper` is one rank lower, so with the default every Entry Plan is refused with
+`entry_permission_insufficient` before the model is called
+(`core/aletheia/trading/entry_authority.py`). Before expecting entries, verify the
 effective Settings/Doctor projection rather than editing `config.yaml` manually:
 
-1. **Permission mode** → `Paper` (`Research`/`ReadOnly` never trade). Dashboard
-   Settings → Permission Mode (primary), or CLI:
+1. **Permission mode** → `Full` (valid modes: `Observe` < `Paper` < `Full`; only
+   the route's minimum or higher plans entries). Dashboard Settings → Permission
+   Mode, or CLI:
    ```bash
-   uv run aletheia permission set Paper
+   uv run aletheia permission set Full
    ```
+   `Full` on `bitget_demo` grants no Live authority: Live stays `live_disabled`
+   and any effective Live state fails entry closed.
 2. Confirm the scheduler is enabled and not held by any durable pause owner:
    ```bash
    uv run aletheia inspect config
@@ -135,7 +145,7 @@ effective Settings/Doctor projection rather than editing `config.yaml` manually:
    The centralized resume gate refuses to run non-essential jobs while any pause
    owner remains; clear the owning condition instead of bypassing it.
 
-Once on, the active paper trading pipeline runs on a schedule with no dashboard clicks:
+Once on, the demo trading pipeline runs on a schedule with no dashboard clicks:
 
 ```
 market data → Universe refresh → published Candidate
@@ -144,20 +154,16 @@ market data → Universe refresh → published Candidate
   → Bitget Demo Order + private Fill + Position (one causal chain)
   → position_manager: protective exits, or Operator horizon review
   → verified close + net PnL + eligible Outcome
-  → post-trade review / cases / counterfactuals / Learning measurement
-  → owner-gated bounded influence on a later decision
+  → post-trade review → Learning (see spec 0001-learning-loop)
 ```
 
 The admitted route is defined only by
 [ACTIVE_RUNTIME_SCOPE.md](../../product/ACTIVE_RUNTIME_SCOPE.md).
 
-This proves lifecycle continuity, not profitability. Behavioural Learning influence
-is available by default only for the registry-declared measurement-supported path,
-but no experiment self-admits: a protected owner action, matching prospective
-treatment/control evidence, sufficient actual intervention, one consumed fixed-look
-confirmatory verdict, clear harm state, and every authority gate are still required.
-Missing, harmful, invalid, monitoring-only, or underpowered evidence falls back to
-or retains the declared static behavior.
+This proves lifecycle continuity, not profitability. How a review becomes advice
+for a later decision is owned by
+[spec 0001-learning-loop](../../design/specs/0001-learning-loop/spec.md); Learning
+never gains Risk, execution, credential or Live authority.
 
 Watch it on the **Overview**, **Universe** (Entry Plans tab), **Trades &
 Positions**, and **Agent Activity** dashboard pages
@@ -200,9 +206,9 @@ as a human; the agent can propose changes in a report but cannot apply them.
   essential-job count. `resume` to re-enable.
 - **Full quiescence:** `aletheia gateway stop` — stops the Gateway and its
   scheduler; use this when no automated job should run.
-- **Kill switch (global trading brake):** rejects *every* proposal (paper and
-  live) until released. Auto-trips if the daily-loss limit is breached.
-  Primary: dashboard **Risk panel**. CLI (deprecated, still works):
+- **Kill switch (global trading brake):** rejects *every* new-entry proposal
+  until released. Auto-trips if the daily-loss limit is breached.
+  Dashboard **Risk panel**, or CLI:
   ```bash
   uv run aletheia risk status      # shows kill-switch state + key limits
   uv run aletheia risk kill        # engage
@@ -216,8 +222,7 @@ as a human; the agent can propose changes in a report but cannot apply them.
 Live is `live_disabled` by default and the agent can never unlock it. Moving to
 `live_limited` requires explicit human action (Settings → Live State → unlock, or
 the live API route) and passes the selected-account preflight and the go-live
-scorecard gate ([live_unlock_contract](../../design/contracts/live_unlock_contract.md),
-[kill_conditions_contract K3](../../design/contracts/kill_conditions_contract.md)). LIVE positions are **never** auto-closed by the position
+scorecard gate ([live_unlock_contract §4a](../../design/contracts/live_unlock_contract.md)). LIVE positions are **never** auto-closed by the position
 manager. Treat enabling live as a separate, deliberate decision.
 
 ## 9. Updating the code
@@ -260,7 +265,7 @@ Only source checkouts are supported (the packaged runtime lane was removed on
 2026-09-28). Dirty, wrong-branch, ahead, or diverged source checkouts fail
 closed rather than clobbering local work or inventing a deployment state.
 
-The Fedora Paper Candidate may instead follow strict stable Release Tags with
+The Fedora demo runtime may instead follow strict stable Release Tags with
 the source-runtime auto updater. Bootstrap it once (or migrate an old owned
 timer) with `ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto install`,
 inspect it with `update auto status`, and use `update auto resume` only after
@@ -269,16 +274,15 @@ pinned and reports the migration reason; it is never guessed to be Paper. The
 role-only migration preserves an existing Aletheia-managed `ALETHEIA_DATA_DIR`
 from the service unit when the shell does not export one. The timer ignores
 prerelease tags, pins the selected Tag SHA, requires a clean fast-forward-only
-`master`, Paper mode, Live off, and healthy Gateway/provider/
+`master`, the `bitget_demo` external-exchange execution mode (`ops/update/auto.py::_runtime_gate`;
+the `paper` role name is historical), Live off, and healthy Gateway/provider/
 settlement baselines, and rolls back activation failures. The complete gates and
 failure policy are authoritative in
 [`DEPLOYMENT.md`](../deployment/DEPLOYMENT.md#无人值守升级边界).
 
 ## 10. Health & observability
 
-The detailed stability roadmap and phase gates live in
-[`STABILITY_TARGET_ARCHITECTURE.md`](../architecture/STABILITY_TARGET_ARCHITECTURE.md). The key
-runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
+The key runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 (API+dashboard readiness), and `/api/health` (business/runtime health).
 
 - **Dashboard:** Overview (gateway/live/permission/kill-switch state, account/PnL),
@@ -286,7 +290,7 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 - **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia doctor --verbose`
   or `--deep` (redacted log tails + recent failures + next-log pointers),
   `aletheia doctor --bundle ~/.aletheia/diagnostics/doctor.json` (redacted JSON bundle for AI/support),
-  `aletheia gateway status`, `aletheia gateway logs` (multi-log redacted tails). (`aletheia risk status` still works but the Risk panel is primary.)
+  `aletheia gateway status`, `aletheia gateway logs` (multi-log redacted tails), `aletheia risk status`.
 - `aletheia doctor --fetch` performs an explicit origin refresh; a failed
   refresh exits non-zero, and `--json` includes its bounded `fetch` outcome.
 - **Files** under the effective Runtime root (`~/.aletheia/` unless an absolute
@@ -308,8 +312,8 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 ```text
 [ ] aletheia gateway start  → dashboard opens
 [ ] Settings → Model Provider configured + Test passes
-[ ] (optional) Bitget demo creds + Test Connection
-[ ] permission_mode = Paper
+[ ] Bitget Demo creds stored + `aletheia exchange test` passes
+[ ] permission_mode = Full (the bitget_demo route minimum)
 [ ] Scheduler is enabled, Gateway is not paused, and no pause owner blocks resume
 [ ] Universe shows published Candidates and Entry Plans
 [ ] Trades & Positions shows a Bitget Demo position open, then close with a realized PnL

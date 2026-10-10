@@ -1,7 +1,7 @@
 # System Operator 进化分析：从 Trader → System Operator
 
 > **[历史归档 — 2026-07-01]** 文件名保留，"PI Agent"已更名为"System Operator"。
-> 当前实现状态见 `docs/design/operator/operator_layer.md` 和 `DECISIONS.md §2026-07-01`。
+> 当前实现状态见 `docs/design/history/operator_layer.md` 和 `DECISIONS.md §2026-07-01`。
 
 > 竞品调研 + 架构设计方案 | 2026-06-21
 

@@ -29,7 +29,7 @@
 | cleanup | cron 03:17 CST | io | Data retention cleanup |
 | exchange_sync | 5min | io | Refresh exchange account cache |
 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
-| reconciliation | 2min (live only) | io | Full state reconciliation |
+| reconciliation | 2min | io | Order/Fill reconciliation for every exchange account mode (no Live gating) |
 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
@@ -429,11 +429,60 @@ Execution, exchange or Live state. The broader `lco-v1` design remains the
 
 ### E. Operator runtime
 
-The TS operator-shell is the sole runtime Operator. Under the owner-approved
-#3134 retirement, the Python `pi_operator_loop`, its scheduler/manual trigger,
-config-action writer and fallback selector are removed. Disabling operator-shell
-does not activate another Operator. Historical `operator_assessment` and audit
-records remain readable; they grant no current execution authority.
+The TS operator-shell (`operator-shell/`) is the sole runtime Operator. Under the
+owner-approved #3134 retirement, the Python `pi_operator_loop`, its scheduler/manual
+trigger, config-action writer and fallback selector are removed. Disabling
+operator-shell does not activate another Operator. Historical `operator_assessment`
+and audit records remain readable; they grant no current execution authority.
+Diagnosis and lifecycle detail: [The Operator runtime](../architecture/OPERATOR_SHELL.md).
+
+| Entry point | Kind | Owner |
+|---|---|---|
+| `operator-shell/src/index.ts` → `OperatorLoop.start()` | supervised Node process | `core/aletheia/gateway/operator_shell.py::OperatorShellMonitor` |
+| `/api/operator/internal/*` (GET/POST/PATCH) | backend bridge | `core/aletheia/server/routes/operator.py` |
+| `GET /api/operator/status` | status projection | [Status Surface Contract](status_surface_contract.md) |
+
+**OP-C01 Least-privilege surface.** The backend shall authenticate the operator
+service credential only for the routes declared in
+`server/operator_service_auth.py`: the fixed read set (`_OPERATOR_SERVICE_READ_PATHS`),
+`GET /api/operator/sessions/*`, the internal bridge, and exactly one mutation,
+`POST /api/agent-runs/start`.
+- WHEN the shell calls any other route (settings, pause/resume, kill switch, gateway
+  restart, order submission) THEN the service credential is refused
+  (`tests/test_operator_service_auth.py`).
+
+**OP-C02 No trading authority.** The operator-shell shall not hold Risk, execution,
+credential or Live authority and shall not run its own model loop; reasoning goes
+through `/api/operator/internal/llm-session` on the Python side.
+
+**OP-C03 Heartbeat.** While running, the shell shall write an `agent_shell_heartbeats`
+row with `agent_id=operator` every `ALETHEIA_OPERATOR_HEARTBEAT_SEC` seconds (default
+10), carrying mode, permission mode, busy flag, current task and `current_intent`.
+
+**OP-C04 Supervised restart.** If the latest operator heartbeat is older than
+`operator.heartbeat_stale_after_sec` once the boot grace window (the same interval
+after spawn) has passed and the backend API is ready, then `OperatorShellMonitor`
+shall restart the process, record `operator_shell_restart`, and hold a
+`operator.restart_after_sec` cooldown.
+- WHEN the backend API is not ready THEN staleness is not judged (no restart loop
+  during gateway start).
+
+**OP-C05 Permission ladder.** The shell shall materialize a task only when the
+current operator permission mode (`ALETHEIA_OPERATOR_PERMISSION_MODE`, default
+`ReadOnly`; ladder `ReadOnly < Research < PaperAuto < AllowEditing < Auto`,
+`agent_shell/permissions.py`) meets the task type's required level.
+- WHEN the level is too low THEN the recommendation exists but no task is created;
+  this is a permission fact, not a failure.
+
+**OP-C06 Consumer paths stay live.** Every backend path the shell names shall exist in
+the served route table and in the service allowlist, and the allowlist shall name no
+dead path (`tests/test_api_consumer_paths.py`).
+- WHEN a called route returns 404 THEN the shell records
+  `gateway_request_failed:404:…` in `last_error` and degrades its mode; the status
+  surface shows that mode rather than inventing health.
+
+The operator permission ladder is independent of the trading permission mode
+(`agent.permission_mode`, `Observe < Paper < Full`) that gates Entry Plans.
 
 ---
 
@@ -446,7 +495,7 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 2. WAL mode + `busy_timeout=30000ms` (30s) as last-resort fallback — `storage/sqlite.py::_open_connection`
 3. One connection per thread via `threading.local`
 4. `was_in_tx = db.in_transaction` captured BEFORE writes; commit only `if not was_in_tx`
-5. Scheduler `max_workers=3` (do not raise)
+5. Scheduler pools are sized in `scheduler.py::_EXECUTOR_WORKERS` (`default` 2, every other pool 1); never above 3 ([scheduler_contract](scheduler_contract.md) INV-SCH-1)
 6. Never `await` or do network I/O inside a `with transaction():` block — `_WRITE_LOCK` is held for the full transaction duration
 
 ### Job Timeouts (hard wall-clock bound, per-job — `_ASYNC_JOB_TIMEOUT_SEC`)

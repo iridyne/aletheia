@@ -66,7 +66,7 @@ class LiveConfig:
     "credential_revision": "sha256:<digest>",
     "config_revision": "sha256:<digest>"
   },
-  "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; PI operator elevated to Auto"
+  "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; System Operator elevated to Auto"
 }
 ```
 append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust §1.4](../../governance/policies/trust_and_change_control.md)。
@@ -76,7 +76,7 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 ## 4. 不可逆操作清单
 
 - **解锁 live**(§2)——单向,审计不可删。
-- **真实下单**(`bitget/okx/binance_live_limited`)——经 [execution_contract](execution_contract.md),交易所确认后不可撤回(只能反向平仓)。
+- **真实下单**(`*_live_limited`;当前只有 Bitget 是现役交易所,OKX/Binance 冻结)——经 [execution_contract](execution_contract.md),交易所确认后不可撤回(只能反向平仓)。
 
 ---
 

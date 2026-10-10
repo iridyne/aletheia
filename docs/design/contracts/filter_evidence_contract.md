@@ -335,7 +335,7 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
   `Lab priority unavailable` 并继续普通到期队列，不假报健康。该优先级只改变有界
   结算顺序，不改变冻结成本、精确市场价格、retention、经济资格或交易权限。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
-- `outcome_settler` 每 15 分钟运行；刚到期的 filter outcome 在 20 分钟宽限内标为
+- `outcome_settler` 每 10 分钟运行（`scheduler.py` `id="outcome_settler"`）；刚到期的 filter outcome 在 20 分钟宽限内标为
   `awaiting_cadence`，不算故障。超过宽限的 `stale_overdue` 才参与积压告警，口径与主 forward
   outcome 诊断一致。
 - `doctor` 同时校验批次里的候选总数是否等于 pass/reject/not-applicable/error 之和。

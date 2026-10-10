@@ -19,7 +19,7 @@ Every current document has exactly one primary role:
 | Product Truth | What does the product promise and support? | `docs/product/` |
 | Contract | What behavior is currently approved and observable? | `docs/design/contracts/` |
 | Decision | Why was a long-lived choice made? | `docs/design/decisions/` |
-| Proposal | What substantial future change is being considered? | `docs/design/proposals/` |
+| Spec (formerly Proposal) | What substantial change is approved or being considered, and how is it verified? | `docs/design/specs/` (format: [specs README](../../design/specs/README.md)); legacy `docs/design/proposals/` until revised |
 | Operations | How is the current system operated or recovered? | `docs/operations/` |
 | Evidence / Archive | What was observed or believed at a point in time? | `docs/research/`, `docs/archive/`, and frozen legacy trees |
 
@@ -45,6 +45,13 @@ use ends, preserve it as dated evidence or remove it from the current
 documentation path.
 
 ## Proposal threshold and lifecycle
+
+Since 2026-10-10 a new substantial design is written as a Spec in
+`docs/design/specs/NNNN-name/` using the fixed SDD format in the
+[specs README](../../design/specs/README.md). The threshold below is unchanged; the Spec
+lifecycle is `draft`, `approved`, `implemented`, `superseded`, `rejected`. A legacy
+Proposal that is revised moves into that format; one that is replaced is marked `superseded`.
+
 
 A Proposal is an optional communication tool, never a precondition. No change of
 any depth requires one before it lands; what a change requires is that its gates

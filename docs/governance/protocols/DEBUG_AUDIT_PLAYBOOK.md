@@ -13,7 +13,7 @@
 **陷阱**：并行审计/调研 agent（以及人）会把"我没看到"当成"不存在"。只看一个语言/模块/进程就下"未实现/死代码/no-op"的判断，极易误报。
 
 **真实案例（2026-06-28 PI agent 审计）**：
-- audit agent 拿 `operator_layer.md`（愿景）对照 **Python** 代码，报"8 modes / 多级 cadence / Auto Repair 未实现"。真相：**全部已在 TS `operator-shell/` 实现且正在生产运行**（3000+ 行，gateway spawn 的 node 子进程，21577 条 heartbeat 实时刷新）。
+- audit agent 拿 `docs/design/history/operator_layer.md`（愿景）对照 **Python** 代码，报"8 modes / 多级 cadence / Auto Repair 未实现"。真相：**全部已在 TS `operator-shell/` 实现且正在生产运行**（3000+ 行，gateway spawn 的 node 子进程，21577 条 heartbeat 实时刷新）。
 - 同源误报 A2/A4：把三套组件（**TS operator-shell** / Python `operator_loop.py` / Python `pi_daemon.py`）混为一谈 → "pi_daemon 不写 heartbeat 导致判 offline"（其实 heartbeat 是 TS shell 写的）、"guard 审批旁路"（其实 dispatcher 正确分级）。
 
 **SOP**：

@@ -1,6 +1,6 @@
 ---
 id: slim-core-planner-data-boundary
-status: accepted
+status: implemented
 github_issue: 3134
 related_contracts:
   - ../contracts/entry-plan-contract.md

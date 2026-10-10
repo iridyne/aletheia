@@ -1,11 +1,10 @@
 # Entry Sizing and Financing Contract
 
-> Status: current authority (implementation of Issue #3729).
+> Status: current authority.
 > Related: [Risk Engine Contract](risk_engine_contract.md) (§5 sizing, checks #13/#18/#19),
-> [Entry Plan Contract](entry-plan-contract.md) (Plan schema and execution mainline),
-> [#3726](https://github.com/iridyne/aletheia/issues/3726) (the coupling this contract removes),
-> [#1451](https://github.com/iridyne/aletheia/issues/1451) (margin-mode safety).
-> Evidence baseline: `master@1d653f632` (2026-09-29).
+> [Entry Plan Contract](entry-plan-contract.md) (Plan schema and execution mainline).
+> Decision references: #3729 (this contract), #3726 (the coupling it removes),
+> #1451 (margin-mode safety).
 
 ## Scope and authority
 
@@ -141,7 +140,8 @@ actually submits, and both the resolver and the submission path read the same de
   fact or an account-aware conservative model; without one the result is
   `CROSS_MARGIN_SAFETY_UNAVAILABLE`. There is no isolated fallback.
 - A route with no declared mode fails closed with `MARGIN_MODE_UNAVAILABLE`.
-- Spot is structurally 1x with no liquidation solver (`not_applicable`).
+- Spot is out of product scope and never reaches this path; the residual 1x
+  `not_applicable` branch in code is not a support claim.
 
 Venue tier facts come from the venue that will **hold the position** — the execution
 route's venue, not the candidate's market-data venue (they differ whenever analysis and

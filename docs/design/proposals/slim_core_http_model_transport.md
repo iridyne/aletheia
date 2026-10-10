@@ -1,6 +1,6 @@
 ---
 id: slim-core-http-model-transport
-status: accepted
+status: implemented
 github_issue: 3134
 related_contracts:
   - ../contracts/llm_inference_harness_contract.md

@@ -436,3 +436,27 @@ def test_navigation_route_gate_requires_its_region_markers(monkeypatch, tmp_path
 def test_navigation_route_gate_is_green_on_the_current_tree() -> None:
     """Every symbol in SYSTEM_MAP's route table resolves in its linked source."""
     assert check_docs.navigation_route_failures() == []
+
+
+def test_spec_format_gate_rejects_untraced_and_unclarified_specs(tmp_path) -> None:
+    folder = tmp_path / "0009-demo"
+    folder.mkdir()
+    spec_headings = "\n".join(check_docs.SPEC_REQUIRED_HEADINGS["spec.md"])
+    design_headings = "\n".join(check_docs.SPEC_REQUIRED_HEADINGS["design.md"])
+    (folder / "spec.md").write_text(
+        "---\nid: 0009-demo\ntitle: Demo\nstatus: approved\ndepth: D1\nprefix: DM\n---\n"
+        f"{spec_headings}\n### DM-R01 One\n### DM-R02 Two\n[NEEDS CLARIFICATION: x]\n",
+        encoding="utf-8",
+    )
+    (folder / "design.md").write_text(f"{design_headings}\n| DM-R01 |\n", encoding="utf-8")
+
+    failures = check_docs.spec_format_failures(tmp_path)
+
+    assert failures == [
+        "docs/design/specs/0009-demo/spec.md: approved spec still has [NEEDS CLARIFICATION] markers",
+        "docs/design/specs/0009-demo/design.md: requirements without traceability ['DM-R02']",
+    ]
+
+
+def test_repository_specs_follow_the_sdd_format() -> None:
+    assert check_docs.spec_format_failures() == []

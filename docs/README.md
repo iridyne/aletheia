@@ -41,7 +41,7 @@ GitHub Issues/PRs track work and evidence, not a second runtime truth.
 | Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |
 | Local setup, preview, tests, deployment | `operations/README.md` | `operations/development/`, `operations/deployment/`, `operations/runbooks/` |
 | Bug triage or known problems | `governance/protocols/BUG_TRIAGE_PROTOCOL.md` | GitHub Issues; use `archive/legacy/issues/` only for historical evidence |
-| Substantial design proposal | `design/proposals/README.md` | one proposal only when its threshold is met |
+| Substantial design (SDD spec) | `design/specs/README.md` | one spec only when the threshold is met; legacy `design/proposals/` until revised |
 | Historical implementation intent | `archive/README.md` | one file under `archive/legacy/plans/`; never use it as current authority |
 | External inspiration or papers | `references/README.md` | `references/external-systems/`, `references/papers-and-benchmarks/` |
 | Research/audit evidence | `research/README.md` | one domain folder under `research/` |
@@ -66,5 +66,5 @@ GitHub Issues/PRs track work and evidence, not a second runtime truth.
 - Use a domain folder instead of adding files to a crowded parent directory.
 - Prefer lowercase kebab-case for new filenames unless the existing family uses uppercase.
 - Add or update the nearest `README.md` when a new subfolder is created.
-- Put current behavior in `design/contracts/`; put qualifying substantial designs in `design/proposals/`; put investigation evidence in `research/<domain>/`; put current defects in GitHub Issues.
+- Put current behavior in `design/contracts/`; put qualifying substantial designs in `design/specs/` (SDD format); put investigation evidence in `research/<domain>/`; put current defects in GitHub Issues.
 - Never create a Markdown file to track owners, priorities, checklists, completion percentages, or live work status.

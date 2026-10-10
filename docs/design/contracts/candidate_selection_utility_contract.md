@@ -18,6 +18,34 @@ Historical six-family and `total_score` records remain immutable audit evidence,
 not a runtime fallback or rollback allocator. Risk, Gateway, credentials and
 Live-unlock authority are unchanged.
 
+### Instrument scope (registry)
+
+The product trades USDT-margined crypto perpetuals only
+([Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)). The
+universe registry (`universe/registry.py`, background from
+`data/symbols.py`) is where that boundary is enforced:
+
+- **CS-B1** — When the registry ingests venue market facts, it shall skip every
+  instrument whose `market_type` is not `perp`, or every instrument when
+  `exchange.enabled_markets["usdt_futures"]` is false; spot never becomes a universe
+  asset, Candidate, Entry Plan or Proposal.
+- **CS-B2** — When a Bitget perpetual carries `isRwa=YES`, its instrument
+  background shall be `asset_class=real_world_asset`; `isRwa=NO` is `crypto`; an
+  absent flag falls through to the other venue signals and otherwise stays
+  `instrument_background_unresolved`.
+- **CS-B3** — If an instrument's background is not a supported crypto context, then
+  the registry shall store it with `blacklisted=true` and the rejection reason as
+  `blacklist_reason` (for example `unsupported_analysis_context:tradifi_perpetual`),
+  visible rather than silently dropped; ordinary crypto exclusions (leveraged
+  tokens, test/dated contracts) are omitted altogether.
+- **CS-B4** — If venue market facts are unavailable, then the registry shall write
+  nothing (no partial or guessed rows).
+
+Verification: `tests/test_registry_market_boundary.py`
+(`test_bitget_rwa_perpetual_is_not_crypto`,
+`test_unavailable_market_facts_never_write_registry`,
+`test_registry_retains_admission_blacklist_and_cleanup`).
+
 Historical Twin evaluation still verifies persisted records by replaying the
 old allocation and whole-candidate continuous-scoring rules. Those replay
 functions remain alongside the shared current execution decoration and
@@ -110,9 +138,25 @@ strength without an invented percentile.
 
 ## Persistence and historical evidence
 
-The target path reuses `universe_twin_shadow_batches`,
-`universe_twin_shadow_records`, and `filter_candidate_outcomes`; it creates no
-second Candidate, Outcome, experiment, scheduler, or database platform. Each
+Candidate Selection Utility is the sole current writer of
+`universe_twin_shadow_batches` and `universe_twin_shadow_records` (the table names
+are inherited from the retired Twin shadow experiment,
+[history](../history/universe_twin_shadow_contract.md)), together with
+`filter_candidate_outcomes`. It creates no second Candidate, Outcome, experiment,
+scheduler, or database platform.
+
+- **CS-P1** — When a Universe refresh publishes (or reuses) a Candidate snapshot,
+  `universe/service.py` shall write the selection bundle through
+  `insert_universe_twin_shadow_bundle(..., min_interval_sec=0)` inside the same
+  `_atomic_universe_publication()` transaction as the snapshot; there is no
+  separate 55-minute cadence.
+- **CS-P2** — If the bundle fails validation (count, scanner-run, capture-time,
+  direction or outcome-identity mismatch → `ValueError`), then the publication
+  transaction shall roll back and re-raise: a Candidate snapshot never exists
+  without its selection evidence.
+- **CS-P3** — When the same `scanner_run_id` batch is already stored with identical
+  identity, the write shall be a no-op (returns 0); a conflicting identity raises
+  `universe_twin_shadow_batch_identity_conflict`. Each
 successful sampled scanner run persists the complete same-T0 population plus
 one canonical 4h outcome per observed direction. The compact record maps all
 mechanism cohort labels to that shared outcome, so several labels cannot become
@@ -278,8 +322,9 @@ comparison and is part of the policy identity. Detected regime is frozen once
 into current feature context, Candidate evidence and outcomes; it does not add
 an economic score or automatic directional bias.
 
-The #2917 actionability manifest `supported-mechanism-and-fast-route-before-capacity/v2`
-rotates the existing current policy epoch. The original B amendment rotated identity
+The #2917 actionability manifest (current identity
+`supported-mechanism-and-fast-route-before-capacity/v3`,
+`universe/candidate_selection_authority.py`) rotates the existing current policy epoch. The original B amendment rotated identity
 through its actionability
 contract material and short-control configuration. It does not rewrite A's
 historical golden policy, Context/Planning identity or any persisted evidence.

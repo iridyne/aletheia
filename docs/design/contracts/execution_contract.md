@@ -80,10 +80,13 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
 
 | 模式 | 真实单 | Broker | 位置 |
 |------|--------|--------|------|
-| `bitget_demo` / `okx_demo` / `binance_testnet` | 是(demo/testnet) | Gateway → Coordinator → UTA | `gateway.py` / `execution/coordinator.py` |
-| `bitget/okx/binance_live_limited` | 是(**真实资金**) | Gateway → Coordinator → UTA | `gateway.py` / `execution/coordinator.py` |
+| 模式 | 状态 | Broker | 位置 |
+|------|------|--------|------|
+| `bitget_demo` | **唯一获准新入场的路由**（[Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) `execution_modes`） | Gateway → Coordinator → UTA v3 | `execution/gateway.py` / `execution/coordinator.py` |
+| `okx_demo` / `binance_testnet` | 冻结：不接受新入场；仅保留历史身份与既有敞口的对账/平仓恢复 | 同上 | 同上 |
+| `*_live_limited` | Live 默认关闭；只有 [Live Unlock](live_unlock_contract.md) 的人工解锁可进入，且当前 Entry Plan 不会路由到 Live | 同上 | 同上 |
 
-`_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
+`risk/engine.py::_is_live` 判定 `*_live_limited`。
 
 旧本地模拟入场与成交规则已[归档](../history/local_simulated_risk_execution.md)。
 
@@ -139,17 +142,16 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
 `private_history_retention_days`);profile 不能给出完整的精确读取时证明不可得,系统保持 fail
 closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 profile 中声明这些能力。
 
-### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
+### 3.1 Instrument scope at the adapter boundary
 
-核心逻辑(universe/opportunity/decision/risk)只认 canonical 类型 `spot` / `usdt_futures`,**不关心交易所**;能不能下某类型单是**各 adapter 的能力**,在 adapter 边界声明并路由(owner 原则 2)。
-
-| Adapter | 支持 market_type | 路由要点 | 来源 |
-|---------|-----------------|----------|------|
-| okx | `spot` + `usdt_futures` | UTA profile 处理精确 contract-size、client-id 与 spot/perp 参数；实际可用性仍由 venue facts 与资格约束 | `extensions/exchanges/okx/profile.py` |
-| bitget | profile 声明 `spot` + `usdt_futures` | 只有 UTA v3 一个账户 profile(#3806 删除了 Classic v2 与运行时切换);声明能力不代表 demo 标的或凭据已合格 | `extensions/exchanges/bitget/profile.py` |
-
-> **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
-> 当前 market_type 来自 canonical Candidate/EntryPlan 的 exact instrument；不存在旧 PI fallback 类型选择。
+产品只交易 USDT 本位加密永续（canonical `market_type=usdt_futures`）。现货与 venue 标为
+真实世界资产的永续（Bitget `isRwa=YES`）不进入 universe registry
+（`data/symbols.py`、`universe/registry.py`），因此不会产生 Candidate、Entry Plan 或 Proposal。
+venue 差异（contract size、client-id、保护单参数）只在
+`extensions/exchanges/{venue}/profile.py` 处理；Bitget 只有 UTA v3 一个账户 profile。
+Core 与 Risk 中仍保留的 `spot` 分支是主线不可达的残留，不构成支持声明（收敛见审查证据
+[doc-golden-standard-2026-10-10](../../research/audits/doc-golden-standard-2026-10-10/README.md)）。
+当前 market_type 只来自 canonical Candidate/EntryPlan 的 exact instrument；不存在 fallback 类型选择。
 
 ### 3.2 Symbol Availability Pre-check（标的可用性预检）
 

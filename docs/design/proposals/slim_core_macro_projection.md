@@ -1,6 +1,6 @@
 ---
 id: slim-core-macro-projection
-status: accepted
+status: implemented
 github_issue: 3134
 related_contracts:
   - ../data/data_utilization.md

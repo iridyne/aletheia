@@ -194,8 +194,8 @@ bounded unavailable retries with model/compiler invocation facts retained.
 Frozen identity, geometry and execution-context failures remain terminal for
 that input; no failure is converted into an economic NO_PLAN or unlimited retry.
 
-`anchor-resting-maker` and `anchor-retrace-reclaim` are deterministic compiler
-Profiles. The latter reuses the existing retrace/sweep/reclaim engine and 0.25 ATR
+`grounded-anchor-direct` and `grounded-anchor-retrace-reclaim` are the only
+current deterministic compiler Profiles (`trading/entry_profiles.py`). The latter reuses the existing retrace/sweep/reclaim engine and 0.25 ATR
 semantics under its stable identity; Fast Monitoring never invokes AI. Plan
 activation and execution revalidate the current generation fingerprints, shared
 runtime authority, immutable hashes, and canonical Entry Plan provenance before
@@ -347,22 +347,33 @@ Fast Monitoring status exposes the bounded IDs it actually watches.
 
 `EntryHypothesis` is the sole current model-output contract. It owns the
 qualitative decision and economic reason, mechanism/direction, supplied anchor
-references, entry profile, urgency, risk tier, horizon and evidence references.
+references, entry profile, capture priority, risk tier, horizon and evidence references.
 The Compiler consumes this validated hypothesis directly, including when
 resuming from its immutable checkpoint; no intermediate PlanIntent protocol is
 constructed.
 
 It never owns prices, quantity, notional, leverage, stop, target, expiry,
 slippage, timeout, TriggerSpec parameters, or Risk policy identity. The profile
-and urgency determine the Compiler's final execution fields:
+decides activation and `capture_priority` decides the frozen capture policy
+(`trading/entry_capture.py::CAPTURE_POLICIES`):
 
-| Profile | Urgency | Execution mode | Tactic |
-|---|---|---|---|
-| `grounded-anchor-resting-maker` | `PASSIVE` | `RESTING_MAKER` | `POST_ONLY_LIMIT` |
-| `grounded-anchor-retrace-reclaim` | `PASSIVE` | `TRIGGERED` | `POST_ONLY_LIMIT` |
-| `grounded-anchor-retrace-reclaim` | `BOUNDED_URGENT` | `TRIGGERED` | `OPPOSING_BBO_IOC` |
+| Profile | Activation |
+|---|---|
+| `grounded-anchor-direct` | Immediate |
+| `grounded-anchor-retrace-reclaim` | Conditional (`TRIGGERED`, registered retrace/sweep/reclaim TriggerSpec) |
 
-After the model selects `NO_PLAN`, anchor/profile/urgency fields are
+| `capture_priority` | Frozen `capture_policy_id` | Passive attempt |
+|---|---|---|
+| `PRICE_FIRST` | `exact-anchor-passive-until-plan-terminal/v1` | Post-Only until the Plan is terminal |
+| `MAKER_PREFERRED` | `exact-anchor-passive-then-bounded-ioc/v1` | one 60 s Post-Only attempt, then bounded IOC |
+| `FILL_FIRST` | `bounded-opposing-bbo-ioc/v1` | none; bounded opposing-BBO IOC |
+
+Either profile may compile any capture priority (see
+[Capture compilation](#capture-compilation-contract-3111-stage-2)). The retired
+`execution_urgency` field (`PASSIVE`/`BOUNDED_URGENT`) and the
+`grounded-anchor-resting-maker` profile remain readable in stored Plans only.
+
+After the model selects `NO_PLAN`, anchor/profile/capture fields are
 non-authoritative and canonicalized to null, with risk tier and horizon `NONE`.
 The decision, reason, mechanism, direction and evidence references remain
 unchanged. No execution Plan is produced.
@@ -543,9 +554,9 @@ so old bound inputs remain historical through the normal identity cutover.
 
 ## Executable static feasibility — Gate B / #2899
 
-Planner blocks `spot_short_not_allowed` before market acquisition or inference;
-Compiler and canonical Risk use the same instrument predicate. No market or venue
-substitution occurs. Compiler applies `stop_distance_below_min_floor()` to the
+Only `usdt_futures` instruments reach the Planner (spot never enters the
+registry); the residual `spot_short_not_allowed` block is unreachable on the
+mainline. No market or venue substitution occurs. Compiler applies `stop_distance_below_min_floor()` to the
 closest permitted entry and structural stop before issuing an immutable Plan.
 The existing configuration and published-regime semantics are unchanged; Risk
 rechecks its current floor at execution. Neither entry/stop geometry nor Risk

@@ -37,7 +37,8 @@ Branch coverage is required because the bugs we care about (a fall-through
 window) usually hide behind an untaken branch, not an unexecuted line.
 
 Per-module floors live in `scripts/ci/coverage_floors.py`. They match today's
-measured values. A PR that pushes any module below its floor fails CI. A
+measured values. A PR that pushes any module below its floor fails the local
+coverage lane. A
 PR that raises measured coverage may (optionally, in a follow-up commit)
 ratchet its floor upward.
 
@@ -48,17 +49,17 @@ fails; a new file that touches these boundaries must be added to the
 
 ## How the gate runs
 
-The `review` job in `.github/workflows/ci.yml` runs `pytest --cov` against
-the tests that exercise the boundaries, then:
+Remote CI is retired. `scripts/ci/ci_plan.py` selects the `coverage` lane
+whenever a change touches a measured module or the floors, and
+`scripts/ci/ci_local.py` runs `pytest --cov` against the tests that exercise the
+boundaries, then:
 
 1. `scripts/ci/coverage_floors.py --selftest` (hermetic; asserts the
    percentage math and regression detection).
 2. `scripts/ci/coverage_floors.py` (compares measured coverage to `FLOORS`).
 
-Local reproduction — must stay in sync with the ``Trust-boundary
-coverage floors`` step in ``.github/workflows/ci.yml``. Property tests
-contribute non-trivially to the frozen percentages, so omitting them
-will fail floors that pass in CI:
+Manual reproduction of that lane. Property tests contribute non-trivially to
+the frozen percentages, so omitting them fails the floors:
 
 ```sh
 uv run pytest \
@@ -142,7 +143,7 @@ invariants that are not violated in practice add maintenance noise.
 - **Adding.** Add the file path to `.coveragerc` `include=` and to
   `FLOORS` in `scripts/ci/coverage_floors.py`. Set the floor to the current
   measured value minus 2 – 5 points. Add the test file(s) that exercise
-  it to the `pytest` invocation in `.github/workflows/ci.yml` if not
-  already covered by the transitive imports there.
+  it to the coverage test list in `scripts/ci/ci_plan.py` if not already
+  covered by the transitive imports there.
 - **Removing.** Only if the module is genuinely no longer a trust
   boundary (e.g. it became a pure schema / DTO). Document why in the PR.

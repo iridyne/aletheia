@@ -1,5 +1,7 @@
 # Universe Twin Prospective Shadow Evidence Contract
 
+> **History (moved 2026-10-10).** Retired or superseded design kept as evidence; not current authority. See [design history](README.md).
+
 > Current behavior as of 2026-08-09
 >
 > Authority scorer: `universe-step-v2`

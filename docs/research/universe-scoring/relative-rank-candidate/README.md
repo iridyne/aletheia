@@ -19,9 +19,9 @@ Read in this order:
    transparent challenger approved for V1 observation.
 
 Current behavior and promotion boundaries are owned by the
-[Relative Rank Shadow contract](../../../design/contracts/universe_relative_rank_shadow_contract.md).
+[Relative Rank Shadow contract](../../../design/history/universe_relative_rank_shadow_contract.md).
 The existing Continuous experiment remains owned by the
-[Universe Twin Shadow contract](../../../design/contracts/universe_twin_shadow_contract.md),
+[Universe Twin Shadow contract](../../../design/history/universe_twin_shadow_contract.md),
 the [Experiment Protocol](../../../product/experiments/EXPERIMENT_PROTOCOL.md),
 and the accepted
 [continuous scoring safety Proposal](../../../design/proposals/universe_continuous_scoring_safety.md).

@@ -1,6 +1,6 @@
 ---
 id: slim-core-candidate-publication
-status: accepted
+status: implemented
 github_issue: 3134
 related_contracts:
   - ../contracts/decision_lifecycle_contract.md

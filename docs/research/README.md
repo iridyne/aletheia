@@ -22,6 +22,9 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Documentation golden-standard review — 2026-10-10](audits/doc-golden-standard-2026-10-10/README.md)
+  reviews every current document outside learning/counterfactual against the SDD spec format and the
+  futures-only product scope; per-domain reports, a framework rationale table and owner decisions. Frozen evidence.
 - [Where AstraQuant and VergeX make money — 2026-10-09](trading-strategy/COMPETITOR_PNL_SOURCE_ASTRAQUANT_VERGEX_2026-10-09.md)
   finds no verifiable net-of-cost user profit for either; decomposes the only ledger (an owner-run AstraQuant demo,
   43 trades) into market beta, demo-price distortion and concentration; documents that platform revenue comes from

@@ -1,6 +1,7 @@
 ---
 id: universe-continuous-scoring-safety
-status: accepted
+status: superseded
+superseded_by: ../contracts/candidate_selection_utility_contract.md
 related_contracts:
   - ../contracts/learning_contract.md
   - ../contracts/filter_evidence_contract.md
@@ -9,6 +10,9 @@ supersedes: []
 ---
 
 # Universe Continuous Scoring Safety Proposal
+
+> **Superseded (2026-10-10).** Candidate Selection Utility is the sole selection
+> authority; the continuous-curve safeguards here were never the production selector.
 
 > Proposal status: accepted design, not an implementation or runtime claim.
 >
