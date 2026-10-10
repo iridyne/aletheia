@@ -1,89 +1,135 @@
 # Market Data Coverage and Collector Health Contract
 
-## Purpose and current scope
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `MC` · **Owner code:** `core/aletheia/data/data_coverage.py::get_data_coverage_report`, `core/aletheia/data/collector_health.py::record_collector_status`
 
-This contract owns the operator-facing distinction between collector execution
-health and persisted market-data coverage. It does not define trading, business,
-or infrastructure readiness.
+## Scope
+
+This contract owns the operator-facing distinction between collector execution health (did
+each scheduled collector run, and how did it finish) and persisted market-data coverage
+(what retained data is actually present and recent in SQLite). Both are diagnostic inputs
+for operators and the Overview page around the trading mainline; neither defines trading,
+business or infrastructure readiness, and neither authorizes a strategy, Risk decision, order
+or Live operation. Ticker and `MarketSnapshot` value validity belong to the
+[OHLCV Provider Result Contract](ohlcv_provider_result_contract.md#ticker-results).
 
 ## Entry points
 
-- `GET /api/market/collector-health` reports whether each scheduled collector
-  ran and how its latest attempt finished.
-- `GET /api/market/data-coverage` reports what retained data is actually present
-  and recent enough in SQLite.
-- Overview / System displays the two reports as separate rows.
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/server/routes/data.py::get_market_collector_health` | API route `GET /api/market/collector-health` | Overview / System collector row |
+| `core/aletheia/server/routes/data.py::get_market_data_coverage` | API route `GET /api/market/data-coverage` | Overview / System coverage row |
+| `core/aletheia/data/collector_health.py::record_collector_status` | call | `core/aletheia/agent_runtime/scheduler.py` collector dispatch |
 
-## Durable state and consumers
+## Durable state
 
-Collector health uses the bounded `collector_health_state` SQLite table, with
-one latest row per known collector domain. Data coverage reads the authoritative
-market-data tables for orderbook, primary funding, primary open interest,
-long/short ratio, liquidations, macro, on-chain, and OHLCV data.
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `collector_health_state` (one latest row per domain in `COLLECTOR_CADENCE_SEC`) | `core/aletheia/data/collector_health.py::record_collector_status` | `get_collector_health_report`, `core/aletheia/data/derivatives_facts.py::derivatives_readiness` | replaceable latest row; counters monotonic |
+| `collector_health_state.derivatives_coverage_json` | `record_collector_status` (from the `derivatives_comparison` collector result; kept from the previous row when absent) | `derivatives_readiness` (per-venue listing/attempt facts) | replaceable |
+| `orderbook_snapshots`, `funding_rate_snapshots`, `open_interest_snapshots`, `liquidation_events`, `macro_snapshots`, `onchain_snapshots`, `market_ohlcv` | their collectors | `get_data_coverage_report` (read-only census) | not written by this capability |
+| in-process coverage cache | `get_data_coverage_report` | the coverage route | replaceable, 30-second TTL |
 
-The reports are diagnostic inputs for operators and the Overview page. They do
-not authorize a strategy, Risk decision, order, or Live operation.
+## Requirements
 
-## Observable result
+### MC-C01 Collector health reports execution facts only
 
-Collector health exposes the latest raw status, cadence, attempt/success facts,
-problem counters, overdue state, and independently established connectivity
-attribution.
+`When a scheduled collector finishes a turn, the collector health writer shall record the latest raw status, cadence, attempt/success timestamps and problem counters for that domain, and the report shall expose overdue state and independently established connectivity attribution.`
 
-Data coverage exposes retained row, symbol, and source counts; newest observation;
-age; configured freshness limit; criticality; and one of `fresh`, `stale`,
-`empty`, `invalid`, or `idle` for every covered domain. Its overall status is
-`healthy`, `attention`, or `empty`.
+- WHEN a collector completes with `empty` THEN the status is recorded as an honest completed outcome, not a failure.
+- WHEN a domain is not scheduled for more than three cadences THEN it is `overdue`; WHEN it is scheduled but only records `skipped_budget` for more than three cadences THEN it is `starved` (from `last_attempt_at`), with raw status and counters unchanged.
 
-## Invariants and trust boundaries
+Evidence: `core/aletheia/data/collector_health.py::record_collector_status`, `get_collector_health_report`.
 
-- A completed collector call does not prove that a dataset is populated or
-  fresh.
-- A fresh retained row does not prove economic correctness or business
-  readiness.
-- `empty` is an honest completed collector outcome; `idle` is an honest
-  event-stream coverage state.
-- Raw collector facts are not rewritten when a shared connectivity incident is
-  identified; attribution is presentation metadata.
-- Coverage is a retained-table census, not requested-scope completeness or a
-  publication-generation guarantee.
-- A provider may report ticker success only with a canonical `Ticker` whose
-  required price/volume/change facts are finite and in-domain; optional 24h
-  extremes, when present, are finite positive values and ordered.
-- Batch volume ranking omits rows with non-finite or impossible ticker price,
-  change, or volume facts. It never turns those values into ranking evidence.
-- `MarketSnapshot` rejects non-finite or impossible price, volume, and 24h
-  extreme values before persistence; this is defense in depth, not a SQLite
-  migration or a replacement for provider validation.
-- Neither report changes `/_infra/livez`, `/_infra/readyz`, Risk, Execution
-  Gateway, or Live permissions.
+### MC-C02 Connectivity attribution never rewrites raw facts
 
-## Failure and recovery semantics
+`While a confirmed shared external-connectivity incident is unavailable or recovering, the collector health report shall group dependent collector failures under that incident as presentation metadata without converting them into source success or rewriting the stored raw status.`
 
-Collector failures and timeouts remain visible until a later scheduled result
-updates that domain. Confirmed shared connectivity incidents group dependent
-failures without converting them into source success.
+- WHEN connectivity is `unavailable` and a collector failed THEN the row is shown `blocked_by_connectivity` with `dependent_on="external_connectivity"` while `last_status` stays `failed`.
 
-Coverage classifies missing rows as `empty`, malformed newest timestamps as
-`invalid`, old decision-critical data as `stale`, and old or absent optional
-event data as `idle`. Normal reads use the existing 30-second in-process cache;
-the response exposes scan timing through `Server-Timing`.
+Evidence: `core/aletheia/data/collector_health.py::_infrastructure_incident`.
 
-## Executable evidence
+### MC-C03 Coverage classifies every domain
 
-- `tests/test_collector_health.py` proves bounded status, overdue, connectivity
-  attribution, and recovery presentation.
-- `tests/test_market_data_coverage.py` proves fresh, stale, empty, and idle
-  coverage classification.
-- `tests/test_crypto_fallback.py`, `tests/test_market_data_venue_health.py`,
-  `tests/test_instrument_aware_collectors.py`, and
-  `tests/test_universe_features.py` prove ticker and batch-ranking integrity.
-- `tests/test_market_routes.py` proves the two reports remain separate API
-  surfaces and that data coverage exposes its timing facts.
+`The coverage report shall return, for each of orderbook, primary funding, primary open interest, long/short ratio, liquidations, macro, on-chain and OHLCV, the retained row, symbol and source counts, newest observation, age, freshness limit, criticality and exactly one state of fresh, stale, empty, invalid or idle.`
 
-## Known gaps
+- WHEN a table has no rows THEN the state is `empty` (or `idle` for optional event domains).
+- WHEN the newest timestamp is malformed THEN the state is `invalid`.
+- WHEN decision-critical data is older than its limit THEN `stale`; optional event data (long/short ratio, liquidations, on-chain) that is old or absent is `idle`.
 
-There is no generic requested/succeeded/failed coverage percentage, publication
-ID, or generation pointer because no named derived dataset currently requires
-that contract. Such facts must be added at the producing dataset boundary, not
-inferred from retained row counts.
+Evidence: `core/aletheia/data/data_coverage.py::DOMAIN_DEFINITIONS`, `_summarize_domain`.
+
+### MC-C04 Overall status
+
+`The coverage report shall set its overall status to empty when every domain is empty, attention when any domain is empty, invalid or stale, and healthy otherwise.`
+
+Evidence: `core/aletheia/data/data_coverage.py::_build_report`.
+
+### MC-C05 Primary derivatives exclude comparison sources
+
+`The coverage report shall count as primary funding, open interest and long/short ratio only rows whose exchange is not one of the comparison sources hyperliquid, hyperliquid_predicted or coinalyze and whose metadata is not marked observation_only.`
+
+- WHEN only Hyperliquid funding rows are fresh THEN `primary_funding` is not fresh.
+
+Evidence: `core/aletheia/data/data_coverage.py::_PRIMARY_DERIVATIVE_WHERE`, `core/aletheia/storage/repositories.py::LEGACY_DERIVATIVES_WHERE`.
+
+### MC-C06 Coverage is a retained-table census
+
+`The coverage report shall describe retained rows only and shall not claim requested-scope completeness, publication generation, economic correctness or business readiness.`
+
+- WHEN a collector call completed THEN that alone does not make a domain `fresh`; WHEN a row is fresh THEN that alone proves no economic correctness.
+
+Evidence: `core/aletheia/data/data_coverage.py::_query_domain`.
+
+### MC-C07 Reads are cached and timed
+
+`When the coverage route is served, the system shall answer from the 30-second in-process cache when it is warm and shall expose scan timing in the Server-Timing response header.`
+
+Evidence: `core/aletheia/data/data_coverage.py::_CACHE_TTL_SEC`, `core/aletheia/server/routes/data.py::get_market_data_coverage`.
+
+### MC-C08 Reports are separate and grant no authority
+
+`The collector health and data coverage reports shall remain separate API surfaces and shall not change /_infra/livez, /_infra/readyz, Risk, Execution Gateway or Live permissions.`
+
+Evidence: `core/aletheia/server/routes/data.py` (two routes, no writes outside `collector_health_state`).
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| Collector failure or timeout | stays visible until a later scheduled result updates the domain | `last_status`, `consecutive_problems`, alert after 3 | failure, never success |
+| Shared connectivity incident | dependent failures grouped | `blocked_by_connectivity` | raw status unchanged |
+| Domain table has no rows | classified | `empty` / `idle` | `empty`, never `0`-row healthy |
+| Newest timestamp malformed or in the future | classified | `invalid` | not fresh |
+
+## Authority
+
+Diagnostic only: may write `collector_health_state`; may never change readiness probes,
+Risk, Gateway submission or Live unlock.
+
+## Verification
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| MC-C01, MC-C02 | `tests/test_collector_health.py` |
+| MC-C03 – MC-C06 | `tests/test_market_data_coverage.py` |
+| MC-C07, MC-C08 | `tests/test_market_routes.py` |
+
+### Known conformance gaps
+
+- Coverage marks `macro` decision-critical (`critical=True` in
+  `core/aletheia/data/data_coverage.py::DOMAIN_DEFINITIONS`), but the Entry Planner context
+  (`core/aletheia/trading/entry_analysis.py`) reads no macro, on-chain or liquidation data; macro's
+  current readers are Regime, persona sizing and Gateway attribution
+  ([Macro Source-Time Contract](macro_source_time.md)).
+- With `market_data.enable_long_short_ratio` (default `True`), long/short and top-trader ratios
+  are fetched from Binance USD-M (`extensions/data/collectors/derivatives.py::DerivativesCollector.collect`),
+  a frozen venue under the product scope.
+
+## Decision references
+
+- There is no generic requested/succeeded/failed coverage percentage, publication ID or generation
+  pointer, because no named derived dataset requires one; such facts belong at the producing
+  dataset boundary, not inferred from row counts.
+- Budget-skip starvation warning: #3089 (`core/aletheia/data/collector_health.py`).
