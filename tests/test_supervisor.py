@@ -60,6 +60,10 @@ def test_child_source_roots_preserve_frozen_launch_contract(tmp_path, monkeypatc
     else:
         assert runner._spawn_server(cfg, port=8788) == 0
         assert captured["command"][:4] == ["python-real", "-m", "uvicorn", "aletheia.server.app:app"]
+        # The supervised backend is the production runtime: debug logging filled
+        # the host's disk (3 GB of logs on Fedora) and its memory with request noise.
+        command = captured["command"]
+        assert command[command.index("--log-level") + 1] == "info"
         assert captured["env"]["ALETHEIA_RUNTIME_PORT"] == "8788"
     assert captured["cwd"] == str(root)
     assert captured["env"]["PYTHON_PATCH"] == "1"
