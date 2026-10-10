@@ -1000,7 +1000,7 @@ def skip_xfail_and_data_guard_failures() -> list[str]:
 # ``docs/design/contracts/`` always wins over a same-stem Proposal: an executable
 # claim answers to approved behavior, never to a design that does not exist yet.
 CONTRACT_DOC_ALIASES = {
-    "PI_OPERATOR_DESIGN_DECISIONS": "docs/design/operator/PI_OPERATOR_DESIGN_DECISIONS.md",
+    "PI_OPERATOR_DESIGN_DECISIONS": "docs/design/history/PI_OPERATOR_DESIGN_DECISIONS.md",
     "active_runtime_scope": "docs/product/ACTIVE_RUNTIME_SCOPE.md",
     "api_reference": "docs/design/api/api_reference.md",
     "candidate_selection_utility": "docs/design/contracts/candidate_selection_utility_contract.md",
@@ -1012,7 +1012,7 @@ CONTRACT_DOC_ALIASES = {
     "learning": "docs/design/contracts/learning_contract.md",
     "learning_evolution": "docs/design/proposals/learning_evolution.md",
     "learning_observability": "docs/design/proposals/learning_observability.md",
-    "operator_layer": "docs/design/operator/operator_layer.md",
+    "operator_layer": "docs/design/history/operator_layer.md",
     "risk_engine": "docs/design/contracts/risk_engine_contract.md",
 }
 # Contract names with no document anywhere in the repository: the section

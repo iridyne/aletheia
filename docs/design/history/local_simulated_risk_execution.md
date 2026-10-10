@@ -15,7 +15,7 @@ Paper Internal 的入场、撮合、账户现金、保护与恢复机制已退�
 
 ## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关与 6b)
 
-> ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
+> ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
 > 以下 20 个主关卡及表内子关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
 > 历史:本表曾止于 16 关;6b(跨 broker/池同标的去重)、17(账户杠杆比)、18(爆仓缓冲)、19(单标的累计名义)为后续追加,**2026-06-30 补齐契约**(代码↔spec 早已存在,FL-S08/S09 守 17/18;契约滞后已修)。
 > **四个新增关卡的失败 token(spec RE-S04b 锁定,floor ≥ 20)**:

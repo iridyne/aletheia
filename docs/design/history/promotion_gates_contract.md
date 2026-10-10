@@ -39,7 +39,7 @@ FORWARD_TRANSITIONS = {
 ```
 任何非终态可转 `retired`/`deprecated`(逃生口)。
 
-**[ARCH_GUIDE 第八章](../architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 原则**:自动推进止于 `paper_candidate`,激活需门检查。
+**[ARCH_GUIDE 第八章](SYSTEM_ARCHITECTURE_GUIDE.md) 原则**:自动推进止于 `paper_candidate`,激活需门检查。
 
 ---
 

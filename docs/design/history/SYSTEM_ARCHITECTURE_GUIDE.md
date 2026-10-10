@@ -1,5 +1,7 @@
 # Aletheia Trading OS — 系统架构全景图
 
+> **History (moved 2026-10-10).** Retired or superseded design kept as evidence; not current authority. See [design history](README.md).
+
 > 本文档是解释性导览，不是能力或运行状态权威。
 > 当前支持边界只认 [`ACTIVE_RUNTIME_SCOPE.md`](../../product/ACTIVE_RUNTIME_SCOPE.md)
 > 与 [`CAPABILITY_GROUND_TRUTH.md`](../../product/CAPABILITY_GROUND_TRUTH.md)；
@@ -21,7 +23,7 @@
 
 Market Observer 与 Python Operator assessment 已退役（#3463 / #3134）：不再注册调度任务、
 不再有 fallback writer，只保留历史 assessment 的只读检视。旧记录或旧表名不构成恢复生产的许可；
-活动调度身份以 [System Map](SYSTEM_MAP.md) 为准。
+活动调度身份以 [System Map](../architecture/SYSTEM_MAP.md) 为准。
 
 **核心原则**：System Operator 是唯一受支持的入场策略决策主体；Risk Engine
 和 Execution Gateway 仍是独立硬边界，任何组件都不能绕过它们。
@@ -131,7 +133,7 @@ Testnet 及对应的 Live Limited；注册模式不代表该账户已经配置�
 
 Order 提交与真实成交是不同事实。只有匹配的交易所私有成交证据才能驱动 Fill 和 Position
 物化；缺失成交或费用证据时必须保留未决或不可用状态。历史本地模拟执行定义和原流程图
-已[归档](../history/diagrams/README.md)，不能作为当前账户或成交资格。
+已[归档](diagrams/README.md)，不能作为当前账户或成交资格。
 
 ---
 
@@ -198,7 +200,7 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 
 ## 历史交易流程图
 
-旧 Operator 入场与本地模拟执行全流程图保存在[历史图集](../history/diagrams/README.md)。
+旧 Operator 入场与本地模拟执行全流程图保存在[历史图集](diagrams/README.md)。
 当前执行链路见第五章。
 
 ---
@@ -218,6 +220,6 @@ Operator assessment 及其配置写入、调度、手动触发已退役，仅保
 
 ## 附录：定时任务一览
 
-活动调度身份与静态导航只有一份权威：[System Map](SYSTEM_MAP.md) 的任务表；它只声明任务身份，
+活动调度身份与静态导航只有一份权威：[System Map](../architecture/SYSTEM_MAP.md) 的任务表；它只声明任务身份，
 不声明运行健康。当前调度与运行状态查 `uv run aletheia control status --json`（只读快照）或
 `aletheia doctor`，静态表不承载运行状态。

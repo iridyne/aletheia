@@ -35,6 +35,10 @@ reactivating a historical document in place.
 
 - [Local simulated position observation](local_simulated_position_observation.md): retired simulated path recovery and protection-derived observation identity.
 
+- [Universe Twin shadow experiment](universe_twin_shadow_contract.md) and [relative-rank shadow](universe_relative_rank_shadow_contract.md): prospective ranking experiments whose producers were removed on 2026-08-11 (#900); the Twin tables are now written only by Candidate Selection Utility.
+- [Python System Operator design decisions](PI_OPERATOR_DESIGN_DECISIONS.md) and [operator layer concept](operator_layer.md): the retired Python Operator loop; the current Operator is [operator-shell](../architecture/OPERATOR_SHELL.md).
+- [System architecture guide (2026-07)](SYSTEM_ARCHITECTURE_GUIDE.md): whole-system narrative that still describes retired Ranker/Observer/Python-Operator stages; current navigation is [SYSTEM_MAP](../architecture/SYSTEM_MAP.md).
+
 - [Retired entry-decision lifecycle](decision_lifecycle_retired_entry.md): TradingDecision, PiDecision, `signal_pending` and admission-slot semantics of the retired Ranker/`paper_trader` entry path.
 
 - [Former Paper Internal development unblock runbook](paper-trading-dev-unblock.md): historical commands and repair guidance; not a current operating procedure.
@@ -78,7 +82,7 @@ reactivating a historical document in place.
 - [Retired observed-stocks control](observed_stocks_settings_control.md) and [tokenized-equity config alias](observed_xstocks_settings_control.md): removed duplicate settings inputs.
 - [Archived SHA-bound UTA Qualification](uta_qualification.md): retired by #3035.
 - [Former Promotion Gates contract](promotion_gates_contract.md): retired strategy-promotion mechanism.
-- [June 2026 Operator specs](operator-specs/): merge postmortem and PI Operator dual-process design/audit/crosswalk.
+- [June 2026 Operator specs](operator-specs): merge postmortem and PI Operator dual-process design/audit/crosswalk.
 
 Moved here on 2026-10-09 (each file carries a dated header note):
 

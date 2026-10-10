@@ -214,7 +214,7 @@ This research does not establish that:
 - [`aletheia/universe/features.py`](../../../../core/aletheia/universe/features.py) — Universe feature construction.
 - [`aletheia/data/data_coverage.py`](../../../../core/aletheia/data/data_coverage.py) and [`aletheia/data/collectors/derivatives.py`](../../../../extensions/data/collectors/derivatives.py) — source freshness and derivative collection.
 - [Continuous curve specification](../02_continuous_curve_specification_2026-08-07.md), [adversarial review](../03_adversarial_review_2026-08-07.md), and [reference notes](../04_references_and_practical_notes.md).
-- [Continuous scoring safety Proposal](../../../design/proposals/universe_continuous_scoring_safety.md) and [Twin Shadow contract](../../../design/contracts/universe_twin_shadow_contract.md).
+- [Continuous scoring safety Proposal](../../../design/proposals/universe_continuous_scoring_safety.md) and [Twin Shadow contract](../../../design/history/universe_twin_shadow_contract.md).
 
 ### Open-source and vendor references
 

@@ -1,5 +1,7 @@
 # Aletheia Trading OS — System Operator Layer Design
 
+> **History (moved 2026-10-10).** Retired or superseded design kept as evidence; not current authority. See [design history](README.md).
+
 > #3134 retirement (2026-09-23): Python `pi_operator_loop` and its configuration
 > writer/fallback controls are removed. Older Python-loop examples below are
 > historical design only. Current authority is [Agent Contracts](../contracts/agent_contracts.md).
@@ -76,8 +78,8 @@
 >
 > **2026-06-10 详细化补充**：本文继续承担**概念设计**角色。针对当前 repo 的**双进程实现转换蓝图**，
 > 权威细化文档已移至：
-> - [specs/2026-06-10-pi-operator-agent-dual-process-design.md](../history/operator-specs/2026-06-10-pi-operator-agent-dual-process-design.md)
-> - 参考文件覆盖矩阵：[specs/2026-06-10-pi-operator-agent-design-crosswalk.md](../history/operator-specs/2026-06-10-pi-operator-agent-design-crosswalk.md)
+> - [specs/2026-06-10-pi-operator-agent-dual-process-design.md](operator-specs/2026-06-10-pi-operator-agent-dual-process-design.md)
+> - 参考文件覆盖矩阵：[specs/2026-06-10-pi-operator-agent-design-crosswalk.md](operator-specs/2026-06-10-pi-operator-agent-design-crosswalk.md)
 >
 > （原路径 `superpowers/specs/` 已被废弃；上述文件对应 `docs/design/specs/` 目录，
 > 由 `docs/design/README.md` 中的 frozen-sweep 分类保留。

@@ -13,10 +13,10 @@ Every Contract should identify:
 - executable evidence for current behavior.
 
 Future targets, unwired components, and desired guarantees belong in
-[`../proposals/`](../proposals/). Known mismatches belong in GitHub Issues. A
+[`../proposals/`](../proposals). Known mismatches belong in GitHub Issues. A
 Contract may link to either, but must not express them as current behavior.
 
-Legacy or retired mechanisms belong in [`../history/`](../history/).
+Legacy or retired mechanisms belong in [`../history/`](../history).
 
 Use [template.md](template.md) for new Contracts. Contract changes and their
 executable claims must remain aligned, but claim conformance does not determine
@@ -104,10 +104,6 @@ every declared consumer in the same change — is owned by the
 [Status Surface Contract](status_surface_contract.md). Its producer side (the
 supervised TypeScript operator process) is described in
 [The Operator runtime](../architecture/OPERATOR_SHELL.md).
-
-The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
-owns the current non-authoritative continuous-score evidence, allocation replay,
-identity, persistence, and retention boundary.
 
 The [Trading Mandate Contract](trading_mandate_contract.md) owns the single
 optional observe-only mandate's canonical identity, deterministic fit evidence,

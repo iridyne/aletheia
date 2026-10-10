@@ -6,7 +6,7 @@
 | Folder | Use |
 |---|---|
 | `source/` | D2 source files for the current diagrams |
-| `rendered/` | SVG renders used by [SYSTEM_ARCHITECTURE_GUIDE.md](../design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md) |
+| `rendered/` | SVG renders used by [SYSTEM_ARCHITECTURE_GUIDE.md](../design/history/SYSTEM_ARCHITECTURE_GUIDE.md) |
 
 ## Agent Rule
 

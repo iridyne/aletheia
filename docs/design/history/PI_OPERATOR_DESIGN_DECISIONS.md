@@ -1,5 +1,7 @@
 # System Operator 设计决策书
 
+> **History (moved 2026-10-10).** Retired or superseded design kept as evidence; not current authority. See [design history](README.md).
+
 > **#3134 retirement (2026-09-23):** The Python assessment/config-action loop,
 > its cron/manual triggers and fallback selector are retired. References to that
 > loop and its proposed event triggers below are historical, not active support.
@@ -14,7 +16,7 @@
 > `backtest_orchestrator`、Optuna/RuleSet 策略生成或策略晋级的内容均为历史设计背景。
 > 规则引擎已于 2026-07-02 删除；当前 System Operator 不再触发 strategy_designer、
 > backtest 或 Optuna sweep。当前有效边界见 `agent_contracts.md`；策略晋级门已退役
-> （[history](../history/promotion_gates_contract.md)）。
+> （[history](promotion_gates_contract.md)）。
 
 ---
 

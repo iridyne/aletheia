@@ -91,7 +91,7 @@ Risk、Execution、凭证、Agent 权限与 Live 开关的改动边界只在
 
 ## 深度阅读
 
-- 架构全景（8章）→ [`docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md`](SYSTEM_ARCHITECTURE_GUIDE.md)
+- 历史架构全景（含已退役组件）→ [`docs/design/history/SYSTEM_ARCHITECTURE_GUIDE.md`](../history/SYSTEM_ARCHITECTURE_GUIDE.md)
 - 数据模型 → [`docs/design/data/data_model.md`](../data/data_model.md)
 - Agent 契约 → [`docs/design/contracts/agent_contracts.md`](../contracts/agent_contracts.md)
 - 信任边界规则 → [`docs/governance/policies/trust_and_change_control.md`](../../governance/policies/trust_and_change_control.md)

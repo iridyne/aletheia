@@ -5,10 +5,10 @@
 > thing, what may it do, how is it kept alive, and how do I diagnose it".
 >
 > **What this is not**: the operator's *design history*. The concept document is
-> [`../operator/operator_layer.md`](../operator/operator_layer.md), which opens
+> [`../history/operator_layer.md`](../history/operator_layer.md), which opens
 > with its own warning that it is not implementation status. Anything about the
 > retired Python assessment loop lives there and in
-> [`../history/`](../history/).
+> [`../history/`](../history).
 
 ## 1. What it is, in one paragraph
 
@@ -112,7 +112,7 @@ allowlisted, and the allowlist may not name anything dead.
 - [Status Surface Contract](../contracts/status_surface_contract.md) — how the
   operator's state and the other status inputs become what the UI shows, and the
   coupling rule that keeps the two ends of this seam moving together.
-- [System Map](../architecture/SYSTEM_MAP.md) — where the code lives.
+- [System Map](SYSTEM_MAP.md) — where the code lives.
 - [Cross-platform service environment](../../operations/deployment/CROSS_PLATFORM_SERVICE_ENVIRONMENT.md)
   — supervision and `ALETHEIA_OPERATOR_SHELL_ROOT`.
 - `operator_layer.md` — the concept/history document this one deliberately is not.

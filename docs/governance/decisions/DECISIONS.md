@@ -646,7 +646,7 @@ Operator Layer 采用 **dual-process** 架构:
 ### Consequences
 
 - 本地设计 source of truth 收口为:
-  - `docs/design/operator/operator_layer.md` = 概念层
+  - `docs/design/history/operator_layer.md` = 概念层
   - `docs/design/history/operator-specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程蓝图
   - `docs/design/history/operator-specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 参考文件覆盖矩阵
 - 后续 implementation plan 必须按 dual-process 拆 Track 0-9,不能回退成单进程 quick fix
@@ -1022,7 +1022,7 @@ Aletheia 已完整自建（operator-shell 自身已是 LLM agent runtime）+ 引
 
 ### References
 
-- 三组件区分图：`docs/design/operator/operator_layer.md` §[必看] 警告框
+- 三组件区分图：`docs/design/history/operator_layer.md` §[必看] 警告框
 - memory：`aletheia-pi-agent-full-build-decision`（含 A2/A4 误报根因详述）
 - 历史设计归档：`docs/design/history/operator-specs/2026-06-10-pi-operator-agent-design-crosswalk.md`
 

@@ -110,9 +110,25 @@ strength without an invented percentile.
 
 ## Persistence and historical evidence
 
-The target path reuses `universe_twin_shadow_batches`,
-`universe_twin_shadow_records`, and `filter_candidate_outcomes`; it creates no
-second Candidate, Outcome, experiment, scheduler, or database platform. Each
+Candidate Selection Utility is the sole current writer of
+`universe_twin_shadow_batches` and `universe_twin_shadow_records` (the table names
+are inherited from the retired Twin shadow experiment,
+[history](../history/universe_twin_shadow_contract.md)), together with
+`filter_candidate_outcomes`. It creates no second Candidate, Outcome, experiment,
+scheduler, or database platform.
+
+- **CS-P1** — When a Universe refresh publishes (or reuses) a Candidate snapshot,
+  `universe/service.py` shall write the selection bundle through
+  `insert_universe_twin_shadow_bundle(..., min_interval_sec=0)` inside the same
+  `_atomic_universe_publication()` transaction as the snapshot; there is no
+  separate 55-minute cadence.
+- **CS-P2** — If the bundle fails validation (count, scanner-run, capture-time,
+  direction or outcome-identity mismatch → `ValueError`), then the publication
+  transaction shall roll back and re-raise: a Candidate snapshot never exists
+  without its selection evidence.
+- **CS-P3** — When the same `scanner_run_id` batch is already stored with identical
+  identity, the write shall be a no-op (returns 0); a conflicting identity raises
+  `universe_twin_shadow_batch_identity_conflict`. Each
 successful sampled scanner run persists the complete same-T0 population plus
 one canonical 4h outcome per observed direction. The compact record maps all
 mechanism cohort labels to that shared outcome, so several labels cannot become

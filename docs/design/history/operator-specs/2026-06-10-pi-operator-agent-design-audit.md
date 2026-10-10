@@ -67,7 +67,7 @@ Required evidence:
 
 Evidence:
 
-- [operator_layer.md](../../operator/operator_layer.md)
+- [operator_layer.md](../operator_layer.md)
 
 Status:
 
@@ -188,7 +188,7 @@ Required conclusion:
 Evidence:
 
 - dual-process spec `§14`
-- conceptual design additions in [operator_layer.md](../../operator/operator_layer.md)
+- conceptual design additions in [operator_layer.md](../operator_layer.md)
 - decision record in [DECISIONS.md](../../../governance/decisions/DECISIONS.md)
 
 Status:
