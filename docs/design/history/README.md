@@ -35,6 +35,8 @@ reactivating a historical document in place.
 
 - [Local simulated position observation](local_simulated_position_observation.md): retired simulated path recovery and protection-derived observation identity.
 
+- [Retired entry-decision lifecycle](decision_lifecycle_retired_entry.md): TradingDecision, PiDecision, `signal_pending` and admission-slot semantics of the retired Ranker/`paper_trader` entry path.
+
 - [Former Paper Internal development unblock runbook](paper-trading-dev-unblock.md): historical commands and repair guidance; not a current operating procedure.
 
 - [Previous local-exchange capability review](local_simulated_capability_review.md): original capability labels and evidence, superseded by the external-account scope.
