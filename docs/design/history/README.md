@@ -94,3 +94,39 @@ Moved here on 2026-10-09 (each file carries a dated header note):
 - [Retired knowledge consumers](knowledge_retired_entry_consumers.md): former Ranker weighting and Operator entry-prompt injection (knowledge_contract §8.1/§8.2).
 - [Retired shadow_trades write path](shadow_trades_write_path.md): former shadow writer/resolver entry points and CF-I02/I04/I05/I06 (#3704).
 - [Retired Ranker / PaperTrader filter-evidence rules](ranker_paper_trader_filter_evidence.md): former batch selection, Stage E record and completion criteria (filter_evidence_contract §7/§9/§11).
+
+## Text moved out of current documents on 2026-10-10
+
+Verbatim passages removed when the current Contracts and operations docs were rewritten
+into the golden-standard form; see the [review evidence](../../research/audits/doc-golden-standard-2026-10-10/README.md).
+
+- [Agent Contracts — retired, duplicated and summarized sections](agent_contracts_retired_sections.md)
+- [Audit Chain Contract — retired and historical sections](audit_chain_retired_sections.md)
+- [Candidate Selection Utility — superseded contract text](candidate_selection_utility_superseded_passages.md)
+- [History snapshot: `data_collector_health.md` before the 2026-10-10 rewrite](data_collector_health.md)
+- [History snapshot: `data_layer.md` before the 2026-10-10 rewrite](data_layer_2026-10-10.md)
+- [History snapshot: `data_model.md` before the 2026-10-10 rewrite](data_model_reference_2026-10-10.md)
+- [Decision Lifecycle — superseded contract text](decision_lifecycle_superseded_passages.md)
+- [Deployment — retired and superseded sections](deployment_retired_sections.md)
+- [Derivatives Economic Semantics: convergence narrative](derivatives_semantics_convergence_notes.md)
+- [Entry Plan Contract: retired and superseded passages](entry_plan_contract_superseded_passages.md)
+- [Entry Plan DRAFT: ATR-relative stop-floor policy](entry_plan_stop_floor_draft.md)
+- [Execution contract: retired narrative](execution_contract_retired_narrative.md)
+- [Filter Evidence — retired entry-chain text](filter_evidence_retired_chain.md)
+- [jj workspace playbook — retired sections](jj_workspace_playbook_retired_sections.md)
+- [LLM Inference Harness Contract — retired and superseded text](llm_inference_harness_retired_sections.md)
+- [History snapshot: `market_data_observability.md` before the 2026-10-10 rewrite](market_data_observability.md)
+- [Observation Experiment Ownership V2 Migration Contract (pre-2026-10-10 text)](observation_experiment_ownership_v2_migration.md)
+- [Observation Lab Joint Backup / Restore Contract](observation_lab_backup_contract.md)
+- [Observation Lab v1 Contract (pre-2026-10-10 text)](observation_lab_retired_text.md)
+- [Observation Lab v1 — Current Design](observation_lab_v1_design.md)
+- [Persistence Contract — retired and historical sections](persistence_recovery_retired_sections.md)
+- [Profit-loop, Profit-gradient and trade-rationale contract text (moved)](profit_loop_and_rationale_retired_text.md)
+- [History snapshot: `RETENTION_POLICY.md` before the 2026-10-10 rewrite](retention_policy_2026-10-10.md)
+- [Risk Engine, Kill Conditions and Live Unlock — retired contract narrative](risk_kill_live_contract_narrative.md)
+- [Scheduler Contract — retired, target and duplicated sections](scheduler_contract_retired_sections.md)
+- [Serenity Lens Contract — retired and historical sections](serenity_contract_retired_sections.md)
+- [Settings switch inventory (retired copy)](settings_control_switch_inventory.md)
+- [Technical Analysis Contract: retired and unwired passages](technical_analysis_retired_sections.md)
+- [Trading Diagnostics — legacy Opportunity/Ranker funnel view](trading_diagnostics_legacy_funnel.md)
+- [Retired `.bl-*` Blotter primitives](ui_design_system_retired_bl_classes.md)
