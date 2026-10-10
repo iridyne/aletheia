@@ -44,7 +44,6 @@ class TestP0AutoPromote:
             assessed_by="deterministic_evaluator",
             confidence_score=85,
             asset_class="crypto",
-            market_type="spot",
         )
         repo.insert_serenity_opportunity(opp)
 

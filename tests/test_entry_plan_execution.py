@@ -179,7 +179,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     if school == "serenity":
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
         from aletheia.storage.models import UniverseMember
-        theme, opportunity = _serenity_publication_source(market_type)
+        theme, opportunity = _serenity_publication_source()
         research_id = opportunity.id
         [candidate_id] = publish_serenity_candidates(theme.id, [research_id])
         candidate = UniverseMember.model_validate(repo.get_candidate(candidate_id))
