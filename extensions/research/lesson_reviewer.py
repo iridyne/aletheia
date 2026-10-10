@@ -9,28 +9,25 @@ This agent closes the chain WITHOUT hard-coding low-dimensional symbol/direction
 blocks (an explicit owner constraint — see negative-feedback design). Instead it
 is a high-dimensional, evidence-based, fully-automatic, *overturnable* reviewer:
 
-  Step A (overturn): re-judge every already-accepted lesson against fresh settled
-          evidence; demote (→ rejected) any the current evidence no longer
-          supports. Later evidence can always overturn an earlier acceptance.
-  Step B (promote):  judge each proposed lesson against clean, cost-aware settled
-          outcomes matching every populated symbol/direction/scanner dimension.
-          System-wide aggregates are context only and never satisfy the gate.
-          A deterministic floor (insufficient settled data → defer) prevents
+  Step A (overturn): re-judge every already-accepted/applied lesson; the LLM may
+          demote (→ rejected) one its evidence no longer supports.
+  Step B (promote):  judge each proposed lesson against the realized net outcomes
+          of its own source trades (evidence_json.supporting_source_ids →
+          trade_case_study → position → assess_realized_position). A
+          deterministic floor (too few clean source trades → defer) prevents
           rubber-stamping in a data vacuum; the LLM then accepts only what the
           numbers support, rejects what they contradict, defers the ambiguous.
   Step C (apply):    fold the run's freshly-accepted lessons into one immutable
           `lesson_policy` version and stamp applied_policy_version on each, so the
           chain is provably closed (not a status stub).
 
-Accepted lessons flow to the PI decision context as higher-confidence advisory
-(trading_context surfaces them) and to risk/engine._check_lesson_constraints —
-which only enforces lessons that carry an explicit recommendation action, so a
-plain accepted lesson is advisory, never an autonomous hard block.
+Applied lessons reach the Entry Planner as advisory, citable context
+(agent_shell/context.py::entry_lessons) and risk/engine._check_lesson_constraints,
+which only enforces lessons that carry an explicit recommendation action.
 """
 
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from typing import Literal
@@ -43,22 +40,16 @@ from aletheia.model_provider.router import ProviderNotConfigured, get_provider_f
 
 logger = logging.getLogger("aletheia.agents.lesson_reviewer")
 
-# Deterministic anti-rubber-stamp floor: never promote a lesson when there is too
-# little settled evidence to judge it against at all.
-_MIN_SETTLED_EVIDENCE = 20
+# Deterministic anti-rubber-stamp floor: a lesson needs this many of its own source
+# trades with a clean realized net outcome before the judge sees it. Three is the
+# smallest sample where one trade cannot decide the majority; on the 2026-10-10
+# Fedora demo database 7 of the 142 proposed lessons reach it.
+_MIN_SOURCE_TRADES = 3
 # Bound LLM cost per run; the backlog drains over successive daily runs (logged).
 _MAX_PROPOSED_PER_RUN = 40
 # Bound LLM re-judgements of consumed lessons per run. The deterministic demote
 # check still covers every consumed lesson each run, as Risk enforces every one.
 _MAX_REJUDGED_PER_RUN = 200
-# Overturn guard: a clearly-failing symbol-specific basis demotes deterministically
-# even if the LLM would keep it (belt-and-suspenders for the overturn requirement).
-_DEMOTE_MIN_SAMPLES = 10
-_DEMOTE_WIN_RATE = 35.0
-
-_SYMBOL_RE = re.compile(r"\b([A-Z0-9]{2,12}/USDT)\b")
-_LONG_RE = re.compile(r"\blongs?\b", re.IGNORECASE)
-_SHORT_RE = re.compile(r"\bshorts?\b", re.IGNORECASE)
 
 
 class _LessonJudgment(BaseModel):
@@ -67,176 +58,71 @@ class _LessonJudgment(BaseModel):
 
 
 def _fetch_evidence(lesson) -> dict:
-    """Build the settled-outcome evidence pack for a lesson.
+    """The lesson's own source trades and their realized net outcomes.
 
-    Global figures are context only. Eligibility is decided exclusively by the
-    clean, cost-aware 24h outcomes matching every populated scope dimension that
-    can be recovered deterministically from the lesson.
+    ``evidence_json.supporting_source_ids`` name the trade_case_study items the
+    lesson was extracted from; each names the closed position it reviews. Only
+    positions the shared realized-outcome gate accepts count toward the sample.
     """
-    from datetime import datetime, timezone
-    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.outcome_semantics import assess_realized_position
+    from aletheia.files.knowledge_document import read_knowledge_document
+    from aletheia.storage import repositories as repo
 
-    db = get_db()
-    as_of_at = datetime.now(timezone.utc)
-
-    def _agg(where_extra: str, params: tuple) -> dict:
-        from aletheia.analytics.outcome_semantics import assess_candidate_outcome
-
-        rows = db.execute(
-            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,due_at,settled_at,venue,direction,market_type,"
-            "entry_price_usd,exit_price_usd,"
-            "directional_return_pct,estimated_fee_pct,"
-            "estimated_spread_slippage_pct,estimated_funding_pct,"
-            "net_return_pct,min_tradable_edge_pct,cost_model_version,"
-            "settlement_price_source,settlement_lag_sec "
-            "FROM filter_candidate_outcomes "
-            "WHERE status='settled' AND horizon='24h' "
-            "AND settled_at >= datetime('now','-30 days') " + where_extra,
-            params,
-        ).fetchall()
-        eligible_by_outcome: dict[str, tuple[dict, float]] = {}
-        for raw in rows:
-            row = dict(raw)
-            assessed = assess_candidate_outcome(row, as_of_at=as_of_at)
-            if (
-                not assessed.eligible
-                or assessed.net_return_pct is None
-                or not assessed.outcome_key
-            ):
-                continue
-            eligible_by_outcome.setdefault(
-                assessed.outcome_key, (row, assessed.net_return_pct),
-            )
-        eligible = list(eligible_by_outcome.values())
-        total = len(eligible)
-        wins = sum(
-            1 for row, net in eligible
-            if net > float(row["min_tradable_edge_pct"])
-        )
-        avg_return = (
-            sum(net for _, net in eligible) / total if total else None
-        )
-        return {
-            "total": total,
-            "wins": wins,
-            "win_rate": round(100.0 * wins / total, 1) if total else None,
-            "avg_return": round(avg_return, 3) if avg_return is not None else None,
+    try:
+        lesson_evidence = json.loads(lesson.evidence_json or "{}")
+    except (TypeError, ValueError):
+        lesson_evidence = {}
+    if not isinstance(lesson_evidence, dict):
+        lesson_evidence = {}
+    trades: dict[str, dict] = {}
+    excluded: dict[str, int] = {}
+    for source_id in dict.fromkeys(lesson_evidence.get("supporting_source_ids") or ()):
+        item = repo.get_knowledge_item(str(source_id))
+        position_id = ""
+        if item is not None and item.get("item_type") == "trade_case_study":
+            document = read_knowledge_document(item)
+            if document.state not in {"integrity_conflict", "unavailable"}:
+                position_id = str(document.metadata.get("position_id") or "").strip()
+        position = repo.get_position(position_id) if position_id else None
+        if position is None:
+            excluded["source_position_unavailable"] = excluded.get("source_position_unavailable", 0) + 1
+            continue
+        assessed = assess_realized_position(position)
+        if not assessed.eligible or assessed.net_return_pct is None:
+            excluded[assessed.reason] = excluded.get(assessed.reason, 0) + 1
+            continue
+        trades[position_id] = {
+            "symbol": position.get("symbol"),
+            "direction": position.get("direction"),
+            "close_reason": position.get("close_reason"),
+            "net_return_pct": round(assessed.net_return_pct, 3),
         }
-
-    evidence = {"aggregate": _agg("", ())}
-
-    def _json_dict(raw: str | None) -> dict:
-        try:
-            value = json.loads(raw or "{}")
-            return value if isinstance(value, dict) else {}
-        except (ValueError, TypeError):
-            return {}
-
-    rec = _json_dict(lesson.recommendation_json)
-    ev = _json_dict(lesson.evidence_json)
-    factor_parts = [
-        str(key).split(":")
-        for key in (ev.get("supporting_factor_keys") or [])
-        if len(str(key).split(":")) == 5
-    ]
-
-    def _single_factor_value(index: int) -> str | None:
-        values = {parts[index] for parts in factor_parts if parts[index] != "unknown"}
-        return next(iter(values)) if len(values) == 1 else None
-
-    # Recover a symbol if the lesson carries one.
-    symbol = None
-    symbol = rec.get("symbol") or ev.get("symbol") or _single_factor_value(1)
-    if not symbol and lesson.summary:
-        m = _SYMBOL_RE.search(lesson.summary)
-        if m:
-            symbol = m.group(1)
-
-    evidence["symbol"] = symbol
-    if symbol:
-        evidence["symbol_stats"] = _agg("AND symbol = ?", (symbol,))
-
-    # Scanner-family slice (#99): a block_scanner lesson must be judged against the
-    # scanner-family's OWN settled outcomes, not just the global/symbol aggregates —
-    # otherwise a family-specific block is approved on evidence that never looked at
-    # that family. universe_forward_outcomes carries scanner_family.
-    scanner = rec.get("scanner") or rec.get("scanner_family")
-    scanner = scanner or ev.get("scanner") or ev.get("scanner_family")
-    scanner = scanner or _single_factor_value(0)
-    if not scanner:
-        families = ev.get("scanner_families")
-        if isinstance(families, list) and len(families) == 1:
-            scanner = families[0]
-    evidence["scanner_family"] = scanner
-    if scanner:
-        evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
-
-    direction = rec.get("direction") or ev.get("direction") or _single_factor_value(2)
-    if not direction and lesson.summary:
-        if _LONG_RE.search(lesson.summary):
-            direction = "long"
-        elif _SHORT_RE.search(lesson.summary):
-            direction = "short"
-    direction = str(direction).lower() if direction else None
-    if direction not in {"long", "short"}:
-        direction = None
-    evidence["direction"] = direction
-    if direction:
-        evidence["direction_stats"] = _agg("AND direction = ?", (direction,))
-
-    scope_clauses: list[str] = []
-    scope_params: list[str] = []
-    if symbol:
-        scope_clauses.append("AND symbol = ?")
-        scope_params.append(symbol)
-    if direction:
-        scope_clauses.append("AND direction = ?")
-        scope_params.append(direction)
-    if scanner:
-        scope_clauses.append("AND scanner_family = ?")
-        scope_params.append(scanner)
-    evidence["exact_scope_dimensions"] = {
-        key: value for key, value in {
-            "symbol": symbol, "direction": direction, "scanner_family": scanner,
-        }.items() if value
+    total = len(trades)
+    wins = sum(1 for trade in trades.values() if trade["net_return_pct"] > 0)
+    return {
+        "total": total,
+        "wins": wins,
+        "win_rate": round(100.0 * wins / total, 1) if total else None,
+        "avg_return": (
+            round(sum(t["net_return_pct"] for t in trades.values()) / total, 3) if total else None
+        ),
+        "trades": list(trades.values()),
+        "excluded": excluded,
     }
-    evidence["exact_scope"] = (
-        _agg(" ".join(scope_clauses), tuple(scope_params))
-        if scope_clauses else {"total": 0, "wins": 0, "win_rate": None, "avg_return": None}
-    )
-    return evidence
 
 
 def _evidence_block(evidence: dict) -> str:
-    agg = evidence["aggregate"]
     lines = [
-        "System-wide settled outcomes (last 30d, 24h horizon):",
-        f"- total: {agg['total']}, win_rate: {agg['win_rate']}%, avg_return: {agg['avg_return']}%",
+        "Realized net outcomes of the lesson's own source trades:",
+        f"- total: {evidence['total']}, win_rate: {evidence['win_rate']}%, "
+        f"avg_net_return: {evidence['avg_return']}%",
     ]
-    if evidence.get("symbol"):
-        s = evidence.get("symbol_stats") or {}
-        lines.append(
-            f"Symbol {evidence['symbol']}: total: {s.get('total')}, "
-            f"win_rate: {s.get('win_rate')}%, avg_return: {s.get('avg_return')}%"
-        )
-    if evidence.get("scanner_family"):
-        sf = evidence.get("scanner_family_stats") or {}
-        lines.append(
-            f"Scanner family {evidence['scanner_family']}: total: {sf.get('total')}, "
-            f"win_rate: {sf.get('win_rate')}%, avg_return: {sf.get('avg_return')}%"
-        )
-    if evidence.get("direction"):
-        ds = evidence.get("direction_stats") or {}
-        lines.append(
-            f"Direction {evidence['direction']}: total: {ds.get('total')}, "
-            f"win_rate: {ds.get('win_rate')}%, avg_return: {ds.get('avg_return')}%"
-        )
-    exact = evidence.get("exact_scope") or {}
-    lines.append(
-        f"Exact populated scope {evidence.get('exact_scope_dimensions') or {}}: "
-        f"total: {exact.get('total')}, win_rate: {exact.get('win_rate')}%, "
-        f"avg_return: {exact.get('avg_return')}%"
+    lines.extend(
+        f"- {t['symbol']} {t['direction']} close={t['close_reason']} net={t['net_return_pct']}%"
+        for t in evidence["trades"]
     )
+    if evidence["excluded"]:
+        lines.append(f"Source trades excluded (no clean realized outcome): {evidence['excluded']}")
     return "\n".join(lines)
 
 
@@ -249,7 +135,7 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str, 
         payload, err = await llm_structured(
             system=(
                 "You are a skeptical trading-lesson evaluator. Decide whether a proposed "
-                "lesson is supported by the recent settled-outcome evidence provided. "
+                "lesson is supported by the realized outcomes of the trades it was drawn from. "
                 "Be conservative: default to 'defer' unless the evidence clearly supports "
                 "the lesson; choose 'reject' if the evidence contradicts it; choose "
                 "'accept' only when the numbers back it. Do NOT accept on plausibility "
@@ -274,19 +160,6 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str, 
     if err or payload is None:
         return "defer", str(err or "empty_payload")[:200], True
     return str(payload["decision"]), str(payload.get("reasoning") or "")[:200], False
-
-
-def _deterministic_demote(evidence: dict) -> bool:
-    """A clearly failed exact-scope basis demotes regardless of LLM."""
-    s = evidence.get("exact_scope")
-    if not s or not s.get("total"):
-        return False
-    win_rate = s.get("win_rate")
-    return (
-        s["total"] >= _DEMOTE_MIN_SAMPLES
-        and win_rate is not None
-        and win_rate < _DEMOTE_WIN_RATE
-    )
 
 
 def _rejudge_window(lesson_ids: list[str], now: datetime) -> set[str]:
@@ -324,7 +197,7 @@ async def run_lesson_reviewer(
     # ── Step A: overturn — re-judge already-consumed lessons against fresh evidence ──
     # #130: 'accepted' is transient (accept + mark_applied happen in the same run), so
     # the consumed stable state is 'applied'. Re-review BOTH, so an applied lesson with
-    # contradictory settled evidence is demoted rather than left active until expiry.
+    # contradicting evidence is demoted rather than left active until expiry.
     # #2865: Risk enforces every applied lesson (limit=-1), so the overturn pass
     # must reach every one too, not only the newest 100 of each status.
     demoted = 0
@@ -339,24 +212,7 @@ async def run_lesson_reviewer(
         except Exception as e:  # evidence query must never crash the job
             errors.append(f"evidence_failed:{lesson.lesson_id}:{e}")
             continue
-        if _deterministic_demote(evidence):
-            started_at = time.monotonic()
-            if not store.reject(
-                lesson.lesson_id, expected_status=lesson.status,
-            ):
-                continue
-            demoted += 1
-            outputs.append(f"demoted:{lesson.lesson_id}")
-            log_tool(
-                run_id,
-                "demote_lesson",
-                "observe",
-                True,
-                output=lesson.lesson_id,
-                duration_ms=elapsed_ms(started_at),
-            )
-            continue
-        if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
+        if evidence["total"] < _MIN_SOURCE_TRADES:
             continue
         if lesson.lesson_id not in _judge_ids:
             continue
@@ -402,7 +258,7 @@ async def run_lesson_reviewer(
             deferred += 1
             continue
         # Deterministic floor: no data → defer (never rubber-stamp in a vacuum).
-        if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
+        if evidence["total"] < _MIN_SOURCE_TRADES:
             deferred += 1
             continue
         decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
@@ -494,7 +350,7 @@ async def run_lesson_reviewer(
                         policy={
                             "accepted_lesson_ids": accepted_ids,
                             "reviewed_at": datetime.now(timezone.utc).isoformat(),
-                            "basis": "settled outcomes, last 30d, 24h horizon",
+                            "basis": "realized net outcomes of each lesson's own source trades",
                         },
                         created_by="lesson_reviewer",
                     )

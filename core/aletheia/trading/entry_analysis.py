@@ -138,6 +138,7 @@ class EntryAnalysisContext(BaseModel):
     anchors: tuple[EntryAnchor, ...]
     entry_profiles: tuple[dict[str, Any], ...]
     learning_context: EntryLearningContext
+    lessons: tuple[dict[str, Any], ...] = Field(default_factory=tuple, max_length=5)
     unavailable_sections: tuple[str, ...] = ()
     candidate_opportunity_context: dict[str, Any]
     inference_identity: dict[str, str]
@@ -378,6 +379,7 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
         ],
         "entry_profiles": data["entry_profiles"],
         "learning_context": data["learning_context"],
+        "lessons": data["lessons"],
         "unavailable_sections": data["unavailable_sections"],
     }
 
@@ -397,10 +399,11 @@ def validate_hypothesis_references(
     opportunity = context.candidate_opportunity_context["opportunity"]
     if hypothesis.mechanism != opportunity["primary_mechanism"] or hypothesis.direction != opportunity["direction"]:
         raise ValueError("hypothesis_opportunity_identity_mismatch")
-    learning_refs = set(context.learning_context.evidence_refs)
-    if hypothesis.learning_evidence_refs and context.learning_context.status == "unavailable":
+    lesson_refs = {f"lesson:{lesson['lesson_id']}" for lesson in context.lessons}
+    learning_refs = set(hypothesis.learning_evidence_refs) - lesson_refs
+    if learning_refs and context.learning_context.status == "unavailable":
         raise ValueError("hypothesis_learning_context_unavailable")
-    if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
+    if not learning_refs.issubset(context.learning_context.evidence_refs):
         raise ValueError("hypothesis_learning_ref_not_supplied")
     if hypothesis.decision == "NO_PLAN":
         return
@@ -831,6 +834,7 @@ def build_entry_analysis_context(
     candidate_detected_at: str | None,
     positions: list[dict] | None = None,
     orderbook: dict | None = None,
+    lessons: tuple[dict, ...] = (),
     model_provider: str = "custom_planner",
 ) -> EntryAnalysisContext:
     """Freeze exact stored bars and existing causal structure into one model input."""
@@ -1099,6 +1103,7 @@ def build_entry_analysis_context(
         anchors=selected,
         entry_profiles=profiles,
         learning_context=learning_context,
+        lessons=lessons,
         unavailable_sections=tuple(key for key, value in serialized.items() if value["availability"] == "unavailable"),
     )
     if opportunity_context is None:

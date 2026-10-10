@@ -175,6 +175,7 @@ def _build_fresh_entry_context(
     feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
     cutoff = datetime.now(timezone.utc)
     cutoff_ms = int(cutoff.timestamp() * 1000)
+    from aletheia.agent_shell.context import entry_lessons
     from aletheia.data.providers import timeframe_ms
 
     windows = {
@@ -192,6 +193,10 @@ def _build_fresh_entry_context(
         ),
         positions=repo.list_all_open_positions(),
         orderbook=orderbook,
+        lessons=entry_lessons(
+            symbol=generation["symbol"], direction=generation["direction"],
+            family=generation["candidate_family"], now=cutoff,
+        ),
         model_provider=model_provider,
     )
     return feature, context_model

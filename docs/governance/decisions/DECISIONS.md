@@ -1371,3 +1371,35 @@ owner 于 2026-10-10 确认。
   这个问题是独立审查发现的：统一路径每轮都会做全账户读，原来的 profile 没有声明。
 - `test_reconciliation_covers_every_registered_account_through_one_path`；
   审计 `test_reconciliation_incomplete_read_logging` 的处理点数由 10 降到 8，依据是被删路径正好有 2 个。
+
+## 2026-10-10 — 学习闭环重新接上入场：Planner 读取已应用的 lesson，审核看 lesson 自己的来源交易（D1，owner 决定，Refs #3930）
+
+**Decision:** owner 2026-10-10 撤回 knowledge_contract §6 A1 的“ps_lessons 入场注入已退役”。闭环
+“平仓 → 结果 → 复盘 → lesson → 审核通过 → 下次入场提示读到它 → 决策改变”在两处断开，一并接上：
+
+- **Planner 读 lesson。** `agent_shell/context.py::entry_lessons` 复用 `configure_learning_context_reader`
+  注入的 reader，取已应用、未过期、已过 `dry_run_until` 且 scope 与本 Candidate 匹配的 lesson，最多 5 条，
+  每条只带 `lesson_id`、`category`、`summary`，冻结进 `EntryAnalysisContext.lessons`。lesson 的 scope
+  是它的 recommendation 或全部 `supporting_factor_keys` 一致的维度（symbol / direction / scanner family，
+  family 与规划代次的 `candidate_family` 比较）；没有可恢复 scope 的 lesson 不进入。`lesson:<lesson_id>`
+  可写进 `learning_evidence_refs`。canonical entry prompt 增加一句：lesson 是系统自己复盘过的错误与成功，
+  权衡它，但它单独不能授权入场。
+- **审核看来源交易。** `extensions/research/lesson_reviewer.py::_fetch_evidence` 的证据改为该 lesson 自己的
+  来源交易：`evidence_json.supporting_source_ids` → `trade_case_study` → position →
+  `analytics/outcome_semantics.py::assess_realized_position` 的已实现净收益。至少 3 笔干净来源交易才交给
+  LLM 判定。原来按旧 scanner_family 词汇、对 30 天 24h 候选前瞻收益（`filter_candidate_outcomes`）
+  聚合的证据路径删除；依赖它的确定性降级（同 scope 样本 ≥10 且胜率 <35% 即拒绝）一并删除，
+  因为一条“这类交易会亏”的 lesson 正是被亏损的来源交易所支持。
+
+**Reason:** Fedora 2026-10-10 只读核对：3333 个冻结的 planner 输入里 0 个含 lesson；7 条 applied lesson
+最晚的在 2026-10-07 过期，最近一次 accept 在 2026-09-07；当时有 142 条 proposed lesson 在排队。按新证据，890 个来源交易引用里 49 个是干净已实现结果（其余 841 个平仓时间早于干净窗口起点
+2026-09-23T16:43:35Z）；142 条 proposed 中有 7 条至少有 3 笔（分别是 4、5、6、6、6、8、9 笔），
+门槛取 5 只剩 6 条、取 2 是 9 条。3 是一笔交易不能单独决定多数的最小样本。
+
+**Guardrail:**
+- lesson 只是 advisory：Planner 的入场仍须引用当前市场事实，Risk 与 Gateway 不变；lesson 引用只能来自本次冻结提供的 lesson。
+- 旧的不按 Candidate 过滤的 trading_context `ps_lessons` 注入不恢复。
+- 回归：`tests/test_entry_analysis.py::test_planner_input_carries_only_current_in_scope_lessons_and_they_are_citable`、
+  `tests/specs/spec_learning_final_consumers.py::test_lesson_reviewer_judges_a_lesson_from_its_source_trades`。
+
+**Not decided (open):** 来源交易是固定的，所以 Step A 的复审只会对同一份证据重判；真正让 lesson 退出的仍是 30 天过期。

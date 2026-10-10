@@ -137,7 +137,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 |------|---------|---------|------|
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | 仅符合 active + high-confidence 与文档完整性门槛的项可由 `retrieve_lessons()` 提供 advisory context；Risk Critic 的 medium-confidence note 不在该池 | ✅ 存储研究记录不等于交易上下文准入 |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | advisory candidate context；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
-| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | Entry Planner learning context / System Operator review → bounded advisory use | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
+| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | `agent_shell/context.py::entry_lessons` → 冻结的 `EntryAnalysisContext.lessons`（最多 5 条同 scope、已应用、未过期、已过 dry-run，可引用为 `lesson:<id>`）；Operator 只读诊断；Risk lesson constraints | ✅ 晋级/推翻只看该 lesson 自己的来源交易（`supporting_source_ids` → trade_case_study → position）经 `assess_realized_position` 的干净已实现净收益，至少 3 笔 |
 | historical Ranker case/memo Learning | trade_case_study + latest trading_memo | 只读历史 funnel/attribution reports | 🟡 不创建当前 Entry exposure，不改变 Candidate/Risk/Execution |
 | persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | 🟡 可显示静态/学习建议/实际金额，但 measurement-unsupported；实际金额保持静态 baseline，不创建 formal exposure |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |

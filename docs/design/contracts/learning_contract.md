@@ -66,7 +66,7 @@ results can influence a later trading judgment, even when it lives outside `exte
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `extensions/research/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
 | Risk critique and lesson constraint | `extensions/research/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | `risk_critic` writes a medium-confidence advisory research note only. Manual/owner/human Risk lessons remain static safety rules. The automatic-lesson experiment hook is measurement-unsupported, so automatic lessons currently remain advisory and cannot acquire blocking authority. |
-| Lesson extraction/review | `extensions/research/dreaming_agent.py`, `extensions/research/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
+| Lesson extraction/review | `extensions/research/dreaming_agent.py`, `extensions/research/lesson_reviewer.py` | promotion/overturn judges only the lesson's own source trades (`evidence_json.supporting_source_ids` → `trade_case_study` → position) and needs at least 3 with a clean realized net outcome (`analytics/outcome_semantics.py::assess_realized_position`) before the judge runs |
 | Memo synthesis | `extensions/analytics/insight_synthesizer.py`, `extensions/analytics/memo_effectiveness.py` | memo reaches observer prompt; Ranker scoring and old Operator entry-prompt consumers are retired |
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic. The `ranker_factor_filter` hook is measurement-unsupported, creates no formal exposure, and returns the static watch/neutral behavior. |
 | Reasoning feedback | `extensions/analytics/reasoning_feedback.py` | retained feedback evidence; old Operator entry-prompt injection retired |
@@ -396,6 +396,7 @@ Current consumers:
 
 | Consumer | Reads |
 | --- | --- |
+| `agent_shell/context.py::entry_lessons` → `EntryAnalysisContext.lessons` | applied, non-expired lessons past dry-run whose own scope (symbol / direction / scanner family) matches the Candidate, at most 5, citable as `lesson:<id>` in `learning_evidence_refs`; advisory only, never authorizes an entry alone (knowledge_contract §6 A1) |
 | `agent_shell/context.py::_curated_learning_context` | applied, non-expired lessons past dry-run for read-only Operator diagnosis; no entry treatment |
 | `risk/engine.py::_check_lesson_constraints` | `status="applied"`, non-expired lessons after dry-run. `manual`/`owner`/`human` sources remain static constraints; automatic sources propose an advisory block and require exact `risk_lesson_constraint` treatment authority linked to `proposal:<id>:4h`. Adapter errors fail closed as `lesson_check_error:internal_failure`. |
 | `lesson_reviewer` | `proposed` for promotion and `accepted` for overturn checks |

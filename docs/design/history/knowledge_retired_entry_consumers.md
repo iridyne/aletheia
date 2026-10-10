@@ -21,7 +21,7 @@ hypothesis/experiment/exposure；它仍是 Shadow-only，实际 Ranker delta 固
 
 ## 8.2 历史 System Operator 入场 prompt 片段（已退役）
 
-以下三路 trading_context/trading_decision 注入及其旧 LP-S14 枚举属于历史契约，不再是当前入场路径；不得恢复旧 prompt 或据此为 Planner 新增消费权。当前 Operator 诊断 lesson 消费见 §7.2。
+以下三路 trading_context/trading_decision 注入及其旧 LP-S14 枚举属于历史契约，不再是当前入场路径；不得恢复旧 prompt 或据此为 Planner 新增消费权。当前 Entry Planner 与 Operator 诊断的 lesson 消费见 knowledge_contract §6 A1 / §7.2（Entry Planner 读取 applied lessons 由 owner 2026-10-10 决定恢复，形式不同于这里的旧注入）。
 
 System Operator 的 system prompt 分为两层：
 - **基础层**（宪法约束，人类专有）：角色定义、FORBIDDEN_INTENTS 提示、风格约定
