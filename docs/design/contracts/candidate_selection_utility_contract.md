@@ -18,6 +18,34 @@ Historical six-family and `total_score` records remain immutable audit evidence,
 not a runtime fallback or rollback allocator. Risk, Gateway, credentials and
 Live-unlock authority are unchanged.
 
+### Instrument scope (registry)
+
+The product trades USDT-margined crypto perpetuals only
+([Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)). The
+universe registry (`universe/registry.py`, background from
+`data/symbols.py`) is where that boundary is enforced:
+
+- **CS-B1** — When the registry ingests venue market facts, it shall skip every
+  instrument whose `market_type` is not `perp`, or every instrument when
+  `exchange.enabled_markets["usdt_futures"]` is false; spot never becomes a universe
+  asset, Candidate, Entry Plan or Proposal.
+- **CS-B2** — When a Bitget perpetual carries `isRwa=YES`, its instrument
+  background shall be `asset_class=real_world_asset`; `isRwa=NO` is `crypto`; an
+  absent flag falls through to the other venue signals and otherwise stays
+  `instrument_background_unresolved`.
+- **CS-B3** — If an instrument's background is not a supported crypto context, then
+  the registry shall store it with `blacklisted=true` and the rejection reason as
+  `blacklist_reason` (for example `unsupported_analysis_context:tradifi_perpetual`),
+  visible rather than silently dropped; ordinary crypto exclusions (leveraged
+  tokens, test/dated contracts) are omitted altogether.
+- **CS-B4** — If venue market facts are unavailable, then the registry shall write
+  nothing (no partial or guessed rows).
+
+Verification: `tests/test_registry_market_boundary.py`
+(`test_bitget_rwa_perpetual_is_not_crypto`,
+`test_unavailable_market_facts_never_write_registry`,
+`test_registry_retains_admission_blacklist_and_cleanup`).
+
 Historical Twin evaluation still verifies persisted records by replaying the
 old allocation and whole-candidate continuous-scoring rules. Those replay
 functions remain alongside the shared current execution decoration and
