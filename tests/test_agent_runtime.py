@@ -19,10 +19,6 @@ from aletheia.storage import repositories as repo
 
 def setup_test_env(tmp_path, monkeypatch):
     """Set up test db and config."""
-    from aletheia.agents import register_agent
-    from extensions.research.research_agent import run_research_agent
-
-    register_agent("research_agent")(run_research_agent)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -78,12 +74,12 @@ def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkey
 
     running = AgentRun(agent_name="post_trade_reviewer", trigger_type="scheduled")
     queued = AgentRun(
-        agent_name="research_agent",
+        agent_name="lesson_reviewer",
         trigger_type="manual",
         status="queued",
     )
     completed = AgentRun(
-        agent_name="research_agent",
+        agent_name="lesson_reviewer",
         trigger_type="manual",
         status="completed",
         ended_at="2026-01-01T00:00:00+00:00",
@@ -134,7 +130,7 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
 
     monkeypatch.setattr(run_logger, "write_agent_run_log", fail_log)
 
-    queued = queue_run("research_agent", "manual", "Observe")
+    queued = queue_run("post_trade_reviewer", "manual", "Observe")
     assert repo.get_agent_run(queued.id)["status"] == "queued"
 
     begin_queued_run(queued, permission_mode="Observe", model_provider=None)
@@ -149,23 +145,6 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
 
 # Agents now call the LLM; with no model server in tests they degrade gracefully.
 _OK = ("completed", "completed_with_errors")
-
-
-@pytest.mark.anyio
-async def test_research_agent_creates_note(tmp_path, monkeypatch):
-    setup_test_env(tmp_path, monkeypatch)
-    # Mock LLM to return substantive content (≥80 chars to pass quality gate).
-    async def _fake_llm(system, user, max_tokens=800, **_kwargs):
-        return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
-                "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
-    monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
-
-    result = await run_agent("research_agent", trigger_type="manual")
-    assert result["status"] in _OK
-    assert any("research_note:" in o for o in result["outputs"])
-    items = repo.list_knowledge_items(item_type="research_note")
-    assert len(items) >= 1
-    reset_db()
 
 
 @pytest.mark.anyio
@@ -216,8 +195,8 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Observe"
     save_config(cfg)
 
-    result = await run_agent("research_agent", trigger_type="manual")
-    # In Observe mode, research notes ARE permitted (observe tool class)
+    result = await run_agent("portfolio_agent", trigger_type="manual")
+    # In Observe mode, observe-class tools are permitted
     assert result["status"] in _OK
     assert not any("Unknown agent" in error for error in result["errors"])
     reset_db()
@@ -233,7 +212,7 @@ async def test_run_agent_tolerates_non_string_default_model_provider(tmp_path, m
     cfg.models.default_provider = MagicMock(name="default_provider")
     monkeypatch.setattr(orchestrator, "load_config", lambda: cfg)
 
-    result = await run_agent("research_agent", trigger_type="manual")
+    result = await run_agent("portfolio_agent", trigger_type="manual")
 
     assert result["status"] in _OK
     latest = repo.list_agent_runs(limit=1)[0]

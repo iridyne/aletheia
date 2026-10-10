@@ -859,15 +859,13 @@ def priority_for_agent(agent_name: str, trigger_type: str) -> InferencePriority:
         "position_manager",
     }:
         return InferencePriority.TRADING
-    if agent_name in {"market_observer", "equity_observer", "prediction_observer"}:
+    if agent_name == "market_observer":
         return InferencePriority.OBSERVER
     if agent_name in {
         "dreaming_agent",
         "dreaming_daily",
         "post_trade_reviewer",
-        "risk_critic",
         "insight_synthesizer",
-        "research_agent",
     }:
         return InferencePriority.BACKGROUND
     return InferencePriority.DEFAULT

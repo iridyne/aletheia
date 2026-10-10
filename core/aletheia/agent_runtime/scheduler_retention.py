@@ -8,7 +8,6 @@ __all__ = [
     "_prune_agent_task_claims_tasks_db",
     "_prune_backups",
     "_prune_diagnostics",
-    "_prune_news",
     "_prune_pre_migration_backup",
     "_prune_session_logs",
     "_prune_task_notes",
@@ -38,15 +37,6 @@ def _cleanup_catchup_due(*, now: datetime | None = None) -> bool:
     except Exception as exc:
         logger.debug("cleanup catch-up probe unavailable: %s", exc)
         return False
-
-
-def _prune_news(cfg) -> dict[str, int | str | None]:
-    try:
-        from extensions.data.news_collector import prune_old_news
-        deleted = prune_old_news(cfg.news.retention_days)
-        return {"deleted": deleted, "error": None}
-    except Exception as e:
-        return {"deleted": 0, "error": str(e)}
 
 
 def _prune_session_logs(cfg) -> dict[str, int | str | None]:

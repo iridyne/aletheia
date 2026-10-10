@@ -50,18 +50,14 @@
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
 | 衍生品仓位比（DU-S26） | DerivativesCollector（CCXT `binanceusdm` implicit fapiData methods：global account ratio + top-trader position ratio） | `open_interest_snapshots.long_short_ratio/top_trader_position_ratio` → `universe_feature_snapshots` | normalizer→crowding_score→leverage→LLM；Relative Rank Shadow 的 perp 准入和 positioning rank | ✅ 两种 ratio 保持独立语义；缺 funding/OI/OI delta/任一 ratio 的 perp 候选在新 Shadow 中 fail closed，不读取本地私有账户仓位 |
 | 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |
-| 美股宏观代理(S&P500/VIX/DXY/Gold) | extensions.data.yfinance_provider (enable_yfinance_macro 门控，CLI/Web 绑定可选 reader) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM；缺 reader 不添加宏观块 | ✅ |
 | 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | macro 块→LLM | ✅ |
 | 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | macro 块(top_movers_summary)→LLM | ✅ |
 | 成交量排名 | VolumeScannerCollector（精确 venue+market InstrumentId） | 内存 `_latest_volume_ranking` + `volume_ranking_snapshots` | universe/service→按原 market_type 排序已登记资产（不创建新资产） | ✅；单标的不支持不再打断整批 |
-| 新闻+情绪 | NewsCollector + independent bounded analyzer | `news_items` | 仅 `analyzed`、relevance≥0.6、exact ticker/asset-name 匹配的行进入 market_observer；research_worker 同门槛消费 | ✅ fetch/analyze 分离；单批3条、单条30s、整体105s；一次失败退避30min、二次失败终止，不伪装 analyzed |
-| 官方公告/监管 RSS（SEC/CFTC/Ethereum Foundation） | NewsCollector（默认 news.feeds） | `news_items` | 与新闻质量门相同；Opportunity metadata 保留实际渲染 news id/source/published_at | ✅ |
 | **Hyperliquid OI/资金费率/预测** | HyperliquidCollector | `funding/OI` (exchange=hyperliquid*) | **market_observer→跨 venue annualized funding + OI/真实1h OI delta（含 source timestamp）→LLM**；System Operator 决策写入精确 source IDs | ✅；OI 只用同 source 45-75min baseline，缺基线或>300%异常为 unavailable；30 分钟 freshness fail-closed |
 | 永续持仓结构/清算墙 | owner-authorized aggregate rows 或脱敏多市场 holder batch（`aletheia data ingest-perp-structure PATH`）+ fixture/offline Position X parser；仅显式按需导入，无自动 API/调度 | holder batch 先计算为带 batch hash/coverage/universe 的白名单聚合行，再写 `perp_structure_snapshots` + `perp_structure_shadow_outcomes`；不保存 holder 原始行/身份 | market_observer / System Operator 只读 advisory；1h/4h/24h shadow settlement；`evaluate-perp-structure` 只读比较 weighted/equal/单因子/零结构 gross baseline；doctor 诚实显示未配置/新鲜度 | 🟡 observation-only（默认至少 3 个 perp 市场、每市场 coverage≥80%、source skew≤300s；评估默认每 horizon 30 个合格样本、14 天、80% coverage，并拒绝回溯导入/混合 epoch 或 feature contract；cost-aware unavailable；当前不参与排序/风控/执行） |
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
-| 预测市场 | PolymarketProvider | prediction 表 | 原始 Opportunity observation-only；market_observer 预测块→LLM；派生 divergence 可进入 crypto 决策链，但必须先确定 question polarity | ✅ unknown/negated/mixed polarity fail-closed |
-| 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
-| **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot** | ✅ |
+| 预测市场（历史） | 采集器已退役（#3930） | prediction 表（保留，不再写入） | Prediction Lens 只读历史行 | 🟡 只读 |
+| **美股 r-series 代币 (113 tokens, Bitget)** | `observed_stock_tokens` 配置 | 不落库 | 注入 Serenity equity_chain lens 上下文 | ✅ |
 | 市场状态 regime | MacroCollector 与存量读取共用 `data/freshness.py` 风险标签投影；独立 `extensions/regime/collector.py`/detector | `macro_snapshots.risk_regime` + `market_regimes` | market_observer / emitter / ranker / System Operator | ✅ 宏观标签不依赖 collector 可用性；Universe regime 使用真实约7天 market-cap baseline 与已完成日K true range；缺历史时 unavailable，不回落24h proxy |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
 | 清算 liquidations | CoinalyzeCollector（key-guard，data_collector_context；DU-S06/DU-T01） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
@@ -172,11 +168,9 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |
 | DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
-| DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
 | DU-S05 | L2a | 不存在 `class RegimeCollector`；宏观风险标签由 `data/freshness.py` 的单一投影供采集与存量读取共用，不依赖 optional collector；独立市场 regime detector 语义不变 |
 | DU-S06 | L2a | `CoinalyzeCollector` 已注册到 `_async_data_collector_context`；Core `MarketDataConfig` 仅定义非敏感 `enable_coinalyze`，不接受或暴露原始 credential；Data Extension 仅解析自己的 `coinalyze_api_key` Secret Store reference 或专属 `COINALYZE_API_KEY` 环境回退，缺少凭据则诚实跳过；旧 YAML key 只报字段名和安全移除指引，不回显值 |
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
-| DU-S12 | L2a | 默认新闻源包含 SEC/CFTC/Ethereum Foundation 官方 RSS，且 §3 登记为 NewsCollector→`news_items`→market_observer/research_worker |
 | DU-T01 | L2b | 离线注入 CoinalyzeCollector 输出，断言 scheduler 写入 `open_interest_snapshots` 与 `liquidation_events`（不依赖真实 API key） |
 | DU-S19 | L2b | 三家 Exchange profile 经 UTA 返回 `VerifiedExitReport`；Core 保留 verified/absent/inconclusive 区分，网络、分页、过期与账户不符不得伪装完整证据 |
 

@@ -124,7 +124,6 @@ def test_invalid_webhook_candidate_has_no_persistence_or_audit(monkeypatch):
 @pytest.mark.parametrize(
     ("model", "field", "value"),
     [
-        (settings.TelegramConfigUpdate, "daily_summary_hour_cst", 24),
         (settings.TelegramConfigUpdate, "dnd_start_hour", -1),
         (settings.TelegramConfigUpdate, "dnd_end_hour", 24),
         (settings.WebhookConfigUpdate, "timeout_sec", nan),
@@ -136,68 +135,28 @@ def test_settings_requests_share_canonical_notification_constraints(model, field
         model(**{field: value})
 
 
-def test_invalid_telegram_candidate_has_no_persistence_audit_or_reconcile(monkeypatch):
+def test_invalid_telegram_candidate_has_no_persistence_or_audit(monkeypatch):
     cfg = AletheiaConfig()
     saved = []
     audited = []
-    reconciled = []
 
     stub_config_edits(monkeypatch, settings, cfg, lambda value: saved.append(value))
     monkeypatch.setattr(
         "aletheia.files.jsonl.write_audit",
         lambda event: audited.append(event),
     )
-    monkeypatch.setattr(
-        "aletheia.agent_runtime.scheduler.reschedule_telegram_summary",
-        lambda hour: reconciled.append(hour) or True,
-    )
 
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
             settings.update_telegram_config(
-                settings.TelegramConfigUpdate.model_construct(
-                    daily_summary_hour_cst=24,
-                ),
+                settings.TelegramConfigUpdate.model_construct(dnd_start_hour=24),
             ),
         )
 
     assert exc_info.value.status_code == 422
     assert saved == []
     assert audited == []
-    assert reconciled == []
-    assert cfg.telegram.daily_summary_hour_cst == 8
-
-
-def test_telegram_reschedule_failure_restores_previous_config(monkeypatch):
-    cfg = AletheiaConfig()
-    saved_hours = []
-    audited = []
-
-    stub_config_edits(
-        monkeypatch, settings, cfg,
-        lambda value: saved_hours.append(value.telegram.daily_summary_hour_cst),
-    )
-    monkeypatch.setattr(
-        "aletheia.files.jsonl.write_audit",
-        lambda event: audited.append(event),
-    )
-    monkeypatch.setattr(
-        "aletheia.agent_runtime.scheduler.reschedule_telegram_summary",
-        lambda _hour: False,
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(
-            settings.update_telegram_config(
-                settings.TelegramConfigUpdate(daily_summary_hour_cst=20),
-            ),
-        )
-
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.detail["code"] == "telegram_summary_reschedule_failed"
-    assert saved_hours == [20, 8]
-    assert cfg.telegram.daily_summary_hour_cst == 8
-    assert audited == []
+    assert cfg.telegram.dnd_start_hour == 23
 
 
 def test_scheduler_startup_logs_configuration_blocker_for_invalid_legacy_config(

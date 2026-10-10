@@ -67,10 +67,7 @@ Core data/analytics 定义当前事实与完整性语义，Extensions 中同名�
 | `outcome_settler` | 10min | 更新 filter_candidate_outcomes（UFO 已于 v94 删除，#3701） | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
 | cleanup | cron 03:17 | 分析/遥测行保留窗口由 config/schema.py 和 scheduler 清理入口共同定义；开放实验保留保护 | SQLite 稳定性 + data_pruned audit | 不触碰交易因果表，不把不可证明的清理结果当作已完成 |
-| `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
-| `news_fetch` | 15min(可配) | `news_items(status=new)` | news_analyze | ✅ RSS I/O 与 LLM 分离 |
-| news_analyze | 5min | 更新 news_items sentiment/relevance/status | Research Worker / 当前上下文消费者 | 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
 | owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted perp_structure_snapshots + source/batch hash + coverage/universe audit; no holder rows or identities; seeds perp_structure_shadow_outcomes | System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | optional observation; no automatic endpoint/scheduler; cost-aware unavailable; decision influence disabled |
 | `demo_capabilities` | 4h | `execution.venue_capabilities` 内存 capability 缓存 | Gateway 精确 market 的 symbol availability 检查 | ✅ 保留 sandbox 产品事实刷新；不是独立 broker 或当前交易准入 |
 | `venue_margin_facts` | 5min | settings(`venue_margin_envelope.<venue>.<symbol>.<market_type>`) | Entry Compiler 的确定性杠杆解析、Risk submit-time 复核（#3729） | ✅ 只维护 Planner 当前可认领队列读到的 instrument（`list_candidate_planning_demand`）；新鲜行跳过、缺失/过期才取公开 tier API；exact venue 是持仓场馆（`execution_mode_venue`），失败留 typed unavailable 且永不默认 MMR |
@@ -88,9 +85,6 @@ Market Observer 不再注册为调度任务；历史归因与读取不代表活�
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
 | `post_trade_reviewer` | 4h | closed positions | knowledge_items(post_trade_review) | dreaming_agent, retrieve_lessons() | ✅ |
-| `risk_critic` | 6h | proposal / risk_decisions history | medium-confidence `research_note`（subtype=risk_lesson） | advisory note / audit；不进入 `retrieve_lessons()` 的 high-confidence 池 | ✅ 不写 RiskDecision 或改硬风控 |
-| `equity_observer` | 工作日 09:30-16:00 America/New_York /30min | yfinance + bitget xStocks | opportunities(equity) | research/analytics（observation only） | ✅ |
-| `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | divergence_scanner / research analytics（observation only） | ✅ |
 | `guard_promotion` | cron 04:00 CST | learned guards / candidates 的 expires_at | 仅 TTL 到期 deprecated | 显式 owner review 才可晋级；定时任务不自动晋级或按历史亏损率降级 | ✅ 保留任务身份及暂停/Learning gates |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | 合格研究经 `publish_serenity_candidates` 发布 Candidate / PlanningGeneration，再由 Planner / Compiler 生成 EntryPlan | ✅ 每日批次键防重；不恢复 PiDecision 入场 |
 | `serenity_startup_catchup` | gateway 启动后4min一次 | 最近成功 Serenity run + 当前活动/批次记录 | 缺失时创建一个 scheduled research run | ✅ 补 02:00 漏跑；fresh/active/attempted 均 no-op，暂停恢复后仍可执行 |
@@ -136,7 +130,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 
 | 模块 | 写入路径 | 读取路径 | 管道 |
 |------|---------|---------|------|
-| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | 仅符合 active + high-confidence 与文档完整性门槛的项可由 `retrieve_lessons()` 提供 advisory context；Risk Critic 的 medium-confidence note 不在该池 | ✅ 存储研究记录不等于交易上下文准入 |
+| knowledge_items + knowledge_fts | post_trade_reviewer, dreaming_agent, insight_synthesizer | 仅符合 active + high-confidence 与文档完整性门槛的项可由 `retrieve_lessons()` 提供 advisory context | ✅ 存储研究记录不等于交易上下文准入 |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | advisory candidate context；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
 | ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | Entry Planner learning context / System Operator review → bounded advisory use | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
 | historical Ranker case/memo Learning | trade_case_study + latest trading_memo | 只读历史 funnel/attribution reports | 🟡 不创建当前 Entry exposure，不改变 Candidate/Risk/Execution |

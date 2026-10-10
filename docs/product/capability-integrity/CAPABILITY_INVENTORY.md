@@ -49,14 +49,14 @@ Discovery surfaces:
 | MD-02 | Watched-position price feed | Maintain fast exact-instrument prices for mark-to-market and protective exits | Scheduler, Positions | `scheduler.py:price_feed`, `aletheia/data/price_feed.py` |
 | MD-03 | Orderbook, funding, and open-interest collection | Collect microstructure facts used by opportunity analysis | Scheduler, Markets, CLI | `scheduler.py:data_collectors`, `aletheia/data/collectors.py` |
 | MD-04 | Liquidation, macro, and cross-venue context | Enrich analysis with bounded contextual market data | Scheduler, Markets | `scheduler.py:data_collector_context`, `aletheia/data/context_collectors.py` |
-| MD-05 | Historical OHLCV backfill | Maintain bounded historical bars for active-universe features and settlement | Scheduler, CLI | `ohlcv_active_backfill`, `ohlcv_nightly_backfill` |
+| MD-05 | Historical OHLCV backfill | Maintain bounded historical bars for active-universe features and settlement | Scheduler, CLI | `ohlcv_active_backfill` |
 | MD-06 | Dynamic Universe generation | Discover, score, diversify, and persist tradable candidate instruments | Entry Workbench, Settings, scheduler | `aletheia/universe/`, `scheduler.py:universe_refresh` |
 | MD-07 | Universe family calibration | Measure cost-adjusted treatment/control outcomes by scanner family | Learning UI, CLI, scheduler | `universe_forward_outcomes`, `learning_exposures`, calibration analytics |
 | MD-08 | Forward outcome settlement | Settle universe/filter/shadow outcomes at declared horizons | Scheduler, Learning, CLI | `scheduler.py:outcome_settler`, shared assessment in `aletheia/analytics/outcome_semantics.py` |
 | MD-09 | Market regime detection | Produce regime state and use it in analysis/sizing/risk context | Markets, Settings, CLI | `aletheia/regime/`, `aletheia/server/routes/data.py` |
-| MD-10 | News ingestion and analysis | Fetch, deduplicate, analyze, and expose relevant news | News Intel, Markets, scheduler | `news_fetch`, `news_analyze`, `aletheia/news/` |
-| MD-11 | Equity opportunity observation | Observe supported equities/xStocks during market hours and emit opportunities | Scheduler, Agent Activity | `scheduler.py:equity_observer`, `extensions/research/equity_observer.py` |
-| MD-12 | Prediction-market observation | Collect prediction events/markets, claims, history, and emit opportunities | Prediction Lens, Settings, scheduler | `aletheia/prediction/`, `aletheia/server/routes/prediction.py` |
+| MD-10 | News ingestion and analysis | **Retired (#3930).** Collector, analyzer, routes and News Intel page were deleted; historical `news_items` rows remain unread | none | — |
+| MD-11 | Equity opportunity observation | **Retired (#3930).** The equity observer and its scheduler job were deleted; equities are outside active scope | none | — |
+| MD-12 | Prediction-market observation | **Producer retired (#3930).** Collection and refresh were deleted; Prediction Lens reads only retained rows | Prediction Lens (read-only) | `aletheia/server/routes/prediction.py` |
 | MD-13 | Exchange symbol/market eligibility | Validate that an exact symbol and market type can be traded on the selected venue | Settings, execution preflight, doctor | `aletheia/config/exchanges.py`, `aletheia/execution/order_constraints.py` |
 
 ## Research, opportunities, and decisions
@@ -130,7 +130,7 @@ Discovery surfaces:
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
 | LN-01 | Post-trade review | Convert eligible closed outcomes into attributable lessons/reviews | Scheduler, Learning | `post_trade_reviewer`, `trade_case_builder.py` |
-| LN-02 | Risk critic | Review risk-decision history and write reusable risk lessons | Scheduler, Learning | `scheduler.py:risk_critic` |
+| LN-02 | Risk critic | **Retired (#3930).** The advisory risk-note job was deleted; Risk lessons remain static safety rules | none | — |
 | LN-03 | Dreaming consolidation | Periodically consolidate research, trades, and knowledge into durable artifacts | Learning, scheduler | `dreaming_daily`, `dreaming_agent.py` |
 | LN-04 | Trading memo synthesis | Produce bounded decision memos from current knowledge and outcomes | Learning, scheduler | `insight_synthesizer` |
 | LN-05 | Knowledge retrieval | Search and inject eligible active knowledge into later agent decisions | Learning, CLI, agent prompts | `knowledge/retrieval.py`, FTS |

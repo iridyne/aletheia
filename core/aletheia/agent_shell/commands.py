@@ -124,7 +124,6 @@ def _default_schedule_for(agent_name: str) -> str | None:
         "exchange_sync": "every 5 minutes",
         "portfolio_snapshot": "every 10 minutes",
         "post_trade_reviewer": "every 4 hours",
-        "risk_critic": "every 6 hours",
         "dreaming_agent": "daily at 02:00",
     }
     return schedules.get(agent_name)

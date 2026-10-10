@@ -1596,8 +1596,6 @@ class TelegramConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     allowed_chat_ids: Optional[list[int]] = None
     notify_trade_fills: Optional[bool] = None
-    notify_daily_summary: Optional[bool] = None
-    daily_summary_hour_cst: Optional[NotificationHour] = None
     dnd_enabled: Optional[bool] = None
     dnd_start_hour: Optional[NotificationHour] = None
     dnd_end_hour: Optional[NotificationHour] = None
@@ -1616,46 +1614,12 @@ async def update_telegram_config(req: TelegramConfigUpdate):
         )
         cfg.telegram = candidate
 
-    rescheduled = False
-    if (
-        "daily_summary_hour_cst" in updates
-        and updates["daily_summary_hour_cst"] != old.get("daily_summary_hour_cst")
-    ):
-        from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
-        from starlette.concurrency import run_in_threadpool
-        try:
-            rescheduled = await run_in_threadpool(
-                reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
-            )
-        except Exception as exc:
-            logger.warning("settings: telegram summary reschedule unavailable (%s)", type(exc).__name__)
-            rescheduled = False
-        if not rescheduled:
-            try:
-                with edit_config() as current:
-                    current.telegram = TelegramConfig.model_validate(old)
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "code": "telegram_config_rollback_failed",
-                        "message": "Daily summary rescheduling failed and the previous Telegram configuration could not be restored.",
-                    },
-                ) from exc
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "telegram_summary_reschedule_failed",
-                    "message": "Daily summary rescheduling failed; the previous Telegram configuration was restored.",
-                },
-            )
-
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
                  "entity_type": "telegram_config", "before": old,
                  "after": cfg.telegram.model_dump(mode="json"),
                  "message": f"Telegram config updated: {list(updates.keys())}"})
-    return {"updated": updates, "rescheduled": rescheduled}
+    return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
@@ -1668,7 +1632,6 @@ class WebhookConfigUpdate(SettingsRequest):
     secret: Optional[str] = None
     notify_trade_fills: Optional[bool] = None
     notify_alerts: Optional[bool] = None
-    notify_daily_summary: Optional[bool] = None
     timeout_sec: Optional[WebhookTimeoutSeconds] = None
 
 
@@ -2103,34 +2066,6 @@ def update_tradable_symbols(req: SymbolsUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Observed equities (US equity tickers for equity_observer)
-# ---------------------------------------------------------------------------
-
-class EquitiesConfigUpdate(SettingsRequest):
-    tickers: list[str]
-
-
-@router.post("/equities")
-def update_observed_equities(req: EquitiesConfigUpdate):
-    """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
-    normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
-    old = []
-
-    def apply_update(cfg):
-        old.extend(cfg.market_data.observed_equities)
-        cfg.market_data.observed_equities = normalized
-        return True
-
-    mutate_config(apply_update)
-    from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "equities_config_changed",
-                 "entity_type": "market_data_config", "before": {"observed_equities": old},
-                 "after": {"observed_equities": normalized},
-                 "message": f"Observed equities updated: {old} -> {normalized}"})
-    return {"observed_equities": normalized}
-
-
-# ---------------------------------------------------------------------------
 # Trading config (paper position management)
 # ---------------------------------------------------------------------------
 
@@ -2286,7 +2221,6 @@ class MarketDataConfigUpdate(SettingsRequest):
     ccxt_fallback: Optional[str] = None
     confirm_exchange_divergence: bool = False
     ohlcv_cache_ttl_min: Optional[int] = None
-    enable_yfinance_macro: Optional[bool] = None
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget r-series,
     # Bitget ON-series, future OKX SWAP).  Replaces the narrower observed_xstocks.
     observed_stock_tokens: Optional[list[str]] = None
@@ -2749,8 +2683,6 @@ class HistoricalDataConfigUpdate(SettingsRequest):
     enabled: bool | None = None
     max_bars_per_pair: int | None = None
     default_months: int | None = None
-    nightly_backfill_enabled: bool | None = None
-    nightly_backfill_hour_cst: int | None = None
     min_bars_for_backtest: int | None = None
     active_universe_backfill_enabled: bool | None = None
     active_universe_backfill_interval_minutes: int | None = None
@@ -2767,8 +2699,6 @@ async def update_historical_data_config(req: HistoricalDataConfigUpdate):
         cfg.historical_data = _validated_settings_section(HistoricalDataConfig, old, updates, name="HistoricalDataConfig")
 
     _SCHEDULER_FIELDS = {
-        "nightly_backfill_enabled",
-        "nightly_backfill_hour_cst",
         "active_universe_backfill_enabled",
         "active_universe_backfill_interval_minutes",
         "enabled",
@@ -2832,49 +2762,3 @@ def update_event_trigger_config(req: EventTriggerConfigUpdate):
     return {"updated": updates, "event_triggers": cfg.event_triggers.model_dump(mode="json")}
 
 
-# ---------------------------------------------------------------------------
-# News feeds config
-# ---------------------------------------------------------------------------
-
-class NewsFeedUpdate(SettingsRequest):
-    name: str
-    url: str
-    source: str
-    enabled: bool
-
-
-class NewsConfigUpdate(SettingsRequest):
-    enabled: Optional[bool] = None
-    fetch_interval_minutes: Optional[int] = None
-    retention_days: Optional[int] = None
-    feeds: Optional[list[NewsFeedUpdate]] = None
-
-
-@router.post("/news")
-async def update_news_config(req: NewsConfigUpdate):
-    from aletheia.config.schema import NewsConfig
-    with edit_config() as cfg:
-        old = cfg.news.model_dump(mode="json")
-        updates = req.model_dump(exclude_none=True, exclude={"feeds"})
-        cfg.news = _validated_settings_section(NewsConfig, old, updates, name="NewsConfig")
-        if req.feeds is not None:
-            from aletheia.config.schema import NewsFeedEntry
-            cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
-
-    rescheduled = False
-    if (
-        req.fetch_interval_minutes is not None
-        and req.fetch_interval_minutes != old.get("fetch_interval_minutes")
-    ):
-        from aletheia.agent_runtime.scheduler import reschedule_news_fetch
-        from starlette.concurrency import run_in_threadpool
-        rescheduled = await run_in_threadpool(
-            reschedule_news_fetch, cfg.news.fetch_interval_minutes,
-        )
-
-    from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "news_config_changed",
-                 "entity_type": "news_config", "before": old,
-                 "after": cfg.news.model_dump(mode="json"),
-                 "message": "News config updated"})
-    return {"news": cfg.news.model_dump(mode="json"), "rescheduled": rescheduled}

@@ -131,7 +131,7 @@ Stage 1 证据收集用**多个 LLM 视角**并行代替单次调用 (S1 multi-l
 
 Stage 4 **强制裁决** (S4 verdict): `_OPPORTUNITIES_SYSTEM` 强制 LLM 输出结构化 `verdict_json`(`recommendation` ∈ long/short/watch/avoid + `bull_case` + `bear_case` + `key_assumption`),消除两边倒措辞 (SV-S02/SV-B01)。裁决是研究证据，不是可执行 TradingDecision；source/hash 冻结后仍须由共享真实 PA evaluator 与 Entry Planner/Compiler 形成入场计划。历史 SV-S03/S04/B02/C01 对旧 PI context 的断言不再是当前入场权限。
 
-生成端**必须**路由过评估器: `research_worker` 与 `prediction_observer` 都调 `assess_evidence_tier` / `assess_opportunity_tier`(SE-S02/S03),否则证据仍是自评。
+生成端**必须**路由过评估器: `research_worker` 调 `assess_evidence_tier` / `assess_opportunity_tier`(SE-S02),否则证据仍是自评。
 
 ### 5.1 Research run lifecycle truth
 
@@ -258,7 +258,6 @@ Proposal→Gateway→Position/reconciliation 必须保留 school 与 source，�
 
 股票代币(xStocks)不在产品范围内(仅 USDT 永续)。research_worker 不再识别、不再放行股票代币 symbol,只产出 `asset_class="crypto"`、`market_type="perp"` 的机会:
 - 只有已登记的 exact venue/symbol/market_type 与受支持 instrument context、真实 PA/eligibility 门可发布 Candidate。纯股票 ticker、股票代币或预测问题文本不能伪造成 instrument。
-- `equity_observer` 保持观察-only,OBS-S04 不被破坏。
 - 加密-only 过滤(§2 不变量 #5,SE-S07/I07): `_is_tradeable_crypto_symbol`(= research_worker 的 `_is_allowed_serenity_symbol` 别名) + `_ALLOWED_QUOTE_CURRENCIES` 在持久化前拒绝 MSTR/USD、SPY、GBP/USD、USDT/INR,放行 BTC/USDT、ETH/BTC 等。
 
 ---

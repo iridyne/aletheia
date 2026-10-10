@@ -136,38 +136,6 @@ def _auto_promote_serenity_opportunities(
 
 
 
-def _get_recent_news_for_research() -> str:
-    """Fetch recent high-relevance analyzed news for injection into research context."""
-    try:
-        from aletheia.data.news_entities import match_crypto_entities
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT title, source, summary, content, impact_summary, sentiment "
-            "FROM news_items WHERE status = 'analyzed' AND relevance_score >= 0.6 "
-            "AND fetched_at >= datetime('now', '-24 hours') "
-            "ORDER BY relevance_score DESC LIMIT 20"
-        ).fetchall()
-        if not rows:
-            return ""
-        lines = []
-        for r in rows:
-            symbols = match_crypto_entities(
-                r["title"], r["summary"], r["content"]
-            )
-            if not symbols:
-                continue
-            syms = f" [{', '.join(symbols)}]"
-            impact = r["impact_summary"] or ""
-            lines.append(f"- [{r['source']}] {r['title']} — {impact} ({r['sentiment']}{syms})")
-        if not lines:
-            return ""
-        return "\n\nRecent News Headlines (last 24h, auto-analyzed):\n" + "\n".join(lines)
-    except Exception as e:
-        logger.debug("news injection into research context failed: %s", e)
-        return ""
-
-
 def _get_flow_context_block() -> str:
     """Inject real OI and liquidation data from Coinalyze into the research context.
 
@@ -514,8 +482,6 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             t["name"] for t in existing_themes[:10]
         )
 
-    news_block = _get_recent_news_for_research()
-
     # Inject derivatives flow data (Coinalyze OI + liquidations) when available.
     flow_block = _get_flow_context_block()
 
@@ -524,7 +490,6 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         f"Brief: {brief}\n"
         f"{existing_context}\n"
         f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-        f"{news_block}"
         f"{flow_block}"
     )
 

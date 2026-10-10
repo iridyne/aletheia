@@ -12,10 +12,6 @@ from aletheia.storage import repositories as repo
 
 
 def setup_env(tmp_path, monkeypatch):
-    from aletheia.agents import register_agent
-    from extensions.research.research_agent import run_research_agent
-
-    register_agent("research_agent")(run_research_agent)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -81,7 +77,7 @@ def test_orchestrator_releases_counter(tmp_path, monkeypatch):
     from aletheia.agent_runtime.orchestrator import run_agent
     from aletheia.agents import helpers
     keys_before = set(helpers._step_counters)
-    result = asyncio.run(run_agent("research_agent", trigger_type="manual"))
+    result = asyncio.run(run_agent("portfolio_agent", trigger_type="manual"))
     assert not any("Unknown agent" in error for error in result.get("errors", []))
     # No NEW counter should remain after run_agent completes (old residues from
     # other tests are allowed — we only own the keys introduced in this call).

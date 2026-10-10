@@ -117,23 +117,16 @@ async def test_ac06_model_providers(client, monkeypatch):
     assert set(["openai_compatible", "anthropic_compatible"]).issubset(data["providers"].keys())
 
 
-# #7 Agent runtime creates research notes + opportunities
+# #7 Agent runtime records manual runs
 @pytest.mark.anyio
 async def test_ac07_agent_creates_artifacts(client, monkeypatch):
     c, _ = client
-    # Mock LLM to return substantive content so quality gate passes.
-    async def _fake_llm(system, user, max_tokens=800, **_kwargs):
-        return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
-                "ETH funding rates suggest crowded longs. Recommend reducing spot exposure.", None)
-    monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
-
-    first = await c.post("/api/agent-runs/start", json={"agent_name": "research_agent"})
-    second = await c.post("/api/agent-runs/start", json={"agent_name": "equity_observer"})
+    first = await c.post("/api/agent-runs/start", json={"agent_name": "portfolio_agent"})
+    second = await c.post("/api/agent-runs/start", json={"agent_name": "post_trade_reviewer"})
     assert first.status_code == second.status_code == 202
     await _wait_for_agent_run(c, first.json()["job_id"])
     await _wait_for_agent_run(c, second.json()["job_id"])
     assert len((await c.get("/api/agent-runs")).json()) >= 2
-    assert len(repo.list_knowledge_items(item_type="research_note")) >= 1
 
 
 # #8 Knowledge base stores items

@@ -16,7 +16,7 @@ def test_old_advisory_modules_are_removed():
 @pytest.mark.parametrize("entrypoint", ["cli", "web"])
 @pytest.mark.parametrize("missing", [
     None, "extensions", "extensions.research", "extensions.data",
-    "extensions.data.ccxt_provider", "extensions.data.polymarket_provider", "broken_dependency", "broken_data_dependency",
+    "extensions.data.ccxt_provider", "broken_dependency", "broken_data_dependency",
     "broken_nightly_dependency", "extensions.research.dreaming_agent",
 ])
 def test_advisory_agent_composition(entrypoint, missing):
@@ -34,11 +34,9 @@ def forbidden(*args, **kwargs):
 
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-advisory = ("research_agent", "risk_critic", "equity_observer", "post_trade_reviewer", "dreaming_agent", "lesson_reviewer")
-pipeline = ("prediction_observer", "divergence_scanner")
-names = advisory + pipeline
+names = ("post_trade_reviewer", "dreaming_agent", "lesson_reviewer")
 broken = missing in {"broken_dependency", "broken_data_dependency", "broken_nightly_dependency", "extensions.research.dreaming_agent"}
-unavailable = names if missing in {"extensions", "extensions.research"} else pipeline if missing else ()
+unavailable = names if missing in {"extensions", "extensions.research"} else ()
 for name in names:
     register_agent(name)(forbidden)
 from aletheia.agent_runtime import scheduler
@@ -91,11 +89,6 @@ else:
             assert fn is not forbidden
     assert callable(get_agent_fn("portfolio_agent")), "Core snapshot agent remains available"
     from aletheia.server.routes import data
-    from aletheia.config.schema import AletheiaConfig
-    cfg = AletheiaConfig()
-    cfg.market_data.prediction_enabled = True
-    cfg.market_data.observed_prediction_markets = ["crypto"]
-    data.load_config = lambda: cfg
     catalog = {row["name"]: row for row in data.get_agents_catalog()["agents"]}
     for name in names:
         if name in unavailable:

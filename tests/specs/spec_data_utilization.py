@@ -652,39 +652,6 @@ def test_ccxt_liquidation_dead_code_removed():
 
 
 # ---------------------------------------------------------------------------
-# DU-S04 — yfinance macro path is declared in §3 (GAP-DU-02 / R5 compliance)
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "DU-S04", _CONTRACT, "§yfinance macro path R5", "L2a",
-        "yfinance_provider.py is an independent data-source path (S&P500/VIX/DXY/"
-        "Gold -> LLM context) gated by enable_yfinance_macro. Per R5 it must be "
-        "registered in data_utilization.md §3. This claim locks that registration.",
-        status="implemented",
-    ),
-)
-def test_yfinance_provider_declared_in_utilization_doc():
-    """yfinance_provider.py exists, is gated in market_context, and doc §3 lists it."""
-    yf_provider = _ROOT / "extensions" / "data" / "yfinance_provider.py"
-    assert yf_provider.exists(), "yfinance_provider.py must exist"
-
-    market_ctx = _ROOT / "core" / "aletheia" / "trading" / "market_context.py"
-    src = market_ctx.read_text(encoding="utf-8")
-    assert "read_macro_context" in src, (
-        "market_context.py must consume the composed macro reader"
-    )
-    assert "enable_yfinance_macro" in src, (
-        "yfinance path must be gated by enable_yfinance_macro config flag"
-    )
-
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    assert "yfinance" in doc, (
-        "data_utilization.md §3 must register the yfinance macro path (R5)"
-    )
-
-
-# ---------------------------------------------------------------------------
 # DU-S05 — regime is inline-derived; no standalone RegimeCollector (GAP-DU-03)
 # ---------------------------------------------------------------------------
 
@@ -791,40 +758,6 @@ def test_market_context_timeframes_cover_all_three_periods():
     )
     assert "'1d'" in src or '"1d"' in src, (
         "_TIMEFRAMES must include '1d' (DU-S07)"
-    )
-
-
-# ---------------------------------------------------------------------------
-# DU-S12 — official RSS news feeds are registered and consumed
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "DU-S12", _CONTRACT, "§official RSS feeds", "L2a",
-        "Default news feeds include SEC/CFTC/Ethereum Foundation official RSS "
-        "sources, and data_utilization.md §3 registers them as NewsCollector -> "
-        "news_items -> market_observer/research_worker consumers.",
-    ),
-)
-def test_official_news_feeds_registered_and_consumed():
-    from aletheia.config.schema import AletheiaConfig
-
-    cfg = AletheiaConfig()
-    feed_sources = {feed.source for feed in cfg.news.feeds}
-    for source in ("sec-press", "cftc-press", "ethereum-foundation"):
-        assert source in feed_sources, (
-            f"default news feeds must include official source {source!r} (DU-S12)"
-        )
-
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    assert "官方公告/监管 RSS" in doc, (
-        "data_utilization.md §3 must register official RSS feeds (DU-S12)"
-    )
-    assert "NewsCollector" in doc and "news_items" in doc, (
-        "official RSS registration must declare collector and storage (DU-S12)"
-    )
-    assert "market_observer" in doc and "research_worker" in doc, (
-        "official RSS registration must declare consumers (DU-S12)"
     )
 
 

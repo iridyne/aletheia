@@ -2,11 +2,9 @@
 
 import os
 import builtins
-import asyncio
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -53,90 +51,9 @@ def test_public_data_has_one_physical_implementation():
         "collectors/hyperliquid.py",
         "collectors/macro.py", "collectors/coinalyze.py",
         "collectors/options_structure.py",
-        "news_collector.py", "news_analyzer.py",
     ):
         assert not (root / "core/aletheia/data" / relative).exists()
         assert (root / "extensions/data" / relative).is_file()
-    assert not (root / "aletheia/server/routes/news.py").exists()
-    assert (root / "extensions/data/news_routes.py").is_file()
-
-
-@pytest.mark.parametrize("job,adapter", [
-    ("news_fetch", "news_collector"), ("news_analyze", "news_analyzer"),
-])
-def test_absent_news_adapter_stays_in_existing_job_failure_boundary(job, adapter, monkeypatch):
-    from aletheia.agent_runtime import scheduler
-
-    missing = f"extensions.data.{adapter}"
-    original_import = builtins.__import__
-    failures = []
-
-    def without_adapter(name, *args, **kwargs):
-        if name == missing:
-            raise ModuleNotFoundError(missing, name=missing)
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", without_adapter)
-    monkeypatch.setattr(scheduler, "load_config", lambda: SimpleNamespace(
-        news=SimpleNamespace(enabled=True), runtime=SimpleNamespace(paused=False)))
-    monkeypatch.setattr(scheduler, "_run_async_with_timeout", lambda _job, coro: asyncio.run(coro))
-    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
-    getattr(scheduler, f"_run_{job}")()
-    assert failures == [(job, missing)]
-
-
-@pytest.mark.parametrize("missing", ["news_routes", "broken_dependency", "present"])
-def test_news_routes_absence_preserves_core_and_stored_news(missing, tmp_path):
-    script = f"missing = {missing!r}\n" + '''
-from datetime import datetime, timezone
-import importlib
-import socket
-import sys
-
-effects = []
-def forbidden(*args, **kwargs):
-    effects.append("external_effect")
-    raise AssertionError("absence check must not use network or credentials")
-socket.socket.connect = forbidden
-from aletheia.config import secrets
-secrets.get_secret = forbidden
-attempted = []
-class MissingNews:
-    def find_spec(self, fullname, path=None, target=None):
-        if missing != "present" and fullname in {"aletheia.server.routes.news", "extensions.data.news_routes"}:
-            attempted.append(fullname)
-            raise ModuleNotFoundError("isolated missing news", name=(
-                "broken_dependency" if missing == "broken_dependency" else fullname))
-sys.meta_path.insert(0, MissingNews())
-try:
-    module = importlib.import_module("aletheia.server.app")
-except ModuleNotFoundError as exc:
-    assert missing == "broken_dependency" and exc.name == missing, exc
-else:
-    assert missing != "broken_dependency", "internal dependency defects must propagate"
-    paths = {route.path for route in module.app.routes}
-    assert ("/api/news" in paths) == (missing == "present")
-    if missing == "present":
-        assert "/api/news/{news_id}/analyze" in paths
-    assert "/_infra/livez" in paths
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.sqlite import get_db
-    run_migrations()
-    now = datetime.now(timezone.utc)
-    db = get_db()
-    db.execute("INSERT INTO news_items "
-        "(id,title,source,published_at,status,relevance_score) VALUES (?,?,?,?,?,?)",
-        ("stored", "Bitcoin adoption", "fixture", now.isoformat(), "analyzed", 0.9))
-    db.commit()
-    assert [row[0] for row in db.execute("SELECT id FROM news_items")] == ["stored"]
-assert bool(attempted) == (missing != "present") and not effects, (attempted, effects)
-'''
-    result = subprocess.run(
-        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
-        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
-        capture_output=True, text=True, timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_attribution_and_stored_context_survive_absent_position_x(tmp_path):

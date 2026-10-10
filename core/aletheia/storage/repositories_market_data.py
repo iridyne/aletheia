@@ -55,8 +55,6 @@ __all__ = [
     "upsert_collector_health_state",
     "upsert_ohlcv_backfill_state",
     "upsert_ohlcv_candles",
-    "upsert_prediction_event",
-    "upsert_prediction_market",
 ]
 
 
@@ -162,64 +160,6 @@ def get_latest_prediction_run() -> dict | None:
 
     rows = _select_all("prediction_observer_runs", order="started_at DESC", limit=1)
     return rows[0] if rows else None
-
-
-def upsert_prediction_event(data: dict) -> str:
-    """Insert or update a prediction event by external_event_id."""
-    from aletheia.storage.repositories import execute_write, get_db
-
-    from aletheia.storage.models import _utcnow, new_id
-
-    db = get_db()
-    ext_id = data["external_event_id"]
-    existing = db.execute(
-        "SELECT id FROM prediction_events WHERE external_event_id = ? AND source = ?",
-        (ext_id, data.get("source", "polymarket")),
-    ).fetchone()
-    if existing:
-        row_id = existing["id"]
-        data["updated_at"] = _utcnow()
-        data.pop("id", None)
-        data.pop("created_at", None)
-        sets = ", ".join(f"{k} = ?" for k in data.keys())
-        execute_write(f"UPDATE prediction_events SET {sets} WHERE id = ?", [*data.values(), row_id])
-    else:
-        row_id = data.get("id") or new_id()
-        data["id"] = row_id
-        data.setdefault("created_at", _utcnow())
-        data.setdefault("updated_at", _utcnow())
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join("?" * len(data))
-        execute_write(f"INSERT INTO prediction_events ({cols}) VALUES ({placeholders})", list(data.values()))
-    return row_id
-
-
-def upsert_prediction_market(data: dict) -> str:
-    """Insert or update a prediction market by external_market_id."""
-    from aletheia.storage.repositories import execute_write, get_db
-
-    from aletheia.storage.models import _utcnow, new_id
-
-    db = get_db()
-    ext_id = data["external_market_id"]
-    existing = db.execute(
-        "SELECT id FROM prediction_markets WHERE external_market_id = ? AND source = ?",
-        (ext_id, data.get("source", "polymarket")),
-    ).fetchone()
-    if existing:
-        row_id = existing["id"]
-        data["updated_at"] = _utcnow()
-        data.pop("id", None)
-        sets = ", ".join(f"{k} = ?" for k in data.keys())
-        execute_write(f"UPDATE prediction_markets SET {sets} WHERE id = ?", [*data.values(), row_id])
-    else:
-        row_id = data.get("id") or new_id()
-        data["id"] = row_id
-        data.setdefault("updated_at", _utcnow())
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join("?" * len(data))
-        execute_write(f"INSERT INTO prediction_markets ({cols}) VALUES ({placeholders})", list(data.values()))
-    return row_id
 
 
 def list_prediction_events(category: str | None = None, status: str = "active", limit: int = 50) -> list[dict]:

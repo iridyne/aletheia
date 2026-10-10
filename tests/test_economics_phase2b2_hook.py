@@ -249,7 +249,7 @@ async def test_regular_call_omits_would_block_key():
     ("fallback_to_defaults", False, False, .0001, "research_worker", True),
     ("warn_only", False, True, .0001, "research_worker", False),
     ("hard_block", False, True, 1000, "research_worker", False),
-    ("hard_block", False, False, .0001, "risk_critic", False),
+    ("hard_block", False, False, .0001, "pi_trading_decision", False),
 ])
 async def test_enforcement_independent_of_observation(monkeypatch, mode, shadow, tracing, cap, agent, denied):
     from aletheia.config.schema import AletheiaConfig

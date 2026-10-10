@@ -1106,43 +1106,13 @@ async def _request_timing(request, call_next):
 from aletheia.agents import register_agent, unregister_agent
 
 try:
-    from extensions.research.equity_observer import run_equity_observer
-except ModuleNotFoundError as exc:
-    if exc.name not in {"extensions", "extensions.research"}:
-        raise
-    unregister_agent("equity_observer")
-else:
-    register_agent("equity_observer")(run_equity_observer)
-
-try:
-    from extensions.research.research_agent import run_research_agent
-    from extensions.research.risk_critic import run_risk_critic
     from extensions.research.post_trade_reviewer import run_post_trade_reviewer
 except ModuleNotFoundError as exc:
     if exc.name not in {"extensions", "extensions.research", "extensions.knowledge"}:
         raise
-    unregister_agent("research_agent")
-    unregister_agent("risk_critic")
     unregister_agent("post_trade_reviewer")
 else:
-    register_agent("research_agent")(run_research_agent)
-    register_agent("risk_critic")(run_risk_critic)
     register_agent("post_trade_reviewer")(run_post_trade_reviewer)
-
-
-try:
-    from extensions.research.prediction_observer import run_prediction_observer
-    from extensions.research.divergence_scanner import run_divergence_scanner
-except ModuleNotFoundError as exc:
-    if exc.name not in {
-        "extensions", "extensions.research", "extensions.data", "extensions.data.ccxt_provider", "extensions.data.polymarket_provider",
-    }:
-        raise
-    unregister_agent("prediction_observer")
-    unregister_agent("divergence_scanner")
-else:
-    register_agent("prediction_observer")(run_prediction_observer)
-    register_agent("divergence_scanner")(run_divergence_scanner)
 
 
 from aletheia.storage.repositories import configure_observation_readers
@@ -1301,26 +1271,7 @@ else:
     configure_entry_learning(load_entry_learning_context)
 
 
-from aletheia.data.providers import configure_macro_reader, configure_prediction_history_reader
 from aletheia.universe.outcome_recorder import configure_structure_shadow_settler
-
-try:
-    from extensions.data.yfinance_provider import fetch_macro_context
-except ModuleNotFoundError as exc:
-    if exc.name not in {"extensions", "extensions.data", "extensions.data.yfinance_provider"}:
-        raise
-    configure_macro_reader(None)
-else:
-    configure_macro_reader(fetch_macro_context)
-
-try:
-    from extensions.data.polymarket_provider import fetch_market_history
-except ModuleNotFoundError as exc:
-    if exc.name not in {"extensions", "extensions.data", "extensions.data.polymarket_provider"}:
-        raise
-    configure_prediction_history_reader(None)
-else:
-    configure_prediction_history_reader(fetch_market_history)
 
 try:
     from extensions.data.perp_structure_shadow import settle_due_perp_structure_outcomes
@@ -1492,14 +1443,6 @@ except ModuleNotFoundError as exc:
     logger.warning("telegram_routes_unavailable")
 else:
     app.include_router(telegram_router)
-try:
-    from extensions.data.news_routes import router as news_router
-except ModuleNotFoundError as exc:
-    if exc.name not in {"extensions", "extensions.data", "extensions.data.news_routes"}:
-        raise
-    logger.warning("news_routes_unavailable")
-else:
-    app.include_router(news_router)
 try:
     from extensions.analytics.routes import router as analytics_reports_router
 except ModuleNotFoundError as exc:

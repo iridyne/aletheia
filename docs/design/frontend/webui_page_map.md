@@ -19,7 +19,6 @@ dated design documents and archive; they are not active page authority.
 | `/usage` | Usage | Runtime/model usage observability |
 | `/prediction-markets` | Prediction Markets | Prediction observer facts |
 | `/serenity-lens` | Serenity Lens | Long-horizon research |
-| `/news` | News Intel | Collected news evidence |
 
 Compatibility redirects (`LegacyRedirect` in `frontend/src/App.tsx`) own no unique UI:
 
@@ -36,7 +35,7 @@ Compatibility redirects (`LegacyRedirect` in `frontend/src/App.tsx`) own no uniq
 ## Navigation information architecture
 
 - Global: Overview, Command Center.
-- Research: Markets, Prediction Markets, Serenity Lens, News Intel.
+- Research: Markets, Prediction Markets, Serenity Lens.
 - Decision: Entry Workbench, Agent Activity.
 - Portfolio: Trades & Positions, Risk & Controls.
 - Global utilities: Learning, Usage, Settings.

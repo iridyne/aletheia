@@ -56,7 +56,7 @@ _EXECUTOR_WORKERS = {
 | `fast_io` | 1 | 延迟敏感的基础设施（price_feed、connectivity_monitor） |
 | `protective` | 1 | Position 保护检查（position_manager 是此池唯一 job）；不得排在长时数据/结算任务之后 |
 | `observer` | 1 | 保留的隔离池；原 market_observer 已退役（#2933），当前没有 job 注册到此池 |
-| `agents` | 1 | LLM/agent 密集型 job（pi_trading_decision、news_analyze、post_trade_reviewer 等）；串行防 SQLite 竞争 |
+| `agents` | 1 | LLM/agent 密集型 job（pi_trading_decision、post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
 **总工人数**：2 + 1 × 7 = **9**。
 
@@ -95,12 +95,7 @@ _EXECUTOR_WORKERS = {
 | `health_check` | interval | minutes=10 | io | — | 120 |
 | `persona_rollout` | interval | hours=8 | io | — | 600 |
 | `filter_controller_observe` | interval | hours=max(1, int(cfg.controller.observe_interval_hours)) | io | — | 600 |
-| `news_fetch` | interval | minutes=cfg.news.fetch_interval_minutes | io | 120 | 120 |
-| `news_analyze` | interval | minutes=5 | agents | 105 | 120 |
-| `equity_observer` | cron | 工作日 09:30–16:00 America/New_York，每 30 分钟（`_equity_observer_trigger()`）；仅注册已组合的 producer | agents | 240 | 300 |
-| `prediction_observer` | interval | minutes=30；Prediction Observer 与 Divergence Scanner 均已组合时注册 | agents | 240 | 120 |
 | `post_trade_reviewer` | interval | hours=4；仅注册已组合的 producer | agents | 300 | 300 |
-| `risk_critic` | interval | hours=6；仅注册已组合的 producer | agents | 300 | 300 |
 | `universe_refresh` | interval | minutes=10 | maintenance_io | 600 | 120 |
 | `universe_scanner_audit_reconciler` | interval | minutes=5 | audit | 15 | 120 |
 | `observation_lab_bridge` | interval | minutes=1 | audit | 30 | 120 |
@@ -110,11 +105,9 @@ _EXECUTOR_WORKERS = {
 | `data_collectors` | interval | minutes=2 | io | 55 | 60 |
 | `data_collector_context` | interval | minutes=10 | io | 60 | 60 |
 | `guard_promotion` | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
-| `ohlcv_nightly_backfill` | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | maintenance_io | 3600 | 600 |
 | `ohlcv_active_backfill` | interval | minutes=getattr(cfg.historical_data, 'active_universe_backfill_interval_minutes', 10) | maintenance_io | 300 | 120 |
 | `demo_capabilities` | interval | hours=4 | io | — | 600 |
 | `venue_margin_facts` | interval | minutes=5（`VENUE_MARGIN_REFRESH_INTERVAL_MINUTES`） | io | 60 | 120 |
-| `daily_summary` | cron | hour=cfg.telegram.daily_summary_hour_cst（默认 8）, minute=0, tz=Asia/Shanghai | io | 60 | 600 |
 
 已退役、不再注册的 job：`market_observer`（#2933）、`paper_trader`（#2945，2e69baae9）、`shadow_resolver`（shadow 写路径随 #3704 退役，384cd0cb2）。
 
@@ -151,14 +144,9 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 达到配置预算 80% 后最多 64 MiB。它必须持有 SQLite process/cross-process writer permit，
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
-**注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。
-`post_trade_reviewer`、`equity_observer` 与 `risk_critic` 仅在 CLI/Web composition 已将对应
+**注**：`post_trade_reviewer` 仅在 CLI/Web composition 已将对应
 `extensions/research` producer 绑定到既有 agent registry、`get_agent_fn()` 可解析时注册。
 Research 缺失时省略对应 job，不创建失败 AgentRun 或调度失败健康记录；Core 任务保持注册。
-Equity 的 `_equity_observer_trigger()` 保留 Eastern-time DST 与 misfire 语义。
-`prediction_observer` job 要求 `prediction_observer` 与 `divergence_scanner` 两个 registry
-binding 均可解析；Research 或所需 Data adapter 缺失时省略该 job，不创建失败运行。
-已组合时保留每 30 分钟的 Observer-then-Divergence 顺序、240 秒 Observer timeout 与 120 秒 misfire grace。
 任务总数随配置、已组合 producer 和实际职责变化，不设源码调用数量下限。
 
 `insight_synthesizer` 与 `confidence_calibration` 仅在 CLI/Web composition 已绑定

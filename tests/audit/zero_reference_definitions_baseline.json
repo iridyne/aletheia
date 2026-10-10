@@ -53,6 +53,7 @@
     {"file": "core/aletheia/storage/repositories.py", "name": "plan_market_ohlcv_tiering", "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"},
     {"file": "core/aletheia/storage/sqlite.py", "name": "reset_db", "reason": "untriaged by the sweep; referenced only by 147 test file(s)"},
     {"file": "core/aletheia/storage/sqlite.py", "name": "writer_metrics_snapshot", "reason": "sweep 2026-10-09 MS-10 DELETE; referenced only by 1 test file(s)"},
+    {"file": "core/aletheia/trading/market_context.py", "name": "build_market_context", "reason": "#3930 batch 1: no production caller before or after; its only textual reference was a docstring in the deleted yfinance_provider; delete with the module in a follow-up"},
     {"file": "core/aletheia/trading/instruments.py", "name": "contracts_to_notional", "reason": "untriaged by the sweep; referenced only by 1 test file(s)"},
     {"file": "core/aletheia/trading/instruments.py", "name": "notional_to_contracts", "reason": "untriaged by the sweep; referenced only by 1 test file(s)"},
     {"file": "core/aletheia/trading/market_context.py", "name": "_compute_snap", "reason": "untriaged by the sweep; referenced only by 1 test file(s)"},

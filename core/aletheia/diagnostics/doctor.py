@@ -471,7 +471,6 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_perp_structure,  # noqa: F405
         _probe_macro_signals,  # noqa: F405
         _probe_coinalyze,  # noqa: F405
-        _probe_prediction_markets,  # noqa: F405
         _probe_serenity_pipeline,  # noqa: F405
         _probe_volume_ranking,  # noqa: F405
         _probe_data_quality,  # noqa: F405

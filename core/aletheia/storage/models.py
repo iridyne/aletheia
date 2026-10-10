@@ -168,9 +168,7 @@ class Opportunity(_Provenanced):
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
     # older rows valid.
     asset_class: str = "crypto"
-    # Sub-category within asset_class. For equity: "equity_daily" (yfinance daily
-    # bars as primary signal). equity_observer always produces "equity_daily" with
-    # optional xstock data in metadata.
+    # Sub-category within asset_class (historical equity rows carry "equity_daily").
     asset_subclass: str = ""
     # Canonical equity ticker for cross-path correlation (e.g. "AAPL").
     canonical_ticker: str = ""

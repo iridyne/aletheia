@@ -350,7 +350,6 @@ async def build_market_context(
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
-    md_cfg = cfg.market_data
 
     _owned_provider = False
     if provider is None:
@@ -569,22 +568,12 @@ async def build_market_context(
 
     rs_block = _render_relative_strength(returns_24h)
 
-    # Optional macro block (yFinance, default off)
-    macro_block = ""
-    if md_cfg.enable_yfinance_macro:
-        try:
-            from aletheia.data.providers import read_macro_context
-            macro_block = await read_macro_context()
-        except Exception as e:
-            logger.warning("Macro context fetch failed: %s", e)
-
     body = (
         "## Verified market data snapshot\n"
         "Source-of-truth for the read below. If you cite a number, it must "
         "come from this block.\n\n"
         + "\n".join(sections)
         + ("\n" + rs_block if rs_block else "")
-        + ("\n" + macro_block if macro_block else "")
         + ("\n" + _INDICATOR_GLOSSARY if include_glossary else "")
     )
     debug["fallback"] = False

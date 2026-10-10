@@ -375,13 +375,11 @@ fresh, since each window is distinct.
 | POST | `/settings/exchange-mode` | Sets `exchange.mode` to `demo` or `live`; Live unlock remains separate |
 | POST | `/settings/risk` | Risk limit parameters |
 | POST | `/settings/symbols` | Crypto symbol config |
-| POST | `/settings/equities` | xStocks / equity config |
 | POST | `/settings/trading` | Trading parameters (slippage, sizing) |
 | POST | `/settings/market-data` | Market data collection config |
 | POST | `/settings/universe` | Universe pipeline config |
 | POST | `/settings/historical_data` | Historical data config, including nightly and bounded active-Universe catch-up controls |
 | POST | `/settings/event_triggers` | Event-driven trigger config |
-| POST | `/settings/news` | News ingestion/settings config |
 | POST | `/settings/network` | Network/proxy settings |
 | POST | `/settings/network/test` | Test network connectivity |
 | GET | `/settings/tunnel/status` | Cloudflare tunnel status |
@@ -467,7 +465,6 @@ fresh, since each window is distinct.
 | GET | `/prediction/claims` | All claims |
 | GET | `/prediction/preferences` | User preferences |
 | PATCH | `/prediction/preferences` | Update preferences |
-| POST | `/prediction/refresh` | Force refresh |
 
 ---
 
@@ -587,17 +584,6 @@ fresh, since each window is distinct.
 > internal-only, not part of the public UI contract. Kept enumerated so the
 > "complete endpoint index" claim (§0) actually holds (was previously
 > collapsed to a single wildcard row that hid drift; see #80).
-
----
-
-## News
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/news` | List news items (paginated) |
-| GET | `/news/{id}` | News item detail |
-| POST | `/news/{id}/analyze` | Trigger LLM analysis of news item |
-| POST | `/news` | Create manual news item |
 
 ---
 

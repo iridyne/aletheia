@@ -16,29 +16,6 @@ from aletheia.data.symbols import InstrumentId
 
 
 _provider_factory: Callable[..., MarketDataProvider] | None = None
-_macro_reader: Callable[[], Awaitable[str]] | None = None
-_prediction_history_reader: Callable[..., Awaitable[list[dict]]] | None = None
-
-
-def configure_macro_reader(reader: Callable[[], Awaitable[str]] | None) -> None:
-    global _macro_reader
-    _macro_reader = reader
-
-
-async def read_macro_context() -> str:
-    return await _macro_reader() if _macro_reader is not None else ""
-
-
-def configure_prediction_history_reader(reader: Callable[..., Awaitable[list[dict]]] | None) -> None:
-    global _prediction_history_reader
-    _prediction_history_reader = reader
-
-
-async def read_prediction_history(token_id: str, *, interval: str) -> list[dict] | None:
-    """None means no adapter; an installed source may honestly return no points."""
-    if _prediction_history_reader is None:
-        return None
-    return await _prediction_history_reader(token_id, interval=interval)
 
 
 class MarketDataObservationError(RuntimeError):

@@ -12,15 +12,12 @@
 | Job ID | Interval | Executor | Description |
 |--------|----------|----------|-------------|
 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
-| prediction_observer | 30min | agents | Prediction market scan |
 | pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
 | position_manager | 30s | protective | Manage open positions (trailing stop, exit) |
 | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
-| risk_critic | 6h | agents | Evaluate risk exposure and write an advisory research note |
 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
@@ -31,20 +28,16 @@
 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
 | reconciliation | 2min (live only) | io | Full state reconciliation |
 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
-| daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
 | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
 | demo_capabilities | 4h | io | Refresh the configured demo account's instrument capabilities |
 | guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
 | universe_refresh | 10min | maintenance_io | Universe composition refresh |
-| ohlcv_nightly_backfill | cron (configurable) CST | maintenance_io | Historical OHLCV gap fill |
 | ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | maintenance_io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
 | filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
 | persona_rollout | 8h | io | Rechecks durable exact Persona/policy/step evidence; advances at most one parameter or refreezes, never changes unrelated config |
 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete Serenity post-mortem delivery |
-| news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
-| news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | outcome_settler | 10min | maintenance_io | Settle due Filter Candidate Outcomes (`filter_candidate_outcomes`); `universe_forward_outcomes` was dropped in v94 (#3701) |
 | broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
@@ -156,57 +149,14 @@ is the sole candidate supply path. Historical `market_observer` runs and
 `metadata.observer_assessment` rows remain readable as audit-only evidence; they
 grant no current entry or enrichment authority.
 
-#### equity_observer (replaces stock_observer)
-
-- **Owner**: `extensions/research/equity_observer.py`, registered by CLI/Web
-  composition in the existing Core registry. An absent Research package makes
-  the manual catalog unavailable and omits this scheduler job, not a failed run.
-- **Trigger**: cron 工作日 09:30-16:00 America/New_York, every 30min
-- **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
-- **LLM**: Yes
-- **Outputs**: opportunities table (equity-linked symbols)
-- **Side effects**: Writes observation-only research evidence; does not wake Ranker or publish executable Candidate authority.
-- **Condition**: config.market_data.observed_equities non-empty
-
-#### stock_observer (removed 2026-06-17 — superseded by equity_observer)
+#### stock_observer (removed 2026-06-17)
 
 The retired name is absent from the manual agent catalog and is rejected with
 HTTP 403 by `POST /api/agent-runs/start`, including Operator service calls.
-Use `equity_observer`; historical runs remain readable. Historical
+Its successor equity observer was itself retired (#3930); historical runs remain readable. Historical
 `observed_stocks` config is decoded into the sole `observed_equities` workset
 under the [configuration contract](configuration_contract.md); no runtime alias
 or writable legacy control remains.
-
-#### prediction_observer
-
-- **Owner**: `extensions/research/prediction_observer.py`. CLI/Web composition
-  binds the Prediction/Divergence pipeline separately from other Research agents;
-  absent Research or its Data adapter makes both unavailable before manual queue
-  writes and omits the scheduler job. Internal dependency defects propagate.
-- **Trigger**: scheduler every 30min
-- **Inputs**: prediction market APIs (Polymarket/Kalshi), existing prediction_markets table
-- **LLM**: Yes (structured event interpretation; the chained divergence scanner is deterministic)
-- **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots,
-  and observation-only prediction Opportunities
-- **Side effects**: Scheduler chains divergence_scanner after the observer;
-  manual Prediction refresh runs only this observer. Research Opportunities do
-  not wake a retired entry queue. Existing Serenity evidence insertion also
-  refreshes same-theme active research opportunity grades; it does not publish Candidates.
-
-#### divergence_scanner (chained from prediction_observer)
-
-- **Owner**: `extensions/research/divergence_scanner.py`, composed with the
-  Prediction Observer. Core retains the existing registry and scheduler lifecycle.
-- **Trigger**: runs after prediction_observer completes
-- **Inputs**: prediction market prices vs spot prices
-- **LLM**: No
-- **Outputs**: divergence alerts → opportunities table
-- **Side effects**: Retains the shared information-policy epoch check and terminal
-  filter facts. A created observation-only Opportunity and its terminal fact share
-  the existing transaction/savepoint; a divergence Opportunity is not a Candidate entry owner.
-- **Direction contract**: YES probability change is combined with deterministic
-  bullish/bearish question polarity. Unknown, negated, or mixed polarity fails closed;
-  probability direction alone never decides crypto direction.
 
 #### Historical Ranker / PaperTrader (retired entry)
 
@@ -216,14 +166,13 @@ pending queue and applied family TTL penalties. PaperTrader then wrote
 only: neither job, queue admission, TTL writer nor on-demand notification remains
 an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 
-#### research_agent / research_worker
+#### research_worker
 
-- **Owner**: `extensions/research/research_agent.py` owns advisory notes;
-  `extensions/research/research_worker.py` owns the distinct optional Serenity pipeline.
+- **Owner**: `extensions/research/research_worker.py` owns the optional Serenity pipeline.
 - **Trigger**: enqueued by dreaming_agent or manual
 - **Inputs**: topic query + knowledge context; Serenity publication reads exact research opportunity IDs and evidence, independent of display limits
 - **LLM**: Yes (research_worker makes LLM calls)
-- **Outputs**: knowledge_items(research_note), serenity_profile_snapshots
+- **Outputs**: serenity_profile_snapshots
 - **Side effects**: FTS index update; eligible Serenity research can publish durable Candidates via `publish_serenity_candidates`, sharing the manual publication implementation. Auto-promotion retains its score gate; manual publication still requires real PA/eligibility evidence. Source identity is frozen at birth, not inferred from pending. See [Serenity contract](serenity_contract.md).
 
 #### portfolio_agent
@@ -363,17 +312,6 @@ only performs learned-guard TTL expiry; candidate promotion is explicit owner re
   reduce the number of whole Positions to stay within the total prompt budget and
   reports the omitted count; it never truncates a selected Position's rationale.
 
-#### risk_critic
-
-- **Owner**: `extensions/research/risk_critic.py`, registered by CLI/Web composition
-  in the existing Core agent registry. An absent producer is unavailable in the
-  manual catalog and omitted from the scheduler, not recorded as a failed run.
-- **Trigger**: scheduler every 6h; disabled when `agent.autonomous_learning=false`
-- **Inputs**: Open positions, risk config, recent violations, portfolio exposure
-- **LLM**: Yes (risk assessment)
-- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `extensions/research/risk_critic.py` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`)
-- **Side effects**: Writes one medium-confidence advisory research note. It does not flag opportunities or write `risk_decisions`; those facts remain owned by the Risk Engine. Automatic Risk lessons remain advisory because `risk_lesson_constraint` is not measurement-supported.
-
 #### dreaming_daily
 
 - **Owner / availability**: Dreaming and Lesson Reviewer have one implementation each in
@@ -475,7 +413,7 @@ is set per `add_job`.
 - `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit, connect/network/remote-protocol/proxy transport failures), tries the next candidate model from the explicit ordered `fallback_models` configuration only; discovery and model-name heuristics cannot supply candidates (see [Inference Harness failure semantics](llm_inference_harness_contract.md#failure-and-recovery-semantics)). Authentication and other permanent 4xx failures do not retry. Timeout exceptions remain terminal so five sequential 60-second model attempts cannot overrun bounded agent jobs.
 - `agents.helpers.llm_structured()` 对非对象/不可解析 JSON、schema 校验失败和空输出最多尝试 2 次：第一次使用原始请求，第二次只在这些结构化失败后追加一次随机 nonce 修复消息，并保持同一输出预算；不再把上一轮坏输出或递增预算带回第三次尝试。全部尝试共享 180 秒总墙钟预算，不继承 provider 面向长研究输出的 300 秒上限。当前 HTTP provider 使用 portable strict JSON Schema；不支持该字段时由适配器执行有界 schema fallback。`fallback_to_defaults` 默认关闭；只有非关键调用方显式开启时，失败才返回 schema 派生默认值，并在 error 字符串保留 `(fallback)` 标记。当前生产调用方均未开启该选项。
 - **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).
-- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. equity_observer → technical-only signals).
+- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades.
 
 ### Permission Modes (two surfaces — see [live_unlock_contract §5](live_unlock_contract.md))
 

@@ -110,13 +110,13 @@ async def test_structured_repair_attempts_share_one_logical_call():
             "system",
             "user",
             schema=_ValueSchema,
-            caller="equity_observer.market_read",
+            caller="agent_shell.portfolio_review",
         )
 
     assert error is None
     assert data == {"value": 7}
     db = get_db()
-    logical = db.execute("SELECT * FROM llm_inference_calls WHERE caller='equity_observer.market_read'").fetchone()
+    logical = db.execute("SELECT * FROM llm_inference_calls WHERE caller='agent_shell.portfolio_review'").fetchone()
     assert logical is not None
     assert logical["status"] == "success"
     assert logical["parse_valid"] == 1
@@ -152,7 +152,7 @@ async def test_empty_text_transport_success_is_logical_error():
         content, error = await helpers.llm_complete(
             "system",
             "user",
-            caller="research_agent.note",
+            caller="post_trade_reviewer.review",
         )
 
     assert content is None
@@ -161,7 +161,7 @@ async def test_empty_text_transport_success_is_logical_error():
     db = get_db()
     logical = db.execute(
         "SELECT logical_call_id,status,attempt_count,final_model,error_type "
-        "FROM llm_inference_calls WHERE caller='research_agent.note' "
+        "FROM llm_inference_calls WHERE caller='post_trade_reviewer.review' "
         "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
     assert logical is not None
@@ -345,7 +345,7 @@ async def test_schema_invalid_object_never_becomes_success():
             "system",
             "user",
             schema=_ValueSchema,
-            caller="equity_observer.market_read",
+            caller="agent_shell.portfolio_review",
         )
 
     assert data is None
@@ -354,7 +354,7 @@ async def test_schema_invalid_object_never_becomes_success():
         get_db()
         .execute(
             "SELECT status,parse_valid,schema_valid,attempt_count,error_type "
-            "FROM llm_inference_calls WHERE caller='equity_observer.market_read'"
+            "FROM llm_inference_calls WHERE caller='agent_shell.portfolio_review'"
         )
         .fetchone()
     )
@@ -370,7 +370,7 @@ async def test_schema_invalid_object_never_becomes_success():
         .execute(
             "SELECT structured_attempt_index,outcome FROM llm_structured_attempt_outcomes "
             "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
-            "WHERE caller='equity_observer.market_read') ORDER BY structured_attempt_index"
+            "WHERE caller='agent_shell.portfolio_review') ORDER BY structured_attempt_index"
         )
         .fetchall()
     )
@@ -399,7 +399,7 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
                 "system",
                 "user",
                 schema=_ValueSchema,
-                caller="news_analyzer.analysis",
+                caller="agent_shell.intent_classification",
                 fallback_to_defaults=True,
             )
         )
@@ -412,7 +412,7 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
         get_db()
         .execute(
             "SELECT status,finished_at,parse_valid,schema_valid,error_type "
-            "FROM llm_inference_calls WHERE caller='news_analyzer.analysis'"
+            "FROM llm_inference_calls WHERE caller='agent_shell.intent_classification'"
         )
         .fetchone()
     )
@@ -427,7 +427,7 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
         .execute(
             "SELECT outcome FROM llm_structured_attempt_outcomes "
             "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
-            "WHERE caller='news_analyzer.analysis')"
+            "WHERE caller='agent_shell.intent_classification')"
         )
         .fetchall()
     )
@@ -564,7 +564,7 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
             "system",
             "user",
             schema=_ValueSchema,
-            caller="equity_observer.market_read",
+            caller="agent_shell.portfolio_review",
             allow_model_fallback=False,
             context_artifacts=artifacts,
             context_symbol="BTC/USDT",
@@ -575,7 +575,7 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
     db = get_db()
     call = db.execute(
         "SELECT logical_call_id,allow_model_fallback FROM llm_inference_calls "
-        "WHERE caller='equity_observer.market_read'"
+        "WHERE caller='agent_shell.portfolio_review'"
     ).fetchone()
     artifact = db.execute(
         "SELECT logical_call_id,evaluation_pair_id,evaluation_arm,fixture_id,rendered_chars FROM llm_context_artifacts"

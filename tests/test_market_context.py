@@ -6,10 +6,7 @@ Covers:
 """
 
 import asyncio
-import json
-import sqlite3
 import math
-from datetime import datetime, timedelta, timezone
 
 from aletheia.trading import indicators
 
@@ -358,67 +355,4 @@ def test_build_context_preserves_instrument_identity_and_cache_scope():
     assert all(isinstance(symbol, InstrumentId) for symbol in provider.ohlcv_symbols)
     assert {symbol.market_type for symbol in provider.ohlcv_symbols[:3]} == {"perp"}
     assert {symbol.market_type for symbol in provider.ohlcv_symbols[3:]} == {"spot"}
-
-
-def _setup_env(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
-    from aletheia.storage.migrations import run_migrations
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    for sub in ("logs", "knowledge/research_notes", "knowledge/strategies",
-                "knowledge/post_trade_reviews", "knowledge/dreaming_logs",
-                "knowledge/daily_reviews"):
-        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
-    reset_db()
-    sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
-    init_tool_registry()
-
-
-def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path, monkeypatch):
-    """Research agent should not reuse stale prediction-market claims when the module is off."""
-    _setup_env(tmp_path, monkeypatch)
-    from extensions.research.research_agent import _prediction_context_block
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.storage.repositories import _insert
-
-    cfg = load_config()
-    cfg.market_data.prediction_enabled = False
-    save_config(cfg)
-    _insert("prediction_market_claims", {
-        "id": "claim-stale",
-        "market_id": "pm-stale",
-        "claim_text": "Old probability momentum should not appear",
-        "claim_type": "probability_momentum",
-        "direction": "long",
-        "confidence": 0.7,
-        "source": "prediction_observer",
-        "metadata": "{}",
-        "created_at": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
-    })
-    assert _prediction_context_block() == ""
-
-    cfg.market_data.prediction_enabled = True
-    save_config(cfg)
-    assert _prediction_context_block() == ""
-
-    _insert("prediction_market_claims", {
-        "id": "claim-fresh",
-        "market_id": "pm-fresh",
-        "claim_text": "Fresh probability momentum may appear",
-        "claim_type": "probability_momentum",
-        "direction": "long",
-        "confidence": 0.7,
-        "source": "prediction_observer",
-        "metadata": "{}",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    assert "Fresh probability momentum may appear" in _prediction_context_block()
-
 

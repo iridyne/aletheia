@@ -14,6 +14,7 @@
     {"table": "paper_account_events", "reason": "local paper_internal cash ledger retired with the local simulator (history/local_paper_account_controls.md); readers serve archived evidence and export"},
     {"table": "position_exit_plan_versions", "reason": "read-only historical protection report (persistence_recovery_contract.md); sweep MS-05 NEEDS_OWNER"},
     {"table": "position_protection_triggers", "reason": "read-only historical protection report (persistence_recovery_contract.md)"},
+    {"table": "prediction_observer_runs", "reason": "#3930 batch 1 retired its producer (prediction_observer); Prediction Lens /prediction/status and /runs read retained rows; delete the readers with the Lens follow-up"},
     {"table": "ps_gateway_sessions", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
     {"table": "ps_orders", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},
     {"table": "ps_positions", "reason": "retired PS persistence table, 0 rows on Fedora; /api/persistence readers are sweep RP-12 NEEDS_OWNER"},

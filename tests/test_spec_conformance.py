@@ -53,7 +53,7 @@ REQUIRED_CONTRACTS = [
     "trading_mandate_contract",
     "market_structure_contract",
     # subsystem observer claims register under "agent_contracts" by design —
-    # equity_observer / prediction_observer are agents, not a separate contract.
+    # observer agents are not a separate contract.
 ]
 
 

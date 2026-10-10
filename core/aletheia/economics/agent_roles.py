@@ -17,12 +17,12 @@ class AgentRole(StrEnum):
 
 
 _SYSTEM_OPERATOR_NAMES = frozenset({"system_operator", "pi_trading_decision"})
-_EVALUATOR_NAMES = frozenset({"risk_critic", "lesson_reviewer", "post_trade_reviewer"})
+_EVALUATOR_NAMES = frozenset({"lesson_reviewer", "post_trade_reviewer"})
 _COORDINATOR_NAMES = frozenset({"orchestrator", "agent_runtime", "agent_shell"})
 _WORKER_NAMES = frozenset({
-    "market_observer", "equity_observer", "stock_observer", "divergence_scanner",
-    "dreaming_agent", "paper_trader", "portfolio_agent", "prediction_observer",
-    "research_agent", "research_worker", "news_analyzer", "insight_synthesizer",
+    "market_observer", "stock_observer",
+    "dreaming_agent", "paper_trader", "portfolio_agent",
+    "research_worker", "insight_synthesizer",
 })
 
 

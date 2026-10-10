@@ -830,12 +830,11 @@ def test_binance_testnet_requires_fresh_market_data(tmp_path, monkeypatch):
         "pipeline_middle_state_integrity",
         "§5 producer identity helpers",
         "L2b",
-        "Trade opportunity reads exclude predictions, and divergence source-version "
-        "identity resolves the earliest row across every lifecycle state.",
+        "Trade opportunity reads exclude predictions.",
         status="implemented",
     )
 )
-def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch):
+def test_trade_opportunity_reads_exclude_predictions(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.storage import repositories as repo
@@ -870,24 +869,6 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
             status="reviewed",
             asset_class="crypto",
         ),
-        Opportunity(
-            id="divergence-first",
-            symbol="SOL/USDT",
-            market="spot",
-            status="reviewed",
-            source_agent="divergence_scanner",
-            metadata=json.dumps({"source_version": "div-v1"}),
-            created_at="2026-01-01T00:00:00+00:00",
-        ),
-        Opportunity(
-            id="divergence-later",
-            symbol="SOL/USDT",
-            market="spot",
-            status="open",
-            source_agent="divergence_scanner",
-            metadata=json.dumps({"source_version": "div-v1"}),
-            created_at="2026-01-02T00:00:00+00:00",
-        ),
     ]
     for row in rows:
         repo.insert_opportunity(row)
@@ -895,11 +876,7 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
     assert {row["id"] for row in list_open_trade_opportunities(limit=20)} == {
         "crypto-open",
         "equity-open",
-        "divergence-later",
     }
-    found = repo.find_divergence_opportunity_by_source_version("div-v1")
-    assert found is not None
-    assert found["id"] == "divergence-first"
 
 
 @spec_claim(
@@ -1004,72 +981,6 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
                 reintroduced[path.relative_to(ROOT).as_posix()] = name
     assert not reintroduced, (
         f"retired emitter seams reintroduced in production: {reintroduced}"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-MSI-19",
-        "pipeline_middle_state_integrity",
-        "§5 atomic divergence source identity",
-        "L2c",
-        "Concurrent divergence retries for one immutable prediction source version resolve "
-        "one durable Opportunity owner across every lifecycle state.",
-        status="implemented",
-    )
-)
-def test_divergence_source_version_identity_claim_is_atomic(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.sqlite import get_db
-
-    barrier = threading.Barrier(2)
-    results: list[tuple[str, bool]] = []
-    errors: list[BaseException] = []
-    result_lock = threading.Lock()
-
-    def produce(index: int) -> None:
-        try:
-            candidate = Opportunity(
-                id=f"divergence-race-{index}",
-                symbol="SOL/USDT",
-                market="spot",
-                direction_bias="long",
-                source_agent="divergence_scanner",
-                metadata=json.dumps({"source_version": "divergence-race-v1"}),
-            )
-            barrier.wait(timeout=5)
-            owner, created = repo.insert_divergence_opportunity_once(
-                candidate, source_version="divergence-race-v1"
-            )
-            with result_lock:
-                results.append((str(owner["id"]), created))
-        except BaseException as exc:  # pragma: no cover - asserted below
-            with result_lock:
-                errors.append(exc)
-
-    threads = [threading.Thread(target=produce, args=(index,)) for index in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    rows = get_db().execute(
-        "SELECT id FROM opportunities WHERE source_agent='divergence_scanner' "
-        "AND json_extract(metadata, '$.source_version')='divergence-race-v1'"
-    ).fetchall()
-    assert not errors
-    assert len(results) == 2
-    assert sum(created for _owner, created in results) == 1
-    assert len({owner for owner, _created in results}) == 1
-    assert [row["id"] for row in rows] == [results[0][0]]
-    import inspect
-    from extensions.research import divergence_scanner
-
-    assert "insert_divergence_opportunity_once(" in inspect.getsource(
-        divergence_scanner
     )
 
 

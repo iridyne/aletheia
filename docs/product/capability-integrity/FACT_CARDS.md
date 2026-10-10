@@ -54,9 +54,9 @@ Notation:
 | MD-07 | outcome jobs → exposures/outcomes → family calibration stats → allocator multiplier → bounded scoring | Learning/CLI; neutral 1.0 fallback | E1+E2, Experimental | External Windows runtime observations are tracked separately from this local code review. |
 | MD-08 | scheduler → outcome settler → horizon outcomes → calibration/learning consumers → settled evidence | Learning/CLI; retry/incomplete | E1+E2, Supported | Tests assert cost-aware settlement through its consumers. |
 | MD-09 | regime job/API → regime detector → regime rows → observer/persona/risk context → regime-aware input | Markets/doctor; neutral fallback | E1+E2, Supported | Detector, Universe/ranker/position consumers and attribution checks pass. |
-| MD-10 | fetch/analyze jobs → news stores → relevance analysis → News UI/agent context → news evidence | News Intel; dedupe/provider errors | E1+E2, Supported | Analysis lifecycle, retry/failure, research injection and owner visibility checks pass. |
-| MD-11 | market-hours job → equity observer → opportunities/runs → Operator → equity candidate decision | Agent Activity; market-hours skip | E1+E2, Experimental | Tested, but equity is outside active crypto scope. |
-| MD-12 | prediction jobs → prediction stores/claims → observer/UI → research opportunity | Prediction Lens; provider errors | E1, Experimental | Research output is not an execution promise. |
+| MD-10 | Retired (#3930): no news producer or UI | — | Retired | Historical rows only. |
+| MD-11 | Retired (#3930): no equity observer | — | Retired | Historical rows only. |
+| MD-12 | retained prediction rows → Prediction Lens (read-only) | Prediction Lens | E1, Experimental | Producer retired (#3930); no refresh. |
 | MD-13 | settings/preflight → venue metadata/constraints → eligibility result → Risk/Gateway → accept/reject | Settings/doctor; hard reject | E1+E2+E3, Supported | Natural Runtime marked all nine candidates ineligible when live prices were absent and PI correctly produced no evaluable action. |
 
 ## Research, opportunities, and decisions
@@ -130,7 +130,7 @@ Notation:
 | ID | Runtime path and durable state → final consumer/result | Visible / recovery | Evidence and verdict | Review |
 |---|---|---|---|---|
 | LN-01 | post-trade job → reviewer/case builder → lessons/cases → retrieval/review → attributable review | Learning; ineligible skip | E1+E2, Supported | Only genuine eligible outcomes enter the consumer path. |
-| LN-02 | risk critic job → risk history analysis → risk lessons → review/Risk constraint consumer → reusable lesson | Learning; reject/archive | E1+E2, Supported | Structured applied lessons can only tighten/reject. |
+| LN-02 | Retired (#3930): no risk-critic job | — | Retired | Risk lessons remain static safety rules. |
 | LN-03 | daily job → dreaming agent → dreaming log/daily review + trade-case lessons → lesson reviewer → applied lessons → Layer3/Operator prompt | Learning; agent outputs/errors and lesson lifecycle | E1+E2, Supported | Scheduler/producer tests and the exact `trade_case_study` lesson consumer acceptance close the final-reuse join. |
 | LN-04 | scheduler → insight synthesizer → trading memo → observer/ranker/Operator bundle → bounded advice | Learning/agent evidence; expiry | E1+E2, Supported | Memo remains advisory and has neutral fallback. |
 | LN-05 | agent request → knowledge retrieval/FTS → retrieved bundle → prompts/ranker → later decision evidence | CLI/Learning; empty fallback | E1+E2, Supported | Final-consumer tests prove injection, not merely search. |

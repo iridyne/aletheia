@@ -1,7 +1,7 @@
 """Prediction Market Lens API — observation-only prediction market data.
 
 Provides endpoints for the Prediction Market Lens frontend page.
-All data is read-only except the manual refresh trigger.
+All data is read-only.
 """
 
 import json
@@ -9,7 +9,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.server.routes.prediction")
@@ -161,23 +160,11 @@ def get_prediction_market_detail(market_id: str):
 
 
 @router.get("/markets/{market_id}/history")
-async def get_prediction_market_history(market_id: str, interval: str = "1h"):
+def get_prediction_market_history(market_id: str):
     """Probability history from local snapshots."""
     snapshots = repo.list_probability_snapshots(market_id, limit=500)
-    if not snapshots:
-        market = repo.get_prediction_market_by_id(market_id)
-        if not market:
-            raise HTTPException(404, "Market not found")
-        ext_id = market.get("external_market_id", "")
-        if ext_id:
-            from aletheia.data.providers import read_prediction_history
-            try:
-                history = await read_prediction_history(ext_id, interval=interval)
-                if history is not None:
-                    return {"source": "polymarket_api", "points": history}
-            except Exception:
-                logger.debug("prediction: Polymarket probability-history fetch failed; returning empty local point set", exc_info=True)
-        return {"source": "local", "points": []}
+    if not snapshots and not repo.get_prediction_market_by_id(market_id):
+        raise HTTPException(404, "Market not found")
     return {
         "source": "local",
         "points": [
@@ -222,59 +209,3 @@ def update_prediction_preferences(body: dict):
             if isinstance(cats, list) and all(isinstance(c, str) for c in cats):
                 cfg.market_data.observed_prediction_markets = cats
     return {"status": "ok", "categories": cfg.market_data.observed_prediction_markets}
-
-
-@router.post("/refresh", status_code=202)
-def trigger_prediction_refresh():
-    """Manually trigger a prediction observer run via the durable job queue."""
-    from aletheia.config.loader import load_config
-    try:
-        cfg = load_config()
-    except Exception as exc:
-        raise HTTPException(503, "Prediction observer configuration is unavailable") from exc
-    blocked_reason = prediction_observer_blocked_reason(cfg)
-    if blocked_reason is not None:
-        message = {
-            "prediction_observer_disabled": "Prediction market module is disabled",
-            "prediction_observer_not_configured": "No prediction markets configured",
-            "prediction_observer_config_unavailable": "Prediction observer configuration is unavailable",
-        }.get(blocked_reason, "Prediction observer is unavailable")
-        raise HTTPException(400 if blocked_reason != "prediction_observer_config_unavailable" else 503, message)
-
-    from aletheia.agent_runtime.job_queue import (
-        AgentJobAlreadyQueued,
-        AgentJobManagerClosed,
-        AgentJobQueueFull,
-        get_agent_job_manager,
-    )
-
-    manager = get_agent_job_manager()
-    try:
-        run = manager.enqueue("prediction_observer")
-    except AgentJobAlreadyQueued as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "prediction_refresh_in_progress",
-                "job_id": exc.run_id,
-            },
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except AgentJobQueueFull as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "prediction_refresh_in_progress",
-                "job_id": exc.run_id,
-                "capacity": exc.capacity,
-            },
-        ) from exc
-    except AgentJobManagerClosed as exc:
-        raise HTTPException(status_code=503, detail="agent_job_manager_unavailable") from exc
-    return {
-        "job_id": run.id,
-        "run_id": run.id,
-        "status": "queued",
-        "queue": manager.snapshot(),
-    }

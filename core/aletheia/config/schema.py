@@ -365,7 +365,8 @@ class MarketDataConfig(BaseModel):
         default_factory=lambda: ['binance', 'okx', 'bitget'], max_length=3,
     )
     ohlcv_cache_ttl_min: int = 10
-    # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
+    # No reader since the yfinance macro provider retired (#3930); kept until
+    # Fedora's config drops the key (extra="forbid").
     enable_yfinance_macro: bool = False
     # Round 2 macro signals (Step 1-4 zero-cost data integration).
     # Binance Futures globalLongShortAccountRatio; populates
@@ -397,20 +398,18 @@ class MarketDataConfig(BaseModel):
     # volume, stored in onchain_snapshots and folded into the macro context block.
     # Fills the on-chain hole left by the never-built Glassnode. Phase B cadence.
     enable_defillama: bool = True
-    # Master switch for prediction market observation (Polymarket). When False,
-    # prediction_observer does not run and the Prediction Lens page shows disabled.
+    # Prediction Lens display switch. The Polymarket producer is retired (#3930);
+    # this field stays until Fedora's config drops it (extra="forbid").
     prediction_enabled: bool = False
-    # Polymarket category slugs (or keywords) to observe. prediction_observer
-    # fetches active markets matching these categories every 30 minutes.
+    # Polymarket category slugs. No producer reads them since #3930; kept for
+    # config compatibility until Fedora's config drops the key.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
-    # US equities to observe — canonical Yahoo Finance tickers (e.g. "AAPL").
-    # equity_observer fetches daily bars via yfinance AND real-time price via
-    # exchange stock tokens (r-series + ON-series on Bitget; future OKX SWAP).
-    # Runs Mon–Fri 14:30–21:00 UTC (US market hours). Empty = disabled.
+    # US equity tickers (e.g. "AAPL"). The equity observer is retired (#3930); the
+    # field stays until Fedora's config drops it (extra="forbid").
     observed_equities: list[str] = Field(default_factory=list)
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
     # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
-    # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.
+    # "AAPLON/USDT".
     # Historical observed_xstocks is consumed only during config decoding.
     # Default covers the major r-series + ON-series starters; edit in Settings UI.
     observed_stock_tokens: list[str] = Field(
@@ -2166,8 +2165,8 @@ class EconomicsConfig(BaseModel):
       `warn_only` means budget crossings are signals, never blocks.
       `fallback_to_defaults` and `hard_block` are opt-in for
       non-safety callers only; safety-relevant callers
-      (pi_trading_decision, risk_critic,
-      agent_shell/trading_decision) stay warn-only regardless.
+      (pi_trading_decision, agent_shell/trading_decision) stay
+      warn-only regardless.
     - `harness_header_default_on`: Phase 5 feature flag. Off until an
       ablation study (see docs/design/proposals/
       tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears
