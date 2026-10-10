@@ -1,150 +1,220 @@
 # Opportunity Outcome Contract
 
-> 状态：阶段 D 权威设计，2026-07-10。
-> 范围：Universe 选出的 Opportunity 和已有事前方向的筛选候选，在固定持有期后的反事实结果，以及这些结果如何进入诊断和学习。
-> 不包含：实盘盈亏记账、风控限额、订单执行、自动调参。
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `OO` · **Owner code:** `core/aletheia/universe/outcome_economics.py` (economics) and
+> `core/aletheia/universe/filter_outcome_recorder.py` (settlement)
 
-## 1. 目标
+## 1. Scope
 
-结果层回答的不是“价格后来涨了吗”，而是：
+This contract owns the economics and settlement status of `filter_candidate_outcomes`
+(FCO): the fixed-horizon, cost-aware counterfactual result of a candidate that had an
+ex-ante direction at a decision time. It answers "given what was visible then, on the
+exact target market and direction, did this candidate leave a tradable net edge?" — not
+"did price go up". It supports Candidate selection measurement on the mainline
+(Universe → Candidate → … → Outcome). It does not own realized Position PnL, Risk limits,
+order execution, or any automatic tuning. Which gates create rows is owned by the
+[Filter Evidence contract](filter_evidence_contract.md); this contract owns the row.
 
-> 在当时可见信息、目标市场和目标方向下，按可解释的交易成本估算，这个机会是否留下了可交易的净优势？
+## Entry points
 
-毛价格变化只能用于解释市场走势，不能直接驱动 missed-alpha、过滤器评价、scanner 校准或自动守卫。
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/analytics/filter_evidence.py::build_candidate_outcomes` | call (row builder) | `core/aletheia/universe/candidate_selection_shadow.py::build_candidate_selection_shadow_bundle` (every Universe refresh) |
+| `core/aletheia/analytics/filter_evidence.py::record_filter_decision` / `::ensure_candidate_outcomes` | call (row registration with direction guard) | Universe tradability gates, Risk (`record_risk_filter_decision`), `core/aletheia/analytics/causal_controls.py` |
+| `core/aletheia/universe/filter_outcome_recorder.py::settle_due_filter_outcomes` | scheduler job `outcome_settler` (every 10 minutes) | `core/aletheia/universe/outcome_recorder.py::settle_due` |
+| `core/aletheia/universe/outcome_economics.py::estimate_outcome_economics` | call | `filter_outcome_recorder.py::settle_due_filter_outcomes` |
+| `core/aletheia/analytics/outcome_semantics.py::classify_counterfactual` | call | outcome readers (missed-alpha, filter pressure, Candidate win statistics) |
 
-## 2. 工具身份
+## Durable state
 
-每条 `filter_candidate_outcomes` 必须保存：
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `filter_candidate_outcomes` | `storage/repositories_universe.py::insert_filter_candidate_outcomes_batch` (insert), `::settle_filter_candidate_outcome` / `::fail_filter_candidate_outcome` (settle) | Candidate Selection Utility estimator, calibration, filter feedback, alpha attribution, doctor | insert once per `outcome_candidate_key + horizon`; status moves `pending → settled` or `pending → failed` once; `allocation_selected` NULL may be resolved once |
+| `perp_structure_shadow_outcomes` | optional Data structure-shadow settler (`configure_structure_shadow_settler`) | structure-shadow readers | same status vocabulary (OO-C14); owned by its own cohort |
 
-- `venue`：产生该候选的行情场所。
-- `symbol`：内部 canonical symbol，例如 `BTC/USDT`。
-- `market_type`：`spot` / `perp` / `futures`。
-- `direction`：`long` / `short`；未知方向只能记录毛价格变化，不能计算净交易结果。
+## Requirements
 
-取价边界必须使用完整的 `InstrumentId(venue, symbol, market_type)`。永续取价失败时不得回退到同名现货。
+### 2. Instrument identity and row creation
 
-原 `universe_forward_outcomes` 已随 #3701 在 v94 迁移
-（`20260929_0094_drop_universe_forward_outcomes_v94`）删除，`filter_candidate_outcomes`
-是唯一的固定持有期结果载体。同一候选经过多个筛选关时，以 `outcome_candidate_key + horizon` 共享一条结果，
-禁止把同一条价格路径重复当成多个独立样本。
+#### OO-C04 Exact instrument identity
 
-## 3. 固定持有期
+`The outcome row shall store venue, canonical symbol, market_type and direction, and settlement shall resolve prices only through the full InstrumentId(venue, symbol, market_type).`
 
-支持 `15m`、`1h`、`4h`、`24h`。结算优先读取从 `entry_ts` 到 `due_at` 的目标市场 OHLCV，并使用目标周期末的 close；不得把任务实际运行时的当前价格伪装成目标周期价格。
+- WHEN a perpetual price fetch fails THEN the row is not settled from the same-named spot market.
+- WHEN market identity is unknown THEN funding and net stay NULL (`tests/specs/spec_opportunity_outcomes.py::OO-B06`).
+- Current Candidates are `perp`; `spot` rows exist only as historical records and residual code paths.
 
-只有在结算延迟不超过持有期的 10% 时，才允许使用 ticker 作为近时点 fallback。更晚的 ticker 仍可保存毛走势供排障，但净收益必须为空，不能进入学习。
+#### OO-C05 No directionless rows
 
-## 4. 收益字段
+`If the pre-decision direction is not long or short, then the recorder shall not create an outcome row.`
 
-字段单位统一为百分比数值，例如 `0.25` 表示 `0.25%`：
+- WHEN a tradability gate rejects a feature with no scanner direction THEN only the filter fact is written.
+- Historical `direction=unknown` rows stay immutable read-only audit evidence; they are not backfilled, migrated or deleted.
 
-- `forward_return_pct`：兼容旧消费者的原始价格变化，等同 `gross_return_pct`。
-- `gross_return_pct`：`(exit - entry) / entry * 100`，不含方向。
-- `directional_return_pct`：long 使用 gross；short 使用 `-gross`。
-- `estimated_fee_pct`：双边手续费，`2 * trading.execution_fee_pct`。
-- `estimated_spread_slippage_pct`：一轮完整交易的点差与双边滑点，`(entry_spread_bps + 2 * trading.slippage_bps) / 100`。缺失实测点差时使用 Universe 可交易点差上限并保留成本模型版本。
-- `estimated_funding_pct`：正数表示成本，负数表示收入。现货为 0；永续按入场资金费率、8 小时周期和持有时长线性估算。正 funding 下 long 支付、short 收取。
-- `net_return_pct`：`directional - fee - spread/slippage - funding`。
-- `min_tradable_edge_pct`：估算误差安全余量，取 `max(0.05%, 单边配置滑点)`。
-- `min_cost_covering_edge_pct`：描述性字段，等于
-  `estimated_fee_pct + estimated_spread_slippage_pct + estimated_funding_pct
-  + min_tradable_edge_pct`；`net_return_pct` 为 NULL 时同步为 NULL。
-  `net_return_pct` 已扣除全部成本，因此准入、胜率与 missed-alpha 判定只比较
-  `net_return_pct` 与 `min_tradable_edge_pct`，不得再与本字段比较（否则重复扣
-  成本，且资金费率收入可使其为负）。(#3483/#3486，owner 2026-10-09)
+#### OO-C06 One result per candidate and horizon
 
-永续缺少入场资金费率、方向未知、价格时点不可信时，`net_return_pct` 必须为 NULL。禁止把未知成本按 0 处理。
-配置成本还必须满足与 Paper 执行相同的 canonical 域：单边 fee 为有限的 `0..5`
-百分点、单边 adverse slippage 为有限的 `0..200` bps；缺失实测点差时使用的
-`universe.max_spread_bps` 为有限的 `1..200` bps。实测点差只要求有限且非负，
-因为它是市场事实而不是配置上限。任一被消费的成本非法时，本次结算必须在写入前失败，
-不能 clamp 为 0、生成净收益或改变历史行。
+`The outcome table shall hold at most one row per outcome_candidate_key and horizon, shared by every gate the candidate passed through.`
 
-## 5. 路径质量
+- WHEN two gates record the same candidate THEN one price path is settled once and is never counted as two samples.
+- WHEN a row first written with `allocation_selected=NULL` is re-inserted with True/False THEN the definitive value is kept; a later NULL never overwrites it.
 
-- `mfe_pct`：持有期内按方向计算的最大有利变化，最小为 0。
-- `mae_pct`：持有期内按方向计算的最大不利变化，最大为 0。
-- `settlement_price_source`：`horizon_ohlcv` / `horizon_ohlcv_local` / `near_due_ticker` / `late_ticker`。
-  `horizon_ohlcv_local` 与 `horizon_ohlcv` 语义完全相同——都是在 `due_at` 或之前收盘的已收 K 线，过同一道新鲜度闸门，因此同样 `price_quality_ok=True`；区别只在于前者读自本地已持久化的 `market_ohlcv`（正是本结算器自己写入的那些 K 线），且必须"根数完整"才被采用，不完整则落回交易所。分成两个值是为了让本地命中率可以直接从账本查出来。
-- `settlement_lag_sec`：实际结算时间相对 `due_at` 的延迟。
-- `cost_model_version`：当前为 `v1`，使后续模型升级可分 cohort 比较，禁止静默改写历史。
+### 3. Fixed horizons and settlement price
 
-MFE/MAE 是毛路径指标，用来区分方向错误与出入场表达错误；它们不替代净收益。
+#### OO-C07 Fixed horizon matrix
 
-## 6. 结算状态与证据保全
+`The row builder shall support exactly the horizons 15m, 1h, 4h and 24h, writing all four by default and only the subset a caller declares.`
 
-Position X 的 `perp_structure_shadow_outcomes` 是可选 Data 的独立观测 cohort。
-CLI/Web 将其异步结算器绑定到 Core Universe outcome recorder 的精确 callback；
-缺少该 producer 时跳过这项补充，不阻断 canonical forward/filter settlement，
-不把未测量 shadow 行改成失败。已安装时沿用原尾部调用次序、批量上限及非致命异常处理；
-这不是 Portfolio 真实持仓 Outcome 的投递/重试机制。
+- WHEN a Candidate is unselected THEN only its `4h` row is written; a selected primary writes all four; an `entry-fill:<id>` outcome writes `4h`.
 
-`filter_candidate_outcomes` 和
-`perp_structure_shadow_outcomes` 共用同一套 `status` 取值，其中只有一个是终态：
+#### OO-C08 Horizon price, not runtime price
 
-- `pending`：已登记、尚未得到测量。唯一可重试的状态，下一周期会再问一次。
-- `settled`：拿到了可用的目标周期价格，收益与路径字段已写入。
-- `failed`：终态。没有任何作业会回访 `failed` 行，因此写入它等于永久放弃这条反事实观测。
+`When an outcome is due, the settler shall use the close of target-market OHLCV bars between entry_ts and due_at, preferring complete locally persisted bars (horizon_ohlcv_local) over a venue fetch (horizon_ohlcv).`
 
-只有在场所确实回答了、而回答不可用时，才允许写 `failed`：目标周期内没有可用 K 线、
-价格 ≤ 0、或与 `entry_price_usd` 偏离超过 10 倍（跨标的污染的典型形态）。
+- WHEN local bars are incomplete for the window THEN the settler falls back to the venue.
+- WHEN only a ticker is available and settlement lag ≤ 10% of the hold THEN the source is `near_due_ticker` and quality is accepted.
+- WHEN the ticker is later than that THEN the source is `late_ticker`, quality fails, and the row becomes `failed` with the observed price recorded.
 
-**场所不可达不是测量失败。** 请求超时、被拒、被限流或 IP 封禁时，这一行的价格窗口
-根本没有被看过，关于它无从下结论：该行必须留在 `pending`，等场所恢复后重问。预算耗尽
-同理——本周期没排到的行也留在 `pending`。当一整批请求全部不可达时，结算器必须在本周期
-停止继续向同一场所发请求：继续请求只会延长封禁，而这些行的 K 线仍然完整、依旧可测。
-这类周期必须留下一条明确说出“场所不可达、没有任何行被写死”的日志，否则它与队列卡死
-在外部看起来完全一样，而两者需要相反的处置。
+### 4. Return and cost fields
 
-写 `failed` 时，若场所给出了价格而该价格被判定污染，必须同时记录 `exit_price_usd`
-与 `settlement_price_source`。因此 `failed` 且这两列皆为 NULL 恰好只有一个含义：
-**这一行从未被观测过。** 维护性 requeue 依赖这个区分，只回收被误杀的行，不碰任何
-带真实判定的行。
+#### OO-C09 Return and cost formula
 
-`failed` 行不进入学习：所有消费者按 §8 只取 `net_return_pct IS NOT NULL`，
-而 `failed` 行永远没有该值。
+`The economics estimator shall compute, in percent, gross = (exit − entry) / entry × 100, directional = gross for long and −gross for short, fee = 2 × execution_fee_pct, spread/slippage = (entry_spread_bps + 2 × slippage_bps) / 100, and net = directional − fee − spread/slippage − funding.`
 
-## 7. 反事实判定
+- WHEN entry spread is missing THEN `universe.max_spread_bps` is the fallback spread and `cost_model_version` is recorded (`v1`).
+- `min_tradable_edge_pct = max(0.05, slippage_bps / 100)` is the estimation-error margin.
+- `min_cost_covering_edge_pct = fee + spread/slippage + funding + min_tradable_edge_pct` is descriptive only and NULL when net is NULL.
 
-按以下顺序判定：
+#### OO-C10 Funding cost
 
-1. `net_return_pct > min_tradable_edge_pct`：`missed_alpha_suspect`。
-2. 毛方向收益为正，但净收益不足、缺失或未超过安全余量：`positive_gross_move_only`。
-3. 有完整净结果且未盈利：`protective`。
-4. 其他情况：`insufficient_data`。
+`When the market is perpetual and the direction and entry funding rate are known, the estimator shall set funding = rate × 100 × hold_seconds / interval_seconds × (+1 long, −1 short), where interval_seconds is the T0-proved interval for scanner_family=candidate_selection_utility and 8 hours for every other producer.`
 
-因此“价格方向判断正确”与“当时值得交易”是两个不同事实。
+- WHEN a Candidate row's `candidate-perp-funding/v1` proof is missing or invalid THEN funding and net are NULL, never an 8h assumption.
+- Positive funding is a cost to longs and income to shorts.
 
-## 8. 消费规则
+#### OO-C11 Unknown cost is never zero
 
-- scanner 校准、family edge、doctor signal health、lesson evidence 和自动 guard 只读取 `net_return_pct IS NOT NULL` 的新结果。
-- 历史 `forward_return_pct` 保留用于历史解释，不回填虚构成本，也不混入净收益样本。
-- 任何按方向或市场聚合的消费者必须至少按 `scanner_family + direction + market_type + horizon` 区分；若上层暂时不能消费该粒度，应保持中性而不是合并相反经济含义。
-- Alpha 对照组在拥有同口径成本前必须明确标为 gross comparison，不得声称是净盈利证据。
-- 新 shadow/control 行必须通过 `outcome_candidate_key` 读取共享 net 结果；历史 gross-only 行仍可解释，但不进入 ranker/System Operator alpha 基线。
-- 过滤器 pass/reject 对照按 `filter_name + stage + filter_version +
-  outcome_candidate_key` 的首次持久化 exposure 唯一归因；后续 retry 不得把同一
-  outcome 同时放入 pass 和 reject。
-- `observer_pre_filter` 的诊断必须使用事发时持久化的 `matched_rules`、RSI、
-  ATR 和 parameter snapshot，拆分 `rsi_only` / `atr_only` /
-  `rsi_and_atr` / `neither`；不得用当前代码重跑历史输入后改写归因。
-- persistent recommendation 的 `filter_version` 与当前生产版本不一致时，只能
-  标记 `production_filter_version_changed` 并保留为历史假说；不得触发 replay、
-  shadow experiment 或参数建议。
-- Observer RSI/ATR 回放必须使用事前固定的有限网格、候选上限、当前 exact
-  filter version 和完整净结果。历史回放即使达门，也只授权前瞻 shadow，不授权
-  修改生产阈值。
+`If entry funding is missing on a perpetual, the direction is unknown, or the settlement price quality is not accepted, then the estimator shall leave net_return_pct NULL.`
 
-## 9. 安全边界
+- WHEN a perpetual row has no entry funding THEN gross and directional are stored and net is NULL.
 
-该结果层是 observation-only：不提交订单、不修改风险、不开实盘、不自动放宽过滤器。任何依据净结果改变排序、阈值或仓位的动作必须进入独立受控实验。
+#### OO-C12 Canonical cost domain
 
-### Canonical Candidate Perp Funding amendment — #3086
+`If a consumed cost is outside its canonical domain (fee per side finite 0..5 %, slippage finite 0..200 bps, fallback spread finite 1..200 bps, measured spread finite and ≥ 0), then settlement shall fail before writing.`
 
-For `scanner_family=candidate_selection_utility`, the 8h estimate in §4 is
-superseded by the T0 proved interval in `funding_evidence_json`:
-`rate * 100 * hold_seconds / interval_seconds * direction_sign`.
-Unknown interval or unusable source proof leaves funding/net NULL. This scoped
-amendment does not change other forward/counterfactual/benchmark consumers or
-§5 near-due MAE behavior. See the Perp Funding section of
-[candidate selection contract](candidate_selection_utility_contract.md).
+- WHEN fee is negative or NaN THEN no net is written and the row is not changed; costs are never clamped to 0.
+
+### 5. Path quality
+
+#### OO-C13 Directional excursions
+
+`The estimator shall record mfe_pct ≥ 0 and mae_pct ≤ 0 as directional excursions over the hold, plus settlement_price_source and settlement_lag_sec.`
+
+- MFE/MAE are gross path metrics; they do not replace net. A Candidate Selection Utility row whose MAE is unavailable stays pending.
+
+### 6. Settlement status
+
+#### OO-C14 One terminal status
+
+`The settler shall use pending (registered, retryable), settled (target-horizon price obtained, economics written) and failed (terminal, never revisited) for filter_candidate_outcomes and perp_structure_shadow_outcomes.`
+
+- `failed` rows have no `net_return_pct`, so no net consumer reads them.
+
+#### OO-C15 Unreachable venue is not a measurement failure
+
+`If a price request times out, is refused, is rate limited or the cycle budget runs out, then the settler shall leave the row pending, and when a whole wave produces no observation it shall stop the cycle and log that no row was written off.`
+
+- WHEN the venue answers with no usable bar, a price ≤ 0, or a price more than 10× away from entry (either direction) THEN the row becomes `failed`.
+
+#### OO-C16 Failed rows distinguish "never observed"
+
+`When the settler writes failed for an observed but rejected price, it shall also store exit_price_usd and settlement_price_source, so failed with both NULL means the row was never observed.`
+
+- WHEN maintenance requeue runs (`aletheia data requeue-unobserved-settlements`) THEN only never-observed failed rows are reclaimed.
+
+### 7. Counterfactual verdict
+
+#### OO-C17 Ordered verdict
+
+`The classifier shall return missed_alpha_suspect when net > min_tradable_edge_pct, else positive_gross_move_only when directional > 0, else protective when net is complete, else insufficient_data.`
+
+- WHEN gross direction is right but net does not clear the margin THEN the verdict is `positive_gross_move_only`, not missed alpha.
+- The same single comparison (net above `min_tradable_edge_pct`, `net_clears_tradable_edge_sql`) defines "cleared its edge" for every win-rate, missed-alpha and filter-pressure statistic; nothing compares against `min_cost_covering_edge_pct`.
+
+### 8. Consumers
+
+#### OO-C01 Net-only consumers
+
+`Every consumer that measures edge, win rate or calibration shall read only rows with net_return_pct IS NOT NULL and the current cost model.`
+
+- WHEN a legacy gross-only row exists THEN it may explain price movement but never enters a net sample.
+
+#### OO-C02 Cohort granularity
+
+`Any consumer that aggregates outcomes shall keep at least scanner_family, direction, market_type and horizon separate, and shall stay neutral rather than merge opposite economics when it cannot consume that granularity.`
+
+- WHEN the Universe UI shows calibration THEN it displays the backend cohorts without refolding them.
+
+#### OO-C03 Learning use is scoped and out of this contract
+
+`Where the optional Knowledge extension is installed, the settler shall pass settled 4h rows with net below −3% to the guard-candidate writer scoped by direction and market_type.`
+
+- This is the current behavior only; learning consumers are defined by [spec 0001](../specs/0001-learning-loop/spec.md) (judgment labels in R), and FCO `net_return_pct` is selection-quality evidence.
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| venue unreachable / budget exhausted | stay `pending`, stop wave | warning "unreachable … none were written off" | pending, never `failed` |
+| answered but unusable price | `failed` with observed price/source | row status | net NULL |
+| missing funding / direction / quality | economics written, net NULL | `net_return_pct IS NULL` | unavailable, never `0` |
+| cost outside canonical domain | raise before write | settlement error log | no row change |
+| Lab priority reader unavailable | continue in plain due order | warning `Lab priority unavailable` | ordering only |
+
+## Authority
+
+Observation only: it may write outcome rows and their settlement status; it never submits
+orders, changes Risk, unlocks Live, or loosens a filter. Any change to ranking, thresholds
+or sizing from these results needs a separate approved experiment.
+
+## Verification
+
+Requirement ids `OO-C01..C03` keep the meaning of the pre-existing executable claims with
+those ids; new requirements continue from `OO-C04`.
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| OO-C01 | `tests/specs/spec_opportunity_outcomes.py::OO-C01` |
+| OO-C02 | `tests/specs/spec_opportunity_outcomes.py::OO-C02` |
+| OO-C03 | `tests/specs/spec_opportunity_outcomes.py::OO-C03` |
+| OO-C04 | `tests/specs/spec_opportunity_outcomes.py::OO-B06`, `tests/test_universe_outcome_economics.py::test_perp_provider_fallback_never_downgrades_to_spot` |
+| OO-C05 | `tests/specs/spec_filter_evidence.py::FE-B02` |
+| OO-C06 | `tests/specs/spec_filter_evidence.py::FE-S23`, `::FE-B01` |
+| OO-C07 | `tests/specs/spec_filter_evidence.py::FE-S02` |
+| OO-C08 | `tests/test_filter_evidence.py::test_locally_answerable_rows_settle_without_any_exchange_request`, `tests/test_universe_outcome_economics.py::test_late_price_and_unknown_direction_do_not_create_net_result` |
+| OO-C09 | `tests/specs/spec_opportunity_outcomes.py::OO-B01` |
+| OO-C10 | `tests/specs/spec_candidate_selection_utility.py::CSU-S06`, `tests/test_candidate_funding.py::test_proved_interval_controls_candidate_cost` |
+| OO-C11 | `tests/specs/spec_opportunity_outcomes.py::OO-B02` |
+| OO-C12 | `tests/specs/spec_opportunity_outcomes.py::OO-B07` |
+| OO-C13 | `tests/test_universe_outcome_economics.py::test_short_perp_funding_credit_and_directional_path` |
+| OO-C14 | `tests/test_universe_outcome_economics.py::test_terminal_filter_settlement_is_first_writer_wins` |
+| OO-C15 | `tests/specs/spec_opportunity_outcomes.py::OO-B04`, `tests/test_settlement_deferral.py::test_an_unreachable_venue_stops_the_cycle_instead_of_spending_the_budget` |
+| OO-C16 | `tests/test_settlement_deferral.py::test_requeue_restores_only_the_rows_that_were_never_observed` |
+| OO-C17 | `tests/specs/spec_opportunity_outcomes.py::OO-B03` |
+
+## Decision references
+
+- 2026-07-10: Stage D outcome design introduced cost-aware net, MFE/MAE and the ordered verdict.
+- #3701 (migration `20260929_0094_drop_universe_forward_outcomes_v94`): `universe_forward_outcomes`
+  dropped; FCO is the only fixed-horizon carrier. Its `forward_return_pct` compatibility field
+  (equal to gross) existed only on that table; FCO has no such column.
+- #3483 / #3486, owner decision 2026-10-09: admission and win statistics compare net with
+  `min_tradable_edge_pct` only; `min_cost_covering_edge_pct` stays descriptive.
+- #3086: Candidate rows use the T0-proved funding interval (merged into OO-C10; see the
+  [Candidate Selection contract](candidate_selection_utility_contract.md)).
+- #3073: near-due path and MAE semantics for Candidate rows.
+- 2026-10-10 rewrite: removed the Ranker / System Operator alpha baseline and the
+  `observer_pre_filter` diagnostic rules (no current writer; the Market Observer is retired,
+  see [history](../history/filter_evidence_retired_chain.md)); unified the
+  "no directionless rows" rule with the Filter Evidence contract per
+  `analytics/filter_evidence.py::record_filter_decision`.
