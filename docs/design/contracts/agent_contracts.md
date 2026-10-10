@@ -29,7 +29,7 @@
 | cleanup | cron 03:17 CST | io | Data retention cleanup |
 | exchange_sync | 5min | io | Refresh exchange account cache |
 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
-| reconciliation | 2min (live only) | io | Full state reconciliation |
+| reconciliation | 2min | io | Order/Fill reconciliation for every exchange account mode (no Live gating) |
 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
@@ -446,7 +446,7 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 2. WAL mode + `busy_timeout=30000ms` (30s) as last-resort fallback — `storage/sqlite.py::_open_connection`
 3. One connection per thread via `threading.local`
 4. `was_in_tx = db.in_transaction` captured BEFORE writes; commit only `if not was_in_tx`
-5. Scheduler `max_workers=3` (do not raise)
+5. Scheduler pools are sized in `scheduler.py::_EXECUTOR_WORKERS` (`default` 2, every other pool 1); never above 3 ([scheduler_contract](scheduler_contract.md) INV-SCH-1)
 6. Never `await` or do network I/O inside a `with transaction():` block — `_WRITE_LOCK` is held for the full transaction duration
 
 ### Job Timeouts (hard wall-clock bound, per-job — `_ASYNC_JOB_TIMEOUT_SEC`)

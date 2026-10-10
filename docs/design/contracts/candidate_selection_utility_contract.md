@@ -294,8 +294,9 @@ comparison and is part of the policy identity. Detected regime is frozen once
 into current feature context, Candidate evidence and outcomes; it does not add
 an economic score or automatic directional bias.
 
-The #2917 actionability manifest `supported-mechanism-and-fast-route-before-capacity/v2`
-rotates the existing current policy epoch. The original B amendment rotated identity
+The #2917 actionability manifest (current identity
+`supported-mechanism-and-fast-route-before-capacity/v3`,
+`universe/candidate_selection_authority.py`) rotates the existing current policy epoch. The original B amendment rotated identity
 through its actionability
 contract material and short-control configuration. It does not rewrite A's
 historical golden policy, Context/Planning identity or any persisted evidence.
