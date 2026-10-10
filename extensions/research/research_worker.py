@@ -915,7 +915,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                         _market_type = _stock_mkt_type(_sym)  # "spot" for r-series/ON-series; "swap" for future OKX SWAP
                     else:
                         _asset_class = "crypto"
-                        _market_type = "spot"  # Serenity generates spot opportunities; swap/perp handled by PI
+                        _market_type = "perp"  # USDT perpetuals are the only product
                     # The opportunity's authoritative tier is derived from the strongest
                     # INDEPENDENTLY ASSESSED supporting evidence under this theme, not the
                     # LLM's self-graded `evidence_tier` (which is kept only as a proposal).

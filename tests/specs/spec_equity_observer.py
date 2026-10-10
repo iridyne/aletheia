@@ -227,7 +227,7 @@ def test_serenity_opportunity_has_instrument_fields():
     assert hasattr(opp, "asset_class"), "SerenityOpportunity must have asset_class field"
     assert hasattr(opp, "market_type"), "SerenityOpportunity must have market_type field"
     assert opp.asset_class == "crypto", "Default asset_class must be 'crypto'"
-    assert opp.market_type == "spot", "Default market_type must be 'spot'"
+    assert opp.market_type == "perp", "Default market_type must be 'perp' (perp-only product)"
 
     # Equity override works
     opp_eq = SerenityOpportunity(

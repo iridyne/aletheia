@@ -890,13 +890,13 @@ class SerenityOpportunity(BaseModel):
     researchability_grade: str = "C"
     # EQ-R (2026-07-01, r-series/equity_chain adaptation): instrument classification.
     # asset_class: "crypto" (default) | "equity" (US stock token from equity_chain lens).
-    # market_type: canonical InstrumentId market type — "spot" | "swap" | "perp" | "futures".
-    #   Bitget r-series + ON-series are always "spot".  Future OKX SWAP → "swap".
-    #   NULL on legacy rows means "crypto/spot" — treat as crypto for execution routing.
+    # market_type: canonical InstrumentId market type. USDT perpetuals are the only
+    #   product (CAPABILITY_GROUND_TRUTH), so a crypto opportunity is "perp"; the
+    #   research worker tags spot-only stock tokens "spot", which never publish.
     # These two fields let trading_context and the PI skip equity observations for
     # order routing while still surfacing them as research context.
     asset_class: str = "crypto"
-    market_type: str = "spot"
+    market_type: str = "perp"
 
 
 class SerenityRiskGate(BaseModel):

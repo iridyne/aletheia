@@ -157,7 +157,7 @@ def test_historical_measured_context_hash_is_not_rewritten():
     assert _member(restored).candidate_selection_utility_pct == 1.5
 
 
-def _serenity_publication_source(market_type="spot"):
+def _serenity_publication_source():
     import math
     from datetime import timezone
     from aletheia.config.loader import load_config, save_config
@@ -174,11 +174,11 @@ def _serenity_publication_source(market_type="spot"):
     save_config(cfg)
     theme = SerenityTheme(name="Research publication", status="active")
     repo.insert_serenity_theme(theme)
-    opportunity = SerenityOpportunity(theme_id=theme.id, symbol="BTC/USDT", direction="long", market_type=market_type)
+    opportunity = SerenityOpportunity(theme_id=theme.id, symbol="BTC/USDT", direction="long")
     repo.insert_serenity_opportunity(opportunity)
     repo.insert_serenity_evidence(SerenityEvidence(theme_id=theme.id, title="Filed research", source="sec",
         source_ref="https://www.sec.gov/Archives/research", tier="disclosed", assessed_tier="disclosed", supports=True))
-    asset = UniverseAsset(venue=venue, symbol=opportunity.symbol, market_type=market_type)
+    asset = UniverseAsset(venue=venue, symbol=opportunity.symbol, market_type="perp")
     repo.upsert_universe_asset(asset)
     repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(asset_id=asset.id, ts=now.isoformat(),
         quote_volume_24h=10_000_000, spread_bps=5, depth_10bps_usd=30_000, data_freshness_sec=0,
@@ -188,9 +188,18 @@ def _serenity_publication_source(market_type="spot"):
         candles = [Candle(timestamp=end-(count-index)*interval, open=100+math.sin(index/3),
             high=102+math.sin(index/3), low=98+math.sin(index/3), close=100+math.sin(index/3), volume=1000)
             for index in range(count)]
-        repo.upsert_ohlcv_candles(opportunity.symbol, timeframe, candles, exchange=venue, market_type=market_type)
+        repo.upsert_ohlcv_candles(opportunity.symbol, timeframe, candles, exchange=venue, market_type="perp")
     repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?, last_mutated_at=?", (now.isoformat(), now.isoformat()))
     return theme, opportunity
+
+
+def test_route_written_serenity_opportunity_publishes_against_perp_only_registry():
+    """The registry holds perpetuals only (#3892); a writer that leaves market_type
+    to the model default must still name an instrument the registry has."""
+    from aletheia.server.routes.data import SerenityOpportunityCreate, create_serenity_opportunity
+    theme, _ = _serenity_publication_source()
+    created = create_serenity_opportunity(SerenityOpportunityCreate(theme_id=theme.id, symbol="BTC/USDT", direction="long"))
+    assert publish_serenity_candidates(theme.id, [created["id"]])
 
 
 def test_serenity_publication_is_idempotent_scoped_and_never_writes_pi_decisions():
@@ -283,7 +292,7 @@ def test_research_batch_collision_rolls_back_and_released_owner_can_cut_over():
     from datetime import timezone
     from aletheia.storage.models import SerenityOpportunity
     theme, first = _serenity_publication_source()
-    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long", market_type="spot")
+    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long")
     repo.insert_serenity_opportunity(second)
     with pytest.raises(ValueError, match="instrument_owned"):
         publish_serenity_candidates(theme.id, [first.id, second.id])
@@ -327,7 +336,7 @@ def test_requalification_ownership_reads_the_one_non_terminal_order_registry(mon
     from aletheia.storage.models import Order, SerenityOpportunity
 
     theme, first = _serenity_publication_source()
-    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long", market_type="spot")
+    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long")
     repo.insert_serenity_opportunity(second)
     owner = repo.get_candidate_planning_for_candidate(publish_serenity_candidates(theme.id, [first.id])[0])
     assert owner is not None
@@ -335,12 +344,12 @@ def test_requalification_ownership_reads_the_one_non_terminal_order_registry(mon
     repo._insert("entry_plans", {
         "id": "owner-plan", "planning_generation_id": owner["id"], "candidate_id": owner["last_candidate_id"],
         "planning_key": owner["planning_key"], "version": "entry-plan/v1", "venue": "bitget", "symbol": "BTC/USDT",
-        "market_type": "spot", "direction": "long", "execution_mode": "RESTING_MAKER", "plan_json": payload,
+        "market_type": "perp", "direction": "long", "execution_mode": "RESTING_MAKER", "plan_json": payload,
         "plan_hash": hashlib.sha256(payload.encode()).hexdigest(), "status": "expired", "created_at": AT,
         "updated_at": AT, "terminal_at": AT, "terminal_reason": "plan_expired",
     })
     repo._insert("orders", Order(
-        id="owner-order", symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+        id="owner-order", symbol="BTC/USDT", market_type="perp", direction="long", order_type="limit",
         quantity=1, price=100, execution_mode="bitget_demo", entry_plan_id="owner-plan", status="open",
         created_at=AT,
     ).model_dump())
