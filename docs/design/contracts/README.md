@@ -98,7 +98,9 @@ code still exists and is not a support claim
 | Risk | [Risk Engine](risk_engine_contract.md) | The sole approval authority before any submission |
 | | [Live Unlock](live_unlock_contract.md) | Human-only Live unlock, scorecard gate, agent prohibitions |
 | | [Kill Conditions](kill_conditions_contract.md) | Demo kill thresholds |
-| Execution / Position / Close | [Execution](execution_contract.md) | Gateway, UTA submission, reconciliation, close routing, outcome integrity |
+| Execution / Position / Close | [Execution](execution_contract.md) | Gateway, UTA submission, reconciliation, audit |
+| | [Exit and Close](exit_and_close_contract.md) | Exit triggers, the single close router, close claims, verified exit |
+| | [Outcome Integrity](outcome_integrity_contract.md) | When a close is a cost-complete Outcome; funding evidence; incident breaker |
 | | [Persistence and Recovery](persistence_recovery_contract.md) | Durable state recovery, backup/restore, bundle import |
 | | [Audit Chain](audit_chain_contract.md) | Append-only audit and hash chain |
 | Review / Learning | [Learning](learning_contract.md), [Knowledge](knowledge_contract.md), [Counterfactual](counterfactual_contract.md) | Being replaced by [spec 0001-learning-loop](../specs/0001-learning-loop/spec.md) |

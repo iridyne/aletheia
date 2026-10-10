@@ -237,7 +237,7 @@ Do not delete the primary `~/.aletheia` Runtime root as part of Preview cleanup.
 
 Moved here from the execution contract §3.4 (2026-10-10); the Gateway half of the rule
 is requirement `EX-C15` in the
-[execution contract](../../design/contracts/execution_contract.md#34-worktree-preview-runtime).
+[execution contract](../../design/contracts/execution_contract.md#ex-c15-preview-refuses-execution).
 
 - `uv run aletheia dev api --port <879x>` is an explicit, foreground, isolated
   development API. It is not a second gateway instance and never binds the stable

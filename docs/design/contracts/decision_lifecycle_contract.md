@@ -13,7 +13,7 @@ between subsystems. It owns the seam invariants and the Candidate business-progr
 health read; it does not repeat subsystem rules. Plan field-freeze, timing/holding,
 planning-cycle and execution-leg rules belong to the [Entry Plan contract](entry-plan-contract.md);
 Candidate admission to the [Candidate Selection contract](candidate_selection_utility_contract.md);
-the exit spine to [execution_contract.md §10](execution_contract.md); filter evidence to the
+the exit spine to [exit_and_close_contract.md](exit_and_close_contract.md); filter evidence to the
 [Filter Evidence contract](filter_evidence_contract.md). Retired TradingDecision / PiDecision /
 `signal_pending` text is in [history](../history/decision_lifecycle_retired_entry.md) and the
 pre-rewrite text in [history](../history/decision_lifecycle_superseded_passages.md).
@@ -164,7 +164,7 @@ Observer / Ranker / System Operator evidence is read-only.
 | Planning → Plan | Entry Planner / Compiler | Plan execution / watcher | immutable input, owner CAS, typed unavailable / no-plan, real Profile | EP-C07..C17, DL-C18 |
 | Plan → Proposal | `entry_plan_execution.py` | Risk / Gateway | source/school/holding consistent, single Plan lineage, no legacy pending revival | EP-C04, DL-C27 |
 | Proposal → Risk | Gateway | `risk/engine.py::evaluate_proposal` | serialized by `_eval_lock`; each Proposal evaluated once; `approved=False` never executes | risk_engine_contract |
-| Exit spine | — | — | exit trigger priority; pause never blocks a close | [execution_contract.md §10](execution_contract.md) |
+| Exit spine | — | — | exit trigger priority; pause never blocks a close | [exit_and_close_contract.md](exit_and_close_contract.md) |
 | Filter evidence | each gate's writer | filter controller / doctor | ex-ante input + version; no direction no net; Risk evidence atomic | FE contract |
 
 ## 4. Invariants

@@ -112,7 +112,7 @@ Market Observer 不再注册为调度任务；历史归因与读取不代表活�
 
 另有 `persona_rollout`（8h，persona sizing 状态机）：[Entry sizing 合同](../contracts/entry_sizing_and_financing_contract.md)明文排除 persona 仓位进入主线，persona 整体挂起（owner 2026-10-10），停止调度见 spec 0003 FC-R07。
 
-Learning 行为生产任务受 `agent.autonomous_learning` 控制；结果结算、funding、durable outcome replay 与 Observation Lab 保留各自独立边界。旧 contribution evaluator、measurement catch-up 和 lifecycle controller/reconciler 已退役，历史任务记录不代表当前调度或晋级权限；见 [Agent Contracts](../contracts/agent_contracts.md#1-scheduler-job-overview)。
+Learning 行为生产任务受 `agent.autonomous_learning` 控制；结果结算、funding、durable outcome replay 与 Observation Lab 保留各自独立边界。旧 contribution evaluator、measurement catch-up 和 lifecycle controller/reconciler 已退役，历史任务记录不代表当前调度或晋级权限；见 [Agent Contracts](../contracts/scheduler_contract.md)。
 
 ### Opportunity 生命周期身份
 

@@ -1,7 +1,7 @@
 # Manual Close Reconciliation Runbook
 
 Operator procedure for the human-owned `manual_reconciliation_pending` close
-state, per [execution_contract §10.2.4](../../design/contracts/execution_contract.md).
+state, per [exit_and_close_contract XC-C19](../../design/contracts/exit_and_close_contract.md#xc-c19-terminal-bound-on-close-side-ambiguity).
 Nothing here is automatic: a human investigates the venue and authorizes exactly
 one transition at a time.
 
@@ -124,6 +124,6 @@ was.
 
 ## Reference
 
-- [execution_contract §10.2.4](../../design/contracts/execution_contract.md)
+- [exit_and_close_contract XC-C19](../../design/contracts/exit_and_close_contract.md#xc-c19-terminal-bound-on-close-side-ambiguity)
 - [`scripts/maintenance/manual_close_diagnostic.py`](../../../scripts/maintenance/manual_close_diagnostic.py)
 - [`scripts/maintenance/manual_close_resolver.py`](../../../scripts/maintenance/manual_close_resolver.py)
