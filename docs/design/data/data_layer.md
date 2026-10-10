@@ -1,211 +1,158 @@
-# Data Layer — Current Market-Data Boundary
+# Data Layer Contract — Public Market-Data Boundary
 
-## Purpose
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `DLY` (claim namespace `data_layer_contract` also holds `DL-*`, `DFL-*`, `HL-*`, `MS-*`, `OD-*` claims) · **Owner code:** `core/aletheia/data/providers.py`, `extensions/data/ccxt_provider.py`
 
-This document describes Aletheia's **current market-data boundary**. It replaces the old staged refactoring plan.
+## Scope
 
-The core rule is:
+Public market facts (ticker, OHLCV, orderbook, funding, open interest, listings) reach Core
+through one provider abstraction; private account, order, fill and funding-ledger facts stay
+behind UTA and the Execution Gateway. A provider or fallback change must not change instrument
+identity, causal time, availability semantics, Risk authority or execution ownership. Ticker
+and OHLCV result validity is detailed in the
+[OHLCV Provider Result Contract](../contracts/ohlcv_provider_result_contract.md); which collector
+feeds which consumer is registered in [Data Utilization](data_utilization.md); collector health
+and coverage are in the [Coverage and Collector Health Contract](../contracts/market_data_coverage_contract.md).
 
-> **Public market facts go through the market-data abstraction. Private account/order/execution facts stay behind the account/execution boundary.**
+## Entry points
 
-A change in provider or fallback implementation must not silently change instrument identity, causal time, availability semantics, Risk authority or execution ownership.
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/data/providers.py::get_market_data_provider` | call | `universe/features.py`, `agent_shell/entry_planner.py`, `data/price_feed.py`, `server/routes/data.py` and other public readers |
+| `core/aletheia/data/providers.py::configure_market_data_factory` | composition | `main.py`, `server/app.py` (binds `extensions/data/ccxt_provider.py::create_market_data_provider`) |
+| `extensions/data/collectors/*` | scheduler collectors | `agent_runtime/scheduler.py` (`data_collectors`, `data_collector_context`) |
 
-## Current architecture
+## Durable state
 
-```mermaid
-flowchart TD
-    A[Market-data consumers] --> B[MarketDataProvider]
-    B --> C[get_market_data_provider]
-    C --> D[CCXTProvider]
-    C --> E[FallbackChainProvider]
-    E --> D
-    E --> F[CoinGecko public provider]
-    E --> G[Binance public provider]
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `market_ohlcv` | `extensions/data/ccxt_provider.py` best-effort persistence of confirmed bars; `data/history_downloader.py` | OHLCV route fallback, Entry Planner windows, analytics | upsert by full instrument identity + `ts` |
+| in-process OHLCV cache | `core/aletheia/data/cache.py` | provider callers | replaceable, TTL |
 
-    H[Optional macro / equity context] --> I[YFinanceProvider]
+All other market-data tables and their writers: [data_model.md §3](data_model.md).
 
-    D --> J[Canonical Ticker / OHLCVResult]
-    E --> J
-    I --> K[Bounded macro/equity facts]
+## Requirements
 
-    L[Private account / orders / fills] --> M[UTA / execution adapters]
-```
+### DLY-C01 One provider entry
 
-`MarketDataProvider` is defined in `aletheia/data/providers.py` and currently exposes bounded async ticker/OHLCV reads plus close semantics.
+`When Core needs public market data, it shall obtain a fresh request-owned provider from data/providers.py::get_market_data_provider, which shall raise "market data provider unavailable" when composition bound no factory.`
 
-Consumers using the normalized Core boundary enter through `get_market_data_provider()` in `aletheia/data/providers.py`. Composition binds the concrete implementation from `extensions/data/ccxt_provider.py`; an absent binding reports market data unavailable. The adapter returns a **fresh provider per caller/event loop** because async CCXT sessions are loop-bound.
+- WHEN `exact_venue=True` is requested without a venue THEN `ValueError` is raised.
+- WHEN a new direct `CCXTProvider(...)` construction appears THEN it needs a stated reason; the current ones are the factory, `extensions/data/collectors/derivatives.py` (history backfill) and `extensions/research/equity_observer.py` (residual, see below).
 
-When crypto fallback is enabled, the adapter factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks in `extensions/data/sources/`. The Core provider contract exposes normalized capabilities, not native CCXT metadata. Primary-only observation capabilities do not use cross-source fallback. Ordinary ticker/OHLCV methods retain their configured fallback policy: selecting `exact_venue=True` does not disable that fallback when a distinct `fallback_venue` is explicitly supplied.
+### DLY-C02 Loop-scoped provider lifecycle
 
-The native CCXT consumers `volume_scanner.py`, `microstructure.py` and `derivatives.py` belong to `extensions/data/collectors`; the existing scheduler composes them and retains cadence, health and live-snapshot persistence. Derivatives history backfill still delegates to the same Core repository APIs. Entry Planner uses the normalized exact-venue orderbook capability and retains freshness admission, diagnostics and persistence. This describes those consumers, not a complete inventory or proof that every Core/optional Data boundary is closed.
+`The data layer shall create async CCXT providers on the caller's event loop, leave closing to the caller, and shall not cache a provider across event loops.`
 
-## Public market-data contract
+- WHEN `close()` is called twice THEN the second call is a no-op.
 
-Macro/FRED and Coinalyze acquisition lives in `extensions/data/collectors`.
-These concrete adapters retain the owner-approved exception to resolve only
-their own credential reference; Core consumers receive facts, not raw keys.
-Scheduler composition owns cadence and snapshot persistence. Doctor calls the
-optional Coinalyze presence probe and reports unavailable if the adapter is absent.
-Existing FRED attempt provenance and Coinalyze Learning policy-epoch behavior
-remain unchanged; neither adapter is claimed to be entirely side-effect-free.
+### DLY-C03 Exact-venue reads stay pinned
 
-Deribit options acquisition/GEX parsing lives in
-`extensions/data/collectors/options_structure.py`; observation-only IV derivation
-lives in `extensions/data/options_volatility.py`. Core keeps the persisted
-`OptionsVolatilitySnapshot` contract in `aletheia/data/options_volatility.py`,
-so repository validation and historical export do not require acquisition code.
-Scheduler cadence, source clocks, GEX/IV formulas and repository writers are unchanged.
+`When a consumer requests exact_venue, the provider shall read the named venue through native CCXT with that venue as its own fallback unless an explicit fallback_venue is passed, and optional observation capabilities shall use no cross-source fallback.`
 
-### Canonical values
+- WHEN an exact-venue listing or orderbook read fails THEN the result is unavailable, never another venue's value.
 
-Current canonical market-data models include:
+### DLY-C04 No physical-market substitution
 
-- `Ticker`;
-- `Candle`;
-- `OHLCVResult` plus per-attempt quality/fallback evidence;
-- `InstrumentId` / canonical symbol and physical market identity.
+`If a request carries a non-spot InstrumentId, then the fallback chain shall use only the CCXT provider and never a spot-only source.`
 
-Market facts must be finite and semantically valid. Malformed, non-finite or physically impossible values are rejected rather than propagated as usable evidence.
+- WHEN a perp ticker read fails on CCXT THEN CoinGecko and Binance public are not tried (`extensions/data/sources/chain.py::FallbackChainProvider._eligible_providers`).
 
-### Exact instrument identity
+### DLY-C05 Finite, valid market facts
 
-Public data reads preserve the exact instrument dimensions required by the consumer, including where applicable:
+`When a provider row is parsed, the data layer shall reject non-finite or physically impossible ticker and OHLCV values rather than return them as usable facts.`
 
-- venue/exchange;
-- canonical symbol;
-- physical market type (`spot`, `perp`, etc.);
-- provider/source identity;
-- timeframe and bar timestamp.
+Evidence: `data/providers.py::parse_ohlcv_candle`, `Ticker`.
 
-A same-symbol Spot and Perp are not interchangeable. A fallback may not silently relabel one physical market as another.
+### DLY-C06 OHLCV order and forming bar
 
-### OHLCV semantics
+`The provider shall return candles oldest to newest and mark the trailing still-forming bar is_closed=False, and missing rows or provider failure shall not become fabricated candles.`
 
-`OHLCVResult` distinguishes complete/partial/empty/failed/unsupported attempts and retains request-scoped fallback/quality evidence.
+- WHEN a causal consumer builds a window THEN it excludes bars with `is_closed=False`.
 
-Rules:
+### DLY-C07 Persistence never changes fetch truth
 
-- candles are oldest → newest;
-- the currently forming trailing bar is marked unclosed and must not be treated as confirmed history by causal consumers;
-- malformed/non-finite/impossible rows are rejected explicitly;
-- missing rows or provider failure do not become fabricated candles;
-- confirmed bars may be persisted best-effort to the existing OHLCV store;
-- persistence failure must not fabricate fetch success or change the fetched market fact.
+`If best-effort OHLCV persistence fails, then the fetched result shall be returned unchanged.`
 
-### Cache
+### DLY-C08 Cache identity
 
-The market-data cache is an optimization only. Cache identity includes the material instrument/timeframe dimensions needed to avoid cross-market contamination.
+`The OHLCV cache shall key entries by exchange, symbol, market_type, timeframe and limit, and a cache hit shall not relax the caller's freshness or causal-time requirement.`
 
-Cached data does not become a second authority and cannot relax freshness/causal-time requirements of the caller.
+### DLY-C09 Canonical symbols
 
-## Provider lifecycle
+`Internal consumers shall use canonical symbols and InstrumentId, and provider-specific symbol formats shall be converted only at the adapter boundary.`
 
-Async CCXT instances are created on the active event loop and closed by the caller.
+- WHEN `to_canonical("BTCUSDT")` runs THEN it returns `BTC/USDT`; WHEN `to_bitget("BTC/USDT")` runs THEN it returns `BTCUSDT`; the round trip is stable.
 
-Do not introduce a process-global cached CCXT provider whose aiohttp session can leak across scheduler event loops.
+### DLY-C10 Public and private stay separate
 
-New direct `CCXTProvider(...)` construction sites require a concrete reason. Normal consumers should enter through `get_market_data_provider()` so configuration, session ownership, fallback and malformed-market protections remain consistent.
+`The data layer shall not route private account, order, fill or funding-ledger reads through MarketDataProvider, and public-market consumers shall not construct a private execution client.`
 
-## Provider/fallback boundary
+### DLY-C11 Collector credentials stay in the adapter
 
-Fallback is allowed only where the requested semantic identity remains compatible.
+`Where a collector needs an API key (Coinalyze, FRED), the adapter shall resolve only its own secret reference and Core consumers shall receive facts, never keys.`
 
-Examples:
-
-- a generic public crypto read may try the configured fallback chain;
-- a venue-pinned listing/exact-venue check must stay pinned and cannot substitute another venue merely to return a value;
-- different physical market types must never be compared or substituted implicitly.
-
-Fallback availability and source identity remain visible to downstream consumers.
-
-## Symbol / identity boundary
-
-Internal consumers should use canonical symbols / `InstrumentId` rather than provider-specific string conventions.
-
-Provider-specific symbol conversion belongs at the provider/adapter boundary. Bitget/CCXT/yFinance display or API formats must not leak upward as competing domain identities.
-
-Legacy persisted representations remain readable only through explicit compatibility code; new code should not create another symbol-normalization convention.
-
-## Market data vs execution/account data
-
-The separation is deliberate:
-
-### Market-data layer owns
-
-- public ticker / OHLCV / bounded market metadata;
-- provider fallback and quality evidence;
-- canonical public-market normalization;
-- optional macro/equity observation facts where implemented.
-
-### UTA / execution/account layers own
-
-- credentials and private account reads;
-- balances/equity;
-- positions;
-- open orders / order state;
-- fills;
-- funding/account economics where private evidence is required;
-- submit/modify/cancel and execution reconciliation.
-
-Do not route private account/order semantics through `MarketDataProvider`, and do not use a private execution client as the general public-market-data abstraction.
-
-## Current consumers
-
-Current production consumers may include Universe/feature collection, market context, charts/data routes and other bounded public-market readers.
-
-Each consumer remains responsible for its own stricter requirements such as:
-
-- exact venue pinning;
-- physical market type;
-- causal cutoff / closed-bar requirement;
-- maximum staleness;
-- complete versus partial admissibility.
-
-A generic provider success is not automatically sufficient evidence for every Consumer.
-
-## Optional yFinance context
-
-`YFinanceProvider` is a separate bounded source used for supported equity/macro contexts. It does not make yFinance a universal fallback for crypto execution facts and does not grant trading authority.
-
-Any derived comparison such as stock-token deviation must preserve the exact reference price/source/time used in the calculation.
+- WHEN no Coinalyze key is configured THEN the collector returns `errors=["no_key"]` and its health is `not_configured`.
 
 ## Failure semantics
 
-- malformed provider payload → unavailable/rejected fact, not default zero;
-- one provider unavailable → fallback only when semantic compatibility permits it;
-- all compatible providers unavailable → explicit failure/unavailable result;
-- cache/persistence failure → must not be confused with provider fact success/failure;
-- forming/future bar → not confirmed evidence;
-- wrong venue/market identity → reject rather than coerce;
-- session close failure → bounded cleanup error; never reason to keep a loop-bound provider globally alive.
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| malformed / non-finite payload | rejected | attempt evidence on `OHLCVResult` | unavailable, never `0` |
+| primary unavailable | fallback only where DLY-C03/C04 allow | source identity on the result | unavailable if none compatible |
+| wrong venue or market identity | rejected | error | never coerced |
+| forming or future bar | not confirmed history | `is_closed=False` | — |
+| persistence or cache failure | logged | log | fetch result unchanged |
+| close failure | bounded cleanup error | log | provider still not cached |
+
+## Authority
+
+May read public market data and persist confirmed candles; may never read credentials outside
+its own adapters, change Risk, submit or route orders, or unlock Live.
 
 ## Verification
 
-Current market-data changes should preserve focused proof for:
+| Requirement | Executable claim / focused test |
+|---|---|
+| DLY-C01 | `tests/specs/spec_data_layer.py::DL-S01`, `DL-S02`; `tests/test_ccxt_provider_factory.py` |
+| DLY-C02 | `tests/test_ccxt_provider_factory.py` |
+| DLY-C03 | `tests/test_market_provider_port.py`; `tests/test_data_provider_and_async_fixes.py` (registry never substitutes the fallback venue) |
+| DLY-C04 | `tests/specs/spec_data_layer.py::DL-S06`; `tests/test_crypto_fallback.py` |
+| DLY-C05, DLY-C06 | `tests/specs/spec_data_layer.py::DL-B14`; `tests/test_ohlcv_provider_boundary.py`; `tests/test_crypto_fallback.py` (forming bar) |
+| DLY-C07 | `tests/test_ccxt_provider_async_persistence.py` (persistence path; no failure-injection test found) |
+| DLY-C08 | `tests/specs/spec_data_layer.py::DL-S08`, `DL-S09` |
+| DLY-C09 | `tests/specs/spec_data_layer.py::DL-S03`, `DL-B04`, `DL-B05`, `DL-C01`, `DL-C02`, `DL-C03` |
+| DLY-C10 | `tests/specs/spec_data_layer.py::DL-S07` |
+| DLY-C11 | `tests/specs/spec_data_utilization.py::DU-S06` |
 
-- `MarketDataProvider` structural compatibility;
-- exact Spot/Perp/venue identity;
-- canonical symbol conversion;
-- finite/valid ticker and OHLCV admission;
-- forming-bar handling;
-- fallback source/attempt evidence;
-- venue-pinned no-substitution behavior;
-- cache-key identity and no cross-market contamination;
-- loop-scoped CCXT lifecycle / idempotent close;
-- best-effort OHLCV persistence without changing fetch truth;
-- public-market consumers not constructing private execution/account authority.
+### Residual for closed scopes
 
-## Non-goals
+The product is USDT-margined perpetuals on `bitget_demo`; these paths remain in code but are
+not supported scope. Their removal is owned by
+[spec 0003 FC-R03](../specs/0003-futures-only-convergence/spec.md).
 
-This document does not authorize:
+- `enable_crypto_fallback` (default `True`) wraps generic reads in
+  `FallbackChainProvider([CCXT, CoinGecko, BinancePublic])`; the two public sources are
+  spot-only and are skipped for perp requests (DLY-C04).
+- `market_data.ccxt_fallback` defaults to `bybit`, so a generic (non-exact) CCXT read may fall
+  back to a venue outside the product.
+- `MarketInstrument` listings still report spot markets; `read_market_listing(spot_only=...)`
+  serves only the xStock listing check.
+- `extensions/data/yfinance_provider.py::fetch_macro_context` is bound as the macro reader when
+  `enable_yfinance_macro` is on (default off); its only consumer,
+  `trading/market_context.py::build_market_context`, has no production caller. Stock-token
+  deviation in `extensions/research/equity_observer.py` is equity scope.
 
-- a new market-data platform or generic provider registry beyond current need;
-- automatic provider switching across incompatible venue/market identities;
-- moving private account/order/fill authority into the public data layer;
-- a second cache/persistence truth system;
-- new data sources merely because an adapter can be written;
-- Risk, execution, credential or Live changes.
+### Known conformance gaps
 
-## Issue discipline
+- `extensions/data/collectors/derivatives.py::DerivativesCollector.collect` fetches long/short
+  and top-trader ratios from Binance USD-M, a frozen venue
+  (also listed in the [coverage contract](../contracts/market_data_coverage_contract.md#known-conformance-gaps)).
 
-This file describes the **current data-layer contract**. It contains no implementation phases or prescribed migration order. A new provider, cache behavior or consumer migration requires a focused current Change Contract only when independently justified.
+## Decision references
+
+- The former staged refactoring plan, Mermaid diagram and non-goals list:
+  [history snapshot](../history/data_layer_2026-10-10.md).
+- Async CCXT sessions are loop-bound; a process-global provider leaked aiohttp sessions across
+  scheduler loops (reason for DLY-C02).

@@ -133,3 +133,105 @@ Risk, Gateway submission or Live unlock.
   pointer, because no named derived dataset requires one; such facts belong at the producing
   dataset boundary, not inferred from row counts.
 - Budget-skip starvation warning: #3089 (`core/aletheia/data/collector_health.py`).
+
+## Merged collector-health and observability rules (2026-10-10)
+
+Rules carried over from the retired
+[data_collector_health.md](../history/data_collector_health.md) and
+[market_data_observability.md](../history/market_data_observability.md) that MC-C01 – MC-C08 do
+not already state. Each was re-checked against the code named in its evidence line.
+
+### MC-C09 Two collector lanes with separate deadlines
+
+`The scheduler shall run primary-venue orderbook, funding and open interest in data_collectors every 2 minutes and the context collectors in data_collector_context every 10 minutes, each lane under its own wall-clock deadline (50 s and 55 s) that the other lane cannot consume.`
+
+- WHEN 2 s or less of a lane's deadline remains THEN the next collector is not started and records `skipped_budget`.
+- WHEN a collector raises THEN it records `failed` with the exception class name as its code; WHEN it times out THEN `timed_out` with `asyncio_timeout`.
+
+Evidence: `core/aletheia/agent_runtime/scheduler.py::_bounded`, `_DC_DEADLINE_S`, `_DC_CONTEXT_DEADLINE_S`; cadences in `core/aletheia/data/collector_health.py::COLLECTOR_CADENCE_SEC`.
+
+### MC-C10 Status vocabulary and problem counter
+
+`The collector health writer shall accept only success, partial, empty, failed, timed_out, skipped_budget, not_configured and disabled, shall increment consecutive_problems only for failed and timed_out, and shall reset it for every other status.`
+
+- WHEN a result's errors are exactly `["no_key"]` THEN the status is `not_configured`; WHEN errors come with payload THEN `partial`; WHEN errors come without payload THEN `failed`.
+- WHEN a collector is turned off THEN `disabled`; WHEN it is on but has no symbols THEN `not_configured`; neither is ever overdue.
+
+Evidence: `core/aletheia/data/collector_health.py::classify_collector_result`, `record_collector_status`; `core/aletheia/agent_runtime/scheduler.py::_schedule_collector`.
+
+### MC-C11 Success only after persistence
+
+`For collectors whose rows the scheduler persists, the scheduler shall record success only after those rows reach SQLite, and shall record failed with a <domain>_persist_failed code when the write fails.`
+
+- WHEN the funding write fails THEN `derivatives` is `failed` with `derivatives_funding_persist_failed`, and a fetched-but-unpersisted row is never reported healthy.
+
+Evidence: `core/aletheia/agent_runtime/scheduler.py::_PERSISTENCE_GATED_COLLECTOR_HEALTH`.
+
+### MC-C12 Repeated-problem and starvation alerts
+
+`When a domain reaches three consecutive problems, the collector health writer shall emit one infrastructure event deduplicated for 30 minutes, as warning collector_consecutive_problem, or as info collector_problem_dependent_connectivity while external connectivity is unavailable or recovering.`
+
+- WHEN a `skipped_budget` turn lands on a domain with no real attempt for more than three cadences THEN one warning `collector_budget_starvation` is emitted (deduplicated for three cadences) without touching `consecutive_problems`.
+
+Evidence: `core/aletheia/data/collector_health.py::record_collector_status`.
+
+### MC-C13 Bounded recovery attribution
+
+`After external connectivity becomes reachable again, the collector health report shall attribute failures attempted before the recovery to one external_connectivity_recovering incident for at most two context cadences.`
+
+- WHEN the exchange probe succeeds while the neutral probe fails THEN external egress is treated as reachable.
+
+Evidence: `core/aletheia/data/collector_health.py::_infrastructure_incident`, `_RECOVERY_GRACE_SEC`; `core/aletheia/agent_runtime/connectivity.py::_probe_exchange_and_external`.
+
+### MC-C14 Collection continues under trading pause
+
+`While trading is paused, the scheduler shall keep data_collectors, data_collector_context and connectivity_monitor running, and only a full scheduler pause shall stop them.`
+
+Evidence: `core/aletheia/agent_runtime/scheduler.py::_ESSENTIAL_JOBS`.
+
+### MC-C15 Coverage judges current targets and keeps an inventory
+
+`The coverage report shall evaluate orderbook and OHLCV against the current collector instrument targets and primary funding, open interest and long/short against the current derivative targets, shall attach an inventory projection of every retained row, and shall report an empty target set as idle.`
+
+- WHEN a required target has no row THEN `missing_target_count` is positive and fresh rows of other targets do not make the domain fresh.
+- WHEN the latest OI row lacks a long/short ratio THEN that target counts as missing; an older non-null ratio is not used.
+
+Evidence: `core/aletheia/data/data_coverage.py::_build_report`, `_query_domain`, `_summarize_domain`.
+
+### MC-C16 Slow coverage refresh is logged without values
+
+`When a coverage refresh takes 500 ms or more, the system shall log data_coverage_refresh_slow with only the three slowest domain durations and no SQL parameters or row values.`
+
+Evidence: `core/aletheia/data/data_coverage.py::get_data_coverage_report`.
+
+### MC-C17 OHLCV response provenance
+
+`When GET /api/market/ohlcv answers, the route shall set X-Aletheia-Data-Source to memory_cache, provider_fetch, database_fallback or unavailable and X-Aletheia-Data-Instrument to exchange:symbol:market_type:timeframe, and a database fallback shall read only the exact requested exchange, symbol, market type, timeframe and before boundary off the event loop.`
+
+Evidence: `core/aletheia/server/routes/data.py` (OHLCV route, `_database_fallback` via `asyncio.to_thread`).
+
+### MC-C18 Diagnostics label stale rows
+
+`When aletheia inspect microstructure runs, it shall report each funding, open-interest and orderbook row with its source, observation time and freshness state, keeping stale rows labelled rather than dropped.`
+
+Evidence: `core/aletheia/cli/inspect_cmd.py::microstructure`.
+
+### Verification of merged rules
+
+| Requirement | Focused test |
+|---|---|
+| MC-C09 | `tests/test_scheduler_timeouts.py` |
+| MC-C10 – MC-C13 | `tests/test_collector_health.py`; MC-C11 also `tests/specs/spec_gateway_stability.py` |
+| MC-C14 | `tests/test_layered_pause.py` |
+| MC-C15 | `tests/test_market_data_coverage.py` |
+| MC-C16 | no focused test found |
+| MC-C17 | `tests/test_market_provider_port.py` |
+| MC-C18 | `tests/test_inspect_microstructure_limit.py` |
+
+### Merged-rule conformance gaps
+
+- Raw external errors: `collector_health_state.last_error_code` keeps only a sanitized code
+  (exception class name, at most 120 characters) and the retired document required that stored
+  values never contain exception messages; the owner convention (#3880, SAFETY_AND_TRUST)
+  keeps the bounded token and the redacted, capped raw error side by side. The table has no
+  raw-error column.

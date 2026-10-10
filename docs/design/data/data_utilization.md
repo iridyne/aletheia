@@ -30,6 +30,19 @@
 | **R4 诚实降级** | 消费者存在但数据采不到时（如清算），渲染端必须显式缺省/标注，不得静默填 0 伪装。 |
 | **R5 防回归** | 新增数据源时，必须同时声明消费者并在 `spec_data_utilization.py` 加 claim，否则 SDD 挡下。 |
 
+## 入口（Entry points）
+
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/agent_runtime/scheduler.py::_schedule_collector` | 采集器注册（`data_collectors` / `data_collector_context`） | scheduler 启动 |
+| `core/aletheia/universe/features.py::collect_features` | Candidate 特征（funding/OI/OI delta/ratio/盘口） | `universe/service.py` 刷新 |
+| `core/aletheia/trading/entry_snapshot.py::capture_attribution_snapshot_json` → `core/aletheia/data/context_builder.py::build_market_context_from_db` | Proposal 归因快照（只取 data_completeness/tradability/leverage） | `execution/gateway.py` |
+| `core/aletheia/trading/entry_analysis.py::EntryAnalysisContext` | Entry Planner 模型可见输入 | `agent_shell/entry_planner.py` |
+
+§3 每行的"消费模块"只能写上述生产路径或其它有生产调用方的读者；没有生产调用方的渲染器
+（`data/context_builder.py::render_enriched_context_md`、`trading/market_context.py::build_market_context`）
+不算消费者。
+
 ---
 
 ## 3. 全量数据域 → 消费模块登记表（分门别类）
@@ -59,15 +72,15 @@
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
 | 衍生品仓位比（DU-S26） | DerivativesCollector（CCXT `binanceusdm` implicit fapiData methods：global account ratio + top-trader position ratio） | `open_interest_snapshots.long_short_ratio/top_trader_position_ratio` → `universe_feature_snapshots` | normalizer→crowding_score→leverage→LLM；Relative Rank Shadow 的 perp 准入和 positioning rank | ✅ 两种 ratio 保持独立语义；缺 funding/OI/OI delta/任一 ratio 的 perp 候选在新 Shadow 中 fail closed，不读取本地私有账户仓位 |
 | 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | regime 标签（`data/freshness.py`）、context_builder（归因快照）、shadow_trades、position_enrichment | 🟡 无 Entry Planner 消费者 |
-| 美股宏观代理(S&P500/VIX/DXY/Gold) | extensions.data.yfinance_provider (enable_yfinance_macro 门控，CLI/Web 绑定可选 reader) | 不落库，直接生成 markdown | `market_context.build_market_context` →"Macro context (daily)" 块（渲染路径无生产调用方） | ❌ orphan |
-| 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | 原 macro 块→LLM（渲染路径无生产调用方） | ❌ orphan |
-| 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | 原 macro 块(top_movers_summary)→LLM（渲染路径无生产调用方） | ❌ orphan |
+| 美股宏观代理(S&P500/VIX/DXY/Gold) | extensions.data.yfinance_provider (enable_yfinance_macro 门控，CLI/Web 绑定可选 reader) | 不落库，直接生成 markdown | `market_context.build_market_context` →"Macro context (daily)" 块（渲染路径无生产调用方） | ❌ orphan → 删除死渲染器见 [spec 0003 FC-R05](../specs/0003-futures-only-convergence/spec.md)；不在 0004 环境事实之列 |
+| 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | 原 macro 块→LLM（渲染路径无生产调用方） | ❌ orphan → 目标消费者 `market_environment`，见 [spec 0004 ME-R01](../specs/0004-market-environment-context/spec.md) |
+| 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | 原 macro 块(top_movers_summary)→LLM（渲染路径无生产调用方） | ❌ orphan → 目标消费者 `market_environment` 的 breadth，见 [spec 0004 ME-R01](../specs/0004-market-environment-context/spec.md) |
 | 成交量排名 | VolumeScannerCollector（精确 venue+market InstrumentId） | 内存 `_latest_volume_ranking` + `volume_ranking_snapshots` | universe/service→按原 market_type 排序已登记资产（不创建新资产） | ✅；单标的不支持不再打断整批 |
 | 新闻+情绪 | NewsCollector + independent bounded analyzer | `news_items` | 仅 Serenity `research_worker` 消费 `analyzed`、relevance≥0.6 的行（Serenity 默认关闭）；Entry Planner 不读新闻 | ✅ fetch/analyze 分离；单批3条、单条30s、整体105s；一次失败退避30min、二次失败终止，不伪装 analyzed |
 | 官方公告/监管 RSS（SEC/CFTC/Ethereum Foundation） | NewsCollector（默认 news.feeds） | `news_items` | 与新闻质量门相同；Opportunity metadata 保留实际渲染 news id/source/published_at | ✅ |
 | **Hyperliquid OI/资金费率/预测** | HyperliquidCollector | `funding/OI` (exchange=hyperliquid*) | 原 market_observer 跨 venue funding/OI 块（无生产调用方）；Canonical Derivatives Facts 只读投影 | 🟡 observation-only；OI 只用同 source 45-75min baseline，缺基线或>300%异常为 unavailable；30 分钟 freshness fail-closed |
 | 永续持仓结构/清算墙 | owner-authorized aggregate rows 或脱敏多市场 holder batch（`aletheia data ingest-perp-structure PATH`）+ fixture/offline Position X parser；仅显式按需导入，无自动 API/调度 | holder batch 先计算为带 batch hash/coverage/universe 的白名单聚合行，再写 `perp_structure_snapshots` + `perp_structure_shadow_outcomes`；不保存 holder 原始行/身份 | 无 Entry Planner 消费者（`render_enriched_context_md(perp_structure=…)` 钩子无生产调用方）；1h/4h/24h shadow settlement；`evaluate-perp-structure` 只读比较 weighted/equal/单因子/零结构 gross baseline；doctor 诚实显示未配置/新鲜度 | 🟡 observation-only（默认至少 3 个 perp 市场、每市场 coverage≥80%、source skew≤300s；评估默认每 horizon 30 个合格样本、14 天、80% coverage，并拒绝回溯导入/混合 epoch 或 feature contract；cost-aware unavailable；当前不参与排序/风控/执行） |
-| **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | 原 macro 链上块→LLM（渲染路径无生产调用方） | ❌ orphan |
+| **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | 原 macro 链上块→LLM（渲染路径无生产调用方） | ❌ orphan → spec 0004 非目标（保持 observation-only）；死渲染器删除见 [spec 0003 FC-R05](../specs/0003-futures-only-convergence/spec.md) |
 | 预测市场 | PolymarketProvider | prediction 表 | 出产品范围；`prediction_observer` 默认关闭；无交易决策消费者 | ✅ unknown/negated/mixed polarity fail-closed |
 | 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
 | xStock 上市状态（责任交易所 active spot market list） | market_data 失败路径经 `get_market_data_provider(native_ccxt=True)` 查询 | 不落行情表；确认缺失时只更新 canonical `observed_stock_tokens` 并写 audit，见[配置 Contract](../contracts/configuration_contract.md) | 仅维护 observation-only xStock 采集范围 | 🟡；单轮每 venue 一次、10s 硬截止；超时/网络失败/空列表均为 indeterminate，保留配置 |
@@ -149,7 +162,7 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 且 acquisition 距 cutoff ≤30 分钟，不回退到更旧的可用值。
 这些事实没有 Candidate、Entry、Prompt、Risk、Sizing、Compiler、Gateway、UTA 或 Live authority。
 
-- **Hyperliquid（❌ 再次 orphan）**：原消费者 `market_observer` 已退役；Hyperliquid funding/OI 只进入 Canonical Derivatives Facts 的只读投影，不进入 Entry Planner。
+- **Hyperliquid（❌ 再次 orphan）**：原消费者 `market_observer` 已退役；Hyperliquid funding/OI 只进入 Canonical Derivatives Facts 的只读投影，不进入 Entry Planner。目标消费者 `market_environment` 的跨 venue funding/OI 比较，见 [spec 0004 ME-R01](../specs/0004-market-environment-context/spec.md)。
 - **永续持仓结构（🟡）**：没有可信自动 endpoint 时，`doctor` 明确显示 not configured；不生成假数据。Owner 可通过显式 CLI 导入白名单 aggregate export，系统保存 source ref/hash 和审计事件，并为有 reference price + directional bias 的行建立 1h/4h/24h shadow outcome。14 天窗口成熟前 `decision_influence=disabled`，之后也只进入人工评审，不自动进入 Risk/Execution。
 - **Position X 离线材料（🟡）**：`aletheia.data.position_x` 只读授权样本中的维度说明、结构总结、拟合结果、`analysis_*.json` 的表达样式和 prompt 组织方式；`extract_position_x_material_bundle()` 可一次性把目录中的授权材料提炼成安全 knowledge cards 与结构化快照。原始 prompt、账户、地址、余额、credential、token 不进入运行时卡片、日志或 prompt；拟合文件只保留公式提示、相关性结论和 source hash。
 - **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；Data Extension 从自身 `coinalyze_api_key` Secret Store reference 读取，缺失时可用专属 `COINALYZE_API_KEY` 环境回退；均未配置时返回 `errors=["no_key"]` 并诚实跳过。Core 配置只保留 enable flag；若旧 `config.yaml` 仍含原始 key 字段，加载时会拒绝并安全提示手工移除字段，不回显值。持久化路径锁定于 DU-T01。
@@ -193,3 +206,24 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-S19 | L2b | 三家 Exchange profile 经 UTA 返回 `VerifiedExitReport`；Core 保留 verified/absent/inconclusive 区分，网络、分页、过期与账户不符不得伪装完整证据 |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。
+
+
+## 失败语义（Failure semantics）
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| 消费者存在但采集无数据（无 key、源失败、为空） | 渲染/投影显式缺省（R4） | collector health `not_configured` / `failed` / `empty`；coverage `empty` / `idle` | `unavailable`，不填 `0` |
+| 数据超过消费者的新鲜度上限 | 整行退出决策 | `data/freshness.py::assess_freshness` 状态 | 不回落到更旧的值 |
+| 采集了但没有生产消费者 | 登记为 ❌ orphan 或 🟡 observation-only 并写理由 | 本表状态列 | — |
+
+## 验证（Verification）
+
+| Rule | Executable claim / focused test |
+|---|---|
+| R1 单一去向（每行消费者） | `tests/specs/spec_data_utilization.py` 各 DU-* claim；采集器注册与本表的机械对照尚无测试，目标见 [spec 0003 FC-R05](../specs/0003-futures-only-convergence/spec.md) |
+| R2/R3 消化形式、信噪 | 评审规则；无可执行检查 |
+| R4 诚实降级 | `tests/specs/spec_data_utilization.py::DU-C02`、`DU-T01`；`tests/test_collector_health.py` |
+| R5 防回归 | 评审规则（新增数据源须同时加 DU-* claim）；无可执行检查 |
+
+已知问题：`tests/specs/spec_data_utilization.py` 的部分 claim 断言本文含特定文字（如 `research_worker`、
+`无 Entry Planner 消费者`），只验证文字、不验证调用路径。
