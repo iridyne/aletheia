@@ -48,10 +48,10 @@ def test_long_position_pnl(tmp_path, monkeypatch):
     ))
     # Simulate a fresh exact instrument mark at 110 and the exchange's uPnL.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
-    exchange_upnl(monkeypatch, {("BTCUSDT", "long"): 20.0})
+    exchange_upnl(monkeypatch, {("BTCUSDT", "long"): 17.5})
     summary = compute_portfolio()
     assert summary["positions"][0]["unrealized_pnl_source"] == "exchange_exact"
-    assert summary["unrealized_pnl"] == 20.0
+    assert summary["unrealized_pnl"] == 17.5
     assert summary["positions_count"] == 1
     assert summary["exposure_by_symbol"]["BTCUSDT"] == 220.0
     reset_db()
@@ -66,11 +66,11 @@ def test_short_position_pnl(tmp_path, monkeypatch):
     # The exchange reports the short's uPnL; the local Position keys it by direction.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 180.0)
     exchange_upnl(monkeypatch, {
-        ("ETHUSDT", "short"): 60.0,
+        ("ETHUSDT", "short"): 55.25,
         ("ETHUSDT", "long"): -999.0,
     })
     summary = compute_portfolio()
-    assert summary["unrealized_pnl"] == 60.0
+    assert summary["unrealized_pnl"] == 55.25
     reset_db()
 
 
@@ -105,20 +105,36 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
         lambda s, mt, *, venue: 100.0,
     )
     exchange_upnl(monkeypatch, {
-        ("BTCUSDT", "long"): 10.0,
-        ("BTCUSDT", "short"): -10.0,
+        ("BTCUSDT", "long"): 9.0,
+        ("BTCUSDT", "short"): -11.0,
         ("ETHUSDT", "long"): 0.0,
     })
 
     summary = compute_portfolio()
 
     assert summary["positions_count"] == 3
-    assert summary["unrealized_pnl"] == 0.0
+    assert summary["unrealized_pnl"] == -2.0
     assert summary["unrealized_by_symbol"] == {
-        "BTCUSDT": 0.0,
+        "BTCUSDT": -2.0,
         "ETHUSDT": 0.0,
     }
     assert round(sum(summary["unrealized_by_symbol"].values()), 4) == summary["unrealized_pnl"]
+    reset_db()
+
+
+def test_summary_upnl_is_unavailable_when_any_position_upnl_is_unavailable(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        repo.insert_position(Position(
+            symbol=symbol, market_type="usdt_futures", direction="long",
+            quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
+        ))
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
+    # The exchange reports BTC only; ETH uPnL is unavailable, not zero.
+    exchange_upnl(monkeypatch, {("BTCUSDT", "long"): 17.5})
+    summary = compute_portfolio()
+    assert summary["unrealized_pnl"] is None
+    assert summary["today_pnl"] is None
     reset_db()
 
 
@@ -279,12 +295,12 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
         execution_mode="bitget_demo",
         status="open",
     ))
-    # open ETH position: the exchange reports +20 uPnL
+    # open ETH position: the exchange reports +13 uPnL
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 60.0)
-    exchange_upnl(monkeypatch, {("ETHUSDT", "long"): 20.0})
+    exchange_upnl(monkeypatch, {("ETHUSDT", "long"): 13.0})
     # closed BTC position closed today should contribute to realized today, closed_at is today by default from model
     summary = compute_portfolio()
     assert summary["today_realized_pnl"] == 15.0
-    assert summary["unrealized_pnl"] == 20.0
-    assert summary["today_pnl"] == 35.0
+    assert summary["unrealized_pnl"] == 13.0
+    assert summary["today_pnl"] == 28.0
     reset_db()

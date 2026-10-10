@@ -215,22 +215,21 @@ class TelegramBot:
                 if portfolio.get("today_realized_pnl_complete") is True
                 else None
             )
-            unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
+            unrealized = portfolio.get("unrealized_pnl")
+            total = None if realized is None or unrealized is None else realized + unrealized
+
+            def usdt(value):
+                return "unavailable" if value is None else f"{value:+.2f} USDT"
+
+            lines = [
+                "Today PnL",
+                f"Realized: {usdt(realized)}",
+                f"Unrealized: {usdt(unrealized)}",
+                f"Total: {usdt(total)}",
+            ]
             if realized is None:
-                return (
-                    "Today PnL\n"
-                    "Realized: unavailable\n"
-                    f"Unrealized: {unrealized:+.2f} USDT\n"
-                    "Total: unavailable\n"
-                    "Funding or other close economics are incomplete."
-                )
-            sign = "+" if realized >= 0 else ""
-            return (
-                f"Today PnL\n"
-                f"Realized: {sign}{realized:.2f} USDT\n"
-                f"Unrealized: {unrealized:+.2f} USDT\n"
-                f"Total: {realized + unrealized:+.2f} USDT"
-            )
+                lines.append("Funding or other close economics are incomplete.")
+            return "\n".join(lines)
         except Exception as e:
             return f"Error fetching PnL: {e}"
 
