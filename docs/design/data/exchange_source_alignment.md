@@ -9,7 +9,21 @@ meaning of every opportunity. A silent split is therefore a semantic-honesty bug
 
 `exchange.name` is only a configured preference and can be stale. The actual order
 target is derived from `exchange.paper_execution_mode`. All alignment checks now use
-`aletheia/config/exchange_alignment.py`:
+`aletheia/config/exchange_alignment.py`.
+
+## One switch: market data follows the trading account
+
+`exchange.paper_execution_mode` is the single switch. `market_data.ccxt_exchange`
+defaults to empty, meaning "follow the trading account": every market-data reader
+resolves its primary venue through `market_data_exchange(cfg)`, which returns an
+explicit `ccxt_exchange` override when one is set and otherwise the venue of the
+configured execution mode (`binance` only when no account is configured). An empty
+`ccxt_fallback` means "same as primary". Switching the trading account therefore
+moves Universe, features, funding/OI, OHLCV, price feed and Fast Trigger data with
+it; a split exists only when an operator writes an explicit, different override.
+`aletheia exchange use` and Settings → Primary Exchange (`apply_primary_exchange`)
+clear the override instead of copying the venue, so the two cannot drift apart
+after a later execution-mode change.
 
 | Configured execution mode | Resolved execution exchange |
 |---|---|
@@ -26,8 +40,9 @@ fall back to `exchange.name` or create a local account. Credential-profile names
 
 - `not_configured`: no execution mode was selected.
 - `unavailable`: a selected mode has no supported execution exchange.
-- `aligned`: execution and `market_data.ccxt_exchange` are the same exchange.
-- `diverged`: external execution and market data use different exchanges.
+- `aligned`: execution and the resolved market-data exchange are the same exchange
+  (always the case while `ccxt_exchange` is empty).
+- `diverged`: an explicit `ccxt_exchange` override names a different exchange.
 
 `GET /api/status`, doctor, Overview, and Settings read this same model. Overview's
 connection probe targets `execution_exchange`, not the retained preference name.
@@ -65,7 +80,8 @@ alignment definition is [archived](../history/local_simulated_runtime_scope.md#f
 
 ## Non-goals
 
-- No automatic config rewrite or forced alignment.
+- No config rewrite of an explicit override: a written `ccxt_exchange` is kept and,
+  when it differs, reported as `diverged`.
 - No credential, live-unlock, risk, order-routing, or broker change.
 - No cross-exchange price conversion or fallback.
 - Confirmation acknowledges semantic divergence; it does not claim the split is safe.

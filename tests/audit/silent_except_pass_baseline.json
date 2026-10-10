@@ -41,17 +41,17 @@
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 742,
+      "line": 743,
       "reason": "5s stop.wait() timeout is the watch loop poll tick"
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 982,
+      "line": 983,
       "reason": "StopAsyncIteration is the stream task normal terminal state"
     },
     {
       "file": "core/aletheia/agent_runtime/fast_trigger_watch.py",
-      "line": 830,
+      "line": 831,
       "reason": "backoff stop.wait() timeout is the loop poll tick"
     },
     {
@@ -91,12 +91,12 @@
     },
     {
       "file": "core/aletheia/config/secrets.py",
-      "line": 261,
+      "line": 262,
       "reason": "best-effort fd close on an already-failing write path before fdopen took ownership; original exception is re-raised"
     },
     {
       "file": "core/aletheia/config/secrets.py",
-      "line": 345,
+      "line": 346,
       "reason": "FileExistsError from O_EXCL exclusive creation: expected loser side of a first-start key-creation race"
     },
     {
@@ -106,7 +106,7 @@
     },
     {
       "file": "core/aletheia/diagnostics/probes/environment.py",
-      "line": 690,
+      "line": 695,
       "reason": "RuntimeError means no loop on this thread; the probe drives one deliberately"
     },
     {
@@ -151,7 +151,7 @@
     },
     {
       "file": "core/aletheia/main.py",
-      "line": 521,
+      "line": 519,
       "reason": "SystemExit from the install subcommand is the CLI own exit path"
     },
     {
@@ -181,7 +181,7 @@
     },
     {
       "file": "core/aletheia/trading/market_data.py",
-      "line": 71,
+      "line": 72,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {
@@ -191,12 +191,12 @@
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 851,
+      "line": 852,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 860,
+      "line": 861,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {

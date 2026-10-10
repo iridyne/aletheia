@@ -131,19 +131,19 @@ def _monitoring_projection(
     }
 
 
-def _make_bitget_stream():
-    from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
-    return CcxtProFastMarketStream("bitget")
+def _ccxt_pro_stream(exchange_name: str):
+    def make():
+        from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
+        return CcxtProFastMarketStream(exchange_name)
+    return make
 
 
-def _make_binanceusdm_stream():
-    from extensions.data.fast_stream_ccxt_pro import CcxtProFastMarketStream
-    return CcxtProFastMarketStream("binanceusdm")
-
-
+# Execution mode -> CCXT Pro exchange id of its public market stream. OKX's
+# public `watch_ticker` carries bid/ask like Bitget's (probed 2026-10-10).
 _FAST_STREAM_ADAPTERS = {
-    "bitget_demo": _make_bitget_stream,
-    "binance_testnet": _make_binanceusdm_stream,
+    "bitget_demo": _ccxt_pro_stream("bitget"),
+    "binance_testnet": _ccxt_pro_stream("binanceusdm"),
+    "okx_demo": _ccxt_pro_stream("okx"),
 }
 
 

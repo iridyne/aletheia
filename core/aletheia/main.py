@@ -7,7 +7,7 @@ import typer
 from pathlib import Path
 
 # Windows: enforce SelectorEventLoop before any CLI command calls asyncio.run()
-# (doctor / data backfill / model probe / bitget sync, etc.). See §17 in
+# (doctor / data backfill / model probe / exchange sync, etc.). See §17 in
 # aletheia/async_utils.py, plus the CLI-provider incompatibility constraint.
 from aletheia.async_utils import apply_windows_selector_policy
 
@@ -17,7 +17,6 @@ from aletheia.cli.gateway import gateway_app
 from aletheia.cli.model import model_app
 from aletheia.cli.permission import permission_app
 from aletheia.cli.secrets_cmd import secrets_app
-from aletheia.cli.bitget_cmd import bitget_app
 from aletheia.cli.risk_cmd import risk_app
 from aletheia.cli.update_cmd import update_app
 from aletheia.cli.runtime_cmd import runtime_app
@@ -445,7 +444,6 @@ app.add_typer(
 )
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
-app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
 app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop tools (reindex, search).")
 app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only, resolve a reconciliation incident.")
 

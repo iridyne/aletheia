@@ -1536,7 +1536,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     )
     monkeypatch.setattr(
         exchange_materialization,
-        "materialize_bitget_entry",
+        "materialize_private_entry",
         materialize_before_cancel,
     )
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
@@ -1669,7 +1669,7 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     )
     monkeypatch.setattr(
         reconciliation,
-        "materialize_bitget_entry",
+        "materialize_private_entry",
         materialize_ioc,
     )
 
@@ -1716,7 +1716,7 @@ def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
     )
     monkeypatch.setattr(
         reconciliation,
-        "materialize_bitget_entry",
+        "materialize_private_entry",
         lambda *_args, **_kwargs: SimpleNamespace(
             state="evidence_missing",
             new_fill_count=0,

@@ -83,7 +83,10 @@ def test_external_exchange_selection_keeps_all_axes_aligned(monkeypatch, exchang
     result = settings.set_primary_exchange(settings.PrimaryExchangeRequest(exchange_id=exchange))
 
     assert result["exchange_id"] == cfg.exchange.name == cfg.risk.allowed_exchange == exchange
-    assert cfg.market_data.ccxt_exchange == cfg.market_data.ccxt_fallback == exchange
+    # Market data follows the account: the override is cleared, the effective venue aligned.
+    from aletheia.config.exchange_alignment import market_data_exchange
+    assert cfg.market_data.ccxt_exchange == cfg.market_data.ccxt_fallback == ""
+    assert market_data_exchange(cfg) == exchange
     assert cfg.exchange.paper_execution_mode == mode
     assert audits[0]["event_type"] == "primary_exchange_changed"
 

@@ -16,7 +16,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @pytest.fixture
 def universe_position(monkeypatch, request):
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from tests.e2e.test_pipeline_exchange_entry_to_position import (
         _approving_risk, _drive_entry, _private_entry_fill, _wire_venue,
     )
@@ -38,7 +38,8 @@ def universe_position(monkeypatch, request):
     result = _drive_entry(plan)
     assert result["status"] == "submitted", result
     order = repo.get_order(result["order_id"])
-    materialized = materialize_bitget_entry(order["id"], [
+    assert order is not None
+    materialized = materialize_private_entry(order["id"], [
         _private_entry_fill(order, quantity=order["quantity"] * fill_fraction),
     ])
     assert materialized.state == ("filled" if fill_fraction == 1.0 else "partially_filled")
@@ -229,7 +230,7 @@ def test_same_plan_two_proposals_reach_realized_outcome(
         outcome_write_eligibility,
         raw_account_events,
     )
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage.models import Order, RiskDecision, TradeProposal
     from tests.e2e.test_pipeline_exchange_entry_to_position import _private_entry_fill
 
@@ -264,7 +265,7 @@ def test_same_plan_two_proposals_reach_realized_outcome(
         "execution_attempt_id": None, "execution_receipt_hash": None, "filled_at": None,
     })
     repo.insert_order(order)
-    result = materialize_bitget_entry(order.id, [_private_entry_fill(order.model_dump())])
+    result = materialize_private_entry(order.id, [_private_entry_fill(order.model_dump())])
     assert result.position_id == position["id"] and result.state == "filled"
     _close(monkeypatch, repo.get_position(position["id"]))
     if broken_link == "equivalent_identity_encoding":

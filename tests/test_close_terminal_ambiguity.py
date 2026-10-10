@@ -496,7 +496,7 @@ def test_late_fill_after_terminal_bound_still_materializes(tmp_path, monkeypatch
     # The late fill lands locally (as a real execution path would record it).
     from aletheia.execution.exchange_materialization import (
         durable_private_fill_id,
-        materialize_bitget_close,
+        materialize_private_close,
     )
 
     db = repo.get_db()
@@ -519,7 +519,7 @@ def test_late_fill_after_terminal_bound_still_materializes(tmp_path, monkeypatch
     # The ordinary reconciler skips manual positions; the operator's PR4 tool
     # bypasses that filter and calls the materializer directly. Here we call the
     # same helper the reconciler uses.
-    result = materialize_bitget_close(close.id, fill_rows)
+    result = materialize_private_close(close.id, fill_rows)
 
     assert result.state == "filled"
     stored = _get_position(position.id)

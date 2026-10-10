@@ -10,7 +10,7 @@ from tests.specs import spec_pipeline_exchange_materialization as fixture
 def test_entry_position_account_isolation(tmp_path, monkeypatch, linked, identity_change):
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
-        materialize_bitget_entry,
+        materialize_private_entry,
     )
     from aletheia.storage import repositories as repo
 
@@ -26,7 +26,7 @@ def test_entry_position_account_isolation(tmp_path, monkeypatch, linked, identit
         return order, fill
 
     first, first_fill = entry("account-first", "account-fill-1", 1_784_600_000_000)
-    first_result = materialize_bitget_entry(first.id, [first_fill])
+    first_result = materialize_private_entry(first.id, [first_fill])
     original = repo._select_one("positions", first_result.position_id)
     if identity_change == "missing":
         # Historical NULL must never inherit the current configured identity.
@@ -42,13 +42,13 @@ def test_entry_position_account_isolation(tmp_path, monkeypatch, linked, identit
 
     if linked and identity_change:
         with pytest.raises(MaterializationIntegrityError, match="account.*linked Position"):
-            materialize_bitget_entry(second.id, [second_fill])
+            materialize_private_entry(second.id, [second_fill])
         assert repo._select_one("positions", original["id"]) == original
         assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (second.id,)).fetchone()[0] == 0
         assert repo.get_order(second.id)["status"] == "materialization_missing"
         return
 
-    result = materialize_bitget_entry(second.id, [second_fill])
+    result = materialize_private_entry(second.id, [second_fill])
     if identity_change:
         assert result.position_id != original["id"]
         assert repo._select_one("positions", original["id"]) == original
@@ -56,6 +56,6 @@ def test_entry_position_account_isolation(tmp_path, monkeypatch, linked, identit
     else:
         assert result.position_id == original["id"]
         assert repo._select_one("positions", original["id"])["quantity"] == pytest.approx(0.5)
-    replay = materialize_bitget_entry(second.id, [second_fill])
+    replay = materialize_private_entry(second.id, [second_fill])
     assert replay.position_id == result.position_id
     assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (second.id,)).fetchone()[0] == 1

@@ -1319,3 +1319,31 @@ L0–L4 成熟度判据。文档**不写**任何能力的当前级别、缺口�
 - 测试：`test_admission_floor_is_the_estimation_margin_only`、
   `test_win_counts_clear_the_margin_not_the_cost_floor`。
 - 不手动升 `CANDIDATE_SELECTION_UTILITY_VERSION`（#3484 已被 owner 关闭为 superseded）。
+
+## 2026-10-10 — 切换交易所只改一处：行情跟随交易账户
+
+**Decision:** 演示/测试盘账户由 `exchange.paper_execution_mode` 决定，行情跟着它走。
+`market_data.ccxt_exchange` 默认留空，表示"跟随交易账户"；所有行情读取方都通过
+`config.exchange_alignment.market_data_exchange(cfg)` 取主行情交易所。显式填写的值是有意分开，
+仍按 `diverged` 报告。`aletheia exchange use` 和 Settings → Primary Exchange 改为清空这个覆盖值，
+不再复制一份。对账、物化、能力刷新、体检、杠杆档位和快行情流不再写死 `bitget_demo` /
+`"bitget"`，改按订单或配置自身的执行模式取值。Entry 资格（入场权限、保证金模式、原生止盈止损
+默认值）合并为一张 `config.exchanges.ENTRY_ROUTE_POLICIES`。这推翻
+[exchange_source_alignment.md](../../design/data/exchange_source_alignment.md) 原来的
+"不自动对齐"非目标。owner 在 2026-10-10 的会话中直接提出这个要求。
+
+**Reason:** 原来要同步改两到三个配置键才能换交易所，漏一个就会出现行情和下单不在同一家
+交易所的情况，9 月 Gate B 就是因此停摆。
+
+**Guardrail:**
+- 新交易所的下单资格仍然要显式登记：`ACTIVE_RUNTIME_SCOPE.md` 的 `execution_modes` 和
+  `ENTRY_ROUTE_POLICIES` 各加一项，并配上对应的测试。改配置不会自动放行。
+- 还没收敛的身份键：`exchange.name` 和 `risk.allowed_exchange` 仍然独立，分别决定实盘账户和
+  风控允许名单。日常切换走 `aletheia exchange use` 或 Settings → Primary Exchange，三项会一起
+  改；只改 `paper_execution_mode` 时，行情会跟着走，这两项不会。把它们收成同一个来源是后续工作。
+- 历史缺口恢复和过期平仓标记清理现在覆盖所有已登记账户。这项扩大是语义变化（D1）。
+  2026-10-10 Fedora 只读核查：没有任何非 Bitget 的外部订单，所以部署后线上行为不变。
+- 测试：`test_market_data_follows_the_trading_account`、
+  `test_doctor_checks_the_configured_account_not_a_fixed_exchange`、
+  `test_refresh_selects_the_tier_api_by_ccxt_capability_not_venue_name`、
+  `test_okx_demo_execution_uses_public_okx_stream`。

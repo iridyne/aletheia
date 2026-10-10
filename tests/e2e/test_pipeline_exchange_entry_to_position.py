@@ -285,9 +285,9 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     assert stored == submitted[0].expected_account
 
     # Only exact private fill evidence turns the acknowledgement into a Position.
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
 
-    materialized = materialize_bitget_entry(
+    materialized = materialize_private_entry(
         order["id"], [_private_entry_fill(order)]
     )
     assert materialized.state == "filled", materialized
@@ -371,7 +371,7 @@ def test_non_acknowledged_entry_invents_no_economics(
 
 def test_partial_private_fill_does_not_report_a_complete_entry(e2e_db, monkeypatch):
     """Half the requested quantity is a partial entry, not a filled one."""
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
 
     _approving_risk(monkeypatch)
     _wire_venue(monkeypatch)
@@ -380,7 +380,7 @@ def test_partial_private_fill_does_not_report_a_complete_entry(e2e_db, monkeypat
     order = repo.get_order(result["order_id"])
 
     requested = float(order["quantity"])
-    materialized = materialize_bitget_entry(
+    materialized = materialize_private_entry(
         order["id"], [_private_entry_fill(order, quantity=requested / 2)]
     )
 
@@ -399,18 +399,19 @@ def test_replayed_private_fill_evidence_stays_idempotent(e2e_db, monkeypatch):
     Reconciliation, the scheduler and a restart can all present the same evidence
     again; the materializer is the single place that has to refuse to double-count.
     """
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
 
     _approving_risk(monkeypatch)
     _wire_venue(monkeypatch)
     plan = _seeded_plan()
     result = _drive_entry(plan)
     order = repo.get_order(result["order_id"])
+    assert order is not None
     evidence = [_private_entry_fill(order)]
 
-    first = materialize_bitget_entry(order["id"], evidence)
+    first = materialize_private_entry(order["id"], evidence)
     assert first.state == "filled", first
-    second = materialize_bitget_entry(order["id"], evidence)
+    second = materialize_private_entry(order["id"], evidence)
     assert second.state == "filled", second
 
     assert len(repo.list_fills(order_id=order["id"])) == 1
@@ -472,7 +473,7 @@ def test_acknowledged_entry_recovers_after_the_connection_is_reopened(
     this is the cheaper adjacent claim, not a substitute for it.
     """
     import aletheia.storage.sqlite as sq
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
 
     _approving_risk(monkeypatch)
     _wire_venue(monkeypatch)
@@ -491,7 +492,7 @@ def test_acknowledged_entry_recovers_after_the_connection_is_reopened(
     # attributable evidence at all.
     assert reopened["uta_account_identity_json"]
 
-    materialized = materialize_bitget_entry(
+    materialized = materialize_private_entry(
         order_id, [_private_entry_fill(reopened)]
     )
     assert materialized.state == "filled", materialized
@@ -523,18 +524,19 @@ def test_entry_with_unavailable_cost_is_not_reported_as_complete(
     and an absent fee has no value at all; either read as 0.0 would understate
     cost on every downstream Outcome.
     """
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
 
     _approving_risk(monkeypatch)
     _wire_venue(monkeypatch)
     plan = _seeded_plan()
     result = _drive_entry(plan)
     order = repo.get_order(result["order_id"])
+    assert order is not None
 
     row = _private_entry_fill(order, fee=fee, fee_coin=fee_coin)
 
     try:
-        materialized = materialize_bitget_entry(order["id"], [row])
+        materialized = materialize_private_entry(order["id"], [row])
     except Exception:
         # Refusing outright is an acceptable, honest answer for evidence that
         # cannot be costed.

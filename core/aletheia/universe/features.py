@@ -1,6 +1,7 @@
 """Feature Collector — batch tickers → volume pre-filter → concurrent OHLCV."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 import json
@@ -528,8 +529,8 @@ def _record_ticker_prefilter_batches(
         stage="ticker_prefilter",
         candidate_facts=ticker_facts,
         parameters={
-            "primary_venue": cfg.market_data.ccxt_exchange,
-            "fallback_venue": cfg.market_data.ccxt_fallback or cfg.market_data.ccxt_exchange,
+            "primary_venue": market_data_exchange(cfg),
+            "fallback_venue": cfg.market_data.ccxt_fallback or market_data_exchange(cfg),
         },
         min_interval_sec=HEAVY_BATCH_MIN_INTERVAL_SEC,
     )
@@ -1104,7 +1105,7 @@ async def collect_features(
     # Feature observation capabilities pin their external reads to the primary
     # venue; ordinary provider fallback remains configured for other consumers.
     md = cfg.market_data
-    venue = md.ccxt_exchange
+    venue = market_data_exchange(cfg)
     fallback_venue = md.ccxt_fallback or venue
     spot_provider = get_market_data_provider(
         exchange=venue, exact_venue=True, fallback_venue=fallback_venue,

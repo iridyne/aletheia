@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -100,3 +101,23 @@ def is_live_execution_mode(execution_mode: str | None) -> bool:
 def live_execution_mode_for_exchange(exchange_id: str) -> str | None:
     """Return the canonical live execution mode for a supported exchange."""
     return LIVE_EXECUTION_MODES.get(str(exchange_id or "").strip().lower())
+
+
+@dataclass(frozen=True)
+class EntryRoutePolicy:
+    """What qualifies one execution route for autonomous Entry Plans."""
+
+    minimum_permission: str  # venue API-key permission the route needs
+    margin_mode: str  # "isolated" | "cross": what the entry path submits
+    native_tpsl_default: bool  # exchange-side TP/SL when the flag is unset
+
+
+# The one place an execution route is qualified for entries. A route missing
+# here fails closed for entry permission, margin mode and native TP/SL default.
+# Add a route only together with matching Planner, Risk/Gateway and execution
+# tests (#3729 §8, #3848 PR-A item 4).
+ENTRY_ROUTE_POLICIES: dict[str, EntryRoutePolicy] = {
+    "bitget_demo": EntryRoutePolicy(
+        minimum_permission="Full", margin_mode="isolated", native_tpsl_default=True,
+    ),
+}

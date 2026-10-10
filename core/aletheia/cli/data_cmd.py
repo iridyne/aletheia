@@ -1,5 +1,6 @@
 """CLI: aletheia data — historical data and accounting management."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import asyncio
 import json
 from pathlib import Path
@@ -407,7 +408,7 @@ def backfill(
     from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
 
     if symbols:
-        venue = exchange or load_config().market_data.ccxt_exchange
+        venue = exchange or market_data_exchange(load_config())
         instruments = [(venue, s.strip(), market_type) for s in symbols.split(",") if s.strip()]
         active_members = skipped_members = 0
     else:

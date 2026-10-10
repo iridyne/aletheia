@@ -9,6 +9,8 @@ the floor at open" bug cannot re-appear via copy-paste.
 
 from __future__ import annotations
 
+from aletheia.config.exchanges import ENTRY_ROUTE_POLICIES
+
 
 def merge_protective_stop(
     direction: str,
@@ -30,9 +32,12 @@ def merge_protective_stop(
     return min(new_stop, old_stop)
 
 
-# #3848 PR-A item 4: with the flag unset, native protection is on for bitget_demo
-# only. An explicit true/false applies to every execution mode.
-NATIVE_TPSL_DEFAULT_MODES = frozenset({"bitget_demo"})
+# #3848 PR-A item 4: with the flag unset, native protection follows the route's
+# `native_tpsl_default` in `config.exchanges.ENTRY_ROUTE_POLICIES`. An explicit
+# true/false applies to every execution mode.
+NATIVE_TPSL_DEFAULT_MODES = frozenset(
+    mode for mode, policy in ENTRY_ROUTE_POLICIES.items() if policy.native_tpsl_default
+)
 
 
 def native_tpsl_enabled(trading, execution_mode: str | None) -> bool:

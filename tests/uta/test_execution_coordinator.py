@@ -359,7 +359,7 @@ def test_missing_configured_adapter_is_recorded_before_send(tmp_path, monkeypatc
 
 def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage import repositories as repo
 
     proposal_id, risk_id = "proposal-late", "risk-late"
@@ -381,7 +381,7 @@ def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
         future = pool.submit(_execute, proposal_id, risk_id)
         assert entered.wait(timeout=5)
         [pending] = repo.list_orders(limit=10)
-        winner = materialize_bitget_entry(
+        winner = materialize_private_entry(
             pending["id"], [_fill("venue-late", proposal_id,
                                  identity=adapter.identity, market_type="spot", side="buy")]
         )
@@ -399,7 +399,7 @@ def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
 
 def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
     from aletheia.uta.errors import UTAErrorCode
@@ -442,7 +442,7 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
         future = pool.submit(close_position, position.id, "stop_loss")
         assert entered.wait(timeout=5)
         [pending] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
-        winner = materialize_bitget_close(
+        winner = materialize_private_close(
             pending["id"], [_fill("venue-close", pending["client_order_id"],
                                  identity=adapter.identity, market_type="spot", side="sell")]
         )
@@ -767,7 +767,7 @@ def test_stop_amend_without_a_stored_venue_stop_sends_nothing(tmp_path, monkeypa
 def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, monkeypatch, mode):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import coordinator, gateway
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage import repositories as repo
     from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
@@ -805,6 +805,7 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
                                       order_type="market", quantity=0.01, price=100.0, execution_mode=mode,
                                       leverage=2)
     order = repo.get_order(result["order_id"])
+    assert order is not None
     assert order["status"] == "submitted"
     assert order["proposal_id"] == proposal.id and order["risk_decision_id"] == decision.id
     assert UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]) == identity
@@ -812,7 +813,7 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
                                 instrument=instrument_from_local("BTC/USDT", "usdt_futures"),
                                 purpose="entry", target_venue_order_id=order["exchange_order_id"], reason="test")
     assert coordinator.cancel_order(cancel).evidence is CommandEvidence.ACKNOWLEDGED
-    materialized = materialize_bitget_entry(order["id"], [_fill(
+    materialized = materialize_private_entry(order["id"], [_fill(
         order["exchange_order_id"], proposal.id,
         identity=identity, market_type="usdt_futures", side="buy",
     )])

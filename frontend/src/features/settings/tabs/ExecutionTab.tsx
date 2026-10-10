@@ -47,7 +47,9 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
     currentPaperMode,
   )
   const currentDataExchange = String(settings?.market_data?.ccxt_exchange || '')
+  // An empty data exchange follows the trading account, so it never splits.
   const currentDiverged = currentExecutionExchange !== null
+    && currentDataExchange !== ''
     && currentExecutionExchange !== currentDataExchange
   const showDivergedWarning = currentDiverged && (isVisible(EXCHANGE_CONNECTION_SECTION.id) || isVisible(TRADING_MODE_SECTION.id))
   return (
@@ -199,6 +201,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   )
   const createsDivergence = paperMode !== serverPaperMode
     && executionExchange !== null
+    && dataExchange !== ''
     && executionExchange !== dataExchange
 
   const mut = useMutation({

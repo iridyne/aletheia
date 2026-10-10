@@ -958,7 +958,7 @@ def test_verified_external_funding_expiry_preserves_actual_audit_reason(monkeypa
 
 def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
     from aletheia.execution.broker_funding import make_complete_ledger, compute_stored_broker_funding
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
     from aletheia.uta.compat import scope_from_local
     from aletheia.uta.models import UTAAccountIdentity, FillListReport, FillReport
@@ -967,7 +967,7 @@ def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
     _, entry, position, close = _seed_pending_close(exchange_order_id="native-late-fee", market_type="usdt_futures")
     at_ms = 1_784_400_000_000
     raw = _private_fill(close.exchange_order_id, "native-fee-fill", price=110.0, quantity=1.0, fee=None, filled_at_ms=at_ms)
-    assert materialize_bitget_close(close.id, [raw]).state == "filled"
+    assert materialize_private_close(close.id, [raw]).state == "filled"
     original = repo.list_fills(order_id=close.id)
     assert len(original) == 1 and original[0]["fee"] is None
     pending = repo.get_position(position.id)
@@ -996,7 +996,7 @@ def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
         funding_evidence=funding.evidence, funding_ledger=ledger)
     assert result["status"] == "settled" and result["realized_pnl"] == pytest.approx(9.74)
     assert repo.list_fills(order_id=close.id) == original
-    assert materialize_bitget_close(close.id, report.fills).state == "filled"
+    assert materialize_private_close(close.id, report.fills).state == "filled"
     assert repo.list_fills(order_id=close.id) == original
 
 

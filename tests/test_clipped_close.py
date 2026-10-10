@@ -125,7 +125,7 @@ def test_clipped_close_exact_fill_reduces_position_and_releases_claim(
 ):
     """A clip that fills exactly must reduce — not close — the Position."""
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     # Position 424; the clipped close order only claims 212 of it.
@@ -134,7 +134,7 @@ def test_clipped_close_exact_fill_reduces_position_and_releases_claim(
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    result = materialize_private_close("order-clip", _fill_rows(212.0))
 
     assert result.state == "filled_clip_partial_position"
     position = repo._select_one("positions", "pos-clip")
@@ -155,7 +155,7 @@ def test_clipped_close_exact_fill_reduces_position_and_releases_claim(
 
 def test_clipped_close_replay_does_not_double_count(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -163,10 +163,10 @@ def test_clipped_close_replay_does_not_double_count(tmp_path, monkeypatch):
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    first = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    first = materialize_private_close("order-clip", _fill_rows(212.0))
     assert first.state == "filled_clip_partial_position"
 
-    replay = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    replay = materialize_private_close("order-clip", _fill_rows(212.0))
     assert replay.state == "filled"
     position = repo._select_one("positions", "pos-clip")
     assert abs(float(position["quantity"]) - 212.0) < 1e-9
@@ -177,7 +177,7 @@ def test_clipped_close_partial_fill_keeps_claim_for_continued_polling(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -185,7 +185,7 @@ def test_clipped_close_partial_fill_keeps_claim_for_continued_polling(
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    result = materialize_bitget_close("order-clip", _fill_rows(106.0))
+    result = materialize_private_close("order-clip", _fill_rows(106.0))
 
     assert result.state == "partially_filled"
     position = repo._select_one("positions", "pos-clip")
@@ -198,7 +198,7 @@ def test_clipped_close_partial_fill_keeps_claim_for_continued_polling(
 
     # Second batch: another 106 fills for the same order. Only the delta may
     # reduce the Position (318 -> 212), never the order's running total.
-    result2 = materialize_bitget_close("order-clip", _fill_rows(106.0)
+    result2 = materialize_private_close("order-clip", _fill_rows(106.0)
                                        + _fill_rows(106.0, trade_id="FILL-EX-CLIP-1b"))
     assert result2.state == "filled_clip_partial_position"
     position2 = repo._select_one("positions", "pos-clip")
@@ -211,7 +211,7 @@ def test_clipped_close_partial_fill_keeps_claim_for_continued_polling(
     assert [row["closed_qty"] for row in events] == [106.0, 106.0]
 
     # Replay with the same full evidence: no new fills, no further reduction.
-    result3 = materialize_bitget_close(
+    result3 = materialize_private_close(
         "order-clip", _fill_rows(106.0) + _fill_rows(106.0, trade_id="FILL-EX-CLIP-1b")
     )
     position3 = repo._select_one("positions", "pos-clip")
@@ -224,7 +224,7 @@ def test_clipped_close_exact_fill_replay_ten_times_stays_reduced(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -232,10 +232,10 @@ def test_clipped_close_exact_fill_replay_ten_times_stays_reduced(
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    first = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    first = materialize_private_close("order-clip", _fill_rows(212.0))
     assert first.state == "filled_clip_partial_position"
     for _ in range(10):
-        replay = materialize_bitget_close("order-clip", _fill_rows(212.0))
+        replay = materialize_private_close("order-clip", _fill_rows(212.0))
         assert replay.state == "filled"
         position = repo._select_one("positions", "pos-clip")
         assert position["status"] == "open"
@@ -246,7 +246,7 @@ def test_clipped_close_two_batches_100_and_112_reduce_once_to_212(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -254,12 +254,12 @@ def test_clipped_close_two_batches_100_and_112_reduce_once_to_212(
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    first = materialize_bitget_close("order-clip", _fill_rows(100.0))
+    first = materialize_private_close("order-clip", _fill_rows(100.0))
     assert first.state == "partially_filled"
     position = repo._select_one("positions", "pos-clip")
     assert abs(float(position["quantity"]) - 324.0) < 1e-9
 
-    second = materialize_bitget_close(
+    second = materialize_private_close(
         "order-clip",
         _fill_rows(100.0) + _fill_rows(112.0, trade_id="FILL-EX-CLIP-1b"),
     )
@@ -278,14 +278,14 @@ def test_remaining_quantity_matching_fill_closes_position(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
     _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip",
                               quantity=212)
 
-    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    result = materialize_private_close("order-clip", _fill_rows(212.0))
     assert result.state == "filled"
     position = repo._select_one("positions", "pos-clip")
     assert position["status"] == "closed"
@@ -294,7 +294,7 @@ def test_remaining_quantity_matching_fill_closes_position(
 
 def test_clipped_close_survives_crash_restart_replay(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -302,9 +302,9 @@ def test_clipped_close_survives_crash_restart_replay(tmp_path, monkeypatch):
                               quantity=424)
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    first = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    first = materialize_private_close("order-clip", _fill_rows(212.0))
     assert first.state == "filled_clip_partial_position"
-    restart = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    restart = materialize_private_close("order-clip", _fill_rows(212.0))
     assert restart.state == "filled"
     position = repo._select_one("positions", "pos-clip")
     assert position["status"] == "open"
@@ -504,7 +504,7 @@ def test_clipped_close_quantity_halves_per_venue_cancel(tmp_path, monkeypatch):
 
 def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -514,7 +514,7 @@ def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeyp
     db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    result = materialize_private_close("order-clip", _fill_rows(212.0))
 
     assert result.state == "filled_clip_partial_position"
     position = repo._select_one("positions", "pos-clip")
@@ -539,7 +539,7 @@ def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeyp
 
 def test_futures_partial_close_keeps_pnl_unavailable_without_funding(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -547,7 +547,7 @@ def test_futures_partial_close_keeps_pnl_unavailable_without_funding(tmp_path, m
     db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    result = materialize_private_close("order-clip", _fill_rows(212.0))
 
     assert result.state == "filled_clip_partial_position"
     event = db.execute(
@@ -561,7 +561,7 @@ def test_futures_partial_close_keeps_pnl_unavailable_without_funding(tmp_path, m
 
 def test_legacy_partial_fee_gap_stays_unavailable_and_is_not_reallocated(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -583,7 +583,7 @@ def test_legacy_partial_fee_gap_stays_unavailable_and_is_not_reallocated(tmp_pat
         "closed_at": "2026-08-22T14:30:00+00:00",
     })
 
-    result = materialize_bitget_close("order-clip", _fill_rows(106.0))
+    result = materialize_private_close("order-clip", _fill_rows(106.0))
 
     assert result.state == "filled_clip_partial_position"
     position = repo._select_one("positions", "pos-clip")
@@ -620,7 +620,7 @@ def test_partial_close_without_entry_fee_blocks_daily_loss_economics(tmp_path, m
 
 def test_partial_close_with_unpriced_fee_keeps_economics_unavailable(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -628,7 +628,7 @@ def test_partial_close_with_unpriced_fee_keeps_economics_unavailable(tmp_path, m
     db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
-    result = materialize_bitget_close("order-clip", _fill_rows(212.0, fee_coin="BGB"))
+    result = materialize_private_close("order-clip", _fill_rows(212.0, fee_coin="BGB"))
 
     assert result.state == "filled_clip_partial_position"
     event = db.execute(

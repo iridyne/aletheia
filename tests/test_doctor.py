@@ -1315,7 +1315,7 @@ def test_build_report_runs_and_covers_all_dimensions():
     # every dimension contributes at least its primary check
     for expected in (
         "code.sync", "process.gateway", "process.gateway_service", "config.permission",
-        "config.kill_switch", "creds.bitget_demo", "data.market",
+        "config.kill_switch", "creds.exchange", "data.market",
         "data.collectors",
         "loop.activity", "health.rollup",
     ):

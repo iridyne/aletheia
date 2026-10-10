@@ -347,7 +347,9 @@ class MarketDataConfig(BaseModel):
 
     # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
     provider: str = "ccxt"
-    ccxt_exchange: str = "binance"
+    # Primary market-data venue. Empty = follow exchange.paper_execution_mode's
+    # venue; read it through config.exchange_alignment.market_data_exchange().
+    ccxt_exchange: str = ""
     ccxt_fallback: str = "bybit"
     # Symbols to observe for market analysis (canonical BTC/USDT format).
     # Kept for backwards compatibility — if observed_instruments is non-empty it takes

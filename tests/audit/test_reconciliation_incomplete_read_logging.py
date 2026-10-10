@@ -209,7 +209,7 @@ def test_guard_rejects_a_warning_without_the_reason_code() -> None:
         " getattr(exc, 'reason_code', 'no_reason_code'))\n"
         "def out_of_scope():\n"
         "    try:\n"
-        "        materialize_bitget_entry()\n"
+        "        materialize_private_entry()\n"
         "    except Exception as exc:\n"
         "        logger.warning('failed for %s', type(exc).__name__)\n"
     )

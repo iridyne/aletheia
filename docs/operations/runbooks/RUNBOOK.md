@@ -113,7 +113,7 @@ credentials are only needed if you want authenticated demo calls.
 uv run aletheia secrets set bitget.demo.api_key
 uv run aletheia secrets set bitget.demo.api_secret
 uv run aletheia secrets set bitget.demo.passphrase
-uv run aletheia bitget test
+uv run aletheia exchange test   # tests the configured trading account
 ```
 
 ## 5. Run the autonomous paper loop

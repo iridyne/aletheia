@@ -1,6 +1,7 @@
 """Lifecycle-owned Fast Trigger watcher; public data only, no LLM hot path."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 import hashlib
@@ -127,7 +128,7 @@ def _watch_config_identity(cfg) -> tuple[object, ...]:
         cfg.fast_trigger.trigger_behavior_version,
         cfg.agent.permission_mode,
         cfg.exchange.paper_execution_mode,
-        str(cfg.market_data.ccxt_exchange or "").strip().lower(),
+        market_data_exchange(cfg),
         cfg.runtime.paused,
         cfg.runtime.kill_switch_active,
     )

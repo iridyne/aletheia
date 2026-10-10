@@ -215,6 +215,7 @@ def test_malformed_cached_payload_fails_closed(tmp_path, monkeypatch):
 
 class _FakeBitgetExchange:
     def __init__(self, tiers):
+        self.has = {"fetchMarketLeverageTiers": True, "fetchLeverageTiers": False}
         self._tiers = tiers
 
     async def fetch_market_leverage_tiers(self, symbol):
@@ -223,6 +224,7 @@ class _FakeBitgetExchange:
 
 class _FakeBinanceusdmExchange:
     def __init__(self, tiers_by_symbol):
+        self.has = {"fetchMarketLeverageTiers": "emulated", "fetchLeverageTiers": True}
         self._tiers_by_symbol = tiers_by_symbol
 
     async def fetch_leverage_tiers(self, symbols):
@@ -294,7 +296,7 @@ async def test_refresh_fails_closed_on_missing_mmr_field_never_defaults(tmp_path
     ) is None
 
 
-async def test_refresh_fails_closed_for_unmapped_venue(tmp_path, monkeypatch):
+async def test_refresh_fails_closed_when_the_venue_has_no_tier_api(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.trading import venue_margin as vm
 
@@ -327,6 +329,7 @@ class _RecordingBitgetExchange:
     """Bitget tier fake that records which instruments were actually fetched."""
 
     def __init__(self, tiers, *, failing=()):
+        self.has = {"fetchMarketLeverageTiers": True, "fetchLeverageTiers": False}
         self._tiers = tiers
         self._failing = {str(symbol) for symbol in failing}
         self.fetched: list[str] = []
@@ -596,3 +599,20 @@ def test_scheduler_job_skips_when_no_entry_route_is_configured(monkeypatch):
     monkeypatch.setattr(vm, "refresh_venue_margin_demand", unexpected)
 
     scheduler._run_venue_margin_facts()
+
+
+async def test_refresh_selects_the_tier_api_by_ccxt_capability_not_venue_name(tmp_path, monkeypatch):
+    """A venue with no name-specific branch (OKX) still reads its native tier API."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.trading import venue_margin as vm
+
+    class _FakeOkxExchange(_FakeBitgetExchange):
+        pass
+
+    envelope = await vm.refresh_venue_margin_envelope(
+        _FakeOkxExchange(_GOOD_BITGET_TIERS), venue="okx", symbol="BTC/USDT",
+        market_type="perp", margin_mode="isolated",
+    )
+    assert envelope.venue == "okx"
+    assert len(envelope.tiers) == 2
+

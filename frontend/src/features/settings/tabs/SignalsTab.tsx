@@ -50,8 +50,9 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const exchangeSettings = settings?.exchange || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
 
-  const [primary, setPrimary] = useState(md.ccxt_exchange || 'binance')
-  const [fallback, setFallback] = useState(md.ccxt_fallback || 'bybit')
+  // '' = follow the trading account's exchange (backend default).
+  const [primary, setPrimary] = useState(String(md.ccxt_exchange || ''))
+  const [fallback, setFallback] = useState(String(md.ccxt_fallback || ''))
   const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
   const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
   const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
@@ -65,8 +66,9 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     String(exchangeSettings.paper_execution_mode || ''),
   )
   const createsDivergence = executionExchange !== null
+    && primary !== ''
     && primary !== executionExchange
-    && primary !== String(md.ccxt_exchange || 'binance')
+    && primary !== String(md.ccxt_exchange || '')
 
   const mut = useMutation({
     mutationFn: () => api.updateMarketDataConfig({
@@ -84,8 +86,8 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
-  const dirty = primary !== (md.ccxt_exchange || 'binance')
-    || fallback !== (md.ccxt_fallback || 'bybit')
+  const dirty = primary !== String(md.ccxt_exchange || '')
+    || fallback !== String(md.ccxt_fallback || '')
     || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
     || yfinance !== !!md.enable_yfinance_macro
     || longShortRatio !== (md.enable_long_short_ratio ?? true)
@@ -99,8 +101,8 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     onDirty,
     serverKey: settings,
     adoptServer: () => {
-      setPrimary(md.ccxt_exchange || 'binance')
-      setFallback(md.ccxt_fallback || 'bybit')
+      setPrimary(String(md.ccxt_exchange || ''))
+      setFallback(String(md.ccxt_fallback || ''))
       setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
       setYfinance(!!md.enable_yfinance_macro)
       setLongShortRatio(md.enable_long_short_ratio ?? true)
@@ -115,11 +117,13 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     <>
       <Row label="Primary exchange" hint="CCXT exchange ID used for OHLCV and ticker data. Must match a supported CCXT exchange.">
         <select value={primary} onChange={e => { setPrimary(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
+          <option value="">follow trading account{executionExchange ? ` (${executionExchange})` : ''}</option>
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>
       <Row label="Fallback exchange" hint="Used when the primary exchange fails or returns stale data.">
         <select value={fallback} onChange={e => { setFallback(e.target.value); setMsg(null) }} className="w-auto">
+          <option value="">same as primary</option>
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>

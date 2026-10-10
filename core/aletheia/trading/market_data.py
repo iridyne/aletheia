@@ -4,6 +4,7 @@ Runs without credentials (public market endpoints via CCXT).
 Degrades gracefully if the exchange is unreachable.
 """
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import asyncio
 import logging
 
@@ -201,7 +202,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     Discovery sources are capped at _MAX_DYNAMIC_INSTRUMENTS to keep collection
     within the scheduler budget; the total expands when open Positions exceed it.
     """
-    exchange = cfg.market_data.ccxt_exchange or "binance"
+    exchange = market_data_exchange(cfg)
 
     seen: dict[tuple[str, str, str], InstrumentId] = {}
     try:

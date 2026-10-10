@@ -1,5 +1,6 @@
 """Health and status API routes."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import logging
 import os
 from pathlib import Path
@@ -380,7 +381,7 @@ def status():
 
         market_data_providers = get_provider_capability_snapshot(
             provider=cfg.market_data.provider,
-            primary=(cfg.market_data.ccxt_exchange if cfg.market_data.provider == "ccxt" else cfg.market_data.provider),
+            primary=(market_data_exchange(cfg) if cfg.market_data.provider == "ccxt" else cfg.market_data.provider),
             fallback=(cfg.market_data.ccxt_fallback if cfg.market_data.provider == "ccxt" else None),
         )
     except Exception as e:

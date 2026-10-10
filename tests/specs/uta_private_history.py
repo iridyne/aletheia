@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
 from datetime import datetime, timezone
 
 from aletheia.uta.models import (
@@ -83,8 +84,8 @@ def _identity(execution_mode: str) -> UTAAccountIdentity:
     return UTAAccountIdentity(
         account_id=f"{execution_mode}-spec",
         execution_mode=execution_mode,
-        venue="bitget",
-        environment="live" if execution_mode == "bitget_live_limited" else "demo",
+        venue=execution_mode_venue(execution_mode) or "unknown",
+        environment=execution_mode_environment(execution_mode) or "demo",
         profile="spec",
         credential_generation=0,
         adapter_implementation="SpecUTAAdapter",

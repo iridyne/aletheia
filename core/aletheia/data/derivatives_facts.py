@@ -1,6 +1,7 @@
 """Read-only economic meaning of derivatives observations; no trading authority."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 from datetime import datetime, timedelta, timezone
 import json
@@ -545,7 +546,7 @@ def derivatives_readiness(symbol, cfg, *, now=None):
     from aletheia.storage import repositories as repo
     now = now or datetime.now(timezone.utc)
     md = cfg.market_data
-    venues = list(dict.fromkeys([md.ccxt_exchange, *md.derivatives_comparison_venues,
+    venues = list(dict.fromkeys([market_data_exchange(cfg), *md.derivatives_comparison_venues,
         *(['hyperliquid'] if md.enable_hyperliquid else [])]))
     health = repo.get_collector_health_state('derivatives_comparison') or {}
     coverage = json.loads(health.get('derivatives_coverage_json') or '{}')

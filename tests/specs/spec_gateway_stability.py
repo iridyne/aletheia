@@ -600,6 +600,7 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
     )
 
     cfg = SimpleNamespace(
+        exchange=SimpleNamespace(paper_execution_mode="", name=""),
         market_data=SimpleNamespace(
             ccxt_exchange="binance",
             enable_hyperliquid=False,

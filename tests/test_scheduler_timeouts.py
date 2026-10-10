@@ -500,7 +500,9 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     from extensions.data.collectors.options_structure import OptionsStructureCollector
 
     cfg = SimpleNamespace(
+        exchange=SimpleNamespace(paper_execution_mode="", name=""),
         market_data=SimpleNamespace(
+            ccxt_exchange="",
             derivatives_comparison_venues=[],
             enable_coingecko_top=True,
             coingecko_top_n=10,
@@ -634,7 +636,9 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     monkeypatch.setattr(DefiLlamaCollector, "collect", _defillama)
 
     cfg = SimpleNamespace(
+        exchange=SimpleNamespace(paper_execution_mode="", name=""),
         market_data=SimpleNamespace(
+            ccxt_exchange="",
             derivatives_comparison_venues=[],
             enable_coingecko_top=True,
             coingecko_top_n=10,
@@ -1497,7 +1501,9 @@ def test_derivatives_history_uses_bounded(monkeypatch):
     monkeypatch.setattr(scheduler, "_record_collector_health", lambda *a, **kw: None)
 
     cfg = SimpleNamespace(
+        exchange=SimpleNamespace(paper_execution_mode="", name=""),
         market_data=SimpleNamespace(
+            ccxt_exchange="",
             derivatives_comparison_venues=[],
             enable_coingecko_top=False,
             enable_hyperliquid=False,

@@ -111,3 +111,30 @@ def test_exchange_markets_route_rejects_uta_credential_profiles():
         assert "paper_execution_mode must be one of" in str(excinfo.value.detail)
 
     assert DEMO_EXECUTION_MODES == {"bitget_demo", "binance_testnet", "okx_demo"}
+
+
+def test_market_data_follows_the_trading_account():
+    """One switch: with no explicit override, market data moves with the account."""
+    from aletheia.config.exchange_alignment import (
+        apply_primary_exchange,
+        exchange_alignment,
+        market_data_exchange,
+    )
+
+    cfg = AletheiaConfig()
+    assert cfg.market_data.ccxt_exchange == ""
+    assert market_data_exchange(cfg) == "binance"  # no account configured
+
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    assert market_data_exchange(cfg) == "bitget"
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    assert market_data_exchange(cfg) == "okx"
+    assert exchange_alignment(cfg).status == "aligned"
+
+    cfg.market_data.ccxt_exchange = "binance"  # an explicit split stays visible
+    assert market_data_exchange(cfg) == "binance"
+    assert exchange_alignment(cfg).status == "diverged"
+
+    apply_primary_exchange(cfg, "bitget")  # the unified switch clears the override
+    assert cfg.market_data.ccxt_exchange == ""
+    assert (cfg.exchange.paper_execution_mode, market_data_exchange(cfg)) == ("bitget_demo", "bitget")

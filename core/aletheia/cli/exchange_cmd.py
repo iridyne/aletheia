@@ -5,6 +5,7 @@ Switch primary exchange, toggle demo/live mode, and show current state.
 
 import typer
 
+from aletheia.config.exchange_alignment import market_data_exchange
 from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, VALID_EXCHANGES
 
 exchange_app = typer.Typer(no_args_is_help=True)
@@ -37,12 +38,8 @@ def use(
             )
             raise typer.Exit(1)
 
-        ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
-        cfg.exchange.name = eid
-        cfg.market_data.ccxt_exchange = ccxt_ex
-        cfg.market_data.ccxt_fallback = ccxt_ex
-        cfg.exchange.paper_execution_mode = paper_mode
-        cfg.risk.allowed_exchange = eid
+        from aletheia.config.exchange_alignment import apply_primary_exchange
+        apply_primary_exchange(cfg, eid)
 
 
     from aletheia.files.jsonl import write_audit
@@ -58,7 +55,7 @@ def use(
     typer.echo(f"Switched to: {eid}")
     typer.echo(f"  exchange.name:             {cfg.exchange.name}")
     typer.echo(f"  paper_execution_mode:      {cfg.exchange.paper_execution_mode}")
-    typer.echo(f"  market_data.ccxt_exchange:  {cfg.market_data.ccxt_exchange}")
+    typer.echo(f"  market data exchange:      {market_data_exchange(cfg)} (follows the account)")
     typer.echo(f"  risk.allowed_exchange:      {cfg.risk.allowed_exchange}")
     typer.echo("")
     typer.echo("Note: restart gateway for changes to take full effect.")
@@ -113,6 +110,57 @@ def show():
     typer.echo(f"  name:                 {cfg.exchange.name}")
     typer.echo(f"  mode:                 {cfg.exchange.mode}")
     typer.echo(f"  paper_execution_mode: {cfg.exchange.paper_execution_mode}")
-    typer.echo(f"  ccxt_exchange:        {cfg.market_data.ccxt_exchange}")
+    typer.echo(f"  market data exchange: {market_data_exchange(cfg)}"
+               f"{'' if cfg.market_data.ccxt_exchange else ' (follows the account)'}")
     typer.echo(f"  allowed_exchange:     {cfg.risk.allowed_exchange}")
     typer.echo(f"  enabled_markets:      {cfg.exchange.enabled_markets}")
+
+
+def _configured_account() -> str:
+    """The execution mode the configured exchange.mode actually trades through."""
+    from aletheia.config.exchanges import live_execution_mode_for_exchange
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    if cfg.exchange.mode == "live":
+        mode = live_execution_mode_for_exchange(cfg.exchange.name) or ""
+    else:
+        mode = str(cfg.exchange.paper_execution_mode or "")
+    if not mode:
+        typer.echo("Error: no trading account configured (exchange.paper_execution_mode).", err=True)
+        raise typer.Exit(1)
+    return mode
+
+
+@exchange_app.command("test")
+def test():
+    """Test the configured trading account's connection."""
+    from aletheia.uta.manager import probe_account_reachable
+
+    mode = _configured_account()
+    result = probe_account_reachable(mode)
+    if result["connected"]:
+        typer.echo(f"✓ {mode} connection successful")
+    else:
+        typer.echo(f"✗ {mode} connection failed: {result['error']}", err=True)
+        raise typer.Exit(1)
+
+
+@exchange_app.command("sync")
+def sync():
+    """Refresh the configured trading account through UTA (debug tool)."""
+    from aletheia.portfolio.exchange_sync import status_for, sync_all_exchanges
+    from aletheia.storage.migrations import assert_migrations_current
+
+    assert_migrations_current()
+    mode = _configured_account()
+    state = sync_all_exchanges(execution_modes=(mode,))
+    if state is None or status_for(state) != "ok":
+        typer.echo(f"UTA account unavailable: {state}", err=True)
+        raise typer.Exit(1)
+    account = next(row for row in state["accounts"] if row["broker_id"] == mode)
+    typer.echo(f"mode: {mode}")
+    typer.echo(f"equity_usdt: {account.get('equity_usdt')}")
+    typer.echo(f"available_usdt: {account.get('available_usdt')}")
+    typer.echo(f"fetched_at: {state.get('fetched_at')}")
+

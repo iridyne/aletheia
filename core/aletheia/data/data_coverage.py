@@ -1,6 +1,7 @@
 """Cached persisted-data coverage report for operator-facing diagnostics."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -241,7 +242,7 @@ def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dic
     instrument_targets = list(dict.fromkeys(
         (item.symbol, item.exchange, item.market_type) for item in instruments
     ))
-    derivative_targets = [(symbol, cfg.market_data.ccxt_exchange) for symbol in derivative_symbols]
+    derivative_targets = [(symbol, market_data_exchange(cfg)) for symbol in derivative_symbols]
     domains: list[dict] = []
     for definition in DOMAIN_DEFINITIONS:
         started = time.perf_counter()

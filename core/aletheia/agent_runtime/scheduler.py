@@ -1,5 +1,6 @@
 """Scheduler for periodic agent + market-data tasks using APScheduler."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import asyncio
 import concurrent.futures
 from contextvars import ContextVar
@@ -146,8 +147,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "health_check",
     "cleanup",
     "news_fetch",
-    "okx_demo_symbols",
-    "bitget_demo_capabilities",
+    "demo_capabilities",
     "reconciliation",
     "position_reconcile",
     "tpsl_fill_check",
@@ -1714,20 +1714,12 @@ def init_scheduler() -> BackgroundScheduler | None:
             next_run_time=datetime.now() + timedelta(minutes=3),
             executor="maintenance_io",
         )
-    # Demo capability list refresh — keeps the O(1) symbol filter cache warm.
-    # One job per sandbox execution mode; each runs every 4 h.
+    # Demo capability list refresh — keeps the O(1) symbol filter cache warm
+    # for the configured demo account (exchange.paper_execution_mode).
     _scheduler.add_job(
-        _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
-        id="okx_demo_symbols", misfire_grace_time=600, executor="io",
+        _guarded("demo_capabilities", _run_demo_capabilities), "interval", hours=4,
+        id="demo_capabilities", misfire_grace_time=600, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=45),
-    )
-    _scheduler.add_job(
-        _guarded(
-            "bitget_demo_capabilities", _run_bitget_demo_capabilities,
-        ),
-        "interval", hours=4,
-        id="bitget_demo_capabilities", misfire_grace_time=600, executor="io",
-        next_run_time=datetime.now() + timedelta(seconds=75),
     )
     # #3741: the margin-tier facts the Entry path reads are venue facts, not an
     # operator chore. A fresh row is skipped, so a steady state costs no fetch
@@ -2775,7 +2767,7 @@ def _tpsl_fill_check_body():
         import json as _json
         from aletheia.storage.repositories import list_all_open_positions
         from aletheia.execution.exchange_materialization import (
-            claim_observed_tpsl_close, materialize_bitget_close,
+            claim_observed_tpsl_close, materialize_private_close,
         )
         from aletheia.uta.manager import (
             configured_identity, create_native_protection_reader,
@@ -2946,7 +2938,7 @@ def _tpsl_fill_check_body():
                                 reader_identity, current_identity
                             ) is not IdentityRelation.SAME:
                                 raise ValueError("uta_account_identity_mismatch")
-                            result = materialize_bitget_close(
+                            result = materialize_private_close(
                                 close_order["id"], private_fills
                             )
                             if result.state == "filled":
@@ -4014,28 +4006,22 @@ def _ohlcv_backfill_body():
                 len(instruments), total_bars)
 
 
-def _run_okx_demo_symbols() -> None:
-    """Refresh OKX demo symbol capabilities (scheduler job).  4 h interval."""
+def _run_demo_capabilities() -> None:
+    """Refresh the configured demo account's capabilities (scheduler job).  4 h."""
+    from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+    from aletheia.config.loader import load_config
     from aletheia.execution.venue_capabilities import refresh_demo_capabilities
-    try:
-        count = refresh_demo_capabilities("okx_demo")
-    except Exception as e:
-        logger.warning("okx_demo_symbols refresh failed: %s", e)
-        _record_job_failure("okx_demo_symbols", str(e))
-        return
-    logger.info("okx_demo capabilities refreshed: %d symbols", count)
 
-
-def _run_bitget_demo_capabilities() -> None:
-    """Refresh Bitget demo capabilities (scheduler job).  4 h interval."""
-    from aletheia.execution.venue_capabilities import refresh_demo_capabilities
-    try:
-        count = refresh_demo_capabilities("bitget_demo")
-    except Exception as e:
-        logger.warning("bitget_demo_capabilities refresh failed: %s", e)
-        _record_job_failure("bitget_demo_capabilities", str(e))
+    mode = str(load_config().exchange.paper_execution_mode or "").strip()
+    if mode not in DEMO_EXECUTION_MODES:
         return
-    logger.info("bitget_demo capabilities refreshed: %d symbols", count)
+    try:
+        count = refresh_demo_capabilities(mode)
+    except Exception as e:
+        logger.warning("demo_capabilities refresh failed for %s: %s", mode, e)
+        _record_job_failure("demo_capabilities", str(e))
+        return
+    logger.info("%s capabilities refreshed: %d symbols", mode, count)
 
 
 def _run_venue_margin_facts() -> None:
@@ -4387,7 +4373,7 @@ def get_collector_targets(cfg):
 
     instruments = _get_observed_instruments(cfg) or []
     derivative_symbols = _get_derivative_symbols(instruments)
-    funding_venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip().lower()
+    funding_venue = market_data_exchange(cfg)
     try:
         derivative_symbols = list(dict.fromkeys([
             *derivative_symbols,
@@ -4805,7 +4791,7 @@ def _get_observed_instruments(cfg):
                 if not member.get("symbol") or not member.get("execution_eligible", True):
                     continue
                 asset = repo.get_universe_asset(member.get("asset_id")) or {}
-                venue = asset.get("venue") or cfg.market_data.ccxt_exchange or "binance"
+                venue = asset.get("venue") or market_data_exchange(cfg)
                 market_type = member.get("market_type") or asset.get("market_type") or MARKET_SPOT
                 if market_type == "usdt_futures":
                     market_type = MARKET_PERP

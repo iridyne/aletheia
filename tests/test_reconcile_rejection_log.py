@@ -11,7 +11,7 @@ def test_rejected_materialization_log_carries_the_validator_reason(monkeypatch, 
     def reject(_order_id, _rows):
         raise PrivateFillEvidenceInvalid("private fill report identity or timestamp is incomplete")
 
-    monkeypatch.setattr(reconciliation, "materialize_bitget_entry", reject)
+    monkeypatch.setattr(reconciliation, "materialize_private_entry", reject)
     monkeypatch.setattr(reconciliation, "_write_reconcile_event", lambda *a, **k: None)
     errors: list[str] = []
 

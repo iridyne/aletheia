@@ -108,7 +108,7 @@ function getSectionSummary(id: string, settings: any, status: any): string | nul
     case 'network-proxy':
       return settings?.network?.proxy_host ? 'Configured' : 'Direct'
     case 'market-data-sources':
-      return settings?.market_data?.ccxt_exchange ? String(settings.market_data.ccxt_exchange).toUpperCase() : 'Default'
+      return settings?.market_data?.ccxt_exchange ? String(settings.market_data.ccxt_exchange).toUpperCase() : 'Follows account'
     case 'macro-sentiment-signals':
       return 'Macro & sentiment'
     case 'news-feeds':

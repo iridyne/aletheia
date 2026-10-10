@@ -34,7 +34,7 @@
 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
 | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
-| okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
+| demo_capabilities | 4h | io | Refresh the configured demo account's instrument capabilities |
 | guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
 | universe_refresh | 10min | maintenance_io | Universe composition refresh |
 | ohlcv_nightly_backfill | cron (configurable) CST | maintenance_io | Historical OHLCV gap fill |
@@ -53,7 +53,6 @@
 | pricing_reference_refresh | 6h | io | Refresh the LLM pricing reference (`aletheia.economics.pricing_sync`) |
 | universe_scanner_audit_reconciler | 5min | audit | Retry pending Universe scanner audit JSONL mirrors after DB-authoritative recovery |
 | observation_lab_bridge | 1min | audit | Drain Main delivery receipts and mirror Lab audit intents |
-| bitget_demo_capabilities | 4h | io | Refresh Bitget demo instrument capabilities |
 | venue_margin_facts | 5min | io | Maintain venue margin-tier facts for the Planner's live demand (#3741) |
 
 Learning behavior producers remain gated by `agent.autonomous_learning`.

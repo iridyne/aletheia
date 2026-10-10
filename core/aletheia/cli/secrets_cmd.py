@@ -64,23 +64,3 @@ def list_cmd():
             typer.echo(f"  SET     {key}  ({redact(val)})")
         else:
             typer.echo(f"  MISSING {key}")
-
-
-@secrets_app.command()
-def test(service: str = typer.Argument(..., help="Service to test, e.g. bitget")):
-    """Test secrets connectivity for a service."""
-    if service == "bitget":
-        from aletheia.config.loader import load_config
-        from aletheia.execution.venue_capabilities import venue_execution_mode
-        from aletheia.uta.manager import probe_account_reachable
-
-        mode = venue_execution_mode("bitget", load_config().exchange.mode)
-        result = probe_account_reachable(mode)
-        if result["connected"]:
-            typer.echo(f"✓ Bitget {mode} connection successful")
-        else:
-            typer.echo(f"✗ Bitget {mode} connection failed: {result['error']}", err=True)
-            raise typer.Exit(1)
-    else:
-        typer.echo(f"Unknown service '{service}'. Supported: bitget", err=True)
-        raise typer.Exit(1)
