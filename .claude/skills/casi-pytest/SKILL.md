@@ -40,6 +40,11 @@ cd '$dir'
 exec 9>.remote-test.lock; flock 9                       # one run per checkout
 eval "set -- $args"
 uv sync --frozen --quiet
+# throwaway one-commit repo (as remote_pytest.sh): tests read HEAD and git ls-files
+[ -d .git ] || git init -q
+git add -A
+git -c user.name=remote-test -c user.email=remote-test@localhost commit -q --allow-empty --no-verify --amend -m remote-test-snapshot 2>/dev/null \\
+  || git -c user.name=remote-test -c user.email=remote-test@localhost commit -q --allow-empty --no-verify -m remote-test-snapshot
 tmp=\$(mktemp -d /var/tmp/remote-test.XXXXXX); trap 'rm -rf "\$tmp"' EXIT
 # 2G throttle / 4G kill, private loopback, fresh data dir: never ~/.aletheia
 systemd-run --user --scope --quiet -p CPUQuota=800% -p MemoryHigh=2G -p MemoryMax=4G -- \\
