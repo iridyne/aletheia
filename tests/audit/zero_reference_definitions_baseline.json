@@ -35,7 +35,6 @@
     {"file": "core/aletheia/economics/tracing.py", "name": "record_fixed_cost_event", "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"},
     {"file": "core/aletheia/execution/broker_funding.py", "name": "require_retained_history", "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"},
     {"file": "core/aletheia/execution/broker_utils.py", "name": "entry_acknowledgement_state", "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 1 test file(s)"},
-    {"file": "core/aletheia/execution/reconciliation.py", "name": "resolve_orders_missing_from_exchange", "reason": "sweep 2026-10-09 MP-10 DELETE; referenced only by 2 test file(s)"},
     {"file": "core/aletheia/execution/verified_exit.py", "name": "private_history_window_available", "reason": "sweep 2026-10-09 MP-11 DELETE; no reference anywhere, tests included"},
     {"file": "core/aletheia/gateway/autostart.py", "name": "is_supported_platform", "reason": "untriaged by the sweep; no reference anywhere, tests included"},
     {"file": "core/aletheia/gateway/autostart.py", "name": "write_watchdog_tick", "reason": "untriaged by the sweep; referenced only by 1 test file(s)"},

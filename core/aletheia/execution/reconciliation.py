@@ -3,8 +3,8 @@
 Compares locally-tracked exchange orders against the venue's reported open orders
 and private fill history.  Absence from the open-order list is not proof of a
 fill: cancelled, rejected, and history-query failures have the same appearance.
-Local paper orders are ignored. Bitget demo orders are exchange-side records and
-therefore use the same evidence and materialization path as limited live orders.
+Local paper orders are ignored. Demo and testnet orders are exchange-side records
+and therefore use the same evidence and materialization path as limited live orders.
 Reconciliation never places or cancels orders — it only converges local
 bookkeeping when the exchange provides direct evidence.
 """
@@ -83,20 +83,11 @@ def _order_lookup_start(order: dict) -> datetime | None:
 
 # Each execution mode selects its own account explicitly; using the current
 # config mode could reconcile a live Order against a demo/testnet account after
-# an operator configuration change. The identity registry supplies the venue
-# partition; Bitget's native recovery path remains the only explicit exception.
-_BITGET_ACCOUNT_MODES = {
-    mode: execution_mode_environment(mode)
-    for mode in UTA_EXECUTION_MODES
-    if execution_mode_venue(mode) == "bitget"
-    and execution_mode_environment(mode) in {"demo", "live"}
-}
-_MULTIBROKER_ACCOUNT_MODES = tuple(
-    sorted(
-        mode
-        for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) not in {None, "bitget"}
-    )
+# an operator configuration change. Every registered external account goes
+# through the one reconciliation path below; venue differences live in the
+# Exchange Extension profiles behind UTA, not in a per-venue branch here.
+_ACCOUNT_MODES = tuple(
+    sorted(mode for mode in UTA_EXECUTION_MODES if execution_mode_venue(mode) is not None)
 )
 
 
@@ -657,36 +648,6 @@ def _filled_quantity_by_order(rows) -> dict[str, float]:
         key = str(report.venue_order_id)
         quantities[key] = quantities.get(key, 0.0) + quantity
     return quantities
-_CCXT_LIVE_MODES = tuple(
-    sorted(
-        mode
-        for mode in _MULTIBROKER_ACCOUNT_MODES
-        if execution_mode_environment(mode) == "live"
-    )
-)
-
-def resolve_orders_missing_from_exchange(
-    local_orders: list[dict],
-    exchange_open_ids: set[str],
-    modes: tuple[str, ...] = _CCXT_LIVE_MODES,
-) -> list[str]:
-    """Historical CR-EX-01 projection: identify orders absent from the open set.
-
-    This result alone is not Fill evidence. Current reconciliation reads exact
-    UTA Order/Fill reports and materializes proven private fills separately.
-    """
-    resolved: list[str] = []
-    for o in local_orders:
-        if (
-            o.get("execution_mode") in modes
-            and o.get("status") in NON_TERMINAL_ORDER_STATES
-            and o.get("exchange_order_id")
-            and o["exchange_order_id"] not in exchange_open_ids
-        ):
-            resolved.append(o["exchange_order_id"])
-    return resolved
-
-
 def _response_rows(rows) -> list[FillReport]:
     if isinstance(rows, FillReport):
         return [rows]
@@ -1109,33 +1070,6 @@ class _UTAReconciliationProjection:
         return None
 
 
-def _fetch_multibroker_evidence(order: dict):
-    """Read normalized UTA fills and adapt them to the existing materializer."""
-    mode = str(order.get("execution_mode") or "")
-    client = _UTAReconciliationProjection(mode, UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]))
-    return client.get_order_fills(
-        order_id=str(order.get("exchange_order_id") or "") or None,
-        client_order_id=str(order.get("client_order_id") or "") or None,
-        symbol=str(order["symbol"]),
-        market_type=str(order.get("market_type") or "spot"),
-        start_at=order.get("created_at"),
-    )
-
-
-async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
-    """Read the exact normalized UTA funding ledger for a complete close."""
-    return await _UTAReconciliationProjection(
-        str(order.get("execution_mode") or ""),
-        UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]),
-    ).get_funding_ledger(
-        broker_id=str(order.get("execution_mode") or ""),
-        symbol=str(request["position"]["symbol"]),
-        market_type=str(order.get("market_type") or "usdt_futures"),
-        start_time_ms=int(request["start_time_ms"]),
-        end_time_ms=int(request["end_time_ms"]),
-    )
-
-
 def _validate_reconcile_identities(
     candidate_orders, filled_gap_orders, configured_identities,
 ) -> tuple[list, list, list[str], int, int]:
@@ -1315,197 +1249,11 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
     }
 
 
-def _reconcile_multibroker_orders(multibroker_orders) -> dict:
-    """Materialize account-matched OKX and Binance entry and close evidence."""
-    errors: list[str] = []
-    inconclusive = 0
-    filled = 0
-    partially_filled = 0
-    materialized_fills = 0
-    # OKX and Binance expose actual per-fill economics through broker-owned
-    # account-explicit private history readers. Native entry and close Orders
-    # share the atomic materializer after normalization.
-    for order in multibroker_orders:
-        execution_mode = str(order.get("execution_mode") or "")
-        market_type = str(order.get("market_type") or "")
-        if order.get("source") != "native":
-            inconclusive += 1
-            _write_reconcile_event(
-                order,
-                state=str(order.get("status") or "unresolved"),
-                reason="non_native_demo_order_read_only",
-            )
-            continue
-        try:
-            rows = _response_rows(
-                run_coro_from_sync(_fetch_multibroker_evidence(order))
-            )
-        except Exception as exc:
-            inconclusive += 1
-            errors.append(
-                f"{execution_mode}/{market_type}: private fill query unavailable"
-            )
-            logger.warning(
-                "reconcile: private fill query failed for %s order %s (%s: %s)",
-                execution_mode,
-                order["id"],
-                type(exc).__name__,
-                getattr(exc, "reason_code", "no_reason_code"),
-            )
-            _write_reconcile_event(
-                order,
-                state=str(order.get("status") or "unresolved"),
-                reason="private_fill_history_unavailable",
-            )
-            continue
-        funding_ledger = None
-        is_close_order = _is_close_order(order)
-        if is_close_order:
-            funding_request = funding_request_for_complete_close(order["id"], rows)
-            if funding_request is not None:
-                try:
-                    funding_ledger = run_coro_from_sync(
-                        _fetch_multibroker_funding(order, funding_request)
-                    )
-                except Exception as exc:
-                    errors.append(
-                        f"{execution_mode}/{market_type}: private funding history unavailable"
-                    )
-                    logger.warning(
-                        "reconcile: funding query failed for %s order %s (%s: %s)",
-                        execution_mode,
-                        order["id"],
-                        type(exc).__name__,
-                        getattr(exc, "reason_code", "no_reason_code"),
-                    )
-        try:
-            result = (
-                materialize_private_close(
-                    order["id"], rows, funding_ledger=funding_ledger
-                )
-                if is_close_order
-                else materialize_private_entry(order["id"], rows)
-            )
-        except (MaterializationIntegrityError, ValueError) as exc:
-            inconclusive += 1
-            errors.append(
-                f"{execution_mode}/{market_type}: local materialization rejected"
-            )
-            logger.warning(
-                "reconcile: materialization rejected for %s order %s (%s)",
-                execution_mode,
-                order["id"],
-                type(exc).__name__,
-            )
-            _write_reconcile_event(
-                order,
-                state=str(order.get("status") or "unresolved"),
-                reason="local_materialization_rejected",
-            )
-            continue
-        except Exception as exc:
-            inconclusive += 1
-            errors.append(
-                f"{execution_mode}/{market_type}: local materialization failed"
-            )
-            logger.warning(
-                "reconcile: materialization failed for %s order %s (%s)",
-                execution_mode,
-                order["id"],
-                type(exc).__name__,
-            )
-            try:
-                transition_order(
-                    order["id"],
-                    status="materialization_missing",
-                    error_reason="exchange_fill_local_materialization_missing",
-                    filled_at=None,
-                )
-            except Exception as transition_exc:
-                # `transition_order` failed — the database order status did
-                # NOT reach `materialization_missing`. Do not emit an audit
-                # event saying it did (that would split audit truth from
-                # database truth). Surface the failure via `errors` and a
-                # warning; the next order still gets processed.
-                errors.append(
-                    f"{order['id']}:materialization_missing_transition_failed"
-                )
-                logger.warning(
-                    "reconcile: materialization_missing transition failed "
-                    "for order %s (%s)",
-                    order["id"],
-                    type(transition_exc).__name__,
-                )
-            else:
-                # Transition succeeded — the database is now at
-                # `materialization_missing`. The audit event may be written.
-                try:
-                    _write_reconcile_event(
-                        order,
-                        state="materialization_missing",
-                        reason="local_materialization_failed",
-                    )
-                except Exception as audit_exc:
-                    # Committed order state is authoritative
-                    # (execution_contract.md §7); an audit-sink failure
-                    # after that must not roll it back or bubble up.
-                    logger.warning(
-                        "reconcile: materialization failure audit write failed "
-                        "for order %s (%s)",
-                        order["id"],
-                        type(audit_exc).__name__,
-                    )
-            continue
-
-        materialized_fills += result.new_fill_count
-        if result.state == "filled":
-            filled += 1
-            _write_reconcile_event(
-                order, state="filled", reason="private_fill_materialized"
-            )
-        elif result.state == "partially_filled":
-            partially_filled += 1
-            _write_reconcile_event(
-                order,
-                state="partially_filled",
-                reason="partial_private_fill_materialized",
-            )
-        elif result.state == "overfilled" and not is_close_order:
-            # #2084: an entry overfill is a materialized Position, flagged.
-            filled += 1
-            _write_reconcile_event(
-                order,
-                state="overfilled",
-                reason="entry_fill_quantity_diverged",
-            )
-        elif result.state == "overfilled":
-            inconclusive += 1
-            _write_reconcile_event(
-                order,
-                state="overfilled",
-                reason="exchange_quantity_exceeds_local_authority",
-            )
-        else:
-            inconclusive += 1
-            _write_reconcile_event(
-                order,
-                state=str(order.get("status") or "unresolved"),
-                reason="complete_exchange_fill_not_proven",
-            )
-    return {
-        "errors": errors,
-        "inconclusive": inconclusive,
-        "filled": filled,
-        "partially_filled": partially_filled,
-        "materialized_fills": materialized_fills,
-    }
-
-
-def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> dict | None:
+def _prepare_private_views(execution_mode, account_orders, configured) -> dict | None:
     """Gather one mode's private views after persisted account validation."""
     errors: list[str] = []
     mode_orders = [
-        order for order in bitget_orders
+        order for order in account_orders
         if order.get("execution_mode") == execution_mode
     ]
     if not mode_orders:
@@ -1552,8 +1300,8 @@ def _prepare_bitget_private_views(execution_mode, bitget_orders, configured) -> 
             fill_rows[market_type] = []
             if getattr(exc, "completeness", None) is ReadCompleteness.UNSUPPORTED:
                 # Structural, not a failure: this venue cannot answer an account-wide
-                # fill read at all (Bitget requires a symbol on every request variant,
-                # #3564), so every pass would fail identically. Empty rows reference no
+                # fill read at all (its profile declares `account_wide_fills_supported =
+                # False`, #3564), so every pass would fail identically. Empty rows reference no
                 # order, so each order is proven through its own symbol-scoped read
                 # below — and a failure there still leaves it unresolved.
                 continue
@@ -1833,6 +1581,7 @@ def _materialize_native_order(
                 funding_ledger = run_coro_from_sync(client.get_funding_ledger(
                     broker_id=execution_mode,
                     symbol=str(funding_request["position"]["symbol"]),
+                    market_type=market_type,
                     start_time_ms=int(funding_request["start_time_ms"]),
                     end_time_ms=int(funding_request["end_time_ms"]),
                 ))
@@ -1993,15 +1742,9 @@ def reconcile() -> dict:
     filled_gap_orders = _list_demo_filled_entry_gaps()
     pending_close_cleared_ids = _clear_verified_closed_pending()
 
-    bitget_orders = [
+    account_orders = [
         o for o in all_orders
-        if o.get("execution_mode") in _BITGET_ACCOUNT_MODES
-        and o.get("status") in NON_TERMINAL_ORDER_STATES
-        and (o.get("exchange_order_id") or o.get("client_order_id"))
-    ]
-    multibroker_orders = [
-        o for o in all_orders
-        if o.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
+        if o.get("execution_mode") in _ACCOUNT_MODES
         and o.get("status") in NON_TERMINAL_ORDER_STATES
         and (o.get("exchange_order_id") or o.get("client_order_id"))
     ]
@@ -2012,7 +1755,7 @@ def reconcile() -> dict:
     materialized_fills = 0
     filled_gap_recovered = 0
     filled_gap_inconclusive = 0
-    checked = len(bitget_orders) + len(multibroker_orders) + len(filled_gap_orders)
+    checked = len(account_orders) + len(filled_gap_orders)
     filled_gap_checked = len(filled_gap_orders)
     configured = {identity.execution_mode: identity for identity in build_uta_registry().configured_identities()}
     # An Order stored under an older credential generation can only be read once its
@@ -2020,34 +1763,19 @@ def reconcile() -> dict:
     # check below sees the bound identity instead of skipping the Order every pass.
     from aletheia.execution.coordinator import reanchor_drifted_orders
 
-    unresolved = bitget_orders + multibroker_orders
-    for execution_mode in sorted({str(o.get("execution_mode") or "") for o in unresolved} & set(configured)):
+    for execution_mode in sorted({str(o.get("execution_mode") or "") for o in account_orders} & set(configured)):
         reanchor_drifted_orders(
-            execution_mode, [o for o in unresolved if o.get("execution_mode") == execution_mode],
+            execution_mode, [o for o in account_orders if o.get("execution_mode") == execution_mode],
         )
     (
         candidate_orders, filled_gap_orders, identity_errors,
         identity_inconclusive, identity_gap_inconclusive,
     ) = _validate_reconcile_identities(
-        bitget_orders + multibroker_orders, filled_gap_orders, configured,
+        account_orders, filled_gap_orders, configured,
     )
     errors.extend(identity_errors)
     inconclusive += identity_inconclusive
     filled_gap_inconclusive += identity_gap_inconclusive
-    bitget_orders = [
-        order for order in candidate_orders
-        if order.get("execution_mode") in _BITGET_ACCOUNT_MODES
-    ]
-    multibroker_orders = [
-        order for order in candidate_orders
-        if order.get("execution_mode") in _MULTIBROKER_ACCOUNT_MODES
-    ]
-    multibroker_result = _reconcile_multibroker_orders(multibroker_orders)
-    errors.extend(multibroker_result["errors"])
-    inconclusive += multibroker_result["inconclusive"]
-    filled += multibroker_result["filled"]
-    partially_filled += multibroker_result["partially_filled"]
-    materialized_fills += multibroker_result["materialized_fills"]
     gap_result = _recover_filled_gap_orders(filled_gap_orders, configured)
     errors.extend(gap_result["errors"])
     inconclusive += gap_result["inconclusive"]
@@ -2056,8 +1784,8 @@ def reconcile() -> dict:
     filled += gap_result["filled"]
     materialized_fills += gap_result["materialized_fills"]
 
-    for execution_mode in _BITGET_ACCOUNT_MODES:
-        views = _prepare_bitget_private_views(execution_mode, bitget_orders, configured)
+    for execution_mode in _ACCOUNT_MODES:
+        views = _prepare_private_views(execution_mode, candidate_orders, configured)
         if views is None:
             continue
         mode_orders = views["mode_orders"]

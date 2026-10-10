@@ -10,10 +10,11 @@ from time import monotonic
 import time
 
 import ccxt
-from typing import cast
+from typing import Any, cast
 import pytest
 
 from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+from aletheia.uta.compat import scope_from_local
 from aletheia.async_utils import run_coro_from_sync
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
@@ -1067,7 +1068,10 @@ async def test_binance_single_timestamp_fill_window_requires_real_read(monkeypat
     identity = _identity(profile).model_copy(update={"execution_mode": profile.expected_execution_mode})
     adapter = CCXTUTAAdapter(identity, profile)
     try:
-        report = await adapter.get_fills(FillQuery(scope=QueryScope(start_at=at, end_at=at)))
+        # Binance trade history is symbol-scoped (account-wide reads are UNSUPPORTED).
+        report = await adapter.get_fills(FillQuery(scope=scope_from_local(
+            "BTC/USDT", "usdt_futures", start_at=at, end_at=at,
+        )))
     finally:
         await adapter.close()
     assert report.completeness is ReadCompleteness.COMPLETE
@@ -1095,10 +1099,9 @@ async def test_private_history_bound_is_partial(monkeypatch):
     _install(monkeypatch, exchange)
     adapter = CCXTUTAAdapter(_identity(profile), profile)
 
-    report = await adapter.get_fills(FillQuery(scope=QueryScope(
-        start_at=datetime.now(timezone.utc) - timedelta(hours=1),
-        limit=1000,
-    )))
+    report = await adapter.get_fills(FillQuery(scope=scope_from_local(
+        "BTC/USDT", "usdt_futures", start_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    ).model_copy(update={"limit": 1000})))
 
     assert report.completeness is ReadCompleteness.PARTIAL
     assert report.reason_code == "private_fill_history_bound_reached"
@@ -2107,7 +2110,10 @@ async def test_private_read_failure_logs_only_safe_diagnostics(monkeypatch, capl
         if surface == "order":
             report = await adapter.get_order(OrderQuery(scope=scope, venue_order_id="synthetic-order"))
         elif surface == "fills":
-            report = await adapter.get_fills(FillQuery(scope=scope))
+            # Binance trade history is symbol-scoped (account-wide reads are UNSUPPORTED).
+            report = await adapter.get_fills(FillQuery(scope=scope_from_local(
+                "BTC/USDT", "usdt_futures", start_at=scope.start_at,
+            )))
         elif surface == "funding":
             report = await adapter.get_funding_ledger(FundingLedgerQuery(
                 scope=_funding_scope(datetime.now(timezone.utc), age_days=1)
@@ -2179,3 +2185,41 @@ def test_uta_v3_fill_fee_is_the_positive_cost_the_venue_reported():
     profile = _profile("bitget")
     report = profile.fill(trade, {}, _identity(profile), datetime.now(timezone.utc))
     assert report.fee == Decimal("0.00642032") and report.fee_currency == "USDT"
+
+
+@pytest.mark.asyncio
+async def test_binance_account_wide_reads_follow_the_venue_capability():
+    """Reconciliation reads every account the same way, so each profile must state
+    what its venue can answer without a symbol. Binance trade history needs a symbol
+    (a typed UNSUPPORTED, not a breaker-feeding UNAVAILABLE); its open-orders endpoint
+    answers account-wide once CCXT's weight warning is acknowledged."""
+    import ccxt.async_support as ccxt_async
+
+    profile = _profile("binance")
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    report = await adapter.get_fills(FillQuery(scope=QueryScope(
+        start_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )))
+    assert report.completeness is ReadCompleteness.UNSUPPORTED
+    assert report.reason_code == "private_fill_symbol_required"
+
+    exchange = ccxt_async.binanceusdm(cast(Any, profile.client_options()))
+    sent: list[str] = []
+
+    async def transport(url, method="GET", headers=None, body=None):
+        sent.append(url)
+        return []
+
+    exchange.fetch = transport
+    exchange.set_markets([{
+        "id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT",
+        "baseId": "BTC", "quoteId": "USDT", "settleId": "USDT", "type": "swap", "spot": False,
+        "swap": True, "future": False, "option": False, "contract": True, "linear": True,
+        "inverse": False, "active": True, "precision": {"amount": 0.001, "price": 0.1},
+        "limits": {}, "info": {},
+    }])
+    try:
+        assert await exchange.fetch_open_orders() == []
+    finally:
+        await exchange.close()
+    assert any("openOrders" in url for url in sent), sent

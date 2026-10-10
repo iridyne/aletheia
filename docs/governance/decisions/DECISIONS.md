@@ -1347,3 +1347,27 @@ L0–L4 成熟度判据。文档**不写**任何能力的当前级别、缺口�
   `test_doctor_checks_the_configured_account_not_a_fixed_exchange`、
   `test_refresh_selects_the_tier_api_by_ccxt_capability_not_venue_name`、
   `test_okx_demo_execution_uses_public_okx_stream`。
+
+## 2026-10-10 — 对账只留一条路径：所有交易所账户共用
+
+**Decision:** 删掉 OKX/Binance 专用的那条对账路径（`_reconcile_multibroker_orders`、
+`_fetch_multibroker_evidence`、`_fetch_multibroker_funding`），也删掉 `_BITGET_ACCOUNT_MODES` /
+`_MULTIBROKER_ACCOUNT_MODES` 两个分区。所有已登记的外部账户统一走原 Bitget 那条更完整的路径
+（`_prepare_private_views` → 订单号找回 → 精确/按合约成交读取 → 原生物化 / 只读收敛），
+`reconciliation.py` 里不再出现任何交易所名。还有一个旧函数一并删除：
+`resolve_orders_missing_from_exchange`，它凭"挂单列表里没有了"就判定已成交，违反执行契约 §6。
+这个函数没有生产调用方，10-09 的清扫已经标为 DELETE。属于长期目标 Convergence over compatibility，
+owner 于 2026-10-10 确认。
+
+**Reason:** 同一个能力有两份实现。OKX/Binance 那份缺这几样：凭 clientOid 找回交易所订单号、
+歧义检测、按合约回退读取、IOC 剩余量终态。所以每接一家交易所都要在两条路之间打补丁。
+
+**Guardrail:**
+- `tests/specs/spec_pipeline_multibroker_reconciliation.py` 里覆盖 OKX/Binance 的行为声明一条不改
+  （只改了文件头说明），在统一路径上全部通过。
+- 交易所支持哪种读法由它的 profile 声明。Binance 的成交接口必须带交易对，所以声明
+  `account_wide_fills_supported = False`；挂单接口可以不带交易对，因此确认了 CCXT 的权重警告。
+  对应测试 `test_binance_account_wide_reads_follow_the_venue_capability`，用的是真实 CCXT，只替换网络层。
+  这个问题是独立审查发现的：统一路径每轮都会做全账户读，原来的 profile 没有声明。
+- `test_reconciliation_covers_every_registered_account_through_one_path`；
+  审计 `test_reconciliation_incomplete_read_logging` 的处理点数由 10 降到 8，依据是被删路径正好有 2 个。

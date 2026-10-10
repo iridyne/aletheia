@@ -1,11 +1,10 @@
-"""Tests for OCO resolution + CR-EX-01 reconciliation decision logic (M3.5 refinement).
+"""Tests for OCO resolution decision logic (M3.5 refinement).
 
 Pure decision logic — the exchange adapters (place/poll/cancel, get_open_orders) are the
 needs-demo stubs and are NOT exercised here.
 """
 
 from aletheia.execution.oco import OcoLeg, resolve_oco
-from aletheia.execution.reconciliation import resolve_orders_missing_from_exchange
 
 
 # ── OCO resolution ───────────────────────────────────────────────────────────
@@ -55,30 +54,3 @@ def test_both_open_no_action():
 def test_leg_remaining_qty():
     assert _leg("limit_exit", "partial", filled=0.3, total=1.0).remaining_qty == 0.7
     assert _leg("limit_exit", "filled", filled=1.0, total=1.0).remaining_qty == 0.0
-
-
-# ── CR-EX-01 reconciliation decision ─────────────────────────────────────────
-
-def _order(oid, mode, status, ex_id="ex-1"):
-    return {"id": oid, "execution_mode": mode, "status": status, "exchange_order_id": ex_id}
-
-
-def test_missing_order_resolved_as_filled():
-    orders = [_order("o1", "okx_live_limited", "submitted", ex_id="ex-1")]
-    # ex-1 is NOT in the exchange's still-open set → should converge to filled
-    assert resolve_orders_missing_from_exchange(orders, exchange_open_ids=set()) == ["ex-1"]
-
-
-def test_still_open_order_not_resolved():
-    orders = [_order("o1", "okx_live_limited", "submitted", ex_id="ex-1")]
-    assert resolve_orders_missing_from_exchange(orders, exchange_open_ids={"ex-1"}) == []
-
-
-def test_only_target_modes_and_open_states():
-    orders = [
-        _order("o1", "bitget_live_limited", "submitted", ex_id="a"),  # not a target mode
-        _order("o2", "okx_live_limited", "filled", ex_id="b"),        # not an open state
-        _order("o3", "okx_live_limited", "submitted", ex_id=None),    # no exchange id
-        _order("o4", "binance_live_limited", "partial", ex_id="d"),   # target + open + id → resolved
-    ]
-    assert resolve_orders_missing_from_exchange(orders, exchange_open_ids=set()) == ["d"]

@@ -1,4 +1,7 @@
-"""OKX and Binance account-explicit private-fill reconciliation contracts."""
+"""OKX and Binance private-fill reconciliation contracts.
+
+These accounts run the one reconciliation path every registered account uses.
+"""
 
 from __future__ import annotations
 

@@ -58,35 +58,15 @@ def test_entry_permission_uses_registered_capability_identity(monkeypatch):
     assert venue_capabilities.entry_execution_minimum_permission("okx_demo") == "Full"
 
 
-def test_reconciliation_partitions_follow_registered_uta_identities():
-    from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
-    from aletheia.execution.reconciliation import (
-        _BITGET_ACCOUNT_MODES,
-        _CCXT_LIVE_MODES,
-        _MULTIBROKER_ACCOUNT_MODES,
-    )
+def test_reconciliation_covers_every_registered_account_through_one_path():
+    from aletheia.config.exchanges import execution_mode_venue
+    from aletheia.execution.reconciliation import _ACCOUNT_MODES
     from aletheia.uta.manager import UTA_EXECUTION_MODES
 
-    bitget_modes = {
-        mode: execution_mode_environment(mode)
-        for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) == "bitget"
-        and execution_mode_environment(mode) in {"demo", "live"}
+    assert set(_ACCOUNT_MODES) == {
+        mode for mode in UTA_EXECUTION_MODES if execution_mode_venue(mode) is not None
     }
-    multibroker_modes = {
-        mode
-        for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) not in {None, "bitget"}
-    }
-    ccxt_live_modes = {
-        mode
-        for mode in multibroker_modes
-        if execution_mode_environment(mode) == "live"
-    }
-
-    assert _BITGET_ACCOUNT_MODES == bitget_modes
-    assert set(_MULTIBROKER_ACCOUNT_MODES) == multibroker_modes
-    assert set(_CCXT_LIVE_MODES) == ccxt_live_modes
+    assert {"bitget_demo", "okx_demo", "binance_testnet"} <= set(_ACCOUNT_MODES)
 
 
 @pytest.mark.parametrize("mode", ["bitget_demo", "bitget_live_limited"])
