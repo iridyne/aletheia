@@ -1,6 +1,6 @@
 ---
 id: mechanism-aware-grounded-entry
-status: accepted
+status: implemented
 github_issue: 2791
 related_contracts:
   - ../contracts/candidate_selection_utility_contract.md

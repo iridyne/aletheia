@@ -1,6 +1,6 @@
 ---
 id: slim-core-partial-reduce-retirement
-status: accepted
+status: implemented
 github_issue: 3134
 related_contracts:
   - ../contracts/execution_contract.md

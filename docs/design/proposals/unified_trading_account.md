@@ -1,6 +1,6 @@
 ---
 id: unified-trading-account
-status: accepted
+status: implemented
 github_issue: 2299
 related_contracts:
   - docs/design/contracts/execution_contract.md

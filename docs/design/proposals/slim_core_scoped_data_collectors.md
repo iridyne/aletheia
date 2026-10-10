@@ -1,6 +1,6 @@
 ---
 id: slim-core-scoped-data-collectors
-status: accepted
+status: implemented
 github_issue: 3134
 ---
 

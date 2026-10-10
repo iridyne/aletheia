@@ -1,6 +1,6 @@
 ---
 id: slim-core-public-context-adapters
-status: accepted
+status: implemented
 github_issue: 3134
 ---
 

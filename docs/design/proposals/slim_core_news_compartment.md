@@ -1,6 +1,6 @@
 ---
 id: slim-core-news-compartment
-status: accepted
+status: implemented
 github_issue: 3134
 ---
 
