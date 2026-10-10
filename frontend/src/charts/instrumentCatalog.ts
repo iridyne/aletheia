@@ -1,4 +1,4 @@
-export type AssetClass = 'crypto_spot' | 'crypto_perp' | 'dex' | 'equity_token' | 'commodity'
+export type AssetClass = 'crypto_spot' | 'crypto_perp' | 'dex' | 'commodity'
 
 export interface CatalogEntry {
   symbol: string
@@ -63,12 +63,6 @@ const DEX_ENTRIES: CatalogEntry[] = [
   { symbol: 'SOL/USDC', marketType: 'spot', exchange: 'jupiter', assetClass: 'dex', displayName: 'Solana on Jupiter', aliases: ['Solana'] },
 ]
 
-const EQUITY_ENTRIES: CatalogEntry[] = [
-  { symbol: 'AAPLX/USDT', marketType: 'spot', exchange: 'bitget', assetClass: 'equity_token', displayName: 'Apple xStock', aliases: ['Apple', 'AAPL'] },
-  { symbol: 'TSLAX/USDT', marketType: 'spot', exchange: 'binance', assetClass: 'equity_token', displayName: 'Tesla xStock', aliases: ['Tesla', 'TSLA'] },
-  { symbol: 'NVDAX/USDT', marketType: 'spot', exchange: 'okx', assetClass: 'equity_token', displayName: 'Nvidia xStock', aliases: ['Nvidia', 'NVDA'] },
-]
-
 const COMMODITY_ENTRIES: CatalogEntry[] = [
   { symbol: 'PAXG/USDT', marketType: 'spot', exchange: 'bitget', assetClass: 'commodity', displayName: 'PAX Gold', aliases: ['Gold', 'PAXG'] },
   { symbol: 'PAXG/USDT', marketType: 'spot', exchange: 'binance', assetClass: 'commodity', displayName: 'PAX Gold', aliases: ['Gold', 'PAXG'] },
@@ -78,7 +72,6 @@ const COMMODITY_ENTRIES: CatalogEntry[] = [
 export const INSTRUMENT_CATALOG: readonly CatalogEntry[] = Object.freeze([
   ...buildCryptoEntries(),
   ...DEX_ENTRIES,
-  ...EQUITY_ENTRIES,
   ...COMMODITY_ENTRIES,
 ])
 
