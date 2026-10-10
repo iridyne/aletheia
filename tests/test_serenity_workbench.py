@@ -1522,3 +1522,15 @@ def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     assert recorded["error_message"] == "TimeoutError"
     assert recorded["stage"] is None
     assert recorded["allow_queued"] is True
+
+
+@pytest.mark.anyio
+async def test_disabled_serenity_refuses_to_start_research_or_promote(client, tmp_path):
+    (tmp_path / "config.yaml").write_text("serenity:\n  enabled: false\n", encoding="utf-8")
+    with patch("aletheia.agent_runtime.scheduler._enqueue_research_run") as enqueue:
+        resp = await client.post("/api/serenity/runs", json={"mode": "standard", "triggerType": "manual"})
+        assert resp.status_code == 503
+        enqueue.assert_not_called()
+    assert (await client.get("/api/serenity/runs")).json()["items"] == []
+    resp = await client.post("/api/serenity/themes/any-theme/promote")
+    assert resp.status_code == 503

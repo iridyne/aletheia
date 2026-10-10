@@ -121,7 +121,7 @@ _EXECUTOR_WORKERS = {
 Nightly Research availability 不改变上述 cadence：`dreaming_daily` 仅在 lesson
 extraction 或 Serenity enqueue callback 至少一个已组合时注册；各自只执行可用子能力。
 `lesson_reviewer` 保留 03:00 CST、agents pool、300s misfire，只在 registry 已组合时注册；
-`serenity_startup_catchup` 保留启动后 4 分钟，仅在 enqueue callback 可用时注册。
+`serenity_startup_catchup` 保留启动后 4 分钟，仅在 enqueue callback 可用且 `serenity.enabled` 为真时注册。
 5 分钟 Learning startup catch-up 在进入各 child guard 前跳过缺失 producer，不写
 成功水位、失败 attempt 或为缺失 child 安排无限重试；独立 insight synthesis 不受影响。
 已有 Serenity interrupted-run recovery 不依赖 producer 安装状态。

@@ -62,14 +62,14 @@ def test_absent_catchup_skips_before_guard_without_watermark_or_retry(absent, mo
 
 def test_composed_nightly_jobs_keep_schedule(absent, monkeypatch):
     from aletheia.agents import _AGENTS
-    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config.schema import AletheiaConfig, SerenityConfig
     from extensions.research.dreaming_agent import _extract_lessons
     from extensions.research.lesson_reviewer import run_lesson_reviewer
 
     monkeypatch.setattr(absent, "_extract_research_lessons", _extract_lessons)
     monkeypatch.setattr(absent, "_enqueue_research_run", lambda _: None)
     monkeypatch.setitem(_AGENTS, "lesson_reviewer", run_lesson_reviewer)
-    monkeypatch.setattr(absent, "load_config", AletheiaConfig)
+    monkeypatch.setattr(absent, "load_config", lambda: AletheiaConfig(serenity=SerenityConfig(enabled=True)))
     monkeypatch.setattr(absent, "_scheduler", None)
     started = absent.init_scheduler()
     try:
@@ -127,3 +127,16 @@ def test_absent_producer_still_recovers_interrupted_runs(absent):
     absent._recover_interrupted_serenity_run()
     assert repo.get_serenity_research_run(interrupted.id)["status"] == "failed"
     assert repo.get_serenity_research_run(cancelling.id)["status"] == "cancelled"
+
+
+def test_disabled_serenity_registers_no_startup_catchup(absent, monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(absent, "_enqueue_research_run", lambda _: None)
+    monkeypatch.setattr(absent, "load_config", AletheiaConfig)  # serenity.enabled defaults to False
+    monkeypatch.setattr(absent, "_scheduler", None)
+    started = absent.init_scheduler()
+    try:
+        assert started.get_job("serenity_startup_catchup") is None
+    finally:
+        absent.stop_scheduler()

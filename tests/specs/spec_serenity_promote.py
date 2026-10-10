@@ -271,6 +271,7 @@ def _seed_theme_with_opportunities(n: int = 2):
     cfg.exchange.paper_execution_mode = "bitget_demo"
     venue = "bitget"
     cfg.market_data.ccxt_exchange = venue
+    cfg.serenity.enabled = True
     save_config(cfg)
 
     theme = SerenityTheme(name="Test industrial chain — semis", status="active")

@@ -2543,9 +2543,15 @@ def get_serenity_status():
     }
 
 
+def _require_serenity_enabled():
+    if not load_config().serenity.enabled:
+        raise HTTPException(503, "Serenity is disabled (serenity.enabled=false)")
+
+
 def _require_serenity_enqueue():
     from aletheia.agent_runtime.scheduler import require_research_enqueue
 
+    _require_serenity_enabled()
     try:
         return require_research_enqueue()
     except ValueError as exc:
@@ -2895,6 +2901,7 @@ def promote_serenity_theme(theme_id: str):
     """Publish the theme through the canonical Candidate planning path."""
     from aletheia.trading.serenity_publication import publish_serenity_candidates
 
+    _require_serenity_enabled()
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:

@@ -1400,7 +1400,7 @@ def init_scheduler() -> BackgroundScheduler | None:
             _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
             misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
         )
-    if _enqueue_research_run is not None:
+    if _enqueue_research_run is not None and cfg.serenity.enabled:
         _scheduler.add_job(
             _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
             "date",
