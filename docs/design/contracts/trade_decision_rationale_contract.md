@@ -1,52 +1,171 @@
-# 交易开平仓理由契约
+# Trade Decision Rationale Contract
 
-> 角色：定义一笔交易的关键开仓参数与平仓行为如何留下可读、可核验且不伪造来源的理由记录。
-> 范围：补充 `decision_lifecycle_contract.md` 与 `execution_contract.md`；不改变风险批准、订单路由或实盘权限。
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `TR` · **Owner code:** `core/aletheia/portfolio/pnl.py::build_exit_reasoning` (close) and `core/aletheia/execution/entry_plan_execution.py::build_entry_plan_order_intent` (entry)
 
-## 1. 不变量
+## Scope
 
-1. 当前入场理由的唯一来源是 Entry Planner 的 `EntryHypothesis`：它只给定性判断（决定、经济理由、机制/方向、锚点引用、profile、`capture_priority`、风险姿态、horizon、证据引用），从不给价格、数量、杠杆、止损或止盈数值；这些由确定性 Compiler 与 sizing 计算（[Entry Plan](entry-plan-contract.md)、[Entry sizing](entry_sizing_and_financing_contract.md)）。
-2. 验证后的 hypothesis 以 `entry_hypothesis_json` / `entry_hypothesis_hash` 冻结在不可变 Entry Plan 中（`trading/entry_plan.py`）；Proposal 写 `agent_rationale = plan.thesis`，并在 hash 覆盖的 `attribution_snapshot` 中带 `entry_plan_id` 与 `entry_hypothesis_hash`（`execution/entry_plan_execution.py`）。Entry Plan 缺 hypothesis 或 source 时不得生成 Proposal。
-3. 旧 PiDecision 路径写在 `trade_proposals.agent_rationale.entry_parameters` 的五项理由（entry/stop/take-profit/notional/leverage）只对历史行可读；当前没有任何 Python 写入方，不得为新交易合成。
-4. 平仓理由只在关闭事实成功写入后保存到 `positions.exit_reasoning`。异步交易所平仓若已有真实 Operator 原话，必须先随 pending Close Order 保存同一版本的 `orders.close_reasoning` carrier，等待已验证成交后原子提升为最终事实；pending carrier 不等于已平仓理由。自动保护、人工、对账和 AI 复核必须使用真实 actor/source；没有 AI 原话时 `is_ai_judgment=false`。
-5. 历史或外部记录缺少理由时，API/UI 只能显示 `not recorded`，不得从最终价格、PnL 或 close_reason 倒推故事。
+Every trade leaves a readable, verifiable record of why it was opened and why it was
+closed, without inventing a source. Entry rationale is the Entry Planner's frozen
+`EntryHypothesis` carried by the immutable Entry Plan and its Proposal; close rationale is
+`positions.exit_reasoning`, written only once the close is a verified fact. This contract
+supplements the [Entry Plan](entry-plan-contract.md) and [execution](execution_contract.md)
+contracts; it does not change Risk approval, order routing or Live permission.
 
-## 2. 开仓快照
+## Entry points
 
-开仓快照即不可变 Entry Plan：冻结的 hypothesis JSON/hash、Compiler 得出的 entry/stop/target/
-杠杆/数量及其 `capture_policy_id`，加上 Proposal 的 `attribution_snapshot`。数值的来源是 Compiler
-与 sizing，不是模型；读取方不得把这些数值标为 "AI 决定"。历史 `entry_parameters` 行按原样显示，
-缺失时显示 `not recorded`。
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/execution/entry_plan_execution.py::build_entry_plan_order_intent` | call | Entry Plan execution (`execute_entry_plan`) |
+| `core/aletheia/portfolio/pnl.py::close_position` | call | verified close materialization (`core/aletheia/execution/gateway.py`, `core/aletheia/execution/exchange_materialization.py`) |
+| `core/aletheia/portfolio/position_manager.py::close_position_routed` | call | System Operator portfolio review / owner close |
+| `core/aletheia/execution/exchange_materialization.py::_close_reasoning_for_order` | call | pending Close Order materialization |
+| `frontend/src/components/CausalChain.tsx` | UI | Trades & Positions Causal Chain |
 
-## 3. 平仓记录
+## Durable state
 
-`positions.exit_reasoning` 的 JSON 至少包括：
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `entry_plans.entry_hypothesis_json` / `entry_hypothesis_hash` | `core/aletheia/storage/repositories.py::complete_candidate_planning_with_plan` | Entry Plan execution, replay, story | immutable |
+| `trade_proposals.agent_rationale`, `attribution_snapshot` | `core/aletheia/storage/repositories.py::insert_trade_proposal` | Risk, materialization, replay, UI | immutable, inside the Proposal hash |
+| `positions.decision_reasoning` | `core/aletheia/execution/exchange_materialization.py::_attribution_fields` | UI, post-trade review | set at open |
+| `orders.close_reasoning` | `core/aletheia/execution/coordinator.py::_claim_close` | close materialization | pending carrier; `NULL` = not recorded |
+| `positions.exit_reasoning` | `core/aletheia/portfolio/pnl.py::close_position`, `persist_exit_reasoning` | UI, post-trade review | written at verified close; replaced only on an already-closed Position |
 
-```json
-{
-  "version": "trade_decision_rationale.v1",
-  "actor": "system_operator|system|human|position_reconciler",
-  "source": "portfolio_review|position_lifecycle|verified_exit_protocol|...",
-  "reason_code": "stop_loss|take_profit|...",
-  "reason": "原始 AI 说明或规则触发的事实说明",
-  "is_ai_judgment": false,
-  "trigger": {"exit_price": 0}
-}
-```
+## Requirements
 
-- `stop_loss` / `take_profit` 记录进入时已承诺的保护价；说明明确为自动规则。
-- `max_hold` 记录开仓时间；市场规则退出保存已有信号理由（若有）。
-- System Operator 的组合复核保存其原始文本，并以 `is_ai_judgment=true` 标记。
-- 已验证成交和行政收敛保留其对账来源；行政收敛不得伪造价格、PnL 或 AI 动机。
-- pending Close Order 的非空 `close_reasoning` 必须匹配 `close_reason`，且在完整 private Fill 结算前不得写入 Position；损坏或身份不一致的 carrier 必须令 materialization fail closed。历史 `NULL` carrier 继续明确表示未记录。
+### Entry rationale
 
-## 4. Dashboard
+#### TR-C01 The hypothesis is the only entry rationale
 
-Trades & Positions 的 Causal Chain 从 resulting position 解析 `exit_reasoning`。入场侧当前仍只解析历史 `entry_parameters`（`frontend/src/components/CausalChain.tsx`），因此新交易显示缺失；改为读取 Entry Plan hypothesis 是一个待修的 conformance gap，不是新语义。订单锚点依 `positions.order_id` 解析 resulting position；这只是读取已有因果链接，不创建关联或推导缺失成交。
+`The Entry Planner's EntryHypothesis shall be the only source of entry rationale and shall carry only qualitative fields (decision, reason code, mechanism, direction, anchor refs, entry profile, capture priority and reason, risk tier and intent posture, horizon, supporting/opposing/learning evidence refs), never a price, quantity, leverage, stop or target value.`
 
-## 5. 验证
+- WHEN a model output contains an unknown field THEN validation fails (`extra="forbid"`).
 
-- `tests/specs/spec_pipeline_risk_gate.py` (`PL-RG-12`)、`tests/specs/spec_pi_decision_chain.py` (`PI-S05`) 与 `tests/specs/spec_pipeline_entry_enrichment.py`（`PL-ENRICH-02`）：五项开仓事实（entry/stop/take-profit/notional/leverage 的理由与来源）在入场路径的缺项拦截、native limit 四要素门槛，以及持久化 rationale 回链。五项 JSON 的历史定义见 [退役入场生命周期](../history/decision_lifecycle_retired_entry.md)。
-- `tests/test_exchange_close_confirmation.py`、`tests/specs/spec_pipeline_multibroker_reconciliation.py` 与 `tests/specs/spec_pipeline_exchange_materialization.py`：pending exchange close 的 durable rationale handoff、verified settlement、legacy NULL、损坏 carrier fail-closed 与 replay 幂等。
-- `tests/test_trade_decision_rationale_ui.py`：侧栏必须读取持久字段、保留缺失态。
-- 既有 proposal hash、entry enrichment、position-manager、execution-chain specs：保护原有链路与安全语义。
+Evidence: `core/aletheia/trading/entry_analysis.py::EntryHypothesis`.
+
+#### TR-C02 Frozen hypothesis in the Entry Plan
+
+`When an Entry Plan carries provenance, the plan shall store the validated hypothesis as entry_hypothesis_json with its SHA-256 entry_hypothesis_hash and shall reject a hash mismatch or partially present provenance.`
+
+- WHEN the hash differs from `sha256(entry_hypothesis_json)` THEN the plan fails with `entry_plan_hypothesis_hash_mismatch`.
+- WHEN only some provenance fields are present THEN it fails with `entry_plan_provenance_incomplete`.
+
+Evidence: `core/aletheia/trading/entry_plan.py::EntryPlan` (`_contract_is_coherent`).
+
+#### TR-C03 No Proposal without hypothesis provenance
+
+`If an Entry Plan lacks entry_hypothesis_json or source_kind, then the system shall not build an order intent or Proposal for it.`
+
+- WHEN `entry_hypothesis_json` is `None` THEN `build_entry_plan_order_intent` raises `ai_entry_plan_provenance_required`.
+
+Evidence: `core/aletheia/execution/entry_plan_execution.py::_require_ai_entry_authority`.
+
+#### TR-C04 Proposal back-links the hypothesis
+
+`When an Entry Plan Proposal is built, it shall set agent_rationale to plan.thesis and put entry_plan_id and entry_hypothesis_hash into the hash-covered attribution_snapshot, and the opened Position shall carry that agent_rationale as decision_reasoning.`
+
+- WHEN the Proposal is stored THEN `commit_hash` covers `attribution_snapshot` (only `status` and `commit_hash` are excluded).
+- WHEN reading `agent_rationale` THEN it is the compiler label `"<mechanism> grounded entry"`, not model prose; the model's own words are in the hypothesis (`capture_reason`, `risk_intent.reason`).
+
+Evidence: `core/aletheia/execution/entry_plan_execution.py::build_entry_plan_order_intent`, `core/aletheia/trading/entry_plan_compiler.py::_compile_bounded_risk_envelope` (sets `thesis`), `core/aletheia/storage/repositories.py` (`_PROPOSAL_HASH_EXCLUDES`), `core/aletheia/storage/repositories_execution.py::_compute_proposal_hash`, `core/aletheia/execution/exchange_materialization.py::_attribution_fields`.
+
+#### TR-C05 Numbers are attributed to the compiler
+
+`Readers shall attribute entry, stop, target, leverage and quantity to the deterministic compiler and sizing (with capture_policy_id), never label them as decided by the AI.`
+
+#### TR-C06 Retired five-item entry parameters are history only
+
+`The system shall not write or synthesize agent_rationale.entry_parameters for any new trade; historical rows shall be shown as stored and as not recorded when absent.`
+
+- WHEN grepping Python sources for `entry_parameters` THEN there is no writer.
+
+History: [retired entry lifecycle](../history/decision_lifecycle_retired_entry.md).
+
+### Close rationale
+
+#### TR-C07 Close rationale only after a verified close
+
+`When a close fact is written, the system shall store positions.exit_reasoning as trade_decision_rationale.v1 with version, actor, source, reason_code, reason, is_ai_judgment and trigger, and a later AI-specific rewrite shall only apply to an already-closed Position.`
+
+- WHEN `persist_exit_reasoning` is called on a Position whose status is not `closed` THEN it returns `False` and writes nothing.
+
+Evidence: `core/aletheia/portfolio/pnl.py::build_exit_reasoning`, `close_position`, `persist_exit_reasoning`.
+
+#### TR-C08 Rule triggers are described as rules
+
+`When a Position closes by stop_loss, take_profit, max_hold or market_signal_exit, the rationale shall describe an automatic rule (not an AI judgment) and record the committed stop/target price, the opened_at time, or the last market-signal reason in trigger.`
+
+- WHEN the reason is `verified_exit` or `reconciled_gone` THEN the reason states closure from reconciliation evidence and invents no price, PnL or AI motive.
+
+#### TR-C09 Real actor and AI flag
+
+`The rationale shall name the real actor (system_operator, system, human or position_reconciler) and shall set is_ai_judgment=true only when the actor is system_operator with its original review text.`
+
+- WHEN the System Operator closes via portfolio review THEN `actor=system_operator`, `source=portfolio_review`, `reason` is its original text (≤ 1200 chars) and `is_ai_judgment=true`.
+
+Evidence: `core/aletheia/portfolio/position_manager.py::close_position_routed`.
+
+#### TR-C10 Pending close carrier
+
+`When an asynchronous exchange close has real Operator text, the system shall save it as orders.close_reasoning on the pending Close Order, promote it to positions.exit_reasoning only after the full private Fill settles, and fail materialization closed if the carrier is malformed, mismatches close_reason, or conflicts actor with the AI flag.`
+
+- WHEN `close_reasoning.reason_code != orders.close_reason` THEN materialization raises `MaterializationIntegrityError`.
+- WHEN `close_reasoning` is `NULL` THEN the generic rule rationale is written and the carrier means not recorded.
+
+Evidence: `core/aletheia/execution/exchange_materialization.py::_close_reasoning_for_order`.
+
+### Display
+
+#### TR-C11 Missing means not recorded
+
+`If a historical or external record has no rationale, then the API and UI shall show not recorded and shall not reconstruct a story from final price, PnL or close_reason.`
+
+#### TR-C12 Causal Chain reads persisted fields
+
+`The Causal Chain shall read close rationale only from the resulting Position's exit_reasoning, resolved through positions.order_id, and shall create no link or inferred fill.`
+
+Evidence: `frontend/src/components/CausalChain.tsx`.
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| Entry Plan without hypothesis/source | no order intent | `ai_entry_plan_provenance_required` | no Proposal |
+| Hypothesis hash mismatch / partial provenance | plan rejected | `entry_plan_hypothesis_hash_mismatch` / `entry_plan_provenance_incomplete` | — |
+| Malformed or mismatched close carrier | materialization fails closed | `MaterializationIntegrityError` | Position not closed by that write |
+| Rationale absent | displayed as missing | `not recorded` | never a synthesized story |
+
+## Authority
+
+Records rationale only; it may never change Risk approval, order routing, close decisions,
+credentials or Live permission.
+
+## Verification
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| TR-C01 – TR-C03 | `tests/test_entry_plan_execution.py`, `tests/test_entry_activation.py` |
+| TR-C04 | `tests/specs/spec_pipeline_entry_enrichment.py` (`PL-ENRICH-02`); no focused test asserts the `entry_hypothesis_hash` back-link |
+| TR-C06, TR-C11, TR-C12 | `tests/test_trade_decision_rationale_ui.py` |
+| TR-C07 – TR-C09 | `tests/specs/spec_pipeline_multibroker_reconciliation.py`, `tests/test_exchange_close_confirmation.py` |
+| TR-C10 | `tests/specs/spec_pipeline_exchange_materialization.py` (`test_invalid_pending_close_reasoning_*`, `test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance`) |
+
+## Known conformance gaps
+
+- **TR-C01/TR-C12 entry side of the Causal Chain.** `frontend/src/components/CausalChain.tsx`
+  still reads only `meta.entry_parameters` for Entry Reasoning, which no Python code writes,
+  so every Entry Plan trade shows the entry rationale as missing. The UI should read the Entry
+  Plan hypothesis; `tests/test_trade_decision_rationale_ui.py` asserts the
+  `entry_parameters` string and must change with it.
+- **TR-C03 has no focused regression.** No test builds an order intent from an Entry Plan
+  without `entry_hypothesis_json` and asserts `ai_entry_plan_provenance_required`.
+
+## Decision references
+
+- Retired PiDecision five-item entry rationale and its old verification line:
+  [retired entry lifecycle](../history/decision_lifecycle_retired_entry.md),
+  [moved text](../history/profit_loop_and_rationale_retired_text.md).
+- [Spec 0001](../specs/0001-learning-loop/spec.md) LL-R01 adds `p_target_first` and
+  `lessons_considered` to the same `EntryHypothesis` carrier when implemented.

@@ -1,106 +1,114 @@
-# Observation Experiment Ownership V2 Migration Contract
+# Observation Experiment Ownership Contract
 
-## Purpose and authority
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `OEO` · **Owner code:** `extensions/observation_lab/canonical.py`
+> (`get_authority_source`, `set_authority_source`) and `extensions/observation_lab/migration.py`
 
-This Contract records the durable migration boundary established for Issue
-#2737. The accepted future design is
-[Observation Experiment Ownership V2](../proposals/observation_experiment_ownership_v2.md).
+## Scope
 
-Observation Lab is the sole online Experiment authority after the single-mainline
-cutover. Legacy ledgers are retained only for explicit proof-gated import and
-historical reads. Fresh databases initialize Lab authority. Existing legacy
-databases cannot run the retired writer while awaiting migration.
+Exactly one Experiment authority exists per database, stored in `app.db`
+`observation_authority_state`: `legacy` or `lab`. Under `lab`, Observation Lab is the sole
+online Experiment owner and the only state in which a Lab manifest may change behavior; under
+`legacy` (or an unreadable row) every Lab consumer stays on its deterministic baseline. The
+cutover is one-way. Lab mechanics (receipts, checkpoint, windows) are owned by the
+[Observation Lab Contract](observation_lab_contract.md); learning semantics by
+[spec 0001](../specs/0001-learning-loop/spec.md). The completed migration narrative is in
+[history](../history/observation_experiment_ownership_v2_migration.md).
 
-The bridge is intentionally fail-closed: a missing Lab manifest, incompatible
-adapter, revoked contract, unresolved conflict, deny tombstone, unavailable
-Lab, or full delivery outbox returns the declared deterministic baseline while
-preserving a Main receipt. A `lab` authority epoch is the only state in which
-the generic `TreatmentAdapter` seam may apply a behavior-changing Manifest.
+## Entry points
 
-## Current ownership
+| Entry point | Kind | Caller |
+|---|---|---|
+| `extensions/observation_lab/canonical.py::get_authority_source` | call | `resolve_observation_treatment`, `extensions/counterfactual/filter_experiments.py::_require_lab_authority`, `extensions/observation_lab/runner.py` (`filter_shadow_evaluate`), `ops/update/continuity.py` |
+| `extensions/observation_lab/canonical.py::set_authority_source` | call | `core/aletheia/storage/migrations.py` (fresh install), CLI `aletheia observe set-experiment-authority lab` |
+| `extensions/observation_lab/migration.py::apply_legacy_learning_migration` | CLI `aletheia observe migrate-learning-ledger --apply` | operator, one-shot |
 
-- Learning owns research, lessons, knowledge and pre-registration nominations,
-  not an Experiment control plane.
-- Main owns production/trading facts, behavior-policy identity, Risk,
-  Execution, Gateway, credentials, and Live authority.
-- Observation Lab v1 owns its implemented windows, units, Manifests, Lab
-  exposure facts, runner, and joint-checkpoint primitives.
-- Legacy mode keeps the existing no-prune and earliest-exposure guards. Lab
-  mode uses exact active retention claims plus verified archive-before-eviction;
-  missing claim/source state fails closed and never widens deletion.
-- The existing `execution_owner=main|worker` modes host the same Lab runner;
-  exactly one cycle owner remains mandatory.
+## Durable state
 
-## Executable V2 boundary
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `observation_authority_state` (`state_key='experiment_authority'`) | baseline DDL seeds `legacy`; `set_authority_source` | `get_authority_source` | one-way `legacy → lab` |
+| legacy `learning_experiments`, `learning_exposures`, `learning_contribution_verdicts`, `filter_shadow_experiments` | none on the trading path; allowlisted retention/migration code only | migration import, backup verification | frozen; dropped by `retire_legacy_experiment_tables` |
 
-`observation_delivery_outbox` is a bounded Main transport/proof surface, not a
-second Experiment owner. A production transaction writes its domain fact and
-receipt together. `import_delivery_receipts()` consumes present receipts in
-sequence order, inserts each Lab Exposure by `source_receipt_id`, and
-acknowledges Main only after the Lab transaction commits. A numeric sequence gap
-alone is not evidence loss; only a proven source checkpoint may classify a
-missing receipt. A malformed present row stops the prefix and remains retryable.
-Owner actions use the same transport and remain `pending` until Lab applies the
-lifecycle event.
+## Requirements
 
-`observation_results` is an immutable Lab result projection for Learning and
-review. Learning may import/read that artifact by fingerprint; a positive
-verdict never grants production authority or changes a Main behavior policy.
-Graduation/adoption remains a separate owner-approved Main behavior-policy
-change, after which the Lab generation is revoked/superseded and retained as
-evidence.
+### Executable V2 boundary
 
-For measurement-supported paths, the Lab evaluator reads the immutable Lab
-Exposure snapshot and exact Main outcome identities, then invokes the existing
-cohort and verdict algorithms in memory. It records only Lab Evaluation and
-Result rows; it never creates or reads legacy Experiment rows. Monitoring uses
-the descriptive look, while confirmatory evaluation requires a hash-valid,
-frozen Lab inference plan, its assignment-unit cutoff, and a declared finite
-authority alpha; a consumed plan
-returns its already-bound Evaluation rather than recomputing history.
+#### OEO-C01 One-way cutover
 
-## Single-authority migration
+`The authority writer shall accept only lab and reject any request to restore legacy.`
 
-`set_authority_source` accepts only `lab`; restoring `legacy` is rejected.
-Missing authority/schema keeps treatments at baseline with an unavailable reason.
-The old evaluator, lifecycle controller, scheduler jobs and Experiment/exposure/
-verdict writers are removed. Filter-shadow registration and evaluation use Lab.
+- WHEN `set_authority_source("legacy", …)` is called THEN it raises `authority_source_must_be_lab`.
+- WHEN a fresh database is migrated THEN authority is set to `lab` (`fresh_install_lab_authority`) and the legacy Experiment tables are dropped.
+- WHEN an existing database is upgraded THEN its seeded `legacy` row stays until an explicit cutover.
 
-The existing offline migration remains explicit:
+#### OEO-C02 Cutover requires proof
 
-```text
-aletheia observe migrate-learning-ledger --apply --retire-legacy-schema --runtime-commit <exact-sha> --rollback-backup-identity <verified-id> --json
-```
+`If a non-empty legacy database is cut over to lab, then the writer shall require no pending Main receipts and a proof whose migration plan, checkpoint, retention-claim fingerprints and runtime commit match current state.`
 
-Checkpoint, archive hashes, source identity, pending receipts, retention claims
-and verified recovery backup remain mandatory. Failure preserves source evidence.
-Import never upgrades historical positives into current treatment qualification.
-Learning projections read Lab results; unavailable canonical economic qualification
-is reported as unavailable, not as zero effect or legacy success.
+- WHEN pending receipts exist THEN it raises `authority_cutover_pending_main_receipts`.
+- WHEN the checkpoint fingerprint differs THEN `authority_cutover_checkpoint_mismatch`; WHEN unimported legacy rows exist THEN `authority_cutover_unprovable_legacy_evidence`.
+- Import never upgrades a historical positive into current treatment qualification.
 
-## Current migration invariants
+#### OEO-C03 Legacy authority keeps baseline
 
-- Main domain facts and delivery receipts remain atomic.
-- Observation Lab grants no Risk, Gateway, credential, signer, order, Position,
-  or Live authority.
-- Filter-shadow remains hard observe-only with
-  `production_mutation_allowed=0`.
-- #470/#447 historical UFC evidence remains fixed, negative/refrozen, and
-  non-authorizing.
+`While authority is legacy or unreadable, every Lab treatment consumer shall return its deterministic baseline and Lab-only registration paths shall refuse.`
 
-## Compatibility with existing authorities
+- WHEN filter-shadow registration runs under `legacy` THEN it raises `observation_lab_authority_required`.
+- WHEN the `filter_shadow_evaluate` window runs under `legacy` THEN it errors with `authority_source_unavailable`.
+- The entry-learning adapter is one Lab adapter with empty control and the `mechanism-aware-grounded-entry` interference key ([OL-C03](observation_lab_contract.md#ol-c03-entry-learning-adapter-boundary)).
 
-- #1072 remains current for Main/Worker independence and one Lab cycle owner.
-- #2614 remains current for the generic Observation window/unit kernel, handler
-  architecture, fairness, and failure isolation.
-- #1135 remains current for existing rolling-update continuity.
-- #1008 remains the continuous Learning product authority.
+#### OEO-C04 Results never grant authority
 
-## Verification and recovery
+`The Lab shall expose observation_results as an append-only projection that no consumer may treat as a Main behavior-policy change.`
 
-Focused migration, canonical bridge, Lab evaluator/window/checkpoint and
-end-to-end suites prove import idempotency, archive/receipt safety, one-way
-authority, fail-closed treatment and preserved historical evidence. They do not
-prove economic benefit or production qualification. Deployment recovery preserves
-the existing joint-checkpoint and Observer progression guards; it never turns
-the legacy writer back on or rewrites an advanced Observation window.
+- WHEN a result verdict is positive THEN no Risk, Gateway, credential, sizing or Live input changes; adoption is a separate owner-approved behavior-policy change.
+
+### Frozen legacy storage inventory
+
+#### OEO-C05 Legacy coupling cannot grow
+
+`The codebase shall keep production references to and writers of the four legacy Experiment tables within the exact allowlists in tests/specs/spec_observation_experiment_ownership.py.`
+
+- WHEN a module outside the reference allowlist mentions a legacy table THEN the claim fails; WHEN an allowlisted module stops mentioning it THEN the claim also fails until the allowlist shrinks.
+
+### Lab runtime independence
+
+#### OEO-C06 Runner does not import the legacy runtime
+
+`The Lab runner and evaluator shall not import extensions.learning.experiments or extensions.learning.ledger.`
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| authority row missing / malformed | baseline | `authority_source_unavailable` | never treated as `lab` |
+| authority `legacy` | baseline; Lab registration refuses | `authority_source_legacy`, `observation_lab_authority_required` | not "no effect" |
+| cutover proof mismatch | cutover refused, nothing written | `authority_cutover_*` reason | legacy evidence preserved |
+
+## Authority
+
+This capability may change only the Experiment authority row; it never grants Risk, Gateway,
+credential, signer, order, Position or Live authority.
+
+## Verification and rollback
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| OEO-C01 | `tests/test_observation_lab_migration.py::test_authority_cli_refuses_legacy_even_with_the_recorded_cutover_proof`, `test_explicit_retirement_requires_import_proof_and_drops_legacy_tables` |
+| OEO-C02 | `tests/test_observation_lab_migration.py::test_lab_cutover_refuses_unimported_legacy_rows`, `test_nonempty_lab_cutover_requires_and_records_complete_proof`; `tests/test_observation_canonical_bridge.py::test_pending_receipt_blocks_cutover_without_losing_evidence` |
+| OEO-C03 | `tests/specs/spec_observation_experiment_ownership.py::OEO-S05`; `tests/test_observation_canonical_bridge.py::test_numeric_treatment_without_lab_authority_preserves_baseline` |
+| OEO-C04 | not covered by a dedicated test; the only non-Lab reader is `extensions/learning/read_models.py` (read-only projection). Related: `tests/test_observation_canonical_bridge.py::test_paper_manifest_without_explicit_lab_authorization_falls_back_to_baseline` |
+| OEO-C05 | `tests/specs/spec_observation_experiment_ownership.py::OEO-S01`, `OEO-S03` |
+| OEO-C06 | `tests/specs/spec_observation_experiment_ownership.py::OEO-S04` |
+
+Deployment rollback restores through the joint checkpoint ([OL-C15](observation_lab_contract.md#ol-c15-restore-and-drift-resolution)); it never re-enables a legacy writer.
+
+## Decision references
+
+- #2737 single Lab authority ([accepted proposal](../proposals/observation_experiment_ownership_v2.md));
+  #2945 retired the legacy Learning Experiment runtime; #470/#447 historical UFC evidence is
+  fixed, negative and non-authorizing.
+- Migration narrative and the offline `migrate-learning-ledger` recipe:
+  [history](../history/observation_experiment_ownership_v2_migration.md).

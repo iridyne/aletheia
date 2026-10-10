@@ -1,449 +1,236 @@
-# Profit-loop observability contract
+# Position Replay and Lifecycle Story Contract
 
-## Purpose and current scope
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `PL` · **Owner code:** `core/aletheia/analytics/position_replay.py::build_position_replay`
 
-Aletheia exposes read-only, versioned evidence for replaying one Position,
-rendering its deterministic lifecycle story, reconstructing the complete candidate
-denominator, evaluating a fixed exploratory counterfactual registry, and applying
-seven-layer profitability-analysis gates.
+## Scope
 
-Profit Gradient is an analysis capability, not an optimization authority. It
-provides data, attribution views, and uncertainty; it does not automatically
-select, create, start, authorize, or activate an experiment or change trading
-policy. The owner + ChatGPT decide the next optimization direction manually.
-
-The current Position counterfactual is deliberately an early-path experiment. Its
-formal output always declares `counterfactual_scope = first_60_minutes` and
-`counterfactual_horizon = 60_minutes_after_each_hypothetical_entry`: every arm
-uses 60 one-minute bars after that arm's hypothetical entry to compare the
-preregistered initial-Stop baseline with the five bounded candidate treatments.
-A delayed arm also reads its delay prefix; therefore `delay_5_bars/v1` can use
-the source open at minute 65 (66 source rows in total). The scope is not a
-strict shared 60-row input window, does not describe a Position's full Holding /
-Exit lifecycle, and must not be read as a rule that Positions should be closed
-after one hour.
-
-This capability has no trading authority. It does not change Ranker, System
-Operator, Risk, Execution, position protection, Learning, Live, or an existing
-experiment cohort.
+This capability lets the owner and the post-trade review read back what happened to one
+trade on the mainline (Candidate → Entry Plan → Proposal → Risk → Order → Fill → Position →
+verified close): an exact-ID Position replay, a deterministic lifecycle story, a
+candidate-first lineage diagnosis, and the 5-minute path observations that feed them. The
+replay, story and diagnosis are read-only inspection; the Position Path Observer is the one
+scheduler writer. It has no trading authority. The fixed-horizon candidate funnel, the
+first-60-minute counterfactual registry and the seven-layer Profit Gradient are frozen
+research tools owned by the [Profit Gradient Contract](profit_gradient_evidence_contract.md).
+Decision-level learning labels (judgment R) come from
+`core/aletheia/analytics/signal_replay.py`, not from this replay
+([spec 0001](../specs/0001-learning-loop/spec.md)).
 
 ## Entry points
 
-The production entry point is `aletheia inspect`:
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/cli/inspect_cmd.py::position_replay` | CLI `aletheia inspect position-replay --id <id> [--as-of <ts>] [--json]` | owner / offline review |
+| `core/aletheia/cli/inspect_cmd.py::position_story` | CLI `aletheia inspect position-story --id <id> [--as-of <ts>] [--json]` | owner / offline review |
+| `core/aletheia/cli/inspect_cmd.py::position_diagnosis` | CLI `aletheia inspect position-diagnosis` | owner |
+| `core/aletheia/cli/inspect_cmd.py::lifecycle` | CLI `aletheia inspect lifecycle --<anchor>-id <id> [--as-of <ts>]` | owner |
+| `core/aletheia/cli/inspect_cmd.py::position_path` | CLI `aletheia inspect position-path --id <id>` | owner |
+| `core/aletheia/agent_runtime/scheduler.py::_run_position_path_observer` | scheduler job `position_path_observer`, every 5 min | Gateway scheduler |
+| `core/aletheia/cli/control_cmd.py` (`build_position_path_observer_status`) | `aletheia control status` section | owner |
+| `core/aletheia/storage/repositories.py::insert_trade_proposal` → `core/aletheia/storage/proposal_hypothesis.py::freeze_position_hypothesis` | call before the Proposal hash | every Proposal insert |
 
-- `position-replay --id <position_id> --as-of <timestamp> --json` emits one
-  `profit_loop_fact/v1` Position fact;
-- `position-story --id <position_id> --as-of <timestamp> [--json]` renders one
-  deterministic `position_lifecycle_story/v1` explanation. Its
-  `structured_events` projection is machine-facing; human text is not a
-  statistical input;
+## Durable state
 
-The `position_lifecycle_story/v1` machine-facing shape includes the
-cutoff-visible `periodic_observations` projection and corresponding
-`position_path_observed` entries in `structured_events`. Their `occurred_at`
-is the durable observation time (`observed_at`), not the bucket opening time,
-and their facts preserve `producer_commit` and `runtime_session_id` so a
-consumer can reject evidence mixed across producer builds or Runtime Sessions.
-These are additive v1 fields; an incompatible change to their meaning or
-required shape requires a new Story contract version.
-- `candidate-facts --horizon <15m|1h|4h|24h> --as-of <timestamp> --json` emits
-  the complete `candidate_fact` denominator at one fixed horizon;
-- `position-diagnosis` and `candidate-diagnosis` emit
-  `profit_loop_diagnosis/v1` artifacts without changing their inputs;
-- `profit-counterfactual --cost-model <json>` evaluates the fixed
-  `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
-- `profit-gradient --evidence <json>` applies `profit_gradient/v3` gates to a
-  frozen evidence artifact;
-- `lifecycle --position-id <id> [--as-of <ts>] [--json]` (and the other five
-  anchors: `--candidate-id`, `--generation-id`, `--entry-plan-id`,
-  `--proposal-id`, `--order-id`) emits a `lifecycle_diagnosis/v1` artifact
-  tracing the full attributable chain for Universe-origin and
-  Serenity/Opportunity-origin trades. Prefer this over `opportunity-lifecycle`
-  for current Universe-origin trades (where `opportunity_id` is NULL). Exit
-  codes: 0 well-formed (including availability=unavailable); 2 arg error.
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `position_path_observations` | `core/aletheia/portfolio/position_path_observer.py::observe_open_position_paths` | replay, story, `inspect position-path`, control status | append-only (update/delete triggers) |
+| `position_path_observation_deferred_buckets` | same observer (`repo.defer_position_path_observation_bucket`, `repo.resolve_deferred_position_path_observation`) | observer, control status | replaceable work queue |
+| `trade_proposals.attribution_snapshot.position_hypothesis` | `core/aletheia/storage/proposal_hypothesis.py::freeze_position_hypothesis` | replay, story, counterfactual | immutable, inside the Proposal hash |
 
-All commands are synchronous, read-only inspection commands. The cost-model and
-gradient evidence files are inputs only.
+Replay, story and diagnosis artifacts are never persisted. They read `trade_proposals`,
+`risk_decisions`, `orders`, `fills`, `positions`, `entry_plans`,
+`candidate_planning_generations`, `universe_members`, settlement/runtime provenance and
+`market_ohlcv` through caller-owned or read-only connections.
 
-## Durable state and consumers
+## Requirements
 
-No replay, diagnosis, counterfactual, gradient, manifest, or protected-retention
-table exists.
+### Position replay
 
-Profit-loop registration reuses `learning_policy_epochs` with
-`epoch_kind=evidence_anchor:profit_loop_observability`. Gateway startup creates
-the anchor only after a durable Runtime Session exists. Its immutable identity
-is the exact Runtime Session boot commit, behavior fingerprint, and canonical
-SHA-256 of the five-treatment registry; the offline `evidence epoch register
---commit` override cannot supply or replace this identity. No migration,
-configuration field, or Learning treatment is introduced.
+#### PL-C01 Exact-ID causal joins
 
-Position replay joins existing immutable IDs across Proposal, authoritative Risk
-decision, Order, Fill, Position, exit plan, protection state, settlement,
-runtime provenance, and `market_ohlcv`. For Universe-origin trades
-(`opportunity_id` is NULL), ancestry resolves via
-`Candidate → Generation → EntryPlan → Proposal`; a PI decision is not required
-on that path (see `decision_lifecycle_contract.md`). For Serenity/Opportunity-
-origin trades, ancestry resolves via `Opportunity → Proposal` as before.
-The lifecycle boundary is:
+`When a Position is replayed, the replay shall join Proposal, authoritative Risk decision, Order, Fill, Position, exit plan, protection, settlement, runtime provenance and OHLCV only by exact durable IDs and shall never select a latest related record as a fallback.`
 
-```text
-Position Path Facts → Position Replay → Position Lifecycle Story
-                                      → human review / dashboard / post-trade review
-                                      → evidence compiler → statistical attribution
-```
+- WHEN the entry Order's `risk_decision_id` differs from the joined Risk decision THEN `causal_errors` contains `authoritative_risk_identity_mismatch`.
+- WHEN a closed Position has no close Fill chain THEN `causal_errors` contains `close_fills_missing`.
 
-The Story exposes a deterministic readable view plus `structured_events`. The
-future evidence compiler and gradient consume structured event facts, never
-rendered prose or an LLM-generated narrative. No Story or replay artifact is
-persisted by this contract.
+Evidence: `core/aletheia/analytics/position_replay.py::build_position_replay`.
 
-New native entry Proposals freeze `position_hypothesis/v1` inside the existing
-immutable `trade_proposals.attribution_snapshot` before the Proposal commit hash
-is computed. Historical Proposals and non-entry Proposals remain `not_recorded`;
-they are never backfilled.
+#### PL-C02 Universe ancestry needs no PI decision
 
-The final consumer is the Owner or an offline analysis process. No runtime
-behavior owner imports these analytics modules.
+`When the replayed Proposal has no opportunity_id, the replay shall resolve ancestry Candidate → Planning Generation → Entry Plan → Proposal through the shared lineage reader and shall not report a missing PI decision as a causal error.`
 
-## Observable result
+- WHEN a Universe-origin Position has a recorded Planning Generation THEN `causal_errors` contains no `pi_decision_not_recorded`.
+- WHEN lineage finds no Planning Generation THEN `causal_errors` contains `planning_generation_not_recorded`.
 
-`candidate_fact` and `position_fact` are separate statistical populations:
+Evidence: `core/aletheia/analytics/position_replay.py::build_position_replay` (calls `candidate_lifecycle.for_position`). Serenity/Opportunity-origin Proposals (Serenity is Experimental) resolve via `opportunity_id`.
 
-- Selection, Decision, and Risk use `outcome_candidate_key` and a fixed-horizon
-  net outcome. Candidate quote conversions use the frozen ex-ante analysis basis,
-  not downstream Proposal/Position capital, and are not claims about realized
-  account cash;
-- Execution, Holding, Exit, and Costs use exact `position_id` and verified
-  settled net economics.
+#### PL-C03 Cutoff visibility
 
-Position replay reports exact causal IDs, evidence cutoff, economics residual,
-runtime/behavior identity, ordered-path coverage, canonical OHLCV window hash,
-and explicit unavailable reasons. Its `profit_loop_fact/v1` stages and exact
-`holding.trade_path` / `exit` evidence are the Position Lifecycle Story: they
-describe the actual `opened_at` → `closed_at` path, independently of the
-first-60-minute counterfactual. Candidate replay preserves filtered, skipped,
-rejected, unfilled, and traded terminal states.
+`When as_of_at is supplied, the replay shall exclude every row created after that cutoff, and rerunning against unchanged durable facts and the same cutoff shall produce the same canonical fact and OHLCV window hash.`
 
-The lifecycle Story reports the structured event vocabulary needed for
-post-trade review: first meaningful favorable excursion, maximum favorable
-excursion, hypothesis weakening and invalidation, expected horizon, management
-decisions, ExitPlan revisions, protection activation, exit triggers, close fills,
-and verified costs. It may also render opening thesis and review context for a
-human; those narrative fields are not evidence-compiler inputs.
+- WHEN a Risk decision is created after `as_of_at` THEN the replay treats it as absent.
 
-The gradient report always emits
-`Selection / Decision / Risk / Execution / Holding / Exit / Costs`, quote harm,
-basis points, per-100-candidate harm, per-capital-day harm, clustered interval,
-concentration, exclusions, and gate reasons. Its verdict is either
-`unique_max_direction` or `no_unique_direction`.
+#### PL-C04 Ordered path is complete or unavailable
 
-### Profit-gradient v3 comparison method
+`The replay shall build the ordered OHLCV path only from closed one-minute bars of the exact instrument with complete coverage, shall report missing coverage as unavailable, and shall treat a same-bar Stop/Target order as ambiguous with pessimistic bounds and MFE/MAE bounded at zero.`
 
-The CLI accepts an outer compiler artifact with contract
-`profit_gradient_evidence/v2`; after source-bound verification, the selector
-emits a `profit_gradient/v3` report with one `evidence_context.comparison_method`:
+- WHEN one bar inside the holding window is missing THEN `stages.holding.ohlcv.availability` is `unavailable`, never a zero excursion.
 
-```json
-{
-  "contract_version": "profit_gradient_evidence/v2",
-  "evidence_context": {
-    "comparison_method":
-    "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
-  }
-}
-```
+Evidence: `core/aletheia/analytics/trade_path.py` (bounded path classification).
 
-The CLI rejects a missing or older compiler wrapper before evaluating samples;
-`profit_gradient/v3` identifies the selector result, not the input file. Historical
-v1 artifacts remain archival-only and are not pooled with v2 evidence.
+#### PL-C05 Gross-to-net reconciliation
 
-Version 3 also records the randomized estimand and cohort identity. Version 2 and
-older results are historical and are not pooled with version 3.
+`The replay shall deduct entry fee, exit fee, funding and slippage exactly once from gross economics and shall report the residual against settled net economics.`
 
-A missing or unknown method is ineligible; v1 and v2 evidence are historical and are not
-implicitly assigned a method, relabeled, pooled, or compared with version 3 evidence.
-One artifact does not mix methods implicitly. A caller evaluating a different
-method creates a separately identified evidence artifact.
+- WHEN settled economics are missing THEN `economics.availability` is `unavailable`.
 
-All methods retain the existing coverage, epoch, unit-integrity, clustered
-interval, practical-effect, temporal-stability, concentration, and Risk-layer
-hard gates. The method-specific gates are:
+#### PL-C06 Position hypothesis is frozen before the Proposal hash
 
-| comparison method | additional method gate | unique winner |
-| --- | --- | --- |
-| `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms with each cluster assigned to one arm, at least 20 clusters in the smaller arm, singular assignment/horizon/outcome/metric/statistical-unit/stage identities, and a positive quote contrast aligned with the basis-point direction | allowed |
-| `paired_same_unit` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
-| `deterministic_decomposition` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; facts remain descriptive | prohibited; measured fact only |
-| `directional_observational` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; association remains directional | prohibited; rank the next question only |
+`When a native entry Proposal with positive quantity and long/short direction is inserted, the system shall freeze position_hypothesis/v1 into attribution_snapshot before the commit hash is computed, and shall never backfill historical or non-entry Proposals, which remain not_recorded.`
 
-For `prospective_randomized`, the estimand is the equal-weight per-cluster
-`treatment - control` outcome contrast; arm labels affect the estimate and the
-cluster bootstrap. Quote harm converts the exposure-weighted treatment and control
-means to the treatment-exposure cohort total before denominator normalization,
-weighting each arm cluster's quote contribution by its own exposure count; both
-the contrast and this total must be positive. Concentration uses
-translation-invariant, centered per-cluster arm-effect contributions, not pooled
-row sums. A pooled mean is not a randomized effect. For
-`paired_same_unit`, the estimand is the unit-weighted mean across normalized
-rows with a cluster bootstrap for dependence; each row contributes one complete, cost-aware
-delta for one unique statistical unit (for the current Exit counterfactual,
-one Position). Duplicate `unit_id` rows are excluded. The paired result is
-temporal-stability-ineligible when its chronological midpoint is a timestamp tie
-and is never made to satisfy the randomized arm gate by inventing `treatment` or
-`control` labels. The report exposes the applied threshold profile, arm counts,
-unassigned-arm counts for randomized evidence, and
-`smaller_arm_count: null` when arms do not apply.
+- WHEN an existing `position_hypothesis` is present THEN it is validated, never rewritten.
 
-The current delayed-entry, breakeven, and hypothesis-invalidation registry is
-an exploratory paired counterfactual and remains `promotion_eligible=false`.
-If its deltas are adapted into gradient evidence, the adapter must declare
-`paired_same_unit` and preserve the frozen Position, cost, epoch, cluster,
-time, and concentration identities.
+Evidence: `core/aletheia/storage/proposal_hypothesis.py::freeze_position_hypothesis`. See Known conformance gaps.
 
-### Ownership and reconciliation (`profit_gradient/reconciliation/v1`)
+### Lifecycle story
 
-Every admitted sample carries a machine-checkable component, ownership stage,
-stage window, positive quote notional, harm/attribution identities, evidence
-references, and a reconciliation declaration. `exclusive` declarations contain
-one component and reconcile its quote delta exactly to the declared total.
-`residual` declarations may contain several components, including components in
-different layers, but all components must share one unit scope and sum exactly
-to the declared total and its basis-point equivalent within
-`1e-8` quote units. A shared harm or attribution event across layers is rejected
-unless this residual contract proves that decomposition; a shared cost event is
-always rejected. Missing or malformed ownership, alternative-cost, execution
-isolation, or reconciliation evidence is unavailable/ineligible and never
-converted to zero.
+#### PL-C07 Deterministic story with a machine projection
 
-Execution uses gross fill/routing deviation against a compatible execution
-alternative; fees and funding are explicitly excluded. Costs are admitted only
-when a persisted, realizable alternative identifies an avoidable extra cost and
-its cost event/model identity. A production gross-minus-net ledger by itself is
-not an actionable Costs comparison, so it remains unavailable rather than being
-counted beside Execution.
+`The position-story command shall render position_lifecycle_story/v1 deterministically without any model call, and only its structured_events projection shall be a machine input; rendered text shall never enter learning or statistical attribution.`
 
-## Invariants and trust boundaries
+- WHEN the same Position and cutoff are rendered twice THEN the output is identical.
+- WHEN a path observation is visible at the cutoff THEN `structured_events` holds a `position_path_observed` event whose `occurred_at` is the observation's `observed_at` (not the bucket open) and whose facts keep `producer_commit` and `runtime_session_id`.
 
-- Replay never selects a latest related record as a fallback. Every causal join
-  uses an exact durable ID.
-- Evidence created after `as_of_at` is excluded.
-- Fixed-horizon candidate outcomes never mix with variable-horizon Position
-  economics.
-- Ordered OHLCV paths require exact instrument identity, closed one-minute bars,
-  and complete coverage. Missing coverage is unavailable, not zero.
-- MFE and MAE are bounded at zero; same-bar Stop/TP order remains ambiguous and
-  uses pessimistic bounds.
-- Gross-to-net reconciliation deducts entry fee, exit fee, funding, and
-  slippage exactly once in settled economics; attribution layers must then use
-  either one exclusive component or an explicit residual decomposition, never
-  the same fee/cost delta twice.
-- Hypothesis state reads only the completed prefix supplied by its caller.
-  Missing machine-evaluable inputs return `not_evaluable`.
-- The counterfactual registry is finite and locked. Its formal scope is
-  `first_60_minutes` with a per-arm horizon of
-  `60_minutes_after_each_hypothetical_entry`; delayed entry uses the next bar
-  open, and thesis invalidation during the delay produces `no_trade`.
-- `counterfactual_scope = first_60_minutes` is an evidence boundary, not an
-  exit recommendation. A better early-path treatment cannot establish that all
-  Positions should exit within one hour.
-- Position Lifecycle Story evidence and first-60-minute counterfactual results
-  are separate populations and must not be pooled or used as substitutes for
-  one another.
-- If complete lifecycle evidence repeatedly identifies a later holding-period
-  problem such as horizon overrun or post-entry giveback, register a new
-  horizon-aligned Holding / Exit experiment with its own registry identity and
-  evidence window. Do not edit or extend this preregistered 60-minute contract.
-- A counterfactual resolves exactly one immutable profit-loop evidence anchor
-  matching the complete opening/closing producer commit, behavior fingerprint,
-  and current registry hash. Missing, mixed, conflicting, or duplicate identity
-  fails closed; current HEAD, parent commits, raw Position rows, and fingerprint-
-  only matches are never fallbacks.
-- `learning_policy_epochs.started_at` is the immutable registration time and the
-  only cutoff is `started_at + 30 days`. A restart with the same triple reuses
-  the epoch. Any commit, fingerprint, or registry change ends the old epoch and
-  starts a new 30-day window from zero. An epoch ended before its cutoff cannot
-  be evaluated as a shortened cohort.
-- The hard-coded registration opened on 2026-08-13 cannot accept the producer
-  identity of the build that actually ran it. It remains immutable historical
-  evidence with zero valid samples and is neither deleted nor reinterpreted.
-- Counterfactual output requires a cost model with a model ID, verification
-  timestamp, source-evidence SHA-256, fee, funding, and slippage assumptions.
-- Same-sample counterfactuals are permanently `exploratory` and
-  `promotion_eligible=false`.
-- Gradient pooling requires one behavior, policy, market-data, and cost epoch.
-  Coverage, sample size, arm size, Risk-reject count, clustered interval,
-  absolute effect, temporal stability, and Top-1/Top-5 concentration are hard
-  gates.
-- A winner exists only when exactly one layer clears every gate and its harm
-  lower bound exceeds every runner-up upper bound.
-- Lifecycle Story rendering is deterministic and has no LLM/model call.
-- `structured_events` is the only Story projection suitable for a future
-  evidence compiler; rendered/free-text story content cannot enter Learning or
-  statistical attribution.
-- No analytics result authorizes an automatic behavior or parameter change.
+Evidence: `core/aletheia/analytics/position_lifecycle_story/service.py::build_position_lifecycle_story` (`STORY_CONTRACT_VERSION`), `core/aletheia/analytics/position_lifecycle_story/events.py`.
 
-## Failure and recovery semantics
+#### PL-C08 Story vocabulary
 
-Identity, cutoff, accounting, OHLCV, cost-model, or sample evidence failures are
-returned as explicit unavailable or ineligible reasons. They do not create a
-fallback fact, cache a terminal error, mutate a Position, or alter an experiment.
-Rerunning against unchanged durable facts and the same cutoff produces the same
-canonical fact and OHLCV hash.
+`The story shall report first meaningful favorable excursion, maximum favorable excursion, hypothesis weakening and invalidation, expected horizon, management decisions, ExitPlan revisions, protection activation, exit triggers, close fills and verified costs over the actual opened_at → closed_at path.`
 
-Position Path Observer uses a recoverable expected-bucket contract. For every
-open or eligible closed external-account Position it derives the first complete post-entry 5m
-bucket through the latest completed bucket (capped at `closed_at` for a closed
-Position), registers only the oldest not-yet-materialized bucket per bounded
-pass, and preserves each registration durably before provider I/O. A healthy
-observer cycle makes at most two bounded oldest-first passes per
-Position, so recovery converges without a backfill storm; exact
-venue/symbol/spot-perp identity and provider `is_closed` proof remain mandatory.
-Instrument venue comes from the registered execution mode, with canonical Position
-symbol and physical market; retired protection/Universe identities cannot override
-it. Recovered buckets do not reuse current mutable funding/protection state: funding
-and historical protection levels are unavailable. The retained schema field
-`exit_plan_version=0` carries no active ExitPlan identity. Old observer definitions
-are [archived](../history/local_simulated_position_observation.md).
+- WHEN the opening thesis is rendered THEN it is a human field, not a `structured_events` input.
 
-Archived simulated Positions and their deferred buckets are excluded from new
-observation, retry materialization and active recovery metrics. Existing observations
-and queues remain unchanged and historical per-Position reads remain available.
+#### PL-C09 Hypothesis prefix evaluation
 
-Transient Position path-provider failures stay in the durable deferred queue for
-bounded retries. Once the retry limit is reached, the bucket is materialized as
-an append-only `unavailable` fact and removed from the queue; it cannot remain
-pending forever. `aletheia control status` exposes the oldest missing bucket,
-durable deferred count, observer lag, and trailing 24h available/unavailable/
-skipped counts.
+`The hypothesis-state evaluator shall read only the completed bar prefix supplied by its caller and shall return not_evaluable when a machine-evaluable input is missing.`
 
-`candidate-diagnosis` and the `opportunity audit --view entry-exit` report root
-both declare `read_only=true` and `behavior_changed=false`. These fields describe
-the inspection surfaces only; their economics, eligibility, gates, and rows are
-unchanged.
+Evidence: `core/aletheia/storage/proposal_hypothesis.py::evaluate_hypothesis_prefix`.
 
-No protected OHLCV retention was added. The Fedora Paper evidence checked during
-implementation contained 327 closed Positions, a maximum hold of 1,705.28
-minutes, and only 1,414 retained ADA perpetual one-minute rows—well below the
-50,000-row pruning cap. The missing older ADA window therefore does not prove
-rolling-prune loss, overwrite, or an on-demand backfill performance boundary.
-A manifest remains prohibited until one of those observable triggers occurs.
+### Lifecycle diagnosis
 
-## Executable evidence
+#### PL-C10 One anchor, one lineage reader
 
-- `tests/test_position_replay.py`
-- `tests/test_candidate_facts.py`
-- `tests/test_proposal_hypothesis.py`
-- `tests/test_profit_loop_diagnosis.py`
-- `tests/test_profit_loop_counterfactual.py`
-- `tests/test_profit_gradient.py`
-- `tests/test_profit_loop_cli.py`
-- `tests/test_position_path_observer.py`
-- `tests/test_position_lifecycle_story.py`
-- `tests/test_stop_loss_path_attribution.py`
+`When aletheia inspect lifecycle receives exactly one of candidate, generation, entry_plan, proposal, order or position IDs, the inspector shall emit lifecycle_diagnosis/v1 from the shared candidate_lifecycle lineage reader, and it shall exit 2 for any other anchor count.`
 
-## Lifecycle diagnosis (v1)
+- WHEN two anchors are given THEN the command exits 2 with `exactly one anchor required`.
+- WHEN the database is missing THEN it prints `availability=unavailable`, `unavailable_reason=database_missing` and exits 0.
 
-`aletheia inspect lifecycle` resolves the complete attributable chain from any
-of six anchors: `candidate_id`, `generation_id`, `entry_plan_id`, `proposal_id`,
-`order_id`, `position_id`. It emits a `lifecycle_diagnosis/v1` object:
+Evidence: `core/aletheia/cli/inspect_cmd.py::lifecycle`, `core/aletheia/analytics/candidate_lifecycle/lineage_reader.py` (`for_candidate` … `for_position`), `core/aletheia/analytics/candidate_lifecycle/inspector.py::build_lifecycle_diagnosis`. The same reader serves `position_replay.py`, `position_lifecycle_story/readers.py`, `family_scorecard.py` and `trade_attribution.py`.
 
-```
-{
-  contract_version: "lifecycle_diagnosis/v1",
-  anchor:  { kind, id },
-  source:  { kind: "universe" | "serenity" | "opportunity" | "unknown", ids: {...} },
-  evidence_context: { cutoff, read_at },
-  stages:  [ { stage, status, record_status, ... } ],
-  current_stage, attention_state,
-  first_break: null | { stage, reason, owner, evidence_refs },
-  coverage: { legs, gaps, identity_conflicts, truncated },
-  economics: { candidate_fact, position_fact },   // always availability=unavailable here
-  next_inspection: [ { command, args } ]
-}
-```
+#### PL-C11 Source kind resolution
 
-**Anchors and resolution path:**
-- Universe trades: `entry_plans → candidate_planning_generations → universe_members
-  → universe_snapshots` (cross-checked against `plan_json.$.source_kind='universe'`).
-- Serenity/Opportunity trades: `trade_proposals.opportunity_id → opportunities /
-  serenity_opportunities`.
-- If `entry_plan_id` and `opportunity_id` are both NULL: `source_kind='unknown'`,
-  `evidence_gaps=['entry_plan_not_found']`, no cross-branch fallback.
+`The lineage reader shall take source_kind from plan_json.$.source_kind, else from Proposal columns (opportunity_id → serenity/opportunity; entry_plan_id with a Candidate → universe), else from discriminating tables, and shall report unknown with entry_plan_not_found when nothing discriminates.`
 
-**`source_kind` three-level fallback:**
-1. `plan_json.$.source_kind` (authoritative when the plan was frozen with it).
-2. Proposal columns — `opportunity_id` present → `serenity`/`opportunity`;
-   `opportunity_id` NULL + `entry_plan_id` set + `entry_plans.candidate_id`
-   populated → `universe`.
-3. Discriminating tables — if a proposal names an `opportunity_id`, the
-   `serenity_opportunities` table wins over `opportunities` when both exist.
-   `unknown` when nothing discriminates.
+- WHEN both `entry_plan_id` and `opportunity_id` are NULL THEN `source_kind='unknown'` and `evidence_gaps` contains `entry_plan_not_found`, with no cross-branch fallback.
+- WHEN `plan_json` extracts disagree with joined rows THEN `identity_conflicts` is non-empty.
 
-**Stages — per-leg × per-stage:** the ancestry stages
-(`candidate_discovery`, `planning_generation`, `opportunity`, `entry_plan`) are
-emitted with `leg=null`. Every entry-leg proposal (up to two per plan, keyed by
-`entry_leg_index ∈ {0,1}`) then expands into a repeated execution branch:
-`proposal → risk_decision → order → fill → position → exit`, each stage tagged
-with its leg index. `current_stage` is the latest available stage across all
-legs.
+#### PL-C12 Per-leg stages and attention state
 
-**`attention_state`:**
-- `advancing` — legs exist, no break yet.
-- `waiting` — a downstream execution stage is missing but no leg has ended.
-- `ended_ok` — the latest visible position is in a terminal status
-  (`closed` / `archived`).
-- `ended_reject` — the latest visible order is `rejected` / `failed` /
-  `cancelled` / `invalidated`.
-- `evidence_gap` — `lineage_reader.evidence_gaps` is non-empty.
-- `breakpoint` — `lineage_reader.identity_conflicts` is non-empty (never a
-  silent cross-branch fallback).
+`The inspector shall emit ancestry stages with leg=null, expand each entry leg (entry_leg_index 0 or 1) into proposal → risk_decision → order → fill → position → exit, and derive attention_state as breakpoint, evidence_gap, ended_ok, ended_reject, waiting or advancing.`
 
-**`--as-of` cutoff:** each SELECT in the reader is `<= cutoff`. A row created
-strictly after `cutoff` yields an `<entity>_not_yet_visible` evidence gap. This
-is the sole tense-of-time gate on the diagnosis; `read_at` records the wall
-clock at diagnosis time but does not filter data.
+- WHEN `identity_conflicts` is non-empty THEN `attention_state` is `breakpoint`.
+- WHEN the latest visible Position is `closed` or `archived` THEN `attention_state` is `ended_ok`.
+- WHEN the latest visible Order is `rejected`, `failed`, `cancelled` or `invalidated` THEN `attention_state` is `ended_reject`.
 
-**Economics:**
-- `candidate_fact` — always `unavailable` on this inspector; owned by
-  `candidate-facts`.
-- `position_fact` — when the anchor is a position, the inspector loads
-  `build_position_replay(position_id, as_of_at=cutoff)` and returns it under
-  `profit_loop_fact`. For other anchors, `unavailable` with
-  `unavailable_reason=anchor_is_not_a_position`.
+Evidence: `core/aletheia/analytics/candidate_lifecycle/inspector.py::_derive_attention_state`.
 
-**Invariants:**
-- A PI decision is not required for Universe-origin trades.
-- `identity_conflicts` is non-empty when `plan_json` extracts disagree with
-  joined rows; no silent cross-branch fallback occurs.
-- The reader only SELECTs (caller-owned connection, `readonly_db`).
-- Exit 0 for a well-formed diagnosis (including unavailable); exit 2 for arg
-  errors.
+#### PL-C13 Diagnosis cutoff and economics
 
-**Composition with existing consumers:** this command does not replace
-`position-replay` or `position-story`; the shared `candidate_lifecycle.lineage_reader`
-is the single implementation of Universe/Serenity ancestry resolution used by
-`position_replay.py`, `position_lifecycle_story/readers.py`,
-`family_scorecard.py`, and `trade_attribution.py`. When the anchor is a
-position, the inspector embeds the full `profit_loop_fact/v1` under
-`economics.position_fact`.
+`The lineage reader shall filter every SELECT by created-at ≤ cutoff, reporting a later row as <entity>_not_yet_visible, and the inspector shall embed the Position replay only for a position anchor and report anchor_is_not_a_position otherwise.`
 
-**Executable evidence:**
-- `tests/specs/spec_candidate_lifecycle_lineage_reader.py` — LC-S01…LC-S06
-  (universe resolution, anchor consistency, missing entry_plan gap, SQL
-  equivalence with `_ATTRIBUTION_SQL`, cutoff visibility, identity_conflicts).
-- `tests/test_universe_lifecycle_regression.py` — Universe fixture and
-  consumer regressions.
-- `tests/test_trade_attribution.py::test_build_rows_universe_origin_is_included_via_lineage_reader`
-  — semantic flip: Universe rows are now included.
-- `tests/test_profit_loop_cli.py::test_inspect_lifecycle_*` — CLI E2E, all six
-  anchors, identity conflict, cutoff, per-leg execution stages.
+- WHEN the anchor is a Candidate THEN `economics.position_fact.unavailable_reason` is `anchor_is_not_a_position` and `economics.candidate_fact` is `unavailable`.
 
-## Known gaps
+### Position Path Observer
 
-The first post-repair deployment evidence cohort must accumulate before any
-empirical winner or retention trigger can be claimed. Its cutoff is established
-only after deploying the exact merged commit and recording the new durable epoch;
-the historical 2026-09-12 cutoff is not reused. GitHub issue #964 is the parent
-scope and #974 records the producer-registration repair. This remains exploratory
-with no promotion authority and does not modify or reset UFC.
+#### PL-C14 Expected-bucket registration before provider I/O
+
+`When the position_path_observer job runs, the observer shall, for every open or closed Position in an exchange-demo or live execution mode, durably register the oldest not-yet-materialized complete 5-minute bucket (capped at closed_at) before any provider request.`
+
+- WHEN a tick was skipped THEN the next run registers the oldest missing bucket first, oldest-first, at most two bounded recovery passes per run.
+- WHEN a Position is `archived` or in a retired simulated mode THEN it is not observed and its existing rows stay readable.
+
+Evidence: `core/aletheia/portfolio/position_path_observer.py::observe_open_position_paths` (`_MAX_RECOVERY_PASSES_PER_CYCLE = 2`), `core/aletheia/storage/repositories.py::list_positions_for_path_observation_recovery` (`_POSITION_PATH_EXECUTION_SCOPE_SQL`).
+
+#### PL-C15 Exact venue and closed-bar proof
+
+`The observer shall fetch the bar from the exact venue derived from the Position's execution mode, canonical symbol and market type, and shall accept only a provider candle whose timestamp equals the bucket open and whose is_closed is true.`
+
+- WHEN a recovered bucket is materialized THEN funding and historical protection levels are `unavailable`; current mutable state is not reused, and `exit_plan_version=0` carries no ExitPlan identity.
+
+Evidence: `core/aletheia/portfolio/position_path_observer.py::_resolve_instrument`, `observe_open_position_paths` (`exact_venue=True`).
+
+#### PL-C16 Bounded retries end in an unavailable fact
+
+`If a bucket's provider fetch fails transiently, then the observer shall keep it in the deferred queue, and after POSITION_PATH_MAX_RETRY_ATTEMPTS (3) attempts shall append an unavailable fact with reason max_retries_exceeded:<reason> and remove the queue row.`
+
+- WHEN a crash left an exhausted queue row THEN the next run materializes it as `unavailable` before discovering new gaps.
+
+Evidence: `core/aletheia/portfolio/position_path_observer.py::observe_open_position_paths` (`defer_retry`), `core/aletheia/storage/repositories.py` (`POSITION_PATH_MAX_RETRY_ATTEMPTS`).
+
+#### PL-C17 Observer status is visible
+
+`The control status surface shall expose the oldest missing bucket, oldest deferred bucket, durable deferred count, observer lag and trailing 24h available/unavailable/skipped counts.`
+
+Evidence: `core/aletheia/portfolio/position_path_observer.py::build_position_path_observer_status`, read by `core/aletheia/cli/control_cmd.py`.
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| ID, cutoff, accounting or OHLCV evidence missing/conflicting | return the fact with reasons; no fallback fact, no cached terminal error, no mutation | `causal_errors`, `unavailable_reason`, `evidence_gaps`, `identity_conflicts` | `unavailable`, never `0` |
+| Database missing for `inspect lifecycle` | exit 0 | `unavailable_reason=database_missing` | `unavailable` |
+| Bad CLI arguments | exit 2 | Typer `BadParameter` | — |
+| Path provider transient failure | deferred retry, then append-only `unavailable` fact | control status deferred count / lag | `unavailable` row, never a synthetic bar |
+| Observer job error | logged, job reports errors | `position_path_observer_reported_errors` | — |
+
+## Authority
+
+Read-only inspection plus append-only path observations; it may never change a Position,
+protection, Risk, Execution, Entry Planner input, Learning state, Live unlock or an
+experiment cohort, and no analytics result authorizes an automatic behavior change.
+
+## Verification
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| PL-C01, PL-C03, PL-C04, PL-C05 | `tests/test_position_replay.py`, `tests/test_stop_loss_path_attribution.py` |
+| PL-C02 | `tests/test_universe_lifecycle_regression.py` |
+| PL-C06, PL-C09 | `tests/test_proposal_hypothesis.py` |
+| PL-C07, PL-C08 | `tests/test_position_lifecycle_story.py` |
+| PL-C10 – PL-C13 | `tests/specs/spec_candidate_lifecycle_lineage_reader.py` (LC-S01 … LC-S06), `tests/test_profit_loop_cli.py` (`test_inspect_lifecycle_*`), `tests/test_trade_attribution.py::test_build_rows_universe_origin_is_included_via_lineage_reader` |
+| PL-C14 – PL-C17 | `tests/test_position_path_observer.py` |
+| diagnosis read-only flags | `tests/test_profit_loop_diagnosis.py` |
+
+## Known conformance gaps
+
+- **PL-C06 never fires on the Universe mainline.** `core/aletheia/storage/proposal_hypothesis.py::freeze_position_hypothesis`
+  returns early when `not proposal.opportunity_id`, and
+  `core/aletheia/execution/entry_plan_execution.py::build_entry_plan_order_intent` sets
+  `opportunity_id=None` for every non-Serenity Entry Plan. Universe-origin trades therefore
+  carry no `position_hypothesis/v1`; the story and the counterfactual registry
+  (`frozen_inputs_unavailable`) have no frozen hypothesis for them.
+- **PL-C02 decision stage.** `core/aletheia/analytics/position_replay.py::build_position_replay`
+  sets `stages.decision.availability` to `available` only when `pi_decision` exists, so every
+  Universe-origin replay reports the decision stage `unavailable` even though no PI decision
+  is required on that path.
+
+## Decision references
+
+- Moved runtime readings, progress notes and the 2026-08-13 registration note:
+  [history](../history/profit_loop_and_rationale_retired_text.md); retired simulated
+  observer definitions: [local simulated position observation](../history/local_simulated_position_observation.md).
+- Product plan: [position replay / profit gradient proposal](../proposals/position_replay_profit_gradient.md).
+- Entry-leg and scale-in fill-chain verification in the replay: #1271.
+- Owner 2026-10-10: the AI trades like a person; review → lesson → next decision is the
+  mainline ([spec 0001](../specs/0001-learning-loop/spec.md)).

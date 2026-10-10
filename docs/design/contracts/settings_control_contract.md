@@ -1,130 +1,151 @@
-# Settings Control Persistence Contract
+# Settings Control Contract
 
-This contract covers the frontend control boundary for Settings and the small
-number of non-Settings controls that reuse the same `Switch` primitive.
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `SC` · **Owner code:** `frontend/src/components/ui/Switch.tsx`, `frontend/src/pages/Settings.tsx`
 
-## Contract
+## Scope
 
-`Switch` requires `persistence="immediate"` or `persistence="staged"` at every
-call site. The value is part of the component API; it is never inferred from
-the callback or the surrounding component.
+Settings is the operator's control surface for persisted configuration. This contract
+owns two facts: whether a control's change is already persisted or is only a draft
+awaiting Save (the persistence boundary of the shared `Switch` primitive and the
+Settings draft lifecycle), and what Settings may claim about Webhook delivery. It does
+not own the backend mutation routes, payloads, persisted values or schemas; those
+belong to each section's Contract (configuration loading:
+[Configuration Loading Contract](configuration_contract.md)).
 
-An immediate control sends its mutation from the change handler. Its caller
-owns the pending and error state and must leave the last confirmed value
-visible until the mutation succeeds; concurrent immediate mutation errors stay
-visible until their own source succeeds. A staged control changes only a local
-draft. It renders as a native checkbox with a distinct staged-control style and
-an accessible “draft; save required” description, reports dirty state through
-the Settings draft lifecycle, and is applied by the section's existing Save
-action. Leaving a tab with a dirty draft uses the Settings shell's explicit
-discard confirmation; a failed Save leaves the draft dirty and the error
-visible. Immediate blur-save number fields are marked as immediate so the
-shell's staged-draft fallback does not offer to discard an already-persisted
-mutation; the Settings shell suppresses focus-transfer blur before the Discard
-button's click.
+## Entry points
 
-`SwitchGrid` requires the same persistence value and passes it to every switch
-it expands. It is currently used only by staged Settings editors. Its fields
-and Save boundaries are included in the inventory below.
+| Entry point | Kind | Caller |
+|---|---|---|
+| `frontend/src/components/ui/Switch.tsx::Switch` | UI primitive | every boolean control in `frontend/src` |
+| `frontend/src/components/ui/SettingsSection.tsx::SwitchGrid` | UI primitive | staged editors in `RiskTab.tsx`, `RuntimeSystemTab.tsx`, `HealthNotificationsTab.tsx` |
+| `frontend/src/features/settings/dirtyGuard.ts::isFallbackDraftControl` | call | `frontend/src/pages/Settings.tsx` draft fallback |
+| `core/aletheia/notifications.py::webhook_delivery_status` | read model | `core/aletheia/server/routes/settings.py::get_settings` (`webhook.last_delivery`) |
 
-The backend mutation routes, payloads, persisted values, and schemas are
-unchanged by this contract. Risk, execution, and paper-trading controls remain
-staged unless a separately reviewed backend contract changes their persistence
-semantics.
+**Control inventory.** The inventory is the source itself: every `<Switch` call site in
+`frontend/src` (some files import it as `Toggle`). It is not copied here. The required
+`persistence` prop is enforced by the TypeScript type of `Switch` and `SwitchGrid`
+(`npm run build` runs `tsc -b`) and pinned by
+`frontend/src/components/ui/switchLabelling.test.ts`. The last checked-in copy of the
+per-site table is [history](../history/settings_control_switch_inventory.md).
 
-Webhook configuration and delivery truth are separate. Settings exposes only
-the newest attempted delivery as `delivered` or `failed`, with timestamp,
-host-only receiver identity, source entity, HTTP status or exception class, and
-latency. Disabled or category-suppressed events are `not_attempted`, do not
-create delivery facts, and never overwrite the last attempt. URL paths,
-queries, HMAC secrets, payloads, response bodies, and raw exception text are
-never persisted or returned. The read model selects by attempt timestamp and
-exposes only records confirmed in the hash-chained audit mirror; pending or
-failed mirrors remain unavailable and are retried rather than shown as truth.
+## Durable state
 
-## Checked-in inventory
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `config.yaml` sections | the section's Settings route (via `edit_config`) | `load_config` | replaceable document |
+| `audit_events` rows with `event_type='webhook_delivery'` | `core/aletheia/notifications.py::_record_webhook_outcome` (outbox, hash-chained mirror) | `core/aletheia/storage/repositories.py::latest_mirrored_webhook_delivery_event` | append-only |
 
-The table maps all 63 static `Switch`/`Toggle` JSX sites in `frontend/src`.
-`SwitchGrid` is one shared primitive site and expands the listed field arrays at
-runtime; each grid uses the staged mode and the named Save boundary.
+Staged drafts live only in component state; they are not durable.
 
-| Source site | Control(s) | Persistence | Mutation or Save/discard boundary |
-| --- | --- | --- | --- |
-| `components/ui/SettingsSection.tsx` `SwitchGrid` | Each `BoolField` supplied by a grid | Explicit caller mode; all current callers are staged | Caller card Save; Settings tab discard confirmation |
-| `features/settings/execution/PaperTradingSettings.tsx` `TradingParamsCard` | Auto-adopt external demo positions | staged | `updateTradingConfig`; `Save` |
-| same | Trailing stop + breakeven | staged | `updateTradingConfig`; `Save` |
-| same | Volatility-target sizing | staged | `updateTradingConfig`; `Save` |
-| same | Exchange-native TPSL bracket | staged | `updateTradingConfig`; `Save` |
-| same | Persona-based sizing | staged | `updateTradingConfig`; `Save` |
-| same | Persona learning | staged | `updateTradingConfig`; `Save` |
-| same | Progressive unlock | staged | `updateTradingConfig`; `Save` |
-| same | Auto-advance rollout | staged | `updateTradingConfig`; `Save` |
-| same | Pyramid add-on policy helper | staged | `updateTradingConfig`; `Save` |
-| same | Market-aware review | staged | `updateTradingConfig`; `Save` |
-| `features/settings/model-providers/ModelProvidersSection.tsx` `ApiProfileEditor` | Enable after verification | staged | `createModelProfile`/`updateModelProfile`; `Verify & Save` or `Cancel` |
-| same `ApiProfiles` | Enable API profile | immediate | `updateModelProfile`; pending/error state in provider panel |
-| `features/settings/tabs/AgentModelsTab.tsx` Learning | Autonomous learning | immediate | `setAutonomousLearning` |
-| same | Bypass distress gate | immediate | `setBypassDistressGate` |
-| same | Contribution measurement | immediate | `updateLearningConfig` |
-| same | Lifecycle automation | immediate | `updateLearningConfig` |
-| same | Paper influence | immediate | `updateLearningConfig` |
-| same | Auto-refreeze | immediate | `updateLearningConfig` |
-| same | Guards enabled | immediate | `updateGuardConfig` |
-| same | Enforce in paper ranker | immediate | `updateGuardConfig` |
-| same | Shadow observe job enabled | immediate | `updateControllerConfig` |
-| same | Regime detection enabled | immediate | `updateRegimeConfig` |
-| same | Short trades enabled | immediate | `updateRegimeConfig` |
-| same | Serenity Lens enabled | immediate | `updateSerenityConfig` |
-| same | Auto-promote candidate themes | immediate | `updateSerenityConfig` |
-| same | Scheduler enabled | immediate | `updateRuntimeConfig` |
-| same | System Operator daemon | immediate | `updatePiDaemonConfig` |
-| same `EconomicsSnapshotCard` | Enable economics harness | immediate | `updateEconomicsConfig` |
-| same | Budget shadow observation | immediate | `updateEconomicsConfig` |
-| same | Prompt secret-shape detection | immediate | `updateEconomicsConfig` |
-| `features/settings/tabs/ExecutionTab.tsx` `ExchangeMarketsRow` | Spot market | staged | `setExchangeMarkets`; `Save exchange config` |
-| same | USDT Futures market | staged | `setExchangeMarkets`; `Save exchange config` |
-| same | Exchange/data divergence confirmation | staged | `setExchangeMarkets`; `Save exchange config` |
-| `features/settings/tabs/HealthNotificationsTab.tsx` `WebhookCard` | Webhook delivery | staged | `updateWebhookConfig`; `Save` |
-| same | Last Webhook delivery | read-only | latest sanitized `webhook_delivery` audit outcome |
-| same | Alert events | staged | `updateWebhookConfig`; `Save` |
-| same | Trade fill events | staged | `updateWebhookConfig`; `Save` |
-| same | Daily summary event | staged | `updateWebhookConfig`; `Save` |
-| `features/settings/tabs/RiskTab.tsx` `UniverseConfigCard` | Universe scanner enabled | staged | `updateUniverseConfig`; `Save` |
-| same | Snapshot TTL enabled | staged | `updateUniverseConfig`; `Save` |
-| `features/settings/tabs/RuntimeSystemTab.tsx` `AppRows` | Remote Control | immediate | `updateRemoteControl` |
-| same | Remote Control token requirement | immediate | `updateRemoteControl` |
-| same | Auto-open browser | immediate | `updateAppConfig` |
-| same | Git versioning of data | immediate | `updateRuntimeConfig` |
-| same | Auto-reload Python changes | immediate | `updateRuntimeConfig` |
-| same | Runtime continuity | immediate | `updateRuntimeConfig` |
-| same `UpdateCard` | Auto-update enabled | staged | `updateUpdateConfig`; `Save config` |
-| same `NetworkCard` | Enforce proxy | staged | `updateNetworkConfig`; `Save` |
-| `features/settings/tabs/SignalsTab.tsx` `MarketDataCard` | Exchange/data divergence confirmation | staged | `updateMarketDataConfig`; `Save market data config` |
-| same | Yahoo Finance macro | staged | `updateMarketDataConfig`; `Save market data config` |
-| same | Long/Short ratio | staged | `updateMarketDataConfig`; `Save market data config` |
-| same `MacroSignalsCard` | Fear & Greed Index | staged | `updateMarketDataConfig`; `Save macro signals config` |
-| same | CoinGecko top markets | staged | `updateMarketDataConfig`; `Save macro signals config` |
-| same | Hyperliquid cross-venue | staged | `updateMarketDataConfig`; `Save macro signals config` |
-| same | DefiLlama on-chain | staged | `updateMarketDataConfig`; `Save macro signals config` |
-| same `PredictionToggleCard` | Prediction observer | immediate | `togglePrediction`; success/error message |
-| same `NewsFeedsCard` | News ingestion | staged | `updateNewsConfig`; `Save news config` |
-| same | Individual RSS feed enabled | staged | `updateNewsConfig`; `Save news config` |
-| `features/settings/telegram/TelegramSection.tsx` | Telegram delivery | staged | `updateTelegramConfig`; `Save` |
-| same | Trade fill notifications | staged | `updateTelegramConfig`; `Save` |
-| same | Daily summary event | staged | `updateTelegramConfig`; `Save` |
-| same | Do-not-disturb | staged | `updateTelegramConfig`; `Save` |
-| `pages/SerenityLens.tsx` `OverviewTab` | Save preferences to profile | staged | `createSerenityRun` when `Run Research` is pressed |
+## Requirements
 
-### `SwitchGrid` field arrays
+### SC-C01 Persistence mode is explicit at every call site
 
-These are the dynamic controls expanded by the shared site and are all staged:
+`The Switch and SwitchGrid primitives shall require persistence="immediate" or persistence="staged" at every call site and shall never infer it from the callback or the surrounding component.`
 
-- Historical data: Enabled, Nightly backfill, Active Universe catch-up → `Save Historical Data`.
-- Health monitoring: Health monitoring, Telegram alerts, Windows toast alerts, Require LLM at startup, Startup behavior gate, Self-heal enabled, Restart on code drift, Restart on stale market data, Clean orphan port holders, Auto-resume after LLM gate → `Save`.
-- Event triggers: Enabled, Watch universe → `Save Event Triggers`.
-- Risk policy: Allow short selling, Correlation guard, Catastrophic stop, Auto-trip mode brake on daily loss → `Save demo/live policy`.
-- Legacy risk limits: Kill switch auto-trigger (live), Kill switch auto-trigger (demo), Allow short selling (live), Allow short selling (demo), Correlation guard → `Save risk limits`.
+- WHEN a call site omits `persistence` THEN the frontend type check fails.
+- WHEN `SwitchGrid` is given a mode THEN every expanded switch receives that mode.
 
-The source-level frontend test keeps the 63-site count and rejects any site
-that omits the explicit `persistence` prop. The shared primitive test also
-asserts that staged controls do not render the immediate switch track.
+Evidence: `frontend/src/components/ui/Switch.tsx::Switch` (`persistence: SwitchPersistence`), `frontend/src/components/ui/SettingsSection.tsx::SwitchGrid`.
+
+### SC-C02 Immediate controls show only confirmed values
+
+`When an immediate control changes, the caller shall send the mutation from the change handler and keep the last confirmed value visible until the mutation succeeds, with each concurrent mutation's error visible until its own source succeeds.`
+
+- WHEN an immediate mutation fails THEN the switch shows the previous confirmed value and an error.
+
+### SC-C03 Staged controls change only a draft
+
+`When a staged control changes, the control shall update only a local draft, render as a native checkbox with the staged style and an accessible "Draft value; save required." description, report dirty state through the Settings draft lifecycle, and persist only through its section's Save action.`
+
+- WHEN a staged switch is toggled and Save is not pressed THEN no backend call is made.
+- WHEN Save fails THEN the draft stays dirty and the error stays visible.
+
+Evidence: `frontend/src/components/ui/Switch.tsx::Switch` (`settings-staged-description`, `!staged &&` track).
+
+### SC-C04 Leaving with a dirty draft asks before discarding
+
+`If the operator leaves a Settings tab or the Settings page with a dirty draft, then the Settings shell shall ask for explicit discard confirmation before navigating.`
+
+- WHEN a tab switch is requested with a dirty draft THEN "Discard unsaved changes?" is shown and the draft survives a Cancel.
+
+Evidence: `frontend/src/pages/Settings.tsx::discardDrafts`, `frontend/src/features/settings/dirtyGuard.ts::shouldBlockNavigation`.
+
+### SC-C05 Immediate blur-save fields are not offered for discard
+
+`Where a number field saves on blur, the field shall be marked data-persistence="immediate" so the shell's draft fallback never offers to discard an already-persisted value, and the shell shall suppress the focus-transfer blur when focus moves to Discard.`
+
+- WHEN an immediate number field is edited THEN `isFallbackDraftControl` returns false for it.
+
+Evidence: `frontend/src/features/settings/dirtyGuard.ts::isFallbackDraftControl`; `frontend/src/pages/Settings.tsx::suppressDiscardBlur`.
+
+### SC-C06 Trading parameters stay staged
+
+`While no separately reviewed backend Contract changes their persistence semantics, the Risk, execution and demo-trading parameter controls shall be staged.`
+
+- WHEN a control in `RiskTab.tsx`, `ExecutionTab.tsx::ExchangeMarketsRow` or `frontend/src/features/settings/execution/PaperTradingSettings.tsx::TradingParamsCard` is toggled THEN it is a draft until Save.
+
+### SC-C07 Webhook delivery truth
+
+`The Settings read model shall expose only the newest attempted Webhook delivery that is confirmed in the hash-chained audit mirror, as delivered or failed with timestamp, host-only receiver, source entity, HTTP status or exception class, and latency.`
+
+- WHEN a delivery is disabled or category-suppressed THEN it is `not_attempted`, writes no delivery fact and never overwrites the last attempt.
+- WHEN the stored outcome carries a URL path, query, HMAC secret, payload, response body or raw exception text THEN none of it is returned.
+- WHEN the audit mirror is pending, failed or unreadable THEN `last_delivery` is `null` (unavailable), never a synthesized outcome; the outbox is reconciled on the next read.
+
+Evidence: `core/aletheia/notifications.py::_send_webhook`, `_record_webhook_outcome`, `webhook_delivery_status`; `core/aletheia/storage/repositories.py::latest_mirrored_webhook_delivery_event` (`jsonl_mirror_status='mirrored'`, ordered by `attempted_at`).
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| immediate mutation fails | keep confirmed value | inline error until that source succeeds | — |
+| staged Save fails | keep draft dirty | error on the section | — |
+| dirty draft on navigation | block until confirmed | discard confirmation dialog | — |
+| Webhook audit mirror pending/failed/unreadable | return `null` | "Last Webhook delivery" shows unavailable | never shown as delivered |
+
+## Authority
+
+Settings controls write only the configuration section their route owns; this contract
+changes no backend route, payload, Risk limit, credential or Live unlock.
+
+## Out-of-scope controls still rendered (residual)
+
+The product scope is USDT-margined perpetuals on `bitget_demo` with Live off
+([Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md)). The controls below
+still render; they follow SC-C01..SC-C06 but configure closed or frozen scope and are
+residual, not supported product behavior:
+
+| Control | Source | Scope status |
+|---|---|---|
+| Spot market | `frontend/src/features/settings/tabs/ExecutionTab.tsx::ExchangeMarketsRow` | spot out of scope |
+| OKX / Binance primary exchange and `okx_demo` / `binance_testnet` execution mode | `ExecutionTab.tsx::PrimaryExchangeCard`, `ExecutionTab.tsx::ExchangeModeRow` | OKX/Binance frozen |
+| Observed US equities, tokenized-equity list | `frontend/src/features/settings/tabs/SignalsTab.tsx::EquitiesCard`, `SignalsTab.tsx::MarketDataCard` | equities/RWA out of scope (see configuration CF-C06..C08) |
+| Prediction observer | `SignalsTab.tsx::PredictionToggleCard` | prediction markets out of scope; `prediction_observer` job still scheduled |
+| Enforce in paper ranker | `frontend/src/features/settings/tabs/AgentModelsTab.tsx::AgentModelsTab` | Ranker retired |
+| Live risk fields (`kill_switch_enabled_live`, `allow_short_live`, live policy editor) | `frontend/src/features/settings/risk/riskFields.ts`, `RiskTab.tsx::RiskPolicyEditor` (`mode='live'`) | Live off; fields are dormant |
+| Learning toggles (Autonomous learning, Contribution measurement, Paper influence, Persona learning, …) | `AgentModelsTab.tsx::AgentModelsTab`, `PaperTradingSettings.tsx::TradingParamsCard` | learning is owned by [spec 0001](../specs/0001-learning-loop/spec.md) |
+
+## Verification
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| SC-C01, SC-C03 | `frontend/src/components/ui/switchLabelling.test.ts`, `frontend/src/components/ui/switchLabelling.render.test.tsx` |
+| SC-C04, SC-C05 | `frontend/src/features/settings/dirtyGuard.test.ts` |
+| SC-C07 | `tests/specs/spec_webhook_delivery_truth.py::SETTINGS-WEBHOOK-S01` |
+| SC-C02, SC-C06 | not covered by a dedicated test |
+
+## Known conformance gaps
+
+- The out-of-scope controls in the table above are a control surface for capabilities the
+  product does not offer; under "one capability, one live implementation" they are
+  retirement candidates (D2, owner decision), not supported behavior.
+
+## Decision references
+
+- Staged controls made explicit: #999 (PR #1068).
+- Sanitized Webhook delivery outcomes: #2749.
+- Source-count inventory test retired: #3595 (commit 67aa9ab3d).
+- Futures-only scope: [DECISIONS 2026-10-09](../../governance/decisions/DECISIONS.md) (#3440).

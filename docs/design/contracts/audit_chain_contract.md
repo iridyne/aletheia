@@ -1,365 +1,258 @@
 # Audit Chain Contract
 
-> **范围**: 两条独立防篡改链——(1) runtime-home `logs/audit.jsonl`（默认 `~/.aletheia/logs/audit.jsonl`）及其轮转存档的**文件级哈希链**（系统事件记忆），(2) `trade_proposals` 表的**行级哈希链**（提案不可伪造链，TaG P0-1，见 §6.4）。
->
-> **层级**: L2 信任边界契约（Trust Boundary — change control required）
->
-> **权威实现**: `core/aletheia/files/jsonl.py`（文件链）、`core/aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
->
-> **最后更新**: 2026-08-07
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `AU` · **Owner code:** `core/aletheia/files/jsonl.py` (file chain),
+> `core/aletheia/storage/repositories.py` (Proposal row chain) · **Layer:** L2 trust boundary
 
----
+## Scope
 
-## §1 文件位置
+Aletheia keeps two independent tamper-evident chains: the runtime-home `logs/audit.jsonl`
+file family (system event memory, hash-linked line by line across rotations) and the
+`trade_proposals` row chain (every Proposal that can reach Risk is hash-linked to its
+predecessor). This Contract owns how audit records are written, linked, deduplicated,
+mirrored to SQLite `audit_events`, verified and reported. It does not own which business
+transitions happen; it owns that the listed trust-boundary transitions leave a record.
+Retired sections (former doctor description, retired Learning lifecycle evidence, the local
+simulated-account funding rows, former defect narrative) are in
+[history](../history/audit_chain_retired_sections.md).
 
-活跃文件路径（运行时）:
+## Entry points
 
-```
-~/.aletheia/logs/audit.jsonl
-```
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/files/jsonl.py::write_audit` | call | trust-boundary writers, e.g. `core/aletheia/risk/kill_switch.py::activate` |
+| `core/aletheia/files/jsonl.py::write_audits_deduplicated` | call | `core/aletheia/portfolio/funding_audit.py::reconcile_funding_audits`, `extensions/observation_lab/canonical.py::mirror_lab_audit_outbox` |
+| `core/aletheia/files/jsonl.py::verify_audit_chain` | call | `core/aletheia/diagnostics/probes/storage_trust.py::_probe_audit_chain` (in `core/aletheia/diagnostics/doctor.py::build_report`) |
+| `funding_audit_reconciler` | scheduler job, every 5 min, `audit` executor | `core/aletheia/agent_runtime/scheduler.py::_run_funding_audit_reconciler` |
+| `core/aletheia/storage/repositories.py::insert_trade_proposal` | call | `core/aletheia/execution/entry_plan_execution.py` (Entry Plan → Proposal) |
+| `core/aletheia/storage/repositories_execution.py::validate_trade_proposal_commit_hash` | call | `core/aletheia/risk/engine.py::_verified_original_proposal_commit_hash` |
 
-轮转存档命名规则: `audit.jsonl.1`, `audit.jsonl.2`, … (数字递增，数字越小越旧)
+## Durable state
 
-目录由 `_log_dir()` 在首次写入时自动创建 （`_log_dir()`）:
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `logs/audit.jsonl`, `audit.jsonl.1`, `.2`, … | `jsonl.py::write_audit`, `jsonl.py::write_audits_deduplicated` | `verify_audit_chain`, backup/restore, operators | append-only; rotated generations never deleted |
+| `logs/.audit.lock` | `jsonl.py::_exclusive_file_lock` | every chain writer, `verify_audit_chain`, `ops/backup/service.py::BackupService.create_backup` | lock file only |
+| `audit_events` | `jsonl.py::_write_audit_row` (default mirror); transactional callers via `core/aletheia/storage/repositories.py::insert_audit_event_once` | API/diagnostic readers, funding outbox | append-only rows; `jsonl_mirror_*` columns monotonic for funding outbox rows only |
+| `trade_proposals.commit_hash` / `parent_hash` | `repositories.py::insert_trade_proposal` | Risk engine, `core/aletheia/analytics/entry_exit_geometry.py`, `core/aletheia/analytics/trading_mandate_compliance.py` | immutable per row |
 
-```python
-def _log_dir() -> Path:
-    d = get_data_dir() / "logs"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-```
+## Requirements
 
-**轮转策略**: 基于文件大小，阈值来自 `config.retention.jsonl_max_mb`（默认 50 MiB，`RetentionConfig.jsonl_max_mb`）。不按时间/日期轮转。每次调用 `write_audit()` 前 `_rotate_jsonl_if_needed()` 检查当前文件大小；若 `>= threshold` 则立即轮转 （`_rotate_jsonl_if_needed()`）:
+`AU-C04` and `AU-C05` predate this numbering and keep their meaning; ids are never reused,
+so the remaining ids follow document order around them.
 
-```python
-def _rotate_jsonl_if_needed(path: Path) -> None:
-    if path.exists() and path.stat().st_size >= _max_bytes():
-        path.rename(_next_rotation_path(path))
-```
+### 1. File family and rotation
 
-轮转是 best-effort：若 `OSError` 则跳过轮转，继续写入 （`_rotate_jsonl_if_needed()`）。轮转后旧文件**不删除**，永久保留作为历史存档。
+#### AU-C01 Size-based rotation that never deletes
 
----
+`When the active audit.jsonl reaches retention.jsonl_max_mb, the writer shall rename it to the next numeric generation and keep every older generation.`
 
-## §2 链结构
+- WHEN the active file size is at or above the threshold (default 50 MiB if config cannot be read) THEN it is renamed to `audit.jsonl.<max+1>` before the append (`jsonl.py::_rotate_jsonl_if_needed`).
+- WHEN the rename raises `OSError` THEN the append still proceeds to the active file (`jsonl.py::_append_jsonl_line`).
+- WHEN rotation reads config THEN it does not persist config migrations (`jsonl.py::_max_bytes`).
 
-每一行是一个独立 JSON 对象（JSONL 格式），`_prev_hash` 字段将全部记录串成哈希链。
+### 2. Record form
 
-### 必填字段 (`trust_and_change_control.md §1.4`)
+Trust-boundary callers supply `actor`, `source`, `event_type`, `entity_type`, `entity_id`
+and `message`; optional `before`/`after` (or `before_state`/`after_state`) carry the change.
+`write_audit` injects `timestamp` (UTC ISO-8601) when absent and always injects `_prev_hash`.
+It does not validate the caller fields (see Known conformance gaps).
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `timestamp` | ISO-8601 字符串 | UTC 时间；`write_audit()` 若未提供则自动注入 （`write_audit()`） |
-| `actor` | 枚举字符串 | `human` / `agent` / `system` / `telegram` / `cli` |
-| `source` | 枚举字符串 | `dashboard` / `api` / `cli` / `scheduler` / `agent_runtime` / `telegram` / `execution_gateway` |
-| `event_type` | 字符串 | 事件类型，如 `live_unlocked`, `trading_brake_activated`, `secret_rotated` |
-| `entity_type` | 字符串 | 被操作对象类型，如 `live_state`, `kill_switch`, `secret`, `command` |
-| `entity_id` | 字符串 | 被操作对象的 ID（指向真实行/对象，不伪造） |
-| `message` | 字符串 | 人类可读的事件描述 |
-| `_prev_hash` | 64 位十六进制字符串 | 前一行序列化内容的 SHA-256（链接字段，由 `write_audit()` 注入） |
+### 3. Hash chain and append-only writes
 
-可选字段（有则包含）: `before`/`before_state`（变更前状态）、`after`/`after_state`（变更后状态）。
+#### AU-C02 Hash-linked append-only record
 
-序列化格式: `json.dumps(event, default=str, ensure_ascii=False)` （`_write_audit_row()`），注意 `_prev_hash` 在序列化前已注入到 `event` 中，因此 `_prev_hash` **包含在**哈希计算的字节里（详见 §3）。
+`When an audit record is written, the writer shall append exactly one line whose _prev_hash is the SHA-256 of the previous on-disk line across all generations, or 64 zeros for the first record.`
 
----
+- WHEN two records are written THEN `line[1]._prev_hash == sha256(line[0] bytes)` and the digest is 64 lowercase hex (`jsonl.py::_hash_record`, `_GENESIS_HASH`).
+- WHEN the line is hashed THEN the hashed bytes are exactly the written bytes, including `_prev_hash` (`json.dumps(event, default=str, ensure_ascii=False)`).
+- WHEN any file in `jsonl.py` is opened for writing THEN the mode is append (`"a"`/`"ab"`), never truncating.
+- WHEN a write runs THEN it holds the in-process `_audit_hash_lock` and the cross-process `.audit.lock` while re-reading the chain tail with `use_cache=False`, injecting `_prev_hash` and appending, so no two records share a parent.
+- WHEN the JSONL append fails or the lock times out THEN `write_audit` logs a warning and returns `False`; it never reports a failed append as written.
 
-## §3 链算法
+#### AU-C03 Transactional SQLite mirror
 
-实现位于 `core/aletheia/files/jsonl.py` 的 `write_audit()` / `_write_audit_row()`：
+`Where the caller has already committed the same AuditEvent inside its state transaction, the writer shall skip only the SQLite mirror and keep the append-only hash-chain write.`
 
-```
-prev_hash = _get_last_audit_hash(use_cache=False)
-event["_prev_hash"] = prev_hash
-line = json.dumps(event, default=str, ensure_ascii=False)
-_append_jsonl_line(...)
-_last_audit_hash = _hash_record(line)
-```
+- WHEN `write_audit(event)` runs with the default `mirror_db=True` THEN the event is also inserted into `audit_events`; a mirror failure is logged and does not undo the JSONL append (`jsonl.py::_write_audit_row`).
+- WHEN `mirror_db=False` THEN the JSONL append, `_prev_hash` injection and both locks are unchanged and no second `audit_events` row is created.
 
-**哈希函数**（`_hash_record()`）:
+### 4. Verify across rotation
 
-```python
-def _hash_record(line: str) -> str:
-    return hashlib.sha256(line.encode("utf-8")).hexdigest()
-```
+#### AU-C06 Exact continuity verification
 
-- 输入: 写入磁盘的**完整行字节**（含 `_prev_hash` 字段，不排除任何字段）
-- 算法: SHA-256，输出 64 位小写十六进制字符串
+`When the chain is verified, the verifier shall walk every generation oldest-first and report valid=false for any record whose _prev_hash does not equal the hash of the exact preceding record.`
 
-**链接规则**:
+- WHEN 5 valid records exist THEN `verify_audit_chain()` returns `valid=True` and empty `errors`.
+- WHEN a later generation's first record does not point at the previous generation's last record THEN the result is `valid=false`; file position or a repeated `_prev_hash` never resets the chain.
+- WHEN a line is invalid JSON or carries a malformed `_prev_hash` THEN it is an error with `{file}:{line}` location; a record without `_prev_hash` (pre-chain history) re-anchors without error.
+- The result shape is `{"valid", "records", "errors", "error_timestamps", "reanchors"}`; `error_timestamps` parallels `errors` with the record timestamp or `""`.
 
-1. 第一条记录（整个 audit.jsonl 生命周期首条）: `_prev_hash = "0" * 64`（创世哈希，`_GENESIS_HASH`）
-2. 后续每条: `_prev_hash = SHA-256(上一条完整行的 UTF-8 字节)`
+### 5. Doctor probes
 
-**验证方式**: 重新对每行计算 SHA-256，确认与下一行的 `_prev_hash` 字段一致。任何行内容被修改都会导致从该行起的所有后续 `_prev_hash` 校验失败。
+#### AU-C07 Chain-break severity
 
-**并发安全**（`_exclusive_file_lock()`）: 每次写入持有两把锁:
-- `_audit_hash_lock`（进程内线程锁）
-- `_exclusive_file_lock`（跨进程文件锁，Windows 用 `msvcrt.LK_LOCK`，Unix 用 `fcntl.LOCK_EX`）
+`When doctor checks the audit chain, the probe shall report trust.audit_chain as ok, info or warn, and never as blocker.`
 
-两把锁确保在读取 `prev_hash → 构造记录 → 写入` 的全过程是原子性的，不会有两条记录共用同一个 `_prev_hash`。
+- WHEN there are no records THEN `info` "no audit records yet".
+- WHEN the chain is valid THEN `ok` with the record count.
+- WHEN every break has a timestamp at or before `EFFECTIVE_CHAIN_FIX_TS` (`2026-07-03T08:00:00+00:00`) THEN `info` naming the count of historical breaks and zero post-fix breaks.
+- WHEN any break is after that timestamp THEN `warn` "chain BROKEN" with up to three locations.
+- WHEN breaks are only undateable THEN `warn`; an undateable break is never classified as historical.
+- WHEN funding outbox rows are `pending` or `failed` THEN `trust.audit_mirror_backlog` is `warn` with count and oldest timestamp; otherwise `ok` (`storage_trust.py::_probe_funding_audit_mirror`).
 
-**SQLite 镜像规则**：`write_audit()` 默认在文件追加成功后把同一事件镜像到
-`audit_events`，供结构化查询。若调用方已经在业务状态事务中提交了同一个
-`AuditEvent`，必须显式传 `mirror_db=False`；该参数只抑制重复的 SQLite 镜像，
-不得跳过 JSONL 追加、`_prev_hash` 注入或两把锁。这样既保留事务内权威审计，
-也避免事务后的文件写入再次制造一条同义数据库记录。
+### 6. Trust-boundary event invariant
 
----
+#### AU-C08 Trust-boundary transitions are audited
 
-## §4 跨轮转链接
+`When a listed trust-boundary transition completes, the owning code path shall write an audit.jsonl record through write_audit or write_audits_deduplicated.`
 
-当活跃文件被轮转（重命名为 `audit.jsonl.1` 等）后，下一条记录写入新的 `audit.jsonl` 时，`_get_last_audit_hash(use_cache=False)` 从**所有**历史文件按时间顺序读取最后一行 （`_get_last_audit_hash()`、`_jsonl_paths_chronological()`）:
+| Transition | `event_type` | Writer |
+|---|---|---|
+| Live unlock / lock | `live_unlocked` / `live_locked` | `core/aletheia/server/routes/live.py::live_unlock` / `live_lock` |
+| Trading brake on / off (scope `global`/`demo`/`live`) | `trading_brake_activated` / `trading_brake_deactivated` | `core/aletheia/risk/kill_switch.py::activate` / `deactivate` (route `core/aletheia/server/routes/risk.py::set_kill_switch`) |
+| Secret change (CLI) | `secret_rotated` | `core/aletheia/cli/secrets_cmd.py::set_cmd` |
+| Agent Shell command, allowed or denied | `agent_shell_command` (`message` prefix `ALLOWED`/`DENIED`) | `core/aletheia/agent_shell/audit.py::record_command`; `FORBIDDEN_INTENTS` (`core/aletheia/agent_shell/registry.py`) are denied in `core/aletheia/agent_shell/commands.py` |
+| External position adoption | `position_adopted` (`after_state` carries `commit_hash` + `parent_hash`) | `core/aletheia/portfolio/position_reconciler.py::adopt_position` |
+| Exchange close-cost / funding settlement | `exchange_position_fee_completed` / `exchange_position_funding_settled` | `core/aletheia/portfolio/broker_funding_settlement.py::materialize_exchange_close_costs` |
+| Exchange funding history expiry | `exchange_position_funding_history_expired` | `broker_funding_settlement.py::_terminalize_funding_history_expired` |
+| Historical filled-Order chain recovery | `order_reconciled` / `order_reconciliation_inconclusive` | `core/aletheia/execution/reconciliation.py::_write_filled_gap_event` |
+| In-place update rollback restored data | `update_rollback_restored` | `ops/update/auto.py::_restore_old_runtime` |
+| Observation Lab lifecycle | Lab audit outbox events | `extensions/observation_lab/canonical.py::mirror_lab_audit_outbox` (event types owned by the [Observation Lab contract](observation_lab_contract.md)) |
 
-```python
-def _jsonl_paths_chronological(path: Path) -> list[Path]:
-    paths = _rotated_paths(path)   # audit.jsonl.1, .2, ...（按编号升序）
-    if path.exists():
-        paths.append(path)         # 最后加上活跃文件
-    return paths
-```
+- WHEN `routes/live.py::live_unlock`, `live_lock` or `routes/risk.py::set_kill_switch` is scanned THEN each calls `write_audit` directly or through `kill_switch`.
+- `paper_position_funding_settled`, `paper_position_economics_repaired` and `paper_position_economics_corrected` are historical event types: `core/aletheia/portfolio/funding_audit.py::_OUTBOX_EVENT_TYPES` still lists them so existing rows can be read and mirrored, but no code path produces new ones.
 
-```python
-def _last_non_empty_line(paths: list[Path]) -> str:
-    last_line = ""
-    for path in paths:
-        ...  # 读取每个文件的最后非空行
-    return last_line
-```
+#### 6.1 Append-only update rollback
 
-因此新文件首条记录的 `_prev_hash` 指向轮转前最后一条记录的哈希——**链在文件轮转边界保持连续**。
+#### AU-C09 Rollback keeps the live audit family
 
-`verify_audit_chain()` 对所有文件执行同一连续性校验。后续文件首行必须精确指向前一轮转文件的尾记录；文件位置或重复 `_prev_hash` 不能作为重置链的授权。任何边界不匹配均使验证结果为 `valid=false`。
+`When an in-place update rollback restores a checkpoint, the restore shall keep every live audit.jsonl generation and then append one update_rollback_restored record.`
 
----
+- WHEN the target holds any audit generation THEN the whole live family is kept byte for byte and listed in `preserved_files`; no generation is filled from the checkpoint (`ops/backup/restore.py::RestoreService.restore`, `_is_audit_generation`).
+- WHEN post-checkpoint records exist and a rotation happened THEN after restore the chain still verifies.
+- `audit_events` returns to the checkpoint with `app.db` and is not rebuilt from JSONL; the appended `update_rollback_restored` record marks the boundary ([persistence contract PR-C12](persistence_recovery_contract.md#pr-c12-audit-family-is-all-or-nothing-and-the-rollback-is-recorded)).
 
-## §5 验证工具
+#### 6.2 Partial-tail repair
 
-### aletheia doctor 集成
+#### AU-C10 Short writes are finished append-only or fail closed
 
-`core/aletheia/diagnostics/probes/storage_trust.py` 定义 `_probe_audit_chain()` 检查项，由 `doctor.py` 的 `build_report()` 探针列表挂入:
+`If the active audit.jsonl ends without a final newline, then the writer shall finish the tail only by appending, or refuse the write.`
 
-```python
-def _probe_audit_chain(report: Report) -> None:
-    from aletheia.files.jsonl import verify_audit_chain
-    result = verify_audit_chain()
-    records = result.get("records", 0)
-    if records == 0:
-        report.add("trust.audit_chain", "info", "no audit records yet")
-        return
-    if result["valid"]:
-        reanchors = result.get("reanchors", 0)
-        extra = f", {reanchors} rotation re-anchors" if reanchors else ""
-        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{extra})")
-    else:
-        errors = result.get("errors", [])
-        detail = f"chain BROKEN — {len(errors)} error(s) in {records} records: {errors[:3]}"
-        report.add("trust.audit_chain", "warn", detail,
-                   "audit log may have been tampered with or corrupted")
-```
+- WHEN the tail is a complete JSON object THEN only `\n` is appended (`jsonl.py::_repair_incomplete_final_line`).
+- WHEN a deduplicated retry's stable payload is the unique byte-extension of the tail THEN only the missing suffix is appended.
+- WHEN neither holds (including any ordinary `write_audit`, which has no stable identity) THEN `OSError("…unrepairable partial record")`; nothing is truncated or guessed, and outbox rows stay pending.
 
-**check 名称**: `trust.audit_chain`
+#### 6.3 Durable lifecycle audit mirror
 
-**报告内容**:
+#### AU-C04 Stable dedup id makes retries idempotent
 
-| 状态 | severity | detail 示例 |
-|------|----------|-------------|
-| 无记录 | `info` | `"no audit records yet"` |
-| 链完整 | `ok` | `"hash chain valid (3897 records, 2 rotation re-anchors)"` |
-| 链中断 | `warn` | `"chain BROKEN — 8 error(s) in 3897 records: ['audit.jsonl:42: _prev_hash mismatch ...', ...]"` |
+`Where a caller passes a stable dedup_id, the writer shall append the record at most once across all generations and report whether it is present in the chain.`
 
-detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{行号}: _prev_hash mismatch (expected <16hex>..., got <16hex>...)` 定位信息。
+- WHEN `dedup_id` is given THEN `mirror_db` must be `False` and `event["id"] == dedup_id`, else `ValueError`.
+- WHEN the id already exists in any generation (checked under the file lock) THEN `write_audit` returns `True` without appending.
+- WHEN the append fails THEN `write_audit` returns `False` and a later retry can append it.
+- WHEN `write_audits_deduplicated` receives a batch THEN ids must be unique and non-empty; the chain is scanned once and the returned set holds ids present or appended; a bounded `lock_timeout_sec` raises no exception to the caller and returns only completed ids.
 
-### 独立验证函数
+#### 6.4 Funding audit outbox
 
-`verify_audit_chain()`（`core/aletheia/files/jsonl.py`）可独立调用，返回:
+#### AU-C05 Funding audits are durable first, mirrored later
 
-```python
-{"valid": bool, "records": int, "errors": list[str], "reanchors": int}
-```
+`When a funding settlement, close-cost completion or funding-history expiry commits, the system shall insert its AuditEvent with a stable id and jsonl_mirror_status='pending' in the same SQLite transaction, and mirror it to JSONL later without replaying accounting.`
 
-遍历所有历史文件 + 活跃文件（按 `_jsonl_paths_chronological` 顺序），对每行校验 `_prev_hash`。
+- The stable id is `funding-audit-v1:` + SHA-256 of `[position_id, event_type, accounting_version, fingerprint, transition_fingerprint, occurred_at]` (`funding_audit.py::funding_audit_id`); retry processing time never enters it.
+- WHEN `insert_pending_funding_audit` runs outside a transaction THEN `RuntimeError`; WHEN the id exists with different content THEN `ValueError("funding audit identity collision")`.
+- WHEN `funding_audit_reconciler` runs THEN at most 100 `pending`/`failed` rows are passed to `write_audits_deduplicated(lock_timeout_sec=1.0)`; appended or already-present ids become `mirrored`, the rest `failed` with only the error class stored.
+- WHEN a record was appended but the process crashed before the ack THEN the next run finds the id in the chain and acks it without a second append.
+- `jsonl_mirror_*` columns are `NULL` (unmanaged) for every non-funding and pre-outbox row; migration never guesses their JSONL state.
+- WHEN the backlog is non-zero THEN `/api/health` reports `funding_audit_mirror_backlog:<n>` (`core/aletheia/agent_runtime/health.py`) and doctor warns (AU-C07); accounting results never change because of mirror failure.
 
----
+#### 6.5 Filled-gap reconciliation identity
 
-## §6 信任不变量
+#### AU-C11 One record per observed filled-gap outcome
 
-### §6.1 仅追加（Append-Only）
+`When historical filled-Order chain recovery records an outcome, the reconciler shall derive a stable id from entity_id, event_type and reason, so repeated polling leaves one SQLite row and one JSONL record per distinct outcome.`
 
-runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，禁止任何路径对文件执行 `truncate`、`overwrite`、或删除行。
+- The id is `filled-gap:` + the first 24 hex of SHA-256 of canonical JSON `{entity_id, event_type, reason}`.
+- SQLite uses `insert_audit_event_once`; JSONL uses `write_audit(..., mirror_db=False, dedup_id=id)`; each sink fails independently and converges on a later run.
+- WHEN the Order, result type or reason differs THEN the id differs. This identity never changes Order state, exchange queries, Risk or Gateway behavior.
 
-更新回滚同样受此约束：原地回滚保留 live `audit.jsonl` 及全部轮转代次，不以 checkpoint 副本覆盖或删除任何一代，并在数据还原后追加一条 `update_rollback_restored` 记录；SQLite `audit_events` 随 `app.db` 回到 checkpoint，不从 JSONL 重建（见 [persistence recovery contract](persistence_recovery_contract.md)）。
+### 7. Proposal row chain
 
-Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：完整 JSON 仅追加换行；只有当尾部字节能由稳定 event payload 证明为同一记录前缀时才追加缺失后缀；否则 fail-closed 并保留 outbox backlog，不猜测或截断审计数据。
+#### AU-C12 Global Proposal hash chain
 
-旧 Learning lifecycle stable-ID 审计保持历史证据；新实验事件只由 Observation Lab 事务与 outbox 产生。
+`When a Proposal is inserted, the repository shall link it to the newest hashed Proposal and store a commit_hash over its immutable fields, rejecting a precomputed hash that does not match or a stale parent.`
 
-- 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")`，以 `"a"` 模式打开，操作系统级别追加。
-- ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
+- `commit_hash` = first 16 hex of SHA-256 canonical JSON of the Proposal excluding `status` and `commit_hash` (`repositories_execution.py::_compute_proposal_hash`; `_PROPOSAL_HASH_EXCLUDES`), so `pending → executed/rejected` never invalidates it.
+- Parent lookup and insert share one `transaction(immediate=True)`; WHEN the caller supplies `commit_hash` with a `parent_hash` that is no longer the tip THEN `ValueError("proposal parent hash is stale")`.
+- `parent_hash = NULL` is valid only for the first hashed row or rows written before the chain existed.
+- WHEN Risk evaluates a stored Proposal whose content no longer matches its `commit_hash` THEN `ProposalIntegrityError` (`risk/engine.py::_verified_original_proposal_commit_hash`).
+- `position_adopted` audit records carry the adopted Proposal's `commit_hash` and `parent_hash`. Any future synthetic Proposal path reuses these field names.
+- No doctor probe scans the whole Proposal chain; continuity is proven by DM-C02 only.
 
-### §6.2 链中断必须报警
+### 8. Change-control guard
 
-链中断时 `aletheia doctor` 必须以 `warn` 级别上报（`_probe_audit_chain` 实现了此逻辑）。
+#### AU-C13 No bypass of the chain writer
 
-⚠️ **当前状态（已知缺陷）**: 报告级别为 `warn`（非 `blocker`）。doctor 在链断时不阻塞网关启动，仅文字告警。见 §7。
+`If any caller attempts to append to audit.jsonl through append_jsonl, then the writer shall raise ValueError naming write_audit.`
 
-### §6.3 信任边界操作必须写审计记录
+`core/aletheia/files/jsonl.py` is a trust-boundary controlled module
+([trust and change control §6](../../governance/policies/trust_and_change_control.md)). These changes are
+forbidden: opening audit files in a truncating mode; removing `_audit_hash_lock` or
+`_exclusive_file_lock`; removing `_prev_hash` injection; changing the bytes `_hash_record`
+hashes; writing audit records through `append_jsonl`.
 
-以下操作类型必须写入 `audit.jsonl` 记录，且必须在操作完成后持久化：
+## Failure semantics
 
-| 操作 | event_type | 实现位置 |
-|------|-----------|----------|
-| live 解锁 | `live_unlocked` | `server/routes/live.py` 的 `live_unlock` |
-| live 加锁 | `live_locked` | `server/routes/live.py` 的 `live_lock` |
-| trading brake（kill switch）激活 | `trading_brake_activated`（按 `global`/`demo`/`live` scope；#361 起取代 `kill_switch_activated`） | `risk/kill_switch.py` 的 `activate` |
-| trading brake（kill switch）解除 | `trading_brake_deactivated`（同上，取代 `kill_switch_deactivated`） | `risk/kill_switch.py` 的 `deactivate` |
-| 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py` 的 `set_cmd`；前端 Settings 路由另有审计 |
-| Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py` 的 `record_command` |
-| 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py` 的 `adopt_position`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
-| Experiment lifecycle transition | Observation Lab lifecycle event/outbox | `observation_lab/canonical.py`；旧 Learning lifecycle 只读归档，不再推进 |
-| Funding settlement/correction/terminal history expiry | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py` + `portfolio/broker_funding_settlement.py`；会计或 terminal-state 事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
-| 原地更新回滚数据还原 | `update_rollback_restored` | `ops/update/auto.py` 的 `_restore_old_runtime`（自动更新与 schema 更新回滚共用） |
-| 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| JSONL append `OSError` / lock timeout | log warning; `write_audit` returns `False`; SQLite mirror still attempted | caller return value; WARN log | record absent, never reported written |
+| SQLite mirror failure | log warning; JSONL record stands | WARN log | — |
+| Unrepairable partial tail | `OSError`; no truncation | dedup batch returns fewer ids; funding rows `failed` | backlog count, not success |
+| Chain break | doctor `info` (pre-fix) / `warn` (post-fix or undateable); startup not blocked | `trust.audit_chain` | `info` with zero records means no records, not valid history |
+| Funding mirror backlog | rows stay `pending`/`failed`; retried every 5 min | `/api/health` issue, doctor `trust.audit_mirror_backlog` | count ≥ 1, never hidden |
+| Proposal hash mismatch | `ValueError` at insert; `ProposalIntegrityError` at Risk | Risk rejection | — |
 
-`FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py`）在 `agent_shell/commands.py` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
+## Authority
 
-### §6.3a Retired Learning lifecycle evidence
+The audit chain records trust-boundary transitions; it may never alter Risk limits,
+credentials, Live unlock or Gateway submission, and an audit record grants no authority.
 
-旧 `learning_lifecycle_events` 与 `learning-lifecycle:<event_id>` JSONL 记录保留原始身份。
-旧 writer 与 reconciler 已退役；显式迁移必须验证 checkpoint、归档与 pending receipts，
-不能删除未证明安全的证据，也不能重放历史 transition 获得当前授权。
-新实验 lifecycle、撤销与交付由 Observation Lab 的现有事务/outbox 承担。
+## Verification
 
-### §6.3b Historical filled-gap reconciliation audit identity
+| Requirement | Executable claim / focused test |
+|---|---|
+| AU-C01 | `tests/test_audit_hashchain.py::test_audit_rotation_does_not_run_config_migration` |
+| AU-C02 | AU-S01, AU-S02 (`tests/specs/spec_audit_chain.py`); `tests/test_audit_hashchain.py::test_concurrent_audit_writes_preserve_single_hash_chain`, `::test_write_audit_ignores_stale_process_cache` |
+| AU-C03 | AU-S06 |
+| AU-C04 | AU-C04 (`tests/specs/spec_audit_chain.py::test_audit_writer_reports_failure_and_deduplicates_retry`); `::test_audit_batch_scans_chain_once` |
+| AU-C05 | AU-C05 (`tests/specs/spec_audit_chain.py::test_funding_audit_reconciler_acks_append_before_crash_without_duplicate`); `::test_funding_audit_reconciler_persists_only_error_class`, `::test_funding_audit_reconciler_bounds_jsonl_file_lock` |
+| AU-C06 | AU-S03; `tests/test_audit_hashchain.py::test_verify_audit_chain_spans_rotated_files`, `::test_verify_detects_tampered_rotated_tail` |
+| AU-C07 | `tests/test_diagnostics_honesty_fixes.py::test_doctor_audit_chain_flags_undateable_breaks_as_warn` |
+| AU-C08 | AU-S05 (live/brake routes only) |
+| AU-C09 | AU-S07 |
+| AU-C10 | `tests/specs/spec_audit_chain.py::test_audit_retry_repairs_partial_tail_by_appending_only`, `::test_ordinary_audit_does_not_guess_identity_of_partial_tail`, `::test_audit_retry_preserves_complete_record_missing_final_newline` |
+| AU-C11 | PL-HCR-07 (`tests/specs/spec_pipeline_historical_chain_recovery.py`) |
+| AU-C12 | DM-B06, DM-C02 (`tests/specs/spec_data_model.py`); PL-ADOPT-09 (`tests/specs/spec_pipeline_adopted_position.py`) |
+| AU-C13 | AU-S04 |
 
-历史 `filled` Order 的 Fill/Position 链恢复会被 scheduler 周期性重试。该重试只允许对同一
-观察事实留下一个结构化事件和一个文件事件，不能把轮询次数伪装成新的业务事实。
+## Known conformance gaps
 
-`_write_filled_gap_event()` 以 canonical JSON 中的 `entity_id`、`event_type` 和 `reason`
-计算 stable `id`：`filled-gap:<sha256-prefix>`。SQLite 使用该主键执行
-`ON CONFLICT(id) DO NOTHING`；JSONL mirror 使用相同 `id` 调用
-`write_audit(..., mirror_db=False, dedup_id=...)`，在文件锁内跨活跃文件和轮转文件去重。
+- **Caller fields not enforced (AU §2).** `jsonl.py::write_audit` accepts any dict; the required
+  `actor`/`source`/`event_type`/`entity_type`/`entity_id`/`message` set is caller discipline only.
+  `jsonl.py::_write_audit_row` builds `AuditEvent(**payload)`, so a malformed event fails only the
+  SQLite mirror (logged), not the JSONL append.
+- **AU-C08 coverage is partial.** AU-S05 scans only `routes/live.py` and `routes/risk.py`; the
+  secret, Agent Shell, adoption, funding, filled-gap and rollback writers are covered by their own
+  focused tests, not by the trust-boundary scan.
+- **No whole-chain Proposal probe (AU-C12).** Only per-row validation at Risk and DM-C02 exist; a
+  `parent_hash` discontinuity in stored rows is not reported by doctor.
 
-两个 sink 独立 best-effort 收敛：任一 sink 暂时失败时，下一轮可补齐缺失记录，已经成功的
-sink 不会产生重复记录。Order、结果类型或 reason 改变代表不同观察事实，必须生成新 id；
-该规则不改变 Order 状态机、交易所查询、Risk approval 或 Execution Gateway 行为。
+## Decision references
 
-### §6.3c Funding settlement audit outbox
-
-新发生的 paper/exchange funding settlement/correction，以及 exchange funding history terminal
-classification，使用 versioned canonical tuple
-`(position_id, event_type, funding_accounting_version, funding_economics_fingerprint,
-transition_fingerprint, occurred_at)` 派生每次 transition occurrence 的 stable audit ID。
-`transition_fingerprint` 绑定完整 before/after 事实。Settlement/correction 的 `occurred_at`
-来自不可变会计 occurrence；history expiry 使用 `history_start + profile retention` 的确定性
-边界，绝不使用重试处理时间生成新身份。Position/PnL、close projection、paper cash、Outcome
-hook intent 与同一 settlement/correction `AuditEvent` 在一个 SQLite transaction 内提交；
-history expiry 只原子提交 Position terminal reason 与同一 `AuditEvent`，保持 PnL/close
-projection/cash/hook 不变。JSONL mirror 失败不得回滚或重放这些事实。
-
-`audit_events.jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at`
-仅由 opt-in funding audit 使用。`NULL` 表示 unmanaged；历史与普通 audit 保持 `NULL`，不得因 migration
-猜测旧 JSONL 是否缺失。新 funding audit 从 `pending` 开始；失败转 `failed`，成功单调转
-`mirrored`。`funding_audit_reconciler` 每 5 分钟在专用 audit lane 有界处理 100 条。append 成功但
-ack 前崩溃时，重启通过所有轮转文件中的同一 stable ID 直接 ack，不追加第二条记录。
-
-会计结果与镜像结果正交：`settled/repaired/corrected/already_current` 不因文件故障改写；调用方同时
-返回 `audit_mirror_status`。`already_current` 只愈合已有 pending audit，不为没有 stable audit 行的
-历史 Position 编造事件。backlog 使 `/api/health` degraded，并由 Doctor
-`trust.audit_mirror_backlog` 报警；`/api/ready` 与前后端 `/_infra/readyz` 仍只表达进程/静态就绪。
-
-### §6.4 提案级 hash chain（TaG P0-1，2026-06-29）
-
-`trade_proposals` 表自 P0-1 起携带行级 hash chain，与 §6.1–6.3 的 `audit.jsonl` 文件链**并存且独立**——前者保护 SQLite 提案记录不可伪造，后者保护审计日志事件流不可篡改。
-
-**两链对照表**
-
-| 维度 | `audit.jsonl` 文件链（§6.1–6.3） | `trade_proposals` 行链（§6.4） |
-|------|---------------------------------|-------------------------------|
-| 保护对象 | 审计事件日志（系统级事件流） | 交易提案记录（决策级实体） |
-| 存储 | runtime-home `logs/audit.jsonl` 及轮转 | SQLite `trade_proposals` 表 |
-| 链节点 | 每条 JSONL 行 | 每行 `trade_proposals` |
-| 前向引用字段 | `_prev_hash` | `parent_hash` |
-| 当前节点哈希字段 | 由下一行的 `_prev_hash` 间接反推 | 显式 `commit_hash` 列 |
-| 哈希算法 | SHA-256(整行 UTF-8 字节) 完整 64-char hex | SHA-256(canonical JSON of immutable fields) 截断 16-char hex（64-bit 空间） |
-| 写入路径 | `files/jsonl.py:write_audit()`，跨进程文件锁 | `storage/repositories.py:insert_trade_proposal()`，事务内自动填 |
-| 校验工具 | `verify_audit_chain()` + doctor `trust.audit_chain` 探针 | 无专用 doctor 探针（gap，见 §7.3） |
-
-**§6.4 不变量**
-
-1. **自动填充**：`insert_trade_proposal()` 在 `p.commit_hash is None` 时强制计算并原地回写；调用方不传也不会破链。
-2. **哈希输入排除可变字段**：`status` 与 `commit_hash` 自身被显式 `model_dump(exclude=...)` 排除。`pending → executed/rejected` 是正常状态流转，**不得**因之失效。
-3. **全局单链**：跨 broker / strategy / execution_mode 共享一条链，按 `rowid DESC` + `commit_hash NOT NULL` 选 parent。`parent_hash = NULL` 仅合法出现在 ① 链首（表内首条已 hash 行）或 ② P0-1 上线前写入的 legacy 行。
-4. **审计事件链入**：所有 `position_adopted` 事件（§6.3 表新增行）必须在 `after_state` 携带 `commit_hash` + `parent_hash`，与 §6.4 同一节点同步；P1-2 在 `position_reconciler.py` 的 `adopt_position` 实施。
-5. **架构等价**：未来其他合成提交路径（execution gateway / reject path）若需链入，沿用相同字段约定（不要发明新键名）。
-
-**SDD 锚点**
-
-- `tests/specs/spec_data_model.py` 的 DM-S08（pydantic 模型字段）/ DM-S09（migration 注册）/ DM-B06（insert 自动填 + 链入）/ DM-C02（re-compute 确定性 + 链完整性 + status 免疫）
-- `tests/specs/spec_pipeline_adopted_position.py` 的 PL-ADOPT-09（audit event payload 携带 commit_hash + parent_hash）
-
-**手动校验命令**
-
-```
-uv run pytest tests/specs/spec_data_model.py -k "hash" -q
-uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
-```
-
-**设计参考**: `docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1 / P1-2`。
-
----
-
-## §7 当前已知缺陷
-
-### §7.1 哈希链中断（已知，未修复）
-
-**症状**: 历史 JSONL 记录中存在少量 `_prev_hash` 断点，`aletheia doctor` 以 `trust.audit_chain: warn — chain BROKEN` 报告；具体断点数以当次 doctor 输出为准，不在契约中记录运行时读数。
-
-**严重程度**: 🟠 中等——chain 中断削弱审计的防篡改保证，但不影响新记录的写入和系统运行。
-
-**可能根因**: `_exclusive_file_lock` 于后期引入；更早写入的若干记录在无锁并发条件下产生了 `_prev_hash` 冲突，其中少数不满足 Pattern 2（consecutive duplicate）的容忍条件。
-
-**历史证据**：[`docs/archive/legacy/issues/domain/BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)（audit hash chain 实施历史）
-
-**缓解状态**: 新记录自 file-lock 引入后不再产生竞态中断；历史断点为静态、已固定。未做 chain repair 工具。
-
-### §7.2 warn 级别不阻塞启动
-
-`trust.audit_chain` 中断时 doctor 报告 `warn`（非 `blocker`），网关启动不受阻断。若需要强制要求链完整性，需要将 severity 升级为 `blocker`。
-
-### §7.3 提案级 hash chain 无 doctor 探针（TaG P0-1 范围外）
-
-`trade_proposals.commit_hash` / `parent_hash` 链当前**仅由 SDD spec 测试**（DM-C02 单事务内重计算 + 链完整性）保证，**没有运行时 doctor 探针**——链中断不会触发 `aletheia doctor` 告警。
-
-如需补齐，需新增独立扫描函数（类比 `verify_audit_chain()`），按 `rowid` 顺序遍历 `trade_proposals`，重算每行 `_compute_proposal_hash(p)` 对比存储值 + 验证 `parent_hash` 连续性，并接入 `diagnostics/doctor.py` 作为 `trust.proposal_chain` 探针。该工作不在 P0-1 范围内，列为后续 hardening 候选。
-
----
-
-## §8 改动控制
-
-`core/aletheia/files/jsonl.py` 已列入信任边界受控模块（`trust_and_change_control.md §6.1`）：
-
-> `core/aletheia/files/jsonl.py`: the append-only JSONL writer backing runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or file-path routing directly affects the §1.4 audit chain invariant.
-
-**变更前必须声明**（按 `trust_and_change_control.md §6.2`）:
-
-- 哪条不变量受影响或改变
-- live 行为是否变化
-- 机密处理是否变化
-- 持久化状态语义是否变化
-- 哪些测试证明行为正确
-
-**最小验证命令**:
-
-```
-uv run pytest tests/test_audit_hashchain.py -q
-uv run pytest tests/specs/ -q
-```
-
-**禁止的改动类型**（无需询问即可判定）:
-
-- 将 `_append_jsonl_line` 的 `"a"` 模式改为 `"w"` 或 truncate
-- 移除 `_audit_hash_lock` 或 `_exclusive_file_lock`
-- 从 `write_audit()` 调用链中移除 `_prev_hash` 注入
-- 更改 `_hash_record()` 的输入范围（如排除某些字段）
-- 绕过 `write_audit()` 直接调用 `append_jsonl()` 写审计记录
+- Proposal row chain: TaG P0-1 / P1-2 (2026-06-29).
+- Trading brake event names replace `kill_switch_*`: #361.
+- Undateable breaks must not be classified historical: #179.
+- Rollback keeps the live audit family: #1910; owner decision 2026-10-09 (#3765) that
+  in-place rollback never deletes post-checkpoint history.
