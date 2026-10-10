@@ -222,6 +222,48 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     assert candidate.candidate_selection_policy_epoch == cfg.universe.candidate_selection_policy_epoch
     return candidate
 
+def test_load_candidate_selection_outcomes_streams_history_rows():
+    # Regression: the history query used fetchall(), so one refresh held every
+    # persisted compact_output_json (hundreds of MB in production) at once.
+    import json
+    import tracemalloc
+
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+        load_candidate_selection_outcomes,
+    )
+
+    population = [_feature(index, return_24h=5.0 + index) for index in range(20)]
+    routes = {
+        (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
+        for item in population
+    }
+    pad = "x" * 100_000
+    for run in range(10):
+        bundle = build_candidate_selection_shadow_bundle(
+            population, scanner_run_id=f"stream-run-{run}",
+            captured_at=f"2026-09-02T00:{run:02d}:00+00:00", universe_config=UniverseConfig(max_candidates=3),
+            action_route_reasons=routes, historical_outcomes=(),
+        )
+        for evidence in bundle.evidence:
+            payload = json.loads(evidence.compact_output_json)
+            payload["padding"] = pad
+            evidence.compact_output_json = json.dumps(payload)
+        repo.insert_universe_twin_shadow_bundle(bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0)
+    policy = json.loads(bundle.batch.policy_json)["selection_policy"]
+    stored_mb = 10 * 20 * len(pad) / 1048576
+
+    tracemalloc.start()
+    try:
+        load_candidate_selection_outcomes(selection_policy=policy)
+        peak_mb = tracemalloc.get_traced_memory()[1] / 1048576
+    finally:
+        tracemalloc.stop()
+    assert stored_mb > 19
+    assert peak_mb < stored_mb / 4, f"history loader held {peak_mb:.1f} MB of {stored_mb:.1f} MB at once"
+
+
 def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
     from aletheia.config.loader import load_config
