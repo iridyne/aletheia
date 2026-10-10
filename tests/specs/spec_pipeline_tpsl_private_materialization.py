@@ -234,7 +234,7 @@ def _exact_fill_reads(calls) -> list[tuple[str, str]]:
     ]
 
 
-@pytest.mark.parametrize("report_kind", ["exact", "ccxt_upgrade", "wrong_account", "wrong_generation", "wrong_plan", "raw"])
+@pytest.mark.parametrize("report_kind", ["exact", "ccxt_upgrade", "with_entry_child", "wrong_account", "wrong_generation", "wrong_plan", "raw"])
 def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkeypatch, report_kind):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
@@ -263,10 +263,13 @@ def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkey
                     update={"credential_generation": identity.credential_generation + 1}
                 ),
             }.get(report_kind, identity)
+            # Bitget UTA v3 lists the order that carried the entry preset among
+            # the strategy's executed children (Fedora 2026-10-10, ADA).
+            entry_child = ("ENTRY-TPSL-port",) if report_kind == "with_entry_child" else ()
             return NativeProtectionHistory(
                 identity=history_identity,
                 plan_order_id="OTHER" if report_kind == "wrong_plan" else order_id,
-                execute_order_ids=("EXEC",),
+                execute_order_ids=("EXEC", *entry_child),
             )
 
         async def get_order_fill_reports(self, **kwargs):
@@ -286,7 +289,7 @@ def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkey
     monkeypatch.setattr(bitget_client, "BitgetClient", forbidden_client)
     result = scheduler._tpsl_fill_check_body()
     assert calls[-1] == "closed"
-    if report_kind in {"exact", "ccxt_upgrade"}:
+    if report_kind in {"exact", "ccxt_upgrade", "with_entry_child"}:
         assert result["failed_count"] == 0
         assert repo._select_one("positions", position.id)["status"] == "closed"
         assert _account_proofs(proofs) == [("EXEC", "usdt_futures", True)]
