@@ -73,3 +73,12 @@
 ## 需要 owner 裁定的事项
 
 见本次 PR 描述；裁定前文档只标"冻结/出范围"，不删除对应代码。
+
+## 编排者复核更正
+
+- **Observation Lab 权威**：[platform_contracts.md](platform_contracts.md) 称"代码只接受 `lab`，
+  合同说 legacy 仍可能生效是错的"。复核：`storage/migrations.py` 为每个库写入
+  `experiment_authority=legacy` 初始行，`extensions/observation_lab/canonical.py` 的切换函数只能单向写
+  `lab`。未执行切换的库（含已有部署）仍是 `legacy`，合同说法成立，未修改。
+  [proposals_research.md](proposals_research.md) 的结论（旧库停在 legacy、spec 0001 依赖这次切换）正确。
+- **退出/平仓合同**：并非缺失，规则在 `execution_contract.md` §10–§11，问题只是篇幅与归属。

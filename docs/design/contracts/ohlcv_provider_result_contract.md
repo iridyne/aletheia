@@ -32,8 +32,9 @@ outcome. Returned `Candle` rows retain provider and exchange identity.
 CCXT persists confirmed bars to the exact SQLite
 `exchange + symbol + market_type + timeframe` identity. Market Context, Regime,
 Universe outcome collection, and the dashboard chart consume provider results.
-History Downloader and Protective Barrier use native CCXT with exact venue
-identity and do not enter the spot-only CoinGecko/Binance fallback path.
+The History Downloader uses native CCXT with exact venue identity and does not
+enter the spot-only CoinGecko/Binance fallback path. That fallback serves only spot
+requests; the product trades perpetuals only, so it is not on the mainline.
 
 ## Observable result
 

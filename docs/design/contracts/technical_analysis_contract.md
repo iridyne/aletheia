@@ -15,9 +15,11 @@ SQLite BLOB cold storage, and external cold files are not configured.
 - `BatchTechnicalAnalyzer.compute()` is the independent numerical reference.
 - `IncrementalTechnicalAnalyzer.update()` is the append-fast runtime path.
 - `TechnicalSnapshotService.snapshot_from_bars()` is the process-wide reuse
-  boundary for Market Observer and Universe feature collection.
+  boundary; its current production consumer is Universe feature collection
+  (`universe/features.py`, 15m/1h/4h).
 - `repositories.plan_market_ohlcv_tiering()` creates a read-only plan for one
-  exact `exchange + symbol + market_type + timeframe` series.
+  exact `exchange + symbol + market_type + timeframe` series. It has no production
+  caller and no cold-store implementation; tiering is not a current runtime behavior.
 - `OHLCVTierManager.copy_to_cold()` coordinates a format-neutral cold backend
   when one is explicitly supplied.
 
@@ -32,8 +34,9 @@ SQLite BLOB cold storage, and external cold files are not configured.
 - SHA-256 input fingerprint;
 - data quality and quality reasons.
 
-Market Observer consumes the shared snapshot directly and renders one bounded
-`technical-context-v1` block. The block preserves exact instrument identity,
+`trading/market_context.py` can render the shared snapshot as one bounded
+`technical-context-v1` block; that renderer served the retired Market Observer and
+has no production caller now. The block format is retained: The block preserves exact instrument identity,
 algorithm version and a bundle input fingerprint in its linked Harness artifact;
 model-visible rows contain normalized trend, momentum, volatility, location and
 participation facts. Insufficient-warmup or degraded timeframes expose only an
@@ -54,7 +57,7 @@ hits. Fixed-size rolling provider windows append only their new suffix.
 The batch and incremental paths expose one `TechnicalSnapshot` contract. The
 batch path remains available for independent reconciliation.
 
-The Market Observer does not send recent raw close arrays. Correlated raw
+The block does not carry recent raw close arrays. Correlated raw
 SMA/EMA levels are compressed into one EMA trend state and spread; ATR, VWAP and
 Donchian location are normalized so the model does not need to calculate them.
 
