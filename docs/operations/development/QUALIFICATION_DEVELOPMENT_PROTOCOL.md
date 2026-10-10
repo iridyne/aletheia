@@ -78,21 +78,19 @@ scope 与 doctor 投影，不能仅靠复制目录或环境变量绕过。
 
 约束：
 
-- 不在 Mac 上运行大规模 pytest；首选仓库 GitHub Actions 的 self-hosted Runner；
-  Runner 不可用且验证不能等待时，才在远程 Fedora 的隔离 CI/Test process 中回退执行；
+- 不在 Mac 上运行大规模 pytest；pytest 在 CASI 的 WSL 上经 `casi-pytest` skill 运行
+  （根 `AGENTS.md`）；远程 CI 已退役，不启动、不等待、不引用；
 - Windows 不属于验证依赖或回退路径；
 - Worktree 不得 restart/stop/update 稳定 Gateway；
 - 开发 checkout 不承担长期 Qualification observation window。
 
-### Fedora：Qualification Runtime 与最后回退验证面
+### Fedora：Qualification Runtime
 
 负责：
 
 - 一个固定 SHA 的稳定 `qualification-main` Runtime；
 - 长时间 scheduler、paper loop、outcome settlement 与 Learning qualification；
-- self-hosted GitHub Actions Runner 承担首选的完整测试；
-- 仅当 Runner 不可用且验证不能等待时，Fedora 主机才运行隔离的临时 CI/Test process；
-  该进程不得使用稳定 Runtime checkout、primary data、secrets 或 execution authority；
+- 不运行 pytest：测试在 CASI WSL 上跑，Fedora 的内存留给运行时；
 - 必要时并行运行多个无执行权的 Preview API。
 
 Fedora 上的参考布局：

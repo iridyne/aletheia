@@ -152,13 +152,13 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 # fast 层或单一 marker 选择
 uv run pytest -m fast -n auto -q
 
-# 全量只在 Fedora 测试环境跑；默认 -n 2（实测见下）
+# 全量在 CASI WSL 上经 casi-pytest skill 跑（根 AGENTS.md）；默认 -n 2
 uv run pytest tests/ -n 2 --tb=line -q
 ```
 
 判断原则：如果并行失败、非并行通过，先把它当成测试隔离问题处理，不要直接改生产逻辑。
 
-**Fedora 实测（2026-09-28，原在 DEVELOPMENT_WORKFLOW.md）**
+**Fedora 实测（2026-09-28，历史数据；全量现已改在 CASI WSL 跑）**
 
 Marker subsets are validated in parallel: `tests/conftest.py::_configure_xdist_runtime_dir`
 gives every worker its own runtime directory, and the same-selection A/B on the
@@ -291,7 +291,7 @@ uv run pytest -q -k "knowledge or dreaming or quality"
 uv run pytest tests/ --tb=no --durations=20 -q
 ```
 
-全量只在 Fedora 测试环境跑（见根 `AGENTS.md`），本机不跑后台全量。
+全量在 CASI WSL 上经 `casi-pytest` skill 跑（见根 `AGENTS.md`），macOS 与 Fedora 都不跑全量。
 
 ---
 
