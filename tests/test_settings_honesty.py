@@ -59,8 +59,6 @@ def test_equities_decode_rejects_invalid_legacy_even_when_canonical_wins(legacy)
 @pytest.mark.parametrize("canonical", [None, [], ["rNVDA/USDT"]])
 def test_historical_stock_tokens_decode_once_and_clear_survives_reload(canonical):
     from aletheia.config.schema import MarketDataConfig
-    from aletheia.trading.instruments import stock_tokens_from_config
-    from types import SimpleNamespace
 
     raw = {"observed_xstocks": ["AAPLON/USDT"]}
     if canonical is not None:
@@ -75,7 +73,7 @@ def test_historical_stock_tokens_decode_once_and_clear_survives_reload(canonical
     assert not hasattr(cfg, "observed_xstocks")
     cfg.observed_stock_tokens = []
     reloaded = MarketDataConfig.model_validate(cfg.model_dump(), extra="forbid")
-    assert stock_tokens_from_config(SimpleNamespace(market_data=reloaded)) == []
+    assert reloaded.observed_stock_tokens == []
 
 
 @pytest.mark.parametrize("legacy", [None, "AAPLON/USDT", [1]])

@@ -660,14 +660,23 @@ def test_observed_instruments_preserve_member_venue_and_market(monkeypatch):
     ),
 )
 def test_okx_equity_contracts_are_excluded_from_crypto_registry():
-    from aletheia.data.providers import MarketInstrument
-    from aletheia.universe.registry import _is_excluded
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_background_rejection_reason,
+    )
 
-    equity_swap = MarketInstrument("okx", "SPCX/USDT", "SPCX", "USDT", "perp", {}, is_tokenized_equity=True)
-    crypto_swap = MarketInstrument("okx", "BTC/USDT", "BTC", "USDT", "perp", {})
+    def background(category):
+        return build_instrument_background(
+            symbol="SPCX/USDT:USDT", venue="okx", market_type="perp",
+            market_info={"info": {"instType": "SWAP", "instCategory": category}},
+        )
 
-    assert _is_excluded(equity_swap) is True
-    assert _is_excluded(crypto_swap) is False
+    equity = background("3")
+    assert equity["asset_class"] == "equity"
+    assert instrument_background_rejection_reason(
+        equity, symbol="SPCX/USDT", market_type="perp", venue="okx",
+    ) is not None
+    assert background("1")["asset_class"] == "crypto"
 
 
 @spec_claim(

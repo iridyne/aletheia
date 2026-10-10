@@ -888,13 +888,9 @@ class SerenityOpportunity(BaseModel):
     # S2 (2026-06-28, AI Berkshire researchability): deterministic A/B/C grade
     # assigned by assess_researchability() at pipeline time. C caps score at ≤40.
     researchability_grade: str = "C"
-    # EQ-R (2026-07-01, r-series/equity_chain adaptation): instrument classification.
-    # asset_class: "crypto" (default) | "equity" (US stock token from equity_chain lens).
-    # market_type: canonical InstrumentId market type. USDT perpetuals are the only
-    #   product (CAPABILITY_GROUND_TRUTH), so a crypto opportunity is "perp"; the
-    #   research worker tags spot-only stock tokens "spot", which never publish.
-    # These two fields let trading_context and the PI skip equity observations for
-    # order routing while still surfacing them as research context.
+    # Instrument classification. The research worker only writes crypto perps
+    # (USDT perpetuals are the only product, CAPABILITY_GROUND_TRUTH); historical
+    # rows may still carry a stock-token asset_class and market_type="spot".
     asset_class: str = "crypto"
     market_type: str = "perp"
 

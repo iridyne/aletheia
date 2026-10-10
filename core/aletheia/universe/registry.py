@@ -25,15 +25,12 @@ _EXCLUDED_BASES = {"BTTC", "LUNC", "LUNA", "UST", "FTT"}
 
 
 def _is_excluded(instrument: MarketInstrument) -> bool:
-    """Filter out unsupported asset classes, leveraged tokens, and test symbols."""
+    """Filter out leveraged tokens and test symbols.
+
+    Asset class (OKX instCategory=3 equity, Bitget isRwa) is classified once by
+    ``symbols.build_instrument_background``; this filter only sees crypto rows.
+    """
     base = instrument.base_asset
-
-    # OKX category 3 is tokenized stocks/ETFs. The equity observer handles these
-    # as observation-only until asset-class metadata and execution capability are
-    # explicitly connected; treating them as crypto makes them silently executable.
-    if instrument.is_tokenized_equity:
-        return True
-
     if any(base.endswith(s) for s in _LEVERAGED_SUFFIXES):
         return True
     if base in _EXCLUDED_BASES:
@@ -211,17 +208,6 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
         # symbols that no longer exist on the active exchange.
         if deactivated_other or deactivated_stale:
             _invalidate_stale_pipeline_data()
-
-        # Always invalidate the venue listing cache after a registry sync so that
-        # the next market_data / price_feed cycle re-fetches the current whitelist.
-        # This covers both exchange switches (deactivated_other) and routine
-        # delistings (deactivated_stale), as well as a first-time sync where
-        # neither counter is non-zero but the cache may be cold.
-        try:
-            from aletheia.data.venue_listing_cache import invalidate_venue_listing
-            invalidate_venue_listing(venue)
-        except Exception:  # noqa: BLE001 — cache invalidation is best-effort
-            logger.debug("universe: venue listing cache invalidation failed; next price feed cycle may reuse a stale cache", exc_info=True)
 
         logger.info("Registry sync: %d active assets from %s", count, venue)
     finally:

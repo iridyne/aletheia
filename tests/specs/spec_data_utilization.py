@@ -32,7 +32,6 @@ _LOCAL_FUNDING = _ROOT / "core" / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "core" / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "extensions" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "extensions" / "data" / "position_x.py"
-_MARKET_DATA = _ROOT / "core" / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 _INFERENCE_SCHEMA = _ROOT / "core" / "aletheia" / "economics" / "schema.py"
@@ -363,43 +362,6 @@ def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
     assert "observation-only" in doc
     assert "operator_evaluation_events" in doctor
     assert "def _probe_skip_halt" in doctor
-
-
-@spec_claim(
-    SpecClaim(
-        "DU-S24", _CONTRACT, "§3 xStock listing status", "L2b",
-        "The venue-specific xStock listing source is registered, bounded, fail-open for "
-        "configured intent, and its confirmed-removal consumer writes a system audit.",
-        status="implemented",
-    ),
-)
-async def test_xstock_listing_source_is_registered_and_bounded(monkeypatch):
-    from unittest.mock import AsyncMock
-    from aletheia.data import providers
-    from aletheia.trading.market_data import _listed_symbols_on_exchange
-    from tests.test_market_listing_boundary import test_adapter_preserves_listing_filters_and_closes
-    from tests.specs.spec_pipeline_market_data import (
-        test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup,
-    )
-    from extensions.data import ccxt_provider
-
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    source = _MARKET_DATA.read_text(encoding="utf-8")
-
-    assert "xStock 上市状态" in doc and "DU-S24" in doc
-    reader = AsyncMock(return_value=frozenset({"AAPLON/USDT"}))
-    monkeypatch.setattr(providers, "_listing_reader", reader)
-    assert await _listed_symbols_on_exchange("bitget") == frozenset({"AAPLON/USDT"})
-    reader.assert_awaited_once_with("bitget", True)
-    reader.side_effect = TimeoutError("synthetic listing timeout")
-    assert await _listed_symbols_on_exchange("bitget") is None
-    await test_adapter_preserves_listing_filters_and_closes(monkeypatch, True)
-    monkeypatch.setattr(providers, "_listing_reader", ccxt_provider.read_market_listing)
-    await test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monkeypatch)
-    assert "_XSTOCK_LISTING_TIMEOUT_SEC" in source
-    assert "listing_cache" in source
-    assert "xstock_observation_config_auto_removed" in source
-    assert '"actor": "system"' in source
 
 
 # ---------------------------------------------------------------------------
@@ -867,31 +829,8 @@ def test_official_news_feeds_registered_and_consumed():
 
 
 # ---------------------------------------------------------------------------
-# DU-S08 / DU-S09 — Serenity research pipeline data injection
+# DU-S09 — Serenity research pipeline data injection
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "DU-S08", _CONTRACT, "§yfinance fundamentals in research_worker", "L2a",
-        "research_worker._get_equity_context_block injects yfinance fundamentals "
-        "(PE, PS, MCap, RevGrowth, Margin) into the research LLM prompt when "
-        "stock tokens are configured — grounding equity_chain lens in real data",
-    ),
-)
-def test_research_worker_injects_yfinance():
-    rw = _ROOT / "extensions" / "research" / "research_worker.py"
-    src = rw.read_text(encoding="utf-8")
-    assert "yfinance" in src, (
-        "research_worker does not reference yfinance — equity_chain lens has no "
-        "fundamentals grounding and relies purely on LLM hallucination"
-    )
-    assert "trailingPE" in src or "forwardPE" in src, (
-        "research_worker does not extract PE ratio from yfinance"
-    )
-    assert "marketCap" in src, (
-        "research_worker does not extract market cap from yfinance"
-    )
 
 
 @spec_claim(

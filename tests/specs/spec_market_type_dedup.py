@@ -59,11 +59,11 @@ def test_legacy_path_single_instrument_per_symbol():
 
 
 @spec_claim(
-    SpecClaim("OD-S01b", "data_layer_contract", "§3 preferred=spot override", "L2b",
-              "with preferred_market_type='spot' and both markets enabled, "
-              "observed_instruments_from_config emits spot, not perp"),
+    SpecClaim("OD-S01b", "data_layer_contract", "§3 perp-only legacy path", "L2b",
+              "USDT perpetuals are the only product: even with preferred_market_type='spot' "
+              "observed_instruments_from_config emits perp, never spot"),
 )
-def test_legacy_path_respects_spot_preference():
+def test_legacy_path_is_perp_only():
     from aletheia.trading.instruments import observed_instruments_from_config
     from aletheia.config.schema import AletheiaConfig
 
@@ -74,7 +74,7 @@ def test_legacy_path_respects_spot_preference():
 
     insts = observed_instruments_from_config(cfg)
     assert len(insts) == 1
-    assert insts[0].market_type == "spot"
+    assert insts[0].market_type == "perp"
 
 
 # ---------------------------------------------------------------------------

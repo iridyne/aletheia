@@ -15,8 +15,6 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.trading.instruments import stock_tokens_from_config
-from aletheia.data.symbols import InstrumentId
 
 
 def _setup(tmp_path, monkeypatch):
@@ -35,36 +33,6 @@ def _setup(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     init_tool_registry()
-
-
-# --- Config helpers ---
-
-def test_stock_tokens_from_config(tmp_path, monkeypatch):
-    """stock_tokens_from_config returns bitget-exchange InstrumentIds."""
-    _setup(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config
-    cfg = load_config()
-    # Default config has 4 xStocks
-    xs = stock_tokens_from_config(cfg)
-    assert len(xs) >= 1
-    for x in xs:
-        assert isinstance(x, InstrumentId)
-        assert x.exchange == "bitget"
-        assert "/" in x.symbol
-        assert x.market_type == "spot"
-    reset_db()
-
-
-def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
-    """An empty canonical token workset schedules no token instruments."""
-    _setup(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_stock_tokens = []
-    save_config(cfg)
-    xs = stock_tokens_from_config(cfg)
-    assert xs == []
-    reset_db()
 
 
 # --- equity_observer integration ---

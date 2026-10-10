@@ -568,11 +568,10 @@ def _bind_regime_evidence(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _bind_market_listing(monkeypatch):
+def _bind_market_data_factory(monkeypatch):
     from extensions.data import ccxt_provider
     from aletheia.data import providers
 
-    monkeypatch.setattr(providers, "_listing_reader", ccxt_provider.read_market_listing)
     monkeypatch.setattr(providers, "_provider_factory", ccxt_provider.create_market_data_provider)
     # Process-level markets metadata must not leak one test's fake venue into another.
     monkeypatch.setattr(ccxt_provider, "_MARKETS_CACHE", {})

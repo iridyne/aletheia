@@ -108,7 +108,6 @@ def test_historical_equities_clear_persists_through_canonical_writer(tmp_path, m
 def test_historical_tokens_clear_persists_through_settings_writer(tmp_path, monkeypatch):
     from aletheia.config import loader
     from aletheia.server.routes import settings
-    from aletheia.trading.instruments import stock_tokens_from_config
 
     config_file = tmp_path / "config.yaml"
     raw = AletheiaConfig().model_dump(mode="json")
@@ -124,5 +123,5 @@ def test_historical_tokens_clear_persists_through_settings_writer(tmp_path, monk
     assert config_file.read_text(encoding="utf-8") == original
     settings.update_market_data_config(settings.MarketDataConfigUpdate(observed_stock_tokens=[]))
     reloaded = loader.load_config(persist_migrations=False, use_cache=False)
-    assert stock_tokens_from_config(reloaded) == []
+    assert reloaded.market_data.observed_stock_tokens == []
     assert "observed_xstocks" not in yaml.safe_load(config_file.read_text())["market_data"]

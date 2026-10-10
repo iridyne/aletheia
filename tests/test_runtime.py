@@ -308,18 +308,9 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
 
     monkeypatch.setattr(providers, "get_market_data_provider", lambda **kw: _FakeCCXT())
 
-    # Disable xStocks so this test covers only the 3 crypto symbols (spot-only
-    # collection path).  Must clear both the new stock-token field and the
-    # legacy alias — the new field has a non-empty default that would add
-    # r-series instruments to the collect run.
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_stock_tokens = []
-    save_config(cfg)
-
     from aletheia.trading.market_data import collect_market_snapshots
     result = await collect_market_snapshots()
-    # 3 observed symbols (BTC/USDT, ETH/USDT, SOL/USDT) × 1 spot each.
+    # 3 observed symbols (BTC/USDT, ETH/USDT, SOL/USDT) × 1 perp each.
     assert len(result["collected"]) == 3
     snaps = repo.list_market_snapshots()
     assert len(snaps) == 3
@@ -340,7 +331,6 @@ async def test_market_data_persists_exact_execution_targets(tmp_path, monkeypatc
     cfg.market_data.ccxt_exchange = "binance"
     monkeypatch.setattr(md, "load_config", lambda: cfg)
     monkeypatch.setattr(md, "observed_instruments_from_config", lambda cfg: [])
-    monkeypatch.setattr(md, "stock_tokens_from_config", lambda cfg: [])
     monkeypatch.setattr(repo, "get_active_universe_members", lambda **kwargs: [])
     monkeypatch.setattr(repo, "list_all_open_positions", lambda: [{
         "symbol": "BTC/USDT", "market_type": "usdt_futures",

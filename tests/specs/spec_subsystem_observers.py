@@ -16,7 +16,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _ROOT = Path(__file__).parent.parent.parent
 _EQUITY_OBS = _ROOT / "extensions" / "research" / "equity_observer.py"
 _PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
-_SYMBOLS = _ROOT / "core" / "aletheia" / "data" / "symbols.py"
 _SCHEDULER = _ROOT / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
 
 
@@ -96,43 +95,6 @@ def test_equity_observer_registered_in_scheduler():
             found = True
             break
     assert found, "No add_job block references 'equity_observer' within 6 lines"
-
-
-@spec_claim(
-    SpecClaim(
-        "OBS-S07", "agent_contracts", "§4 xstock mapping", "L2a",
-        "_XSTOCK_BASE_TO_TICKER mapping dict exists in aletheia/data/symbols.py",
-    ),
-)
-def test_xstock_base_to_ticker_mapping_exists():
-    """The xStock symbol map lives in symbols.py (equity_observer imports ticker_to_xstock from there)."""
-    assert _SYMBOLS.exists(), "aletheia/data/symbols.py not found"
-    src = _SYMBOLS.read_text(encoding="utf-8")
-    assert "_XSTOCK_BASE_TO_TICKER" in src, (
-        "_XSTOCK_BASE_TO_TICKER dict not found in aletheia/data/symbols.py"
-    )
-    # Also verify it is assigned from a dict expression (plain or annotated), not
-    # just a comment. The implementation may use a dict literal or derive the map
-    # from the canonical stock-token registry with a dict comprehension.
-    tree = ast.parse(src)
-    dict_names: set[str] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and isinstance(node.value, (ast.Dict, ast.DictComp))
-        ):
-            dict_names.add(node.target.id)
-        elif (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and isinstance(node.value, (ast.Dict, ast.DictComp))
-        ):
-            dict_names.add(node.targets[0].id)
-    assert "_XSTOCK_BASE_TO_TICKER" in dict_names, (
-        "_XSTOCK_BASE_TO_TICKER is not assigned from a dict expression in symbols.py"
-    )
 
 
 @spec_claim(

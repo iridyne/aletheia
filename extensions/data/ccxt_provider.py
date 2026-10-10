@@ -10,11 +10,8 @@ client, session or loop-bound object) that let the orderbook observation skip a
 repeated cold ``load_markets`` inside its five-second budget.
 
 Primary/fallback: each fetch tries the primary exchange, and on failure retries once on
-the configured fallback. Venue-pinned xStock listing checks still enter through
-``get_market_data_provider(native_ccxt=True, fallback_exchange=exchange)`` so they keep
-the managed session and malformed-market guard without substituting another venue.
-The optional ``get_ohlcv_observation`` capability is deliberately primary-only and
-does not enter this fallback loop.
+the configured fallback. The optional ``get_ohlcv_observation`` capability is
+deliberately primary-only and does not enter this fallback loop.
 
 The remaining documented direct-construction site is an intentional venue-native
 exception (routing through the generic factory would select the configured fallback):
@@ -675,7 +672,6 @@ class CCXTProvider:
                 amount_precision=_precision_to_decimals(precision.get("amount")),
                 contract_size=_opt_float(info.get("contractSize")),
                 is_test_or_dated="TEST" in native_id or "_" in native_id,
-                is_tokenized_equity=str((info.get("info") or {}).get("instCategory") or "") == "3",
             ))
         return result
 
@@ -863,36 +859,6 @@ class CCXTProvider:
             except Exception:
                 logger.debug("ccxt_provider: session close timed out or failed during teardown", exc_info=True)
         self._sessions = []
-
-
-async def read_market_listing(venue: str, spot_only: bool) -> frozenset[str]:
-    """Normalize exact-venue public listings; own and close the fresh client."""
-    provider = get_market_data_provider(
-        exchange=venue, native_ccxt=True, fallback_exchange=venue,
-    )
-    try:
-        exchange = provider._ensure_primary()
-        if spot_only:
-            exchange.options["defaultType"] = "spot"
-        markets = await exchange.load_markets()
-        if not isinstance(markets, dict) or not markets:
-            raise ValueError(f"load_markets returned empty/invalid result for {venue}")
-        # Preserve the two consumers' existing active predicates, including 0:
-        # spot-only uses identity; the all-market cache uses equality.
-        listed = frozenset(
-            to_canonical(str(symbol))
-            for symbol, market in markets.items()
-            if isinstance(market, dict)
-            and (
-                market.get("spot") is True and market.get("active") is not False
-                if spot_only else market.get("active") != False  # noqa: E712
-            )
-        )
-        if not listed:
-            raise ValueError(f"no active {'spot ' if spot_only else ''}markets found for {venue}")
-        return listed
-    finally:
-        await provider.close()
 
 
 def _opt_float(value) -> float | None:
