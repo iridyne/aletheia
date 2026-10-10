@@ -169,13 +169,18 @@ class TestSymbolFilter:
             scheduler, "_record_job_failure",
             lambda job_id, error: failures.append((job_id, error)),
         )
+        from aletheia.config.schema import AletheiaConfig
+
+        cfg = AletheiaConfig()
+        cfg.exchange.paper_execution_mode = "okx_demo"
+        monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
         with patch(
             "aletheia.execution.venue_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
         ):
-            scheduler._run_okx_demo_symbols()
+            scheduler._run_demo_capabilities()
 
-        assert failures == [("okx_demo_symbols", "market load unavailable")]
+        assert failures == [("demo_capabilities", "market load unavailable")]
 
 
 class TestRiskEngineOkx:

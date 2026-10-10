@@ -163,14 +163,14 @@ def _patch_protective_mark(monkeypatch, price: float):
 
 def _settle_pending_close(position_id: str, private_fill) -> None:
     """Materialize the claimed close from exact private fill evidence."""
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
 
     pending = [
         row for row in repo.list_orders(limit=50)
         if row["position_id"] == position_id and row.get("close_reason")
     ]
     assert len(pending) == 1, f"expected exactly one close claim, got {pending}"
-    result = materialize_bitget_close(pending[0]["id"], [private_fill(pending[0])])
+    result = materialize_private_close(pending[0]["id"], [private_fill(pending[0])])
     assert result.state == "filled", result
 
 
@@ -496,7 +496,7 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
     e2e_db, monkeypatch, fee, fee_coin
 ):
     """Accepted #3135: verified execution closes; unresolved costs are not final PnL."""
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
 
     _, submitted, private_fill, _ = _prepare_venue(monkeypatch, fill_price=97.5)
     position = _seed_exchange_position(
@@ -512,7 +512,7 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
 
     row = private_fill(repo.get_order(claim_id), fee=fee, fee_coin=fee_coin)
 
-    result = materialize_bitget_close(claim_id, [row])
+    result = materialize_private_close(claim_id, [row])
     stored = repo.get_position(position.id)
     assert result.state == "filled"
     assert stored["status"] == "closed"
@@ -528,7 +528,7 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
     assert fill["fee_currency"] == fee_coin
     assert fill["fee_source"] == ("reconciled" if fee is not None else "unavailable")
     assert list_outcome_hook_jobs(position_id=position.id) == []
-    repeated = materialize_bitget_close(claim_id, [row])
+    repeated = materialize_private_close(claim_id, [row])
     assert repeated.new_fill_count == 0
     assert len(repo.list_fills(order_id=claim_id)) == 1
     assert repo.get_db().execute(

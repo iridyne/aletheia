@@ -10,6 +10,7 @@ See GAP-DU-C02 / data_utilization.md §4 for the full rationale.
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 import logging
@@ -200,7 +201,7 @@ class DerivativesCollector:
         acquired = datetime.now(timezone.utc)
         result = dict(funding=[], open_interest=[], prices=[], errors=[],
             coverage={'acquired_at': acquired.isoformat(), 'venues': {}})
-        primary = cfg.market_data.ccxt_exchange
+        primary = market_data_exchange(cfg)
 
         async def collect_venue(venue, symbols):
             states = {s: {'listed': None, 'funding': 'deferred', 'open_interest': 'deferred', 'price': 'deferred'} for s in symbols}
@@ -398,7 +399,7 @@ def comparison_workset(cfg) -> dict[str, list[str]]:
     required = {item.symbol for item in configured if item.market_type == 'perp'}
     required.update(row['symbol'] for row in repo.list_all_open_positions() if row.get('market_type') in {'perp', 'usdt_futures'})
     venues = list(dict.fromkeys(cfg.market_data.derivatives_comparison_venues))
-    for venue in dict.fromkeys([cfg.market_data.ccxt_exchange, *venues]):
+    for venue in dict.fromkeys([market_data_exchange(cfg), *venues]):
         required.update(row['symbol'] for row in repo.list_universe_assets(venue=venue, active_only=True, limit=None)
             if row.get('market_type') == 'perp')
     return {venue: sorted(required) for venue in venues}

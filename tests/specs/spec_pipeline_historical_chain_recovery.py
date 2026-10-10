@@ -31,8 +31,8 @@ _FILL_TIME = datetime.fromtimestamp(
 ).isoformat()
 
 
-def _spec_identity():
-    """The exact UTA account identity a real bitget_demo submission would freeze.
+def _spec_identity(execution_mode: str = "bitget_demo"):
+    """The exact UTA account identity a real submission on this account would freeze.
 
     execution_contract.md §submit: "提交前持久化 exact `uta_account_identity_json`；
     历史 NULL 不按当前配置补造身份." `reconcile()` therefore refuses to read private
@@ -42,7 +42,7 @@ def _spec_identity():
     """
     from tests.specs.uta_private_history import _identity
 
-    return _identity("bitget_demo")
+    return _identity(execution_mode)
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -97,6 +97,7 @@ def _seed_entry(
     suffix: str,
     status: str = "filled",
     quantity: float = 1.0,
+    execution_mode: str = "bitget_demo",
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
@@ -110,7 +111,7 @@ def _seed_entry(
         order_type="market",
         quantity=quantity,
         price=60_000.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         leverage=5,
         stop_price=58_000.0,
         take_profit=64_000.0,
@@ -126,17 +127,17 @@ def _seed_entry(
         order_type=proposal.order_type,
         quantity=quantity,
         price=proposal.price,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         exchange_order_id=f"EX-HISTORICAL-{suffix}",
         status=status,
         filled_at=_FILL_TIME if status == "filled" else None,
-        uta_account_identity_json=_spec_identity().model_dump_json(),
+        uta_account_identity_json=_spec_identity(execution_mode).model_dump_json(),
     )
     repo.insert_order(order)
     return proposal, decision, order
 
 
-def _patch_bitget_client(monkeypatch, rows, calls):
+def _patch_bitget_client(monkeypatch, rows, calls, execution_mode: str = "bitget_demo"):
     from types import SimpleNamespace
 
     from aletheia.execution import reconciliation
@@ -149,7 +150,7 @@ def _patch_bitget_client(monkeypatch, rows, calls):
     monkeypatch.setattr(
         reconciliation,
         "build_uta_registry",
-        lambda: SimpleNamespace(configured_identities=lambda: (_spec_identity(),)),
+        lambda: SimpleNamespace(configured_identities=lambda: (_spec_identity(execution_mode),)),
     )
 
 
@@ -159,20 +160,22 @@ def _patch_bitget_client(monkeypatch, rows, calls):
         "pipeline_historical_chain_recovery",
         "§1 exact filled-gap recovery",
         "L2b",
-        "A Bitget demo native entry already marked filled is selected separately and "
-        "recovers its missing Fill/Position chain only from exact complete private "
-        "order fills; unrelated terminal Orders are never added to the normal scan.",
+        "A native demo entry already marked filled, on any registered demo account, "
+        "is selected separately and recovers its missing Fill/Position chain only "
+        "from exact complete private order fills read through its own account; "
+        "unrelated terminal Orders are never added to the normal scan.",
         status="implemented",
     )
 )
+@pytest.mark.parametrize("execution_mode", ("bitget_demo", "okx_demo", "binance_testnet"))
 def test_exact_filled_gap_recovers_without_scanning_all_terminal_orders(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, execution_mode
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
     from aletheia.storage import repositories as repo
 
-    _, _, order = _seed_entry(suffix="recover")
+    _, _, order = _seed_entry(suffix="recover", execution_mode=execution_mode)
     # More than the historical repository list limit, all deliberately ineligible:
     # adopted rows are observations, never native authority to materialize.
     db.executemany(
@@ -194,7 +197,7 @@ def test_exact_filled_gap_recovers_without_scanning_all_terminal_orders(
     )
     rows = [_private_fill(order.exchange_order_id)]
     calls = []
-    _patch_bitget_client(monkeypatch, rows, calls)
+    _patch_bitget_client(monkeypatch, rows, calls, execution_mode)
     monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     result = reconciliation.reconcile()
@@ -217,8 +220,8 @@ def test_exact_filled_gap_recovers_without_scanning_all_terminal_orders(
     assert len(positions) == 1
     assert positions[0]["entry_fill_verified"] == 1
     assert positions[0]["entry_price_source"] == "broker_fill"
-    assert [(method, query.venue_order_id) for method, _, query in calls] == [
-        ("get_fills", order.exchange_order_id),
+    assert [(method, mode, query.venue_order_id) for method, mode, query in calls] == [
+        ("get_fills", execution_mode, order.exchange_order_id),
     ]
 
 
@@ -500,7 +503,8 @@ def test_filled_gap_recovery_rolls_back_fill_when_position_write_fails(
     ).fetchone()[0] == 0
 
 
-def _seed_closed_pending(*, suffix: str):
+def _seed_closed_pending(*, suffix: str, execution_mode: str = "bitget_demo"):
+    from aletheia.execution.exchange_materialization import PRIVATE_CLOSE_EVIDENCE
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
 
@@ -513,7 +517,7 @@ def _seed_closed_pending(*, suffix: str):
         order_type="market",
         quantity=1.0,
         price=60_000.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         leverage=5,
     )
     entry_order = Order(
@@ -527,14 +531,14 @@ def _seed_closed_pending(*, suffix: str):
         order_type=proposal.order_type,
         quantity=1.0,
         price=proposal.price,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         exchange_order_id=f"EX-ENTRY-CLOSED-{suffix}",
         status="filled",
         filled_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_order(entry_order)
     repo.insert_fill(Fill(
-        id=f"private-fill:bitget_demo:ENTRY-{suffix}",
+        id=f"private-fill:{execution_mode}:ENTRY-{suffix}",
         order_id=entry_order.id,
         fill_price=60_000.0,
         fill_quantity=1.0,
@@ -552,7 +556,7 @@ def _seed_closed_pending(*, suffix: str):
         quantity=1.0,
         entry_price=60_000.0,
         current_price=60_100.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         entry_fee=0.1,
         entry_fill_verified=True,
         entry_price_source="broker_fill",
@@ -569,7 +573,7 @@ def _seed_closed_pending(*, suffix: str):
         order_type="market",
         quantity=1.0,
         price=60_100.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
         exchange_order_id=f"EX-CLOSE-CLOSED-{suffix}",
         client_order_id=f"close-{position.id}",
         position_id=position.id,
@@ -578,7 +582,7 @@ def _seed_closed_pending(*, suffix: str):
         filled_at=_FILL_TIME,
     )
     repo.insert_order(close_order)
-    durable_fill_id = f"private-fill:bitget_demo:CLOSE-{suffix}"
+    durable_fill_id = f"private-fill:{execution_mode}:CLOSE-{suffix}"
     repo.insert_fill(Fill(
         id=durable_fill_id,
         order_id=close_order.id,
@@ -589,12 +593,14 @@ def _seed_closed_pending(*, suffix: str):
         fee_source="reconciled",
         filled_at=_FILL_TIME,
     ))
+    # The same evidence identity the close materializer writes for this account.
+    evidence_source, source_endpoint, account_environment = PRIVATE_CLOSE_EVIDENCE[execution_mode]
     evidence = {
-        "source": "bitget_private_close_fills",
-        "source_endpoint": "private_fills",
-        "broker_id": "bitget_demo",
-        "account_environment": "demo",
-        "execution_mode": "bitget_demo",
+        "source": evidence_source,
+        "source_endpoint": source_endpoint,
+        "broker_id": execution_mode,
+        "account_environment": account_environment,
+        "execution_mode": execution_mode,
         "exchange_order_id": close_order.exchange_order_id,
         "client_order_id": close_order.client_order_id,
         "fill_ids": [f"CLOSE-{suffix}"],
@@ -674,21 +680,23 @@ def test_entry_gap_selector_excludes_durable_close_identity(
         "pipeline_historical_chain_recovery",
         "§4 stale pending-close cleanup",
         "L2b",
-        "A verified closed Bitget demo Position clears only stale pending-close fields "
-        "when its filled close Order, bidirectional link, exact local Fill quantity, "
-        "broker price source, and private evidence all agree.",
+        "A verified closed Position on any account with registered close evidence "
+        "clears only stale pending-close fields when its filled close Order, "
+        "bidirectional link, exact local Fill quantity, broker price source, and "
+        "that account's private evidence identity all agree.",
         status="implemented",
     )
 )
+@pytest.mark.parametrize("execution_mode", ("bitget_demo", "okx_demo", "binance_testnet"))
 def test_verified_closed_position_clears_stale_pending_locally(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, execution_mode
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
     from extensions.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
 
-    position, close_order = _seed_closed_pending(suffix="clear")
+    position, close_order = _seed_closed_pending(suffix="clear", execution_mode=execution_mode)
 
     class _NoVenueClient:
         def __init__(self, *args, **kwargs):

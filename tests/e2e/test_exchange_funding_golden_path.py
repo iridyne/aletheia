@@ -101,7 +101,7 @@ _PROCESS_REPLAY = textwrap.dedent(
 
 
     def seed_exchange_chain(mode, spec):
-        from aletheia.execution.exchange_materialization import materialize_bitget_close
+        from aletheia.execution.exchange_materialization import materialize_private_close
         from aletheia.storage.models import (
             Fill,
             Opportunity,
@@ -251,8 +251,8 @@ _PROCESS_REPLAY = textwrap.dedent(
             executed_at=executed_at,
             received_at=datetime.now(timezone.utc),
         )]
-        first = materialize_bitget_close(close_order.id, fills)
-        replay = materialize_bitget_close(close_order.id, fills)
+        first = materialize_private_close(close_order.id, fills)
+        replay = materialize_private_close(close_order.id, fills)
         return {
             "mode": mode,
             "first_state": first.state,

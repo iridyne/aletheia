@@ -112,8 +112,7 @@ _EXECUTOR_WORKERS = {
 | `guard_promotion` | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
 | `ohlcv_nightly_backfill` | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | maintenance_io | 3600 | 600 |
 | `ohlcv_active_backfill` | interval | minutes=getattr(cfg.historical_data, 'active_universe_backfill_interval_minutes', 10) | maintenance_io | 300 | 120 |
-| `okx_demo_symbols` | interval | hours=4 | io | — | 600 |
-| `bitget_demo_capabilities` | interval | hours=4 | io | — | 600 |
+| `demo_capabilities` | interval | hours=4 | io | — | 600 |
 | `venue_margin_facts` | interval | minutes=5（`VENUE_MARGIN_REFRESH_INTERVAL_MINUTES`） | io | 60 | 120 |
 | `daily_summary` | cron | hour=cfg.telegram.daily_summary_hour_cst（默认 8）, minute=0, tz=Asia/Shanghai | io | 60 | 600 |
 

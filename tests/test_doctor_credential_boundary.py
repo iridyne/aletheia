@@ -8,7 +8,7 @@ import pytest
     ((True, False, False), "warn"),
     ((False, False, False), "blocker"),
     (None, "blocker"),
-    ((True,), "blocker"),
+    ((True, True), "ok"),  # a two-field account (field count is the profile's)
 ])
 @pytest.mark.parametrize("configured", [True, False, None])
 def test_doctor_reads_only_sanitized_status(monkeypatch, presence, severity, configured):
@@ -25,7 +25,7 @@ def test_doctor_reads_only_sanitized_status(monkeypatch, presence, severity, con
     cfg.models.providers["selected"] = ProviderConfig(type="openai_compatible", enabled=True, api_key_secret_ref="selected-reference")
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     def read_presence(mode, *, cfg):
-        assert mode == "bitget_demo"
+        assert mode == "bitget_demo"  # the configured account, not a fixed venue
         return presence
     monkeypatch.setattr(manager, "read_credential_presence", read_presence)
     monkeypatch.setattr(router, "_provider_status_reader", lambda name, pcfg: {"configured": configured})
@@ -36,11 +36,33 @@ def test_doctor_reads_only_sanitized_status(monkeypatch, presence, severity, con
     report = doctor.Report()
     doctor._probe_credentials(report)
     checks = {check.name: check for check in report.checks}
-    assert checks["creds.bitget_demo"].severity == severity
+    assert checks["creds.exchange"].severity == severity
     assert checks["creds.llm"].severity == ("ok" if configured is True else "warn")
-    if presence is None or len(presence) != 3:
-        assert "unavailable" in checks["creds.bitget_demo"].detail
-        assert not checks["creds.bitget_demo"].fix_hint
+    if presence is None:
+        assert "unavailable" in checks["creds.exchange"].detail
+        assert not checks["creds.exchange"].fix_hint
     if configured is None:
         assert "unavailable" in checks["creds.llm"].detail
         assert "missing" not in checks["creds.llm"].detail
+
+
+def test_doctor_checks_the_configured_account_not_a_fixed_exchange(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.diagnostics import doctor
+    from aletheia.uta import manager
+
+    cfg = AletheiaConfig()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    asked = []
+    monkeypatch.setattr(manager, "read_credential_presence",
+                        lambda mode, *, cfg: asked.append(mode) or (False, False, False))
+
+    report = doctor.Report()
+    doctor._probe_credentials(report)
+    check = {c.name: c for c in report.checks}["creds.exchange"]
+    assert asked == ["okx_demo"]
+    assert check.severity == "blocker" and "okx_demo" in check.detail
+

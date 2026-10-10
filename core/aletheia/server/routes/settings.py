@@ -1,5 +1,6 @@
 """Settings API routes."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import logging
 
 import asyncio
@@ -577,10 +578,17 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         cfg_check,
         changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
     )
-    from aletheia.config.exchange_alignment import exchange_alignment_for_values
+    from aletheia.config.exchange_alignment import (
+        exchange_alignment_for_values,
+        market_data_exchange_for_values,
+    )
     alignment = exchange_alignment_for_values(
         paper_execution_mode=next_paper_mode,
-        data_exchange=cfg_check.market_data.ccxt_exchange,
+        data_exchange=market_data_exchange_for_values(
+            data_exchange=cfg_check.market_data.ccxt_exchange,
+            paper_execution_mode=next_paper_mode,
+            configured_exchange=cfg_check.exchange.name,
+        ),
         configured_exchange=cfg_check.exchange.name,
     )
     if req.paper_execution_mode is not None and req.paper_execution_mode != cfg_check.exchange.paper_execution_mode:
@@ -649,12 +657,8 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
             "risk.allowed_exchange": cfg.risk.allowed_exchange,
         }
 
-        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
-        cfg.exchange.name = eid
-        cfg.market_data.ccxt_exchange = ccxt_ex
-        cfg.market_data.ccxt_fallback = ccxt_ex
-        cfg.exchange.paper_execution_mode = paper_mode
-        cfg.risk.allowed_exchange = eid
+        from aletheia.config.exchange_alignment import apply_primary_exchange
+        apply_primary_exchange(cfg, eid)
 
         after = {
             "exchange.name": cfg.exchange.name,
@@ -2083,7 +2087,7 @@ def update_tradable_symbols(req: SymbolsUpdate):
         if req.mode == "whitelist" and normalized:
             canonical_symbols = [to_canonical(s) for s in normalized]
             cfg.market_data.observed_symbols = canonical_symbols
-            exchange = cfg.market_data.ccxt_exchange or "binance"
+            exchange = market_data_exchange(cfg)
             cfg.market_data.observed_instruments = [
                 str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
                 for sym in canonical_symbols
@@ -2337,9 +2341,10 @@ def update_market_data_config(req: MarketDataConfigUpdate):
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         if field in {"ccxt_exchange", "ccxt_fallback"}:
+            # Empty = follow the trading account's exchange.
             value = str(value).strip().lower()
-            if value not in _SUPPORTED_EXCHANGES:
-                raise HTTPException(400, f"'{field}' must be one of: {sorted(_SUPPORTED_EXCHANGES)}")
+            if value and value not in _SUPPORTED_EXCHANGES:
+                raise HTTPException(400, f"'{field}' must be empty or one of: {sorted(_SUPPORTED_EXCHANGES)}")
         # #35 fix: validate `provider` against the known label set.
         if field == "provider":
             value = str(value).strip().lower()
@@ -2349,14 +2354,19 @@ def update_market_data_config(req: MarketDataConfigUpdate):
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         validated_updates[field] = value
 
-    from aletheia.config.exchange_alignment import exchange_alignment_for_values
+    from aletheia.config.exchange_alignment import (
+        exchange_alignment_for_values,
+        market_data_exchange_for_values,
+    )
 
     persisted: dict[str, Any] = {}
 
     def apply_update(latest) -> bool:
         latest_old = latest.market_data.model_dump(mode="json")
-        next_data_exchange = str(
-            validated_updates.get("ccxt_exchange", latest.market_data.ccxt_exchange),
+        next_data_exchange = market_data_exchange_for_values(
+            data_exchange=str(validated_updates.get("ccxt_exchange", latest.market_data.ccxt_exchange)),
+            paper_execution_mode=latest.exchange.paper_execution_mode,
+            configured_exchange=latest.exchange.name,
         )
         latest_alignment = exchange_alignment_for_values(
             paper_execution_mode=latest.exchange.paper_execution_mode,
@@ -2365,7 +2375,7 @@ def update_market_data_config(req: MarketDataConfigUpdate):
         )
         if (
             "ccxt_exchange" in validated_updates
-            and next_data_exchange != latest.market_data.ccxt_exchange
+            and next_data_exchange != market_data_exchange(latest)
         ):
             _require_exchange_divergence_confirmation(
                 latest_alignment, req.confirm_exchange_divergence,

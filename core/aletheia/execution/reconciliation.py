@@ -18,7 +18,7 @@ import math
 import time
 from aletheia.async_utils import run_coro_from_sync
 from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
-from aletheia.data.symbols import to_bitget
+from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
 from aletheia.execution.errors import IncompleteReadError
@@ -26,12 +26,13 @@ from aletheia.execution.pending_close_recovery import (
     recover_absent_stale_close_orders,
 )
 from aletheia.execution.exchange_materialization import (
+    PRIVATE_CLOSE_EVIDENCE,
     MaterializationIntegrityError,
     durable_private_fill_id,
     evidence_for_order,
     funding_request_for_complete_close,
-    materialize_bitget_close,
-    materialize_bitget_entry,
+    materialize_private_close,
+    materialize_private_entry,
 )
 from aletheia.infra.events import mark_resolved_from_durable, upsert_critical_unresolved
 from aletheia.storage import repositories as repo
@@ -211,19 +212,21 @@ def _local_fill_chain_materialized(order: dict) -> bool:
     return closed_position is not None
 
 
-def _list_bitget_demo_filled_entry_gaps() -> list[dict]:
+def _list_demo_filled_entry_gaps() -> list[dict]:
     """Select historical filled entry gaps without widening the normal scan.
 
     This query is intentionally unbounded and deliberately separate from
-    ``NON_TERMINAL_ORDER_STATES``.  Only native Bitget demo entries with a durable venue
+    ``NON_TERMINAL_ORDER_STATES``.  Only native demo entries with a durable venue
     id are eligible; adopted observations and close Orders remain read-only.
     """
+    from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+    placeholders = ",".join("?" * len(DEMO_EXECUTION_MODES))
     rows = get_db().execute(
-        """
+        f"""
         SELECT o.*
         FROM orders AS o
         WHERE o.status='filled'
-          AND o.execution_mode='bitget_demo'
+          AND o.execution_mode IN ({placeholders})
           AND o.source='native'
           AND COALESCE(o.exchange_order_id, '') <> ''
           AND o.close_reason IS NULL
@@ -259,7 +262,8 @@ def _list_bitget_demo_filled_entry_gaps() -> list[dict]:
               )
           )
         ORDER BY o.created_at ASC, o.rowid ASC
-        """
+        """,
+        tuple(sorted(DEMO_EXECUTION_MODES)),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -370,10 +374,14 @@ def _closed_pending_chain_complete(
     """Prove a stale pending marker from the complete durable close chain."""
     if order is None or not fills:
         return False
+    execution_mode = str(position.get("execution_mode") or "")
+    evidence_identity = PRIVATE_CLOSE_EVIDENCE.get(execution_mode)
+    if evidence_identity is None:
+        return False
+    evidence_source, source_endpoint, account_environment = evidence_identity
     if (
         position.get("status") != "closed"
-        or position.get("execution_mode") != "bitget_demo"
-        or order.get("execution_mode") != "bitget_demo"
+        or order.get("execution_mode") != execution_mode
         or order.get("source") != "native"
         or order.get("status") != "filled"
         or position.get("pending_close_order_id") != order.get("id")
@@ -412,11 +420,11 @@ def _closed_pending_chain_complete(
     if not isinstance(evidence, dict):
         return False
     if (
-        evidence.get("source") != "bitget_private_close_fills"
-        or evidence.get("source_endpoint") != "private_fills"
-        or evidence.get("broker_id") != "bitget_demo"
-        or evidence.get("account_environment") != "demo"
-        or evidence.get("execution_mode") != "bitget_demo"
+        evidence.get("source") != evidence_source
+        or evidence.get("source_endpoint") != source_endpoint
+        or evidence.get("broker_id") != execution_mode
+        or evidence.get("account_environment") != account_environment
+        or evidence.get("execution_mode") != execution_mode
         or str(evidence.get("exchange_order_id") or "")
         != str(order.get("exchange_order_id"))
         or evidence.get("client_order_id") != order.get("client_order_id")
@@ -456,7 +464,7 @@ def _closed_pending_chain_complete(
             return False
         try:
             durable_fill_id = durable_private_fill_id(
-                "bitget_demo", remote_fill_id
+                execution_mode, remote_fill_id
             )
         except MaterializationIntegrityError:
             return False
@@ -539,17 +547,20 @@ def _closed_pending_chain_complete(
 
 def _clear_verified_closed_pending() -> list[str]:
     """Clear only local stale markers backed by a complete close chain."""
+    modes = tuple(sorted(PRIVATE_CLOSE_EVIDENCE))
+    placeholders = ",".join("?" * len(modes))
     candidate_ids = [
         str(row["id"])
         for row in get_db().execute(
-            """
+            f"""
             SELECT id
             FROM positions
             WHERE status='closed'
-              AND execution_mode='bitget_demo'
+              AND execution_mode IN ({placeholders})
               AND COALESCE(pending_close_order_id, '') <> ''
             ORDER BY closed_at ASC, rowid ASC
-            """
+            """,
+            modes,
         ).fetchall()
     ]
     cleared_ids: list[str] = []
@@ -1153,7 +1164,7 @@ def _validate_reconcile_identities(
 
 
 def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
-    """Recover historical Bitget demo gaps from exact private fill evidence."""
+    """Recover historical demo gaps from exact private fill evidence."""
     errors: list[str] = []
     inconclusive = 0
     filled_gap_inconclusive = 0
@@ -1163,8 +1174,9 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
     # Historical terminal Orders are never added to the ordinary open-order
     # scan.  They get a dedicated, exact orderId-only path after local authority
     # and exposure preflights have passed.
-    filled_gap_client = None
+    filled_gap_clients: dict[str, _UTAReconciliationProjection] = {}
     for order in filled_gap_orders:
+        execution_mode = str(order["execution_mode"])
         market_type = str(order.get("market_type") or "")
         try:
             repo.validate_native_order_authority(order)
@@ -1196,13 +1208,15 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
             )
             continue
         try:
+            filled_gap_client = filled_gap_clients.get(execution_mode)
             if filled_gap_client is None:
-                filled_gap_client = _UTAReconciliationProjection("bitget_demo", configured["bitget_demo"])
+                filled_gap_client = _UTAReconciliationProjection(execution_mode, configured[execution_mode])
+                filled_gap_clients[execution_mode] = filled_gap_client
             rows = _response_rows(
                 run_coro_from_sync(
                     filled_gap_client.get_order_fills(
                         order_id=str(order["exchange_order_id"]),
-                        symbol=to_bitget(str(order["symbol"])),
+                        symbol=str(order["symbol"]),
                         market_type=market_type,
                         start_at=order.get("created_at"),
                     )
@@ -1211,7 +1225,7 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
         except Exception as exc:
             filled_gap_inconclusive += 1
             inconclusive += 1
-            errors.append("bitget_demo: historical exact fill history unavailable")
+            errors.append(f"{execution_mode}: historical exact fill history unavailable")
             logger.warning(
                 "reconcile: historical exact fills failed for order %s (%s: %s)",
                 order["id"],
@@ -1238,7 +1252,7 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
             )
             continue
         try:
-            result = materialize_bitget_entry(
+            result = materialize_private_entry(
                 order["id"],
                 rows,
                 historical_gap_recovery=True,
@@ -1246,7 +1260,7 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
         except (MaterializationIntegrityError, ValueError) as exc:
             filled_gap_inconclusive += 1
             inconclusive += 1
-            errors.append("bitget_demo: historical local materialization rejected")
+            errors.append(f"{execution_mode}: historical local materialization rejected")
             logger.warning(
                 "reconcile: historical materialization rejected for order %s (%s: %s)",
                 order["id"],
@@ -1262,7 +1276,7 @@ def _recover_filled_gap_orders(filled_gap_orders, configured) -> dict:
         except Exception as exc:
             filled_gap_inconclusive += 1
             inconclusive += 1
-            errors.append("bitget_demo: historical local materialization failed")
+            errors.append(f"{execution_mode}: historical local materialization failed")
             logger.warning(
                 "reconcile: historical materialization failed for order %s (%s)",
                 order["id"],
@@ -1366,11 +1380,11 @@ def _reconcile_multibroker_orders(multibroker_orders) -> dict:
                     )
         try:
             result = (
-                materialize_bitget_close(
+                materialize_private_close(
                     order["id"], rows, funding_ledger=funding_ledger
                 )
                 if is_close_order
-                else materialize_bitget_entry(order["id"], rows)
+                else materialize_private_entry(order["id"], rows)
             )
         except (MaterializationIntegrityError, ValueError) as exc:
             inconclusive += 1
@@ -1593,11 +1607,10 @@ def _recover_exchange_order_id(
             # which made this lookup return IncompleteReadError forever and left
             # the order machine-owned with no convergence path (#3564).
             try:
-                from aletheia.data.symbols import to_bitget as _to_bitget
                 detail = run_coro_from_sync(
                     client.get_order_detail_by_client_oid(
                         str(order["client_order_id"]),
-                        _to_bitget(str(order["symbol"])),
+                        str(order["symbol"]),
                         start_at=_order_lookup_start(order),
                     )
                 )
@@ -1642,7 +1655,7 @@ def _fetch_order_history_and_ioc_state(
                 run_coro_from_sync(
                         client.get_order_fills(
                             order_id=str(order["exchange_order_id"]),
-                            symbol=to_bitget(str(order["symbol"])),
+                            symbol=str(order["symbol"]),
                             market_type=market_type,
                             start_at=order.get("created_at"),
                         )
@@ -1668,13 +1681,10 @@ def _fetch_order_history_and_ioc_state(
     else:
         rows = list(fill_rows.get(market_type, []))
     if not use_exact_order_history and _needs_symbol_scoped_history(order, rows):
-        # `to_bitget()` is pure string canonicalisation over `str`
-        # (see `data/symbols.py`) — it cannot raise on a `str` input,
-        # so the historical `except Exception: exchange_symbol = None`
-        # was masking data-integrity issues rather than protecting a
-        # real failure path. Other call sites (`:1211`, `:1416`) call
-        # it directly with no guard, which is the correct pattern.
-        exchange_symbol = to_bitget(str(order["symbol"]))
+        # The UTA query boundary (`scope_from_local`) canonicalises the
+        # symbol itself; passing the local canonical form directly avoids a
+        # venue-specific round trip through a single exchange's string format.
+        exchange_symbol = to_canonical(str(order["symbol"]))
         cache_key = (market_type, exchange_symbol)
         if exchange_symbol and cache_key not in symbol_fill_rows:
             try:
@@ -1839,11 +1849,11 @@ def _materialize_native_order(
                 )
     try:
         result = (
-            materialize_bitget_close(
+            materialize_private_close(
                 order["id"], rows, funding_ledger=funding_ledger
             )
             if is_close_order
-            else materialize_bitget_entry(order["id"], rows)
+            else materialize_private_entry(order["id"], rows)
         )
     except (MaterializationIntegrityError, ValueError) as exc:
         errors.append(
@@ -1980,7 +1990,7 @@ def reconcile() -> dict:
     venue gets its stale claim released so the protective exit may retry.
     """
     all_orders = _list_unresolved_core_orders()
-    filled_gap_orders = _list_bitget_demo_filled_entry_gaps()
+    filled_gap_orders = _list_demo_filled_entry_gaps()
     pending_close_cleared_ids = _clear_verified_closed_pending()
 
     bitget_orders = [

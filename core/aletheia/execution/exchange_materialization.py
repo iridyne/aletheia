@@ -69,7 +69,7 @@ def claim_observed_tpsl_close(
                 and existing.get("position_id") == position_id
             ):
                 # A claim written before this account proof existed carries a NULL
-                # identity, and materialize_bitget_close enforces none of its own.
+                # identity, and materialize_private_close enforces none of its own.
                 # Advancing it would file evidence under absent or foreign
                 # provenance, so the carrier proves itself or the claim waits.
                 try:
@@ -896,7 +896,7 @@ def _verify_durable_fills(
             )
 
 
-def materialize_bitget_entry(
+def materialize_private_entry(
     order_id: str,
     rows,
     *,
@@ -1326,7 +1326,7 @@ def funding_request_for_complete_close(order_id: str, rows) -> dict | None:
     }
 
 
-_PRIVATE_CLOSE_EVIDENCE = {
+PRIVATE_CLOSE_EVIDENCE = {
     "bitget_demo": ("bitget_private_close_fills", "private_fills", "demo"),
     "bitget_live_limited": (
         "bitget_private_close_fills",
@@ -1428,7 +1428,7 @@ def _materialize_complete_private_close(
     if not math.isfinite(exit_price) or exit_price <= 0:
         raise PrivateFillEvidenceInvalid("private close exit price must be finite")
     closed_at = max(item.filled_at for item in evidence)
-    evidence_identity = _PRIVATE_CLOSE_EVIDENCE.get(execution_mode)
+    evidence_identity = PRIVATE_CLOSE_EVIDENCE.get(execution_mode)
     if evidence_identity is None:
         raise MaterializationIntegrityError("close private evidence account is unsupported")
     evidence_source, source_endpoint, account_environment = evidence_identity
@@ -1604,7 +1604,7 @@ def _materialize_complete_private_close(
     )
 
 
-def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = None) -> MaterializationResult:
+def materialize_private_close(order_id: str, rows, funding_ledger: dict | None = None) -> MaterializationResult:
     """Converge an asynchronously filled exchange close without invention."""
     try:
         complete = _materialize_complete_private_close(order_id, rows, funding_ledger=funding_ledger)

@@ -122,7 +122,7 @@ expected_status,
 expected_proposal_status,
 late_outcome,):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage import repositories as repo
 
     entered_exchange = threading.Event()
@@ -157,7 +157,7 @@ late_outcome,):
         )
         assert entered_exchange.wait(timeout=5)
         [pending] = repo.list_orders(limit=10)
-        winner = materialize_bitget_entry(
+        winner = materialize_private_entry(
             pending["id"],
             [_private_fill(
                 exchange_order_id,
@@ -197,7 +197,7 @@ late_outcome,):
 def test_late_close_ack_preserves_private_materialization_winner(tmp_path,
 monkeypatch, execution_mode, late_outcome,):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 
@@ -233,7 +233,7 @@ monkeypatch, execution_mode, late_outcome,):
         )
         assert entered_exchange.wait(timeout=5)
         [pending] = [row for row in repo.list_orders(limit=10) if row["close_reason"]]
-        winner = materialize_bitget_close(
+        winner = materialize_private_close(
             pending["id"],
             [_private_fill(
                 exchange_order_id,
@@ -751,9 +751,9 @@ def test_confirmed_exchange_fill_rolls_back_partial_local_materialization(tmp_pa
     result = _execute(**kwargs)
     assert result["order_status"] == "materialization_missing"
     assert result["position_id"] is None
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     with pytest.raises(sqlite3.IntegrityError, match="private-db-detail"):
-        materialize_bitget_entry(result["order_id"], [_private_fill(
+        materialize_private_entry(result["order_id"], [_private_fill(
             "EX-FILLED-LOCAL-FAIL", kwargs["proposal_id"], quantity=0.001, suffix="rollback-entry")])
 
     orders = repo.list_orders(limit=10)
@@ -831,9 +831,9 @@ def test_confirmed_close_local_failure_stays_open_and_suppresses_retry(tmp_path,
     result = broker.close_position(position.id, reason="stop_loss")
     assert result["closed"] is False
     assert result["status"] == "materialization_missing"
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     with pytest.raises(sqlite3.IntegrityError, match="private-close-db-detail"):
-        materialize_bitget_close(result["order_id"], [_private_fill(
+        materialize_private_close(result["order_id"], [_private_fill(
             "EX-CLOSE-LOCAL-FAIL", f"close-{position.id}", quantity=0.01, suffix="rollback-close")])
 
     order = repo.list_orders(limit=10)[0]

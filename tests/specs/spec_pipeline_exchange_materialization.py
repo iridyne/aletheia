@@ -1377,11 +1377,11 @@ def test_complete_private_close_fill_closes_linked_position_once(tmp_path, monke
 
 def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     _, _, position, close_order = _seed_pending_close(exchange_order_id="EX-XM-CLOSE-LEGACY-NULL")
-    result = materialize_bitget_close(
+    result = materialize_private_close(
         close_order.id,
         [
             _private_fill(
@@ -1409,12 +1409,12 @@ def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(tmp_
 
 def test_verified_close_adds_exit_slippage_to_entry_slippage(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.execution.exchange_materialization import materialize_private_close
     from aletheia.storage import repositories as repo
 
     _, _, position, close_order = _seed_pending_close(exchange_order_id="EX-XM-CLOSE-SLIP")
     force_update_position(position.id, slippage_cost=0.5)
-    materialize_bitget_close(
+    materialize_private_close(
         close_order.id,
         [_private_fill("EX-XM-CLOSE-SLIP", "BG-XM-CLOSE-SLIP-1", price=109.0, quantity=1.0,
                        fee=0.2, filled_at_ms=1_784_400_000_000)],
@@ -1558,7 +1558,7 @@ def test_invalid_pending_close_reasoning_blocks_verified_materialization(
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
-        materialize_bitget_close,
+        materialize_private_close,
     )
     from aletheia.storage import repositories as repo
 
@@ -1578,7 +1578,7 @@ def test_invalid_pending_close_reasoning_blocks_verified_materialization(
     ]
 
     with pytest.raises(MaterializationIntegrityError, match=error_match):
-        materialize_bitget_close(close_order.id, fill_rows)
+        materialize_private_close(close_order.id, fill_rows)
 
     stored_order = repo.get_order(close_order.id)
     stored_position = repo._select_one("positions", position.id)
@@ -1618,7 +1618,7 @@ def test_close_order_authority_change_blocks_verified_materialization(tmp_path, 
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
-        materialize_bitget_close,
+        materialize_private_close,
     )
     from aletheia.portfolio import pnl
     from aletheia.storage import repositories as repo
@@ -1677,7 +1677,7 @@ def test_close_order_authority_change_blocks_verified_materialization(tmp_path, 
     ]
 
     with pytest.raises(MaterializationIntegrityError, match="authority changed"):
-        materialize_bitget_close(close_order.id, fill_rows)
+        materialize_private_close(close_order.id, fill_rows)
 
     stored_order = repo.get_order(close_order.id)
     stored_position = repo._select_one("positions", position.id)
@@ -1696,7 +1696,7 @@ def test_invalid_pending_close_reasoning_blocks_partial_fill_write(tmp_path, mon
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
-        materialize_bitget_close,
+        materialize_private_close,
     )
     from aletheia.storage import repositories as repo
 
@@ -1716,7 +1716,7 @@ def test_invalid_pending_close_reasoning_blocks_partial_fill_write(tmp_path, mon
     ]
 
     with pytest.raises(MaterializationIntegrityError, match="close reasoning carrier"):
-        materialize_bitget_close(close_order.id, fill_rows)
+        materialize_private_close(close_order.id, fill_rows)
 
     stored_order = repo.get_order(close_order.id)
     stored_position = repo._select_one("positions", position.id)
@@ -1742,7 +1742,7 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(t
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
-        materialize_bitget_entry,
+        materialize_private_entry,
     )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
@@ -1775,7 +1775,7 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(t
     ]
 
     with pytest.raises(MaterializationIntegrityError, match="linked Position"):
-        materialize_bitget_entry(order.id, fill_rows)
+        materialize_private_entry(order.id, fill_rows)
 
     stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (wrong_position.id,)).fetchone())
     assert stored_position["quantity"] == pytest.approx(2.0)
@@ -1842,7 +1842,7 @@ def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
 def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
     """#172: serenity leg must not silently merge into a short_term position."""
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Position
 
@@ -1898,7 +1898,7 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
             filled_at_ms=1_784_100_000_000,
         )
     ]
-    result = materialize_bitget_entry(second_order.id, fill_rows)
+    result = materialize_private_entry(second_order.id, fill_rows)
     assert result.state == "filled"
 
     # The serenity leg must have created a NEW position, not merged.

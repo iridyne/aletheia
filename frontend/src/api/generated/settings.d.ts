@@ -680,7 +680,7 @@ export interface components {
         MarketDataConfig: {
             /**
              * Ccxt Exchange
-             * @default binance
+             * @default
              */
             ccxt_exchange: string;
             /**

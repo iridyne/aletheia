@@ -520,7 +520,8 @@ class TestFactory:
             ccxt_fallback="bybit",
             enable_crypto_fallback=True,
         )
-        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(market_data=md))
+        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+            market_data=md, exchange=SimpleNamespace(paper_execution_mode="", name="")))
 
         p = get_market_data_provider()
         assert isinstance(p, FallbackChainProvider)
@@ -535,7 +536,8 @@ class TestFactory:
             ccxt_fallback="bybit",
             enable_crypto_fallback=False,
         )
-        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(market_data=md))
+        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+            market_data=md, exchange=SimpleNamespace(paper_execution_mode="", name="")))
 
         p = get_market_data_provider()
         assert isinstance(p, CCXTProvider)

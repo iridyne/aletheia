@@ -1246,19 +1246,31 @@ def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
     assert candle(121_000, 0, 2.75, 4) is None
 
 
-@pytest.mark.parametrize("mode", ["okx_demo", "bitget_live_limited"])
-def test_execute_mode_refuses_unavailable_or_live_stream(mode):
+@pytest.mark.parametrize("mode,expected", [
+    ("", "fast_trigger_stream_unavailable:unknown"),
+    ("bitget_live_limited", "fast_trigger_live_forbidden"),
+])
+def test_execute_mode_refuses_unavailable_or_live_stream(mode, expected):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_stream
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "execute"
     cfg.exchange.paper_execution_mode = mode
-    reason = validate_fast_trigger_stream(cfg)
-    expected = (
-        "fast_trigger_live_forbidden" if "live" in mode else f"fast_trigger_stream_unavailable:{mode.split('_')[0]}"
-    )
-    assert reason == expected
+    assert validate_fast_trigger_stream(cfg) == expected
+
+
+def test_okx_demo_execution_uses_public_okx_stream():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.fast_stream import fast_market_stream_for_config
+    from aletheia.universe.fast_trigger import validate_fast_trigger_stream
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "execute"
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    assert validate_fast_trigger_stream(cfg) is None
+    stream = fast_market_stream_for_config(cfg)
+    assert getattr(stream, "_exchange_name", None) == "okx"
 
 
 def test_binance_testnet_execution_uses_public_binance_stream():

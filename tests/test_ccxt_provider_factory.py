@@ -32,7 +32,7 @@ def _fake_config(exchange="binance", fallback="bybit", crypto_fallback=True):
         ccxt_fallback=fallback,
         enable_crypto_fallback=crypto_fallback,
     )
-    return SimpleNamespace(market_data=md)
+    return SimpleNamespace(market_data=md, exchange=SimpleNamespace(paper_execution_mode="", name=""))
 
 
 def test_factory_uses_config_exchanges(monkeypatch):

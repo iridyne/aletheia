@@ -7,46 +7,14 @@ import threading
 import time
 
 from aletheia.async_utils import run_coro_from_sync
+from aletheia.config.exchanges import ENTRY_ROUTE_POLICIES
 
 logger = logging.getLogger("aletheia.execution.venue_capabilities")
 
 
-def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
-    """Resolve the durable execution mode for a venue under the configured mode.
-
-    Looks the answer up in UTA's authoritative mode list rather than composing
-    `f"{venue}_demo"`. Two reasons string composition is wrong here:
-
-    * the non-live suffix is NOT uniform — Binance's is `binance_testnet`, not
-      `binance_demo` — so composition yields a mode no registry, profile, or Risk
-      pool recognizes;
-    * `config.exchanges.EXECUTION_MODE_VENUES` is the single registered identity
-      list. Sandbox modes (e.g. `okx_demo`, `bitget_demo`) use the dedicated
-      CCXT sandbox capability seam below, but they share the same physical venue
-      identity.
-    """
-    from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
-    from aletheia.uta.manager import UTA_EXECUTION_MODES
-
-    live = configured_exchange_mode == "live"
-    candidates = sorted(
-        mode for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) == venue
-        and (execution_mode_environment(mode) == "live") is live
-    )
-    if not candidates:
-        raise ValueError(
-            f"no {'live' if live else 'non-live'} execution mode registered for venue {venue!r}"
-        )
-    if len(candidates) > 1:
-        raise ValueError(f"ambiguous execution modes for venue {venue!r}: {candidates}")
-    return candidates[0]
-
-
-# Entry execution currently has one proven exchange-Demo handoff. Extend this
-# registry only with matching Planner, Risk/Gateway, and execution tests.
+# Derived from the one route registry, `config.exchanges.ENTRY_ROUTE_POLICIES`.
 ENTRY_EXECUTION_MINIMUM_PERMISSION: dict[str, str] = {
-    "bitget_demo": "Full",
+    mode: policy.minimum_permission for mode, policy in ENTRY_ROUTE_POLICIES.items()
 }
 
 

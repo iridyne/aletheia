@@ -18,6 +18,7 @@ Design:
   within the scheduler's 45s timeout budget at large symbol counts.
 """
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import logging
 import math
 import threading
@@ -286,7 +287,7 @@ def get_watched_instruments(
     always_on_sources_complete = True
     result: list[InstrumentId] = []
     cfg = load_config()
-    default_exchange = cfg.market_data.ccxt_exchange or "binance"
+    default_exchange = market_data_exchange(cfg)
 
     # Load per-venue listing caches once for this call (sync cache read only).
     _listing_cache: dict[str, frozenset[str] | None] = {}

@@ -37,6 +37,7 @@ when a later fetch fails; persistence failures never propagate.
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 from contextlib import contextmanager
@@ -940,11 +941,12 @@ def get_market_data_provider(
     """
     from aletheia.config.loader import load_config
 
-    md = load_config().market_data
-    primary = exchange or md.ccxt_exchange
+    cfg = load_config()
+    md = cfg.market_data
+    primary = exchange or market_data_exchange(cfg)
     ccxt = CCXTProvider(
         exchange=primary,
-        fallback_exchange=fallback_exchange or md.ccxt_fallback,
+        fallback_exchange=fallback_exchange or md.ccxt_fallback or primary,
     )
 
     if native_ccxt or not getattr(md, "enable_crypto_fallback", True):

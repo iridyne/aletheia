@@ -583,7 +583,8 @@ def test_unsupported_account_wide_fills_resolve_through_symbol_read_quietly(
     with caplog.at_level(logging.WARNING, logger="aletheia.reconciliation"):
         result = reconcile()
 
-    assert calls[0] is None and calls[1:] == ["BTCUSDT"]
+    # The symbol read carries the canonical symbol; the UTA query boundary owns venue form.
+    assert calls[0] is None and calls[1:] == ["BTC/USDT"]
     assert result["filled"] == 1
     assert repo.get_order(order.id)["status"] == "filled"
     assert not [r for r in caplog.records if "default private fills failed" in r.getMessage()]

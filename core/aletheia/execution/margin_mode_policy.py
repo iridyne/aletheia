@@ -9,21 +9,23 @@ isolated-position estimate while the venue posts cross margin.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
+
+from aletheia.config.exchanges import ENTRY_ROUTE_POLICIES
 
 MarginMode = Literal["isolated", "cross"]
 
 # V1 qualifies ISOLATED, the only mode whose position-local liquidation model
 # (`calc_liquidation_price` with the exact venue tier maintenance-margin rate)
-# matches what the adapter submits. `bitget_demo` is the one registered Entry
-# Plan route (`ENTRY_EXECUTION_MINIMUM_PERMISSION`), so it is the one route that
-# needs a declared mode today.
+# matches what the adapter submits. Declared per route in
+# `config.exchanges.ENTRY_ROUTE_POLICIES`.
 #
-# A route that is not listed here has no qualified mode: the resolver and the
+# A route that is not listed there has no qualified mode: the resolver and the
 # submission path both fail closed with MARGIN_MODE_UNAVAILABLE rather than
 # falling back to "policy cap = execution leverage" or to a cross-margin guess.
 SUBMISSION_MARGIN_MODE: dict[str, MarginMode] = {
-    "bitget_demo": "isolated",
+    mode: cast(MarginMode, policy.margin_mode)
+    for mode, policy in ENTRY_ROUTE_POLICIES.items()
 }
 
 

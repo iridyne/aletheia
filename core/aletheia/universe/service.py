@@ -6,6 +6,7 @@ Static instruments are an explicitly named observation fallback, never Candidate
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -686,11 +687,11 @@ class UniverseService:
         try:
             await sync_registry(cfg)
             assets = repo.list_universe_assets(
-                venue=cfg.market_data.ccxt_exchange,
+                venue=market_data_exchange(cfg),
                 limit=1000,
             )
             priority_assets = repo.list_candidate_planning_refresh_assets(
-                venue=cfg.market_data.ccxt_exchange,
+                venue=market_data_exchange(cfg),
             )
             priority_asset_ids = {str(asset["id"]) for asset in priority_assets if asset.get("id")}
             if priority_asset_ids:
@@ -718,7 +719,7 @@ class UniverseService:
                 vol_symbols = vol.get("symbols") or [] if vol else []
                 ranked_instruments = _volume_ranked_instruments(
                     vol_symbols[:20],
-                    cfg.market_data.ccxt_exchange,
+                    market_data_exchange(cfg),
                 )
                 rank_index = {
                     (item.exchange, item.symbol, item.market_type): index

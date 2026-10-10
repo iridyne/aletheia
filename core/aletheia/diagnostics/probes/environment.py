@@ -476,25 +476,30 @@ def _probe_credentials(report: Report) -> None:
     from aletheia.uta.manager import read_credential_presence
     cfg = load_config()
 
-    demo_presence = read_credential_presence("bitget_demo", cfg=cfg)
+    # The configured trading account is the only one whose credentials matter;
+    # the field count belongs to that account's Exchange Extension profile.
     mode = cfg.exchange.mode
-    pem = getattr(cfg.exchange, "paper_execution_mode", "")
+    pem = str(getattr(cfg.exchange, "paper_execution_mode", "") or "")
+    required = mode == "demo" and bool(pem)
+    presence = read_credential_presence(pem, cfg=cfg) if pem else None
 
-    if demo_presence is None or len(demo_presence) != 3:
-        report.add("creds.bitget_demo", "blocker" if (mode == "demo" and pem == "bitget_demo") else "warn",
-                   "bitget demo credential status unavailable — configuration not verified")
-    elif all(demo_presence):
-        report.add("creds.bitget_demo", "ok", "all 3 demo credentials SET")
-    elif any(demo_presence):
-        report.add("creds.bitget_demo", "warn",
-                   f"partial: {sum(demo_presence)}/3 demo credentials SET",
-                   "set the missing ones in Settings → Credentials (or `aletheia secrets set bitget.demo.*`)")
+    if not pem:
+        report.add("creds.exchange", "info", "no trading account configured (exchange.paper_execution_mode is empty)")
+    elif not presence:
+        report.add("creds.exchange", "blocker" if required else "warn",
+                   f"{pem} credential status unavailable — configuration not verified")
+    elif all(presence):
+        report.add("creds.exchange", "ok", f"{pem}: all {len(presence)} credentials SET")
+    elif any(presence):
+        report.add("creds.exchange", "warn",
+                   f"{pem}: partial, {sum(presence)}/{len(presence)} credentials SET",
+                   "set the missing ones in Settings → Credentials (or `aletheia secrets set`)")
     else:
-        # Missing demo creds only BLOCKS if the system is configured to place demo orders.
-        sev: Severity = "blocker" if (mode == "demo" and pem == "bitget_demo") else "info"
-        report.add("creds.bitget_demo", sev,
-                   "no bitget demo credentials — bitget_demo orders cannot reach the exchange",
-                   "Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` + api_secret, passphrase)")
+        # Missing creds only BLOCK if the system is configured to place demo orders.
+        sev: Severity = "blocker" if required else "info"
+        report.add("creds.exchange", sev,
+                   f"no {pem} credentials — {pem} orders cannot reach the exchange",
+                   "Settings → Credentials (or `aletheia secrets set`)")
 
     provider = getattr(cfg.models, "default_provider", "")
     pcfg = cfg.models.providers.get(provider) if provider else None

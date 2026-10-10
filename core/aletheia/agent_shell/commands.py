@@ -1,5 +1,6 @@
 """Command handlers for the Agent Shell control plane."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import hashlib
 import json
 import logging
@@ -1292,7 +1293,7 @@ async def set_symbol_observe_only(params: dict) -> dict:
 
         if cfg.market_data.observed_instruments:
             observe_instrument = str(
-                InstrumentId.from_parts(cfg.market_data.ccxt_exchange or "binance", canonical, MARKET_SPOT)
+                InstrumentId.from_parts(market_data_exchange(cfg), canonical, MARKET_SPOT)
             )
             if observe_instrument not in cfg.market_data.observed_instruments:
                 cfg.market_data.observed_instruments.append(observe_instrument)

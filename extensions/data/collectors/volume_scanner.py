@@ -1,6 +1,7 @@
 """Volume scanner — top symbols by 24h quote volume via batch fetch_tickers."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import logging
 import math
@@ -27,7 +28,7 @@ class VolumeScannerCollector:
 
         errors: list[str] = []
         ranked: list[dict] = []
-        default_exchange = load_config().market_data.ccxt_exchange or "binance"
+        default_exchange = market_data_exchange(load_config())
         groups: dict[tuple[str, str], list[InstrumentId]] = defaultdict(list)
         for symbol in symbols[:200]:
             try:

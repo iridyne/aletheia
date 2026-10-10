@@ -8,7 +8,7 @@ from tests.specs import spec_pipeline_exchange_materialization as fixture
 
 
 def test_entry_overfill_is_flagged_normal_position(tmp_path, monkeypatch):
-    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.execution.exchange_materialization import materialize_private_entry
     from aletheia.storage import repositories as repo
 
     fixture._setup_db(tmp_path, monkeypatch)
@@ -17,8 +17,8 @@ def test_entry_overfill_is_flagged_normal_position(tmp_path, monkeypatch):
         "over-1", "over-fill-1", price=100.0, quantity=1.5, fee=0.01, filled_at_ms=1_784_600_000_000
     )
 
-    result = materialize_bitget_entry(order.id, [fill])
-    materialize_bitget_entry(order.id, [fill])  # replay is idempotent
+    result = materialize_private_entry(order.id, [fill])
+    materialize_private_entry(order.id, [fill])  # replay is idempotent
 
     assert (repo.get_trade_proposal(proposal.id) or {})["status"] == "executed"
     assert (repo.get_order(order.id) or {})["status"] == "overfilled"

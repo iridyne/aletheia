@@ -5,6 +5,7 @@ symbols actually supported on the demo environment — no wasted scanning.
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import json
 import logging
@@ -96,7 +97,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
     Returns count of assets upserted.
     """
     md = cfg.market_data
-    venue = md.ccxt_exchange
+    venue = market_data_exchange(cfg)
     provider = get_market_data_provider(venue, exact_venue=True)
     assets: list[UniverseAsset] = []
     sync_started_at = datetime.now(timezone.utc).isoformat()

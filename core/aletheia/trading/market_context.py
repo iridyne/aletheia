@@ -26,6 +26,7 @@ Governance red lines:
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import hashlib
 import logging
@@ -384,7 +385,7 @@ async def build_market_context(
             "usdt_futures": MARKET_PERP,
             "futures": MARKET_FUTURES,
         }.get(raw_market_type, MARKET_SPOT)
-        data_exchange = exchange or md_cfg.ccxt_exchange
+        data_exchange = exchange or market_data_exchange(cfg)
 
         for sym in symbols:
             sym_debug: dict = {}

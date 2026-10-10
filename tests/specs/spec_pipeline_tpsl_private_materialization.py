@@ -834,7 +834,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
         return SimpleNamespace(state="filled")
 
     monkeypatch.setattr(
-        exchange_materialization, "materialize_bitget_close", materialize
+        exchange_materialization, "materialize_private_close", materialize
     )
     monkeypatch.setattr(
         scheduler, "_run_sync_with_timeout", lambda _job, fn: fn()

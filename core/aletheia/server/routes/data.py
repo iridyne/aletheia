@@ -1,5 +1,6 @@
 """Data API routes for dashboard consumption."""
 
+from aletheia.config.exchange_alignment import market_data_exchange
 import json
 import logging
 import threading
@@ -583,7 +584,7 @@ def get_default_exchange_config():
     venue = getattr(cfg.exchange, "name", "") or ""
     if venue and venue.lower() not in {"paper_internal", "unknown", ""}:
         return {"exchange": venue.lower()}
-    fallback = getattr(cfg.market_data, "ccxt_exchange", "") or "binance"
+    fallback = market_data_exchange(cfg)
     return {"exchange": fallback.lower()}
 
 
@@ -1645,7 +1646,7 @@ async def get_market_ohlcv(
     cfg = load_config()
     md_cfg = cfg.market_data
     sym = to_canonical(symbol)
-    effective_exchange = exchange or md_cfg.ccxt_exchange
+    effective_exchange = exchange or market_data_exchange(cfg)
     limit = max(1, min(limit, 1000))  # bound to CCXT's typical per-request ceiling
 
     # Build an InstrumentId so CCXTProvider uses the correct CCXT symbol internally

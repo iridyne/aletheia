@@ -1,6 +1,7 @@
 """Frozen prospective measurement of Universe candidate-selection quality."""
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import logging
 import gzip
@@ -122,7 +123,7 @@ def _frozen_config(cfg) -> dict[str, Any]:
     return {
         "universe": cfg.universe.model_dump(mode="json"),
         "market_data": {
-            "ccxt_exchange": cfg.market_data.ccxt_exchange,
+            "ccxt_exchange": market_data_exchange(cfg),
             "ccxt_fallback": cfg.market_data.ccxt_fallback,
         },
         "exchange": {

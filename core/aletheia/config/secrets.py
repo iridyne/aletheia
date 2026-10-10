@@ -17,6 +17,7 @@ try:
 except ImportError:  # pragma: no cover - POSIX
     _msvcrt = None
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
 from aletheia.config.loader import get_data_dir, is_preview_mode
 
 logger = logging.getLogger("aletheia.config.secrets")
@@ -113,7 +114,7 @@ def _exchange_credential_scope(key: str) -> str | None:
     parts = key.split(".")
     if (
         len(parts) == 3
-        and parts[0] in {"binance", "okx", "bitget"}
+        and parts[0] in EXCHANGE_UNIFICATION_MAP
         and parts[1] in {"demo", "testnet", "live"}
         and parts[2] in _EXCHANGE_CREDENTIAL_FIELDS
     ):

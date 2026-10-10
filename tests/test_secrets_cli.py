@@ -40,9 +40,3 @@ def test_secrets_list_shows_set_and_missing(tmp_path, monkeypatch):
     # raw secret never printed
     assert "abcd1234" not in result.output
 
-
-def test_secrets_test_unknown_service(tmp_path, monkeypatch):
-    _isolate(tmp_path, monkeypatch)
-    result = runner.invoke(app, ["secrets", "test", "binance"])
-    assert result.exit_code == 1
-    assert "Unknown service" in result.output

@@ -678,7 +678,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         return {"status": "filled", "entry_plan_id": plan_id}
 
     try:
-        from aletheia.execution.exchange_materialization import materialize_bitget_entry
+        from aletheia.execution.exchange_materialization import materialize_private_entry
         from aletheia.async_utils import run_coro_from_sync
         from aletheia.execution.reconciliation import _UTAReconciliationProjection
         from aletheia.uta.compat import scope_from_local
@@ -716,7 +716,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
             return pending_with_defer()
         if rows:
-            materialize_bitget_entry(order["id"], rows)
+            materialize_private_entry(order["id"], rows)
         exact_state = report.found.state
         exact_filled = float(report.found.filled_quantity)
         local_filled = filled_quantity(repo.get_order(order["id"]))

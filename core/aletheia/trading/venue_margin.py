@@ -303,17 +303,19 @@ async def refresh_venue_margin_envelope(
     from the synchronous Compiler/Risk sizing path.
     """
     ccxt_symbol = symbol if market_type == MARKET_SPOT else to_ccxt_perp(symbol)
-    venue_key = str(venue or "").strip().lower()
+    # CCXT advertises each venue's tier API in `exchange.has`: a native
+    # per-symbol read is preferred; an emulated one wraps the batch read anyway.
+    has = getattr(exchange, "has", None) or {}
     try:
-        if venue_key == "bitget":
+        if has.get("fetchMarketLeverageTiers") is True:
             raw_tiers = await exchange.fetch_market_leverage_tiers(ccxt_symbol)
-        elif venue_key == "binanceusdm":
+        elif has.get("fetchLeverageTiers") is True:
             tiers_by_symbol = await exchange.fetch_leverage_tiers([ccxt_symbol])
             raw_tiers = tiers_by_symbol.get(ccxt_symbol)
         else:
             raise VenueMarginUnavailable(
                 REASON_TIERS_UNAVAILABLE,
-                f"no leverage-tier API mapping registered for venue {venue!r}",
+                f"venue {venue!r} exposes no CCXT leverage-tier API",
             )
     except VenueMarginUnavailable:
         raise

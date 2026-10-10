@@ -1,3 +1,4 @@
+from aletheia.config.exchange_alignment import market_data_exchange
 import logging
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
@@ -83,7 +84,7 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
     # read 76% long whether the instrument is spot or perp (price ≈ identical).
     # Emitting two would call the LLM twice for the same signal and downstream
     # consumers would receive duplicate opportunities. OD-S01 locks.
-    exchange = cfg.market_data.ccxt_exchange or "binance"
+    exchange = market_data_exchange(cfg)
     preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
     result = []
     for sym in cfg.market_data.observed_symbols:
@@ -182,6 +183,6 @@ def calc_liquidation_price(
 
 def futures_instruments_from_config(cfg) -> list[InstrumentId]:
     """Return InstrumentId list for configured futures symbols."""
-    exchange = cfg.market_data.ccxt_exchange or "binance"
+    exchange = market_data_exchange(cfg)
     symbols = getattr(cfg.exchange, "futures_symbols", []) or []
     return [InstrumentId.from_parts(exchange, sym, MARKET_PERP) for sym in symbols]

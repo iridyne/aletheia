@@ -7,6 +7,7 @@ Used by:
 """
 
 from __future__ import annotations
+from aletheia.config.exchange_alignment import market_data_exchange
 
 import asyncio
 import logging
@@ -54,7 +55,7 @@ async def download_symbol_history(
     )
 
     cfg = load_config()
-    target_exchange = (exchange or cfg.market_data.ccxt_exchange).lower()
+    target_exchange = (exchange or market_data_exchange(cfg)).lower()
     instrument = InstrumentId.from_parts(target_exchange, symbol, market_type)
     tf_ms = timeframe_ms(timeframe)
     if tf_ms == 0:

@@ -1393,8 +1393,8 @@ export interface paths {
          *     Strategy depends on the runtime mode:
          *     - Under --reload (dev mode): touch a sentinel .py file to trigger uvicorn's
          *       file-watcher reload. Worker stays alive until the reloader kills it cleanly.
-         *     - Without --reload: os._exit(42) kills this process; the managed supervisor
-         *       owns the normal restart path.
+         *     - Without --reload: a controlled restart (#1454) runs the graceful lifespan
+         *       shutdown, then exits 42; the supervisor respawns it outside the crash budget.
          */
         post: operations["restart_gateway_api_gateway_restart_post"];
         delete?: never;
@@ -8916,7 +8916,7 @@ export interface components {
         MarketDataConfig: {
             /**
              * Ccxt Exchange
-             * @default binance
+             * @default
              */
             ccxt_exchange: string;
             /**
