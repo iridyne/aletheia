@@ -192,7 +192,7 @@ def _read_process_command_line(pid: int) -> str | None:
         logger.debug("operator_shell: /proc command-line probe failed; falling back to ps", exc_info=True)
     try:
         return subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
             capture_output=True,
             text=True,
             timeout=5,
@@ -335,7 +335,7 @@ def _list_operator_shell_processes() -> list[tuple[int, int, str]]:
 
     try:
         out = subprocess.run(
-            ["ps", "-eo", "pid=,ppid=,args="],
+            ["ps", "-ww", "-eo", "pid=,ppid=,args="],  # -ww: procps cuts at 80 cols off a tty, losing markers
             capture_output=True,
             text=True,
             timeout=10,
