@@ -1280,33 +1280,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   border-bottom: 1px solid var(--accent);
 }
 
-/* ---------- News Intelligence list ---------- */
-.news-card {
-  display: block;
-  width: 100%;
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: 0;
-  color: var(--text);
-  font: inherit;
-  font-weight: 400;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-.news-card:hover { filter: none; background: var(--surface-2); border-color: var(--border-2); }
-button.news-card:active:not(:disabled) { transform: none; }
-/* clamp summary to 2 lines at a word boundary instead of a mid-word .slice() */
-.news-prose { line-height: 1.6; }
-.news-feeds-grid { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
-.news-feed-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) 0; }
-.news-feed-info { display: flex; flex-direction: column; }
-.news-feed-name { font-size: 0.82rem; }
-.news-feed-source { font-family: var(--mono); }
-.news-add-form input, .news-add-form select, .news-add-form textarea {
-  width: 100%; font-size: 0.82rem; font-family: var(--mono);
-}
-.news-add-form textarea { resize: vertical; }
-
 /* ---------- Universe Board ---------- */
 .entry-workbench { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .entry-workbench-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
@@ -1920,19 +1893,6 @@ button.market-instrument-group-title { font-family: inherit; }
 .macro-cell-change { font-size: 0.68rem; font-feature-settings: 'tnum' 1; }
 
 /* ---------- AI bias dot on watchlist cards ---------- */
-
-/* ---------- News feed ---------- */
-.news-feed { display: flex; flex-direction: column; gap: var(--space-2); }
-.news-item {
-  padding: var(--space-2) var(--space-3); border: 1px solid var(--border);
-  border-radius: var(--r); background: var(--surface);
-}
-.news-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); margin-bottom: 3px; }
-.news-item-title { font-size: 0.82rem; font-weight: 500; line-height: 1.35; }
-.news-item-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: 2px; }
-.news-item-source { font-size: 0.68rem; color: var(--muted); }
-.news-item-ts { font-size: 0.68rem; color: var(--faint); }
-.news-item-summary { font-size: 0.78rem; color: var(--muted); line-height: 1.4; margin-top: 3px; }
 
 /* ---------- Predictions grid ---------- */
 .pred-grid {

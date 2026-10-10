@@ -569,7 +569,7 @@ export function PredictionStatusNotice({ state, enabled }: { state: PredictionSt
       <DataStateMessage
         state="stale"
         message={enabled === true
-          ? 'Prediction status is stale. Retained observations are shown for context; refresh is disabled until live status is confirmed.'
+          ? 'Prediction status is stale. Retained observations are shown for context.'
           : 'Prediction status is stale and the last known mode was disabled. Live availability is not confirmed.'}
       />
     )
@@ -684,27 +684,11 @@ export default function PredictionLens() {
     next.delete('market_id')
     setSearchParams(next)
   }
-  const refresh = useMutation({
-    mutationFn: api.refreshPrediction,
-    onSuccess: () => {
-      toast('success', 'Prediction refresh triggered')
-      qc.invalidateQueries({ queryKey: ['prediction-status'] })
-      qc.invalidateQueries({ queryKey: ['prediction-markets'] })
-      qc.invalidateQueries({ queryKey: ['prediction-runs'] })
-    },
-    onError: (e: any) => toast('error', `Refresh failed: ${e?.message || 'request failed'}`),
-  })
-
   return (
     <div className="pred-page-wrapper">
       <PageHeader
         title="Prediction Markets"
         role="Observe · prediction market probability trends from Polymarket. Observation-only — not routed to Paper Trader or Live Execution."
-        actions={
-          <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending || statusView.state !== 'enabled'}>
-            {refresh.isPending ? 'Refreshing…' : 'Refresh Now'}
-          </Button>
-        }
       />
 
       <PredictionStatusNotice state={statusView.state} enabled={statusView.enabled} />

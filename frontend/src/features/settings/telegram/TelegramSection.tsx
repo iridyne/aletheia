@@ -20,8 +20,6 @@ interface TelegramConfig {
 	enabled?: boolean;
 	allowed_chat_ids?: number[];
 	notify_trade_fills?: boolean;
-	notify_daily_summary?: boolean;
-	daily_summary_hour_cst?: number;
 	dnd_enabled?: boolean;
 	dnd_start_hour?: number;
 	dnd_end_hour?: number;
@@ -33,7 +31,6 @@ function errorMessage(error: unknown): string {
 
 interface TelegramDraftInputs {
 	chatIdsInput: string;
-	summaryHourInput: string;
 	dndStartInput: string;
 	dndEndInput: string;
 }
@@ -46,7 +43,6 @@ type TelegramDraftError = {
 
 interface TelegramDraftValue {
 	allowed_chat_ids: number[];
-	daily_summary_hour_cst: number;
 	dnd_start_hour: number;
 	dnd_end_hour: number;
 }
@@ -81,7 +77,6 @@ function parseHourDraft(
 
 export function parseTelegramDraft({
 	chatIdsInput,
-	summaryHourInput,
 	dndStartInput,
 	dndEndInput,
 }: TelegramDraftInputs): TelegramDraftResult {
@@ -107,12 +102,6 @@ export function parseTelegramDraft({
 		chatIds.push(chatId);
 	}
 
-	const summaryHour = parseHourDraft(
-		"summaryHourInput",
-		"Summary hour",
-		summaryHourInput,
-	);
-	if (!summaryHour.ok) return summaryHour;
 	const dndStart = parseHourDraft(
 		"dndStartInput",
 		"DND start hour",
@@ -130,7 +119,6 @@ export function parseTelegramDraft({
 		ok: true,
 		value: {
 			allowed_chat_ids: chatIds,
-			daily_summary_hour_cst: summaryHour.value,
 			dnd_start_hour: dndStart.value,
 			dnd_end_hour: dndEnd.value,
 		},
@@ -159,8 +147,6 @@ export function TelegramSection({
 	const [enabled, setEnabled] = useState(false);
 	const [chatIdsInput, setChatIdsInput] = useState("");
 	const [notifyFills, setNotifyFills] = useState(true);
-	const [notifySummary, setNotifySummary] = useState(true);
-	const [summaryHourInput, setSummaryHourInput] = useState("8");
 	const [dndEnabled, setDndEnabled] = useState(false);
 	const [dndStartInput, setDndStartInput] = useState("23");
 	const [dndEndInput, setDndEndInput] = useState("7");
@@ -171,17 +157,13 @@ export function TelegramSection({
 	const telegram = (settings?.telegram as TelegramConfig | undefined) ?? {};
 	const draft = parseTelegramDraft({
 		chatIdsInput,
-		summaryHourInput,
 		dndStartInput,
 		dndEndInput,
 	});
 	const inputErrorId = "telegram-input-error";
-	const summaryHourLabel = summaryHourInput.trim() || "--";
 	const dirty = enabled !== !!telegram.enabled
 		|| chatIdsInput !== (telegram.allowed_chat_ids ?? []).join(", ")
 		|| notifyFills !== (telegram.notify_trade_fills !== false)
-		|| notifySummary !== (telegram.notify_daily_summary !== false)
-		|| summaryHourInput !== String(telegram.daily_summary_hour_cst ?? 8)
 		|| dndEnabled !== !!telegram.dnd_enabled
 		|| dndStartInput !== String(telegram.dnd_start_hour ?? 23)
 		|| dndEndInput !== String(telegram.dnd_end_hour ?? 7);
@@ -194,8 +176,6 @@ export function TelegramSection({
 			setEnabled(!!telegram.enabled);
 			setChatIdsInput((telegram.allowed_chat_ids ?? []).join(", "));
 			setNotifyFills(telegram.notify_trade_fills !== false);
-			setNotifySummary(telegram.notify_daily_summary !== false);
-			setSummaryHourInput(String(telegram.daily_summary_hour_cst ?? 8));
 			setDndEnabled(!!telegram.dnd_enabled);
 			setDndStartInput(String(telegram.dnd_start_hour ?? 23));
 			setDndEndInput(String(telegram.dnd_end_hour ?? 7));
@@ -208,7 +188,6 @@ export function TelegramSection({
 			return api.updateTelegramConfig({
 				enabled,
 				notify_trade_fills: notifyFills,
-				notify_daily_summary: notifySummary,
 				dnd_enabled: dndEnabled,
 				...draft.value,
 			});
@@ -293,40 +272,6 @@ export function TelegramSection({
 						}}
 					/>
 				</div>
-				<div className="settings-action-row settings-action-row-start">
-					<Toggle
-						checked={notifySummary}
-						persistence="staged"
-						label={`Daily PnL summary (${summaryHourLabel.padStart(2, "0")}:00 CST)`}
-						onChange={(value) => {
-							setNotifySummary(value);
-							setMessage(null);
-						}}
-					/>
-				</div>
-				{notifySummary && (
-					<div className="form-grid mb-3">
-						<label>
-							<span>Summary hour (CST)</span>
-							<input
-								type="number"
-								min={0}
-								max={23}
-								value={summaryHourInput}
-								onChange={(event) => {
-									setSummaryHourInput(event.target.value);
-									setMessage(null);
-								}}
-								aria-invalid={!draft.ok && draft.field === "summaryHourInput"}
-								aria-describedby={
-									!draft.ok && draft.field === "summaryHourInput"
-										? inputErrorId
-										: undefined
-								}
-							/>
-						</label>
-					</div>
-				)}
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={dndEnabled}

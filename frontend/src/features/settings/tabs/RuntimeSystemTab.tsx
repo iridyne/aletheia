@@ -43,7 +43,7 @@ export const SOFTWARE_UPDATES_SECTION = {
 
 export const NETWORK_PROXY_SECTION = {
   id: 'network-proxy', title: 'Network Proxy', tab: 'runtime',
-  description: 'Route all outbound traffic (exchange, market data, news, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.',
+  description: 'Route all outbound traffic (exchange, market data, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.',
   searchTerms: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'],
 } satisfies SettingsFeatureDescriptor
 
@@ -56,8 +56,6 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       enabled: hd.enabled ?? true,
       max_bars_per_pair: hd.max_bars_per_pair ?? 50000,
       default_months: hd.default_months ?? 6,
-      nightly_backfill_enabled: hd.nightly_backfill_enabled ?? true,
-      nightly_backfill_hour_cst: hd.nightly_backfill_hour_cst ?? 3,
       min_bars_for_backtest: hd.min_bars_for_backtest ?? 200,
       active_universe_backfill_enabled: hd.active_universe_backfill_enabled ?? true,
       active_universe_backfill_interval_minutes: hd.active_universe_backfill_interval_minutes ?? 10,
@@ -82,13 +80,11 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const boolFields: BoolField[] = [
     { key: 'enabled', label: 'Enabled' },
-    { key: 'nightly_backfill_enabled', label: 'Nightly backfill' },
     { key: 'active_universe_backfill_enabled', label: 'Active Universe catch-up' },
   ]
   const numFields: NumField[] = [
     { key: 'max_bars_per_pair', label: 'Max bars/pair', unit: '', min: 1000, max: 200000, step: 5000, isInt: true },
     { key: 'default_months', label: 'Default months', unit: 'mo', min: 1, max: 24, step: 1, isInt: true },
-    { key: 'nightly_backfill_hour_cst', label: 'Backfill hour (CST)', unit: 'h', min: 0, max: 23, step: 1, isInt: true },
     { key: 'min_bars_for_backtest', label: 'Min bars for backtest', unit: '', min: 30, max: 5000, step: 10, isInt: true },
     { key: 'active_universe_backfill_interval_minutes', label: 'Active catch-up interval', unit: 'min', min: 5, max: 60, step: 5, isInt: true },
     { key: 'active_universe_backfill_max_pairs_per_run', label: 'Active catch-up pairs/run', unit: '', min: 1, max: 10, step: 1, isInt: true },

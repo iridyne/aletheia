@@ -61,10 +61,8 @@ vi.mock('../features/settings/tabs/RuntimeSystemTab', () => ({
 }))
 vi.mock('../features/settings/tabs/SignalsTab', () => ({
   SignalsTab: () => null,
-  EQUITIES_SECTION:           { id: 'equities',           title: 'Equities',           tab: 'signals', description: '', searchTerms: [] },
   MACRO_SIGNALS_SECTION:      { id: 'macro-signals',      title: 'Macro Signals',      tab: 'signals', description: '', searchTerms: [] },
   MARKET_DATA_SECTION:        { id: 'market-data',        title: 'Market Data',        tab: 'signals', description: '', searchTerms: [] },
-  NEWS_FEEDS_SECTION:         { id: 'news-feeds',         title: 'News Feeds',         tab: 'signals', description: '', searchTerms: [] },
   PREDICTION_MARKETS_SECTION: { id: 'prediction-markets', title: 'Prediction Markets', tab: 'signals', description: '', searchTerms: [] },
 }))
 vi.mock('../features/settings/tabs/RiskTab', () => ({

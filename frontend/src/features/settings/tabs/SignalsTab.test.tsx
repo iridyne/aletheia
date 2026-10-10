@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { SignalsTab } from './SignalsTab'
 import SRC from './SignalsTab.tsx?raw'
 
-function renderSignalsTab(marketData: { observed_equities?: string[] } = {}) {
+function renderSignalsTab() {
   const client = new QueryClient()
   client.setQueryData(['prediction-status'], { enabled: true })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <SignalsTab
-        settings={{ market_data: marketData, exchange: {}, news: { enabled: true, feeds: [] } }}
+        settings={{ market_data: {}, exchange: {} }}
         qc={client}
         onDirty={() => undefined}
       />
@@ -19,18 +19,9 @@ function renderSignalsTab(marketData: { observed_equities?: string[] } = {}) {
 }
 
 describe('SignalsTab', () => {
-  it('renders only the canonical equities control, including an explicit empty workset', () => {
-    expect(renderSignalsTab({ observed_equities: ['TSLA'] })).toContain('Remove TSLA')
-    const empty = renderSignalsTab({ observed_equities: [] })
-    expect(empty).toContain('No tickers — equity_observer will not run.')
-    expect(empty).not.toContain('Observed stocks')
-    expect(SRC).not.toContain('observed_stocks')
-    expect(SRC).toContain('api.updateEquities(draft)')
-  })
-
   it('preserves section order and deep-link anchors', () => {
     const html = renderSignalsTab()
-    const ids = ['market-data-sources', 'macro-sentiment-signals', 'news-feeds', 'prediction-markets', 'observed-us-equities']
+    const ids = ['market-data-sources', 'macro-sentiment-signals', 'prediction-markets']
     let previous = -1
     for (const id of ids) {
       const position = html.indexOf(`id="settings-section-${id}"`)
@@ -44,12 +35,6 @@ describe('SignalsTab', () => {
 
     expect(SRC).toContain('<MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Fear &amp; Greed Index')
-    expect(html).toContain('News ingestion')
     expect(html).toContain('Prediction observer')
-    expect(html).toContain('No tickers — equity_observer will not run.')
-  })
-
-  it('names each news-feed switch from its sibling feed identity', () => {
-    expect(SRC).toContain('aria-label={`Enable ${f.name}`}')
   })
 })

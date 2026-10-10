@@ -130,8 +130,8 @@ export interface components {
          *       `warn_only` means budget crossings are signals, never blocks.
          *       `fallback_to_defaults` and `hard_block` are opt-in for
          *       non-safety callers only; safety-relevant callers
-         *       (pi_trading_decision, risk_critic,
-         *       agent_shell/trading_decision) stay warn-only regardless.
+         *       (pi_trading_decision, agent_shell/trading_decision) stay
+         *       warn-only regardless.
          *     - `harness_header_default_on`: Phase 5 feature flag. Off until an
          *       ablation study (see docs/design/proposals/
          *       tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears

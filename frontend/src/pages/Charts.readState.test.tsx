@@ -1,14 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   opportunities: undefined as unknown,
   opportunityLoading: false,
   opportunityError: false,
-  news: undefined as unknown,
-  newsLoading: false,
-  newsError: false,
   macro: undefined as unknown,
   macroLoading: false,
   macroError: false,
@@ -17,7 +13,6 @@ const state = vi.hoisted(() => ({
 vi.mock('../api/client', () => ({
   api: {
     getOpportunities: vi.fn(),
-    getNews: vi.fn(),
     getMacro: vi.fn(),
   },
 }))
@@ -25,7 +20,6 @@ vi.mock('../api/client', () => ({
 vi.mock('@tanstack/react-query', () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     if (queryKey[0] === 'opportunities') return { data: state.opportunities, isLoading: state.opportunityLoading, isError: state.opportunityError }
-    if (queryKey[0] === 'news') return { data: state.news, isLoading: state.newsLoading, isError: state.newsError }
     return { data: state.macro, isLoading: state.macroLoading, isError: state.macroError }
   },
 }))
@@ -41,10 +35,8 @@ vi.mock('../charts/PriceChart', async () => {
   }
 })
 
-import { NewsTab, SignalsTab } from './Charts'
+import { SignalsTab } from './Charts'
 import MacroBar from '../components/MacroBar'
-
-const renderNews = () => renderToStaticMarkup(<MemoryRouter><NewsTab /></MemoryRouter>)
 
 const opportunity = {
   id: 'opp-1', symbol: 'BTC/USDT', market: 'spot', asset_class: 'crypto',
@@ -76,24 +68,6 @@ describe('Charts read-state contract', () => {
     expect(html).not.toContain('No active signals')
   })
 
-  it('distinguishes news failures from a successful empty news feed', () => {
-    state.news = undefined
-    state.newsError = true
-    expect(renderNews()).toContain('News data unavailable')
-
-    state.news = []
-    state.newsError = false
-    expect(renderNews()).toContain('News ingestion not configured')
-  })
-
-  it('does not describe a stale empty news cache as unconfigured', () => {
-    state.news = []
-    state.newsError = true
-    const html = renderNews()
-    expect(html).toContain('News data is stale')
-    expect(html).not.toContain('News ingestion not configured')
-  })
-
   it('renders macro read failures as unavailable and retained values as stale', () => {
     state.macro = undefined
     state.macroError = true
@@ -116,10 +90,6 @@ describe('Charts read-state contract', () => {
     state.opportunities = []
     state.opportunityError = false
     expect(renderToStaticMarkup(<SignalsTab onInstrumentSelect={() => undefined} />)).toContain('No active signals')
-
-    state.news = [{ id: 'news-1', title: 'Current item' }]
-    state.newsError = false
-    expect(renderNews()).not.toContain('News data is stale')
 
     state.macro = { available: false, data: null }
     state.macroError = false

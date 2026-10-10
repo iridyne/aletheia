@@ -65,7 +65,7 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'retention.agent_runs_days', 'retention.tool_calls_days', 'retention.run_steps_days',
     'retention.market_snapshots_days', 'retention.portfolio_snapshots_days', 'retention.opportunity_ttl_hours', 'retention.jsonl_max_mb',
     'telegram.enabled', 'telegram.allowed_chat_ids',
-    'telegram.notify_trade_fills', 'telegram.notify_daily_summary', 'telegram.daily_summary_hour_cst',
+    'telegram.notify_trade_fills',
     'telegram.dnd_enabled', 'telegram.dnd_start_hour', 'telegram.dnd_end_hour',
     'update.enabled', 'update.branch',
     'universe.enabled', 'universe.refresh_interval_min', 'universe.max_candidates', 'universe.core_pool_size',
@@ -73,12 +73,11 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'universe.explore_ratio', 'universe.blacklist', 'universe.fallback_symbols',
     'universe.market_type', 'universe.family_quota', 'universe.family_quota_by_regime',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
-    'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
+    'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min',
     'market_data.observed_stock_tokens', 'market_data.observed_prediction_markets',
     // These DO have UI controls — were missing from the set so the coverage matrix
     // falsely labelled them "config.yaml only" (CUI-3, honesty fix):
     'market_data.prediction_enabled',   // PredictionToggleCard
-    'market_data.observed_equities',     // EquitiesCard
     'trading.market_aware_exits.enabled', 'trading.market_aware_exits.urgent_exit_score',
     'trading.market_aware_exits.tighten_stop_score', 'trading.market_aware_exits.confidence_collapse_score',
     'trading.market_aware_exits.tighten_atr_mult',  // TradingParamsCard

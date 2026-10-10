@@ -98,9 +98,6 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
     ['serenity-runs'],        // matches all ['serenity-runs', limit]
     ['serenity-run-detail'],  // matches all ['serenity-run-detail', runId]
   ],
-  news_items: [
-    ['news'],
-  ],
   prediction_runs: [
     ['prediction-status'],
     ['prediction-markets'],

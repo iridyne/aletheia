@@ -146,7 +146,6 @@ export default function CommandPalette({
     { id: 'nav-command-center', label: 'Open Command Center', group: 'Navigation', keywords: 'operator chat control room shell', action: () => navigate('/command-center') },
     { id: 'nav-overview', label: 'Go to Overview', group: 'Navigation', keywords: 'cockpit home dashboard', action: () => navigate('/') },
     { id: 'nav-charts', label: 'Go to Markets', group: 'Navigation', keywords: 'charts price', action: () => navigate('/charts') },
-    { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
     { id: 'nav-serenity-lens', label: 'Go to Serenity Lens', group: 'Navigation', keywords: 'research lens chokepoint opportunities', action: () => navigate('/serenity-lens') },
     { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
@@ -165,7 +164,6 @@ export default function CommandPalette({
     { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) await setKillSwitch(false) } },
     { id: 'sys-dump-incident', label: 'Dump Incident Snapshot (JSON)', group: 'System', keywords: 'debug diagnostic memory blackbox state export snapshot incident', action: () => dumpIncidentSnapshot(qc) },
 
-    { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },
     { id: 'agent-dreaming', label: 'Run Dreaming Agent', group: 'Agents', keywords: 'trigger start dream consolidate', action: () => startAgent('dreaming_agent') },
   ]
 

@@ -1,6 +1,6 @@
 import {
   Activity, ChartCandlestick, Command, Gauge, Globe,
-  GraduationCap, LayoutDashboard, Newspaper, Settings, ShieldAlert,
+  GraduationCap, LayoutDashboard, Settings, ShieldAlert,
   Telescope, TrendingUp, Wallet, type LucideIcon,
 } from 'lucide-react'
 
@@ -17,7 +17,6 @@ export const NAV: NavGroup[] = [
     { to: '/charts', label: 'Markets', icon: ChartCandlestick },
     { to: '/prediction-markets', label: 'Prediction Markets', icon: TrendingUp },
     { to: '/serenity-lens', label: 'Serenity Lens', icon: Telescope },
-    { to: '/news', label: 'News Intel', icon: Newspaper },
   ] },
   { group: 'Decision', items: [
     { to: '/universe', label: 'Entry Workbench', icon: Globe },
