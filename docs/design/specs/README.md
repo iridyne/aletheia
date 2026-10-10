@@ -81,4 +81,4 @@ requirement-id uniqueness and the zero-marker rule for `approved`.
 | Spec | Status | Summary |
 |---|---|---|
 | [0001-learning-loop](0001-learning-loop/spec.md) | approved | Decision-level learning from own mistakes: replay labels, process review, one playbook, advisory vs authority tiers, bundle on/off measurement |
-| [0002-futures-only-convergence](0002-futures-only-convergence/spec.md) | draft | Remove code serving closed scopes: spot residue and defaults, spot fallback, out-of-scope observers, orphan data renderers, persona sizing, uncalled functions |
+| [0003-futures-only-convergence](0003-futures-only-convergence/spec.md) | draft | Remove code serving closed scopes: spot residue and defaults, spot fallback, out-of-scope observers, orphan data renderers, persona sizing, uncalled functions |

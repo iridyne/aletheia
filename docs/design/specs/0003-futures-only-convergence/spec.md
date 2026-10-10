@@ -1,5 +1,5 @@
 ---
-id: 0002-futures-only-convergence
+id: 0003-futures-only-convergence
 title: Converge the code onto the futures-only trading mainline
 status: draft
 depth: D1
@@ -15,7 +15,7 @@ supersedes: []
 superseded_by: []
 ---
 
-# 0002 — Converge the code onto the futures-only trading mainline
+# 0003 — Converge the code onto the futures-only trading mainline
 
 ## Summary
 

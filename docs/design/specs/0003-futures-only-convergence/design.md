@@ -1,4 +1,4 @@
-# 0002 — Converge the code onto the futures-only trading mainline: design
+# 0003 — Converge the code onto the futures-only trading mainline: design
 
 Answers [spec.md](spec.md). Every section cites the requirement ids it serves.
 
