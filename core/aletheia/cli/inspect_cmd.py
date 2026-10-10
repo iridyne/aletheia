@@ -688,6 +688,38 @@ def candidates(
     _output(list_entry_workbench_candidates(limit=limit), json_output)
 
 
+@inspect_app.command("decision-quality")
+def decision_quality(
+    days: int = typer.Option(7, "--days", min=1),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Each AI entry decision, its stated reason, and its cost-adjusted outcome."""
+    from aletheia.analytics.decision_ledger import build_decision_ledger
+    from aletheia.storage.sqlite import readonly_db
+
+    with readonly_db():
+        ledger = build_decision_ledger(days=days)
+    if json_output:
+        _output(ledger, True)
+        return
+    typer.echo(f"{'created_at':16}  {'symbol':14} {'mechanism':23} {'dir':5} {'tier':6} "
+               f"{'state':26} {'net%':>7}  reason")
+    for row in ledger["rows"]:
+        net = "n/a" if row["net_return_pct"] is None else f"{row['net_return_pct']:+.2f}"
+        typer.echo(f"{row['created_at'][:16]}  {row['symbol'] or '':14} {row['mechanism'] or '':23} "
+                   f"{row['direction'] or '':5} {row['risk_tier'] or '':6} {row['state'] or '':26} "
+                   f"{net:>7}  {(row['capture_reason'] or row['reason_code'] or '')[:60]}")
+    summary = ledger["summary"]
+    typer.echo(f"\nsince {ledger['since']}: {summary['decisions']} decisions")
+    typer.echo("states: " + ", ".join(f"{k}={v}" for k, v in summary["states"].items()))
+    for key, stats in {"all": summary["outcomes"], **summary["by_mechanism_direction"]}.items():
+        if not stats["eligible"]:
+            continue
+        typer.echo(f"{key}: eligible={stats['eligible']} win_rate={stats['win_rate']:.0%} "
+                   f"mean_net%={stats['mean_net_return_pct']:+.3f} "
+                   f"sum_net%={stats['sum_net_return_pct']:+.3f}")
+
+
 @inspect_app.command("entry-status")
 def entry_status(
     json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
