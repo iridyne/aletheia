@@ -12,8 +12,7 @@ operators.
 
 Scope narrowing: this guard inspects only ``except Exception`` handlers whose
 ``try`` body directly reads a projection boundary — the six
-``_UTAReconciliationProjection`` read methods or the two multibroker evidence
-helpers — not every handler in the module. Materialization handlers catch
+``_UTAReconciliationProjection`` read methods — not every handler in the module. Materialization handlers catch
 ``MaterializationIntegrityError`` / ``ValueError`` around local-only work and
 never wrap a projection read; including them would flag unrelated code and make
 the guard noisy without protecting the invariant.
@@ -47,26 +46,20 @@ PROJECTION_METHODS = {
     "get_order_detail_by_client_oid",
     "get_funding_ledger",
 }
-PROJECTION_HELPERS = {"_fetch_multibroker_evidence", "_fetch_multibroker_funding"}
-
-EXPECTED_IN_SCOPE_HANDLERS = 10
+# One reconciliation path for every account: the deleted per-venue path held 2.
+EXPECTED_IN_SCOPE_HANDLERS = 8
 
 
 def _is_projection_call(node: ast.AST) -> bool:
     """True when ``node`` reads a projection boundary.
 
     ``client.get_fills(...)`` resolves as an ``Attribute`` with
-    ``.attr ∈ PROJECTION_METHODS``; ``_fetch_multibroker_evidence(...)``
-    resolves as a ``Name`` with ``.id ∈ PROJECTION_HELPERS``.
+    ``.attr ∈ PROJECTION_METHODS``.
     """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    if isinstance(func, ast.Attribute):
-        return func.attr in PROJECTION_METHODS
-    if isinstance(func, ast.Name):
-        return func.id in PROJECTION_HELPERS
-    return False
+    return isinstance(func, ast.Attribute) and func.attr in PROJECTION_METHODS
 
 
 def _body_calls(body: list[ast.stmt]) -> list[ast.Call]:
@@ -203,7 +196,7 @@ def test_guard_rejects_a_warning_without_the_reason_code() -> None:
         " type(exc).__name__, exc.reason_code)\n"
         "def negative_getattr():\n"
         "    try:\n"
-        "        _fetch_multibroker_evidence()\n"
+        "        client.get_order_fills()\n"
         "    except Exception as exc:\n"
         "        logger.warning('failed for %s (%s: %s)', type(exc).__name__,"
         " getattr(exc, 'reason_code', 'no_reason_code'))\n"

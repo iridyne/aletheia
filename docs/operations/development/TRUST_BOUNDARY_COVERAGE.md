@@ -111,7 +111,7 @@ Hypothesis form, the invariants a wrong answer would violate:
 
 | Module | Property test file | Invariants locked |
 |---|---|---|
-| `execution/reconciliation.py` | `tests/test_reconciliation_properties.py` | Fill-quantity conservation (permutation, split, malformed input); CR-EX-01 no-look-ahead (adding an open id only shrinks the resolved set); every resolved id backed by a qualifying order |
+| `execution/reconciliation.py` | `tests/test_reconciliation_properties.py` | Fill-quantity conservation (permutation, split, malformed input) |
 | `analytics/profit_gradient_evidence.py` | `tests/test_profit_gradient_evidence_properties.py` | Epoch-hash determinism; `code_commit` insensitivity; salt on kind/paths/safety; `_hash` canonicalisation across dict order, sets, NaN; `_redact` scrubs secrets at every depth; `_parse_utc` fails closed on naive/malformed input |
 | `counterfactual/filter_replay.py` | `tests/test_filter_replay_properties.py` | `_bounded_alternatives` monotonicity and cap; `_bootstrap_delta_lcb` determinism (seed threads through, no global RNG leak); `_outcome_metrics` permutation invariance; `_shrunk_mean` boundary behaviour |
 | `learning/policy_epochs.py` | `tests/test_policy_epoch_properties.py` | Epoch-hash order-independence; secret-fragment stripping; top-level `code_commit` stripping (nested preserved); `compare_policy_epochs` decision branches |

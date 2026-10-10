@@ -24,12 +24,18 @@ class BinanceTestnetProfile(CCXTProfile):
     mutation_client_order_id = True
     integer_leverage = True
     client_order_lookup_param = "origClientOrderId"
+    # Binance's trade-history endpoint requires a symbol, so an account-wide fill
+    # read is structurally unsupported (reconciliation then reads per symbol).
+    account_wide_fills_supported = False
 
     def __init__(self, *, api_key: str, secret: str) -> None:
         super().__init__(
             apiKey=api_key,
             secret=secret,
-            options={"defaultType": "future"},
+            # The open-orders endpoint does answer without a symbol (at a higher
+            # request weight); CCXT refuses it unless the caller opts in. One call
+            # per reconciliation pass is well inside the weight budget.
+            options={"defaultType": "future", "warnOnFetchOpenOrdersWithoutSymbol": False},
         )
     async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
         # Binance forbids fromId with time bounds; empty windows do not end history.

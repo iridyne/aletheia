@@ -107,9 +107,9 @@ def _has_real_economics(order: dict) -> bool:
 def _stale_pending_close_position_id(order: dict) -> str | None:
     """Return the id of an already-CLOSED Position still naming this close Order.
 
-    reconciliation._clear_verified_closed_pending only clears bitget_demo; an
-    okx_demo (or any non-bitget) close Order that finished after its Position was
-    already closed leaves pending_close_* set forever.
+    reconciliation._clear_verified_closed_pending clears only markers backed by a
+    complete private close chain; this covers a close Order whose Position was
+    already closed without one, which would otherwise keep pending_close_* set.
     """
     row = get_db().execute(
         "SELECT id FROM positions "
