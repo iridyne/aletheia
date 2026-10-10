@@ -15,7 +15,6 @@ AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
     "insight_synthesizer",
     "confidence_calibration",
     "post_trade_reviewer",
-    "risk_critic",
     "guard_promotion",
     "filter_controller_observe",
     "persona_rollout",

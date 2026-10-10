@@ -14,19 +14,9 @@ from aletheia.agent_runtime.orchestrator import run_agent
 
 def setup_env(tmp_path, monkeypatch):
     from aletheia.agents import register_agent
-    from extensions.research.equity_observer import run_equity_observer
-    from extensions.research.research_agent import run_research_agent
-    from extensions.research.risk_critic import run_risk_critic
     from extensions.research.post_trade_reviewer import run_post_trade_reviewer
-    from extensions.research.prediction_observer import run_prediction_observer
-    from extensions.research.divergence_scanner import run_divergence_scanner
 
-    register_agent("research_agent")(run_research_agent)
-    register_agent("risk_critic")(run_risk_critic)
-    register_agent("equity_observer")(run_equity_observer)
     register_agent("post_trade_reviewer")(run_post_trade_reviewer)
-    register_agent("prediction_observer")(run_prediction_observer)
-    register_agent("divergence_scanner")(run_divergence_scanner)
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -61,10 +51,7 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 # --- Scheduler ---
 
-@pytest.mark.parametrize("agent_name", [
-    "risk_critic", "equity_observer", "prediction_observer", "divergence_scanner",
-    "post_trade_reviewer",
-])
+@pytest.mark.parametrize("agent_name", ["post_trade_reviewer"])
 def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_name):
     setup_env(tmp_path, monkeypatch)
     import aletheia.agents as agents
@@ -75,10 +62,6 @@ def test_scheduler_omits_absent_research_producer(tmp_path, monkeypatch, agent_n
     try:
         scheduler = sched.init_scheduler()
         assert scheduler.get_job(agent_name) is None
-        if agent_name in {"prediction_observer", "divergence_scanner"}:
-            assert scheduler.get_job("prediction_observer") is None
-            assert scheduler.get_job("equity_observer") is not None
-            assert scheduler.get_job("risk_critic") is not None
         assert scheduler.get_job("position_manager") is not None
         assert scheduler.get_job("portfolio_snapshot") is not None
     finally:
@@ -112,15 +95,13 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # count: a hard `== N` breaks on every newly-added job (no behavioral
     # regression) while silently passing if two jobs are swapped. The real
     # regression to catch is a critical loop going MISSING — so check membership.
-    # (Some jobs are config-conditional, e.g. ohlcv_nightly_backfill only when
-    # historical_data.nightly_backfill_enabled — excluded from the required set.)
     job_ids = {j.id for j in s.get_jobs()}
     required = {
         "market_data", "pi_trading_decision",
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
-        "guard_promotion", "post_trade_reviewer", "risk_critic", "equity_observer", "prediction_observer",
+        "guard_promotion", "post_trade_reviewer",
         "universe_refresh", "filter_controller_observe",
     }
     missing = required - job_ids
@@ -137,37 +118,11 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert position_manager_job is not None
     assert position_manager_job.trigger.interval == timedelta(seconds=30)
     assert position_manager_job.executor == "protective"
-    equity_job = s.get_job("equity_observer")
-    assert equity_job.executor == "agents"
-    assert equity_job.misfire_grace_time == 300
-    assert str(equity_job.trigger) == str(sched._equity_observer_trigger())
-    prediction_job = s.get_job("prediction_observer")
-    assert prediction_job.executor == "agents"
-    assert prediction_job.misfire_grace_time == 120
-    assert prediction_job.trigger.interval == timedelta(minutes=30)
     post_trade_job = s.get_job("post_trade_reviewer")
     assert post_trade_job is not None
     assert post_trade_job.executor == "agents"
     sched.stop_scheduler()
     reset_db()
-
-
-def test_prediction_scheduler_preserves_pipeline_order(monkeypatch):
-    from types import SimpleNamespace
-    import aletheia.agent_runtime.scheduler as sched
-
-    monkeypatch.setattr(sched, "load_config", lambda: SimpleNamespace(
-        runtime=SimpleNamespace(paused=False),
-        market_data=SimpleNamespace(prediction_enabled=True, observed_prediction_markets=["crypto"]),
-    ))
-    calls = []
-    monkeypatch.setattr(sched, "_async_run", lambda name: name)
-    monkeypatch.setattr(sched, "_run_async_with_timeout", lambda name, task: calls.append((name, task)))
-    sched._run_prediction_observer()
-    assert calls == [
-        ("prediction_observer", "prediction_observer"),
-        ("divergence_scanner", "divergence_scanner"),
-    ]
 
 
 @pytest.mark.parametrize(
@@ -469,48 +424,6 @@ async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, m
     reset_db()
 
 
-# --- Agents: graceful degradation when LLM unreachable ---
-
-@pytest.mark.anyio
-async def test_research_agent_degrades_without_llm(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    # No model server running → llm_complete returns (None, error); agent still completes
-    result = await run_agent("research_agent", trigger_type="manual")
-    assert result["status"] in ("completed", "completed_with_errors")
-    assert any("research_note:" in o for o in result["outputs"])
-    notes = repo.list_knowledge_items(item_type="research_note")
-    assert len(notes) == 1
-    reset_db()
-
-
-@pytest.mark.anyio
-async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-
-    async def fake_complete(system, user, max_tokens=800, **_kwargs):
-        return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
-                "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
-
-    monkeypatch.setattr("extensions.research.research_agent.llm_complete", fake_complete)
-    result = await run_agent("research_agent", trigger_type="manual")
-    assert result["status"] == "completed"
-    notes = repo.list_knowledge_items(item_type="research_note")
-    assert len(notes) == 1
-    reset_db()
-
-
-# --- Tool-call logging ---
-
-@pytest.mark.anyio
-async def test_tool_calls_logged(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    result = await run_agent("research_agent", trigger_type="manual")
-    calls = repo.list_tool_calls(run_id=result["run_id"])
-    assert len(calls) >= 1
-    assert any(c["tool_name"] == "create_research_note" for c in calls)
-    reset_db()
-
-
 # --- New agents exist and run ---
 
 @pytest.mark.anyio
@@ -529,11 +442,9 @@ async def test_portfolio_agent_writes_snapshot(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_risk_critic_and_post_trade_reviewer_run(tmp_path, monkeypatch):
+async def test_post_trade_reviewer_run(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    r1 = await run_agent("risk_critic", trigger_type="manual")
     r2 = await run_agent("post_trade_reviewer", trigger_type="manual")
     # LLM unavailable in test → agents skip writes (by design), only log errors
-    assert r1["outputs"] or r1["errors"]
     assert r2["outputs"] or r2["errors"]
     reset_db()

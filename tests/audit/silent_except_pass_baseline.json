@@ -151,7 +151,7 @@
     },
     {
       "file": "core/aletheia/main.py",
-      "line": 517,
+      "line": 470,
       "reason": "SystemExit from the install subcommand is the CLI own exit path"
     },
     {
@@ -161,7 +161,7 @@
     },
     {
       "file": "core/aletheia/server/routes/ws.py",
-      "line": 365,
+      "line": 364,
       "reason": "WebSocketDisconnect is a client disconnect, not a failure"
     },
     {

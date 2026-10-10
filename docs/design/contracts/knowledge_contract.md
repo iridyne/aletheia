@@ -58,7 +58,7 @@
 
 | item_type | 主要生产者 | 一句话用途 |
 |-----------|-----------|-----------|
-| `research_note` | Research Agent、Market Observer、risk_critic | 市场证据、假设、反例、风险观察 |
+| `research_note` | 历史行（Research Agent、Market Observer、Risk Critic 已退役） | 市场证据、假设、反例、风险观察 |
 | `strategy_memory` | legacy Strategy Designer (removed Position C) | 历史策略描述、参数、生命周期、决策依据；当前只作 legacy 知识类型保留 |
 | `dreaming_log` | Dreaming Agent | 跨策略模式提炼、系统级整合输出 |
 | `daily_review` | Dreaming Agent / 定时任务 | 日度运营总结、交易复盘、系统健康摘要 |
@@ -74,10 +74,8 @@
 
 ### 2.1 类型→生产者映射细节
 
-`risk_critic` 使用 `create_research_note()` 写入，但在 metadata 中携带 `subtype: risk_lesson`
-(`extensions/research/risk_critic.py`)。此条目在 `trust_and_change_control.md §4.1` 表中未单独列出——
-`risk_lesson` 是 metadata 子类型，存储 `item_type` 实为 `research_note`。
-`agent_contracts.md` 也使用同一 producer / subtype 表述；它不是独立 `item_type`。
+历史 `research_note` 行可能在 metadata 中携带 `subtype: risk_lesson`（Risk Critic 已于 #3930 退役，
+不再写入）。`risk_lesson` 是 metadata 子类型，存储 `item_type` 实为 `research_note`，不是独立 `item_type`。
 
 ### 2.2 新增 item_type 的同步义务
 
@@ -305,7 +303,6 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py`）�
 | Agent | 写入的 item_type | 代码锚点 |
 |-------|----------------|---------|
 | `post_trade_reviewer` | `post_trade_review` | `agent_contracts.md:177` |
-| `risk_critic` | `research_note`（metadata.subtype=risk_lesson） | `extensions/research/risk_critic.py` |
 | `dreaming_daily` | `dreaming_log` | `agent_contracts.md:193` |
 | `insight_synthesizer` | `trading_memo` / `reasoning_feedback` piggyback | `agent_contracts.md:201` |
 | `confidence_calibration` | `calibration_report` | `agent_contracts.md:208` |

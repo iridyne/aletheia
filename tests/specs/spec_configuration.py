@@ -73,12 +73,11 @@ def test_dynamic_mapping_keys_remain_valid(tmp_path):
 @spec_claim(
     SpecClaim(
         "CFG-S03", "configuration_contract", "canonical equity observation settings", "L2b",
-        "Historical equities decode without source rewrite; canonical clear persists without a runtime fallback.",
+        "Historical equities decode without source rewrite; a canonical empty save persists without a runtime fallback.",
     )
 )
 def test_historical_equities_clear_persists_through_canonical_writer(tmp_path, monkeypatch):
     from aletheia.config import loader
-    from aletheia.server.routes import settings
 
     config_file = tmp_path / "config.yaml"
     raw = AletheiaConfig().model_dump(mode="json")
@@ -92,7 +91,7 @@ def test_historical_equities_clear_persists_through_canonical_writer(tmp_path, m
     loaded = loader.load_config(persist_migrations=False)
     assert loaded.market_data.observed_equities == []
     assert config_file.read_text(encoding="utf-8") == original
-    settings.update_observed_equities(settings.EquitiesConfigUpdate(tickers=[]))
+    loader.save_config(loaded)
     reloaded = loader.load_config(persist_migrations=False, use_cache=False)
     assert reloaded.market_data.observed_equities == []
     assert not hasattr(reloaded.market_data, "observed_stocks")

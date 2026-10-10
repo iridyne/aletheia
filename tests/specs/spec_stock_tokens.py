@@ -1,9 +1,7 @@
-"""Spec: Equity Observer + stock token abstraction (EQ-* claims).
+"""Spec: tokenized-equity config and Serenity instrument fields (EQ-* claims).
 
-Guards the generic stock-token registry and the equity_observer's
-exchange-agnostic token lookup introduced in the Bitget r-series adaptation
-(2026-07-01).  All claims attach to data_utilization_contract (observation-only
-data domain, not a new trust boundary).
+All claims attach to data_utilization_contract (observation-only data domain,
+not a new trust boundary).
 
 WARNING — CONFORMANCE COLLECTION TRAP:
 Add this file to _import_all_specs() in tests/test_spec_conformance.py.
@@ -12,61 +10,12 @@ Without that registration the conformance matrix collects zero EQ-* cases.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
-
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _CONTRACT = "data_utilization_contract"
-
-
-# ---------------------------------------------------------------------------
-# EQ-R01 — generic stock-token registry + r-series rule exist in symbols.py
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "EQ-R01", _CONTRACT, "§stock-token-registry", "L2a",
-        "symbols.py exposes ticker_to_stock_tokens() for the equity observer, "
-        "r-series before ON-series.",
-    ),
-)
-def test_stock_token_functions_exist():
-    from aletheia.data.symbols import ticker_to_stock_tokens
-
-    tokens = ticker_to_stock_tokens("AAPL")
-    assert tokens[0] == "rAAPL/USDT", "r-series must be first (higher liquidity)"
-    assert "AAPLON/USDT" in tokens, "AAPLON/USDT must be in AAPL token list"
-    # Single-letter NYSE tickers are real r-series listings (rV = Visa).
-    assert ticker_to_stock_tokens("V")[0] == "rV/USDT"
-
-
-# ---------------------------------------------------------------------------
-# EQ-R02 — equity_observer uses ticker_to_stock_tokens (r-series priority)
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "EQ-R02", _CONTRACT, "§equity-observer-r-series", "L2a",
-        "equity_observer imports ticker_to_stock_tokens and iterates candidate "
-        "tokens in priority order (r-series before ON-series).",
-    ),
-)
-def test_equity_observer_uses_priority_token_lookup():
-    src = (_ROOT / "extensions" / "research" / "equity_observer.py").read_text(encoding="utf-8")
-    assert "ticker_to_stock_tokens" in src, (
-        "equity_observer must import/call ticker_to_stock_tokens"
-    )
-    assert "stock_token_exchange" in src, (
-        "equity_observer must call stock_token_exchange for exchange-agnostic routing"
-    )
-    # The iteration over candidate_tokens and break on first successful price
-    assert "for token_sym in candidate_tokens" in src, (
-        "equity_observer must iterate candidate_tokens in priority order"
-    )
 
 
 # ---------------------------------------------------------------------------

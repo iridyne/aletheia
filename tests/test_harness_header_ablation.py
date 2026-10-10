@@ -3,7 +3,7 @@ from scripts.analysis.harness_header_ablation import CALLERS, HEADER, _compliant
 
 def test_corpus_has_the_preregistered_callers():
     assert set(CALLERS) == {
-        "pi_trading_decision", "risk_critic", "research_worker", "dreaming_agent"
+        "pi_trading_decision", "research_worker", "dreaming_agent"
     }
 
 
@@ -26,4 +26,3 @@ def test_compliance_checks_structured_and_text_outputs():
         CALLERS["pi_trading_decision"],
     )
     assert not _compliant("not json", CALLERS["pi_trading_decision"])
-    assert _compliant("Concise advisory text.", CALLERS["risk_critic"])

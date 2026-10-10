@@ -20,9 +20,7 @@ def _cfg(*, paused: bool = False, layered: bool = True):
             layered_pause_enabled=layered,
             exchange_probe_interval_sec=30,
         ),
-        historical_data=SimpleNamespace(nightly_backfill_enabled=False),
-        news=SimpleNamespace(fetch_interval_minutes=15),
-        telegram=SimpleNamespace(daily_summary_hour_cst=8),
+        historical_data=SimpleNamespace(),
     )
 
 
@@ -232,7 +230,7 @@ class TestEssentialJobsCoverage:
         from aletheia.agent_runtime.scheduler import _ESSENTIAL_JOBS
         ai_jobs = {
             "paper_trader", "pi_trading_decision",
-            "dreaming_daily", "post_trade_reviewer", "risk_critic",
+            "dreaming_daily", "post_trade_reviewer",
             "insight_synthesizer", "lesson_reviewer",
         }
         assert _ESSENTIAL_JOBS.isdisjoint(ai_jobs)

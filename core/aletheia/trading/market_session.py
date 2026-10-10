@@ -25,7 +25,7 @@ Session bands (UTC, weekday):
     Sat / Sun    weekend   — Lowest liquidity all day; gap risk into Monday.
 
 `us_equities_open` is the precise NYSE cash window (Mon–Fri 14:30–21:00 UTC),
-matching the existing equity_observer scheduler gate. (NYSE shifts an hour earlier
+matching the retired equity observer's session gate. (NYSE shifts an hour earlier
 under US DST; the one-hour drift is immaterial for a qualitative LLM hint and we
 keep the codebase's fixed 14:30–21:00 convention for consistency.)
 """

@@ -9,7 +9,7 @@ def test_role_taxonomy_preserves_system_operator_compatibility():
 def test_role_taxonomy_classifies_existing_worker_and_evaluator_names():
     assert role_for_logical_agent("market_observer") is AgentRole.WORKER
     assert role_for_logical_agent("research_worker") is AgentRole.WORKER
-    assert role_for_logical_agent("risk_critic") is AgentRole.EVALUATOR
+    assert role_for_logical_agent("post_trade_reviewer") is AgentRole.EVALUATOR
     assert role_for_logical_agent("orchestrator") is AgentRole.COORDINATOR
 
 

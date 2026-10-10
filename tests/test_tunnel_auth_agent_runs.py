@@ -111,7 +111,7 @@ async def test_no_token_tunnel_returns_401_and_creates_no_run(client, tmp_path, 
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 401
     assert fake.enqueued == [], "No run must be created on 401"
@@ -125,7 +125,7 @@ async def test_wrong_token_returns_401_and_creates_no_run(client, tmp_path, monk
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
         headers={"X-Aletheia-Token": "WRONGTOKEN"},
     )
     assert response.status_code == 401
@@ -144,7 +144,7 @@ async def test_tunnel_missing_secret_fails_closed(client, tmp_path, monkeypatch)
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 401
     assert fake.enqueued == []
@@ -158,7 +158,7 @@ async def test_correct_token_allowed_agent_returns_202(client, tmp_path, monkeyp
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
         headers={"X-Aletheia-Token": secret},
     )
     assert response.status_code == 202
@@ -175,7 +175,7 @@ async def test_local_access_no_token_succeeds(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 202
     assert len(fake.enqueued) == 1
@@ -193,7 +193,7 @@ async def test_tunnel_authenticated_run_has_trigger_type_manual_owner(client, tm
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
         headers={"X-Aletheia-Token": secret},
     )
     assert response.status_code == 202
@@ -208,7 +208,7 @@ async def test_local_run_has_trigger_type_manual(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 202
     assert response.json()["trigger_type"] == "manual"
@@ -356,8 +356,8 @@ async def test_kill_switch_blocks_behavior_agent(client, tmp_path, monkeypatch):
     from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.config.loader import load_config, save_config
 
-    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "research_agent", {
-        **_MANUAL_AGENT_ALLOWLIST["research_agent"], "gate_check": True,
+    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "post_trade_reviewer", {
+        **_MANUAL_AGENT_ALLOWLIST["post_trade_reviewer"], "gate_check": True,
     })
     cfg = load_config()
     cfg.runtime.kill_switch_active = True
@@ -367,7 +367,7 @@ async def test_kill_switch_blocks_behavior_agent(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"] == "kill_switch_active"
@@ -380,8 +380,8 @@ async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch
     from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.config.loader import load_config, save_config
 
-    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "research_agent", {
-        **_MANUAL_AGENT_ALLOWLIST["research_agent"], "gate_check": True,
+    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "post_trade_reviewer", {
+        **_MANUAL_AGENT_ALLOWLIST["post_trade_reviewer"], "gate_check": True,
     })
     cfg = load_config()
     cfg.runtime.paused = True
@@ -391,7 +391,7 @@ async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"] == "gateway_paused"
@@ -400,7 +400,7 @@ async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch
 
 @pytest.mark.anyio
 async def test_kill_switch_does_not_block_observe_agent(client, tmp_path, monkeypatch):
-    """kill_switch_active=True must not block gate_check=False agents like equity_observer."""
+    """kill_switch_active=True must not block gate_check=False agents like lesson_reviewer."""
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.runtime.kill_switch_active = True
@@ -410,7 +410,7 @@ async def test_kill_switch_does_not_block_observe_agent(client, tmp_path, monkey
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "equity_observer"},
+        json={"agent_name": "lesson_reviewer"},
     )
     assert response.status_code == 202
 
@@ -448,7 +448,7 @@ async def test_service_credential_can_start_approved_specialist(client, tmp_path
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "equity_observer"},
+        json={"agent_name": "lesson_reviewer"},
         headers={"X-Aletheia-Operator-Service": svc_token},
     )
     assert response.status_code == 202, response.text
@@ -519,7 +519,7 @@ async def test_duplicate_enqueue_same_agent_returns_409(client, tmp_path, monkey
     from aletheia.storage.models import AgentRun
     from aletheia.agent_runtime.job_queue import AgentJobAlreadyQueued
 
-    existing_run = AgentRun(agent_name="research_agent", trigger_type="manual", status="queued")
+    existing_run = AgentRun(agent_name="post_trade_reviewer", trigger_type="manual", status="queued")
 
     class AlreadyQueuedManager:
         def enqueue(self, name, *, trigger_type="manual", idempotency_key=None):
@@ -536,13 +536,13 @@ async def test_duplicate_enqueue_same_agent_returns_409(client, tmp_path, monkey
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 409
     body = response.json()
     assert body["detail"]["error"] == "agent_already_queued"
     assert body["detail"]["run_id"] == existing_run.id
-    assert body["detail"]["agent_name"] == "research_agent"
+    assert body["detail"]["agent_name"] == "post_trade_reviewer"
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +560,7 @@ async def test_operator_service_run_has_trigger_type_operator_service(client, tm
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
         headers={"X-Aletheia-Operator-Service": "svc-token"},
     )
     assert response.status_code == 202
@@ -573,7 +573,7 @@ async def test_operator_service_trigger_type_is_not_interactive_priority():
     """operator_service trigger_type must not map to INTERACTIVE inference priority."""
     from aletheia.model_provider.broker import priority_for_agent, InferencePriority
 
-    p = priority_for_agent("research_agent", "operator_service")
+    p = priority_for_agent("post_trade_reviewer", "operator_service")
     assert p != InferencePriority.INTERACTIVE, (
         "operator_service runs must not consume INTERACTIVE priority"
     )
@@ -582,9 +582,9 @@ async def test_operator_service_trigger_type_is_not_interactive_priority():
 def test_operator_service_runs_excluded_from_manual_runs_by_agent():
     """operator_service trigger_type must not appear in manual_runs_by_agent evidence."""
     runs = [
-        {"id": "r1", "agent_name": "research_agent", "trigger_type": "operator_service"},
-        {"id": "r2", "agent_name": "research_agent", "trigger_type": "operator_service"},
-        {"id": "r3", "agent_name": "equity_observer", "trigger_type": "operator_service"},
+        {"id": "r1", "agent_name": "post_trade_reviewer", "trigger_type": "operator_service"},
+        {"id": "r2", "agent_name": "post_trade_reviewer", "trigger_type": "operator_service"},
+        {"id": "r3", "agent_name": "lesson_reviewer", "trigger_type": "operator_service"},
     ]
     manual_runs_by_agent: dict = {}
     for run in runs:
@@ -604,7 +604,7 @@ async def test_owner_run_remains_manual_owner(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
         headers={"X-Aletheia-Token": secret},
     )
     assert response.status_code == 202
@@ -618,7 +618,7 @@ async def test_local_run_remains_manual(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "research_agent"},
+        json={"agent_name": "post_trade_reviewer"},
     )
     assert response.status_code == 202
     assert fake.enqueued[0].trigger_type == "manual"

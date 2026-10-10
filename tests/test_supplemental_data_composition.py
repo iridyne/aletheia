@@ -8,26 +8,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from aletheia.data import providers
 from aletheia.universe import outcome_recorder
 
 
 @pytest.fixture(autouse=True)
 def bindings(monkeypatch):
-    monkeypatch.setattr(providers, "_macro_reader", None)
-    monkeypatch.setattr(providers, "_prediction_history_reader", None)
     monkeypatch.setattr(outcome_recorder, "_structure_shadow_settler", None)
 
 
 @pytest.mark.parametrize("entry", ["core/aletheia/main.py", "core/aletheia/server/app.py"])
 @pytest.mark.parametrize("module,callback", [
-    ("yfinance_provider", "_macro_reader"),
-    ("polymarket_provider", "_prediction_history_reader"),
     ("perp_structure_shadow", "_structure_shadow_settler"),
 ])
 @pytest.mark.parametrize("missing", [None, "extensions.data", "internal_dependency"])
 def test_exact_bootstrap_binding_is_independent(entry, module, callback, missing, monkeypatch):
-    owner = outcome_recorder if callback == "_structure_shadow_settler" else providers
+    owner = outcome_recorder
     monkeypatch.setattr(owner, callback, object())
     real_import = builtins.__import__
 
@@ -43,8 +38,6 @@ def test_exact_bootstrap_binding_is_independent(entry, module, callback, missing
     block = next(n for n in body if isinstance(n, ast.Try) and isinstance(n.body[0], ast.ImportFrom)
                  and n.body[0].module == "extensions.data." + module)
     namespace = {
-        "configure_macro_reader": providers.configure_macro_reader,
-        "configure_prediction_history_reader": providers.configure_prediction_history_reader,
         "configure_structure_shadow_settler": outcome_recorder.configure_structure_shadow_settler,
     }
     if missing == "internal_dependency":
@@ -56,56 +49,22 @@ def test_exact_bootstrap_binding_is_independent(entry, module, callback, missing
         assert getattr(owner, callback) is None if missing else callable(getattr(owner, callback))
 
 
-def test_macro_absent_and_installed(monkeypatch):
-    assert asyncio.run(providers.read_macro_context()) == ""
-    reader = AsyncMock(return_value="macro facts")
-    monkeypatch.setattr(providers, "_macro_reader", reader)
-    assert asyncio.run(providers.read_macro_context()) == "macro facts"
-    reader.assert_awaited_once_with()
-
-
-@pytest.mark.parametrize("enabled,fails", [(False, False), (True, False), (True, True)])
-def test_macro_gate_preserves_base_context(monkeypatch, enabled, fails):
-    from aletheia.config import loader
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.trading.market_context import build_market_context
-    from tests.test_market_context import _FakeProvider
-    cfg = AletheiaConfig()
-    assert cfg.market_data.enable_yfinance_macro is False
-    cfg.market_data.enable_yfinance_macro = enabled
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    reader = AsyncMock(side_effect=RuntimeError("offline")) if fails else AsyncMock(return_value="supplemental macro facts")
-    monkeypatch.setattr(providers, "_macro_reader", reader)
-    context, debug = asyncio.run(build_market_context(["BTCUSDT"], provider=_FakeProvider()))
-    assert "Verified market data snapshot" in context and debug["fallback"] is False
-    assert ("supplemental macro facts" in context) is (enabled and not fails)
-    assert reader.await_count == int(enabled)
-
-
-@pytest.mark.parametrize("local,market,reader,result", [
-    ([{"ts": "t", "yes_probability": 0.4}], None, None, "local"),
-    ([], {"external_market_id": "external"}, None, "local"),
-    ([], {"external_market_id": "external"}, [], "polymarket_api"),
-    ([], {"external_market_id": "external"}, RuntimeError("offline"), "local"),
-    ([], None, None, "404"),
+@pytest.mark.parametrize("local,market,result", [
+    ([{"ts": "t", "yes_probability": 0.4}], None, "local"),
+    ([], {"external_market_id": "external"}, "local"),
+    ([], None, "404"),
 ])
-def test_history_preserves_local_and_external_source(monkeypatch, local, market, reader, result):
+def test_history_reads_local_snapshots_only(monkeypatch, local, market, result):
     from fastapi import HTTPException
     from aletheia.server.routes import prediction
     monkeypatch.setattr(prediction.repo, "list_probability_snapshots", lambda *a, **k: local)
     monkeypatch.setattr(prediction.repo, "get_prediction_market_by_id", lambda *a: market)
-    callback = AsyncMock(side_effect=reader) if isinstance(reader, Exception) else AsyncMock(return_value=reader)
-    if reader is not None:
-        monkeypatch.setattr(providers, "_prediction_history_reader", callback)
     if result == "404":
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(prediction.get_prediction_market_history("market"))
+            prediction.get_prediction_market_history("market")
         assert exc.value.status_code == 404
     else:
-        value = asyncio.run(prediction.get_prediction_market_history("market"))
-        assert value["source"] == result
-    if local or reader is None:
-        callback.assert_not_awaited()
+        assert prediction.get_prediction_market_history("market")["source"] == result
 
 
 @pytest.mark.parametrize("command,module,args", [

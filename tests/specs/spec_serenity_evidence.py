@@ -17,7 +17,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "serenity_evidence_quality"
 _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "extensions" / "research" / "research_worker.py"
-_PRED_OBS = _ROOT / "extensions" / "research" / "prediction_observer.py"
 
 
 # ---------------------------------------------------------------------------
@@ -55,23 +54,6 @@ def test_research_worker_routes_through_evaluator():
     assert "assess_opportunity_tier" in src, (
         "research_worker.py does not call assess_opportunity_tier — opportunity tier is still self-graded"
     )
-
-
-@spec_claim(
-    SpecClaim(
-        "SE-S03", _CONTRACT, "§2 prediction_observer routes through evaluator", "L2a",
-        "prediction_observer.py routes prediction-market evidence through assess_evidence_tier",
-    ),
-)
-def test_prediction_observer_routes_through_evaluator():
-    src = _PRED_OBS.read_text(encoding="utf-8")
-    assert "assess_evidence_tier" in src, (
-        "prediction_observer.py does not call assess_evidence_tier"
-    )
-
-
-
-
 
 
 # ---------------------------------------------------------------------------

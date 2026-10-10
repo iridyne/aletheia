@@ -31,7 +31,7 @@ def test_supervision_queries_are_not_capped_by_unrelated_agent_runs(monkeypatch)
         [
             (
                 f"noise-{index}",
-                "research_agent",
+                "post_trade_reviewer",
                 (now - timedelta(minutes=index / 10)).isoformat(),
                 (now - timedelta(minutes=index / 10)).isoformat(),
                 "completed",

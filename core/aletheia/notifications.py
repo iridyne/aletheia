@@ -179,8 +179,6 @@ def _send_webhook(
         return {"status": "not_attempted", "reason": "category_suppressed"}
     if event_type == "trade_fill" and not cfg.webhook.notify_trade_fills:
         return {"status": "not_attempted", "reason": "category_suppressed"}
-    if event_type == "daily_summary" and not cfg.webhook.notify_daily_summary:
-        return {"status": "not_attempted", "reason": "category_suppressed"}
 
     attempted_at = datetime.now(timezone.utc).isoformat()
     started_at = time.monotonic()
@@ -191,7 +189,6 @@ def _send_webhook(
         # Issue #406: honour the per-category delivery toggles.
         # alert / operator_notification → notify_alerts
         # trade_fill → notify_trade_fills
-        # daily_summary → notify_daily_summary
         import hashlib
         import hmac
         import json
@@ -365,57 +362,3 @@ def notify_trade_fill(
             "stop_price": stop_price,
             "take_profit_price": take_profit_price,
         }, event_type="trade_fill", source="execution_gateway", entity_type="position", entity_id=position_id)
-
-
-def notify_daily_summary() -> None:
-    """Push daily PnL summary to Telegram and Webhook when configured."""
-    try:
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        # Issue #1226: Telegram and Webhook are independent notification channels.
-        send_telegram = cfg.telegram.enabled and cfg.telegram.notify_daily_summary
-        send_webhook = (
-            cfg.webhook.enabled
-            and bool(cfg.webhook.url)
-            and cfg.webhook.notify_daily_summary
-        )
-    except Exception:
-        return
-
-    try:
-        from aletheia.portfolio.pnl import compute_portfolio
-        portfolio = compute_portfolio()
-        realized_complete = portfolio.get("today_realized_pnl_complete") is True
-        realized = (
-            portfolio.get("today_realized_pnl") if realized_complete else None
-        )
-        unrealized = portfolio.get("unrealized_pnl")
-        open_count = portfolio.get("positions_count", 0)
-        total = portfolio.get("total_value_usdt", 0.0)
-        realized_text = (
-            "unavailable"
-            if realized is None
-            else f"{'+' if realized >= 0 else ''}{realized:.2f} USDT"
-        )
-        # Issue #1745: build plain text; the shared sink escapes before sending.
-        lines = [
-            "Daily Summary",
-            f"Realized: {realized_text}",
-            "Unrealized: unavailable" if unrealized is None else f"Unrealized: {unrealized:+.2f} USDT",
-            f"Open positions: {open_count}",
-            f"Portfolio value: {total:.2f} USDT",
-        ]
-        if send_telegram:
-            # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
-            _send_telegram_alert("\n".join(lines), level="info", _require_alert_switch=False)
-        if send_webhook:
-            _send_webhook({
-                "realized_pnl": realized,
-                "unrealized_pnl": unrealized,
-                "open_positions": open_count,
-                "total_value_usdt": total,
-                "realized_pnl_complete": realized_complete,
-            }, event_type="daily_summary", source="portfolio", entity_type="daily_summary",
-                entity_id=datetime.now(timezone.utc).date().isoformat())
-    except Exception as e:
-        logger.warning("notify_daily_summary failed: %s", e)

@@ -446,7 +446,7 @@ def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
     connection.execute(
         "INSERT INTO agent_runs "
         "(id,agent_name,trigger_type,permission_mode,started_at,status) "
-        "VALUES ('run-1','research_agent','manual','Observe',datetime('now'),'running')"
+        "VALUES ('run-1','post_trade_reviewer','manual','Observe',datetime('now'),'running')"
     )
     connection.execute(
         "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) "
@@ -466,13 +466,13 @@ def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
     connection.execute(
         "INSERT INTO agent_runs "
         "(id,agent_name,trigger_type,permission_mode,started_at,status) "
-        "VALUES ('run-2','research_agent','manual','Observe',datetime('now'),'queued')"
+        "VALUES ('run-2','post_trade_reviewer','manual','Observe',datetime('now'),'queued')"
     )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
             "INSERT INTO agent_runs "
             "(id,agent_name,trigger_type,permission_mode,started_at,status) "
-            "VALUES ('run-3','research_agent','scheduled','Observe',datetime('now'),'running')"
+            "VALUES ('run-3','post_trade_reviewer','scheduled','Observe',datetime('now'),'running')"
         )
     connection.close()
 

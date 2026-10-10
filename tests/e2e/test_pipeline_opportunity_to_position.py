@@ -15,7 +15,7 @@ class TestOpportunityReadFields:
             direction_bias="short",
             confidence="high",
             confidence_score=78,
-            source_agent="divergence_scanner",
+            source_agent="research_worker",
             asset_class="crypto",
             execution_eligible=True,
             scanner_family="momentum",

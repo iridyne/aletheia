@@ -50,7 +50,7 @@ def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
     assert control.get_learning_job_health("dreaming_daily").status == "disabled"
     assert {
         "dreaming_daily", "lesson_reviewer", "insight_synthesizer",
-        "confidence_calibration", "post_trade_reviewer", "risk_critic",
+        "confidence_calibration", "post_trade_reviewer",
         "guard_promotion", "filter_controller_observe", "persona_rollout",
     } <= AUTONOMOUS_LEARNING_JOBS
     assert {"outcome_settler", "shadow_resolver"}.isdisjoint(AUTONOMOUS_LEARNING_JOBS)

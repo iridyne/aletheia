@@ -89,17 +89,17 @@ async def _fake_llm(system, user, max_tokens=800):
         "ETH funding rates suggest crowded longs. Recommend reducing spot exposure.",  # ≥80 chars
         None,  # 无 error
     )
-monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+monkeypatch.setattr("extensions.research.dreaming_agent.llm_complete", _fake_llm)
 ```
 
-**何时必须 mock LLM**：测试断言「知识条目被写入」时，必须 mock 返回 ≥80 字符的内容。不 mock 时 LLM 离线，agent 写入的 fallback 内容已经被刻意设计为通过质量门（见 `research_agent.py`），但 dreaming_agent 等其他 agent 可能仍会跳过写入。
+**何时必须 mock LLM**：测试断言「知识条目被写入」时，必须 mock 返回 ≥80 字符的内容。不 mock 时 LLM 离线，dreaming_agent 等 agent 会跳过写入。
 
 ### 3.3 LLM 离线降级测试 → 不要 mock，直接跑
 
 当测试目的是验证「LLM 不可用时 agent 不崩溃」时，**不要 mock**——让 llm_complete 真实返回 `(None, error)`，然后断言：
 
 ```python
-result = await run_agent("research_agent", trigger_type="manual")
+result = await run_agent("post_trade_reviewer", trigger_type="manual")
 assert result["status"] in ("completed", "completed_with_errors")
 ```
 
@@ -194,7 +194,6 @@ against 646.1 s for one full run). Use one expression instead, e.g.
 |---|---|---|
 | 测试内容 < 80 字符 | 数十个用例 `create_*` 返回 None | 把测试种子内容扩充到 ≥ 80 字符 |
 | `item.id` 无 None 检查 | `commands.py` 多处 AttributeError | `if item is None: return {"error": ...}` |
-| fallback 内容含 placeholder 子串 | `research_agent.py` 降级路径 | 重写 fallback 内容，不含 `(LLM unavailable` |
 | `repr()` 双倍转义反斜杠 | `test_autostart.py` 路径断言 | `r"\.venv\Lib\site-packages"` → `r"\\.venv\\Lib\\site-packages"` |
 | `kill_switch_enabled_demo = False` 默认值 | `test_daily_loss_breaker.py` | 测试内显式 `cfg.risk.kill_switch_enabled_demo = True` |
 | 真实 TCP 超时等待 | `test_openai_healthcheck_no_server` 耗 7.6s | mock `ConnectError`，同其他 healthcheck 测试 |
@@ -408,7 +407,7 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 | 默认禁止 live trading | `tests/specs/spec_live_unlock.py`、`tests/specs/spec_serenity_live_readiness.py` |
 | GET 接口不能返回密钥值 | `tests/specs/spec_api_reference.py`、`tests/test_secrets.py` |
 | 市场数据不能直接用 Bitget execution client | `tests/specs/spec_data_layer.py` |
-| 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_equity_observer.py` |
+| 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_stock_tokens.py` |
 | SQLite 并发三根柱子不能破 | `tests/specs/spec_data_model.py`、`tests/test_storage.py` |
 | AI 默认只跑快反馈 + 上次失败 | `tests/test_pytest_tiering.py`、`scripts/dev/test_ai.ps1` |
 

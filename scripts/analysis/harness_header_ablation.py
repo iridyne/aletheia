@@ -32,12 +32,6 @@ CALLERS: dict[str, dict[str, Any]] = {
         "required": {"action", "direction", "conviction", "reasoning"},
         "max_tokens": 800,
     },
-    "risk_critic": {
-        "system": "You are a risk critic. Identify patterns and advise only; never change hard limits. Keep under 200 words.",
-        "user": "Recent proposals: {proposals}; rejections: {rejections}; dominant violation: position_size_cap. Write a concise risk lesson.",
-        "required": None,
-        "max_tokens": 300,
-    },
     "research_worker": {
         "system": "You are a market research worker. Use supplied evidence only. Return ONLY a raw JSON array of claims with claim, confidence, and evidence fields; no markdown or prose.",
         "user": "Evidence: BTC price={price}; RSI1h={rsi}; 4h momentum={momentum}; spread={spread} bps. Return 1-2 bounded claims.",

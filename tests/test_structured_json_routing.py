@@ -71,7 +71,7 @@ class _ObjectSchema:
 
 @pytest.mark.real_llm
 @pytest.mark.asyncio
-@pytest.mark.parametrize("caller", ["agent_shell.entry_planner", "news_analyzer.analysis"])
+@pytest.mark.parametrize("caller", ["agent_shell.entry_planner", "agent_shell.intent_classification"])
 async def test_structured_call_does_not_inject_unconfigured_endpoint(tmp_path, monkeypatch, caller):
     from aletheia.agents import helpers
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
@@ -300,7 +300,7 @@ async def test_llm_structured_news_keeps_default_model_order_but_still_uses_json
         "sys",
         "user",
         schema=_ObjectSchema,
-        caller="news_analyzer.analysis",
+        caller="agent_shell.intent_classification",
     )
 
     assert err is None

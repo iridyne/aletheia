@@ -274,23 +274,18 @@ the Contract spec.
 | `agent_shell.synthesis` | `agent_shell.synthesis` | `v1` | `text` | `none` |
 | `dreaming.lesson_extraction` | `dreaming.lesson_extraction` | `v1` | `structured` | `none` |
 | `dreaming.nightly_consolidation` | `dreaming.nightly_consolidation` | `v1` | `text` | `none` |
-| `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
 | `insight_synthesizer.insight` | `insight_synthesizer.insight` | `v1` | `text` | `none` |
 | `learning.hypothesis_causal_red_team` | `learning.hypothesis_causal_red_team` | `v1` | `structured` | `none` |
 | `lesson_reviewer.judge` | `lesson_reviewer.judge` | `v1` | `structured` | `none` |
-| `news_analyzer.analysis` | `news_analyzer.analysis` | `v1` | `structured` | `none` |
 | `operator.llm_session.turn` | `operator.llm_session.turn` | `v1` | `text` | `typed-command-text` |
 | `post_trade_reviewer.review` | `post_trade_reviewer.review` | `v1` | `text` | `none` |
-| `prediction_observer.market_read` | `prediction_observer.market_read` | `v1` | `structured` | `none` |
 | `provider_settings.candidate_probe` | `provider_settings.candidate_probe` | `v1` | `text` | `none` |
 | `provider_settings.ping` | `provider_settings.ping` | `v1` | `text` | `none` |
-| `research_agent.note` | `research_agent.note` | `v1` | `text` | `none` |
 | `research_worker.claims` | `research_worker.claims` | `v1` | `text` | `none` |
 | `research_worker.lens` | `research_worker.lens` | `v1` | `text` | `none` |
 | `research_worker.methodology` | `research_worker.methodology` | `v1` | `text` | `none` |
 | `research_worker.opportunities` | `research_worker.opportunities` | `v1` | `text` | `none` |
 | `research_worker.themes` | `research_worker.themes` | `v1` | `text` | `none` |
-| `risk_critic.review` | `risk_critic.review` | `v1` | `text` | `none` |
 | `startup_gate.provider_probe` | `startup_gate.provider_probe` | `v1` | `text` | `none` |
 <!-- END GENERATED CALLER MATRIX -->
 

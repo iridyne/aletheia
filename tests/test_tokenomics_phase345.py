@@ -45,7 +45,7 @@ def test_hard_block_is_explicit_for_non_safety_callers(monkeypatch, logical_agen
         )
 
 
-@pytest.mark.parametrize("logical_agent", ["pi_trading_decision", "risk_critic", "agent_shell/trading_decision"])
+@pytest.mark.parametrize("logical_agent", ["pi_trading_decision", "agent_shell/trading_decision"])
 def test_safety_callers_remain_warn_only_in_every_mode(monkeypatch, logical_agent):
     import aletheia.agent_runtime.run_context as context
 

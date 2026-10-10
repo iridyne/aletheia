@@ -49,7 +49,7 @@ def test_manual_agent_manager_persists_queued_then_runs(tmp_path, monkeypatch):
         return {"status": "completed"}
 
     manager = AgentJobManager(capacity=2, runner=fake_runner)
-    run = manager.enqueue("research_agent")
+    run = manager.enqueue("post_trade_reviewer")
 
     assert run.status == "queued"
     assert completed.wait(timeout=3)
@@ -77,16 +77,16 @@ def test_manual_and_scheduled_admission_share_one_db_claim(tmp_path, monkeypatch
         return {"status": "completed"}
 
     manager = AgentJobManager(capacity=1, runner=blocking_runner)
-    manual_run = manager.enqueue("research_agent")
+    manual_run = manager.enqueue("post_trade_reviewer")
     assert active.wait(timeout=3)
 
     with pytest.raises(AgentJobAlreadyQueued) as exc_info:
-        manager.enqueue("research_agent", idempotency_key="different-click")
+        manager.enqueue("post_trade_reviewer", idempotency_key="different-click")
     assert exc_info.value.run_id == manual_run.id
 
     from aletheia.agent_runtime.orchestrator import run_agent
 
-    scheduled = asyncio.run(run_agent("research_agent", trigger_type="scheduled"))
+    scheduled = asyncio.run(run_agent("post_trade_reviewer", trigger_type="scheduled"))
     assert scheduled["status"] == "already_active"
     assert scheduled["run_id"] == manual_run.id
 
@@ -102,7 +102,7 @@ def test_concurrent_manual_admission_has_one_durable_winner(tmp_path, monkeypatc
     def admit() -> tuple[str, str]:
         barrier.wait(timeout=3)
         try:
-            run = queue_run("research_agent", "manual", "Observe")
+            run = queue_run("post_trade_reviewer", "manual", "Observe")
             return "created", run.id
         except AgentRunAlreadyActive as exc:
             return "existing", exc.run_id
@@ -129,7 +129,7 @@ def test_manual_agent_manager_rejects_when_bounded_queue_is_full(tmp_path, monke
         return {"status": "completed"}
 
     manager = AgentJobManager(capacity=1, runner=blocking_runner)
-    manager.enqueue("research_agent")
+    manager.enqueue("lesson_reviewer")
     assert active.wait(timeout=3)
     manager.enqueue("post_trade_reviewer")
 
@@ -150,14 +150,14 @@ def test_manual_agent_manager_rejects_when_bounded_queue_is_full(tmp_path, monke
 @pytest.mark.anyio
 async def test_manual_agent_route_returns_202_job_id(monkeypatch):
     run = AgentRun(
-        agent_name="research_agent",
+        agent_name="post_trade_reviewer",
         trigger_type="manual",
         status="queued",
     )
 
     class FakeManager:
         def enqueue(self, agent_name, *, trigger_type="manual", idempotency_key=None):
-            assert agent_name == "research_agent"
+            assert agent_name == "post_trade_reviewer"
             return run
 
         def snapshot(self):
@@ -174,7 +174,7 @@ async def test_manual_agent_route_returns_202_job_id(monkeypatch):
     ) as client:
         response = await client.post(
             "/api/agent-runs/start",
-            json={"agent_name": "research_agent"},
+            json={"agent_name": "post_trade_reviewer"},
         )
 
     assert response.status_code == 202

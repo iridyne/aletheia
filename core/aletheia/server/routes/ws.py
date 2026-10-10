@@ -105,7 +105,6 @@ _REGULAR_QUERIES: dict[str, str] = {
     "heartbeats":      "SELECT MAX(last_seen_at) FROM agent_shell_heartbeats",
     # Research / signals
     "serenity_runs":   "SELECT MAX(COALESCE(finished_at, started_at)) FROM serenity_research_runs",
-    "news_items":      "SELECT MAX(fetched_at) FROM news_items",
     "prediction_runs": "SELECT MAX(COALESCE(completed_at, started_at)) FROM prediction_observer_runs",
     # Universe
     "universe_snaps":  "SELECT MAX(created_at) FROM universe_snapshots",

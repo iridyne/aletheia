@@ -208,7 +208,6 @@ def _default_schedule_for(agent_name: str) -> str | None:
         "exchange_sync": "every 5 minutes",
         "portfolio_snapshot": "every 10 minutes",
         "post_trade_reviewer": "every 4 hours",
-        "risk_critic": "every 6 hours",
         "dreaming_agent": "daily at 02:00",
         "strategy_designer": "daily at 01:00",
     }
@@ -1574,32 +1573,9 @@ def _build_health_report_recommendations(
 def _build_risk_recommendations(
     cfg,
     risk_summary: dict,
-    recent_risk_critic_runs: list[dict],
     recent_artifacts: list[dict],
 ) -> list[dict]:
     recommendations: list[dict] = []
-
-    if (
-        not cfg.runtime.paused
-        and risk_summary["recent_rejected_decisions"]
-        and not recent_risk_critic_runs
-    ):
-        recommendations.append(
-            _make_task_recommendation(
-                id_="risk-critique-due",
-                kind="risk_critique_due",
-                severity="medium",
-                summary=(
-                    "Recent risk rejections exist without a fresh risk-critic pass. "
-                    "Delegate risk_critic to record a new risk lesson note."
-                ),
-                task_type="run_risk_critique",
-                metadata={
-                    "task_type": "run_risk_critique",
-                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
-                },
-            )
-        )
 
     if (
         not cfg.runtime.paused
@@ -1815,7 +1791,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         )
 
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    cutoff_6h = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
     cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
     recent_dreaming_logs = repo._select_all(
@@ -1828,12 +1803,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
         params=("dreaming_agent", cutoff_24h),
-        limit=5,
-    )
-    recent_risk_critic_runs = repo._select_all(
-        "agent_runs",
-        where="agent_name = ? AND started_at > ?",
-        params=("risk_critic", cutoff_6h),
         limit=5,
     )
     if not cfg.runtime.paused and not recent_dreaming_logs and not recent_dreaming_runs:
@@ -2026,7 +1995,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         _build_risk_recommendations(
             cfg,
             risk_summary,
-            recent_risk_critic_runs,
             recent_artifacts,
         )
     )

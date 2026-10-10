@@ -435,14 +435,14 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
     insert_agent_run(
         AgentRun(
-            agent_name="equity_observer",
+            agent_name="lesson_reviewer",
             status="failed",
             errors='["structured output parse failed"]',
         )
     )
     insert_agent_run(
         AgentRun(
-            agent_name="equity_observer",
+            agent_name="lesson_reviewer",
             status="failed",
             errors='["structured output parse failed"]',
         )
@@ -569,7 +569,7 @@ async def test_operator_recommendations_include_failed_agent_rerun_due_for_unrec
     failed_started_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     insert_agent_run(
         AgentRun(
-            agent_name="equity_observer",
+            agent_name="lesson_reviewer",
             trigger_type="scheduled",
             status="completed",
             started_at=fresh_started_at,
@@ -607,7 +607,7 @@ async def test_operator_recommendations_include_daily_review_refresh_due_when_to
     fresh_started_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     insert_agent_run(
         AgentRun(
-            agent_name="equity_observer",
+            agent_name="lesson_reviewer",
             trigger_type="scheduled",
             status="completed",
             started_at=fresh_started_at,
@@ -742,43 +742,6 @@ async def test_operator_recommendations_include_agent_performance_report_refresh
     assert due[0]["taskType"] == "create_review_report"
     assert due[0]["metadata"]["report_type"] == "agent_performance"
     assert due[0]["metadata"]["failed_run_count"] == 1
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_risk_critique_due_for_recent_rejections_without_recent_risk_critic_run(
-    client,
-):
-    from aletheia.storage.models import RiskDecision, TradeProposal
-    from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
-
-    proposal = TradeProposal(
-        symbol="BTCUSDT",
-        market_type="spot",
-        direction="long",
-        execution_mode="bitget_demo",
-        quantity=0.005,
-        price=60000,
-    )
-    insert_trade_proposal(proposal)
-    insert_risk_decision(
-        RiskDecision(
-            proposal_id=proposal.id,
-            approved=False,
-            violations='["exceeds_demo_position_margin:300.0>200.0"]',
-            message="Rejected",
-        )
-    )
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "risk_critique_due"
-    )
-    assert due["taskType"] == "run_risk_critique"
-    assert due["metadata"]["rejected_decision_count"] == 1
 
 
 @pytest.mark.anyio
@@ -1313,7 +1276,7 @@ async def test_operator_recommendations_drop_failed_tasks_once_they_age_out(clie
             "status": "failed",
             "priority": "normal",
             "created_by": "operator_loop",
-            "assigned_to": "risk_critic",
+            "assigned_to": "post_trade_reviewer",
             "input_data": {},
             "error": "boom",
         },

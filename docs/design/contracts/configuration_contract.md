@@ -29,11 +29,11 @@ field is absent. A present canonical list, including an empty list, takes preced
 Decoding does not write the source file. Runtime objects and normal saves contain
 no legacy field, so an explicit empty canonical save remains empty after reload.
 
-`POST /api/settings/equities` owns normalized equity edits through the existing
-locked config mutation. The generic market-data endpoint rejects both the retired
-`observed_stocks` input and the duplicate `observed_equities` input. Scheduler,
-observer and Settings use only the canonical list. This retirement under #3134
-does not change observation-only classification or tokenized-equity configuration.
+The equity observer and its `POST /api/settings/equities` control are retired
+(#3930); the field stays in the schema only until the Fedora config drops it. The
+generic market-data endpoint rejects both the retired `observed_stocks` input and
+the duplicate `observed_equities` input. This retirement under #3134 does not
+change observation-only classification or tokenized-equity configuration.
 The former control is [historical](../history/observed_stocks_settings_control.md).
 
 ## Canonical tokenized-equity observation settings

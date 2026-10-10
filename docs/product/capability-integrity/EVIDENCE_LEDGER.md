@@ -154,7 +154,7 @@ tests/test_price_feed.py
 tests/test_market_observer_integration.py
 tests/e2e/test_pipeline_universe_to_operator.py
 tests/test_universe_outcome_economics.py
-tests/specs/spec_equity_observer.py
+tests/specs/spec_stock_tokens.py
 tests/test_xstocks_observer.py
 ```
 

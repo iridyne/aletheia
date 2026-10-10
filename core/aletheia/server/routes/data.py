@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import is_preview_mode, load_config
-from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -355,15 +354,8 @@ def get_agent_run_steps(run_id: str):
 # cost_class: "low" | "medium" | "high"
 # gate_check: True → block when kill_switch_active or runtime paused
 _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
-    # Observational — read-only market data, no model calls, no artifacts
-    "equity_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
-    "prediction_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
-    "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
-    # Research / analysis — uses LLM, writes knowledge/insight artifacts only
-    "research_agent": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
     # Review / critique — uses LLM, writes review/lesson/signal artifacts
     "post_trade_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    "risk_critic": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
@@ -374,12 +366,7 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
 # New entries in _MANUAL_AGENT_ALLOWLIST do NOT automatically expand service authority —
 # explicit addition here is required.
 _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
-    "equity_observer",
-    "prediction_observer",
-    "divergence_scanner",
-    "research_agent",
     "post_trade_reviewer",
-    "risk_critic",
     "lesson_reviewer",
     "dreaming_agent",
     "portfolio_agent",
@@ -398,13 +385,6 @@ def get_agents_catalog():
             get_agent_fn(name)
         except ValueError:
             entry.update({"runnable": False, "blocked_reason": "agent_unavailable"})
-        else:
-            if name == "prediction_observer":
-                try:
-                    reason = prediction_observer_blocked_reason(load_config())
-                except Exception:
-                    reason = "prediction_observer_config_unavailable"
-                entry.update({"runnable": reason is None, "blocked_reason": reason})
         agents.append(entry)
     return {"agents": agents}
 
@@ -454,28 +434,6 @@ def start_agent_run(req: StartAgentRequest, request: Request):
             )
 
     meta = _MANUAL_AGENT_ALLOWLIST[req.agent_name]
-
-    if req.agent_name == "prediction_observer":
-        try:
-            blocked_reason = prediction_observer_blocked_reason(load_config())
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "prediction_observer_config_unavailable",
-                    "message": "Prediction observer configuration is unavailable; no run was queued.",
-                },
-            ) from exc
-        if blocked_reason is not None:
-            status_code = 503 if blocked_reason == "prediction_observer_config_unavailable" else 400
-            message = {
-                "prediction_observer_disabled": "Prediction observer is disabled; no run was queued.",
-                "prediction_observer_not_configured": "No prediction markets are configured; no run was queued.",
-            }.get(blocked_reason, "Prediction observer is unavailable; no run was queued.")
-            raise HTTPException(
-                status_code=status_code,
-                detail={"error": blocked_reason, "message": message},
-            )
 
     # Gate check for behavior-producing agents: honour kill-switch and pause state
     # so a manual trigger cannot bypass protections that scheduled runs respect.

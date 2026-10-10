@@ -144,7 +144,7 @@ def test_collector_batch_rolls_back_earlier_snapshots_when_sqlite_rejects_a_late
 
 def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    run = AgentRun(agent_name="research_agent", trigger_type="manual")
+    run = AgentRun(agent_name="post_trade_reviewer", trigger_type="manual")
     insert_agent_run(run)
     db = get_db()
     trace = _transaction_trace(db)

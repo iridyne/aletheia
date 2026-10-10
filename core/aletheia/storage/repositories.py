@@ -779,64 +779,12 @@ _OPEN_TRADE_RETRY_SQL = f"""
 """
 
 
-def find_divergence_opportunity_by_source_version(
-    source_version: str,
-) -> dict | None:
-    """Return the earliest divergence row for one producer source version.
-
-    Lifecycle state is deliberately unrestricted so a delayed retry resolves
-    the original row after it has already been queued or reviewed.
-    """
-    if not source_version:
-        return None
-    row = (
-        get_db()
-        .execute(
-            "SELECT * FROM opportunities "
-            "WHERE source_agent='divergence_scanner' "
-            "AND json_valid(metadata) "
-            "AND json_extract(metadata, '$.source_version') = ? "
-            "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
-            (source_version,),
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
-
-
 def get_opportunity(oid: str) -> dict | None:
     return _select_one("opportunities", oid)
 
 
 def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list[dict]:
     return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
-
-
-def insert_divergence_opportunity_once(
-    opportunity: Opportunity,
-    *,
-    source_version: str,
-) -> tuple[dict, bool]:
-    """Atomically resolve one lifecycle owner for a divergence source version."""
-    identity = str(source_version or "").strip()
-    if not identity or opportunity.source_agent != "divergence_scanner":
-        raise ValueError("divergence Opportunity identity is invalid")
-    try:
-        metadata = json.loads(opportunity.metadata or "{}")
-    except (TypeError, ValueError) as exc:
-        raise ValueError("divergence Opportunity metadata is invalid") from exc
-    if metadata.get("source_version") != identity:
-        raise ValueError("divergence Opportunity source version mismatch")
-
-    with transaction(immediate=True):
-        existing = find_divergence_opportunity_by_source_version(identity)
-        if existing is not None:
-            return existing, False
-        insert_opportunity(opportunity)
-        persisted = _select_one("opportunities", opportunity.id)
-        if persisted is None:
-            raise RuntimeError("divergence Opportunity insert did not persist")
-        return persisted, True
 
 
 # --- PI Decisions ---
@@ -1009,67 +957,6 @@ def insert_first_capital_event(event) -> bool:
         [*data.values(), event.broker_id],
     )
     return result.rowcount == 1
-
-
-# --- Prediction Observer Runs ---
-
-
-def insert_prediction_run(run_id: str, categories: list) -> None:
-    import json as _json
-
-    from aletheia.storage.models import _utcnow
-
-    _insert(
-        "prediction_observer_runs",
-        {
-            "id": run_id,
-            "started_at": _utcnow(),
-            "status": "running",
-            "categories": _json.dumps(categories),
-        },
-    )
-
-
-def update_prediction_run(
-    run_id: str,
-    *,
-    status: str = "completed",
-    markets_scanned: int = 0,
-    opportunities_created: int = 0,
-    errors: list | None = None,
-) -> None:
-    import json as _json
-
-    from aletheia.storage.models import _utcnow
-
-    data: dict = {
-        "status": status,
-        "completed_at": _utcnow(),
-        "markets_scanned": markets_scanned,
-        "opportunities_created": opportunities_created,
-    }
-    if errors:
-        data["errors"] = _json.dumps(errors)
-    _update("prediction_observer_runs", run_id, data)
-
-
-# --- Prediction Normalized Tables ---
-
-
-def insert_probability_snapshot(snapshot: dict) -> None:
-    from aletheia.storage.models import _utcnow, new_id
-
-    snapshot.setdefault("id", new_id())
-    snapshot.setdefault("created_at", _utcnow())
-    _insert("prediction_probability_snapshots", snapshot)
-
-
-def insert_prediction_claim(data: dict) -> None:
-    from aletheia.storage.models import _utcnow, new_id
-
-    data.setdefault("id", new_id())
-    data.setdefault("created_at", _utcnow())
-    _insert("prediction_market_claims", data)
 
 
 # --- Trade Proposals ---
@@ -5763,9 +5650,8 @@ def prune_onchain_snapshots(days: int = 30) -> int:
 
 
 def prune_prediction_probability_snapshots(days: int = 90) -> int:
-    """#150: prune prediction_probability_snapshots older than `days`. Observation-only
-    telemetry (prediction_observer, 30-min cadence, gated on prediction_enabled) that
-    previously had no retention path."""
+    """#150: prune prediction_probability_snapshots older than `days`. Historical
+    observation-only telemetry; its producer is retired, the table stays."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return _delete_by_rowid_batches("prediction_probability_snapshots", "ts < ?", (cutoff,))
 

@@ -17,7 +17,6 @@ from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPP
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -141,12 +140,10 @@ _ESSENTIAL_JOBS: set[str] = {
     "price_feed",
     "position_manager",
     "position_path_observer",
-    "ohlcv_nightly_backfill",
     "ohlcv_active_backfill",
     "exchange_sync",
     "health_check",
     "cleanup",
-    "news_fetch",
     "demo_capabilities",
     "reconciliation",
     "position_reconcile",
@@ -173,24 +170,6 @@ PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS = 15 * 60
 # skips every row that is already fresh, so the cadence costs nothing at rest.
 VENUE_MARGIN_REFRESH_INTERVAL_MINUTES = 5
 
-_EQUITY_MARKET_TZ = "America/New_York"
-
-
-def _equity_observer_trigger() -> OrTrigger:
-    """Return only the valid half-hour fires in the Eastern session."""
-    return OrTrigger([
-        CronTrigger(
-            day_of_week="mon-fri", hour="9", minute="30", timezone=_EQUITY_MARKET_TZ
-        ),
-        CronTrigger(
-            day_of_week="mon-fri", hour="10-15", minute="0,30", timezone=_EQUITY_MARKET_TZ
-        ),
-        CronTrigger(
-            day_of_week="mon-fri", hour="16", minute="0", timezone=_EQUITY_MARKET_TZ
-        ),
-    ])
-
-
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
 
@@ -204,11 +183,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_data": 90.0,
     "dreaming_agent": 300.0,
     "pi_trading_decision": 300.0,
-    "equity_observer": 240.0,
-    "prediction_observer": 240.0,
-    "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
-    "risk_critic": 300.0,
     "universe_refresh": 600.0,
     "data_collectors": 55.0,
     "data_collector_context": 60.0,
@@ -216,15 +191,11 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "portfolio_snapshot": 45.0,
     "position_path_observer": 90.0,
     "price_feed": 45.0,
-    "daily_summary": 60.0,
-    "ohlcv_nightly_backfill": 3600.0,
     "ohlcv_active_backfill": 300.0,
     "insight_synthesizer": 120.0,
     "confidence_calibration": 30.0,
     "reasoning_feedback": 60.0,
     "connectivity_monitor": 15.0,
-    "news_fetch": 120.0,
-    "news_analyze": 105.0,
     "lesson_reviewer": 300.0,
     # Raised 120 -> 300 so the settler's 240s drain budget fits. The job runs on a
     # 600s interval with max_instances=1, so a 300s ceiling still cannot overlap
@@ -312,8 +283,6 @@ def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
             "async_worker_running": worker.running,
             "async_pending": worker.pending,
             "async_capacity": _TIMEOUT_WORKER_CAPACITY,
-            "news_analyzer_worker_running": _news_analyzer_timeout_worker.running,
-            "news_analyzer_pending": _news_analyzer_timeout_worker.pending,
             "sync_pending": _sync_timeout_worker.pending,
             "universe_audit_sync_pending": _universe_audit_timeout_worker.pending,
             "universe_audit_sync_workers": _SYNC_TIMEOUT_WORKERS,
@@ -477,14 +446,11 @@ class _PersistentAsyncTimeoutWorker:
 
 
 _async_timeout_worker = _PersistentAsyncTimeoutWorker()
-_news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
-    "aletheia-news-analyzer-async"
-)
 
 
 def _ensure_timeout_workers_ready() -> None:
     """Replace closed workers; never submit into a loop already draining stop."""
-    global _async_timeout_worker, _news_analyzer_timeout_worker
+    global _async_timeout_worker
 
     with _timeout_workers_lock:
         if _async_timeout_worker.closed:
@@ -494,18 +460,6 @@ def _ensure_timeout_workers_ready() -> None:
                     "refusing unsafe replacement"
                 )
             _async_timeout_worker = _PersistentAsyncTimeoutWorker()
-        if _news_analyzer_timeout_worker.closed:
-            if (
-                _news_analyzer_timeout_worker.stopping
-                or _news_analyzer_timeout_worker.thread_alive
-            ):
-                raise RuntimeError(
-                    "news analyzer timeout worker shutdown incomplete; "
-                    "refusing unsafe replacement"
-                )
-            _news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
-                "aletheia-news-analyzer-async"
-            )
 
 
 class _PersistentSyncTimeoutWorker:
@@ -900,11 +854,7 @@ def _run_async_with_timeout(
             rollback_if_in_transaction()
             close_db()
 
-    worker = (
-        _news_analyzer_timeout_worker
-        if job_id == "news_analyze"
-        else _async_timeout_worker
-    )
+    worker = _async_timeout_worker
     try:
         future = worker.submit(_guarded_coro())
     except RuntimeError:
@@ -1295,8 +1245,6 @@ def _run_serenity_startup_catchup() -> None:
         _record_job_failure("serenity_startup_catchup", str(exc))
 
 
-
-
 def _run_pricing_reference_refresh() -> None:
     try:
         from aletheia.economics.pricing_sync import start_pricing_refresh
@@ -1564,43 +1512,6 @@ def init_scheduler() -> BackgroundScheduler | None:
             "observation.execution_owner=%s (optional cycle unavailable or Worker-owned)",
             _observation_owner,
         )
-    # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
-    _scheduler.add_job(
-        _guarded("news_fetch", _run_news_fetch), "interval",
-        minutes=cfg.news.fetch_interval_minutes, id="news_fetch",
-        misfire_grace_time=120, executor="io",
-        next_run_time=datetime.now() + timedelta(seconds=30),
-    )
-    _scheduler.add_job(
-        _guarded("news_analyze", _run_news_analyze), "interval",
-        minutes=5, id="news_analyze",
-        misfire_grace_time=120, executor="agents",
-        next_run_time=datetime.now() + timedelta(seconds=90),
-    )
-    # US equity observer — wakes only at valid Eastern half-hours in the
-    # 09:30–16:00 America/New_York session.  The trigger owns the boundary so a
-    # delayed 16:00 fire can still run inside misfire_grace_time after the
-    # single agents worker becomes available.
-    try:
-        get_agent_fn("equity_observer")
-    except ValueError:
-        logger.info("Equity Observer not scheduled: optional Research producer unavailable")
-    else:
-        _scheduler.add_job(
-            _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
-            id="equity_observer", misfire_grace_time=300, executor="agents",
-        )
-    # Prediction market observer — runs every 30 min around the clock.
-    try:
-        get_agent_fn("prediction_observer")
-        get_agent_fn("divergence_scanner")
-    except ValueError:
-        logger.info("Prediction pipeline not scheduled: optional Research/Data unavailable")
-    else:
-        _scheduler.add_job(
-            _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
-            id="prediction_observer", misfire_grace_time=120, executor="agents",
-        )
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
@@ -1613,17 +1524,6 @@ def init_scheduler() -> BackgroundScheduler | None:
             _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
             id="post_trade_reviewer", misfire_grace_time=300,
             next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
-        )
-    # Risk critic — reviews risk decisions and writes lessons every 6 hours.
-    try:
-        get_agent_fn("risk_critic")
-    except ValueError:
-        logger.info("Risk Critic not scheduled: optional Research producer unavailable")
-    else:
-        _scheduler.add_job(
-            _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
-            id="risk_critic", misfire_grace_time=300,
-            next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
         )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
@@ -1691,14 +1591,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("guard_promotion", _run_guard_promotion), "cron", hour=4, minute=0,
         id="guard_promotion", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
-    # Nightly OHLCV backfill — bulk-download history for universe + observed symbols.
-    if cfg.historical_data.nightly_backfill_enabled:
-        _scheduler.add_job(
-            _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
-            "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
-            id="ohlcv_nightly_backfill", misfire_grace_time=600,
-            executor="maintenance_io", timezone="Asia/Shanghai",
-        )
     if (
         getattr(cfg.historical_data, "enabled", True)
         and getattr(cfg.historical_data, "active_universe_backfill_enabled", True)
@@ -1732,12 +1624,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(seconds=60),
         executor="io",
     )
-    # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
-    _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
-    _scheduler.add_job(
-        _guarded("daily_summary", _run_daily_summary), "cron", hour=_summary_hour, minute=0,
-        id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
-    )
 
 
     try:
@@ -1769,7 +1655,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         except Exception:
             logger.warning('scheduler: init cleanup shutdown failed after startup error')
         _async_timeout_worker.close()
-        _news_analyzer_timeout_worker.close()
         raise
     _publish_scheduler(_scheduler)
     return _scheduler
@@ -1798,7 +1683,6 @@ def stop_scheduler() -> bool:
             lane.stop()
         deadline = time.monotonic() + _SYNC_LANE_DRAIN_SEC
         _async_timeout_worker.close()
-        _news_analyzer_timeout_worker.close()
     undrained = [
         name for name, lane in lanes.items()
         if not lane.join(deadline - time.monotonic())
@@ -2028,10 +1912,10 @@ def _reschedule_job_preserving_pause(job_id: str, *, trigger: str, **kwargs) -> 
 
 
 def reconcile_historical_data_jobs(historical_cfg) -> bool:
-    """Reconcile ohlcv_nightly_backfill and ohlcv_active_backfill against live config.
+    """Reconcile ohlcv_active_backfill against live config.
 
-    Both jobs are essential infrastructure; this function adds, removes, or
-    reschedules them immediately after a settings save so the UI reflects
+    The job is essential infrastructure; this function adds, removes, or
+    reschedules it immediately after a settings save so the UI reflects
     actual runtime state. Returns True when the scheduler was reached (even if
     no change was needed); False when the scheduler is absent or an error
     occurred (the saved config still applies at next restart).
@@ -2040,30 +1924,6 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
         return False
     try:
         with _SCHEDULER_JOB_LOCK:
-            nightly_enabled = getattr(historical_cfg, "nightly_backfill_enabled", False)
-            nightly_hour = int(getattr(historical_cfg, "nightly_backfill_hour_cst", 2))
-            nightly_job = _scheduler.get_job("ohlcv_nightly_backfill")
-            if nightly_enabled:
-                if nightly_job is None:
-                    _scheduler.add_job(
-                        _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
-                        "cron", hour=nightly_hour, minute=30,
-                        id="ohlcv_nightly_backfill", misfire_grace_time=600,
-                        executor="maintenance_io", timezone="Asia/Shanghai",
-                    )
-                    logger.info("Added ohlcv_nightly_backfill job at %02d:30 CST", nightly_hour)
-                else:
-                    _scheduler.reschedule_job(
-                        "ohlcv_nightly_backfill", trigger="cron",
-                        hour=nightly_hour, minute=30, timezone="Asia/Shanghai",
-                    )
-                    logger.info("Rescheduled ohlcv_nightly_backfill to %02d:30 CST", nightly_hour)
-            else:
-                if nightly_job is not None:
-                    _scheduler.remove_job("ohlcv_nightly_backfill")
-                    _selectively_paused_jobs.discard("ohlcv_nightly_backfill")
-                    logger.info("Removed ohlcv_nightly_backfill job")
-
             hist_enabled = getattr(historical_cfg, "enabled", True)
             active_enabled = hist_enabled and getattr(historical_cfg, "active_universe_backfill_enabled", True)
             active_interval = int(getattr(historical_cfg, "active_universe_backfill_interval_minutes", 10))
@@ -2090,26 +1950,6 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to reconcile historical data jobs (applies at next restart): %s", e)
-        return False
-
-
-def reschedule_news_fetch(interval_min: int) -> bool:
-    """Apply a new fetch interval to the live news_fetch job.
-
-    Returns True if rescheduled; False if no running scheduler/job or on error
-    (the saved interval still applies at next boot). Never raises into callers.
-    """
-    if _scheduler is None:
-        return False
-    try:
-        with _SCHEDULER_JOB_LOCK:
-            if _scheduler.get_job("news_fetch") is None:
-                return False
-            _scheduler.reschedule_job("news_fetch", trigger="interval", minutes=interval_min)
-        logger.info("Rescheduled news_fetch to every %d min", interval_min)
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Failed to reschedule news_fetch (applies at next restart): %s", e)
         return False
 
 
@@ -2160,27 +2000,6 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to reconcile filter_controller_observe (applies at next restart): %s", e)
-        return False
-
-
-def reschedule_telegram_summary(hour_cst: int) -> bool:
-    """Reschedule the daily_summary cron job to fire at the given hour (CST/UTC+8).
-
-    Returns True if rescheduled; False if no running scheduler/job or on error.
-    """
-    if _scheduler is None:
-        return False
-    try:
-        with _SCHEDULER_JOB_LOCK:
-            if not _reschedule_job_preserving_pause(
-                "daily_summary", trigger="cron",
-                hour=int(hour_cst), minute=0, timezone="Asia/Shanghai",
-            ):
-                return False
-        logger.info("Rescheduled daily_summary to %02d:00 CST", hour_cst)
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Failed to reschedule daily_summary (applies at next restart): %s", e)
         return False
 
 
@@ -2331,15 +2150,6 @@ def _run_connectivity_monitor():
     except Exception as e:
         logger.debug("connectivity_monitor job failed: %s", e)
         _record_job_failure("connectivity_monitor", str(e))
-
-
-def _run_daily_summary():
-    try:
-        from aletheia.notifications import notify_daily_summary
-        notify_daily_summary()
-    except Exception as e:
-        logger.warning("daily_summary job failed: %s", e)
-        _record_job_failure("daily_summary", str(e))
 
 
 def _run_market_data():
@@ -2606,8 +2416,6 @@ def _run_pi_trading_decision():
     except Exception as e:
         logger.warning("pi_trading_decision job failed: %s", e)
         _record_job_failure("pi_trading_decision", str(e))
-
-
 
 
 def _run_position_manager():
@@ -3000,61 +2808,6 @@ def _tpsl_fill_check_body():
         raise
 
 
-def _run_equity_observer():
-    """Run equity_observer; the scheduler trigger owns the session boundary."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    tickers = cfg.market_data.observed_equities
-    if not tickers:
-        return
-    try:
-        _run_async_with_timeout("equity_observer", _async_run("equity_observer"))
-    except TimeoutError:
-        logger.warning(
-            "equity_observer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["equity_observer"],
-        )
-        _record_job_failure("equity_observer", "timeout")
-    except Exception as e:
-        logger.warning("equity_observer job failed: %s", e)
-        _record_job_failure("equity_observer", str(e))
-
-
-def _run_prediction_observer():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    if not cfg.market_data.prediction_enabled:
-        return
-    if not cfg.market_data.observed_prediction_markets:
-        return
-    try:
-        _run_async_with_timeout("prediction_observer", _async_run("prediction_observer"))
-    except TimeoutError:
-        logger.warning(
-            "prediction_observer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["prediction_observer"],
-        )
-        _record_job_failure("prediction_observer", "timeout")
-    except Exception as e:
-        logger.warning("prediction_observer job failed: %s", e)
-        _record_job_failure("prediction_observer", str(e))
-        return  # skip divergence scan on observer failure
-    # Chain: scan for crypto/prediction divergences after observer persists fresh data
-    try:
-        _run_async_with_timeout("divergence_scanner", _async_run("divergence_scanner"))
-    except TimeoutError:
-        logger.warning(
-            "divergence_scanner timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["divergence_scanner"],
-        )
-        _record_job_failure("prediction_observer", "divergence_scanner timeout")
-    except Exception as e:
-        logger.warning("divergence_scanner failed: %s", e)
-        _record_job_failure("prediction_observer", f"divergence_scanner: {e}")
-
-
 def _run_cleanup():
     cfg = load_config()
     try:
@@ -3238,7 +2991,6 @@ def _run_cleanup():
             "agent_task_claims": _prune_agent_task_claims_tasks_db(),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
             "serenity_themes_expired": repo.expire_stale_serenity_themes(),
-            "news_items": _prune_news(cfg),
             # Cancel abandoned unresolved Orders reconciliation can never resolve
             # (no credentials / venue dropped them) so they stop failing every
             # reconciliation cycle. Bookkeeping-only: never touches an Order with a
@@ -3335,66 +3087,6 @@ def _run_cleanup():
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
         _record_job_failure("cleanup", str(e))
-
-
-def _run_news_fetch():
-    cfg = load_config()
-    if not cfg.news.enabled:
-        return
-    try:
-        result = _run_async_with_timeout("news_fetch", _async_news_fetch())
-        if isinstance(result, dict) and result.get("failed", 0):
-            status = (
-                "all_feeds_failed"
-                if result.get("succeeded", 0) == 0
-                else "partial_feed_failure"
-            )
-            _record_job_failure("news_fetch", status)
-    except TimeoutError:
-        logger.warning("news_fetch timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["news_fetch"])
-        _record_job_failure("news_fetch", "timeout")
-    except Exception as e:
-        logger.warning("news_fetch failed: %s", e)
-        _record_job_failure("news_fetch", str(e))
-
-
-async def _async_news_fetch():
-    from extensions.data.news_collector import fetch_news_feeds
-    return await fetch_news_feeds()
-
-
-def _run_news_analyze():
-    cfg = load_config()
-    if not cfg.news.enabled or cfg.runtime.paused:
-        return
-    try:
-        result = _run_async_with_timeout("news_analyze", _async_news_analyze())
-        if isinstance(result, dict):
-            failures = int(result.get("retryable_failed", 0)) + int(
-                result.get("terminal_failed", 0)
-            ) + int(result.get("unresolved_failed", 0))
-            if result.get("attempted", 0) and failures:
-                status = (
-                    "all_items_failed"
-                    if result.get("analyzed", 0) == 0
-                    else "partial_item_failure"
-                )
-                _record_job_failure("news_analyze", status)
-    except TimeoutError:
-        logger.warning(
-            "news_analyze timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["news_analyze"],
-        )
-        _record_job_failure("news_analyze", "timeout")
-    except Exception as e:
-        logger.warning("news_analyze failed: %s", e)
-        _record_job_failure("news_analyze", str(e))
-
-
-async def _async_news_analyze():
-    from extensions.data.news_analyzer import analyze_pending_news
-
-    return await analyze_pending_news(batch_size=3)
 
 
 def _run_persona_rollout():
@@ -3547,23 +3239,6 @@ def _run_post_trade_reviewer():
     except Exception as e:
         logger.warning("post_trade_reviewer job failed: %s", e)
         _record_job_failure("post_trade_reviewer", str(e))
-
-
-def _run_risk_critic():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    try:
-        _run_async_with_timeout("risk_critic", _async_run("risk_critic"))
-    except TimeoutError:
-        logger.warning(
-            "risk_critic job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["risk_critic"],
-        )
-        _record_job_failure("risk_critic", "timeout")
-    except Exception as e:
-        logger.warning("risk_critic job failed: %s", e)
-        _record_job_failure("risk_critic", str(e))
 
 
 def _run_insight_synthesizer():
@@ -3924,19 +3599,6 @@ def _run_guard_promotion():
         _record_job_failure("guard_promotion", str(e))
 
 
-def _run_ohlcv_nightly_backfill():
-    """Nightly bulk download of OHLCV history for universe + observed symbols."""
-    try:
-        _run_sync_with_timeout("ohlcv_nightly_backfill", _ohlcv_backfill_body)
-    except TimeoutError:
-        logger.warning("ohlcv_nightly_backfill timed out after %.0fs",
-                       _ASYNC_JOB_TIMEOUT_SEC["ohlcv_nightly_backfill"])
-        _record_job_failure("ohlcv_nightly_backfill", "timeout")
-    except Exception as e:
-        logger.warning("ohlcv_nightly_backfill failed: %s", e)
-        _record_job_failure("ohlcv_nightly_backfill", str(e))
-
-
 def _run_active_ohlcv_backfill():
     """Repair a bounded number of active-Universe OHLCV gaps."""
     cfg = load_config()
@@ -3983,29 +3645,6 @@ def _active_ohlcv_backfill_body():
         max_pairs=cfg.historical_data.active_universe_backfill_max_pairs_per_run,
         months=cfg.historical_data.default_months,
     ))
-
-
-def _ohlcv_backfill_body():
-    import asyncio as _asyncio
-    from aletheia.data.history_downloader import download_symbol_history
-
-    cfg = load_config()
-    months = cfg.historical_data.default_months
-    instruments = set(_get_observed_instruments(cfg) or [])
-
-    total_bars = 0
-    for instrument in sorted(instruments, key=str):
-        for tf in ("1h", "4h"):
-            try:
-                result = _asyncio.run(download_symbol_history(
-                    instrument.symbol, tf, months=months,
-                    exchange=instrument.exchange, market_type=instrument.market_type,
-                ))
-                total_bars += result.bars_fetched
-            except Exception as e:
-                logger.debug("nightly_backfill skip %s/%s: %s", instrument, tf, e)
-    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
-                len(instruments), total_bars)
 
 
 def _run_demo_capabilities() -> None:
@@ -4826,7 +4465,6 @@ def _get_derivative_symbols(instruments) -> list[str]:
 # Retention imports follow shared helpers; explicit names resolve local call sites.
 from aletheia.agent_runtime.scheduler_retention import (
     _cleanup_catchup_due,
-    _prune_news,
     _prune_session_logs,
     _prune_task_notes,
     _prune_backups,

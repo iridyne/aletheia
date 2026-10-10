@@ -570,24 +570,6 @@ def make_ccxt(name: str, **options):
     return exchange, session
 
 
-def make_ccxt_prediction(name: str, **options):
-    """Build a ccxt.prediction exchange with the managed proxy session injected.
-
-    Extends the sanctioned CCXT construction seam to the ccxt.prediction family
-    (prediction-market exchanges, e.g. Polymarket). Same session/proxy/lifecycle
-    policy as make_ccxt. Returns (exchange, session); caller must close_ccxt.
-    """
-    import ccxt.prediction as prediction
-
-    if not hasattr(prediction, name):
-        raise ValueError(f"unknown ccxt prediction exchange: {name}")
-    session = aiohttp_session()
-    opts = {**ccxt_timeout_options(), "enableRateLimit": True, "session": session}
-    opts.update(options)
-    exchange = getattr(prediction, name)(opts)
-    return exchange, session
-
-
 def make_ccxt_pro(name: str, **options):
     """Build a ccxt.pro WebSocket exchange with the managed proxy session injected.
 

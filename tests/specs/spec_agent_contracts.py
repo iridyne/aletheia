@@ -75,20 +75,6 @@ def test_guard_pipeline_functions():
 
 @spec_claim(
     SpecClaim(
-        "AC-S06", "agent_contracts", "§2 equity_observer", "L2a",
-        "equity_observer module exists (replaces stock_observer)",
-    ),
-)
-def test_equity_observer_exists():
-    from extensions.research import equity_observer
-
-    assert hasattr(equity_observer, "EquityRead")
-
-
-
-
-@spec_claim(
-    SpecClaim(
         "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
         "scheduler.py defines exactly the executor pools "
         "{default, io, audit, fast_io, protective, maintenance_io, "
@@ -149,13 +135,11 @@ def test_long_maintenance_jobs_do_not_share_short_io_lane():
         for job_id in (
             "universe_refresh",
             "outcome_settler",
-            "ohlcv_nightly_backfill",
             "ohlcv_active_backfill",
         )
     } == {
         "universe_refresh": "maintenance_io",
         "outcome_settler": "maintenance_io",
-        "ohlcv_nightly_backfill": "maintenance_io",
         "ohlcv_active_backfill": "maintenance_io",
     }
     assert executors["tpsl_fill_check"] == "io"
@@ -541,9 +525,6 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
 
     # The retired wake sources must stay retired.
     retired = {
-        "extensions/research/equity_observer.py": "equity_observer_opportunity",
-        "extensions/research/prediction_observer.py": "prediction_observer_opportunity",
-        "extensions/research/divergence_scanner.py": "divergence_scanner_opportunity",
         "extensions/analytics/guard_promotion.py": "guard_set_changed",
         "core/aletheia/server/routes/settings.py": "ranker_config_changed",
     }
