@@ -1,192 +1,191 @@
-# Live Unlock 信任边界契约 (L2 金标准)
+# Live Unlock Contract
 
-> **角色**:定义实盘解锁这一最不可逆操作的信任边界——谁能解锁、需什么前置、写什么审计、agent 如何被永久挡在门外。
-> 这是 [Product Direction](../../product/definition/DIRECTION.md) 所要求的人类控制资本暴露与逐级获得自主权的最后一道门。
-> **基线**：以当前代码为底；本契约描述已实现边界，产品支持状态仍以 Capability Ground Truth 为准。
-> **不变式来源**:[trust §6.3 (live.py / permissions)](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-06-21 · 维护者:Aletheia Dev
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `LU` · **Owner code:** `core/aletheia/server/routes/live.py`, `core/aletheia/trust/live_unlock.py`
+> Retired narrative: [history](../history/risk_kill_live_contract_narrative.md).
 
----
+## Scope
 
-## 1. Live 状态标志
+Live Unlock is the human-only gate that moves `live.state` from `live_disabled` to
+`live_limited` after a private preflight of the selected live account and a go-live
+scorecard check, and moves it back on lock or when the evidence goes stale. Live is out
+of product scope and off by default; unlocking records a permission prerequisite only —
+no Entry Plan is routed to a live account (§4b). It does not own order placement
+([execution_contract](execution_contract.md)), Risk checks
+([risk_engine_contract](risk_engine_contract.md)) or the scorecard's criteria
+(`analytics/go_live_scorecard.py`).
 
-```python
-# config/schema.py:111-113
-class LiveConfig:
-    state: str = "live_disabled"               # 默认锁死
-    first_live_confirmation_done: bool = False
-    unlock_evidence: dict | None = None        # sanitized, expiring selected-account proof
-```
+## Entry points
 
-状态值:`live_disabled`(默认) / `live_limited`。**契约**:系统出厂即 `live_disabled`,任何 live 执行被 [risk_engine_contract §2 第3关](risk_engine_contract.md) 拒。
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/server/routes/live.py::live_unlock` | API route `POST /api/settings/live-unlock` | Dashboard Settings → Execution tab |
+| `core/aletheia/server/routes/live.py::live_lock` | API route `POST /api/settings/live-lock` | Dashboard Settings → Execution tab |
+| `core/aletheia/server/routes/live.py::live_preflight` | API route `POST /api/settings/live-preflight` | Dashboard Settings → Execution tab |
+| `core/aletheia/trust/live_unlock.py::revoke_stale_live_unlock` | call | `server/routes/health.py::status` (`GET /api/status`), Risk check #3, `execution/gateway.py::_execute_proposal` |
+| `core/aletheia/analytics/execution_mode.py::resolve_selected_execution_mode` | call | `server/routes/analytics.py`, `server/routes/ui.py` |
 
----
+## Durable state
 
-## 2. 解锁路径与人工确认门
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| config `live.state`, `live.first_live_confirmation_done`, `live.unlock_evidence` | `live.py::live_unlock` / `live_lock`, `trust/live_unlock.py::revoke_stale_live_unlock` (via `save_config`) | Risk check #3, Gateway, `/api/status` | mutable; every transition audited |
+| config `operator.permission_mode` | same writers | `agent_shell/permissions.py::check_permission` | mutable |
+| `audit.jsonl` | `files/jsonl.py::write_audit` | audit mirror | append-only (rotation renames, never deletes) |
 
-| 项 | 行为 | 位置 |
-|----|------|------|
-| 入口 | `live_unlock(req: LiveUnlockRequest)` | `server/routes/live.py` |
-| 前置 | `confirm=true` **且** 首次需 `acknowledge_first_unlock=true`;当前状态须为 `live_disabled`;随后必须通过当前 `exchange.name` 对应 live broker 的私有账户预检 | `live.py` |
-| 方向 | 仅 `live_disabled → live_limited`(单向) | — |
-| 反向锁定 | 独立路由；同时清除 unlock evidence | `live.py` |
+## Requirements
 
-**不变式([trust §6.3](../../governance/policies/trust_and_change_control.md)):**
-- 首次 live 解锁**必须**人工显式确认。
-- live lock/unlock **必须**写审计事件。
-- `live.py` 路由**不得**下单。
-- 预检必须使用选定 broker 的签名私有账户请求；结果明确 `public_reachability=not_used_as_authority`，公共可达性、Bitget legacy cache、demo/testnet 响应不能证明 live 解锁。
-- 预检证据只保存 broker、live 环境、账户指纹、凭证/配置修订号、权限和有效期；缺少订单权限时按 `permission_unknown=deny` 失败。
-- Bitget 私有账户的 `authorities` 权限范围必须明确包含交易权限；只读或未知范围均拒绝。
-- 预检到提交之间若凭证、账户、环境或配置修订号改变，必须拒绝提交；切换选定交易所或修改其 live 凭证时必须先 lock。
-- 证据过期或不再匹配选定账户时，`/api/status`、Risk 或 Gateway 发现该状态会撤销 `live_limited`、清除证据并把 `operator.permission_mode` 重置为 `ReadOnly`；撤销原因和审计结果仍公开在状态响应和审计镜像中。
-- 测试须覆盖"默认 disabled"+"解锁审计"。
+### 1. Default state
 
-> `operator.permission_mode` 管理 Agent/Operator 自主权限，不是人类 Dashboard 解锁的授权门；把它加到此路由会混淆两个信任面，因此旧 `BACKLOG-LU-01` 已否决。Live Unlock 虽有确认、scorecard 与审计门，但当前 System Operator Proposal 仍不会路由到 `*_live_limited`，所以产品能力保持 Experimental，见 GitHub #418。
+#### LU-C01 Live is off by default
+`The configuration shall default live.state to live_disabled, and the Risk Engine shall reject every live-mode Proposal unless live.state is exactly live_limited.`
+- WHEN `live.state` holds any other value (typo, unknown) THEN Risk rejects with `live_disabled` (risk check #3).
 
----
+### 2. Unlock path and human confirmation
 
-## 3. 解锁审计格式
+#### LU-C02 Explicit confirmation
+`If an unlock request lacks confirm=true, then the unlock route shall return 400 and change nothing.`
 
-```json
-// live.py:35-43 → data/logs/audit.jsonl (jsonl.py:36)
-{
-  "actor": "human", "source": "dashboard",
-  "event_type": "live_unlocked", "entity_type": "live_state",
-  "before": {"state": "live_disabled"},
-  "after": {
-    "state": "live_limited",
-    "live_execution_identity": {"broker": "<selected broker>", "account_fingerprint": "sha256:<digest>"}
-  },
-  "live_execution_identity": {
-    "broker": "<selected broker>",
-    "execution_mode": "<broker>_live_limited",
-    "account_environment": "live",
-    "account_fingerprint": "sha256:<digest>",
-    "credential_revision": "sha256:<digest>",
-    "config_revision": "sha256:<digest>"
-  },
-  "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; System Operator elevated to Auto"
-}
-```
-append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust §1.4](../../governance/policies/trust_and_change_control.md)。
+#### LU-C03 First-unlock acknowledgement
+`If live.first_live_confirmation_done is false and the request lacks acknowledge_first_unlock=true, then the unlock route shall return 400 and change nothing.`
 
----
+#### LU-C04 One-way transition
+`The unlock route shall transition only from live_disabled to live_limited.`
+- WHEN the state is already `live_limited` with valid evidence THEN it returns `Already unlocked`.
+- WHEN the state is `live_limited` with invalid evidence THEN it revokes (LU-C08) and returns 409 `live_unlock_evidence_stale`.
+- WHEN the state is anything else THEN it returns 409.
 
-## 4. 不可逆操作清单
+#### LU-C05 Selected-account private preflight
+`When an unlock is requested, the unlock route shall require a private, read-only probe of the selected exchange's live account through the UTA adapter that proves a live environment and granted trading permission, and if the probe fails, then it shall return 403 live_preflight_failed.`
+- WHEN `exchange.mode` is not `live` or the selected exchange has no live mode THEN the preflight fails (`exchange_mode_not_live`, `selected_exchange_unsupported`).
+- WHEN the trading permission is `unknown` THEN it is denied (`permission_unknown`; `PERMISSION_UNKNOWN_POLICY = "deny"`).
+- Public reachability, demo/testnet responses and cached state are never evidence (`public_reachability: not_used_as_authority`).
 
-- **解锁 live**(§2)——单向,审计不可删。
-- **真实下单**(`*_live_limited`;当前只有 Bitget 是现役交易所,OKX/Binance 冻结)——经 [execution_contract](execution_contract.md),交易所确认后不可撤回(只能反向平仓)。
+#### LU-C06 Sanitized, expiring evidence
+`The preflight shall persist only the public evidence fields (broker, execution mode, environment, account fingerprint, credential and config revisions, permission status, fetched_at, expires_at, evidence_binding), expiring 300 s after fetch.`
+- Raw credentials and exchange payloads are never stored or returned (`trust/live_unlock.py::public_evidence`).
 
----
+#### LU-C07 No commit against changed configuration
+`If live.state, the selected exchange, its credentials, UTA profile or config revision changed between preflight and commit, then the unlock route shall return 409 and apply nothing.`
+- Token: `live_unlock_config_revision_conflict`.
 
-## 4a. Core Philosophy：Demo 表现是 Live 的唯一入场券
+#### LU-C08 Stale evidence revokes the unlock
+`If live_limited evidence is missing, expired, no longer granted, or no longer matches the selected account, then the first reader among /api/status, Risk check #3 and the Gateway shall set live.state to live_disabled, clear the evidence, reset operator.permission_mode to ReadOnly and write a live_unlock_revoked audit event.`
+- WHEN the revocation cannot be persisted THEN it is still applied in memory and retried on the next read.
 
-**不变式（D8-C01）**：`POST /api/settings/live-unlock` 在将状态迁移至 `live_limited` 之前，
-**必须**调用 `compute_scorecard()`，且仅在 `composite_score >= 70`、`traffic_light == "green"`、
-`blockers` 为空时方可放行。评分卡必须把合格交易的净已实现收益作为独立硬门：已有合格交易但
-净收益 `<= 0` 时强制红灯并产生 blocker，不得由其他加权维度抵消。
-任何绕过此 scorecard 检查的路径均违反本约。
+#### LU-C09 The route never trades
+`The live unlock routes shall not place, modify or cancel any order.`
 
-**依据**：产品定义 §8（失败与撤退）。demo 阶段是 live 的前置证明期；
-没有量化证据支撑的 live 解锁等同于盲目冒险。
+### 3. Audit format
 
-**当前实现状态（2026-07-21 更新）**：`server/routes/live.py` 在状态迁移前调用
-`compute_scorecard()`；低于 70 分、非绿灯或存在 blocker 均返回 403 并附上分项。
-D8-B02 / D8-C01 及负净收益回归 spec 锁定该门禁。
+#### LU-C10 Unlock is audited before it applies
+`When an unlock passes every gate, the unlock route shall write a live_unlocked audit event before changing state, and if the write fails, then it shall return 503 and change nothing.`
+- The event carries `actor=human`, `source=dashboard`, `entity_type=live_state`, `before{state, operator_permission_mode}`, `after{state=live_limited, operator_permission_mode=Auto, live_execution_identity}`, the public evidence, and the message `Live trading unlocked to live_limited by human confirmation after selected-account preflight; System Operator elevated to Auto`.
 
-> 关联契约：[kill_conditions_contract.md § K3](kill_conditions_contract.md)
+#### LU-C11 Lock always applies
+`When a lock is requested, the lock route shall write a live_locked audit event, set live.state to live_disabled, clear the evidence and reset operator.permission_mode to ReadOnly, even if the audit write fails.`
+- WHEN the audit write fails THEN the response includes `audit_warning`.
 
----
+### 4. Scorecard gate (K3)
 
-## 4b. Live 权限准备态（Experimental）
+#### LU-C12 Demo results gate the unlock
+`When an unlock passes the preflight, the unlock route shall call compute_scorecard and return 403 scorecard_gate_failed unless composite_score is at least 70, traffic_light is green and blockers is empty.`
+- WHEN eligible trades exist and their net realized PnL is ≤ 0 THEN the scorecard is red with a blocker, whatever the weighted score.
+- WHEN the outcome cohort cannot be read THEN the scorecard is red with a blocker.
+- WHEN `compute_scorecard` raises THEN the request fails and nothing is applied.
 
-**当前产品事实（2026-07-28）**：Live Unlock 会在人类确认及 scorecard
-门禁后持久化 `live.state=live_limited`，并把 PI Operator 设为 `Auto(4)`。
-这只是实验性的权限准备态，不代表新 Proposal 已能选择 `*_live_limited`
-执行模式。当前生产 Proposal 入口仍读取 `exchange.paper_execution_mode`，
-因此自动交易继续使用 paper/demo 通道。缺失的 proposal-mode join 由
-EX-04 / GitHub #418 跟踪。
+### 4b Preparatory authority (Experimental)
 
-**UI 警示墙（强制）**：Dashboard 的 Live 解锁入口必须在人类确认前展示醒目警示，包含以下全部要素：
-- 此操作只记录 `live_limited` 权限前置状态，不会把新 Proposal 路由到实盘；
-- 当前自主 Proposal 仍使用已选择的 paper/demo 执行通道；
-- 只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现。
+#### LU-C13 Operator autonomy follows the unlock
+`When an unlock is applied, the unlock route shall set operator.permission_mode to Auto, and the lock route and every revocation shall reset it to ReadOnly.`
 
-**不变式**：
-- Unlock 不得被解释为 live Proposal 路由已经存在，也不得在 Gateway 内把已提交的 demo Proposal 改写成 live
-- `Auto(4)` 仍受风控关卡、FORBIDDEN_INTENTS 和宪法文件约束，不能修改自身约束
-- Live 解锁仍须遵守 §2 的人工确认门，自动化流程不得绕过
-- **risk_engine.evaluate_proposal() 不读取 operator.permission_mode，Auto 模式不豁免任何风控关卡**（见 §4b-1）
+#### LU-C14 No live routing for Entry Plans
+`The Entry Plan compiler shall take execution_account_mode from exchange.paper_execution_mode, so no Entry Plan targets a *_live_limited mode while live is unlocked.`
+- The key keeps its historical name; its value is the demo account mode (for example `bitget_demo`). Owner: `trading/entry_plan_compiler.py`. The Gateway never rewrites a submitted demo Proposal to live.
 
-### §4b-2 已选执行模式解析（L2c 不变式）
+#### LU-C15 Honest UI boundary
+`Before the human confirms an unlock, the Dashboard shall show a warning that unlocking records only a live_limited prerequisite, that autonomous Proposals keep the selected demo execution mode, and that real-fund risk exists only after live Proposal routing is built and verified.`
 
-`analytics.execution_mode.resolve_selected_execution_mode()` 是**已选执行模式的唯一
-实现**。规则：`exchange.mode == "live"` 且 `live.state == "live_limited"` 且
-`trust.live_unlock.current_authorization_ref(cfg)` 非 None 时，返回该 broker 的精确
-`*_live_limited` 模式（经 `config.exchanges.live_execution_mode_for_exchange` 派生，
-不硬编码）；否则回落到配置的 paper 模式。配置不可读或 paper 模式为空返回 `None`。
+#### LU-C16 Selected-mode resolution
+`The selected-mode resolver shall return the selected broker's *_live_limited mode when exchange.mode is live, live.state is live_limited and current_authorization_ref is not None, the configured demo mode otherwise, and None when configuration is unreadable or the demo mode is unregistered.`
+- This read serves analytics, dashboard and CLI only; it does not route Entry Plans (LU-C14).
 
-**这不是 §4b 所说的 new-Proposal 路由。** 本节只约束"当前已选模式"这个读取口径，
-供 analytics / 仪表盘 / CLI 使用；新 Proposal 仍读 `exchange.paper_execution_mode`，
-缺失的 proposal-mode join 仍如 §4b 记录追踪于 GitHub #418。两者不得混淆：本节为绿
-不代表实盘路由存在。
+#### LU-C17 Risk ignores operator autonomy
+`The Risk Engine shall not read operator.permission_mode, so Auto exempts no Risk check.`
 
-`agent_shell/commands._configured_paper_execution_mode` 是本规则的历史实现，已随
-#2945 删除的 proposal-creation 命令一并移除。spec: LU-C07。
+### 5. Permission modes
 
-### §4b-1 risk_engine 不依赖 operator.permission_mode（L2c 不变式）
+#### LU-C18 Two permission ladders
+`The permission layer shall rank worker modes Observe < Paper < Full (default Paper) and operator modes ReadOnly < Research < PaperAuto < AllowEditing < Auto (default ReadOnly), and if a mode is unknown, then it shall deny the command.`
+- The command set each mode allows is `agent_shell/registry.py::COMMANDS`. `operator.permission_mode` governs agent commands only; it is not a gate on the human unlock route.
 
-`core/aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。
+### 6. Forbidden intents and restricted tools
 
-**原因**：Operator 面的 `permission_mode`（ReadOnly/Research/PaperAuto/AllowEditing/Auto）控制 System Operator 可以调用哪些命令，不影响 risk_engine 的判断逻辑。若 Auto 模式能豁免任何关卡，System Operator 可借助权限提升绕过资金安全约束。
+#### LU-C19 Forbidden in every mode
+`The permission layer shall reject every FORBIDDEN_INTENTS command as permanently forbidden under every worker and operator mode, including Auto.`
+- `agent_shell/registry.py::FORBIDDEN_INTENTS` contains at least `enable_live`, `modify_credentials`, `bypass_risk`, `place_live_order`, `modify_execution_gateway`, `delete_knowledge`, `change_risk_limits`, `deactivate_kill_switch`, `modify_permissions`, `modify_own_prompt`; names are lowercase with an underscore.
 
-**当前实现（代码为准）**：`engine.py` 读取的是 Worker 面 `cfg.agent.permission_mode`，仅对 `Observe` 权限添加 `permission_mode_insufficient` violation，不存在 skip/bypass 分支。`operator.permission_mode` 不在 engine.py 中出现。
+#### LU-C20 Restricted tools have no permitted mode
+`The agent runtime shall register RESTRICTED_TOOLS under the restricted class, whose allowed-mode set is empty.`
+- Owner: `agent_runtime/tool_registry.py::RESTRICTED_TOOLS`, `agent_runtime/permissions.py::TOOL_CLASSES`.
 
-**不变式（PCI-G06 锁定）**：
-- 任意 `operator.permission_mode` 值下，违规 proposal 均返回 `approved=False`
-- engine.py 不得新增形如 `if cfg.operator.permission_mode == "Auto": skip_check()` 的绕过逻辑
-- spec `PCI-G06` 通过源码扫描 + 行为断言双重验证此不变式
+## Failure semantics
 
----
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| Preflight timeout / connection / missing credentials | 403, state unchanged | `live_preflight_failed` + `reason_code` (`connection_timeout`, `connection_failed`, `credentials_not_configured`) | permission `unknown`, never granted |
+| Trading permission unknown or denied | 403 | `permission_unknown`, `permission_denied` | unknown = deny |
+| Scorecard below gate or cohort unreadable | 403 | `scorecard_gate_failed` + score, light, blockers | cohort unreadable = blocker |
+| Config changed during preflight | 409 | `live_unlock_config_revision_conflict` | — |
+| Unlock audit write fails | 503, state unchanged | `audit_write_failed` | — |
+| Lock audit write fails | lock applied | `audit_warning` | — |
+| Evidence stale while unlocked | revoke to `live_disabled` + ReadOnly | `live_unlock_revoked` audit, `/api/status` revocation, Risk `live_identity_unverified:*` | — |
 
-## 5. Permission Mode(双面)
+## Authority
 
-**Worker 面(Agent Shell)** `agent_shell/permissions.py:6`:
-```
-Observe(0) < Paper(1) < Full(2)
-```
-默认 `agent.permission_mode = "Paper"`(`schema.py:116`)。
+Only a human Dashboard request may unlock Live and only with confirmation, preflight and
+scorecard; no agent command or tool may unlock, change credentials, change Risk limits or
+reach the Gateway, and unlocking never routes an Entry Plan to a live account.
 
-**Operator 面(System Operator/Dashboard)** `agent_shell/permissions.py:10`:
-```
-ReadOnly(0) < Research(1) < PaperAuto(2) < AllowEditing(3) < Auto(4)
-```
-默认 `operator.permission_mode = "ReadOnly"`(`schema.py:118`)。
+## Verification
 
-| 模式 | 能做 |
-|------|------|
-| ReadOnly | 仅读 |
-| Research | 建知识/查询 |
-| PaperAuto | 触发 paper 交易/策略设计 |
-| AllowEditing | 编辑 config/rule |
-| Auto | 完全自主 |
+Claim ids are `SpecClaim` ids in `tests/specs/` — a separate namespace from `LU-C<NN>`.
 
----
+| Requirement | Executable claim / focused test |
+|---|---|
+| LU-C01 | `spec_live_unlock.py::LU-S01` |
+| LU-C02 | `spec_live_unlock.py::LU-B03`; `spec_pipeline_live_unlock.py::PL-LU-01` |
+| LU-C03 | `spec_live_unlock.py::LU-B04`; `spec_pipeline_live_unlock.py::PL-LU-02` |
+| LU-C04 | `spec_live_unlock.py::LU-B05`; `spec_pipeline_live_unlock.py::PL-LU-03` |
+| LU-C10 | `spec_live_unlock.py::LU-B06`; `spec_pipeline_live_unlock.py::PL-LU-04` |
+| LU-C12 | `spec_kill_conditions.py::D8-B02`, `::D8-B02A`, `::D8-C01`; `spec_pipeline_live_unlock.py::PL-LU-NEG` |
+| LU-C13 | `spec_live_unlock.py::LU-B07`, `::LU-C04`, `::LU-C06` |
+| LU-C15 | `spec_live_unlock.py::LU-S03` |
+| LU-C16 | `spec_live_unlock.py::LU-C07` |
+| LU-C17 | `spec_pi_decision_chain.py::PCI-G06` |
+| LU-C19 | `spec_live_unlock.py::LU-S02`, `::LU-B01`, `::LU-C01`, `::LU-C01b`, `::LU-C02`; `spec_pipeline_live_unlock.py::PL-LU-05` |
+| LU-C20 | `spec_live_unlock.py::LU-B02`, `::LU-C03`; `spec_risk_engine.py::RE-C01` |
 
-## 6. Agent 永久禁止清单(硬防线)
+LU-C05–C09, LU-C11, LU-C14 and LU-C18 have no `SpecClaim`; focused coverage lives in
+`tests/` outside `tests/specs/`. `spec_live_unlock.py::LU-C05` is a missing-status tripwire
+for a Serenity executor that does not exist.
 
-```python
-# agent_shell/registry.py:415-419
-FORBIDDEN_INTENTS = frozenset([
-    "enable_live", "modify_credentials", "bypass_risk",
-    "place_live_order", "modify_execution_gateway",
-    "delete_knowledge", "change_risk_limits",
-])
-```
+## Known conformance gaps
 
-检查实现 `agent_shell/permissions.py:42-72`:命中 `FORBIDDEN_INTENTS` 立即拒("permanently forbidden");未注册命令拒;权限等级不足拒。
+- **G1 — Bitget trading-permission scope.** The approved rule is that a Bitget live
+  account's `authorities` scope must explicitly include trading, read-only or unknown scope
+  being denied. The current probe (`extensions/exchanges/ccxt/profile.py::account_authority`)
+  reads only `cantrade` / `can_trade` / `tradepermission` / `order_permission` keys from
+  balance responses and never parses `authorities`; the test that asserted
+  `authorities: ["read", "trade"]` was removed with the CCXT convergence. The result is
+  fail-closed (`permission_unknown` → deny), so a correctly permissioned Bitget live key
+  cannot pass LU-C05.
 
-> ⚠️ **路径偏差**:[trust §6.1](../../governance/policies/trust_and_change_control.md) 列控制模块为 `core/aletheia/agent_runtime/permissions.py`,实际代码在 `core/aletheia/agent_shell/permissions.py`。批次5核实并统一(以代码为准修文档,或确认 trust 文档需更新)。
+## Decision references
 
-**不变式([trust §6.3](../../governance/policies/trust_and_change_control.md)):** 受限工具对 LLM-driven agent 不可调用;权限扩展必须显式 + 测试;agent **不得**经注册表失误获得 live 解锁/凭证变更/风控变更/执行网关变更能力。
+- `BACKLOG-LU-01` rejected: `operator.permission_mode` is an agent-autonomy control, not a gate on the human unlock route (LU-C18).
+- GitHub #418 / EX-04: the missing Entry Plan → live-mode join; until it exists Live stays Experimental (LU-C14).
+- #388: audit before state change on unlock; lock never refused for audit (LU-C10, LU-C11).
+- D8-C01: scorecard gate is the code-level form of "demo performance is the only ticket to Live" (LU-C12; [kill conditions K3](kill_conditions_contract.md)).
+- [trust_and_change_control §6.3](../../governance/policies/trust_and_change_control.md): first unlock needs explicit human confirmation; lock/unlock are audited; restricted tools stay uncallable.

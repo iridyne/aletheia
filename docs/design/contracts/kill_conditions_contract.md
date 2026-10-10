@@ -1,72 +1,91 @@
-# Kill Conditions 契约 (L2 金标准)
+# Kill Conditions Contract
 
-> **角色**：定义 demo 阶段的三条 Kill 判据及其计算函数。
-> **运行时执行者**：只有 K3 有生产调用方（`server/routes/live.py` 的 Live 解锁）。K1、K2 的计算函数
-> （`analytics/go_live_scorecard.py`）当前**没有任何生产调用方**，只被 spec 测试调用：它们是 owner
-> 在观察窗口中手动评估的判据，不会自动暂停入场或终止实验。需要自动 Kill 时须另写 [spec](../specs/README.md)。
-> **不变式来源**：[Product Direction 的永久边界](../../product/definition/DIRECTION.md#enduring-product-boundaries)；[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `KC` · **Owner code:** `core/aletheia/analytics/go_live_scorecard.py`
+> Retired narrative: [history](../history/risk_kill_live_contract_narrative.md).
 
----
+## Scope
 
-## K1：Demo 连续两轮 PF < 0.5 → Terminate Experiment
+Three stop rules for the Bitget Demo stage. K1 (profit factor below 0.5 for two
+consecutive 14-day windows → end the experiment) is an owner judgment; K2 (three UTC days
+without a new position → the trading loop is stalled) has a calculation function but no
+runtime consumer; K3 (Live unlock needs a passing go-live scorecard) is enforced in
+production and defined in [live_unlock_contract §4](live_unlock_contract.md). No kill
+condition pauses entries or stops a window automatically.
 
-**判决标准**：go_live_scorecard 中 profit_factor criterion 连续两个有合格 outcome 的
-14 日 trailing windows 低于 0.5，
-触发实验终止——该方向已证明无法盈利，继续运行只消耗验证窗口和资金。
+## Entry points
 
-**Kill 阈值**：`PF < 0.5`
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/analytics/go_live_scorecard.py::compute_scorecard` | call | `core/aletheia/server/routes/live.py::live_unlock` (K3) |
+| `core/aletheia/analytics/go_live_scorecard.py::check_kill_condition_consecutive_rounds` | call | none in production (K1; tests only) |
+| `core/aletheia/analytics/go_live_scorecard.py::count_consecutive_zero_fill_days` | call | none in production (K2; tests only) |
 
-**结构与行为前提**：
-- `_check_profit_factor()` 返回的 criterion `weight > 0`（D8-S01 锁死，已实现）
-- 极低 PF（< kill 阈值）评为 `status='fail'` 且 `score=0`（D8-B01 锁死，已实现）
+## Durable state
 
-**计算函数（无运行时调用方）**：
-- `check_kill_condition_consecutive_rounds()` 按 14 日窗口计算连续低于 0.5 的轮次；
-- 当前函数遇到空窗口即停止，未另设每窗最小样本量；调用方不得把它描述成样本充分的
-  盈利性判决；
-- `_check_profit_factor()` 对 PF < 0.5 返回 `status='fail'`、`score=0`。
+None. All three read existing outcome and position rows and write nothing.
 
-**对应 Spec Claims**：D8-S01 · D8-S02 · D8-B01
+## Requirements
 
----
+#### KC-C01 K1 kill floor inside the scorecard
+`If the eligible cohort's profit factor is below 0.5, then the scorecard's profit_factor criterion shall have status fail and score 0, which makes it a blocker for Live unlock.`
+- WHEN PF < 0.5 THEN the criterion detail reads `below kill threshold 0.5` and its weight stays > 0.
 
-## K2：连续 3 天零开仓 → Trading Loop Dead
+#### KC-C02 K1 consecutive-window count is an owner judgment
+`The consecutive-rounds function shall count trailing 14-day windows of eligible closed outcomes whose profit factor is below 0.5, stopping at the first window that is empty or at or above 0.5.`
+- Nothing calls it at runtime; the owner applies K1 by reading it during an observation window. It sets no per-window minimum sample, so a count is not a sufficiently sampled profitability verdict.
 
-**判决标准**：系统连续 3 个自然日没有新的 position open，
-意味着决策链已经僵死——数据在流动，但系统无法将机会转化为行动。
+#### KC-C03 K2 zero-open day count
+`The zero-open function shall count consecutive UTC days, up to 30, back from today on which the selected execution mode opened no position.`
+- Nothing calls it at runtime. The name keeps the historical `zero_fill`; the unit is a `positions.opened_at` date, not a `fills` row.
+- WHEN the selected mode cannot be resolved or the query fails THEN it returns `0` (gap G1).
 
-**计算函数（无运行时调用方）**：
-- `count_consecutive_zero_fill_days()` 读取 `positions.opened_at` 并返回连续无新开仓天数；
-- 函数名保留历史 `zero_fill` 用语，但当前统计单元是 position open，不是 `fills` 表行。
-- 原 doctor 探针 `_probe_profit_loop()`（`loop.profit`）及其 claim D8-S03 已随 #2945（2e69baae9）删除。
+#### KC-C04 K3 scorecard gate on Live unlock
+`When Live unlock is requested, the unlock route shall apply the scorecard gate defined in live_unlock_contract LU-C12.`
+- This contract does not restate the gate; LU-C12 is its only definition.
 
-**对应 Spec Claims**：D8-S04
+#### KC-C05 No personal stop line
+`The Risk configuration shall carry no personal or account-level stop-loss line.`
+- Adding one requires an approved [spec](../specs/README.md); claim D8-B03 fails if a `personal_stop_loss_usdt` or `personal_stop_line` field appears.
 
----
+## Failure semantics
 
-## K3：Live Unlock 须 Scorecard Composite Score ≥ 70
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| Scorecard cohort unreadable (K1 inside scorecard, K3) | red light + blocker | scorecard `blockers`, `cohort_state` | unavailable, never a pass |
+| PF criterion raises | score 0, detail `unavailable` | criterion `fail` | — |
+| Consecutive-rounds read fails (K1) | returns `consecutive_kill_rounds=0`, warning logged | log only | **reads as 0** |
+| Zero-open query fails or mode unresolved (K2) | returns `0`, warning logged | log only | **reads as 0** (gap G1) |
 
-该门禁的完整定义与不变式 D8-C01（scorecard `composite_score >= 70`、绿灯、无 blocker、
-合格交易净收益为正）只在 [live_unlock_contract §4a](live_unlock_contract.md) 维护，本节不复制。
+## Authority
 
-**对应 Spec Claims**：D8-B02 · D8-C01
+Kill conditions only measure; they may not pause entries, change Risk limits, stop or
+reset observation windows, or unlock Live.
 
----
+## Verification
 
-## 延伸：个人止损线（Personal Stop Line）— Deferred
+Claim ids are `SpecClaim` ids in `tests/specs/` — a separate namespace from `KC-C<NN>`.
 
-个人/账户级别的止损线功能（如 `personal_stop_loss_usdt`）尚未纳入 `RiskConfig`，
-属于显式 defer 状态。D8-B03 为 missing_tripwire：当该功能被悄悄加入代码时，
-tripwire 变红，提醒必须补充完整 spec 后才能合并。
+| Requirement | Executable claim / focused test |
+|---|---|
+| KC-C01 | `spec_kill_conditions.py::D8-S01`, `::D8-B01` |
+| KC-C02 | `spec_kill_conditions.py::D8-S02` |
+| KC-C03 | `spec_kill_conditions.py::D8-S04`; `tests/test_retired_execution_surfaces.py` |
+| KC-C04 | `spec_kill_conditions.py::D8-B02`, `::D8-B02A`, `::D8-B02B`, `::D8-C01` |
+| KC-C05 | `spec_kill_conditions.py::D8-B03` |
 
-**对应 Spec Claims**：D8-B03
+## Known conformance gaps
 
----
+- **G1 — K2 reports failure as zero.** `count_consecutive_zero_fill_days` returns `0` on an
+  unresolved mode or a query error, which reads as "a position opened today". Target:
+  [spec 0003](../specs/0003-futures-only-convergence/spec.md) FC-R09 (draft) makes K2 a
+  `candidate_entry_stalled` alert from the health job with an `unavailable` state; it does
+  not pause entries.
 
-## 与其他契约的关系
+## Decision references
 
-| 契约 | 关系 |
-|------|------|
-| [live_unlock_contract.md](live_unlock_contract.md) | K3 扩展 §2 解锁路径；D8-C01 是 §core_philosophy 的代码层不变式 |
-| [risk_engine_contract.md](risk_engine_contract.md) | Kill 触发后下游风控继续拦截；两者独立分层 |
-| [EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md) | K1/K2 来源于实验协议 §6 终止规则；K3 来源于产品定义 §8 |
+- Product Direction §8 (failure and retreat) is the source of K1–K3; [Product Direction](../../product/definition/DIRECTION.md#enduring-product-boundaries).
+- #2945 (2e69baae9): the doctor probe `_probe_profit_loop` (`loop.profit`) and claim D8-S03 that consumed K2 were deleted.
+- Spec 0003 (draft): K2 → FC-R09 alert; K1 → owner judgment recorded in [EXPERIMENT_PROTOCOL](../../product/experiments/EXPERIMENT_PROTOCOL.md); K1 stays manual because too few closed positions exist for a 14-day PF window to mean anything.
+- D8-C01 (live_unlock_contract): K3 is the code-level form of "demo performance is the only ticket to Live".
