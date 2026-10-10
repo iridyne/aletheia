@@ -162,18 +162,19 @@ whole-file gate would fail on every edit and be ignored. The enforced contract i
 `ruff format --check` to this loop without first landing a repository-wide
 formatting migration.
 
-**Where tests run.** pytest does not run on the Mac. `scripts/dev/remote_pytest.sh <pytest args>`
-rsyncs the working tree, uncommitted edits included, to `~/remote-test/<repo>-<checkout>` on Fedora (`u7p`).
-There it runs pytest in a sandbox:
-- a systemd user scope caps CPU at 800%, throttles memory at 2G (`MemoryHigh`) and kills at 4G. The host also runs the live runtime, so the script refuses to start when under 1.5 GB is available (exit 75): retry later. Split big runs by `-m domain_*` with `-n 3` rather than raising the cap;
-- user, net and pid namespaces give the run a private loopback, no network, and no view of the live runtime;
+**Where tests run.** pytest does not run on the Mac, and no longer on Fedora (`u7p`): its 14 GB are
+reserved for the live runtime and it hit the kernel OOM killer on 2026-10-10. Use the `casi-pytest` skill
+(`.claude/skills/casi-pytest/SKILL.md`): it rsyncs the working tree, uncommitted edits included, to
+`/home/runner/remote-test/aletheia-<checkout>` in CASI's WSL (`ubuntu-runner`, 32 GB) and runs pytest in a sandbox:
+- a systemd user scope caps CPU at 800%, throttles memory at 2G (`MemoryHigh`) and kills at 4G; CASI also serves vLLM, so do not raise the cap. Split big runs by `-m domain_*` with `-n 3`;
+- user, net and pid namespaces give the run a private loopback, no network, and no view of other processes;
 - `ALETHEIA_DATA_DIR` and `TMPDIR` point at a fresh directory.
 
-Each checkout gets its own remote directory and lock, so parallel workspaces don't collide. With
-`ALETHEIA_TEST_HOST=u7p` exported, `dev_check` sends its pytest steps there too. Pass `-n 4` for
-anything bigger than a handful of files. The remote tree is a throwaway git repo with one snapshot commit, so
-code that reads the commit or `git ls-files` works; tests that need the local jj workspace, such as
-`tests/test_dev_check.py`, still run locally.
+Each checkout gets its own remote directory and lock, so parallel workspaces don't collide. Pass `-n 4` for
+anything bigger than a handful of files. `scripts/dev/remote_pytest.sh` (and `dev_check` with
+`ALETHEIA_TEST_HOST` set) targets an sshd + rsync host such as the old Fedora one; it does not reach CASI, so
+leave `ALETHEIA_TEST_HOST` unset and call the skill for the tests `dev_check` selects. Tests that need the
+local jj workspace, such as `tests/test_dev_check.py`, still run locally.
 
 Repair order — stop at the first red and fix it before widening:
 
