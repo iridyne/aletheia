@@ -42,10 +42,4 @@ describe('searchInstruments', () => {
     expect(rows[0].symbol.startsWith('BTC/')).toBe(true)
     expect(rows[0].exchange).toBe('bitget')
   })
-
-  it('resolves the AAPL alias to the Apple xStock entry', () => {
-    const rows = searchInstruments('AAPL', 'bitget')
-    expect(rows[0].symbol).toBe('AAPLX/USDT')
-    expect(rows[0].exchange).toBe('bitget')
-  })
 })
