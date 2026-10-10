@@ -24,6 +24,32 @@ ALLOWED_PROPOSAL_STATUSES = {
     "implemented",
     "superseded",
 }
+# SDD spec format: docs/design/specs/README.md is the definition.
+ALLOWED_SPEC_STATUSES = {"draft", "approved", "implemented", "superseded", "rejected"}
+SPEC_FRONTMATTER_KEYS = ("id", "title", "status", "depth", "prefix")
+SPEC_REQUIRED_HEADINGS = {
+    "spec.md": (
+        "## Summary",
+        "## Problem and evidence",
+        "## Goals and non-goals",
+        "## Glossary",
+        "## Requirements",
+        "## Contract Delta",
+        "## Clarify",
+        "## Open questions",
+        "## Decision log",
+    ),
+    "design.md": (
+        "## Overview",
+        "## Data model",
+        "## Components and flow",
+        "## Failure semantics",
+        "## Trust and complexity review",
+        "## Alternatives considered",
+        "## Traceability",
+        "## Rollout and rollback",
+    ),
+}
 FROZEN_MARKERS = {
     Path("docs/archive/legacy/issues/README.md"): "FORENSIC-FROZEN",
     Path("docs/archive/legacy/plans/README.md"): "LEGACY-FROZEN",
@@ -34,6 +60,7 @@ REQUIRED_CURRENT_FILES = {
     Path("docs/governance/policies/documentation_governance.md"),
     Path("docs/design/contracts/README.md"),
     Path("docs/design/proposals/README.md"),
+    Path("docs/design/specs/README.md"),
     Path("docs/product/CAPABILITY_GROUND_TRUTH.md"),
     Path("docs/product/ACTIVE_RUNTIME_SCOPE.md"),
     Path(".github/ISSUE_TEMPLATE/change_contract.md"),
@@ -65,6 +92,7 @@ CURRENT_DOC_PREFIXES = (
     "docs/design/contracts/",
     "docs/design/decisions/",
     "docs/design/proposals/",
+    "docs/design/specs/",
     "docs/design/data/",
     "docs/design/api/",
     "docs/design/architecture/",
@@ -369,6 +397,48 @@ def proposal_metadata_failures() -> list[str]:
             failures.append(
                 f"{path.relative_to(ROOT)}: invalid proposal status"
             )
+    return failures
+
+
+def spec_format_failures(spec_root: Path | None = None) -> list[str]:
+    """Every spec folder follows the fixed SDD format in docs/design/specs/README.md."""
+    spec_root = spec_root or ROOT / "docs/design/specs"
+    failures: list[str] = []
+    for folder in sorted(p for p in spec_root.iterdir() if p.is_dir() and p.name != "_template"):
+        label = f"docs/design/specs/{folder.name}"
+        texts = {}
+        for name, headings in SPEC_REQUIRED_HEADINGS.items():
+            path = folder / name
+            if not path.is_file():
+                failures.append(f"{label}: missing {name}")
+                continue
+            texts[name] = path.read_text(encoding="utf-8")
+            lines = set(texts[name].splitlines())
+            failures.extend(f"{label}/{name}: missing heading {h!r}" for h in headings if h not in lines)
+        spec = texts.get("spec.md", "")
+        match = re.match(r"---\n(.*?)\n---\n", spec, re.DOTALL)
+        if not match:
+            failures.append(f"{label}/spec.md: missing YAML frontmatter")
+            continue
+        meta = dict(re.findall(r"^(\w+):[ \t]*(.*)$", match.group(1), re.MULTILINE))
+        failures.extend(f"{label}/spec.md: missing frontmatter {k!r}" for k in SPEC_FRONTMATTER_KEYS if not meta.get(k))
+        if meta.get("id") and meta["id"] != folder.name:
+            failures.append(f"{label}/spec.md: id {meta['id']!r} must equal the folder name")
+        if meta.get("status") not in ALLOWED_SPEC_STATUSES:
+            failures.append(f"{label}/spec.md: invalid spec status {meta.get('status')!r}")
+        prefix = meta.get("prefix", "")
+        ids = re.findall(rf"^### ({re.escape(prefix)}-R\d{{2}})\b", spec, re.MULTILINE)
+        if not ids:
+            failures.append(f"{label}/spec.md: no requirements named {prefix}-R<NN>")
+        duplicates = sorted({i for i in ids if ids.count(i) > 1})
+        if duplicates:
+            failures.append(f"{label}/spec.md: duplicate requirement ids {duplicates}")
+        if meta.get("status") == "approved" and "[NEEDS CLARIFICATION" in spec:
+            failures.append(f"{label}/spec.md: approved spec still has [NEEDS CLARIFICATION] markers")
+        traced = set(re.findall(rf"\b({re.escape(prefix)}-R\d{{2}})\b", texts.get("design.md", "")))
+        missing = [i for i in ids if i not in traced]
+        if missing:
+            failures.append(f"{label}/design.md: requirements without traceability {missing}")
     return failures
 
 
@@ -1545,6 +1615,7 @@ def main() -> int:
     failures = []
     failures.extend(governance_failures())
     failures.extend(proposal_metadata_failures())
+    failures.extend(spec_format_failures())
     failures.extend(broken_relative_links(current_authority_markdown_files()))
     failures.extend(navigation_route_failures())
     failures.extend(contract_code_path_failures())

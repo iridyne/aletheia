@@ -8,7 +8,8 @@ This is the main implementation authority after governance and product scope. Re
 |---|---|
 | `contracts/` | Gold-standard behavioral contracts: risk, execution, learning, scheduler, audit, persistence |
 | `decisions/` | Durable architectural decisions: why long-lived choices were made and how they evolved |
-| `proposals/` | Substantial future designs before they become current contracts |
+| `specs/` | Substantial designs in the SDD format (spec.md + design.md); the golden standard implementing PRs answer to |
+| `proposals/` | Legacy design proposals; new designs go to `specs/` |
 | `data/` | Data model, data utilization, market data observability, collectors, source alignment |
 | `api/` | API reference and conventions |
 | `architecture/` | System map and architecture guides |
@@ -34,7 +35,7 @@ remaining read models and stored source labels do not make it an active producer
 | API route behavior | `api/api_reference.md` |
 | SQLite tables or persistence semantics | `data/data_model.md` and `contracts/persistence_recovery_contract.md` |
 | Candidate → Planning Generation → Entry Planner / Compiler → Entry Plan → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, `contracts/entry-plan-contract.md`, then `contracts/filter_evidence_contract.md` |
-| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then any accepted learning proposal under `proposals/` |
+| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then the approved spec [`specs/0001-learning-loop`](specs/0001-learning-loop/spec.md) |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |
 | What the supervised TypeScript Operator process is and does | `architecture/OPERATOR_SHELL.md`, then `contracts/agent_contracts.md` |

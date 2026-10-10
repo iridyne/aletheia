@@ -20,7 +20,7 @@ SDD 通过**前置精确 spec** 消除 ambiguity tax（模糊性导致的幻觉+
 Phase           产出物                     本项目对应                    检查点
 ─────────────────────────────────────────────────────────────────────────────
 1. Constitution 不变的项目宪法             AGENTS.md                     团队对齐
-2. Specify      当前契约或重大设计          contracts/ 或 proposals/      产品审核
+2. Specify      当前契约或重大设计          contracts/ 或 specs/          产品审核
 3. Clarify      消歧记录(边缘/错误/空态)   docs/research/audits/ + issue  开发者验证
 4. Plan         实施分解                   GitHub Issue + PR              架构审核
 5. Tasks        原子任务分解(1-4h/PR)      外部开发编排器                 依赖+范围审核
