@@ -82,3 +82,30 @@
   `lab`。未执行切换的库（含已有部署）仍是 `legacy`，合同说法成立，未修改。
   [proposals_research.md](proposals_research.md) 的结论（旧库停在 legacy、spec 0001 依赖这次切换）正确。
 - **退出/平仓合同**：并非缺失，规则在 `execution_contract.md` §10–§11，问题只是篇幅与归属。
+
+## 重写后发现的代码与合同不一致（汇总）
+
+各份合同的 `Known conformance gaps` 节逐条带 `file::symbol` 证据；下表只列影响主线或安全的，按影响排序。都是 Issue 候选，文档没有为迁就它们而改语义。
+
+| # | 不一致 | 影响 | 证据 | 所在合同 |
+|---|---|---|---|---|
+| 1 | Bitget 永续的持仓量永远是 `oi_unit_unproven`：单位只在交易所给出 USD 值或采集器传 `amount_unit` 时成立，Bitget 两者皆无 | Bitget 候选的 `open_interest`/`oi_delta_1h` 永远不可用；Fedora `open_interest_snapshots` 无 bitget 行（2026-10-10 只读查询） | `data/derivatives_facts.py::open_interest_usd` | derivatives_economic_semantics |
+| 2 | Live 预检不解析 Bitget `authorities`（只认 `cantrade` 等键），CCXT 收敛时删了对应测试 | 权限正确的 Live key 也被拒（fail-closed）；Live 默认关闭 | `extensions/exchanges/ccxt/profile.py::account_authority` | live_unlock |
+| 3 | `enabled_markets` 默认 `spot: True`，且进入 policy 身份 | 现货 Proposal 能过 Risk #2；注册表仍挡住现货 | `config/schema.py::ExchangeConfig` | risk_engine, candidate_selection（spec 0003 FC-R01） |
+| 4 | `market_data.ccxt_fallback` 默认 `bybit`，现货回退链默认装配；Regime 读 BTC/USDT 日线可能由 Binance Public 提供 | 非精确场所读取可能走冻结或无关交易所 | `extensions/data/ccxt_provider.py::get_market_data_provider` | ohlcv_provider_result（FC-R03） |
+| 5 | K2 零开仓计数出错时返回 `0` | 测不出来时显示"正常" | `analytics/go_live_scorecard.py::count_consecutive_zero_fill_days` | kill_conditions（FC-R09） |
+| 6 | 超时的 AgentRun 从不写 `timed_out`，20 分钟后才被清理为 `stale` | 页面最多 20 分钟显示 running | `agent_runtime/scheduler.py::_cleanup_stale_agent_runs` | scheduler |
+| 7 | 模型回退把 400/404 当临时错误重试 | 永久错误也走回退链、多花调用 | `fallback.py::_TRANSIENT_STATUS_CODES` | llm_inference_harness |
+| 8 | 只有 `orders.raw_error` 保留原始错误；采集健康与回补只存异常类名/短码 | 违反 owner 2026-10-09"保留原始错误"惯例 | `collector_health_state`, `ohlcv_backfill_state` | data_model, market_data_coverage |
+| 9 | "表只增不删"与 v91/v92/v94 等删表迁移冲突 | 规则与历史不一致，需 owner 定例外规则 | `storage/migrations.py` | data_model |
+| 10 | `SPY/VIX/DXY/NASDAQ` 的日期精度使其永远投影为 None | 宏观风险状态只剩市值变化一个输入（影响 spec 0004） | `data/freshness.py` macro 投影 | macro_source_time |
+| 11 | prediction 路由在 `app.py` 无条件注册，配置里没有冻结开关 | 冻结决定尚未落到代码（spec 0003 FC-R04） | `server/app.py` | api_reference |
+| 12 | `fast_market_data_venue_unavailable` 无写入方；`tests/test_universe_service.py` 在测试里重新实现了已删循环 | 测试不检验生产代码 | `universe/candidate_eligibility.py` | entry-plan |
+| 13 | 有读者无写入方的表：`operator_evaluation_events`、`shadow_trades`、`universe_relative_rank_shadow_batches` | 诊断读空表 | 表读写扫描 | data_model |
+| 14 | 死函数：`reduce_position_routed`、`pnl.today_realized_pnl`、`MarketStructureProvider.get_snapshot`、`plan_market_ohlcv_tiering`、`build_market_context` | 违反"一个能力一份实现" | AST 搜索无生产调用 | exit_and_close, technical_analysis（FC-R08, ME-R08） |
+| 15 | 隐藏 CLI 别名（`alpha audit`、`funnel audit`、`sizing trace`、opportunity `controller`/`ranker-objective` 视图）与 7 个前端 LegacyRedirect | 兼容垫片违反收敛规则 | `main.py`, `routeManifest.ts` | TRADING_DIAGNOSTICS, webui_page_map |
+| 16 | 无"部署任意指定 SHA"命令，`aletheia update` 只部署 `origin/master` 头部 | 部署手册只能要求目标提交即 master 头部 | `ops/update/git_ops.py::pull` | DEPLOYMENT |
+
+## 需求编号与既有测试 claim id 的重名
+
+部分新需求编号（如 `RE-C01`、`LU-C01..C07`、`EX-C03/C04`、`OI-C03..C06`、`FE-C*`、`OO-C*`、`SE-C01/C02`、`MS-C01..C03`）与 `tests/specs/` 已有 claim id 同名。凡语义相同的已对齐；不同的在各合同 Verification 表注明是两套编号。`decision_lifecycle` 从 `DL-C04` 起编，因为 `DL-C01..C03` 已被数据层 claim 占用。彻底消除重名需要改测试中的 claim id，未在本次范围。
