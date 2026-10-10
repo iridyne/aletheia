@@ -74,7 +74,7 @@ The [previous capability review](../design/history/local_simulated_capability_re
 is archived intact. Its 101-row inventory, aggregate status counts, Supported
 Core profile and detailed review conclusions were evaluated against the former
 scope. They are historical evidence, not a current external-exchange acceptance
-matrix. The [capability evidence ledger](capability-integrity/README.md) retains
+matrix. The [capability evidence ledger](../research/audits/capability-integrity-2026-09/README.md) (frozen evidence) retains
 its source context; claims must be checked against the current implementation
 before reuse.
 

@@ -88,7 +88,6 @@ CURRENT_DOC_PREFIXES = (
     "docs/product/definition/",
     "docs/product/gates/",
     "docs/product/experiments/",
-    "docs/product/capability-integrity/",
     "docs/design/contracts/",
     "docs/design/decisions/",
     "docs/design/proposals/",
@@ -112,7 +111,6 @@ CURRENT_DOC_FILES = {
     "docs/product/ACTIVE_RUNTIME_SCOPE.md",
     "docs/product/CAPABILITY_GROUND_TRUTH.md",
     "docs/product/CAPABILITY_MAP.md",
-    "docs/product/capability-integrity/README.md",
     "docs/design/README.md",
     "docs/design/process/SDD_METHODOLOGY.md",
 }
@@ -481,7 +479,6 @@ BASELINE_MISSING_CONTRACT_PATHS: set[str] = set()
 
 CODE_PATH_DOCS: tuple[str, ...] = (
     "docs/design/contracts",
-    "docs/product/capability-integrity/CAPABILITY_INVENTORY.md",
     # Only the backticked .py probe paths are checked, not symbols or callers.
     "docs/product/CAPABILITY_MAP.md",
 )
@@ -1423,10 +1420,6 @@ def semantic_truth_failures() -> list[str]:
             "Mechanism Entry Learning uses Planning Generation as its ITT unit",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
             "Retired simulator | Archived; no current execution",
-        Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):
-            "LN-08 | Learned guard generation and observation",
-        Path("docs/product/capability-integrity/FACT_CARDS.md"):
-            "no learned block/penalty",
         Path("docs/product/experiments/EXPERIMENT_MVP_GATE.md"):
             "retired historical compatibility pointer",
         Path("docs/product/experiments/EXPERIMENT_BACKLOG.md"):

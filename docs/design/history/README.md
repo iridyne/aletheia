@@ -39,6 +39,7 @@ reactivating a historical document in place.
 - [Python System Operator design decisions](PI_OPERATOR_DESIGN_DECISIONS.md) and [operator layer concept](operator_layer.md): the retired Python Operator loop; the current Operator is [operator-shell](../architecture/OPERATOR_SHELL.md).
 - [System architecture guide (2026-07)](SYSTEM_ARCHITECTURE_GUIDE.md): whole-system narrative that still describes retired Ranker/Observer/Python-Operator stages; current navigation is [SYSTEM_MAP](../architecture/SYSTEM_MAP.md).
 
+- [Stability target architecture](STABILITY_TARGET_ARCHITECTURE.md): the 2026-07 self-healing runtime roadmap; current probes live in the RUNBOOK.
 - [Retired entry-decision lifecycle](decision_lifecycle_retired_entry.md): TradingDecision, PiDecision, `signal_pending` and admission-slot semantics of the retired Ranker/`paper_trader` entry path.
 
 - [Former Paper Internal development unblock runbook](paper-trading-dev-unblock.md): historical commands and repair guidance; not a current operating procedure.

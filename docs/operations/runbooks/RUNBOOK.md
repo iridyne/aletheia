@@ -282,9 +282,7 @@ failure policy are authoritative in
 
 ## 10. Health & observability
 
-The detailed stability roadmap and phase gates live in
-[`STABILITY_TARGET_ARCHITECTURE.md`](../architecture/STABILITY_TARGET_ARCHITECTURE.md). The key
-runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
+The key runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 (API+dashboard readiness), and `/api/health` (business/runtime health).
 
 - **Dashboard:** Overview (gateway/live/permission/kill-switch state, account/PnL),

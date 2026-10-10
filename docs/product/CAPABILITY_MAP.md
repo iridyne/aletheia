@@ -31,8 +31,13 @@ the owner also updates it.
 ## Maturity ladder
 
 A review assigns each capability the highest level whose criterion is fully met.
-Evidence classes E1/E2/E3 are defined in
-[AUDIT_METHOD.md](capability-integrity/AUDIT_METHOD.md).
+Evidence classes:
+
+| Class | Meaning |
+|---|---|
+| E1 Static | Reviewed code contains the necessary entry, data flow, consumer, and error path. |
+| E2 Executable | A focused test or bounded local reproduction crosses the important seams and asserts the final result. |
+| E3 Runtime observation | The capability occurred naturally and produced the expected durable/user-visible result. This increases operational confidence but is not a support gate. |
 
 | Level | Name | Criterion |
 |---|---|---|
