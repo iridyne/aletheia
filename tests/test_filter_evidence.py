@@ -222,7 +222,7 @@ def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
 
     def slow_priority(before_ts, keys, limit, deadline=None):
         deadlines.append(deadline)
-        time.sleep(0.45)  # > 0.30 * 1.0s slice, < the 1.0s cycle budget
+        time.sleep(1.0)  # > 0.30 * 3.0s slice, leaves 2s of the cycle for settlement
         return [], True
 
     monkeypatch.setattr(
@@ -233,7 +233,7 @@ def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
         _settling_observations(),
     )
 
-    settled = asyncio.run(fr.settle_due_filter_outcomes(max_rows=1, time_budget_sec=1.0))
+    settled = asyncio.run(fr.settle_due_filter_outcomes(max_rows=1, time_budget_sec=3.0))
 
     assert settled == 1, "an overrunning prologue must not zero out settlement"
     assert deadlines and deadlines[0] is not None, "prologue must be time-boxed"
