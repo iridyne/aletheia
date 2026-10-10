@@ -4,8 +4,12 @@ The accepted current product boundary is **Slim Core + active Bitget Exchange
 Extension + configured HTTP Model Endpoint(s)**, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). Core owns exchange-neutral
 trading semantics; concrete venue and model transports belong to Extensions.
-OKX/Binance, extra markets, research/Learning and optional surfaces are frozen or
-optional, not current Slim Product support. Historical decode/read is not a
+OKX/Binance, extra markets, research and optional surfaces are frozen or
+optional, not current Slim Product support. Learning from the system's own
+decisions belongs to the product mainline by the approved
+[spec 0001-learning-loop](../design/specs/0001-learning-loop/spec.md) (owner
+2026-10-10); until that spec is implemented, current Learning artifacts are
+optional and influence decisions only through the existing gates. Historical decode/read is not a
 runtime capability.
 
 [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md) declares the Bitget Demo route

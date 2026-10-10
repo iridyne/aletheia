@@ -18,7 +18,7 @@
 | 数据库 | SQLite（WAL 模式，进程级 `_WRITE_LOCK` 写序列化，`busy_timeout=30s`，线程本地连接；运行实例使用 owner 选定的数据根目录）|
 | 包管理 | `uv`（禁用 pip/poetry）|
 | 前端构建 | Vite + React（产物 `core/aletheia/dashboard_static/`，gitignored）|
-| 交易所接入 | Core 通过 UTA/Coordinator 与 Exchange Port 访问已注册的 `bitget_demo`、`okx_demo`、`binance_testnet`；注册不等于凭据、能力或资格证明 |
+| 交易所接入 | Core 通过 UTA/Coordinator 与 Exchange Port 访问 Bitget UTA v3；唯一获准入场的路由是 `bitget_demo`（[Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md)）。`okx_demo`、`binance_testnet` 冻结，仅保留历史身份与敞口恢复；注册不等于凭据、能力或资格证明 |
 | LLM 路由 | 兼容 OpenAI / Anthropic 格式；实际 provider 以运行实例 provenance 为准 |
 | 进程管理 | supervisor → frontdoor(:8787) + backend(:8788)，`lifecycle.py` 统管 |
 | 任务调度 | APScheduler，命名 executor 池各 `max_workers` ≤ 3（[scheduler_contract](../contracts/scheduler_contract.md) INV-SCH-1）|
@@ -68,11 +68,8 @@ flowchart TD
 
 ## Unified Trading Account boundary
 
-[`unified_trading_account.md`](../proposals/unified_trading_account.md) 已接受
-完整 UTA 设计，取代“UTA 仅只读”这一旧决策。UTA 是六个现有外部执行模式的唯一
-私有账户读路径；Gateway 的授权变更通过通用 Coordinator 和 `CCXTUTAAdapter`，
-本地 storage 保留事实与 CAS。Binance、OKX 与 Bitget UTA-v3 的差异
-限制在 `extensions/exchanges/{venue}/profile.py` 与 venue-native exception，返回 Core 可消费的规范化 DTO；
+UTA 是唯一的私有外部账户边界（[已实现提案](../proposals/unified_trading_account.md)）；Gateway 的授权变更通过通用 Coordinator 和 `CCXTUTAAdapter`，
+本地 storage 保留事实与 CAS。交易所差异（当前只有 Bitget UTA v3 是现役；OKX/Binance profile 冻结）限制在 `extensions/exchanges/{venue}/profile.py` 与 venue-native exception，返回 Core 可消费的规范化 DTO；
 不存在 legacy/shadow selector 或私有 broker fallback。
 
 Coordinator 负责 pending/claim、外部调用后的短 CAS、审计以及未知结果的重对账，

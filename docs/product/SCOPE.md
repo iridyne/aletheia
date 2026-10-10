@@ -38,13 +38,14 @@ factory driving production entries.
 
 | Area | Included promise | Canonical detail |
 |---|---|---|
-| Market evidence | Crypto market facts required by the Bitget route; additional markets and enrichments remain optional/frozen rather than a Slim Core promise | Capability Ground Truth and data contracts |
+| Instruments | USDT-margined crypto perpetuals only; spot and real-world-asset perps are out of scope | Capability Ground Truth instrument scope |
+| Market evidence | Crypto perpetual market facts required by the Bitget route; additional markets and enrichments remain optional/frozen rather than a Slim Core promise | Capability Ground Truth and data contracts |
 | Decision | One attributable System Operator decision path with neutral/fail-closed behavior when required evidence is missing | Active Runtime Scope and agent contracts |
 | Risk | Deterministic Risk approval is mandatory before every execution attempt | Risk Engine contract |
 | Execution | Active Bitget Extension; other retained route registrations are frozen. Exact-account qualification remains separate | Active Runtime Scope and execution contract |
 | Position and exit | Exchange Fill evidence materializes Positions; the existing position owner and Gateway control external protection and closes | Execution, persistence, and data-model contracts |
 | Accounting | Orders, fills, positions, costs, funding, and genuine outcomes retain causal identity and explicit integrity status | Data/outcome contracts |
-| Learning artifacts and measurements | Optional research Extension, not required Slim Core capability; existing owner admission and influence gates remain mandatory | Learning and knowledge contracts |
+| Learning from own decisions | Mainline target by the approved [spec 0001](../design/specs/0001-learning-loop/spec.md): review → scoped advisory rules → next decision, measured against a randomised control; current artifacts stay optional until it is implemented | Learning contract, spec 0001 |
 | Owner surfaces | Local API, CLI, Dashboard, Doctor, audit history, and honest unavailable/degraded states | Capability Ground Truth |
 
 The repository contains additional implemented or experimental capabilities. Their
@@ -73,8 +74,12 @@ and qualification design is [archived](../design/history/cn_equity_internal_pape
 
 ## Current Learning scope
 
-Learning may create attributable artifacts, measure evidence and recommend owner
-actions within the [Learning contract](../design/contracts/learning_contract.md).
+The target Learning design is the approved
+[spec 0001-learning-loop](../design/specs/0001-learning-loop/spec.md): advisory
+rules may reach the Entry Planner without per-rule measurement, blocking authority
+keeps a strict owner-admitted gate. Until it is implemented, Learning may create
+attributable artifacts, measure evidence and recommend owner actions within the
+[Learning contract](../design/contracts/learning_contract.md).
 Current path support, outcome units, thresholds and influence gates belong to
 that contract and its registry; this scope page does not maintain a second copy.
 Explicit owner trial admission and the declared authority gate remain required
