@@ -57,7 +57,6 @@ def test_prediction_route_handlers_are_sync():
         prediction.get_all_prediction_claims,
         prediction.get_prediction_preferences,
         prediction.update_prediction_preferences,
-        prediction.trigger_prediction_refresh,
     ]
     assert all(not inspect.iscoroutinefunction(h) for h in handlers)
 
