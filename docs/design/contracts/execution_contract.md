@@ -1,878 +1,627 @@
-# Execution 执行通路契约 (L2 金标准)
+# Execution Gateway Contract
 
-> **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
-> **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
-> **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-27 · 维护者:Aletheia Dev
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `EX` · **Owner code:** `core/aletheia/execution/gateway.py`
+> **Invariant source:** [trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md).
+> Paths below are relative to `core/aletheia/` unless they start with a top-level directory.
 
----
+## Scope
 
-## 1. 入口与因果链
+This contract owns the entry half of the trading mainline from an immutable Proposal to the
+exchange and back: Risk-approved Proposal → Gateway claim → Order → private Fill → Position,
+plus native entry protection, order and position reconciliation, and the execution audit
+trail. The product route is USDT-margined perpetuals on `bitget_demo`; Live is off.
+It does not own exit triggers, close routing or close claims
+([exit and close contract](exit_and_close_contract.md)), close economics and Outcome
+eligibility ([outcome integrity contract](outcome_integrity_contract.md)), Risk checks
+([risk engine contract](risk_engine_contract.md)), or Entry Plan compilation
+([entry plan contract](entry-plan-contract.md)).
 
-| 项 | 值 | 位置 |
-|----|----|----|
-| 生产入口 | `execute_existing_proposal(proposal_id, mode)`(Entry Plan execution 先落库 Proposal 再调用) | `core/aletheia/execution/gateway.py` |
-| 直接入口(仅调试) | `submit_proposal(...) -> dict` = 创建 Proposal + `execute_existing_proposal`;唯一调用方是 `aletheia dev test-order`,非 demo 模式在创建 Proposal 前拒绝 | `gateway.py`、`core/aletheia/cli/dev.py` |
+## Entry points
 
-**开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/execution/gateway.py::execute_existing_proposal` | call | `execution/entry_plan_execution.py::execute_entry_plan` |
+| `core/aletheia/execution/gateway.py::submit_proposal` | call (debug only) | `core/aletheia/cli/dev.py` (`aletheia dev test-order`, demo modes only) |
+| `core/aletheia/execution/coordinator.py::execute_order` | call | `gateway.py::_execute_proposal` |
+| `core/aletheia/execution/coordinator.py::replace_protective_stop` | call | `execution/stops.py::replace_exchange_protective_stop` (trailing / Operator adjustment) |
+| `core/aletheia/portfolio/native_protection.py::verify_native_protection` | scheduler job `tpsl_fill_check` (90 s) | `agent_runtime/scheduler.py::_tpsl_fill_check_body` |
+| `core/aletheia/execution/reconciliation.py::reconcile` | scheduler job `reconciliation` (2 min) | `agent_runtime/scheduler.py::_run_reconciliation` |
+| `core/aletheia/portfolio/position_reconciler.py::run_reconcile` | scheduler job `position_reconcile` (5 min) | `agent_runtime/scheduler.py::_run_position_reconcile` |
+| `core/aletheia/execution/stale_order_cleanup.py::cleanup_stale_orphan_orders` | scheduler job `cleanup` (daily) | `agent_runtime/scheduler.py::_run_cleanup` |
 
-```mermaid
-flowchart LR
-    A[Order Intent<br/>physical TradeProposal] --> B[Authoritative RiskDecision]
-    B --> C[Order]
-    C --> D[Private Fill]
-    D --> E[Position]
-```
+## Durable state
 
-**平仓因果链**不伪造第二个 RiskDecision：
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| `trade_proposals` | `gateway.py` | Risk, Gateway, reconciliation, UI | hash-covered intent immutable; `status` monotonic |
+| `proposal_execution_claims` | `gateway.py::execute_existing_proposal` | Gateway | replaceable lease, owner-token CAS release |
+| `risk_decisions` | `risk/engine.py::evaluate_proposal` | Gateway, audit | write-once |
+| `orders` | `execution/coordinator.py` | reconciliation, Risk working set, UI | monotonic status; `uta_account_identity_json` set before submit |
+| `fills` | `execution/exchange_materialization.py` | Position, PnL | append-only |
+| `positions` | `execution/exchange_materialization.py`, `portfolio/position_reconciler.py` | Position Manager, Risk, UI | `open → closed` |
+| `position_disappearance_candidates`, `position_disappearance_observations` | `portfolio/disappearance_confirmation.py` | disappearance settlement | candidates monotonic, observations append-only |
+| `audit_events`, `data/logs/audit.jsonl` | `files/jsonl.py::write_audit`, `execution/post_commit_audit.py::write_post_commit_audit` | audit chain verifier, UI | append-only, SHA-256 chained |
 
-```mermaid
-flowchart LR
-    A[Open Position authority] --> B[Close Order]
-    B --> C[Private Fill]
-    C --> D[Same Position closed]
-```
+## Requirements
 
-开仓 Order 消费 approved authoritative RiskDecision；平仓 Order 消费它所减少的
-open Position，并必须匹配 Position 的 proposal/instrument/execution mode/quantity 与
-durable close client identity。入场 RiskDecision 不能被复制到平仓单上冒充退出授权。
+### 1. Entry points and causal chain
 
-**契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
+The opening chain is Order Intent (physical `TradeProposal`) → authoritative `RiskDecision` →
+Order → private Fill → Position. A close Order consumes the open Position it reduces and never
+a copied entry `RiskDecision` (see [exit and close contract](exit_and_close_contract.md)).
 
-Gateway 的新执行入口只接受 `source='native'`。调用方传入 `adopted` 或未知 source 时，
-`submit_proposal()` 必须在 Proposal 落库前拒绝，`execute_existing_proposal()` 必须在 claim、Risk 或
-broker 副作用前拒绝。`source='adopted'` 只属于 Position Reconciler 直接持久化的 synthetic
-Proposal/Order/Fill/Position 事实，不得进入新订单执行。可执行检查：`EX-B20`。
+#### EX-C01 Sole order path
 
-Entry Plan 是 Universe-linked Proposal 的唯一 active 上游，不是执行旁路。它以 plan id 绑定
-immutable Proposal、authoritative RiskDecision 和 stable client order identity；duplicate execute
-只能恢复同一链，`submission_unknown` 必须先对账且禁止重发。V1 exchange tactic 只允许
-`bitget_demo`，任何 Live 或未注册 venue capability 都在 Gateway fail closed。
+`The Execution Gateway shall be the only path by which an order reaches an exchange.`
 
----
+- WHEN an agent, dashboard route or messaging channel wants to trade THEN it goes through
+  `gateway.py`; no other module calls an exchange order API.
+- WHEN the Gateway evaluates an order THEN `risk/engine.py::evaluate_proposal` is the sole hard
+  gate; no advisory guard chain is wired into `gateway.py`.
 
-## 2. 链路各环数据结构
+#### EX-C02 Risk before execution
 
-| 环 | 结构 | 状态流 | 位置 |
-|----|------|--------|------|
-| Order Intent | Physical compatibility model: `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; this is an internal immutable Risk/Gateway carrier, never an owner-facing planning stage | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local Order/Fill/Position materialization uses `materialization_missing` | `models.py:102` |
-| RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
-| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, close_reasoning?, risk_decision_id=NULL, ...)`；`close_reasoning` 只承载 pending Operator rationale，不代表已关闭 | `pending→submitted→filled` / `→error` | `models.py:136` |
-| Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
-| Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
+`When a Proposal is submitted, the Gateway shall obtain an authoritative RiskDecision before any broker call.`
 
-**Proposal 状态契约([trust §1.2](../../governance/policies/trust_and_change_control.md)):**
-- `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executing`=可能已开始外部提交（Entry 内部准备仅由 claim 表示） · `executed`=Order/Fill/Position 完整成交链已落库 · `rejected`=人工或风控拒 · `error`=确认未提交的终态失败。
-- `submission_unknown`=交易所边界可能已越过，必须先对账，禁止自动重发；`materialization_missing`=已有 Order 或交易所已报告成交活动，但本地 Fill/Position 物化未完整，禁止重新下单（交易所执行的本地记录）。
-- **不得**用状态变更替代缺失记录:执行发生则 order 必存在,风控发生则 risk_decision 必存在。
+- WHEN `submit_proposal` is called THEN it persists the Proposal and delegates to
+  `execute_existing_proposal`, never to `_execute_proposal` directly.
 
-**Risk 与执行快照必须是同一份意图**：交易所数量规则可以生成 quantity-only 的执行副本，
-authoritative RiskDecision 记录 `evaluated_quantity` 并绑定原 Proposal 的 `proposal_commit_hash`；broker
-只能消费这份已批准副本。除 quantity 归一化外，任何 hash-covered 字段与存储 Proposal 不同都会在
-Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
+#### EX-C03 Native source only
 
-**TP 不得事后发明**：Position Manager 对原生 Proposal 只消费持久化的批准值；Proposal 明确为
-`NULL` 时，不得再用当前 config 生成新的平仓触发器（§10.4）。
+`If a caller passes a Proposal source other than native, then the Gateway shall reject it before persisting a Proposal, claiming a lease, calling Risk or calling a broker.`
 
----
+- WHEN `submit_proposal(source="adopted")` THEN it returns `non_native_proposal_not_executable`
+  and no Proposal row exists.
+- WHEN `execute_existing_proposal` loads a Proposal whose `source != "native"` THEN it rejects
+  before the claim. `source="adopted"` rows exist only as synthetic facts persisted by the
+  Position Reconciler.
 
-## 3. Execution Mode 与 Broker
+#### EX-C04 One Proposal row per trade
 
-| 模式 | 真实单 | Broker | 位置 |
-|------|--------|--------|------|
-| 模式 | 状态 | Broker | 位置 |
-|------|------|--------|------|
-| `bitget_demo` | **唯一获准新入场的路由**（[Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) `execution_modes`） | Gateway → Coordinator → UTA v3 | `execution/gateway.py` / `execution/coordinator.py` |
-| `okx_demo` / `binance_testnet` | 冻结：不接受新入场；仅保留历史身份与既有敞口的对账/平仓恢复 | 同上 | 同上 |
-| `*_live_limited` | Live 默认关闭；只有 [Live Unlock](live_unlock_contract.md) 的人工解锁可进入，且当前 Entry Plan 不会路由到 Live | 同上 | 同上 |
+`The Gateway shall create exactly one trade_proposals row per proposed trade.`
 
-`risk/engine.py::_is_live` 判定 `*_live_limited`。
+- WHEN a Proposal is approved, rejected, Risk-evaluated or executed THEN the same row's `status`
+  changes; no second row is created.
 
-旧本地模拟入场与成交规则已[归档](../history/local_simulated_risk_execution.md)。
+#### EX-C05 Entry Plan binding
+
+`When an Entry Plan Proposal is executed, the Gateway shall require one typed EntryExecutionReceiptV1 whose proposal id, plan id and hash match the stored Proposal.`
+
+- WHEN the receipt is missing or malformed THEN `entry_execution_receipt_required`.
+- WHEN its identity or hash differs THEN `entry_execution_receipt_integrity_failed`.
+- WHEN a receipt is passed for a Proposal without `entry_plan_id` THEN
+  `unexpected_entry_execution_receipt`.
+
+#### EX-C06 Exchange order rules before submission
+
+`When a Risk-approved Proposal targets an exchange, the Gateway shall read the receiving venue's current order rules, align the quantity, re-run Risk on the aligned quantity, and only then call the broker.`
+
+- WHEN minimum quantity, step, minimum notional, maximum quantity or contract-size conversion
+  applies THEN the coin quantity is rounded up to a legal step and re-evaluated by Risk.
+- WHEN rules are missing, stale and unrefreshable (5-minute cache,
+  `execution/order_constraints.py::_CACHE_TTL_SECONDS`), the market is inactive or precision
+  cannot be converted safely THEN the Proposal is `rejected` with a
+  `ConstraintUnavailable.reason_code`, an audit row is written and no Order is created.
+
+### 2. Chain data structures
+
+| Link | Model (`storage/models.py`) | Status flow |
+|---|---|---|
+| Order Intent | `TradeProposal` — internal immutable Risk/Gateway carrier | `pending/approved → executing → executed`, `→ rejected`, `→ error`, `submission_unknown`, `materialization_missing` |
+| RiskDecision | `RiskDecision` ([risk engine contract](risk_engine_contract.md)) | write-once |
+| Order | `Order` — entry carries `risk_decision_id`; close carries `position_id`, `close_reason`, optional `close_reasoning`, `risk_decision_id=NULL` | `pending → submitted → partially_filled → filled`, `→ error`, `→ cancelled` |
+| Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | immutable |
+| Position | `Position` + entry context + `exit_reasoning` | `open → closed` |
+
+#### EX-C07 Proposal status meaning
+
+`The Gateway shall use each Proposal status only with its defined meaning.`
+
+- `pending` = no human approval; `approved` = human or permitted workflow approval;
+  `executing` = external submission may have started; `executed` = Order, Fill and Position
+  are all persisted; `rejected` = human or Risk refusal; `error` = terminal failure confirmed
+  not submitted.
+- `submission_unknown` = the exchange boundary may have been crossed; reconcile first, never
+  resubmit automatically. `materialization_missing` = an Order exists or the venue reported
+  fill activity but local Fill/Position is incomplete; never resubmit.
+- WHEN execution happened THEN an Order row exists; WHEN Risk ran THEN a RiskDecision row
+  exists. A status change never substitutes for a missing record.
+
+#### EX-C08 Risk and broker see one intent
+
+`The Gateway shall pass to the broker only the Risk-approved execution copy of the Proposal.`
+
+- WHEN exchange rules change only the quantity THEN the RiskDecision records
+  `evaluated_quantity` and binds the original `proposal_commit_hash`.
+- WHEN any other hash-covered field differs from the stored Proposal THEN execution fails
+  before Risk and no authoritative RiskDecision or Order is produced.
+
+### 3. Execution mode and broker
+
+| Mode | State | Path |
+|---|---|---|
+| `bitget_demo` | the only route admitted for new entries ([Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) `execution_modes`) | Gateway → Coordinator → UTA v3 |
+| `okx_demo`, `binance_testnet` | frozen: no new entries; residual adapters kept only for historical identity and recovery of existing exposure | same |
+| `*_live_limited` | Live off; reachable only through [Live Unlock](live_unlock_contract.md); Entry Plans never route here | same |
+
+#### EX-C09 Entry route admission
+
+`The Gateway shall execute Entry Plan orders only for an execution mode registered in config/exchanges.py::ENTRY_ROUTE_POLICIES.`
+
+- WHEN `venue_capabilities.entry_execution_minimum_permission(mode)` is `None` THEN the Gateway
+  rejects with `entry_plan_tactics_unavailable` and `execute_entry_plan` raises
+  `entry_plan_tactic_capability_unavailable`. Today only `bitget_demo` is registered.
+- WHEN the startup gate (`agent_runtime/startup_behavior_gate.py::_check_active_runtime_scope`)
+  runs THEN only modes listed in Active Runtime Scope gain new-entry admission.
+- `risk/engine.py::_is_live` identifies `*_live_limited`.
 
 ### 3.0a Entry Plan Order Policy
 
-- `RESTING_MAKER` 与 Triggered Maker 必须逐层传递 `post_only=true`、
-  `time_in_force=post_only` 和 exact limit price。venue/profile 无法表达时返回
-  capability unavailable；普通 GTC Limit 永远不是 Maker。
-- Urgent Taker 默认是 opposing-BBO IOC Limit：long 使用 latest exact ask，short 使用 latest
-  exact bid。`max_slippage_bps` 与 `worst_price` 任一越界都拒绝，不得 chase；Market order 不在
-  V1 authority 中。
-- Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
-  `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
-- Entry Plan Proposal 的有界 `EntryExecutionReceiptV1` 不进入 immutable Proposal identity；其
-  attempt/hash 必须同时绑定 authoritative RiskDecision、Order 与 Fill。Maker limit 是订单约束，
-  不得再要求它等于另一条异步 mark。
-- Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
-  随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
-  remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
-- **Cancel 收敛(2026-09-27, #3507)**:cancel 一旦被 fence(`error_reason` 以
-  `entry_cancel_pending:` 开头),只重读 venue 是不够的——若首次 cancel 从未落地
-  (被拒、丢失于凭据/配置 generation 变更、或 venue 未处理),订单会永久停在 `submitted`。
-  reconciling 路径因此在 exact venue 证据显示订单**仍在工作**时幂等重发 cancel(沿用同一
-  `client_order_id`,重发不会产生第二笔 cancel);只有当 venue 用当前凭据返回**同一张** Order
-  (venue/client order id + instrument 匹配)之后,才允许把 credential-generation drift 的持久
-  身份 re-anchor(审计 `uta_account_reanchored`);硬账户不匹配或未绑定 identity 一律 fail closed,
-  不 relabel、不提交。重发按退避调度(`orders.entry_cancel_attempts` /
-  `orders.entry_cancel_retry_after`,additive schema v90),窗口内 Gateway 直接返回
-  `cancel_pending` 而不接触 venue;第 6 次尝试写一条 `entry_cancel_stalled` 审计事件。Order 与
-  Entry Plan 仍留在 durable reconciliation 状态,不得静默放弃或推断 fill。
+#### EX-C10 Entry Plan order tactics
 
-### 3.0b 账户身份关系与连续性证明(2026-10-08, #3798)
+`When an Entry Plan Proposal reaches the Gateway, the Gateway shall submit only a price-bounded Limit order whose tactic semantics are complete.`
 
-`UTAAccountIdentity` 里只有**账户事实**(`account_id` / `execution_mode` / `venue` / `environment`
-/ `profile` / `sub_accounts`)和**凭据代次**(`credential_generation`)构成身份。
-`adapter_implementation` / `adapter_version` / `ccxt_version` / `account_fingerprint` 是**出处**,
-只记录、不参与相等。唯一的判定是 `aletheia.uta.identity.identity_relation`,取值
-`SAME` / `GENERATION_DRIFT` / `DIFFERENT`;入场闸门、对账、精确读取(`query_uta`)、平仓与重标
-全部使用它,不再各自写相等。仅升级 CCXT 或适配器版本不得使任何持久身份变成硬不匹配。
+- WHEN `order_type != "limit"` THEN `entry_plan_requires_limit_order`.
+- WHEN tactic is `POST_ONLY_LIMIT` without `post_only=true` and `time_in_force="post_only"`
+  THEN `entry_plan_requires_post_only`; a plain GTC Limit is never a Maker order.
+- WHEN tactic is `OPPOSING_BBO_IOC` without `post_only=false`, `time_in_force="ioc"`, a
+  `bbo_reference` of `bid`/`ask` and `max_slippage_bps` THEN `entry_plan_requires_bounded_ioc`.
+  Out-of-bound `max_slippage_bps` or `worst_price` rejects; the Gateway never chases and
+  Market orders are not in Entry Plan authority.
+- WHEN the plan is no longer `active` THEN `entry_plan_lifecycle_closed`.
+- The Risk reservation exists before the Order is persisted; Order insert and Entry Plan
+  `risk_reserved → ordered` advance in one SQLite writer transaction.
 
-`GENERATION_DRIFT`(同一账户,只有凭据代次不同)的持久行只有在 **venue 的完整读取**证明当前
-凭据仍到达同一账户后才可重标并审计(`uta_account_reanchored`,带 `proof_order_id` 或
-`position_id`)。接受的证明有且仅有两种:
+#### EX-C11 Entry cancel convergence
 
-1. 当前凭据下 venue 精确持有该本地开放 Position;
-2. 账户没有可证明的开放 Position 时(只有在途 Order 漂移),venue **完整**读回(按本地 client /
-   venue order id,带起始时间)一个**同一旧代次、本地已成交**的 Order。被怀疑的 Order 自己"没找到"
-   **不是**证明——换成另一个物理账户,同一个 client order id 也查不到。
+`When a cancel is fenced (error_reason starts with entry_cancel_pending:) and exact venue evidence shows the order still working, the Gateway shall resend the cancel idempotently under the same client_order_id on a backoff schedule.`
 
-没有证明、`DIFFERENT`、身份未绑定或格式错误一律 fail closed:不 relabel、不提交。
-同一 venue 的账户 profile 在运行时**不可切换**(#3806):账户事实里的 `profile` 对 Bitget 恒为 `uta_v3`;历史行里的 `classic_v2` 只是已落库的事实,按 `DIFFERENT` 处理,不重标。证明读取依赖
-各 venue profile 声明的精确读取能力(`client_order_lookup_param` / 历史扫描与
-`private_history_retention_days`);profile 不能给出完整的精确读取时证明不可得,系统保持 fail
-closed,而不是推断。因此本节与交易所无关,新增 venue 只需在 profile 中声明这些能力。
+- WHEN inside the backoff window (`orders.entry_cancel_retry_after`) THEN the Gateway returns
+  `cancel_pending` without touching the venue.
+- WHEN the sixth attempt is made THEN one `entry_cancel_stalled` audit event is written; the
+  Order and Entry Plan stay in durable reconciliation and no fill is inferred.
+- WHEN a full Fill wins the race THEN the Fill stands; a partial Fill keeps the real Position
+  and the remainder may be cancelled. Request-side `requested_liquidity` never stands in for
+  `realized_liquidity`.
+
+### 3.0b Account identity relation
+
+#### EX-C12 One identity relation
+
+`The execution layer shall compare UTA account identities only through uta/identity.py::identity_relation.`
+
+- Identity = account facts (`account_id`, `execution_mode`, `venue`, `environment`,
+  `profile`, `sub_accounts`) plus `credential_generation`. `adapter_implementation`,
+  `adapter_version`, `ccxt_version` and `account_fingerprint` are provenance only.
+- Results are `SAME`, `GENERATION_DRIFT` or `DIFFERENT`; a CCXT or adapter upgrade alone
+  never produces `DIFFERENT`. A persisted Bitget `classic_v2` profile is `DIFFERENT`.
+- WHEN `GENERATION_DRIFT` THEN rows may be re-anchored (audit `uta_account_reanchored`) only
+  after a complete venue read proves continuity: the venue holds that exact open Position, or,
+  with no open Position, a complete exact read returns an Order of the old generation that is
+  filled locally. A suspect Order merely not found is not proof.
+- WHEN no proof, `DIFFERENT`, unbound or malformed identity THEN fail closed: no relabel, no
+  submit. Proof capability comes from the venue profile (`client_order_lookup_param`,
+  `private_history_retention_days`).
 
 ### 3.1 Instrument scope at the adapter boundary
 
-产品只交易 USDT 本位加密永续（canonical `market_type=usdt_futures`）。现货与 venue 标为
-真实世界资产的永续（Bitget `isRwa=YES`）不进入 universe registry
-（`data/symbols.py`、`universe/registry.py`），因此不会产生 Candidate、Entry Plan 或 Proposal。
-venue 差异（contract size、client-id、保护单参数）只在
-`extensions/exchanges/{venue}/profile.py` 处理；Bitget 只有 UTA v3 一个账户 profile。
-Core 与 Risk 中仍保留的 `spot` 分支是主线不可达的残留，不构成支持声明（收敛见审查证据
-[doc-golden-standard-2026-10-10](../../research/audits/doc-golden-standard-2026-10-10/README.md)）。
-当前 market_type 只来自 canonical Candidate/EntryPlan 的 exact instrument；不存在 fallback 类型选择。
+#### EX-C13 USDT perpetuals only
 
-### 3.2 Symbol Availability Pre-check（标的可用性预检）
+`The execution layer shall accept only canonical market_type=usdt_futures instruments taken from the canonical Candidate / Entry Plan.`
 
-风控批准后、Broker 下单前，gateway 对**所有真实交易所模式**做一次 symbol 可用性验证（`gateway.py:_check_symbol_availability`）。不可用时直接返回 `rejected`，写 `event_type=proposal_skipped` 审计记录，**不产生** `error` 状态。
+- Spot and venue RWA perpetuals (Bitget `isRwa=YES`) never enter the universe registry
+  (`data/symbols.py`, `universe/registry.py`), so they produce no Candidate, Entry Plan or
+  Proposal. There is no fallback market-type selection.
+- Venue differences (contract size, client id, protection parameters) are handled only in
+  `extensions/exchanges/{venue}/profile.py`; Bitget has one profile, UTA v3.
+- `spot` branches still present in Core and Risk are residual and unreachable from the
+  mainline; they are not a support claim.
 
-标的来源由 `core/aletheia/execution/venue_capabilities.py` 的 `get_supported_symbols()`
-（经 `load_venue_capabilities()`）提供，按 market type 区分 spot 与 `usdt_futures`：
+### 3.2 Symbol Availability Pre-check
 
-| 模式 | 标的来源 | 缓存 TTL |
-|------|---------|---------|
-| sandbox 模式（`*_demo` / `*_testnet`，由 CCXT profile 的 restricted listing 判定） | profile 感知的 sandbox 公共行情列表（`refresh_demo_capabilities`；冷缓存时同步刷新，刷新失败 fail-closed） | 4h |
-| 非 sandbox 模式（`*_live_limited`） | `universe_registry` 中该执行模式对应 venue 的行（`load_registry_symbols`） | 4h |
+#### EX-C14 Symbol availability pre-check
 
-**Fail-open**：非 sandbox 模式下 profile 无法解析或 registry 未就绪时返回 `None`，不阻塞下单；提交路径的 `read_order_constraints` 对同一解析独立 fail-closed。
+`When Risk has approved a Proposal for an exchange mode, the Gateway shall reject a symbol that the venue's normalized capability set does not list for that market type.`
 
-上层 `agents/`、`universe/`、`trading/`、`risk/` 只消费
-`execution.venue_capabilities` 提供的 canonical capability facts，不导入具体
-exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查；
-`uta/` 负责唯一私有账户读取与规范化执行。
+- WHEN `gateway.py::_check_symbol_availability` finds the symbol absent THEN the Proposal is
+  `rejected` (not `error`), the Entry Plan fails with `symbol_not_available_on_venue`, and a
+  `proposal_skipped` audit row is written.
+- Sandbox modes read `venue_capabilities.refresh_demo_capabilities` (cold cache refreshes
+  synchronously and fails closed); non-sandbox modes read `universe_registry` via
+  `load_registry_symbols`. Both caches live 4 h.
+- WHEN a non-sandbox profile or registry is unavailable THEN the pre-check returns no verdict
+  (fail-open); `read_order_constraints` (EX-C06) still fails closed independently.
+- `agents/`, `universe/`, `trading/` and `risk/` consume only `execution.venue_capabilities`
+  facts and never import an exchange client.
 
-**新交易所接入方式**（e.g. Hyperliquid）：
-1. 在 `config.exchanges` 的执行模式、环境和 venue 注册表中登记 `"hyperliquid_demo": "hyperliquid"`
-2. 确保 `core/aletheia/universe/registry.py` 的 `sync_registry()` 已写入 `venue="hyperliquid"` 行（非 sandbox 模式），或其 CCXT profile 提供 sandbox listing
+### 3.3 Exchange minimum order rules
 
-**Spec claims**：`EX-S07`（结构）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。入口：`gateway.py` 的 `_check_symbol_availability`。
+See EX-C06. The venue may still reject for price movement, balance or position mode; its final
+receipt is the source of truth.
 
-### 3.4 Worktree preview runtime（fail-closed）
+### 3.4 Worktree preview runtime
 
-`uv run aletheia dev api --port <879x>` 是显式、前台、隔离的开发 API，
-不是 gateway 的第二实例，也不得绑定主 gateway 的 `8787/8788` 端口。它只可
-使用当前 Worktree 的 `data/dev-preview/<port>`。在该模式下，Execution Gateway
-在写入 Proposal、claim、RiskDecision、Order 或调用 broker **之前**拒绝
-`submit_proposal` 与 `execute_existing_proposal`。
+Operating rules moved to
+[DEVELOPMENT_PREVIEW](../../operations/development/DEVELOPMENT_PREVIEW.md#execution-gateway-refusal).
 
-该限制覆盖所有交易所模式，且不改变正常 gateway 的
-风险、执行、审计或 live 行为。凭据读取为空、凭据写入被拒绝；因此 preview
-只能用于界面/API 开发，不能用作交易模拟或订单验收环境。Executable claim:
-`EX-B13`。
+#### EX-C15 Preview refuses execution
 
-### 3.3 交易所最小下单规则（开仓）
+`While the process runs in Preview mode, the Gateway shall reject submit_proposal and execute_existing_proposal before any durable execution state changes.`
 
-对会发到交易所的开仓（demo/testnet/live），不得用行情源或本地猜测来决定最小下单量。首轮风控通过后，gateway 必须从**实际接收订单的交易所**读取该标的规则。
+- WHEN `config/loader.py::is_preview_mode` is true THEN `gateway.py::_reject_preview_execution`
+  raises `PreviewExecutionBlockedError` before Proposal, claim, RiskDecision, Order or broker.
 
-- 必须同时处理最小数量、数量增量、最小成交额、最大数量，以及永续合约的“张数 ↔ 币数”换算；内部数量始终是币数。
-- 数量须向上对齐到合法增量并满足最小成交额；对齐后的数量必须再经过 Risk Engine，才可调用 broker。
-- 规则缺失、规则过期后无法刷新、市场已停用或精度类型无法安全换算时，proposal 设为 `rejected`，写审计记录，且**不得创建/发送 Order**。
-- 规则缓存仅 5 分钟；过期缓存不能在刷新失败时继续使用。此规则是 fail-closed，与上节只为改善提示的标的可用性预检不同。
+### 4. TPSL exchange protection
 
-这道闸门防止系统主动发送低于交易所已公布门槛的开仓单；交易所仍可能因价格瞬时变动、余额、仓位模式或临时风控拒单，调用方必须保留交易所最终回执作为事实来源。
+#### EX-C16 Protection rides on the entry order
 
-**Spec claim**：`EX-B05`；行为回归：`tests/test_order_constraints.py`、`tests/test_gateway_order_constraints.py`。
----
+`When an entry is submitted with an approved stop or target, the execution layer shall carry that protection as a preset on the entry order itself.`
 
-## 4. TPSL 交易所挂单
+- SL/TP prices are the approved Proposal/Position values; none are invented.
+- WHEN the profile lacks native TPSL THEN no success is faked and local protection remains.
+- `execution/stops.py::native_tpsl_enabled`: unset `trading.exchange_tpsl_enabled` follows
+  `ENTRY_ROUTE_POLICIES[...].native_tpsl_default` (only `bitget_demo`); explicit true/false
+  applies to every mode.
 
-| 项 | 行为 | 位置 |
-|----|------|------|
-| 路径 | 保护只随入场单以 preset 携带(Gateway → Coordinator → UTA profile);入场后单独下 SL/TP 子单的 `place_protection` 链无生产调用方,已删除(#3848 PR-B) | `execution/coordinator.py::execute_order` |
-| SL / TP | 使用 Proposal / Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `execution/coordinator.py::execute_order` |
-| 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `extensions/exchanges/{venue}/profile.py` |
-| 持久化 | 仅回读确认的 venue IDs 写入 position.exchange_tpsl_order_id(见下方回读) | `portfolio/native_protection.py` |
-| 收紧 / 追踪(原地修改,#3848 PR-B) | trailing 与 operator 调整经 `replace_protective_stop` **原地修改**已存的 venue stop(Bitget UTA `modify-strategy-order`),**绝不撤单重下**,因此不存在无 venue stop 的窗口;入场 preset(`origin=entry_preset`)同样原地修改。发送前读取 venue 未成交策略单,目标 id 恰好一个且属本 symbol 才发送,否则 `NOT_SENT` + `modify_target_unavailable`。请求重述该策略单上的全部腿:与 SL 共用同一策略单的 TP 以原值重发,修改不会丢掉 TP(CCXT `edit_order` 的 `stopLossPrice` 虽路由到同一端点,却会丢弃 TP 参数,故请求体由 profile 构建)。只朝有利方向移动:相对 venue 当前 stop 放宽的修改不发送(`protection_amend_loosens`);限价型 stop 不修改。仅 venue ACK 记为成功;拒绝 / 不确定 / 未发送 / 异常时原 venue stop 仍有效,id 不删,返回 False,写 `native_protection_amend_failed` 审计(成功写 `native_protection_amended`)。不支持原地修改的 profile 返回 `protection_amend_unsupported`,不退化为撤单重下 | `execution/coordinator.py::replace_protective_stop`、`extensions/exchanges/ccxt/adapter.py::modify_order`、`extensions/exchanges/bitget/profile.py::protection_amend_request` |
-| 本地兜底 | trailing 无论 venue 修改结果如何都持久化更紧的本地 stop,由本地轮询兜底;`exit_plan.trailing.last_runtime_observation.exchange_synced` 记录 venue 的实际回答(此前替换失败也记 True)。operator 调整的返回值 `exchange_synced` 同义;System Operator 复核在请求改 stop 时把它原样报告为 `venue_stop_synced`,为 False 时结果与该 Position 的下一次复核 prompt 都写明 venue stop 未更新、本地 stop 是兜底 | `portfolio/position_manager.py::_maybe_update_trailing_stop`、`apply_operator_adjustment`、`agent_shell/commands.py::review_portfolio_state` |
-| 开关默认 | `trading.exchange_tpsl_enabled` 未设置时仅对 `bitget_demo` 生效(#3848 PR-A 第 4 项);显式 true/false 对所有 execution mode 生效 | `execution/stops.py::native_tpsl_enabled` |
-| 入场附带保护确认(#3848 owner D1, 2026-10-09,取代 PR #3849 的"回读否则平仓") | 保护由**携带 SL/TP 的入场单自身的执行回执**确认,不靠周期回读平仓。**发送前守卫**:profile 声明 native TPSL 且 `native_tpsl_enabled(mode)` 为真、purpose=entry、非 reduce_only、`usdt_futures`,且已批准 command 携带 `stop_loss_price`/`take_profit_price` 时,经 `profile.submit_request` 构建出的 venue 请求参数必须以与批准值相等的字符串携带这些触发价(`stopLoss`/`takeProfit.triggerPrice`);否则不发送,`NOT_SENT` + `native_tpsl_params_missing`,Order 以 `error` 终结并写审计(防 #3783 类:参数被静默丢弃而 venue 仍 ACK)。**ACK**:venue 受理的此类入场在 `uta_command_applied` 审计中记 `protection_source=entry_preset_ack`;被拒即无仓位,无需保护。spot 与 reduce_only / exit 按设计不在此守卫内(Bitget preset 仅 futures 入场) | `extensions/exchanges/ccxt/adapter.py::submit_order`、`execution/coordinator.py::execute_order` |
-| 入场附带保护回读(仅记账) | 受理回执不含 preset 的 id。`tpsl_fill_check` 每轮先读取 venue 未成交策略单(UTA `unfilled-strategy-orders`),只把**同账户、同方向、恰好一个**的 SL(以及恰好一个的 TP)id 连同 `origin=entry_preset` 写入 `exchange_tpsl_order_id`(供后续修改与成交识别),并写 `native_protection_verified` 审计(含 venue 触发价);SL/TP 可能共用同一 id,其触发按成交均价最近的触发价归因为 `stop_loss` / `take_profit`。完整读取在 grace(`PROTECTION_GRACE_SECONDS`)后仍找不到本仓 SL 时只写 `native_protection_absent` 审计并让 job 变红;读取失败、不完整、身份非 `SAME`、多个 SL 或 SL 数量小于持仓时不写库。回读**永不平仓** | `portfolio/native_protection.py`、`execution/stops.py::classify_native_protection` |
+#### EX-C17 Pre-send preset guard
 
----
+`If native TPSL is enabled for a futures entry that carries stop_loss_price or take_profit_price, then the adapter shall refuse to send unless the built venue request carries those trigger prices as strings equal to the approved values.`
 
-## 5. 原子性 / 幂等 / 失败语义
+- WHEN the guard fails THEN `NOT_SENT` + `native_tpsl_params_missing`, the Order ends `error`
+  and is audited (`extensions/exchanges/ccxt/adapter.py::submit_order`).
+- WHEN the venue accepts THEN the `uta_command_applied` audit records
+  `protection_source=entry_preset_ack`. Reduce-only and exit orders are outside this guard.
 
-`submit_proposal()` 与 `execute_existing_proposal()` 必须汇合到同一执行入口，不能由新提案绕开持久租约直接调用 broker。执行入口在一个短 `BEGIN IMMEDIATE` 事务内写入独立的 `proposal_execution_claims` 行，并把 `pending`/`approved` Proposal 改为 `executing`；租约字段不写入 hash-covered Proposal，避免恢复元数据改写交易意图。
+#### EX-C18 Preset read-back is bookkeeping only
 
-**执行租约与崩溃恢复：**
+`The tpsl_fill_check job shall record venue preset ids only from a complete read with SAME identity and shall never close a Position.`
 
-- 一个 Proposal 同时最多有一个 owner；新鲜租约返回 `already_claimed`，不得进入 Risk/broker 或创建 Order。
-- 交易所模式租约过期时，无论本地是否已有 Order，都不得推断“未发送”并自动重试；Proposal 转为 `submission_unknown`，返回 `reconciliation_required`，等待对账。
-- 正常完成或终态失败只允许当前 owner 以 token compare-and-set 释放自己的租约，旧 owner 不能删除新 owner 的租约。
+- WHEN exactly one same-account, same-direction SL (and at most one TP) exists THEN its id is
+  written to `positions.exchange_tpsl_order_id` with `origin=entry_preset` and a
+  `native_protection_verified` audit is written.
+- WHEN a complete read still finds no SL after `execution/stops.py::PROTECTION_GRACE_SECONDS`
+  THEN only `native_protection_absent` is audited and the job turns red.
+- WHEN the read fails, is incomplete, identity is not `SAME`, or SL count is ambiguous THEN
+  nothing is written.
 
-可执行检查：`EX-B17`（新鲜租约不重复）、`EX-B15`（交易所过期租约零重发）。
+#### EX-C19 Stop amendment in place
 
-**下单序列(关键:交易所订单数 ≥ 本地记录,永不出现无本地 trace 的真实成交):**
+`When a trailing or Operator adjustment tightens a stop, the execution layer shall amend the existing venue stop in place and never cancel-and-replace it.`
 
-```
-1. Insert Order(pending)  —— 调交易所之前先写本地
-2. 调交易所(可能失败/超时)
-3. 回填 exchange_order_id + status
-4. Insert Fill + Position(失败非致命,可恢复)
-```
-位置：`execution/coordinator.py`。提交前持久化 exact `uta_account_identity_json`；历史 NULL 不按当前配置补造身份。
+- `coordinator.py::replace_protective_stop` sends only when exactly one target strategy order
+  of this symbol exists (else `NOT_SENT` + `modify_target_unavailable`); the request restates
+  every leg so a shared TP survives (`extensions/exchanges/bitget/profile.py::protection_amend_request`).
+- WHEN the amendment loosens the stop THEN `protection_amend_loosens`; limit-type stops are
+  not amended; profiles without amend support return `protection_amend_unsupported`.
+- Only a venue ACK is success (`native_protection_amended`); otherwise the old venue stop stays,
+  the result is False and `native_protection_amend_failed` is audited.
+- The tighter local stop is persisted regardless and reported as `exchange_synced` /
+  `venue_stop_synced` (`portfolio/position_manager.py::apply_operator_adjustment`,
+  `agent_shell/commands.py::review_portfolio_state`).
 
-`SubmitOrderCommand.reference_price` 只携带已批准的数量/价格对应的参考价格，不是市价单的 limit price。UTA v3 不做钱包划转，`reference_price` 缺失不得推测任何金额。准备失败必须为 `NOT_SENT`，不得留下未知提交或伪造成交。
+### 5. Atomicity, idempotency and leases
 
-第 1 步的 `pending` 不是“还没发生所以可忽略”。它代表真实提交是否发生仍未知，必须一直留在 Risk
-工作集中：在对应 live/demo 池占用入场槽位和同符号权利，并把尚未由 open Position 表示的数量加入
-名义敞口，直到后续状态或 Position 事实明确收敛。平仓 Order 不占新增入场容量。
+#### EX-C20 Durable execution lease
 
-| 场景 | 处理 | 位置 |
-|------|------|------|
-| 下单失败 | Order `status=error`+`error_reason`,proposal→`error` | `gateway.py:183` |
-| 部分成交 | Order partially_filled，等待 private Fill 证据；Position 仅按真实成交物化 | `execution/coordinator.py` / `execution/reconciliation.py` |
-| 并发重复提交 | Gateway 持久租约与 Coordinator 未决订单检查阻断；client_order_id 保留 venue 幂等身份 | `gateway.py` / `execution/coordinator.py` |
+`When execute_existing_proposal claims a Proposal, it shall write one proposal_execution_claims row and move the Proposal to executing inside one short BEGIN IMMEDIATE transaction that ends before Risk or broker I/O.`
 
-**失败语义([trust §1.3](../../governance/policies/trust_and_change_control.md)):**
-- 失败必须留下可检查状态,**不得删除部分创建的行来掩盖失败**。
-- live 执行失败:保留 proposal 设 `error`,**除非交易所确认否则不推断 fill**。
-- Entry Plan 的 `terminal_reason` 必须是有界、可计数的代码(`token` 或 `token:token`,小写字母/数字/下划线):场所拒绝文本、整句说明、符号名一律不落库(落库前不合规的值会被记为 `entry_failure_code_invalid`,使其可见)。场所规则不可用细分为 `ConstraintUnavailable.reason_code`(如 `order_quantity_below_exchange_minimum`、`symbol_not_active_on_venue`、`exchange_rules_refresh_failed`),下单异常记为 `demo_order_failed:<code>`(无可用代码时 `unclassified`)。可执行检查:`tests/test_entry_failure_codes.py`。
-- broker 返回 accepted result 且对应 native Order 已持久化后，交易所边界已经跨过；后续本地读取、
-  Proposal 状态同步或审计故障都不得再把 Proposal/API 改成 `error`。网关优先从 identity-linked
-  durable Order 恢复 `submitted`/`partially_filled`；只有 `status=filled` 的同一 Order 同时拥有唯一、
-  非零且 ID 匹配的 Fill 与 Position，才可恢复 `executed`。证据不可读、不完整或 Proposal 状态写入
-  中断时，必须降级为 `submission_unknown`/`materialization_missing`，明确禁止自动重发，且日志/API
-  不得包含原异常正文。连续读取失败是“证据不可用”，不得误当成“已读且无 accepted Order”再写
-  `error`。可执行检查：`PL-PN-06`～`PL-PN-10`。
+- WHEN a fresh lease exists THEN `already_claimed`; no Risk, broker or Order.
+- WHEN an exchange-mode lease expired with the Proposal `executing` THEN the Proposal becomes
+  `submission_unknown` and the call returns `reconciliation_required`
+  (`execution_lease_expired_exchange_reconciliation_required`); nothing is resent.
+- Release is a compare-and-set on the owner token; an old owner cannot delete a newer lease.
+  Lease fields are not part of the hash-covered Proposal.
 
----
+#### EX-C21 Local record before exchange call
 
-## 6. 对账(Reconciliation)
+`The Coordinator shall insert Order(pending) with the exact non-secret uta_account_identity_json before calling the exchange.`
 
-| 项 | 行为 | 位置 |
-|----|------|------|
-| 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`extensions/exchanges/ccxt/adapter.py` |
-| 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
-| 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得从 open-list 缺失推断 filled/cancelled；入场侧的有界终止见 §6.1 | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
-| 未决平仓 claim 的自动收敛 | `reconcile()` 是对账 job 内**唯一**的自动入口：先按既有顺序完成逐单收敛，再调用 `pending_close_recovery.recover_absent_stale_close_orders()`。释放要求：完整 open-order 视图证明该 close Order 缺席、精确 fill 历史为空，且 **venue 对该精确订单给出肯定报告——终态且未成交**（`filled_quantity == 0`，并由 `remaining_quantity == original_quantity` 作数量见证；任一数量字段缺失或矛盾一律 fail closed）。**不得**从“读到了但没有该单”推断未发送：COMPLETE 读取未命中只证明读取窗口完成，而 typed adapter 会把缺失的 payload 字段折叠为 0，因此单独的 `filled_quantity == 0` 不是证据。满足后再对本地 claim（Order status/clientOid/exchange id、Position claim 字段、零本地 Fill）做 CAS 复验，未变才释放，让保护性平仓以全新 `close-{id}-rN` clientOid 重试。`manual_reconciliation_pending` 这类 human-owned claim 既不在候选集内、也不被判定函数放行，`venue_trade_rate_limited` 停泊永不被释放。释放与停泊都只改本地 Order/Position 状态，绝不下单或撤单 | `execution/reconciliation.py`、`execution/pending_close_recovery.py` |
+- Sequence: insert Order(pending) → call exchange → backfill `exchange_order_id` and status →
+  insert Fill and Position (recoverable on failure). The exchange never holds a fill with no
+  local trace.
+- A historical `NULL` identity is never back-filled from current config; such orders block new
+  entries and unprovable private operations on that account.
+- `SubmitOrderCommand.reference_price` is the approved reference, not a market limit price; a
+  preparation failure is `NOT_SENT`.
 
-UTA 读取的 completeness 失败必须以 typed `IncompleteReadError`
-（`core/aletheia/execution/errors.py`）抛出，不得使用裸 `RuntimeError`。异常携带
-`reason_code`、`completeness`、`endpoint`、`execution_mode`、`market_type`、`symbol`，
-使调用方能在不匹配消息文本的前提下区分**结构性** `PARTIAL`/`UNSUPPORTED`（venue profile
-无法服务该 scope，重试必然同样失败）与**瞬时** `UNAVAILABLE`。裸 `RuntimeError` 会把全部
-诊断信息压缩成 `errors.log` 里的字符串 `"RuntimeError"`，使实际故障原因不可观测。
-凡包裹此类读取的 `except … as exc:` 处理器，其 `logger.warning` 必须同时记录
-`type(exc).__name__` 与该异常的 `reason_code`。类型化只增加诊断词汇，不授予任何新权限：
-不得据此自动重试，不得把 incomplete 读取变成空、零或"仓位已消失"的证据。见 `INV-EX-1`。
+#### EX-C22 Pending orders occupy risk
 
-**Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
+`While an Order is pending or otherwise unresolved, Risk shall count it in the working set.`
 
-Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
-account_environment + canonical symbol + market_type + direction`；双方都带非敏感 account fingerprint
-且值不同时禁止匹配。`source=native/adopted` 只解释仓位如何重新出现，不得限制事故探测。
-外部 Demo/Live 只比较当前执行账户对应的本地仓；其他账户仓位不进入本次分类，不能被当前账户关闭。
-当前分类只接受已注册的外部执行模式；退役账户配置返回 `unconfigured`，不产生受管仓位分类。
-归档本地账户不参与当前对账事故检测，外部缓存不得将其分类为 `orphaned` 或关闭其历史仓位。
-历史记录保持原样，旧分类定义见[归档](../history/local_simulated_position_observation.md#reconciliation)。
-Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬编码某一家交易所（`PL-ADOPT-23`）。
-统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
-不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
-Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
+- It occupies an entry slot and same-symbol right in its pool, and its quantity not yet in an
+  open Position counts toward notional exposure. Close Orders do not consume entry capacity.
 
-instrument key 必须使用 `(canonical symbol, normalized market_type, direction)`；只允许
-`spot` 和 `perp/futures/swap/usdt_futures → usdt_futures` 的已知归一化。相同 symbol/direction
-的 spot 与 futures 是两个独立身份。任一侧同一完整 key 出现重复行，或任一行缺失/携带未知
-market type 时，受影响身份进入 typed `integrity_issues`，不得 last-row-wins、计算跨市场数量漂移、
-创建 disappearance evidence 或进入 auto-adoption；输入顺序不得改变分类结果。
+#### EX-C23 Accepted means crossed
 
-UTA adapter 不得把期货缺失/非法 leverage 默认成 1x：三家 adapter 统一保留
-`leverage=None` 及 `leverage_source=unavailable/invalid`。外部 futures Position 只有在 leverage
-有限、正数且为整数时才能 adoption；spot 使用明确 `1x + not_applicable_spot`，显式非 1x
-视为矛盾并拒绝。adoption 把已验证值同时写入 synthetic Proposal、Position 及不含凭证的
-`reconciliation_identity/reconciliation_evidence`。Demo 的后续完整 exact-account managed view
-只可在同一 Position id 上补齐缺失 leverage；已有有效值不会被不完整 view 清空。Live 仍保持
-alert-only，不新增自动修复权限。`report_invalid_open_position_exposures()` 只读列出历史 open
-Position 的 id、symbol、market type 与 sanitized field category，不执行批量修复。可执行检查：
-`PL-ADOPT-26~28`、`tests/specs/spec_pipeline_adopted_position.py`、`tests/test_position_reconciler.py`；其中
-`PL-ADOPT-26` 还验证已接管 futures Position 的持久化 leverage 被 Risk 账户杠杆计算实际采用。
+`When the broker returns an accepted result and the native Order is persisted, the Gateway shall never report that Proposal as error.`
 
-交易所返回的 Position uPnL 是账户内的聚合暴露，不能被复制成多个本地 Position 各自的完整 uPnL。
-当前身份包含 canonical symbol、broker/execution mode、归一化 market type、direction，以及双方可用的
-非敏感 account fingerprint；fingerprint 不一致时必须 fail closed。broker 提供 Position identity 时，
-远端值还必须在同一 fingerprint 作用域内命中该 identity；同一作用域的重复 identity 标为 ambiguous，
-不能 last-row-wins。没有本地 broker Position identity 时，只有远端当前作用域唯一且本地 open Position
-也只有一个候选，才允许采用聚合值；任一侧基数大于一都拒绝分配，逐行保留本地 mark estimate。
-缺失/未知/不一致 market type 仍拒绝采用远端值。没有 fingerprint 或 broker identity 的 legacy cache
-行只走原有单候选兼容路径，不能作为 exchange-backed Demo qualification 证据。远端值还必须来自被现有
-cache-health classifier 判定为 `ok` 的统一缓存；`stale` 或无法判定 freshness 的缓存只能退回本地 mark
-estimate，持久化路径也不得把其中的远端值写入 Position。Position/API/UI 通过
-`unrealized_pnl_source` 暴露 `exchange_exact`、`ambiguous`、`unavailable` 或 `local_estimate`。
-可执行检查：`PL-PM-16`、`PL-PM-17`、`PL-PM-18`、`PL-PM-19`。
+- Recovery prefers the identity-linked durable Order (`submitted` / `partially_filled`);
+  `executed` only when the same `filled` Order has a unique, non-zero, id-matched Fill and
+  Position.
+- WHEN evidence is unreadable, incomplete or the status write is interrupted THEN
+  `submission_unknown` / `materialization_missing`, no automatic resend, and no raw exception
+  text in logs/API. Repeated read failure is "evidence unavailable", not "no accepted Order".
 
-一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
-不能直接调用 fallback-price close。重复读取同一个 cache、时间倒退、stale/incomplete/wrong-account
-view 不累计；第二个更新且完整的 view 只把 candidate 标为 ready for verified exit。交易所行在新鲜完整
-view 中重新出现时，pending candidate 以 `reappeared` 结案并写审计。当前逻辑账户 fingerprint 只由
-broker/environment/execution-mode 这类非秘密配置身份生成，绝不读取或散列 credential。T06/T07 交付
-真实退出证据与经济分流前，scheduler 不会把 ready candidate 本地平仓。对应 `OI-B01`。
+#### EX-C24 Bounded failure codes
 
----
+`The Gateway shall store an Entry Plan terminal_reason only as a bounded token (token or token:token, lowercase letters, digits, underscore).`
 
-### 6.1 入场侧未决订单的有界终止(2026-10-08, #3798)
+- WHEN a value does not match THEN it is stored as `entry_failure_code_invalid`.
+- Venue-rule failures use `ConstraintUnavailable.reason_code`; order exceptions use
+  `demo_order_failed:<code>` (`unclassified` when none).
 
-每个非终态都必须有一个有界出口;出口所需的证据不得只能通过该状态自己关着的闸门取得(§3.0b)。
-平仓侧的 `submission_unknown` 由 §10.2.4 归 owner 处理,因为错误终止平仓会让仓位失去保护;
-入场侧不同:订单未到达交易所时,终止它只是放弃一个尚未发生的开仓,代价有界,而不终止会永久占用
-风控槽位与 `planning_key`。因此入场侧由 `stale_order_cleanup` 自动终止,且必须**同时**满足:
+#### EX-C25 External calls outside the writer lock
 
-1. 订单年龄不低于 48 小时(`_STALE_ORDER_SOFT_HOURS`);
-2. 本地无 Fill、无关联开放 Position、无在途平仓(`_has_real_economics`);
-3. 在 §3.0b 的身份关系下,按 `client_order_id`/`venue_order_id` 做**完整**的精确读取(`ReadCompleteness.COMPLETE`,带 `start_at`),结果为无成交,且无订单或订单已是明确终态(canceled/expired/rejected)。"读到了但没有该单"在此处是证据,因为 1–3 已一起排除了"读取窗口截断"之外的所有已知解释;读取未完成、不可用、账户身份无法证明连续时一律保持未决。
+`The Coordinator shall make every UTA mutation outside the SQLite writer transaction and apply its result with a short expected-state compare-and-set.`
 
-满足后,**同一事务**内:Order→`cancelled`;仍处 `submission_unknown`/`executing` 的 Proposal→`error`;
-以该 Order 为最新一条腿的 Entry Plan(非终态)→`failed`,`terminal_reason=venue_confirmed_absence`;
-写一条 `order_stale_cancelled` 审计,`after_state` 列出一并终止的 proposal/plan。
-对账器对**同一原因**的 inconclusive 结论只在原因变化时记一行,不再每个 2 分钟周期重复写入。
+- The Gateway is the only business write authority; UTA never writes the Aletheia DB.
+- WHEN a mutation may have been sent but the outcome is partial, unsupported, unavailable,
+  timed out or raised THEN it stays ambiguous and is never retried automatically.
 
-## 7. 审计要求
+### 6. Reconciliation
 
-每个重要状态转换写 `data/logs/audit.jsonl`,最小字段见 [trust §1.4](../../governance/policies/trust_and_change_control.md):`timestamp/actor/source/event_type/entity_type/entity_id/message`,可选 `before/after`。`entity_id` 必须指向实际被改的行;审计消息不得含密钥/签名。
+#### EX-C26 Reconciliation never trades
 
-执行边界跨过后，SQLite 中已提交的 Order/Fill/Position/Proposal 或禁止重发的
-`submission_unknown`/`materialization_missing`/`position_absence_unverified` 是权威事实；此后的
-JSONL 审计属于次要写入。
-审计写失败只能记录不含异常正文的 warning（仅异常类型），不得把已提交的
-`submitted`/`executed`/未决状态改写成 `error`，也不得把失败抛给调用方触发重发。
-三家 exchange broker 的 entry 与 close 路径统一使用
-`aletheia.execution.post_commit_audit.write_post_commit_audit`；该 helper 只包裹 JSONL sink，DB 写与
-exchange 调用必须留在 helper 外并保持原失败语义。close 的审计故障必须保留 Order 与 Position 的
-`pending_close_status`，重复 close 由 durable claim 直接返回，不得再次触达 exchange。
-可执行检查：`PL-PN-04`、`PL-PN-05`、`PL-RX-19`、`PL-RX-20`。
+`The reconciliation path shall never place or cancel an order and never insert a Fill outside the shared materializer.`
 
----
+- `execution/reconciliation.py` imports no order-placement function; it compares state and
+  writes convergence and audit records only.
+- Only a complete, identity-matched private Fill read through UTA enters
+  `execution/exchange_materialization.py`.
 
-## 8. 审计链 hash 链
+#### EX-C27 No inference from absence
 
-每条 audit 记录写入前追加前一行的 SHA-256（`_prev_hash`），写入与校验都在
-`core/aletheia/files/jsonl.py`。规范见 [audit_chain_contract](audit_chain_contract.md) §3。
+`If an open-order list misses an order, paginates to its cap, or reports unsupported, unavailable or partial, then reconciliation shall keep the order unresolved.`
 
-## 9. 策略规则引擎（已删除）
+- Missing from an open list never means filled or cancelled; the only bounded terminations
+  are EX-C33 (entry side) and the close-side rules of the
+  [exit and close contract](exit_and_close_contract.md).
 
-规则引擎已于 2026-07-02 整体删除（Position C）；交易方向不来自任何策略规则，
-`strategy_id` 只是可空的历史归因标签。
+#### EX-C28 Typed read incompleteness
 
----
+`If a UTA read cannot prove ReadCompleteness.COMPLETE, then it shall raise execution/errors.py::IncompleteReadError, never a bare RuntimeError.`
+
+- The exception carries `reason_code`, `completeness`, `endpoint`, `execution_mode`,
+  `market_type`, `symbol`, so callers can tell structural `PARTIAL`/`UNSUPPORTED` from
+  transient `UNAVAILABLE` without matching text. It subclasses `RuntimeError`.
+- Every `logger.warning` in an `except … as exc:` handler around such a read logs
+  `type(exc).__name__` and `reason_code`.
+- Typing grants no authority: never a reason to retry, synthesize an empty or zero result,
+  or treat an incomplete read as absence. A `COMPLETE` read with no match proves only that the
+  read window completed. Exact order lookups supply `start_at` from the order's `created_at`
+  minus `reconciliation.py::_ORDER_LOOKUP_SKEW`; an order older than the profile's
+  `private_history_retention_days` still answers `PARTIAL`.
+
+#### EX-C29 Position matching identity
+
+`The Position Reconciler shall match a local and venue Position only on execution_mode + broker_id + account_environment + canonical symbol + normalized market_type + direction, with matching account fingerprints when both carry one.`
+
+- External accounts compare only Positions of the current execution account; archived local
+  accounts and unregistered modes (`unconfigured`) are not classified or closed.
+- Live scope derives `*_live_limited` from `exchange.name`; Live stays alert-only.
+- Every non-zero row in the unified Demo snapshot needs a `broker_id`; missing account labels
+  degrade to unavailable, never to "local Position gone".
+- WHEN either side has a duplicate full key or a missing/unknown market type THEN the identity
+  goes to typed `integrity_issues`: no last-row-wins, no drift, no disappearance evidence, no
+  adoption; input order never changes the result.
+
+#### EX-C30 Adoption needs valid leverage
+
+`The Position Reconciler shall adopt an external futures Position only when its leverage is finite, positive and integral.`
+
+- Adapters keep missing or invalid leverage as `leverage=None` with
+  `leverage_source=unavailable/invalid`; never a default 1x.
+- Adoption writes the verified value to the synthetic Proposal, Position and credential-free
+  `reconciliation_identity` / `reconciliation_evidence`. A later complete exact-account Demo
+  view may fill missing leverage on the same Position id; an incomplete view never clears it.
+- `position_reconciler.py::report_invalid_open_position_exposures` lists invalid open
+  Positions read-only and repairs nothing.
+
+#### EX-C31 Venue uPnL attribution
+
+`The Position Reconciler shall copy a venue uPnL onto a local Position only when the scoped identity is unique on both sides and the cache is ok.`
+
+- Exposed as `unrealized_pnl_source`: `exchange_exact`, `ambiguous`, `unavailable` or
+  `local_estimate`. A broker Position identity must match within the same fingerprint scope;
+  duplicates are `ambiguous`. A `stale` or undeterminable cache falls back to the local mark
+  estimate and is never persisted. Legacy rows without fingerprint or broker identity keep the
+  single-candidate path and are not Demo qualification evidence.
+
+#### EX-C32 Disappearance is evidence, not a close
+
+`When a fresh complete snapshot lacks a local Position, the Position Reconciler shall record a position_disappearance_candidates row and one immutable observation and shall not close the Position.`
+
+- Repeated cache, time regression, stale, incomplete or wrong-account views do not count; a
+  second newer complete view marks the candidate ready for verified exit; reappearance closes
+  the candidate as `reappeared` with an audit row.
+- The logical account fingerprint comes only from non-secret broker/environment/mode config,
+  never from credentials. Ready candidates are settled only by the exit and close contract.
+
+### 6.1 Entry-side bounded termination
+
+#### EX-C33 Stale entry order termination
+
+`When an entry Order is at least 48 hours old, has no Fill, open Position or in-flight close, and a complete exact read under a provable identity shows no fill and no order or a terminal order, the cleanup shall terminate the entry chain in one transaction.`
+
+- Conditions: `stale_order_cleanup.py::_STALE_ORDER_SOFT_HOURS`, `_has_real_economics`, and a
+  `ReadCompleteness.COMPLETE` lookup by `client_order_id`/`venue_order_id` with `start_at`.
+- Effect: Order → `cancelled`; a `submission_unknown`/`executing` Proposal → `error`; a
+  non-terminal Entry Plan whose latest leg is this Order → `failed` with
+  `terminal_reason=venue_confirmed_absence`; one `order_stale_cancelled` audit listing them.
+- WHEN the read is incomplete, unavailable or identity continuity is unprovable THEN the Order
+  stays unresolved. Close-side ambiguity is never auto-terminated.
+- The reconciler logs an inconclusive verdict only when its reason changes.
+
+### 7. Audit
+
+#### EX-C34 Audit records
+
+`The execution layer shall write an audit record for every significant state transition with timestamp, actor, source, event_type, entity_type, entity_id and message, and never a secret or signature.`
+
+- `entity_id` points at the row actually changed (fields per
+  [trust §1.4](../../governance/policies/trust_and_change_control.md)).
+
+#### EX-C35 Post-commit audit isolation
+
+`If the JSONL audit write fails after the execution boundary has been crossed, then the execution layer shall log a warning with the exception type only and keep the committed state.`
+
+- SQLite rows (Order/Fill/Position/Proposal, `submission_unknown`, `materialization_missing`,
+  `position_absence_unverified`) are authoritative; JSONL is secondary.
+- Entry and close paths use `execution/post_commit_audit.py::write_post_commit_audit`, which
+  wraps only the JSONL sink. A failure never rewrites state to `error` or triggers a resend;
+  a close keeps `pending_close_status` and a repeat close returns the durable claim.
+
+### 8. Audit hash chain
+
+Each audit line carries the SHA-256 of the previous line (`_prev_hash`), written and verified
+in `core/aletheia/files/jsonl.py`; the rules are in [audit chain contract](audit_chain_contract.md) §3.
+
+## Failure semantics
+
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| non-native source, preview mode | reject before any durable write | `non_native_proposal_not_executable`, `PreviewExecutionBlockedError` | no row |
+| fresh lease held | return without side effect | `already_claimed` | — |
+| exchange lease expired while `executing` | block resend | `submission_unknown`, `reconciliation_required` | unknown, never "not sent" |
+| venue rules unavailable | reject Proposal, no Order | `ConstraintUnavailable.reason_code`, audit | — |
+| symbol not listed | reject Proposal | `proposal_skipped` audit | non-sandbox lookup unavailable → no verdict |
+| broker accepted, local read fails | keep crossed state | `submission_unknown` / `materialization_missing` | never `error` |
+| incomplete UTA read | stay unresolved | `IncompleteReadError.reason_code` in `errors.log` | never empty / zero / absent |
+| preset params dropped | `NOT_SENT`, Order `error` | `native_tpsl_params_missing` | — |
+| stop amend refused | old venue stop stays, local stop tighter | `native_protection_amend_failed`, `venue_stop_synced=False` | — |
+| uPnL unattributable | local estimate | `unrealized_pnl_source=ambiguous/unavailable` | never copied aggregate |
+| JSONL audit failure after commit | warning, state kept | warning with exception type | — |
+
+## Authority
+
+The Gateway may submit, cancel and amend orders for Risk-approved native Proposals and close
+Orders on admitted execution modes; it may never change Risk limits, credentials, Live unlock,
+or create a RiskDecision, and reconciliation may never trade.
+
+## Verification
+
+| Requirement | Executable claim / focused test |
+|---|---|
+| EX-C01 | `EX-S01`, `EX-S02`, `EX-C03` (`tests/specs/spec_execution.py`) |
+| EX-C02 | `EX-B01` |
+| EX-C03 | `EX-B20` |
+| EX-C04 | `EX-B02`, `EX-B04` |
+| EX-C05 | `tests/test_entry_plan_execution.py` |
+| EX-C06 | `EX-B05`; `tests/test_order_constraints.py`, `tests/test_gateway_order_constraints.py` |
+| EX-C07 | `EX-B02`; `PL-PN-06`…`PL-PN-10` (`tests/specs/spec_pipeline_exchange_commit.py`) |
+| EX-C08 | `PL-RX-01`, `PL-RX-02`, `PL-RX-18` (`tests/specs/spec_pipeline_risk_execution_integrity.py`) |
+| EX-C09 | `EX-S05`; `tests/test_entry_plan_execution.py` |
+| EX-C10 | `EP-S03` (`tests/specs/spec_entry_plan_contract.py`) |
+| EX-C11 | `EP-S14`; `tests/test_entry_plan_execution.py` (the `entry_cancel_stalled` event has no focused test) |
+| EX-C12 | `tests/uta/test_identity_liveness.py` |
+| EX-C13 | `EX-B16` |
+| EX-C14 | `EX-S07`, `EX-B11`, `EX-B12`, `EX-B16`; `tests/test_symbol_capability_consumer.py` |
+| EX-C15 | `EX-B13` |
+| EX-C16, EX-C17, EX-C18 | `tests/specs/spec_pipeline_bitget_preset_protection.py`, `tests/test_tpsl_native_protection_check.py` |
+| EX-C19 | `tests/uta/test_execution_coordinator.py`, `tests/test_broker_averaging_and_trail_fixes.py` |
+| EX-C20 | `EX-B17`, `EX-B15` |
+| EX-C21 | `EX-B03` |
+| EX-C22 | `tests/specs/spec_pipeline_unresolved_entry_exposure.py` |
+| EX-C23 | `PL-PN-06`…`PL-PN-10` |
+| EX-C24 | `tests/test_entry_failure_codes.py` |
+| EX-C25 | `tests/specs/spec_uta_boundary.py` |
+| EX-C26 | `EX-C04`, `EX-B06`, `EX-S04`; `tests/audit/test_reconciliation_no_gateway_imports.py` |
+| EX-C27 | `PL-RX-07` |
+| EX-C28 | `tests/audit/test_reconciliation_incomplete_read_logging.py`, `tests/test_reconciliation_incomplete_read.py` |
+| EX-C29 | `PL-ADOPT-23`, `PL-ADOPT-24` (`tests/specs/spec_pipeline_adopted_position.py`) |
+| EX-C30 | `PL-ADOPT-26`…`PL-ADOPT-28`; `tests/test_position_reconciler.py` |
+| EX-C31 | `PL-PM-16`…`PL-PM-19` (`tests/test_pnl_pipeline.py`) |
+| EX-C32 | `OI-B01` (`tests/specs/spec_outcome_integrity.py`); `tests/test_disappearance_confirmation.py` |
+| EX-C33 | `tests/test_stale_order_cleanup.py`, `tests/test_entry_plan_execution.py` |
+| EX-C34 | `tests/audit/test_audit_events_have_actor_source.py` |
+| EX-C35 | `PL-PN-04`, `PL-PN-05`, `PL-RX-19`, `PL-RX-20` |
+
+Claim ids `EX-C03` and `EX-C04` in `tests/specs/spec_execution.py` predate this numbering and
+name claims, not the requirements with the same id here; the table maps them explicitly.
+
+## Decision references
+
+- Execution lease and crash recovery: trust §1.2–1.3.
+- Entry cancel convergence and re-anchor: #3507 (2026-09-27); schema v90 adds
+  `orders.entry_cancel_attempts` / `entry_cancel_retry_after`.
+- Account identity relation, continuity proof, entry-side bounded termination: #3798 (2026-10-08);
+  fixed Bitget profile: #3806.
+- Entry-preset protection, in-place amendment, native TPSL default: #3848 PR-A item 4, PR-B;
+  owner D1 2026-10-09 replaced PR #3849 "read back or close"; preset guard prevents the #3783
+  class of silently dropped parameters.
+- Order lookup start window: #3564 (2026-09-27).
+- UTA V1 single mainline: #2299; Demo/Testnet mutation without SHA-bound certificate: #3035.
+- Futures-only scope and RWA exclusion: owner 2026-10-09, [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md).
+- Retired narrative (rule engine, preview text, demo measurements, §12):
+  [history](../history/execution_contract_retired_narrative.md); local simulated execution:
+  [history](../history/local_simulated_risk_execution.md),
+  [position observation](../history/local_simulated_position_observation.md#reconciliation).
+
+## Moved sections
+
+Old section numbers stay as headings so existing references resolve.
+
+### 9. Strategy rule engine
+
+Deleted; see [history](../history/execution_contract_retired_narrative.md#former-9-strategy-rule-engine-deleted).
 
 ## 10. 平仓/退出通路 (Exit Path)
 
-> §1–§6 定义**开仓**通路;本节定义**平仓/退出**通路,达到与开仓对等的严谨度。
-> 入口:`core/aletheia/portfolio/position_manager.py` 的 `evaluate_open_positions()`,由 `position_manager` job 每 30 秒触发(executor=`protective`,见 scheduler_contract §3)。
+Moved to [exit_and_close_contract.md](exit_and_close_contract.md).
 
-### 10.1 退出触发器优先级
+### 10.1 Exit trigger priority
 
-`_decide_exit(position, price, cfg)`(`position_manager.py`)按**固定顺序**判定,先命中先平:
+→ [exit and close contract](exit_and_close_contract.md#1-exit-triggers).
 
-| 优先级 | 触发器 | 判定 | 位置 |
-|--------|--------|------|------|
-| 1 | stop-loss | `price` 越过 `stop_price`(多头跌破/空头升破) | `_decide_exit` |
-| 2 | take-profit | `price` 越过 `take_profit_price` | `_decide_exit` |
-| 3 | max-hold | 持仓时长 ≥ 硬兜底。无 horizon 时为 school 上限 `max_position_hold_hours`(serenity school 用 `max_hold_days`);有 horizon 时为 min(**原始计划** horizon × `horizon_hard_backstop_mult`, school 上限),原始计划 horizon 取 Risk 批准 Proposal 的 `expected_horizon_hours`。Operator 延长 horizon 只推迟复核唤醒,不移动硬兜底;读不到 Proposal horizon(adopted / 历史行)时退回当前 horizon | `_decide_exit` |
-| 4 | market-aware review | **仅当 1–3 都未触发**且 `market_aware_exits.enabled`;评估 `urgent_exit` / `tighten_stop`,但只唤醒 System Operator 复核，不直接平仓或修改止损 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
+### 10.2 close_position_routed
 
-> 当前实现不授予 market-aware evaluator 自动执行权限。action 名称是复核建议，
-> 最终行为是 durable Operator wake；在 Operator 明确作出并物化决定前，Position、
-> Order 和 stop 均不变化。Settings 中仍声称自动平仓/收紧的文案属于已知产品偏差
->（Capability EX-09 / GitHub #417），不能以 evaluator 单元测试判定为已支持。
-
-> (#105) 原优先级-4 的 `ruleset_exit` 触发器已随规则引擎(Position C)删除——`_decide_exit`
-> 不再消费 `ruleset_exit_position_ids`,该触发器不再是活跃退出路径,请勿再加回。
-
-**System Operator 退出路径独立**:`review_portfolio_state()`(LLM 决策)暴露
-`hold / adjust_position / close_one`。Position wake 直接进入该命令，而不是复用
-entry-opportunity schema；可操作列表只包含 wake 指向的完整 Position 和 adverse
-evidence，但必须同时给出全局 open-position 数量和完整可用时的全局 unrealized PnL，
-并明确区分全局只读上下文与本次 review scope。任何一个 Position 缺失合法 PnL 时，
-全局 PnL 必须显示 `not available`，不得把缺失值当零；其他 Position 的身份和参数不进入
-prompt，也不能成为本次动作目标。这些决策时事实同时写入 `pi_decisions` manifest。
-`adjust_position` 复用 `apply_operator_adjustment()`，`close_one` 按明确 Position
-经**同一** `close_position_routed()` 入口平仓，且不传调用方 fallback price；
-manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint 写入
-`pi_decisions`；模型不可用也写入 `review_unavailable`。遗留 `reduce_exposure`
-只能归一为 `hold`，不得静默执行整仓关闭。确定性 evaluator 仍只负责唤醒，
-在 Operator 决定前不得直接修改 Position。
-
-`HORIZON_DUE` 是 must-answer 工作，`horizon_wake_sent_at` 表示**复核完成确认**，
-不是内存事件已排队。Position manager 在复核完成前允许重复投递，因此进程在排队后
-退出时，重启后的下一轮 durable Position 扫描仍会恢复同一唤醒。daemon 遇到
-`review_unavailable`、超时、异常或未确认的 `close_one`，必须恢复原
-`position_id + wake batch` 后重试，不能降级成无持仓上下文的 entry evaluation，
-也不能记 job success。非 horizon 的 adverse review 可用 `hold` 完成；仍开放的
-`HORIZON_DUE` Position 则只允许已确认平仓，或把 `new_horizon_hours` 明确延长到
-严格晚于当前持仓 age 的 `adjust_position` 完成。`hold`、空调整、只改 stop/target、
-以及未越过当前 age 的 horizon 都保持未完成并重试，不得确认原 horizon。混合批次中
-已关闭 Position 的陈旧 horizon wake 不得限制另一笔开放 Position 的 action schema，
-也不得被写入确认。交易所平仓已有 durable pending-close claim 时可确认，由既有
-reconciliation 路径收敛；复核重试不得创建替代 Close Order。确认只归属于刚完成的
-一次复核，并非该 Position 的永久豁免：明确延长后的新 horizon 再次到期时，manager
-必须在短事务中清除旧确认、写入 `horizon_review_rearmed` audit，再投递下一次 must-answer
-复核。该规则同时向前收敛历史版本中由 `hold` 错误留下的确认；存在 durable pending-close
-claim 时绝不清除，由 reconciliation 继续独占收敛。
-
-### 10.2 close_position_routed 路由契约(唯一平仓中枢)
-
-`close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；成交价格来自交易所确认的 private Fill：
-
-- **平仓授权语义**：native close Order 消费正在减少的 open Position，不复用入场
-  RiskDecision。`risk_decision_id` 必须为 `NULL`；`position_id + close_reason +
-  close-{position_id}` 以及与 Position 完全一致的 proposal/instrument/mode/quantity
-  构成持久授权链。完整性扫描必须按 entry/close 分型，不能把合法平仓误报为缺失风控。
-- **未决 Operator 理由必须随 claim 收敛**：当同一 routed close 带有真实
-  `decision_reasoning` 时，三家 exchange broker 必须在首次 exchange side effect 前把
-  `trade_decision_rationale.v1` 保存到唯一 Close Order 的 `close_reasoning`；重复 close
-  只返回原 claim，不得覆盖。Position 保持 open 且 `exit_reasoning` 为空，直到完整 private Fill
-  在共享 materializer 中验证通过。非空 carrier 损坏或与 `close_reason` 不一致时必须
-  `materialization_missing`，不得降级成 generic actor/source；历史 `NULL` carrier 保持兼容。
-- 六种外部 execution_mode 均经 Gateway → Coordinator → UTA。资格不满足时拒绝，不回退旧 broker。
-- **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
-- 交易所腿不可跳过：demo 模式仍走真实交易所 close。
-- **部分平仓写入唯一性**：严格的自主 partial-reduce 命令仍不获授权；未被生产调用、仅凭传入价格和估算费率写入 Position/close event 的 `pnl.reduce_position` 已退役，不保留别名。授权全平请求产生的真实部分 Fill 仍由 `exchange_materialization` 物化，保留数量、费用分摊、未完整 funding 与重放幂等语义；历史 partial event 和 daily-loss 读取不变。
-- **保护触发价格不可伪造**：只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。venue 由六种已注册 execution mode 确定。内存 exact-instrument cache 必须小于 90 秒；SQLite 只接受同 venue、同 `spot/perp` 且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨市场或过期价格触发退出；退出成交价格由 private Fill 决定。
-- **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
-- **交易所报告无仓位不能触发重发或伪造成交**：任一 adapter 仅在明确 venue code / typed response
-  可证明本次 close 因无匹配仓位被拒绝时，才归一为共享 `ClosePositionAbsentError`。各 broker 必须
-  以相同语义处理：本次 Order 保持确认拒绝的 `error`，Position 保持 `open` 并以
-  `pending_close_status=position_absence_unverified` 留住原 durable claim。后续 manager cycle 不得新建
-  Close Order 或再次触达交易所；既有只读 position reconciler 负责按 broker/account/instrument 的完整视图
-  查明先前成交、外部关闭、身份错配或证据不可用。该响应自身绝不创建 Fill、realized PnL 或 eligible
-  Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。当前 Bitget adapter
-  已将 hedge-close 错误码 `22002`/`25227` 作上述分类；OKX/Binance adapter 尚无经权威 fixture 锁定的
-  无仓位错误码，因此普通字符串拒单仍保持 `error`，不得靠文本猜测升级。可执行检查：`PL-RX-22`。
-  `PL-RX-24` 进一步锁定组合链路：原 typed rejection 经两次独立完整账户视图和只读 verified-exit
-  查询收敛为 administrative close 时，原 Close Order 保持唯一且被拒绝的事实，不新增 Fill、PnL、
-  Outcome hook 或 Learning 样本，也不再次触达交易所下单入口。
-- **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
-  Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
-  Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
-- **Bitget 40725 停泊只能由 owner 授权解锁**：UTA `trade_too_many_times_cancel` 取消的 close
-  归一为 `pending_close_status=venue_trade_rate_limited`（永不被自动释放——立即重发只会再撞
-  40725）。解锁通道是 `pending_close_recovery.release_rate_limited_close_claim`（dashboard
-  `POST /api/positions/{id}/recover-parked-close`）：仅在 claim 恰好处于停泊态、对应 Order 已
-  cancelled 且 error_reason 吻合时，把取消原因转写为预留的
-  `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
-  `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
-  价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
-  `venue_trade_rate_limited`（`pending_close_recovery.py:60`）**是** `CLOSE_CLAIM_STATES` 成员：
-  停泊态继续持有 claim fence，任何路径（保护性平仓、手动平仓、coordinator `_claim_close`）都不得
-  再为该 Position 创建第二条 Close Order，只能返回既有 claim 的 `already_pending` 路径。它
-  **不在** `IMMEDIATE_RECONCILIATION_STATES` 里——它需要的是 owner 解锁，机器对账永不释放它；
-  owner read model 以 `close_convergence_state=venue_trade_rate_limited` 与
-  `close_convergence_owner_status="venue rate limited; owner unlock required"` 暴露，且该 owner
-  文案不随 claim 年龄被通用 stale 文案覆盖。停泊 claim 仍按普通 stale claim 升级（超过 stale
-  时限后进入 `stale:venue_trade_rate_limited` 的启动阻挡与 `position_manager` 升级，owner 必须
-  知道存在平不掉的 Position），但该升级绝不释放、绝不重发、绝不伪造成交。
-- **账户身份无法证明的平仓停泊只能由 owner 授权解锁（#3507，owner 2026-10-09）**：close 在提交前
-  因 `uta_account_identity_mismatch` 失败、且 venue 无法证明该精确 Position 在当前身份下存在（含
-  venue 持仓读取本身失败）时，唯一的零提交 Close Order 记为 `error`/`uta_account_identity_mismatch`
-  （无 exchange order id），Position 以 `pending_close_status=account_identity_unproven` 停泊，不再
-  每个周期新建失败 Order。与 `venue_trade_rate_limited` 同一 fence、同一 owner read model
-  （`account identity unproven; owner unlock required`，不被 stale 文案覆盖）、同一 stale 升级、
-  同一解锁通道 `POST /api/positions/{id}/recover-parked-close`；解锁前置条件为 Order 仍是
-  `error` + `uta_account_identity_mismatch` + 无 exchange id，解锁只给一次 `close-{id}-rN` 重试，
-  身份仍不成立则再次停泊。停泊与解锁各写一次审计，不制造 Fill、价格或 PnL。
-- **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
-  撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
-  按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
-  1/64；成功分片不重置计数）。物化语义同步区分"订单成交完"与"仓位平完"：分片单整单成交只把
-  Position 数量核减到剩余（`is_partial=1` 记账、claim 释放、下一保护周期自动发下一片），绝不提前
-  关闭仍有 venue 数量的 Position；重放已落账分片是幂等 no-op；部分成交的分片单保留
-  `partially_filled` claim 继续轮询。完整平仓（订单量 = 剩余量）行为不变。
-- **可成交限价回退（同日扩展）**：实测该 demo 缺陷可以是 **symbol 级**的——XRPUSDT 上任意数量
-  的市价单（含 5 张诊断性入场）都被零成交取消，而限价单正常成交。因此一旦某 Position 的平仓史
-  出现 match-cap 取消，下一次平仓自动改为**可成交限价**：价 = 最新价 ×（对手方向 ±1%），
-  GTC 挂单穿透对手价、残余量留在簿上由既有部分成交物化收敛；取价失败则回退市价。定价方向按
-  venue 侧对手方向计算（UTA 客户端会把 hedge 平仓翻转到持仓反侧）。
-- **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
-  Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
-  exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
-  `close_convergence_state`、`close_convergence_owner_status`、claim age 与
-  `close_convergence_requires_reconciliation`；缺失/过期时间戳和 stale claim fail-closed 为
-  `manual attention required`。
-- **入场超量成交 = 正常持仓 + 数量偏差标记（#2084，owner 2026-10-09）**：入场 Order 的完整 private
-  Fill 累计数量超过授权 Order 数量（超出既有 tolerance）时，真实敞口按普通 open Position 物化
-  （`entry_fill_verified`、broker-fill 价格、可进入 Outcome），Proposal 为 `executed`，EntryPlan 按已成交
-  收敛；不隔离、不阻挡启动准入或新的自主入场。Order 保持 `overfilled` +
-  `exchange_quantity_exceeds_authoritative_order` 作为订单侧标记；同一事务在 Position 写入
-  `entry_quantity_divergence`（JSON：`order_id`、`planned_quantity`、`filled_quantity`），写一条
-  `entry_fill_quantity_diverged` 审计与 warning 日志；对账记为 filled（reason
-  `entry_fill_quantity_diverged`）；AI 持仓复查上下文逐仓展示该标记，使 AI 复查与人都不会把该仓位
-  读作计划数量。重放幂等（不重复标记、不重复审计）。平仓侧 `overfilled` 语义不变。
-- **启动准入必须读取权威主账**：Startup Behavior Gate 的 `pending_orders` / `pending_closes`
-  只使用当前 Core Order、open `positions.pending_close_status` 与 reconciliation incident。
-  遗留 `ps_*` intent、Order、Position 状态仅供历史读取，不再授予或阻挡启动/交易权限。
-  `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
-  `overfilled`（此处仅指平仓 claim 的 `positions.pending_close_status`）立即阻挡新的
-  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态与 owner-unlock-only 的
-  `venue_trade_rate_limited` / `account_identity_unproven` 停泊只在超过 Position Manager 既有
-  stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
-  Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
-- **close clientOid 唯一性**：Every close claim MUST allocate a close `client_order_id` that has
-  not been used by a prior close attempt on the same position. The coordinator's `_claim_close`
-  obtains the identifier via `pending_close_recovery.next_close_client_oid(position_id)`, which
-  selects `close-{position_id}` when no prior attempt exists and `close-{position_id}-r{N+1}`
-  otherwise, where `N` is the max retry index observed in the orders table for that position.
-  Allocation MUST occur inside the same `sqlite.transaction(immediate=True)` writer lock that
-  mutates `positions.pending_close_*`; a read-then-compute outside that lock would race with
-  concurrent close-claim allocation on the same position. A structural AST guard test
-  (`tests/audit/test_close_client_oid_transaction_guard.py`) enforces this containment.
+→ [exit and close contract](exit_and_close_contract.md#2-close-routing).
 
 #### 10.2.4 Terminal bound on close-side submission ambiguity
 
-> A close-side order in `submission_unknown` MUST NOT remain machine-owned without
-> bound. Two thresholds apply from the claim's `pending_close_requested_at`:
->
-> - `PENDING_CLOSE_STALE_HOURS` (4 h): the claim is *stale*. Escalate once per
->   claim identity and keep retrying. Unchanged.
-> - `SUBMISSION_UNKNOWN_TERMINAL_HOURS` (24 h): the claim is *terminally ambiguous*.
->   Exactly one action follows, and it is not a resolution: set
->   `positions.pending_close_status = "manual_reconciliation_pending"`, record the
->   fact once under the `manual-close-reconciliation-` audit identity namespace,
->   raise one P1 `MANUAL_CLOSE_RECONCILIATION_REQUIRED` operator wake, and record
->   one critical outstanding infra state.
->
-> At the terminal bound the system MUST NOT transition the order's status, MUST NOT
-> release the close claim, MUST NOT close the position, and MUST NOT synthesise,
-> infer, or assume a fill. The order remains in an open local state so that a fill
-> arriving after the bound is materialized by the ordinary reconciliation path.
-> `manual_reconciliation_pending` satisfies `has_unresolved_close_claim` and MUST
-> NOT be a member of `IMMEDIATE_RECONCILIATION_STATES`.
->
-> A NULL, malformed, or future `pending_close_requested_at` MUST be treated as
-> terminal ambiguity (fail-closed): the system cannot prove such a claim safe.
->
-> A read reporting `ReadCompleteness.COMPLETE` with no matching order does **not**
-> prove the venue never received the order; it proves only that the read window
-> completed. Automatic machine logic MUST NOT treat it as proof of non-existence.
->
-> Incompleteness MUST be typed, not stringly-raised. Any UTA read that cannot prove
-> `ReadCompleteness.COMPLETE` MUST fail with `IncompleteReadError`
-> (`core/aletheia/execution/errors.py`), never a bare `RuntimeError`. The exception
-> carries `reason_code`, `completeness`, `endpoint`, `execution_mode`, `market_type`,
-> and `symbol`, so a caller can distinguish a *structural* `PARTIAL`/`UNSUPPORTED` —
-> the venue profile cannot serve the requested scope, and every identical retry will
-> fail the same way — from a *transient* `UNAVAILABLE`, without matching on message
-> text. A bare `RuntimeError` conflated the two and reduced the whole diagnostic to
-> the literal string `"RuntimeError"` in `errors.log`. `IncompleteReadError`
-> subclasses `RuntimeError`, so existing fail-closed `except Exception` handlers keep
-> their current behaviour and no caller is forced to change. Typing the failure grants
-> no new authority: it MUST NOT be read as permission to retry, to synthesise an empty
-> or zero result, or to treat an incomplete read as evidence of absence.
->
-> Terminal resolution is exclusively human-authorized, through an operator tool
-> that revalidates the full evidence snapshot under the writer lock immediately
-> before mutation and records `manual_close_claim_resolved` with `actor=human`.
-> The only permitted resolutions are: venue-confirmed fill (requires a
-> venue-sourced fill identifier), venue-confirmed absence (order →
-> `submission_rejected`, claim released, any subsequent close MUST use a freshly
-> allocated close `client_order_id`), and operator-settled-outside-gateway (audit
-> only).
->
-> When operator-authorized resolution transitions the ambiguous order to
-> `submission_rejected`, any subsequent close attempt on the same position MUST use a
-> freshly allocated `client_order_id` returned by `next_close_client_oid` (never the
-> historical `close-{position_id}` literal). This is enforced by construction in
-> `_claim_close` and by the uniqueness guard tests above.
->
-> The terminal bound is evaluated for every unresolved close claim on each
-> `position_manager` pass and is a purely local-DB judgment (no venue read is
-> required to apply it).
+→ [exit and close contract](exit_and_close_contract.md#3-close-claims).
 
-**Close-claim state table**
+### 10.3 paused / kill_switch and closes
 
-| Claim state | Meaning | Membership / behavior |
-|---|---|---|
-| `manual_reconciliation_pending` | terminally ambiguous close, human-owned | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; not reported as a `position_manager` error. Leaves this state only via operator resolution or later arrival of venue proof. |
-| `venue_trade_rate_limited` | Bitget 40725 park, owner-unlock-only | In `CLOSE_CLAIM_STATES` (the fence holds and every second close returns `already_pending`); not in `IMMEDIATE_RECONCILIATION_STATES`. The convergence view names the owner unlock and that owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close` (`pending_close_recovery.release_rate_limited_close_claim`); machine recovery never releases it. |
-| `account_identity_unproven` | unprovable UTA account identity before close submission (#3507), owner-unlock-only | In `CLOSE_CLAIM_STATES`; not in `IMMEDIATE_RECONCILIATION_STATES`; owner text survives the stale threshold. Leaves this state only via `POST /api/positions/{id}/recover-parked-close`, which requires the close Order to still be `error`/`uta_account_identity_mismatch` with no exchange id; machine recovery never releases it. |
+→ [exit and close contract](exit_and_close_contract.md#4-pause-and-kill-switch).
 
-**INV-EX-1 (typed read incompleteness).** Every UTA read completeness failure MUST be
-raised as an `IncompleteReadError`. Every `logger.warning` inside an `except … as exc:`
-handler that wraps such a read MUST include that exception's `reason_code` alongside
-`type(exc).__name__`, so the venue-reported reason reaches `errors.log` instead of the
-opaque type name. Structurally guarded by
-`tests/audit/test_reconciliation_incomplete_read_logging.py`, which discovers the
-call sites from the module AST rather than from a maintained list, and which fails if
-the set of discovered sites is empty — a guard that silently matches nothing is not
-a guard.
+### 10.4 stop/take-profit fallback
 
-> **Limited limitation (narrowed 2026-09-27, #3564)**: `get_order_detail_by_client_oid`
-> (`core/aletheia/execution/reconciliation.py`) previously issued a scope with no
-> `start_at`, so for a venue profile with no client-order lookup parameter the read was
-> *always* structurally `PARTIAL` (`private_order_history_start_required`) and such
-> claims could only ever reach the terminal bound. The call site now supplies a window
-> derived from the order's own `created_at` (with a one-hour skew margin,
-> `_ORDER_LOOKUP_START`), so the read completes for any order inside the venue's
-> private history retention. What remains is a real venue limit, not a caller bug: an
-> order **older than** `private_history_retention_days` still answers `PARTIAL`, and
-> such claims still reach the terminal bound for that reason. After `INV-EX-1` both
-> reasons are visible in `errors.log` rather than hidden behind `RuntimeError`.
+→ [exit and close contract](exit_and_close_contract.md#1-exit-triggers).
 
-### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
+### 10.5 Manual close
 
-> **`paused` 与 `kill_switch` 对持仓生命周期语义一致:都只挡"开新仓",都不挡"管理/平掉已有仓"。**
-> 理由:平仓是**管理已有风险**(止损/止盈/对账),冻结它等于在最需要保护时撤掉保护;开仓才是**承担新风险**,应被暂停/熔断挡住。
+→ [exit and close contract](exit_and_close_contract.md#5-manual-close).
 
-| 控制 | 挡开仓 | 挡平仓 | 实现 |
-|------|--------|--------|------|
-| `kill_switch` | 是(风控 check#0,只拦 proposal=开仓) | **否** | `position_manager` 绕过;`test_position_manager.py:147` + `RUNBOOK.md:181` 锁定 |
-| `paused` | 是(Entry Plan / Gateway 暂停门) | **否** | `_run_position_manager`/`_run_position_reconcile` **无 paused 门**;`spec PL-PM-07` 锁定 |
+## 11. Position close and outcome integrity
 
+The close-path split and §11.1–11.3 moved to the
+[exit and close contract](exit_and_close_contract.md#6-verified-and-administrative-close);
+§11.4–11.6 moved to the [outcome integrity contract](outcome_integrity_contract.md).
 
-### 10.4 stop/take-profit 兜底
+### 11.1 Disappearance confirmation
 
-`_effective_stop` / `_effective_take_profit` 优先使用 Position 行已经持久化的
-`stop_price` / `take_profit_price`（包括获准的 trailing-stop 更新）。若原生 Position 的值为空，则回看
-其不可变 Proposal：Proposal 有值才使用，Proposal 为 `NULL` 就保持无该触发器，绝不能读取后来变化的
-config 发明保护。只有没有 Proposal 身份的历史仓位，或明确 `source=adopted` 的外部接管仓位，才保留
-config 默认百分比兜底；接管流程会尽量在接管时一次性固化这些值，避免之后漂移。`PL-PM-09` 锁定原生
-Proposal 的这一权限边界。
-交易所原生 TPSL 已触发的平仓由 `tpsl_fill_check`(`agent_runtime/scheduler.py::_tpsl_fill_check_body`,每 90 秒)收敛:每轮先由 `portfolio/native_protection.py::verify_native_protection` 回读并记下入场 preset 的 venue id,再按已持久化的 `exchange_tpsl_order_id` 收敛已触发的 SL/TP,避免本地-交易所长期 desync(见 §4)。trailing / operator 收紧经 §4 的原地修改移动 venue stop;本地 `stop_price` 仍是兜底。
-
-### 10.5 已知状态与边界
-
-- ✅ **Demo 手工单仓平仓已实现**:`POST /api/positions/{id}/close` + 前端 Open Positions 行内 Close 按钮 + Position Detail 抽屉 Manual Close 面板。`*_demo` / `*_testnet` 走真实交易所 close 订单。市价提交后按确认成交收敛；限价挂 `exit_limit_price`（本地看守，OCO 与止损）。人工平仓写 `actor='human'`、`close_reason='human_manual_close'`（市价）或 `'human_limit_exit'`（限价触发），不污染 AI 出场统计（`actor` 与 `close_reason` 把人工平仓与 AI 出场分开归因）。新字段 `exit_limit_source TEXT`（`_ADDITIVE_COLUMNS`）记录谁挂了限价：`'human'` 或 `'system_operator'`；NULL = 历史行，向后兼容当 `system_operator` 处理。
-- ⚠️ **live 人工平仓路径仍未实现**:`POST /api/positions/{id}/close` 对 `*_live_limited` 返回 HTTP 409 `live_position_requires_exchange_close`，前端显示 "exchange only"。**live_limited 仓位仍须在交易所界面手动平仓。** 未来加 live close 路径**触信任边界**，须走 [trust §6](../../governance/policies/trust_and_change_control.md) change-control + `allow_live=True` 人工确认。
-- ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
-
-**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见)。
-
-旧本地保护屏障见[归档](../history/local_simulated_protection.md)。
-
-## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented）
-
-`positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
-关闭分为两条不互相冒充的路径：
-
-| 路径 | 必需证据 | 允许的副作用 | 结果资格 |
-|---|---|---|---|
-| verified strategy close | 当前 broker/account/instrument 的可验证退出 fill；期货还需可信 funding ledger 才有完整净经济结果 | 真实 fee、slippage；仅经济字段完整时才写净 PnL 与 outcome-only hook | 通过其余干净窗/归因门且 funding 完整后可 eligible |
-| administrative close | 持久确认仓位已消失，但无可验证退出 fill | 状态收敛、审计、告警 | 永远 ineligible；不得制造经济字段 |
-
-### 11.1 消失确认
-
-一个 complete position view 的单次 miss 只能创建 durable disappearance candidate。只有以下任一条件
-满足后，系统才可判断仓位确实不再存在：
-
-1. 两次独立、完整、同 broker/account/environment 的视图连续 absent；或
-2. broker 直查明确返回 `confirmed_absent_without_fill`；或
-3. broker 直查返回 `verified_fill`。
-
-stale、incomplete、缺 broker identity、wrong-account、分页不完整、网络错误和权限错误都是
-`inconclusive`，不能累计确认。candidate 必须跨进程重启保留，同一 observation 不得重复计数；仓位重新
-出现时把 candidate 结案为 `reappeared` 并留审计（不删除历史）。Live 的不确定消失保持
-alert-only/fail-closed，不借本合同扩大自动权限。Demo ready candidate 会进入 §11.2 的三态直查，
-再由 §11.3 分流为 verified close、administrative close 或保持 inconclusive；ready 本身从不直接关闭。
+→ [exit and close contract](exit_and_close_contract.md#6-verified-and-administrative-close).
 
 ### 11.2 Broker-neutral verified exit
 
-状态：RG-T06 / OI-B02 的语义由 UTA `VerifiedExitReport` 和 RG-T07 编排实现；consumer 不再
-构造三家 concrete private client。
+→ [exit and close contract](exit_and_close_contract.md#6-verified-and-administrative-close).
 
-Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
+### 11.3 Administrative close side-effect ban
 
-- `verified_fill`：含 broker fill/order identity、价格、数量、fee、时间和 provenance；
-- `confirmed_absent_without_fill`：确认已不存在，但找不到足以证明经济结果的 fill；
-- `inconclusive`：无法证明，持仓保持 open/candidate，不关闭。
+→ [exit and close contract](exit_and_close_contract.md#6-verified-and-administrative-close).
 
-symbol 仍只在 adapter 边界转换，查询身份必须包含 venue、market type、account environment；不得用
-Bitget-only TPSL 历史解释其他 broker。每次查询先直查同账户仓位，再按明确时间窗完整翻页读取私有成交：
-Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 使用 futures user-trade id。
-缺页游标、重复游标、保留时间窗不足、权限/网络错误、响应字段缺失、方向或数量歧义全部返回
-`inconclusive`。只有当前仓位明确 absent、历史完整且反向平仓 fill 覆盖本地数量时才是
-`verified_fill`；完整历史确实无 fill 才是 `confirmed_absent_without_fill`。原始私有响应不落库，标准化
-结果不含 credential 或 signer material。
+### 11.4 Central close semantics and read surfaces
 
-### 11.3 行政关闭副作用禁区
+→ [outcome integrity contract](outcome_integrity_contract.md#1-read-surfaces).
 
-状态：RG-T07 / OI-B03 已实现。`portfolio.outcome_closure` 提供 verified 与 administrative 两个不可
-互换的入口；ready demo disappearance candidate 只有经过 RG-T06 三态直查后才可调用。Live 仍是
-alert-only，active reconciliation incident 仍先阻断收口。
+### 11.5 Durable incident circuit breaker
 
-RG-T07 编排层另有一道独立防线（2026-08-19 事故后加入）：`confirmed_absent_without_fill` 本身不是
-administrative close 的充分授权——settlement 必须先用同一 UTA identity 做一次新鲜的 exact 仓位直查，
-直查仍确认 absent 才可关闭，并把 candidate 的 `direct_query_state` 落为 `confirmed_absent` 作为持久
-证据；直查显示仓位仍在则保持 open（下一轮 classify 会把 candidate 结案为 `reappeared`），直查不可用
-则 fail-closed 推迟。`verified_fill` 路径不受此门约束（私有成交历史是更强的平仓证据）。
+→ [outcome integrity contract](outcome_integrity_contract.md#2-incident-circuit-breaker).
 
-administrative-unverified close 不得：
+### 11.6 Futures funding and honest close
 
-- 用 entry/mark/current fallback 伪造退出 fill；
-- 新增手续费、滑点或已实现策略 PnL；
-- 触发 calibration、shadow resolution、strategy KPI、Learning case/reviewer 等 outcome-only hook；
-- 被 Risk 当成权威账户损失。
-
-它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
-其 provenance 和 eligibility。当前实现把 realized PnL、exit fee、slippage 留为 unavailable，不改
-current/entry price，不触发 shadow/Serenity outcome hook。verified close 要求完整 scoped
-identity、精确数量与 `verified_fill`。已证实的退出成交关闭 exposure/lifecycle；缺失费用金额、币种或
-第三币种无可归因折算时，原始 Fill 费用/币种如实保存，quote exit fee 与最终 realized PnL 保持
-unavailable，Outcome 不得 eligible。NULL 费用不等于零，缺失币种不推定为 quote；实际零费用是有效事实，
-base 费用可按该 Fill 的成交价直接折算。数量/identity 不符或非有限、负数等畸形归一化证据仍 fail-closed。
-入场与历史补链的既有完整证据门槛不由此放宽。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
-删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
-
-原生平仓与 verified disappearance 经 `portfolio.pnl.close_position` 验证关闭证据，
-再由 `pnl._commit_close_economics` 统一提交经济关闭；
-`close_position_verified` 仅验证/归一化 disappearance 证据并提供事务内 Order/Fill materialization。
-Universe Outcome 归因沿当前 `Order.entry_plan_id = Proposal.entry_plan_id` 验证 Plan，
-不要求已退役的 `EntryPlan.order_id` 反向执行缓存被回写；错误或缺失的当前 Order→Plan 关系
-不能用旧缓存补成有效链。Generation/Candidate/source 与 Position/Proposal/Order 的其他精确关系仍须成立。
-Position、per-close event、Outcome eligibility、hook job 与数据库 audit 在同一 writer transaction
-提交；外部观察关闭仍为 administrative/ineligible。无成交证据的 administrative close 保持独立，
-不得借用经济关闭入口生成收益；历史记录不因所有者收敛而被改写。
-
-PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
-`today_realized_pnl()` 暂保留 raw 兼容入口，但当天任一关闭缺少净经济结果时返回 unavailable，
-不能把该行按 0 相加。Risk 已由 RG-T09 迁移到独立
-`authoritative_account_realized_loss()`，不再消费该兼容指标。
-
-### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
-
-`core/aletheia/analytics/outcome_integrity.py` 是不依赖 Learning、Risk、Execution、exchange 或 agent shell
-的中央语义层，版本为 `oi-v2`。它提供三个不可互换的入口：
-
-- `raw_account_events()`：所有 closed 状态事件，只用于账本、审计、诊断和明确标注的 raw 展示；
-- `eligible_strategy_outcomes()`：仅当前版本、strategy category、真实 fill 已验证、价格来源可信、
-  identity/时间/经济字段完整的结果；
-- `administrative_closures()`：行政性和维护性关闭，永久保留但不进入 judgement。
-
-已知 synthetic reason 的分类优先于行上其他字段，不能用 `outcome_eligible=1` 覆盖
-`reconciled_gone` 或 maintenance reason。无结构化证据的旧行是 `legacy_unverified_close`，PnL 数值本身
-不能证明退出。reason registry 只在中央模块维护，消费者直接读取 `analytics.outcome_integrity`。
-Operator、KPI、Risk、API/UI 等行为消费者已迁移并由 `OI-C02~C04` 的枚举式架构测试约束；
-新增消费者仍必须显式选择这三种读取口径之一。
-
-仓位 API 的 `position_realized_pnl_view()` 另提供只读的已知经济分量：
-`known_gross_pnl` 来自已验证且价格来源为 `broker_fill` 的入场/退出价格与精确数量；
-`known_net_before_unresolved_costs` 仅扣除已有证据支持的手续费和 funding，
-`known_economics_missing_components` 明列未解决项。未知成本不被补成零，价格、数量或
-成交证据不足时金额保持 unavailable。实际成交价已经含滑点，不重复扣除诊断性 slippage。
-这些字段不写回 Position，不改变 `realized_pnl`、`outcome_eligible` 或下游资格；即使已知
-分量可计算，最终净 PnL 仍由原有完整性检查决定。仓位列表和详情将该金额明确标为
-“已知、未扣除尚未解决成本、非最终”，而不是最终 realized PnL。对应 `OI-C04`。
-
-### 11.5 持久事故断路器（OI-B04/C01 implemented）
-
-当前语义版本下的 administrative/maintenance close 之后，若同一完整账户与 instrument identity
-出现任何 native 或 adopted open event，短窗内达到两个独立 identity 即形成系统性事故。探测器在
-demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_integrity_incidents`，使这两个
-动作和所有会改变行为的 Learning 入口跨重启保持冻结。每次继续出现循环会重置干净计数；干净观察
-必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve（owner 入口
-`aletheia guard resolve-reconcile-incident --actor --reason`，同时写 `audit_events` 与 hash-chain JSONL）。live 继续只分类和告警，不
-获得任何新增自动收口权限。
-
-### 11.6 期货资金费用的可证来源与诚实关闭
-
-本地模拟资金费率模型及其修复流程已退役，旧定义见
-[历史归档](../history/local_paper_account_controls.md#retired-funding-model)。历史数据保持原始证据，
-当前执行只接受对应交易所账户的资金费用事实。
-
-Funding 会计状态与 audit delivery 状态彼此独立。broker funding settlement audit 在上述
-会计 transaction 内以 stable ID 写入 `audit_events` 并标记 JSONL mirror `pending`；transaction
-提交后才尝试 hash-chain append。文件失败保留已提交的 Position/PnL/hook authority，同时返回
-`audit_mirror_status=pending` 并使对应 scheduler/audit job health degraded；不得把 accounting status
-改写为 error 或触发会计重放。`already_current` 只重试已有 pending mirror。append 后 ack 前崩溃由
-stable ID 去重恢复，成功状态单调为 `mirrored`。历史无共享 ID 的 audit 不自动 replay。
-
-exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
-
-funding worker 直接把完整 Position 交给 UTA funding reader，账户身份从其持久化 entry Order
-取得；不保留旧 venue client factory/兼容壳或无资源的 close 生命周期。
-初始关闭、延迟结算和读取校验共用完整成本计算；Position 与 close event 金额一致不能替代
-正价/正数量、非负手续费及可信 funding 来源校验。非法成本不得写为最终 realized PnL。
-初始关闭与延迟 funding 补齐共用 `pnl._commit_close_economics`，统一写入 Position、完整
-close event、Outcome eligibility 与 hook 意图；调用方仍在同一 writer transaction 内验证
-各自证据并写审计。该入口不创建事务或执行外部 I/O，已完成的最终金额不得覆盖。
-归因读取失败后的 eligibility-only 重查及 funding 保留期终止不拥有最终金额写入权。
-后续私有 Fill 报告可补齐缺失的退出费用金额或币种，但不得改写原始 Fill 或原始关闭证据。
-`materialize_exchange_close_costs` 在同一事务内重验账户、Order/Fill identity、完整退出数量、
-价格和成交时间；已有非空费用/币种发生冲突则拒绝。新增观测保存在 reconciliation evidence
-及现有 audit outbox，仅尚未完成的 Position/完整 close-event 费用投影可补齐。
-费用已知而 funding 未知时保持最终 PnL unavailable、Outcome ineligible；现有公平队列下一轮
-再读取 funding，不因单轮 I/O 预算为 1 而停滞。第三币种无可证折算仍不可用，缺失入场成本仍
-不得推定；此退出费用补齐路径不授权历史入场费用重建。
-恢复队列与待恢复计数共用实际成本缺口及已验证 broker-fill 证据条件，不以 Outcome 排除标签
-作为成本恢复许可。已验证的外部关闭即使为 `administrative_close`，仍可补齐账户净经济结果，
-但不因此获得策略 Outcome 资格；无成交证据的行政关闭不得进入此队列。
-当前所有者及独立校验边界的调查见 [settlement ownership evidence](../../research/audits/SLIM_CORE_SETTLEMENT_OWNERSHIP_2026-09-12.md)。
-
-当 UTA 的同账户 funding ledger 以稳定 reason
-`funding_history_retention_expired` 证明查询起点早于该 profile 的私有历史保留边界时，
-`broker_funding_settler` 可在一个 immediate transaction 中把同一条仍为 closed、verified、
-`NULL` economics、funding unavailable 且尚未终止重试的 Position 改为
-`broker_funding_history_expired`。该 terminal 状态只停止自动重试：`funding_cost` 与
-`realized_pnl` 继续为 `NULL`、`funding_source='unavailable'`、`outcome_eligible=false`，
-Order、Fill、Position、full-close event 与 Outcome/Learning authority 都不得改变。
-转换必须同时写入版本化、无凭证的 reconciliation evidence 和 durable funding audit/outbox；
-malformed evidence、身份不匹配、stale snapshot、credential/network/permission failure、
-不完整但未过期的报告均保持 retryable，不得被 terminalize。
-
-恢复队列以 durable `(closed_at,rowid)` keyset cursor 轮转，并分别限制本地 retention
-classification 与 broker I/O。expired、retryable 或 CAS-conflict 前缀都不能永久遮挡后续
-Position 或另一 execution mode；cursor 只改变 scheduler 的下一扫描位置，不改变业务 owner
-state。每轮仍有明确 scan/I/O 上限，不能以扩大 `LIMIT` 代替公平性。
-
-真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户
-账单时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
-
-- `funding_cost=NULL`、`funding_source='unavailable'`；
-- `realized_pnl=NULL`，不得把未知 funding 当成 0；
-- `outcome_eligible=false`、`outcome_exclusion_reason='incomplete_funding_economics'`；
-- 不创建 eligible Outcome hook，也不进入 Attribution、
-  Feedback 或 Learning。
-
-未知的关闭损益不得被当作完整经济结果。spot 不产生 funding，关闭时明确写
-`funding_cost=0`、`funding_source='not_applicable'`。
-
----
-
-## 12. Unified Trading Account V1 migration boundary
-
-Issue #2299 及已批准的唯一主线切换保留 Gateway、Risk 与本地存储权威。六种外部
-execution_mode 仅使用 CCXTUTAAdapter；Bitget 只有 UTA v3 一个 profile。
-按 owner 接受的 #3035，Demo/Testnet mutation 不要求 SHA-bound 本地资格证书。
-账户配置不证明运行或经济资格；执行权限由现有 authoritative Risk、Gateway、exact UTA
-账户绑定与 durable command/reconciliation 规则共同决定。Live 仍独立受既有 Live Trust
-授权约束。没有 legacy/shadow 选择器或旧 broker fallback。外部资格 verdict 必须来自正常
-执行主线的真实证据；静态实现、账户读取或健康状态不证明闭环或部署完成。
-
-提交前 Order 持久化 exact 非秘密账户身份。旧订单身份缺失或不匹配时，保留记录与未决事实，
-阻断该账户新入场及无法证明归属的私有操作；不得用当前配置补造历史身份。
-
-Gateway 是唯一业务写授权；Coordinator 是正常产品路径中 UTA mutation 的调用者；
-UTA 不写 Aletheia DB。外部调用位于 SQLite writer transaction 之外，返回后以短
-expected-state/CAS 应用证据。partial、unsupported、unavailable、timeout 或异常不能变成
-空、零、取消、仓位消失或完整经济事实；可能已发送的 mutation 保持 ambiguous，禁止自动重试。
-UTA 边界见 [`unified_trading_account.md`](../proposals/unified_trading_account.md)。
+→ [outcome integrity contract](outcome_integrity_contract.md#3-futures-funding-and-close-economics).
+Claims `EX-B18`, `EX-B19`, `EX-B21` cite this section number.

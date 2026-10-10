@@ -232,3 +232,22 @@ Do not delete the primary `~/.aletheia` Runtime root as part of Preview cleanup.
   directory at startup.
 - **A Preview asks for credentials or can execute:** stop it immediately; that
   violates the Preview contract and must be treated as a safety defect.
+
+## Execution Gateway refusal
+
+Moved here from the execution contract §3.4 (2026-10-10); the Gateway half of the rule
+is requirement `EX-C15` in the
+[execution contract](../../design/contracts/execution_contract.md#34-worktree-preview-runtime).
+
+- `uv run aletheia dev api --port <879x>` is an explicit, foreground, isolated
+  development API. It is not a second gateway instance and never binds the stable
+  `8787`/`8788` ports.
+- It uses only its own data root under
+  `~/.aletheia/instances/dev-preview/<checkout-id>/<api-port>`
+  (`core/aletheia/config/loader.py::preview_data_dir`).
+- In Preview mode (`core/aletheia/config/loader.py::is_preview_mode`) the Gateway refuses
+  `submit_proposal` and `execute_existing_proposal` before writing a Proposal, claim,
+  RiskDecision or Order, or calling a broker, for every execution mode. Secret reads
+  return nothing and secret writes are rejected.
+- Preview is for UI/API development only, never for trading simulation or order
+  acceptance. Normal gateway Risk, execution, audit and Live behavior is unchanged.
