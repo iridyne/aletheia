@@ -67,7 +67,7 @@
 
 **角色**：Proposal（目标设计）+ 实施日志（P0-P4 commit hash、#409 修复叙事、owner 开启顺序）混合。
 **真实性**：前提"System Operator 按上下文在 persona 区间内决定仓位"（:30-56、§6）依附已退役的 Python `operator_loop`（§13 引 `agent_shell/operator_loop.py:819-874`，不存在）；§4.1 "活跃 paper broker（okx_demo→broker_id 含 okx）"是 paper/OKX 语义。
-**关键冲突**：当前 [Entry Sizing and Financing](../contracts/entry_sizing_and_financing_contract.md) Non-goals 明文"No legacy conviction/Kelly/persona sizing enters this path"（:216）。即 persona sizing **不在入场主线**。但代码仍跑：`persona_rollout` 调度 job（scheduler.py:1540，8h）、`trading/persona.py`、`persona_rollout.py`、`sizing_policy.py`（含无调用者的 `pyramid_plan`，:223）、exchange_materialization.py:528 仍 import persona_rollout、Settings/doctor 读其状态。这是"一个能力两份实现"的典型输家。
+**关键冲突**：当前 `Entry Sizing and Financing` Non-goals 明文"No legacy conviction/Kelly/persona sizing enters this path"（:216）。即 persona sizing **不在入场主线**。但代码仍跑：`persona_rollout` 调度 job（scheduler.py:1540，8h）、`trading/persona.py`、`persona_rollout.py`、`sizing_policy.py`（含无调用者的 `pyramid_plan`，:223）、exchange_materialization.py:528 仍 import persona_rollout、Settings/doctor 读其状态。这是"一个能力两份实现"的典型输家。
 **合理性**：owner 目标"不过度工程化、AI 像人交易"；persona 区间 + 渐进解冻 + 学习 sizing 被 spec 0001 Non-goal "No automatic position-size or leverage learning" 直接否决。
 **结论：ARCHIVE**（移 `design/history/`），并另开收敛 Issue：删除 persona_rollout job/状态机/pyramid helper 及 Settings 入口，或由 owner 裁定保留静态 persona 作为 entry_sizing 的输入（那是新 D1，需写进 entry_sizing contract）。
 **具体修改**：整份移入 history；顶部一行指向 entry_sizing_and_financing_contract.md 与 spec 0001 Non-goals。SYSTEM_MAP §四 "persona sizing Learning" 行同步删除。

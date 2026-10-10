@@ -143,7 +143,7 @@
 - 索引不全：目录 42 份 .md，README 未提及 24 份（本地 `for f in *.md; grep -q` 计数）。
 - :34-51 举例 `LU-C07`、`#418`、`AC-S13`、`DM-S06`、`RE-S99` 和日期——案例叙事属 DEBUG_AUDIT_PLAYBOOK（:73-75 已链接），重复。
 **Verdict**：REWRITE。
-**具体改动**：(1) :15-16 改为 "Future targets go to [`../specs/`](../specs/) (new) or existing `../proposals/`"；(2) 删 :77 整段；(3) 把 :79-135 零散段落替换为一张完整表 `Contract | prefix | owns | owner code`，覆盖全部 42 份（或由 `check_docs.py` 生成/校验）；(4) :25-75 移到 `tests/AGENTS.md`（或 DEVELOPMENT_WORKFLOW），README 只留一行链接；(5) 加一句"Contract 条目编号与 Spec Contract Delta 对齐，见 template.md"。
+**具体改动**：(1) :15-16 改为 "Future targets go to ``../specs/`` (new) or existing `../proposals/`"；(2) 删 :77 整段；(3) 把 :79-135 零散段落替换为一张完整表 `Contract | prefix | owns | owner code`，覆盖全部 42 份（或由 `check_docs.py` 生成/校验）；(4) :25-75 移到 `tests/AGENTS.md`（或 DEVELOPMENT_WORKFLOW），README 只留一行链接；(5) 加一句"Contract 条目编号与 Spec Contract Delta 对齐，见 template.md"。
 
 ## macro_source_time.md（21 行）
 

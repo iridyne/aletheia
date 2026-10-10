@@ -53,7 +53,7 @@
 **Verdict：SPLIT（+ 新建 operator 合同）**
 
 **具体修改**：
-1. 删除 §1 整张 job 表，改为一行："Job registry, cadence, executor and timeout: [scheduler_contract §3](scheduler_contract.md#§3-任务注册表)." scheduler_contract 是唯一 job 表。（scheduler_contract §8 "两份契约通过 job_id 一一对应"同步删除。）
+1. 删除 §1 整张 job 表，改为一行："Job registry, cadence, executor and timeout: `scheduler_contract §3`." scheduler_contract 是唯一 job 表。（scheduler_contract §8 "两份契约通过 job_id 一一对应"同步删除。）
 2. 把 :85-139 三段 OS/Supervisor 合同移到 gateway 生命周期的合同或 `docs/operations/deployment/CROSS_PLATFORM_SERVICE_ENVIRONMENT.md` 的合同部分（它们是 gateway 行为，不是 agent）。
 3. 把所有 retired 段（market_observer、stock_observer、Ranker/PaperTrader、Historical TradingDecision、§C、Learning contribution measurement、§E 的退役叙述）压成文末一张 "Retired agents" 表（name | replaced by | history link），≤10 行。
 4. §B Entry Planner 段压缩为 IO 摘要（trigger/inputs/LLM/outputs/authority 各一行）+ 链接 entry-plan-contract.md；删 "Position X authority" 一整句（研究导入，不是 Planner 行为）。

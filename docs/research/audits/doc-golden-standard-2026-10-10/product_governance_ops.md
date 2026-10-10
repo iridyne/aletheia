@@ -22,7 +22,7 @@
 **具体修改**
 1. L37-48 "Included current scope" 整表删除——每行都已由 GROUND_TRUTH:48-61 拥有。
 2. 新增（或并入 GROUND_TRUTH）一行硬约束："Instrument scope: USDT-margined crypto perpetuals only; spot is out of scope and not planned; venue RWA perps are blacklisted." 并链 DECISIONS 2026-10-09。
-3. L47 Learning 改为："Decision-level learning (review → Playbook rule → next Entry Planner decision) is a mainline capability defined by [spec 0001](../design/specs/0001-learning-loop/spec.md); it gains no Risk/execution/credential authority." 删除 "Optional research Extension"。
+3. L47 Learning 改为："Decision-level learning (review → Playbook rule → next Entry Planner decision) is a mainline capability defined by `spec 0001`; it gains no Risk/execution/credential authority." 删除 "Optional research Extension"。
 4. L54-72 CN Equity 删除，替换为一句链接 ACTIVE_RUNTIME_SCOPE `authorized_extensions.cn_equity`。
 5. L74-83 "Current Learning scope" 删除（learning_contract + spec 0001 拥有）。
 6. L93 删除 "(#614 closed)…" 行；L91-92 两条 Learning 延后项改由 spec 0001 的 advisory/authority 分级表述。
