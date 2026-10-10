@@ -958,6 +958,8 @@ def test_symbol_blacklist_rejects(tmp_path, monkeypatch):
         ("BTC/USDC", "unsupported_trading_quote_asset:USDC"),
         ("BTC", "invalid_symbol_format"),
         ("/USDT", "invalid_symbol_format"),
+        # Tokenised stocks are out of product scope: no lower-case r-series exemption.
+        ("rNVDA/USDT", "invalid_symbol_format"),
     ),
 )
 def test_risk_rejects_non_usdt_or_malformed_trading_symbol(

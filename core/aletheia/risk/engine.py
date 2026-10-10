@@ -1732,21 +1732,8 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
         and symbol.count("/") == 1
         and all(symbol.split("/", 1))
     )
-    # r-series equity tokens deliberately preserve their lower-case leading
-    # ``r``; every other native symbol must equal the canonical converter output.
-    symbol_is_canonical = has_canonical_shape and symbol == to_canonical(symbol)
-    if has_canonical_shape and not symbol_is_canonical:
-        try:
-            from aletheia.data.symbols import is_stock_token
-
-            symbol_is_canonical = is_stock_token(symbol)
-        except Exception as exc:
-            logger.warning(
-                "risk: stock-token canonicality check unavailable for %s (%s)",
-                symbol, type(exc).__name__,
-            )
-            symbol_is_canonical = None
-    if not symbol_is_canonical:
+    # Every native symbol must equal the canonical converter output.
+    if not (has_canonical_shape and symbol == to_canonical(symbol)):
         violations.append("invalid_symbol_format")
 
     if proposal.market_type not in _NATIVE_MARKET_TYPES:
