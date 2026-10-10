@@ -66,7 +66,7 @@ In the checkpoint rules above, "commit" means `jj describe` + `jj new` (or
 `jj commit`). A checkpoint is not complete while the work sits only in `@`: git
 plumbing reads git HEAD, which in a colocated checkout is `@-`. Isolated workspaces
 live under `.claude/worktrees/<name>` (see the
-[workspace playbook](../GIT_WORKTREE_PLAYBOOK.md)).
+[workspace playbook](../JJ_WORKSPACE_PLAYBOOK.md)).
 
 Raw `git` remains only where the surface is git by construction: the production
 self-updater and Fedora/tarball runtimes (`ops/update/`, `aletheia.update.git_ops`,

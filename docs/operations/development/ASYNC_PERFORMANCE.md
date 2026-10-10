@@ -139,18 +139,7 @@ market ticker @15s）。在 Settings 页打开期间，这些持续占用后端 
 
 ---
 
-## 5. 已知遗留慢点（待优化，非紧急）
-
-| 位置 | 问题 | 影响 | 建议 |
-|---|---|---|---|
-| `health.py:compute_health()` | async def 里同步 load_config + 两次 SQLite | GET /api/status 偶慢 | 加缓存或移 threadpool |
-| `pnl.py:compute_portfolio()` | SELECT * FROM positions WHERE status='closed' LIMIT 10000 | GET /api/portfolio 在 421MB DB 上慢 | 加分页或只返回 summary |
-| `data.py:start_agent_run()` | inline await run_agent() = 全 LLM 调用在 HTTP 请求内 | POST /api/agent-runs/start 可能 60s+ | 改为 fire-and-forget + job_id 轮询 |
-| `frontdoor_route.py` | 每次代理请求读 frontdoor-route.json | 每 /api/* 一次磁盘读 | 加 10s TTL 缓存 |
-
----
-
-## 6. 异步测试替身必须拥有传入 coroutine 的生命周期
+## 5. 异步测试替身必须拥有传入 coroutine 的生命周期
 
 Broker 的同步包装器接收的是**已经创建好的 coroutine 对象**。测试若把包装器替换成
 `MagicMock(return_value=...)` 或直接 `side_effect=Exception(...)`，调用结果虽然符合断言，
@@ -171,7 +160,7 @@ Broker 的同步包装器接收的是**已经创建好的 coroutine 对象**。�
 
 ---
 
-## 7. TestClient 与运行时 HTTP 客户端是两条依赖边界
+## 6. TestClient 与运行时 HTTP 客户端是两条依赖边界
 
 Starlette 1.2 起，`starlette.testclient.TestClient` 官方使用 `httpx2`；旧 `httpx` 仅是
 带弃用提示的兼容路径。项目因此把 `httpx2>=2.5,<3` 放在 UV 的 dev dependency group，
@@ -182,7 +171,7 @@ Starlette 1.2 起，`starlette.testclient.TestClient` 官方使用 `httpx2`；�
 
 ---
 
-## 8. 有界性能诊断开关
+## 7. 有界性能诊断开关
 
 - 默认：超过 `ALETHEIA_SLOW_REQUEST_MS`（默认 `500`）的 API 请求写
   `http_request_slow`，字段只有 method/path/status/duration；query string 和 body 不入日志。

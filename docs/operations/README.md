@@ -1,7 +1,7 @@
-
 # operations/ - Run, Recover, Develop
 
-Use this directory for procedural instructions: running the gateway, local development, preview worktrees, testing, deployment, and recovery.
+> **Role: Navigation.** Procedural instructions only; overrides nothing. The runtime is Fedora
+> (`u7p`); macOS is development only; pytest runs on CASI WSL.
 
 PR review budgets, lifecycle states, feedback validity, and merge readiness are
 defined only in [`PR_REVIEW_LIFECYCLE.md`](development/agent-guides/PR_REVIEW_LIFECYCLE.md).
@@ -10,23 +10,24 @@ defined only in [`PR_REVIEW_LIFECYCLE.md`](development/agent-guides/PR_REVIEW_LI
 
 | Folder | Use |
 | --- | --- |
-| `runbooks/` | Daily operations, diagnostics and manual reconciliation |
-| `development/` | Local setup, tests, worktree preview, pytest optimization |
-| `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), source-runtime release/deployment notes, source-update Observer continuity |
+| `runbooks/` | Daily operations, trading-path diagnostics, LLM telemetry, manual reconciliation |
+| `development/` | Local setup, [jj workspaces](development/JJ_WORKSPACE_PLAYBOOK.md), previews, tests, pytest optimization |
+| `deployment/` | [Deployment and verification](deployment/DEPLOYMENT.md), [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), [service environment](deployment/CROSS_PLATFORM_SERVICE_ENVIRONMENT.md), source-update Observer continuity |
 | `recovery/` | Outcome-history remediation |
 | `architecture/` | Stability target architecture for operations |
 
-For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
-[Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md). For CASI-authoritative
-LLM token usage, optional economics, budget-shadow, and context-adapter
-operations, use the [LLM Harness Telemetry runbook](runbooks/LLM_HARNESS_TELEMETRY.md).
-When a close-side submission loses its venue confirmation and the claim reaches
-the human-owned `manual_reconciliation_pending` state, use the
-[Manual Close Reconciliation runbook](runbooks/manual_close_reconciliation.md);
-nothing in that path is automatic.
+## Where to start
 
-For Fedora source-runtime deployment and stable-Tag auto-updates, use
-[Deployment](deployment/DEPLOYMENT.md).
+- Deploy a commit to Fedora and verify it (commit, schema, model provider, settlement health):
+  [Deployment §3](deployment/DEPLOYMENT.md#3-deploy-a-specific-commit-to-fedora-and-verify).
+- Where the Candidate → Entry Plan → Order → Close chain stops:
+  [Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md).
+- LLM token usage, optional economics, budget-shadow and context-adapter operations, read on the
+  Fedora runtime (the source of truth): [LLM Harness Telemetry](runbooks/LLM_HARNESS_TELEMETRY.md).
+- A close-side submission that lost venue confirmation and reached the human-owned
+  `manual_reconciliation_pending` state:
+  [Manual Close Reconciliation](runbooks/manual_close_reconciliation.md); nothing in that path is
+  automatic.
 
 ## Agent Rule
 

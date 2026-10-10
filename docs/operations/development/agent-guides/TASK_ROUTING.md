@@ -48,7 +48,7 @@ no approval authority.
   [async performance](../ASYNC_PERFORMANCE.md).
 - Backend bug or dishonest UI → triage protocol and a current/new GitHub Issue.
 - Dirty checkout, merge, worktree, or frontend conflict →
-  [worktree playbook](../GIT_WORKTREE_PLAYBOOK.md).
+  [worktree playbook](../JJ_WORKSPACE_PLAYBOOK.md).
 - Orca-owned state → [Orca workflow](../ORCA_CLI_WORKFLOW.md).
 - Cross-machine work → [qualification protocol](../QUALIFICATION_DEVELOPMENT_PROTOCOL.md).
 - New documentation family →

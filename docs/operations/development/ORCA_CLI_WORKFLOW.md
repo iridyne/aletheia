@@ -6,7 +6,7 @@ terminal placement, and workspace status. Git, GitHub PRs, and CI remain the
 durable proof of the change.
 
 Use this runbook together with the
-[Git Worktree Playbook](GIT_WORKTREE_PLAYBOOK.md). Do not implement Orca
+[jj Workspace Playbook](JJ_WORKSPACE_PLAYBOOK.md). Do not implement Orca
 session or task state inside Aletheia.
 
 ## Load the live CLI contract first

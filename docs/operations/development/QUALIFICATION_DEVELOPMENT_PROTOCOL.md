@@ -3,7 +3,7 @@
 > 意图进 Git，运行事实不进 Git；开发可以高速变化，Qualification 必须保持静止。
 >
 > 本文是跨机器开发、实例运行、部署与观察窗口的权威协议。Worktree 细节见
-> [`Git Worktree Playbook`](GIT_WORKTREE_PLAYBOOK.md)，开发预览命令见
+> [`jj Workspace Playbook`](JJ_WORKSPACE_PLAYBOOK.md)，开发预览命令见
 > [`Development Preview`](DEVELOPMENT_PREVIEW.md)，交易实验冻结规则见
 > [`Experiment Protocol`](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
 

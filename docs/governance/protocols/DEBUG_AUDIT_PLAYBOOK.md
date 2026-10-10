@@ -84,7 +84,7 @@
 
 **SOP**：合并与 push 的现行步骤（jj workspace、`jj rebase -d master@origin`、复读
 `jj op log`、人工 `gh pr merge --rebase`）只在
-[GIT_WORKTREE_PLAYBOOK §4](../../operations/development/GIT_WORKTREE_PLAYBOOK.md) 维护。
+[JJ_WORKSPACE_PLAYBOOK §4](../../operations/development/JJ_WORKSPACE_PLAYBOOK.md#4-land-a-change) 维护。
 合并后才在**主仓** `aletheia gateway restart` + `aletheia doctor` 验运行态——workspace 的
 `data/` 为空，不要在 workspace 验运行态。
 
