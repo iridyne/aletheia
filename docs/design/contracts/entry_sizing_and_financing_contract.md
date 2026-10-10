@@ -1,225 +1,176 @@
 # Entry Sizing and Financing Contract
 
-> Status: current authority.
-> Related: [Risk Engine Contract](risk_engine_contract.md) (§5 sizing, checks #13/#18/#19),
-> [Entry Plan Contract](entry-plan-contract.md) (Plan schema and execution mainline).
-> Decision references: #3729 (this contract), #3726 (the coupling it removes),
-> #1451 (margin-mode safety).
+> **Role:** Contract — current approved behavior only. Target designs live in
+> [`../specs/`](../specs/README.md); known mismatches live in GitHub Issues.
+> **Prefix:** `ES` · **Owner code:** `core/aletheia/trading/risk_intent.py`,
+> `core/aletheia/trading/entry_sizing.py`, `core/aletheia/trading/leverage_resolution.py`,
+> `core/aletheia/execution/margin_mode_policy.py`
 
-## Scope and authority
+Core semantics: **AI decides qualitative risk intent; sizing decides target exposure; leverage only
+finances that exposure.** No AI emits leverage, notional, margin or a risk multiplier; no resolver
+enlarges target exposure or treats the Owner policy leverage cap as the execution leverage.
 
-This Contract owns three decisions on the canonical entry path and nothing else:
+## Scope
 
-1. **AI Risk Intent** — what qualitative risk posture the System Operator may express.
-2. **Adaptive Sizing** — how a loss budget and stop geometry become a target exposure.
-3. **Deterministic Leverage Resolution** — how much leverage finances that exposure.
+This Contract owns three decisions on the canonical entry path (Entry Plan compilation, re-verified
+by Risk): AI Risk Intent, Adaptive Sizing, and Deterministic Leverage Resolution, plus the margin
+mode those decisions assume. Product scope is USDT-margined perpetuals on `bitget_demo` with
+isolated margin. It does not own the Plan lifecycle ([Entry Plan](entry-plan-contract.md)), Risk
+gate ordering ([Risk Engine](risk_engine_contract.md)), or order submission.
 
-Core semantics:
+## Entry points
 
-> AI decides qualitative risk intent; sizing decides target exposure; leverage only
-> finances that exposure.
+| Entry point | Kind | Caller |
+|---|---|---|
+| `core/aletheia/trading/risk_intent.py::resolve_risk_intent_multiplier` | call | `trading/entry_plan_compiler.py` |
+| `core/aletheia/trading/entry_sizing.py::resolve_entry_sizing` | call | `trading/entry_plan_compiler.py`; Risk re-verification |
+| `core/aletheia/trading/leverage_resolution.py::resolve_execution_financing` | call | `trading/entry_plan_compiler.py`; Risk re-verification |
+| `core/aletheia/trading/venue_margin.py::load_venue_margin_envelope` | call (sync, network-free) | `trading/entry_plan_compiler.py` |
+| `core/aletheia/agent_runtime/scheduler.py::_run_venue_margin_facts` | scheduler job `venue_margin_facts` | refreshes tiers for `list_candidate_planning_demand` instruments |
+| `core/aletheia/cli/data_cmd.py` `data venue-margins` | CLI | operator single-instrument refresh / `--show` |
 
-An AI never emits leverage, notional, margin, or a risk multiplier. A mechanical
-resolver never enlarges the target exposure, and never treats the Owner policy
-leverage cap as the execution leverage.
+## Durable state
 
-## Contract A — AI Risk Intent
+| Table / file | Writer | Readers | Mutability |
+|---|---|---|---|
+| venue margin envelope (settings row keyed venue/symbol/market_type) | `venue_margin.py::store_venue_margin_envelope` | `load_venue_margin_envelope` (24 h TTL) | replaceable cache with fetch timestamp and provenance |
+| `entry_plans.plan_json` financing fields | Compiler | Plan execution, Risk, Gateway | immutable per Plan |
 
-`core/aletheia/trading/risk_intent.py`, `EntryHypothesis.risk_intent`.
+## Requirements
 
-| Field | Contract |
-|---|---|
-| `posture` | `BASELINE` or `REDUCED`. There is no `INCREASED` in V1. |
-| `reason` | Non-empty, ≤512 chars. |
-| `evidence_refs` | 1–8 admissible current fact refs, same admissibility as `capture_evidence_refs`. |
+### ES-C01 Risk intent is a posture, never a number
 
-- `ENTRY_PLAN` carries a `RiskIntent`; `NO_PLAN` clears it.
-- A **partial or omitted** intent is normalized rather than rejected: a bare posture
-  string, or a posture without a reason/evidence, resolves to that posture (omitted →
-  `BASELINE`) with the reason and `evidence_refs` taken from the hypothesis's own
-  `capture_reason` / `capture_evidence_refs`, which `ENTRY_PLAN` already requires and
-  which the reference validator checks against the supplied context. The live
-  System Operator model is not reliable at emitting a nested object it was never
-  trained for, and defaulting to the Owner baseline is the non-expanding direction:
-  an omitted intent can never increase risk, and no numeric field exists to omit.
-  An explicit posture is never overridden, and an unknown posture (`INCREASED`, …)
-  still fails validation. The normalization is logged.
-- An explicit intent is validated as written: nonempty reason, 1–8 admissible refs.
-- `BASELINE` maps to multiplier `1.0`.
-- `REDUCED` maps to `policy.loss.reduced_risk_multiplier`, which must satisfy `0 < m < 1`.
-- Anything else fails with `RISK_INTENT_INVALID`; a hypothesis carrying a numeric
-  leverage/notional/margin field is rejected by the frozen `extra="forbid"` schema.
-- Insufficient or conflicting evidence stays `NO_PLAN`; a smaller position is never a
-  substitute for an invalid thesis.
-- `risk_tier` keeps its existing payoff-geometry meaning and is not merged with posture.
+`The EntryHypothesis risk_intent shall be a RiskIntent with posture BASELINE or REDUCED, reason ≤ 512 chars and 1–8 evidence_refs, under the frozen extra="forbid" schema.`
 
-## Contract B — Adaptive Sizing
+- WHEN posture is `INCREASED` or unknown, or a numeric leverage/notional/margin field is present THEN hypothesis validation fails.
+- WHEN the decision is `NO_PLAN` THEN `risk_intent` is cleared.
+- WHEN `risk_tier` is read THEN it keeps its payoff-geometry meaning and is not merged with posture.
+- WHEN evidence is insufficient or conflicting THEN the decision stays `NO_PLAN`; a smaller position never substitutes for an invalid thesis.
 
-`core/aletheia/trading/entry_sizing.py`, policy version `adaptive-risk-intent-sizing/v2`.
+### ES-C02 Partial intent normalizes to the non-expanding default
+
+`If an ENTRY_PLAN hypothesis omits risk_intent or part of it, then the system shall resolve the supplied posture (omitted → BASELINE) with reason and evidence taken from capture_reason / capture_evidence_refs, log the normalization, and never override an explicit posture.`
+
+- WHEN `risk_intent` is a bare posture string THEN it is treated as `{posture}` and completed (`entry_analysis.py::EntryHypothesis._normalize_risk_intent`).
+- WHEN `risk_intent` is omitted THEN posture is `BASELINE` and a warning is logged (`_resolved_risk_intent`).
+
+### ES-C03 Posture maps to an Owner-policy multiplier
+
+`When sizing resolves the posture, the system shall map BASELINE to 1.0 and REDUCED to policy.loss.reduced_risk_multiplier, and if that value is missing, non-finite or outside (0, 1) or the intent is absent, then it shall fail with RISK_INTENT_INVALID.`
+
+- WHEN posture is `REDUCED` and the policy multiplier is 0.5 THEN `risk_intent_multiplier = 0.5` with source `policy.loss.reduced_risk_multiplier`.
+
+### ES-C04 Loss budget and target notional
+
+`The sizer (policy version adaptive-risk-intent-sizing/v2) shall compute target exposure from the loss budget and stop geometry as below, recording every binding constraint.`
 
 ```text
-baseline_loss_budget_usdt = min(shared_hard_capital_base, fresh_available_balance)
-                            x max_single_trade_risk_pct / 100
+baseline_loss_budget_usdt  = min(shared_hard_capital_base, fresh_available_balance)
+                             x max_single_trade_risk_pct / 100
 effective_loss_budget_usdt = baseline_loss_budget_usdt x risk_intent_multiplier
-
 stop_fraction              = |worst_entry_price - stop_price| / worst_entry_price
 raw_target_notional_usdt   = effective_loss_budget_usdt / stop_fraction
 target_notional_usdt       = min(raw_target, every constraint below)
 margin_budget_usdt         = min(fresh_available_balance, policy.max_position_margin_usdt)
 ```
 
-Constraints applied to `target_notional_usdt`, each recorded in `binding_constraints`:
-
-| Token | Bound |
+| `binding_constraints` token | Bound |
 |---|---|
 | `remaining_total_exposure` | `policy.capital.max_total_exposure_pct` of the capital base, net of the same pool's committed notional |
-| `remaining_account_leverage` | `policy.leverage.account_cap x equity`, net of the same pool's committed notional |
-| `market_liquidity` | executable notional the entry market can absorb (the preflight depth envelope) |
-| `per_symbol_risk_units` | `max_per_symbol_entries` full-size **risk units**, projected as same-symbol stop-loss risk — never `risk_pct x leverage` |
+| `remaining_account_leverage` | `policy.leverage.account_cap × equity`, net of the same pool's committed notional |
+| `market_liquidity` | executable notional the entry market can absorb (preflight depth envelope) |
+| `per_symbol_risk_units` | `max_per_symbol_entries` full-size risk units, projected as same-symbol stop-loss risk — never `risk_pct × leverage` |
 | `instrument_max_notional` | venue/instrument hard notional bound |
 
-`max_single_trade_risk_pct` has exactly one meaning in this contract: the share of the
-capital base that may be lost at the stop. Margin budget is a separate quantity; one
-field never stands for both.
+- WHEN `max_single_trade_risk_pct` is read THEN it means only the share of the capital base that may be lost at the stop; margin budget is a separate quantity.
 
-When the capital base, available balance, policy identity, or geometry is unusable, the
-sizer returns a typed `unavailable` resolution (`SIZING_CAPITAL_UNAVAILABLE`,
-`SIZING_GEOMETRY_INVALID`, `NO_EXECUTABLE_NOTIONAL`). Configured capital is never a
-substitute for an unreadable account authority.
+### ES-C05 Sizing fails closed
 
-`SizingResolution` persists: policy version, posture, multiplier and its source, baseline
-and effective loss budget, worst entry and stop prices, stop distance %, raw and final
-target notional, margin budget, binding constraints, account/policy snapshot identities,
-and `facts_fingerprint`.
+`If the capital base, available balance, policy identity or geometry is unusable, then the sizer shall return a typed unavailable resolution (SIZING_CAPITAL_UNAVAILABLE, SIZING_GEOMETRY_INVALID, NO_EXECUTABLE_NOTIONAL) and never substitute configured capital for unreadable account authority.`
 
-## Contract C — Deterministic Leverage Resolution
+- WHEN a resolution is produced THEN `SizingResolution` persists policy version, posture, multiplier and source, baseline/effective loss budget, worst entry and stop prices, stop distance %, raw/final target notional, margin budget, binding constraints, account/policy snapshot identities and `facts_fingerprint`.
 
-`core/aletheia/trading/leverage_resolution.py`.
+### ES-C06 Leverage only finances the target
 
-The resolver answers one question: *which leverage safely and truthfully implements the
-most of the target exposure, without exceeding it?*
+`The resolver shall enumerate leverage from low to high up to min(policy_leverage_cap, venue absolute cap) and choose the largest execution notional not exceeding the target, the lowest leverage among equal notionals, and NO_FEASIBLE_FINANCING when no candidate is admissible.`
 
-1. `policy_leverage_cap` is the Owner policy ceiling (`get_max_leverage`); it is a
-   ceiling, never the execution leverage.
-2. Venue tier, tier `max_leverage`, and maintenance-margin rate come from a qualified
-   `VenueMarginEnvelope`.
-3. Candidates are enumerated from **low to high**:
-   `candidate_notional(L) = min(target_notional, margin_budget x L, remaining venue and
-   instrument notional capacity, remaining hard exposure capacity)`.
-4. The venue tier is selected for the **projected** position notional
-   (`existing + unresolved + reservation + candidate`).
-5. A candidate is admissible only when `L <= tier.max_leverage`, the candidate notional is
-   inside the tier/instrument range, the margin mode matches the submitted one, evidence is
-   fresh and complete, and liquidation safety is provable for that margin mode
-   (`(1/L - tier.maintenance_margin_rate) x 100 >= liquidation buffer`).
-6. Among admissible candidates, choose the **largest execution notional that does not
-   exceed the target**; among equal notionals choose the **lowest leverage**.
-7. No admissible candidate → `no_feasible_financing` (`NO_FEASIBLE_FINANCING`). A plan is
-   never produced that cannot be financed.
+- WHEN evaluating leverage L THEN `candidate_notional(L) = min(target_notional, margin_budget × L, remaining tier/instrument notional capacity)` and the tier is selected for the projected position notional (existing + candidate, re-resolved after capping).
+- WHEN L exceeds `tier.max_leverage` or `(1/L − tier.maintenance_margin_rate) × 100 < liquidation buffer` THEN L is not admissible.
+- WHEN a target is reachable at 5x and 18x is safe THEN execution leverage is 5x; WHEN the target needs 20x and only 18x is provable THEN execution notional shrinks; WHEN 1x suffices THEN 1x is used.
+- WHEN `policy_leverage_cap` is read THEN it is a ceiling (`get_max_leverage`), never the execution leverage.
+- WHEN a resolution is produced THEN `LeverageResolution` persists status, reason, policy cap, venue absolute cap, safe cap, required leverage for target, execution leverage, target/execution notional, fill ratio, margin budget, projected notional, tier and maintenance-margin rate, margin mode, binding constraint, liquidation buffer and `facts_fingerprint`.
 
-Consequences this contract requires: a target reachable at 5x is executed at 5x even when
-18x is safe; a target needing 20x while only 18x is provable shrinks the execution notional
-instead of raising the loss budget; 1x is used when 1x suffices.
+### ES-C07 One declared margin mode per route
 
-`LeverageResolution` persists: status, reason, policy cap, venue absolute cap, safe
-leverage cap, required leverage for target, execution leverage, target and execution
-notional, target fill ratio, margin budget, projected position notional, selected tier and
-maintenance-margin rate, margin mode, binding constraint, liquidation buffer, provenance,
-and `facts_fingerprint`.
+`The resolver and the submission path shall read the same declared submission margin mode (execution/margin_mode_policy.py::submission_margin_mode), and a route with no declared mode shall fail closed with MARGIN_MODE_UNAVAILABLE.`
 
-## Margin mode and liquidation safety
+- WHEN the route is `bitget_demo` THEN the mode is `isolated` (`config/exchanges.py::ENTRY_ROUTE_POLICIES`), the only qualified mode, using the exact tier maintenance-margin rate.
+- WHEN the envelope reports `cross` THEN the result is `CROSS_MARGIN_SAFETY_UNAVAILABLE`; cross is not qualified, and the isolated estimate `calc_liquidation_price()` is never reused as cross-account safety.
+- WHEN market type is spot THEN the residual `not_applicable` 1x branch in `resolve_execution_financing` applies; spot never reaches this path on the mainline and this is not a support claim.
 
-`core/aletheia/execution/margin_mode_policy.py` declares the mode each execution route
-actually submits, and both the resolver and the submission path read the same declaration.
+### ES-C08 Venue tier facts come from the holding venue
 
-- **Isolated** (V1 qualified): requires the exact venue tier and maintenance-margin rate;
-  the position-local liquidation model then matches what the adapter submits. `bitget_demo`
-  is the one registered Entry Plan route and declares `isolated`.
-- **Cross**: `calc_liquidation_price()` is an isolated-position estimate and MUST NOT be
-  reused as cross-account safety. Cross resolves only from a fresh venue-reported safety
-  fact or an account-aware conservative model; without one the result is
-  `CROSS_MARGIN_SAFETY_UNAVAILABLE`. There is no isolated fallback.
-- A route with no declared mode fails closed with `MARGIN_MODE_UNAVAILABLE`.
-- Spot is out of product scope and never reaches this path; the residual 1x
-  `not_applicable` branch in code is not a support claim.
+`The Compiler shall load the VenueMarginEnvelope for the execution route's venue (the venue that will hold the position), not the Candidate's market-data venue, and if it is absent, stale or incomplete then it shall fail with VENUE_MARGIN_TIERS_UNAVAILABLE or VENUE_MARGIN_TIERS_STALE.`
 
-Venue tier facts come from the venue that will **hold the position** — the execution
-route's venue, not the candidate's market-data venue (they differ whenever analysis and
-execution run on different venues, e.g. a binance-sourced universe executed on
-`bitget_demo`). The Plan's own `venue` still identifies the market data. Facts come from
-`VenueMarginEnvelope` (CCXT public market leverage tiers where
-the venue exposes them, persisted with fetch timestamp and provenance, read through a
-freshness TTL). The read path is synchronous and network-free; the fetch is out-of-band, and
-the runtime maintains it: the `venue_margin_facts` scheduler job refreshes exactly the
-instruments the Planner's current claimable queue reads (`list_candidate_planning_demand`),
-skipping rows that are already fresh, so a rolling universe costs one public tier fetch per
-newly demanded instrument. `uv run aletheia data venue-margins --venue <venue> --symbol
-<symbol>` remains the explicit single-instrument/ops entry point (add `--show` to inspect
-the cached row). Until a fresh row exists for an instrument, its leveraged entry is
-unavailable — that is the fail-closed contract, not a defect to work around. An absent, stale, or incomplete envelope is a typed failure
-(`VENUE_MARGIN_TIERS_UNAVAILABLE`, `VENUE_MARGIN_TIERS_STALE`); a static in-repo
-maintenance-margin default is never the authority.
+- WHEN analysis runs on one venue and execution on `bitget_demo` THEN tiers come from `bitget_demo`'s venue; the Plan's own `venue` still identifies market data.
+- WHEN no fresh row exists for an instrument THEN its leveraged entry is unavailable; the read path is synchronous and network-free and a static in-repo maintenance-margin default is never the authority.
 
-## EntryPlan / Proposal schema and authority migration
+### ES-C09 Plan carries the frozen financing
 
-New plans write explicit fields; historical JSON and hashes are never rewritten.
+`New EntryPlans shall write risk_intent_posture, risk_intent_multiplier, sizing_resolution, leverage_resolution, policy_leverage_cap, execution_leverage, target_notional_usdt, execution_notional_usdt and margin_mode, and only execution_leverage and execution_notional_usdt shall carry submission authority.`
 
-| Field | Meaning |
-|---|---|
-| `risk_intent_posture`, `risk_intent_multiplier` | the frozen intent and its multiplier |
-| `sizing_resolution`, `leverage_resolution` | the two frozen resolutions |
-| `policy_leverage_cap` | Owner policy ceiling |
-| `execution_leverage` | financing actually resolved for this plan |
-| `target_notional_usdt`, `execution_notional_usdt` | wanted vs financed exposure |
-| `margin_mode` | the submitted mode the resolution is valid for; the Gateway reads it from this frozen Plan, so no Proposal can carry a different one |
+- WHEN a Proposal is built THEN `TradeProposal.leverage = EntryPlan.execution_leverage`, quantity derives from `execution_notional_usdt`, and the order boundary reads `margin_mode` from the frozen Plan (the Proposal does not repeat it).
+- WHEN a historical Plan lacks these fields THEN it obtains no new submission authority; `max_leverage`, `max_notional`, `max_risk_pct` remain legacy mirrors; historical JSON and hashes are not rewritten. The retired `available-balance-risk-budget/v1` version remains only in `trading/sizing.py`.
 
-- `TradeProposal.leverage = EntryPlan.execution_leverage`. The Plan is the sole
-authority for the submission margin mode: the order boundary reads it from the frozen
-Plan (the Proposal does not repeat it, so the two can never disagree).
-- Quantity is derived from `execution_notional_usdt`, not from the policy cap.
-- `max_leverage`, `max_notional`, and `max_risk_pct` remain populated as legacy mirrors so
-  historical rows and existing readers keep working; only `execution_leverage` and
-  `execution_notional_usdt` carry submission authority. A plan without them is historical
-  and obtains no new submission authority.
-- Schema and behavior fingerprints upgrade with the new fields; the
-  `available-balance-risk-budget/v1` policy version is retired in favour of
-  `adaptive-risk-intent-sizing/v2`.
+### ES-C10 Risk verifies, never mutates
 
-## Risk convergence
+`Risk shall recompute sizing and financing with the same pure functions on submission-time facts and shall reject a smaller recomputed execution notional with SIZING_RESOLUTION_DRIFT, keep the original on a larger one, and never mutate leverage, notional or margin mode.`
 
-Risk calls the same pure functions with submission-time facts and only verifies:
+- WHEN facts are identical THEN the resolution is identical or equivalent, and a compiled Plan is not rejected by Risk for leverage, margin or stop-risk feasibility.
+- WHEN Risk reads `max_single_trade_risk_pct` THEN it is the single loss-risk check (stop risk ≤ effective loss budget); same-symbol exposure is a projected stop-loss-risk bound in risk units; the liquidation-buffer check stays as a safety net ([Risk Engine](risk_engine_contract.md) gate table).
 
-- identical facts → identical or equivalent resolution;
-- a smaller recomputed execution notional → reject `SIZING_RESOLUTION_DRIFT`;
-- a larger recomputed allowance → keep the original, never silently enlarge;
-- Risk never mutates leverage, notional, or margin mode.
+## Failure semantics
 
-Check #13 becomes the single loss-risk reading of `max_single_trade_risk_pct`
-(`stop risk <= effective loss budget`), and check #19 becomes a projected same-symbol
-stop-loss-risk bound in risk units. Check #18 (liquidation buffer) stays as the safety net
-and is expected to pass by construction for plans the resolver produced.
-
-Key invariant: **with the same facts snapshot, a compiled Plan must not be rejected by Risk
-for leverage, margin, or stop-risk feasibility.**
-
-## Stable failure reasons
-
-`RISK_INTENT_INVALID`, `RISK_INTENT_EVIDENCE_INVALID`, `SIZING_CAPITAL_UNAVAILABLE`,
-`SIZING_GEOMETRY_INVALID`, `NO_EXECUTABLE_NOTIONAL`, `VENUE_MARGIN_TIERS_UNAVAILABLE`,
-`VENUE_MARGIN_TIERS_STALE`, `MARGIN_MODE_UNAVAILABLE`, `CROSS_MARGIN_SAFETY_UNAVAILABLE`,
-`NO_FEASIBLE_FINANCING`, `SIZING_RESOLUTION_DRIFT`.
+| Condition | Response | Visible as | Unavailable vs zero |
+|---|---|---|---|
+| Intent absent / policy multiplier invalid | Plan not compiled | `RISK_INTENT_INVALID` | unavailable |
+| Capital / balance / geometry unusable | Plan not compiled | `SIZING_CAPITAL_UNAVAILABLE`, `SIZING_GEOMETRY_INVALID`, `NO_EXECUTABLE_NOTIONAL` | unavailable, never configured capital |
+| Tier facts absent / stale | Plan not compiled | `VENUE_MARGIN_TIERS_UNAVAILABLE`, `VENUE_MARGIN_TIERS_STALE` | unavailable, never a static default |
+| Mode undeclared / cross | Plan not compiled | `MARGIN_MODE_UNAVAILABLE`, `CROSS_MARGIN_SAFETY_UNAVAILABLE` | unavailable, no isolated fallback |
+| No admissible leverage | Plan not compiled | `NO_FEASIBLE_FINANCING` | — |
+| Submission-time allowance shrank | Risk rejects | `SIZING_RESOLUTION_DRIFT` | — |
 
 Arbitrary exchange exception text is never persisted as a contract reason.
 
-## Non-goals
+## Authority
 
-- No legacy conviction/Kelly/persona sizing enters this path; `compute_position_size()`
-  and `vol_target_size()` keep their existing (non-canonical) status.
-- No additional forecast-volatility or correlation sizing term in V1.
-- No renaming or migration of `risk_tier`, Alpha, Serenity, or execution redesigns.
+Sizing and leverage resolution may only shrink exposure within Owner policy and venue facts; they
+never raise the loss budget, change Risk limits, choose a margin mode the route does not declare,
+or submit orders.
 
 ## Verification
 
-`tests/test_entry_sizing.py`, `tests/test_leverage_resolution.py`,
-`tests/test_venue_margin.py`, `tests/test_risk_intent.py`, and the canonical
-Entry → Compiler → Proposal → Risk → Gateway integration tests.
+| Requirement | Executable claim / focused test |
+|---|---|
+| ES-C01, ES-C02, ES-C03 | `tests/test_risk_intent.py` |
+| ES-C04, ES-C05 | `tests/test_entry_sizing.py` |
+| ES-C06, ES-C07 | `tests/test_leverage_resolution.py` |
+| ES-C08 | `tests/test_venue_margin.py` |
+| ES-C09, ES-C10 | `tests/test_entry_plan_execution.py`, `tests/test_risk_engine.py` (no dedicated SpecClaim) |
+
+## Known conformance gaps
+
+- **ES-C01 evidence admissibility.** The approved rule says explicit `risk_intent.evidence_refs`
+  have "the same admissibility as `capture_evidence_refs`" and the stable reasons list
+  `RISK_INTENT_EVIDENCE_INVALID`. `trading/entry_analysis.py::validate_hypothesis_references` checks
+  only supporting/opposing/capture refs; explicit risk-intent refs are length-checked (1–8) but never
+  checked against the supplied context, and `RISK_INTENT_EVIDENCE_INVALID` has 0 hits in `core/` and
+  `extensions/`.
+- **ES-C01 failure token.** The approved rule says an unknown posture fails with
+  `RISK_INTENT_INVALID`; in code it fails `EntryHypothesis` schema validation (the `Literal`), so the
+  visible failure is a hypothesis validation error, not that token.
+
+## Decision references
+
+- #3729 this contract (Contracts A/B/C); #3726 the policy-cap-as-execution-leverage coupling it
+  removes; #1451 margin-mode safety.
