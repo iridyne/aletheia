@@ -409,14 +409,11 @@ extend the retired `.bl-*` family. Its summary uses `.entry-workbench-summary`
 with four/two/one columns across the canonical 1024/640 boundaries; tabular
 content preserves keyboard order and scrolls on narrow screens.
 
-### Blotter primitives (`.bl-*`) — legacy, no active page owner
+### Blotter primitives (`.bl-*`) — retired
 
-The standalone Decision Blotter was removed by issue #2288. The remaining `.bl-*`
-CSS in `frontend/src/index.css` is legacy cleanup debt and must not be used by new
-or current owner-facing surfaces; the former class table is in
-[`history/blotter_design.md`](../history/blotter_design.md). `.ov-blotter-strip`
-(the one-line Overview summary) keeps its `.ov-` prefix because it lives outside
-the Blotter page.
+No `.bl-*` selector exists in `frontend/src/index.css`; the former section is in
+[`history/ui_design_system_retired_bl_classes.md`](../history/ui_design_system_retired_bl_classes.md).
+`.ov-blotter-strip` (the Overview summary strip) remains current.
 
 **反模式**：不要给同一 tone 用完整方块底色（会让扫视疲劳）——只染数字/文字/边框。
 

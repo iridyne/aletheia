@@ -1,8 +1,11 @@
 # REST API Reference
 
-> Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
-> All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-22 (external-connectivity attribution)
+> Endpoint index for the Aletheia backend (FastAPI on :8788, proxied via :8787). Paths are
+> relative to `/api/` unless noted. **The route list is decided by code**, not by this file:
+> the registered decorators in `core/aletheia/server/` and `extensions/` (mounted in
+> `core/aletheia/server/app.py`) are the authority, and `scripts/ci/export_openapi_schema.py`
+> exports the live schema. This index routes readers; a row here grants no capability, and a
+> route missing here is a documentation gap, not a missing feature.
 
 ---
 
@@ -44,14 +47,28 @@
 | 422 | Pydantic validation failure (FastAPI default) |
 | 503 | Backend dependency unavailable (DB/scheduler/exchange/model) — per [UI truthfulness](../../governance/policies/trust_and_change_control.md), surface as `not available`, never as healthy |
 
-> **Response schemas are NOT mirrored here.** Per "docs follow code", response bodies are defined by the Pydantic models in [data_model §4](../data/data_model.md) and the route handlers. This file is the authoritative **endpoint index**; field-level truth lives in code to avoid drift.
+> **Response schemas are NOT mirrored here.** Response bodies are defined by the Pydantic models in [data_model §4](../data/data_model.md) and the route handlers; field-level truth lives in code to avoid drift.
 
 ### Trust-boundary endpoints (extra requirements)
 
-These endpoints cross a [trust boundary](../../governance/policies/trust_and_change_control.md) and carry obligations beyond a normal route. Mutating endpoints MUST write an audit event; the read-only preflight must not mutate state:
+These endpoints cross a [trust boundary](../../governance/policies/trust_and_change_control.md) and carry obligations beyond a normal route. Mutating endpoints MUST write an audit event; the read-only preflight must not mutate state.
+
+**Authentication (applies to every row).** `server/app.py::_tunnel_auth_guard` is default-deny:
+when `tunnel.enabled` or `remote_control.require_token` is true, every `/api/*` and `/_infra/*`
+path except `_PUBLIC_PATHS` (`/api/ready`, `/_infra/livez`, `/_infra/readyz`) requires the
+owner `X-Aletheia-Token` header; a missing configured token fails closed with 401. Unsafe
+methods (POST/PUT/PATCH/DELETE) additionally require a same-origin or loopback-dashboard
+browser origin, else 403. With both modes off the API is loopback-only and unauthenticated.
+The explicit `_PROTECTED_PATHS` / `_PROTECTED_METHOD_PREFIXES` lists are a checklist that the
+named paths never move to `_PUBLIC_PATHS`; none of the rows below performs an agent
+permission-mode check unless its row says so.
 
 | Endpoint | Requirement | Contract |
 |----------|-------------|----------|
+| `POST /positions/{id}/close` | Owner manual close; places a real exchange close order in demo modes; `*_live_limited` returns 409 `live_position_requires_exchange_close`; writes `actor=human` attribution. Owner token when remote access is enabled (`_PROTECTED_METHOD_PREFIXES` POST `/api/positions/`) | [execution_contract](../contracts/execution_contract.md) |
+| `POST /positions/{id}/recover-parked-close` | Owner release of an owner-unlock-only parked close claim (`execution/pending_close_recovery.py::release_rate_limited_close_claim`). Requires a non-empty `reason` (400 `reason_required`); a claim that is not parked returns 409 with the stable code; releases the claim only (no fill/price/PnL written) and audits `pending_close_owner_authorized_release` with `actor=human`. Owner token when remote access is enabled (POST `/api/positions/` prefix); no permission-mode check | [execution_contract](../contracts/execution_contract.md) |
+| `POST /settings/trading-mandate` | Replaces the observe-only Trading Mandate (`trading/trading_mandate.py`); invalid mandate returns 422 `trading_mandate_invalid`; audits `trading_mandate_changed` with before/after. The mandate has no authority to change a trade. Listed in `_PROTECTED_PATHS` | [configuration_contract](../contracts/configuration_contract.md) |
+| `POST /settings/fast-trigger` | Sets Fast Trigger `mode` (`off`/`shadow`/`execute`), `max_setups`, `authorization_ttl_minutes`; `execute` grants bounded trigger authority. Validated through `FastTriggerConfig`, audits `fast_trigger_config_changed`, reconfigures the watcher immediately. Owner token when remote access is enabled (default-deny) | [configuration_contract](../contracts/configuration_contract.md) |
 | `POST /settings/live-preflight` | private read-only preflight for the selected live broker; no raw credentials returned and no state mutation | [live_unlock_contract](../contracts/live_unlock_contract.md) |
 | `POST /settings/live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock`; selected-account evidence and scorecard required | [live_unlock_contract](../contracts/live_unlock_contract.md) |
 | `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](../contracts/risk_engine_contract.md) |
@@ -71,6 +88,16 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | GET | `/health` | Liveness check (returns `{"status":"ok"}`) |
 | GET | `/ready` | Readiness check (DB, scheduler, exchange) |
 | GET | `/status` | Full system status (gateway, scheduler, independent external connectivity, exchange, live state, permission) |
+| GET | `/version` | Build version info |
+| GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors); connectivity loss is one root-cause warning, recovery and dependent Collector effects are informational. |
+| POST | `/gateway/pause` | Pause scheduler (requires permission >= Operator) |
+| POST | `/gateway/resume` | Resume scheduler |
+| GET | `/ui/shell-bootstrap` | Read · `server/routes/ui.py::shell_bootstrap` — one bounded payload for the app shell (config, status, mode identity); a failed section is reported unavailable, not omitted |
+| GET | `/ui/overview-bootstrap` | Read · `server/routes/ui.py::overview_bootstrap` — Overview cards in one request; resolves the selected execution mode once and scopes every aggregate to it |
+| GET | `/ws/ticket` | Read · `server/routes/ws.py::issue_ws_ticket` — short-lived single-use WebSocket ticket; protected by the owner-auth middleware because browsers cannot attach `X-Aletheia-Token` to a WebSocket |
+| WS | `/ws` | Push · `server/routes/ws.py::ws_realtime` — push-notification socket carrying category names only (no data payloads); `?ticket=` from `/ws/ticket` when remote access is enabled |
+| GET | `/config/default-exchange` | Read · `server/routes/data.py::get_default_exchange_config` — preferred instrument exchange for UI ordering; never surfaces credentials |
+| GET | `/agents/catalog` | Read · `server/routes/data.py::get_agents_catalog` — agents that may be triggered from the Dashboard (`_MANUAL_AGENT_ALLOWLIST`) |
 
 `GET /status` exposes `external_connectivity` as a normalized
 `reachable|unavailable|recovering|unknown` state with severity, priority, message,
@@ -79,10 +106,6 @@ exchange, so a venue-only failure is not reported as a global outage. The route
 also exposes `execution_exchange`, `market_data_exchange`,
 `exchange_alignment` (`aligned|diverged|not_configured|unavailable`), and `exchange_diverged` so
 operators do not infer the real order target from the retained exchange preference.
-| GET | `/version` | Build version info |
-| GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors); connectivity loss is one root-cause warning, recovery and dependent Collector effects are informational. |
-| POST | `/gateway/pause` | Pause scheduler (requires permission >= Operator) |
-| POST | `/gateway/resume` | Resume scheduler |
 
 ---
 
@@ -99,6 +122,8 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/positions/{id}` | One position, complete: every column of the durable row, including the detail-only columns `/positions` projects away. 404 when the id is unknown |
 | GET | `/positions/reconciliation` | Local vs exchange position comparison |
 | POST | `/positions/reconcile` | Trigger position reconciliation |
+| GET | `/orders/{id}/risk-decision` | Read · `server/routes/data.py::get_order_risk_decision` — the exact authoritative RiskDecision an Order consumed; 404 `order_not_found`; `status=not_recorded` when the Order carries no `risk_decision_id` |
+| POST | `/positions/{id}/recover-parked-close` | **Write (trust boundary)** · `server/routes/data.py::recover_parked_close_position` — owner release of a parked close claim; see the trust-boundary table |
 | POST | `/positions/{id}/close` | Owner-initiated manual close of one open position. External demo/testnet modes place a real exchange close order; archived or unknown modes are unavailable. `*_live_limited` returns HTTP 409 `live_position_requires_exchange_close` — close live positions from the exchange UI. Body: `{ order_type: "market"|"limit", limit_price?: number, reason?: string }`. Writes `actor=human`, `close_reason=human_manual_close` or `human_limit_exit`, keeping the attribution separate from AI exit discretion. Guarded by `_PROTECTED_METHOD_PREFIXES POST /api/positions/` when Remote Control / tunnel is enabled. |
 | GET | `/trades` | List orders/trades; optional `entry_plan_id` performs an exact server-side Entry Plan identity filter |
 | GET | `/trades/export` | CSV export of trade history; incomplete legacy PnL is blank and labelled, never exported as a valid tax/PnL number |
@@ -291,6 +316,10 @@ supports `--execution-mode` for an explicit diagnostic override.
 | GET | `/market/macro` | Macro economic indicators |
 | GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, overdue state, and attribution against the normalized external-connectivity state. Raw status remains available while `display_status`, `display_severity`, and `attributed_cause` distinguish dependent consequences from independent Collector warnings. |
 | GET | `/market/data-coverage` | Cached persisted row/symbol/source coverage and freshness, separate from collector execution health. `Server-Timing` distinguishes cache wait/hit, each domain scan, total route work, and global app wall time. |
+| GET | `/market/derivatives-facts` | Read · `server/routes/data.py::get_market_derivatives_facts` — per-symbol derivatives readiness (`data/derivatives_facts.py::derivatives_readiness`) |
+| GET | `/market/microstructure` | Read · `server/routes/data.py::get_market_microstructure` — latest orderbook depth/spread, funding rate and open interest for one instrument |
+| GET | `/market/opportunity-instruments` | Read · `server/routes/data.py::get_market_opportunity_instruments` — residual: instruments that have legacy Opportunity rows (the Opportunity lifecycle has no production producer) |
+| GET | `/market/opportunities` | Read · `server/routes/data.py::get_market_opportunities` — residual: legacy Opportunity rows for one instrument (`symbol`, `market_type`, `limit<=500`) |
 
 `GET /market/ohlcv` preserves its historical candle-array body. The response header
 `X-Aletheia-Data-Source` is `memory_cache`, `provider_fetch`, `database_fallback`,
@@ -338,26 +367,16 @@ fresh, since each window is distinct.
 | GET | `/settings` | Full config as JSON plus `learning_path_options`, the registry-backed supported/unsupported paper-influence inventory used by the existing Settings page |
 | POST | `/settings/autonomous-learning` | Legacy master Learning-loop toggle. Protected by the tunnel owner token when a tunnel is enabled; missing tunnel secret fails closed and rejected authentication performs no config or audit mutation. |
 | POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, registry-validated paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Unknown paths and paths without a wired consumer, Settings support, or prospective measurement are rejected (including when an old unsupported saved path is re-enabled through the master toggle). Lifecycle automation and the sole measured Paper path default on, but experiment authority still requires explicit owner admission; this endpoint cannot enable live trading. Protected by the tunnel owner token when a tunnel is enabled. |
-| POST | `/settings/learning/experiments/{experiment_id}/admit-trial` | Explicit owner admission from a current shadow verdict into one `paper_10` successor. Requires `verdict_id`, `expected_policy_epoch`, bounded `reason`, and `confirm_admission=true`; the server derives the actual epoch, checks every paper gate, writes one deduplicated lifecycle event and audits `human/dashboard`. Protected by the tunnel owner token when a tunnel is enabled. |
+| POST | `/settings/learning/experiments/{experiment_id}/admit-trial` | Residual: always returns 409 ("canonical Lab authority requires the Observation owner-action surface"); admission goes through `.../owner-action` below. Listed under Known conformance gaps. |
 | POST | `/settings/economics` | Default-off tokenomics harness controls. Disabling the harness also disables shadow observation and prompt secret-shape detection; this endpoint never enables budget enforcement. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
-
----
-
-## LLM Harness telemetry (read-only)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/economics/status` | Token/cost tracing and viability-audit kill-switch state. |
-| GET | `/economics/usage-insights?days=1\|7\|30\|90&group=summary\|operations` | Aggregate-only, read-only Usage contract v2 for one exact UTC window. `summary` returns the window, five-value overview, complete-prior-window comparison, observed token composition, and hour/day/week trend. `operations` returns fixed Agent/Model/Provider/Tool breakdowns, compact reliability, active cooldowns, and configured budgets. Unavailable numbers are `null`; token subtypes are omitted when never observed. Costs use provider-reported USD first, otherwise the immutable catalog snapshot effective at the event instant. No prompts, responses, raw errors, provenance/gap diagnostics, research yield, cache, or writes. |
-| GET | `/economics/pricing/refresh-status` | In-process status for the single-flight LiteLLM public price-map refresh. Never performs network or database work. |
-| POST | `/economics/pricing/refresh` | Audited dashboard trigger for a non-blocking refresh from LiteLLM's public GitHub price catalog. Returns HTTP 202; provider-independent model-level medians and measurable provider-native tool rates create forward-only estimated snapshots. This catalog is the only model/tool price source; no manual writer exists and historical events are not rewritten. |
-| GET | `/economics/tokens` | Token-first LLM usage summary for a day window, optionally filtered by `run_id`. Reports provider-supplied input/output/cache/reasoning totals and field availability without requiring a USD price snapshot. |
-| GET | `/economics/costs` | Windowed cost summary; USD remains nullable when no immutable price snapshot applies. |
-| GET | `/economics/budgets` | Read-only declared budget policies. |
-| GET | `/economics/budgets/would-block` | Read-only shadow observations; it does not enforce a budget. |
-
----
+| GET | `/settings/learning/experiments` | Read · `server/routes/settings.py::list_learning_experiments` — Learning experiment summaries (path, stage, status); read from the Observation Lab when it is the selected experiment authority. Learning is owned by [spec 0001](../specs/0001-learning-loop/spec.md) |
+| GET | `/settings/learning/experiments/{experiment_id}` | Read · `server/routes/settings.py::get_learning_experiment` — one experiment's lifecycle/operator view; 503 when the Lab is selected but unavailable |
+| POST | `/settings/learning/experiments/{experiment_id}/owner-action` | Write · `server/routes/settings.py::queue_observation_owner_action` — queue one owner action (`withdraw`, `refreeze`, `invalidate`, `revoke`, `admit`, `close`, `promote`, `hold`, `finalize`, `adopt`) for asynchronous Lab application; requires `reason` and `confirm=true`; deduplicated by content hash; reports transport state, never Lab success; 409 when the Lab is not the selected authority |
+| POST | `/settings/trading-mandate` | **Write (trust boundary)** · `server/routes/settings.py::set_trading_mandate` — replace the observe-only Trading Mandate; see the trust-boundary table |
+| POST | `/settings/fast-trigger` | **Write (trust boundary)** · `server/routes/settings.py::update_fast_trigger_config` — Fast Trigger mode/authority; see the trust-boundary table |
+| POST | `/settings/controller` | Write · `server/routes/settings.py::update_controller_config` — filter-controller shadow settings (`observe_interval_hours` 1–168, `min_samples_gate` 5–500, `max_step` 0.01–0.5, else 400); reschedules the controller job when shadow/interval fields change; audits `controller_config_changed` |
+| GET | `/settings/universe/candidate-selection` | Read · `server/routes/settings.py::get_candidate_selection_status` — the configured Candidate selection authority (recovers an interrupted authority transition before reading) |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
@@ -375,7 +394,7 @@ fresh, since each window is distinct.
 | POST | `/settings/exchange-mode` | Sets `exchange.mode` to `demo` or `live`; Live unlock remains separate |
 | POST | `/settings/risk` | Risk limit parameters |
 | POST | `/settings/symbols` | Crypto symbol config |
-| POST | `/settings/equities` | xStocks / equity config |
+| POST | `/settings/equities` | **Frozen** (equities out of scope, spec 0003 FC-R04): observed US equity tickers for the frozen `equity_observer`; observation-only, never traded |
 | POST | `/settings/trading` | Trading parameters (slippage, sizing) |
 | POST | `/settings/market-data` | Market data collection config |
 | POST | `/settings/universe` | Universe pipeline config |
@@ -393,7 +412,32 @@ fresh, since each window is distinct.
 
 ---
 
+## LLM Harness telemetry (read-only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/economics/status` | Token/cost tracing and viability-audit kill-switch state. |
+| GET | `/economics/usage-insights?days=1\|7\|30\|90&group=summary\|operations` | Aggregate-only, read-only Usage contract v2 for one exact UTC window. `summary` returns the window, five-value overview, complete-prior-window comparison, observed token composition, and hour/day/week trend. `operations` returns fixed Agent/Model/Provider/Tool breakdowns, compact reliability, active cooldowns, and configured budgets. Unavailable numbers are `null`; token subtypes are omitted when never observed. Costs use provider-reported USD first, otherwise the immutable catalog snapshot effective at the event instant. No prompts, responses, raw errors, provenance/gap diagnostics, research yield, cache, or writes. |
+| GET | `/economics/pricing/refresh-status` | In-process status for the single-flight LiteLLM public price-map refresh. Never performs network or database work. |
+| POST | `/economics/pricing/refresh` | Audited dashboard trigger for a non-blocking refresh from LiteLLM's public GitHub price catalog. Returns HTTP 202; provider-independent model-level medians and measurable provider-native tool rates create forward-only estimated snapshots. This catalog is the only model/tool price source; no manual writer exists and historical events are not rewritten. |
+| GET | `/economics/tokens` | Token-first LLM usage summary for a day window, optionally filtered by `run_id`. Reports provider-supplied input/output/cache/reasoning totals and field availability without requiring a USD price snapshot. |
+| GET | `/economics/costs` | Windowed cost summary; USD remains nullable when no immutable price snapshot applies. |
+| GET | `/economics/budgets` | Read-only declared budget policies. |
+| GET | `/economics/budgets/would-block` | Read-only shadow observations; it does not enforce a budget. |
+| GET | `/economics/costs/by-provider` | Read · `server/routes/economics.py::costs_by_provider` — per-provider token breakdown and UTC daily series over `runtime_cost_events` (`days` 1–365, optional `run_id`) |
+| GET | `/economics/costs/by-tool` | Read · `server/routes/economics.py::costs_by_tool` — per-tool call rollup for the Usage dashboard |
+| GET | `/economics/viability/reports` | Read · `server/routes/economics.py::viability_reports` — stored viability reports (`scope=system\|operator`), never recomputed |
+| GET | `/economics/model-health` | Read · `server/routes/economics.py::model_health` — per-(provider, model) cooldown state from the fallback subsystem |
+| GET | `/economics/context-artifacts` | Read · `server/routes/economics.py::context_artifacts` — residual: prompt-free context-consumption audit written for the retired Market Observer |
+| GET | `/economics/pricing` | Read · `server/routes/economics.py::pricing` — catalog-derived model and provider-native tool pricing rows |
+
+---
+
 ## Exchange Credentials
+
+> Bitget is the only in-scope venue. The Binance and OKX rows are **frozen** residual surfaces:
+> they remain registered and keep the write-only credential invariant, but they are not a
+> supported venue.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -441,6 +485,7 @@ fresh, since each window is distinct.
 | GET | `/universe/entry-plans/{plan_id}` | Exact active or terminal Entry Plan; validates its stored V1 contract and content hash before returning it |
 | GET | `/universe/candidates/{candidate_id}` | Exact Candidate attention and planning evidence by identity; elapsed soft/hard attention deadlines are projected immediately as `ttl_expired` / `max_attention_age` without mutating Entry Plans or Orders |
 | GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`), using the same effective attention-expiry projection as Candidate detail |
+| GET | `/universe/planning-generations/{generation_id}` | Read · `server/routes/universe.py::get_planning_generation` — one Candidate planning generation with its planner input, requalification and hypothesis blobs; 404 when unknown |
 | GET | `/universe/members/{id}` | Member detail (features, outcomes) |
 | POST | `/universe/refresh` | Trigger universe refresh |
 | GET | `/universe/policy` | Config-derived universe policy |
@@ -450,6 +495,11 @@ fresh, since each window is distinct.
 ---
 
 ## Prediction Markets
+
+> **Frozen — out of product scope.** Prediction markets are outside the active instrument scope.
+> These routes are residual code: `server/app.py` mounts `routes/prediction.py` unconditionally
+> today. Target per [spec 0003 FC-R04](../specs/0003-futures-only-convergence/spec.md#fc-r04-out-of-scope-producers)
+> (draft): not registered unless `research.frozen_observers` is enabled. Do not build on them.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -485,7 +535,7 @@ fresh, since each window is distinct.
 | PATCH | `/serenity/themes/{id}/status` | Update theme status |
 | POST | `/serenity/themes/{id}/feedback` | Submit feedback |
 | POST | `/serenity/themes/{id}/deep-dive` | Trigger deep research |
-| POST | `/serenity/themes/{id}/promote` | Promote theme opportunities to PI evaluation queue (Phase 3, Option A — writes signal_pending PiDecisions with signal_source='serenity'; no more state='draft' StrategyRecords) |
+| POST | `/serenity/themes/{id}/promote` | Write · `server/routes/data.py::promote_serenity_theme` — publishes the theme's active Serenity opportunities as Candidates through the canonical Candidate path (`trading/serenity_publication.py::publish_serenity_candidates`), then wakes the PI daemon. 404 unknown theme; 409 when the theme has no active opportunities or publication rejects the source (for example missing supporting evidence or a failed risk gate). Writes no PiDecision |
 | GET | `/serenity/evidence` | List evidence |
 | POST | `/serenity/evidence` | Create evidence |
 | GET | `/serenity/opportunities` | Serenity opportunities |
@@ -636,6 +686,13 @@ fresh, since each window is distinct.
 | GET | `/capital/events` | List capital events (deposits/withdrawals) |
 | POST | `/capital/events` | Record new capital event |
 
+## Export
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/export/catalog` | Read · `server/routes/export.py::get_export_catalog` — preset semantics, row counts and dataset classifications |
+| POST | `/export/download` | Read-only side effect (temporary file) · `server/routes/export.py::download_export` — streams a ZIP of the requested CSV datasets and an optional redacted config copy; secrets are never included; ZIPs are analysis output, never restore input (400 when nothing is selected) |
+
 ## Persistence / Data Management
 
 > Internal data management endpoints. Not exposed in frontend UI — used via CLI/API.
@@ -648,6 +705,7 @@ fresh, since each window is distinct.
 | GET | `/persistence/events` | Event log |
 | GET | `/persistence/orders` | PS-layer orders |
 | GET | `/persistence/positions` | PS-layer positions |
+| GET | `/persistence/positions/{position_id}` | Read · `server/routes/persistence.py::get_position` — one PS-layer position with its full `raw_json` payload |
 | GET | `/persistence/backups` | List backups |
 | POST | `/persistence/backups` | Create backup |
 | POST | `/persistence/backups/verify` | Verify backup integrity |
@@ -682,7 +740,8 @@ fresh, since each window is distinct.
 
 ## Infrastructure (internal)
 
-> `/_infra/` routes — not proxied via frontend, direct backend access only.
+> `/_infra/` routes and the backend root `/` carry no `/api/` prefix. `/_infra/*` is not proxied via
+> the frontend; direct backend access only.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -690,6 +749,7 @@ fresh, since each window is distinct.
 | GET | `/_infra/readyz` | Readiness probe |
 | GET | `/_infra/doctor` | Full diagnostic report (JSON of doctor probes) |
 | GET | `/_infra/status` | Infra-only status snapshot |
+| GET | `/` (no `/api/` prefix) | `server/app.py::dashboard_unavailable` — mounted only when the built dashboard is missing (broken/direct-start case); returns a self-refreshing 503 page; excluded from OpenAPI |
 | GET | `/version` | Build version info |
 
 ### Dev-only (environment-gated)
@@ -702,3 +762,33 @@ exclude them. Do not depend on them from UI clients.
 |--------|------|-------------|
 | GET | `/dev/reload/status` | Dev hot-reload status (dev builds only) |
 | GET | `/dev/reload/events` | Dev hot-reload event stream (dev builds only) |
+
+---
+
+## Frozen and residual surfaces
+
+Registered routes that serve a closed scope or a retired producer. They are listed so the index
+matches code; none is a supported capability.
+
+| Surface | State |
+|---|---|
+| `/prediction/*` (15 routes) | Frozen, out of scope; spec 0003 FC-R04 target is not registered by default |
+| `POST /settings/equities` | Frozen with `equity_observer` (spec 0003 FC-R04) |
+| `/binance/*`, `/okx/*`, `POST /settings/{binance,okx}-credentials` | Frozen venues; Bitget is the only in-scope venue |
+| `/opportunities`, `/market/opportunities`, `/market/opportunity-instruments`, `/analytics/opportunity-funnel*`, `/analytics/operator-decisions`, `/analytics/opportunity-trace/{id}` | Residual reads of the legacy Opportunity lifecycle, which has no production producer; the Candidate → Entry Plan path is under `/universe/*` |
+| `/economics/context-artifacts` | Residual audit for the retired Market Observer |
+| `/settings/learning*`, `/analytics/learning-*`, `/knowledge/guard*` | Learning is owned by [spec 0001](../specs/0001-learning-loop/spec.md); rows describe current code only |
+
+## Known conformance gaps
+
+| Gap | Evidence |
+|---|---|
+| `POST /settings/learning/experiments/{id}/admit-trial` is a route that only returns 409 and points callers at `.../owner-action`; under the no-shim rule it should be deleted | `server/routes/settings.py::admit_learning_trial` |
+| Prediction routes are mounted unconditionally; `research.frozen_observers` does not exist in config | `server/app.py` `app.include_router(prediction_router)`; `grep -rn frozen_observers core` has no hit |
+
+## Route coverage check
+
+The table rows above were diffed against every `@router.<method>` / `@app.<method>` /
+`add_api_route` decorator under `core/aletheia/server/` and `extensions/` by a one-shot AST
+script (router prefixes resolved, path parameters normalised); on 2026-10-10 it reported 316
+code routes, 316 documented, zero missing in either direction.

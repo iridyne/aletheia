@@ -1,6 +1,6 @@
 # Entry Workbench design
 
-Status: current owner-facing contract for issue #2288. The historical Decision
+Status: current owner-facing contract for the `/universe` page. The historical Decision
 Blotter and Universe Board specifications are not current product authority.
 
 ## Ownership and causal path

@@ -17,7 +17,7 @@ dated design documents and archive; they are not active page authority.
 | `/learning` | Learning | Learning evidence and governance |
 | `/settings` | Settings | Configuration, including Universe/Candidate attention bounds and protected Candidate Selection qualification/admission/rollback |
 | `/usage` | Usage | Runtime/model usage observability |
-| `/prediction-markets` | Prediction Markets | Prediction observer facts |
+| `/prediction-markets` | Prediction Markets — **frozen**, out of product scope ([spec 0003 FC-R04](../specs/0003-futures-only-convergence/spec.md#fc-r04-out-of-scope-producers): page hidden unless `research.frozen_observers`) | Prediction observer facts (observer off by default) |
 | `/serenity-lens` | Serenity Lens | Long-horizon research |
 | `/news` | News Intel | Collected news evidence |
 
@@ -36,7 +36,7 @@ Compatibility redirects (`LegacyRedirect` in `frontend/src/App.tsx`) own no uniq
 ## Navigation information architecture
 
 - Global: Overview, Command Center.
-- Research: Markets, Prediction Markets, Serenity Lens, News Intel.
+- Research: Markets, Prediction Markets (frozen, see above), Serenity Lens, News Intel.
 - Decision: Entry Workbench, Agent Activity.
 - Portfolio: Trades & Positions, Risk & Controls.
 - Global utilities: Learning, Usage, Settings.
@@ -78,3 +78,10 @@ distinguish loading, unavailable, stale cached, successful empty, disabled, and
 not-configured states. Shared tabs retain arrow/Home/End keyboard behavior. The
 canonical breakpoint scale is 640, 768, 1024, and 1280 pixels; narrow layouts keep
 semantic reading order and use table overflow rather than removing fields.
+
+## Known conformance gaps
+
+| Gap | Evidence |
+| --- | --- |
+| The seven `LegacyRedirect` rows above (nine old paths) are alias routes that own no UI; under the repository rule "one capability, one implementation; no alias mirror" they should be deleted, not kept as compatibility | `frontend/src/App.tsx` `<Route ... element={<LegacyRedirect .../>}>` for `/agent-runs`, `/opportunities`, `/dreaming`, `/knowledge`, `/reports`, `/blotter`, `/proposals`, `/paper-trades`, `/positions` |
+| `/prediction-markets` is still routed unconditionally and listed in navigation and the command palette | `frontend/src/App.tsx` `<Route path="/prediction-markets" ...>`, `frontend/src/routeManifest.ts`, `frontend/src/components/CommandPalette.tsx` `nav-prediction`; no `frozen_observers` gate exists |
