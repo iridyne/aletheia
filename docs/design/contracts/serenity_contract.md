@@ -208,6 +208,11 @@ source-scoped snapshot、member 与 current PlanningGeneration，然后才置 th
 导致全批回滚，不留下半成品晋升。Universe refresh/reconcile 只处理 Universe 来源；
 两个来源仍共用一个 exact venue/symbol/market_type owner，全球 attention TTL 继续适用。
 
+`serenity.enabled`（默认 False）是 Serenity 活动的总开关：关闭时不注册 `serenity_startup_catchup`，
+nightly 不入队研究，`/api/serenity/runs`（创建/重试）、deep-dive 与 promote 返回 503，
+因此没有研究运行，也没有 Serenity Candidate 进入交易主干。已有数据的 interrupted-run recovery
+与 retention 照常执行（状态一致性，不算 Serenity 活动）；只读接口与对 `serenity_*` 表的人工编辑不受影响。
+
 自动晋升保留 `auto_promote`（默认 False）与 `min_score_for_pi` 评分门；低于门槛的 child
 不发布。手工晋升不应用该分数门，但同样必须通过真实证据、风险 gate 与 PA 准入。
 当前 writer 有发布结果才标记 theme promoted；不能把 theme 状态解释成每个 child 都已获交易权。
