@@ -1310,11 +1310,12 @@ def test_execution_lineage_distinguishes_no_fill_from_missing_order(tmp_path, mo
 
     _setup_db(tmp_path, monkeypatch)
     plan, order = _persist_ordered_plan()
-    repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (order.id,))
-    lineage = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
-    assert lineage["availability"]["available"] is True
-    assert lineage["fills"]["quantity"] == 0
-    assert lineage["execution_state"] == "NO_FILL"
+    for ended in ("error", "submission_rejected", "cancelled"):
+        repo.execute_write("UPDATE orders SET status=? WHERE id=?", (ended, order.id))
+        lineage = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
+        assert lineage["availability"]["available"] is True
+        assert lineage["fills"]["quantity"] == 0
+        assert lineage["execution_state"] == "NO_FILL", ended
     repo.execute_write("UPDATE entry_plans SET order_id=NULL WHERE id=?", (plan.plan_id,))
     repo.execute_write("DELETE FROM orders WHERE id=?", (order.id,))
     lineage = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]

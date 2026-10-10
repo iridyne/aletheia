@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import Order, TradeProposal
+from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
 
 __all__ = [
     '_compute_proposal_hash',
@@ -493,8 +494,6 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         get_db,
     )
 
-    from aletheia.storage.order_states import NON_TERMINAL_ORDER_STATES
-
     placeholders = ",".join("?" for _ in NON_TERMINAL_ORDER_STATES)
     rows = (
         get_db()
@@ -761,7 +760,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                     continue
                 if not ps:
                     item["execution_state"] = ("CANCEL_PENDING" if order["status"] == "cancel_pending" else
-                        "NO_FILL" if order["status"] in {"cancelled", "rejected", "failed"} and quantity == 0 else "ORDER_WORKING")
+                        "NO_FILL" if order["status"] not in NON_TERMINAL_ORDER_STATES and quantity == 0 else "ORDER_WORKING")
                     continue
                 if not of:
                     item.update(availability={"available": False, "reason": "entry_fill_relation_missing"}, execution_state="UNAVAILABLE")
