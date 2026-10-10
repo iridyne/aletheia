@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
 from aletheia.config.schema import AletheiaConfig
 from tests.helpers.live_identity import bind_live_identity
 
@@ -12,9 +13,8 @@ def _config(monkeypatch, broker: str):
     import aletheia.trust.live_unlock as trust
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = broker
+    cfg.exchange.paper_execution_mode = EXCHANGE_UNIFICATION_MAP[broker][1]
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = broker
     bind_live_identity(monkeypatch, lambda ref: f"secret:{ref}")
     return cfg, trust
 
@@ -30,14 +30,17 @@ def _account_result(*, uid="account-1", environment="live", permissions=("trade"
 
 
 @pytest.mark.parametrize("broker,profile,generation,revision,config_revision", [
-    ("bitget", "uta_v3", 5, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "e36dc17008c5a8bb79a513ca416db0a706be3494b4e9fbb8b27f7499a740b46b"),
-    ("okx", "okx_live", 0, "a672a19babf643410474e084618f6b92839b0e4cce3df8d3f0b16b72068aff76", "a8de0f070a66658dae23156f110f460f8ff390f0b852b663d36d538b16aea693"),
-    ("binance", "binance_live", 0, "c3373675b3aec36cecc8ea26e7c020eca214023cce91c9af2385918cbfd2cc60", "2113bd513e61e0fee2f1678f6baec045e52225886107b6850da5d200536527b2"),
+    ("bitget", "uta_v3", 5, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "c3fdc20cf3e43a6c1e25a5ab9d2235f25b5de96faf9aafe18e74054b0a029e90"),
+    ("okx", "okx_live", 0, "a672a19babf643410474e084618f6b92839b0e4cce3df8d3f0b16b72068aff76", "8121e23b42e7b7b01b61892a2b5bf9d4e8072da96e01a868d130aa69827601b4"),
+    ("binance", "binance_live", 0, "c3373675b3aec36cecc8ea26e7c020eca214023cce91c9af2385918cbfd2cc60", "a0347ba9a6fa178fd43429ba9af6caf9be58f3cee1d940cf2382c7fa3941ff02"),
 ])
 def test_live_identity_preserves_pre_extraction_hashes(monkeypatch, broker, profile, generation, revision, config_revision):
-    """Synthetic golden identities measured on a6ed49f74 before extraction."""
+    """Synthetic golden identities; credential revisions unchanged since a6ed49f74.
+
+    config_revision was re-measured when `risk.allowed_exchange` left the digest
+    and the broker became the venue of exchange.paper_execution_mode (#3930).
+    """
     cfg, trust = _config(monkeypatch, broker)
-    cfg.exchange.paper_execution_mode = ""
     fields = ("api_key", "api_secret") if broker == "binance" else ("api_key", "api_secret", "passphrase")
     assert trust.resolve_live_execution_identity(cfg) == {
         "broker": broker,
@@ -433,9 +436,8 @@ def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkey
     sq.reset_db()
     run_migrations()
     cfg = AletheiaConfig()
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = "okx"
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")), encoding="utf-8")
     evidence = _route_evidence(cfg, monkeypatch)
 
@@ -487,15 +489,14 @@ def test_live_unlock_rechecks_config_revision_after_preflight(tmp_path, monkeypa
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     cfg = AletheiaConfig()
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = "okx"
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")), encoding="utf-8")
     evidence = _route_evidence(cfg, monkeypatch)
 
     async def fake_preflight(_cfg):
         changed = loader.load_config()
-        changed.exchange.name = "binance"
+        changed.exchange.paper_execution_mode = "binance_testnet"
         loader.save_config(changed)
         return evidence
 

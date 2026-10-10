@@ -49,13 +49,13 @@ _QTY_REL_TOL = 0.02  # 2%
 def _execution_mode_for(account_mode: str) -> str | None:
     """Resolve execution_mode from account mode, respecting paper_execution_mode config."""
     from aletheia.config.exchanges import (
-        DEMO_EXECUTION_MODES, live_execution_mode_for_exchange,
+        DEMO_EXECUTION_MODES, selected_live_execution_mode,
     )
     from aletheia.config.loader import load_config
 
     cfg = load_config()
     if account_mode == "live":
-        return live_execution_mode_for_exchange(cfg.exchange.name)
+        return selected_live_execution_mode(cfg)
     if account_mode == "demo":
         mode = cfg.exchange.paper_execution_mode
         if mode in DEMO_EXECUTION_MODES:

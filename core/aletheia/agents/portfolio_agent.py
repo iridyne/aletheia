@@ -22,10 +22,10 @@ async def run_portfolio_agent(permission_mode: str = "Observe", run_id: str | No
     from aletheia.portfolio.pnl import compute_and_store_snapshot
 
     cfg = load_config()
-    from aletheia.config.exchanges import live_execution_mode_for_exchange
+    from aletheia.config.exchanges import selected_live_execution_mode
 
     execution_mode = (
-        live_execution_mode_for_exchange(cfg.exchange.name) or ""
+        selected_live_execution_mode(cfg) or ""
         if cfg.exchange.mode == "live"
         else cfg.exchange.paper_execution_mode
     )

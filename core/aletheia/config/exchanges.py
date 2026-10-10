@@ -103,6 +103,13 @@ def live_execution_mode_for_exchange(exchange_id: str) -> str | None:
     return LIVE_EXECUTION_MODES.get(str(exchange_id or "").strip().lower())
 
 
+def selected_live_execution_mode(cfg) -> str | None:
+    """The live account of the venue ``exchange.paper_execution_mode`` selects."""
+    return live_execution_mode_for_exchange(
+        execution_mode_venue(cfg.exchange.paper_execution_mode) or ""
+    )
+
+
 @dataclass(frozen=True)
 class EntryRoutePolicy:
     """What qualifies one execution route for autonomous Entry Plans."""

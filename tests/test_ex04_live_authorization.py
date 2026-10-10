@@ -69,10 +69,8 @@ def _setup_live_workspace(tmp_path, monkeypatch, *, broker: str = "okx", unlock:
     import aletheia.trust.live_unlock as trust
 
     cfg = load_config()
-    cfg.exchange.name = broker
     cfg.exchange.mode = "live"
     cfg.exchange.paper_execution_mode = f"{broker}_demo" if broker != "binance" else "binance_testnet"
-    cfg.risk.allowed_exchange = broker
     cfg.agent.permission_mode = "Full"
     from tests.helpers.live_identity import bind_live_identity
 

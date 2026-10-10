@@ -246,7 +246,7 @@ def test_live_disappearance_records_evidence_but_remains_alert_only(tmp_path, mo
     import aletheia.config.loader as loader
     cfg = loader.load_config()
     cfg.exchange.mode = "live"
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     loader.save_config(cfg)
     repo.insert_position(_position(execution_mode="bitget_live_limited"))
     _legacy_snapshot(

@@ -1847,10 +1847,9 @@ def _execute_proposal(
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
             # The quantity-only execution snapshot likewise preserves
             # trade_school=proposal.trade_school on this live dispatch path.
-            from aletheia.config.exchanges import live_execution_mode_for_exchange
+            from aletheia.config.exchanges import selected_live_execution_mode
 
-            selected_exchange = getattr(getattr(cfg, "exchange", None), "name", None)
-            expected_live_mode = live_execution_mode_for_exchange(selected_exchange) if selected_exchange else None
+            expected_live_mode = selected_live_execution_mode(cfg)
             if expected_live_mode is not None and allowed_mode != expected_live_mode:
                 update_trade_proposal(proposal.id, status="rejected")
                 write_audit(

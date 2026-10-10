@@ -475,17 +475,14 @@ def test_exchange_source_divergence_is_guarded_and_visible():
 
     # Every registered external demo/testnet mode has a venue; the archived
     # internal simulator remains unresolved.
-    from aletheia.config.exchange_alignment import (
-        _EXECUTION_MODE_EXCHANGES,
-        execution_exchange_for_mode,
-    )
-    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, execution_mode_venue
 
-    assert set(_EXECUTION_MODE_EXCHANGES) == {
-        paper_mode for _ccxt, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
-    }
-    assert execution_exchange_for_mode("paper_internal") is None
-    assert execution_exchange_for_mode("okx_demo") == "okx"
+    assert all(
+        execution_mode_venue(paper_mode) == venue
+        for venue, (_ccxt, paper_mode) in EXCHANGE_UNIFICATION_MAP.items()
+    )
+    assert execution_mode_venue("paper_internal") is None
+    assert execution_mode_venue("okx_demo") == "okx"
     assert settings_route.count("confirm_exchange_divergence") >= 2
     assert "exchange_alignment" in health_route
     assert "exchange_diverged" in overview

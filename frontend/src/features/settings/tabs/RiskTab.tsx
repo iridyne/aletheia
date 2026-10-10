@@ -842,9 +842,6 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       {/* Immutable fields notice */}
       <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', padding: '0.45rem 0.75rem', background: 'var(--bg)', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', marginBottom: '1.25rem' }}>
         <span className="text-xs text-muted">
-          allowed_exchange: <span className="mono">{risk.allowed_exchange}</span>
-        </span>
-        <span className="text-xs text-muted">
           require_risk_check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`}>{humanizeBool(risk.require_risk_check_for_all_orders)}</span>
         </span>
       </div>

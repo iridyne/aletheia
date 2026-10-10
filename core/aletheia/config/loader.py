@@ -388,6 +388,15 @@ def load_config(
         removed_bitget_profile = isinstance(exchange, dict) and "bitget_profile" in exchange
         if isinstance(exchange, dict):
             exchange.pop("bitget_profile", None)
+        # The venue is exchange.paper_execution_mode alone; `exchange.name` and
+        # `risk.allowed_exchange` were copies of it and were removed (#3930).
+        risk_raw = raw.get("risk")
+        removed_exchange_name = isinstance(exchange, dict) and "name" in exchange
+        removed_allowed_exchange = isinstance(risk_raw, dict) and "allowed_exchange" in risk_raw
+        if isinstance(exchange, dict):
+            exchange.pop("name", None)
+        if isinstance(risk_raw, dict):
+            risk_raw.pop("allowed_exchange", None)
         runtime = raw.get("runtime")
         retired_runtime_keys = {"runtime_continuity_enabled", "runtime_continuity_lock_ttl_sec", "runtime_continuity_shadow_port_offset"}
         removed_runtime_keys = retired_runtime_keys.intersection(runtime) if isinstance(runtime, dict) else set()
@@ -443,7 +452,8 @@ def load_config(
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
         changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
                    or removed_serenity_stop or removed_strategy_factory
-                   or removed_uta_boundary or removed_bitget_profile or removed_runtime_keys or candidate_selection_migrated
+                   or removed_uta_boundary or removed_bitget_profile
+                   or removed_exchange_name or removed_allowed_exchange or removed_runtime_keys or candidate_selection_migrated
                    or removed_operator_loop)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.

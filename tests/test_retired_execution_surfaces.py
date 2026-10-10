@@ -11,7 +11,7 @@ def test_new_config_has_no_implicit_execution_account():
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
-    assert cfg.exchange.name == cfg.exchange.paper_execution_mode == cfg.risk.allowed_exchange == ""
+    assert cfg.exchange.paper_execution_mode == ""
 
     from aletheia.risk.engine import _config_active_execution_mode
 
@@ -82,7 +82,7 @@ def test_external_exchange_selection_keeps_all_axes_aligned(monkeypatch, exchang
 
     result = settings.set_primary_exchange(settings.PrimaryExchangeRequest(exchange_id=exchange))
 
-    assert result["exchange_id"] == cfg.exchange.name == cfg.risk.allowed_exchange == exchange
+    assert result["exchange_id"] == exchange
     # Market data follows the account: the override is cleared, the effective venue aligned.
     from aletheia.config.exchange_alignment import market_data_exchange
     assert cfg.market_data.ccxt_exchange == cfg.market_data.ccxt_fallback == ""

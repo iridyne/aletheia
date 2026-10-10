@@ -72,7 +72,6 @@ def test_gateway_status_reports_unconfigured_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     cfg = loader.load_config()
-    cfg.exchange.name = "okx"  # Retained preference, not an active connection.
     cfg.exchange.paper_execution_mode = ""
     loader.save_config(cfg)
 
@@ -195,7 +194,6 @@ def cli_db(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     cfg = loader.load_config()
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     loader.save_config(cfg)
     yield tmp_path

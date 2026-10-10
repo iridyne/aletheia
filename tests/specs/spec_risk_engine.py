@@ -1818,18 +1818,18 @@ def test_named_external_account_requires_healthy_fresh_account_row(monkeypatch):
         "risk_engine_contract",
         "§2 monitoring account identity",
         "L2b",
-        "The default live monitoring account uses exchange.name, not the unrelated "
-        "market-data provider setting.",
+        "The default live monitoring account is the live account of the venue "
+        "exchange.paper_execution_mode selects, not the market-data provider setting.",
         status="implemented",
     )
 )
-def test_active_live_execution_mode_uses_exchange_name():
+def test_active_live_execution_mode_follows_the_execution_venue():
     import aletheia.risk.engine as eng
     from aletheia.config.loader import load_config
 
     cfg = load_config().model_copy(deep=True)
     cfg.exchange.mode = "live"
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     assert eng._config_active_execution_mode(cfg) == "bitget_live_limited"
 
 

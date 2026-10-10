@@ -280,7 +280,6 @@ class RuntimeConfig(BaseModel):
 
 
 class ExchangeConfig(BaseModel):
-    name: str = ""
     mode: str = "demo"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
     # When both spot and usdt_futures are enabled, which market_type to emit per
@@ -1189,7 +1188,6 @@ class RiskConfig(BaseModel):
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
     symbol_filter_mode: Literal["whitelist", "blacklist"] = "blacklist"
     symbol_list: list[str] = Field(default_factory=list)
-    allowed_exchange: str = ""
     allow_short_demo: bool = True
     allow_short_live: bool = True
     require_risk_check_for_all_orders: bool = True

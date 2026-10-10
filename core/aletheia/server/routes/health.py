@@ -409,7 +409,6 @@ def status():
             "blocked_by": list(pause_blockers),
             "dependency_recovery_is_resume": False,
         },
-        "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
         "paper_execution_mode": paper_execution_mode,
         "execution_target": "external_exchange" if uses_external_exchange else alignment.status,

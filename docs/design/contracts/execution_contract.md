@@ -295,7 +295,7 @@ account_environment + canonical symbol + market_type + direction`；双方都带
 当前分类只接受已注册的外部执行模式；退役账户配置返回 `unconfigured`，不产生受管仓位分类。
 归档本地账户不参与当前对账事故检测，外部缓存不得将其分类为 `orphaned` 或关闭其历史仓位。
 历史记录保持原样，旧分类定义见[归档](../history/local_simulated_position_observation.md#reconciliation)。
-Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬编码某一家交易所（`PL-ADOPT-23`）。
+Live 作用域从 `exchange.paper_execution_mode` 所属交易所派生对应的 `*_live_limited`（`config.exchanges.selected_live_execution_mode`），不得硬编码某一家交易所（`PL-ADOPT-23`）。
 统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
 Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。

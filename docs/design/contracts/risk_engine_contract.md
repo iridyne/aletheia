@@ -76,7 +76,7 @@ Position 没有入场策略，按当前策略守护。
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
 | 8 | Max Daily Loss | **默认关闭**：`risk.max_daily_loss_pct` 默认 `0`，此时整关不执行，也不读取 account snapshot（该快照仅服务本关）。配置正数百分比后启用，行为不变：只读 authoritative account snapshot；来源不可用→拒绝但不伪造 breach；真实日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`（`0`=关闭，demo/live 默认均为 `0`）、`kill_switch_enabled_{live/demo}` | 关闭时不产生；启用时 `account_loss_unavailable:{reason}` / `max_daily_loss_exceeded:{r}<=-{lim}` | engine.py check #8 |
-| 9a | Exchange Allowlist | `AccountConfigBinding.GLOBAL` 账户必须匹配；OKX/Binance 保留既有 `SELF_CONTAINED` 豁免 | `risk.allowed_exchange` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `exchange_not_allowed:{a}!={e}` | engine.py check #9a |
+| 9a | —（已删除 2026-10-10） | 原交易所白名单比较的是两份配置副本，从不比较订单自身的交易所；交易所身份只由 `exchange.paper_execution_mode` 决定（DECISIONS.md 2026-10-10） | — | — | — |
 | 9b | Account Mode Match | `GLOBAL` 账户要求 live↔mode=live / demo↔mode=demo；`SELF_CONTAINED` 保留既有豁免 | `exchange.mode` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `account_mode_mismatch:...` | engine.py check #9b |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | 只接受 Proposal 对应 venue + physical market 的精确快照；同 symbol 的其他 venue/market 不得替代。live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` / `_MAX_DEMO_DATA_AGE_SECONDS=1800` | `stale_market_data:age={a}` (live); `stale_market_data_demo:age={a}` (registered demo modes) | engine.py `_market_data_age_seconds` |

@@ -19,16 +19,16 @@ from aletheia.storage.migrations import run_migrations
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("exchange", ["", "unsupported"])
+@pytest.mark.parametrize("mode", ["", "unsupported"])
 @pytest.mark.parametrize("external_reachable", [False, True])
 async def test_missing_exchange_probe_cannot_prove_connectivity(
-    monkeypatch, exchange, external_reachable,
+    monkeypatch, mode, external_reachable,
 ):
     from aletheia.agent_runtime import connectivity
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = exchange
+    cfg.exchange.paper_execution_mode = mode
     external = {
         "reachable": external_reachable,
         "latency_ms": 10 if external_reachable else None,
@@ -45,24 +45,21 @@ async def test_missing_exchange_probe_cannot_prove_connectivity(
         "reachable": False,
         "latency_ms": None,
         "error": "exchange_probe_unavailable",
-        "exchange": exchange,
+        "exchange": "",
     }
     http_client.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exchange", ["bitget", "okx", "binance"])
-@pytest.mark.parametrize("preference", [None, "", "stale", "okx"])
-async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange, preference):
+async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange):
     from contextlib import asynccontextmanager
     from aletheia.agent_runtime import connectivity
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = exchange if preference is None else preference
-    if preference is not None:
-        from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
-        cfg.exchange.paper_execution_mode = EXCHANGE_UNIFICATION_MAP[exchange][1]
+    cfg.exchange.paper_execution_mode = EXCHANGE_UNIFICATION_MAP[exchange][1]
     client = MagicMock(get=AsyncMock(return_value=MagicMock(status_code=200)))
 
     @asynccontextmanager
@@ -165,7 +162,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     import aletheia.agent_runtime.connectivity as conn_mod
 
     cfg = load_config()
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.health.require_llm_at_startup = False
     loader.save_config(cfg)
     notifications = MagicMock()
@@ -465,7 +462,7 @@ async def test_consecutive_failures_trigger_pause(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.health.exchange_probe_failure_threshold = 3
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.runtime.paused = False
     cfg.runtime.scheduler_enabled = True
     save_config(cfg)
@@ -528,7 +525,7 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     _claim_connectivity_pause(cfg)
     cfg.health.exchange_auto_resume_interval_sec = 10
     cfg.health.exchange_auto_resume_success_threshold = 2
@@ -693,7 +690,7 @@ async def test_startup_gate_pauses_when_exchange_down(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.runtime.paused = False
     cfg.health.exchange_probe_failure_threshold = 3
     save_config(cfg)
@@ -738,7 +735,7 @@ async def test_startup_gate_passes_when_exchange_up(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.runtime.paused = False
     save_config(cfg)
 
@@ -764,7 +761,6 @@ async def test_startup_gate_logs_zero_latency_when_probe_has_no_latency(tmp_path
     import aletheia.agent_runtime.connectivity as conn_mod
 
     cfg = load_config()
-    cfg.exchange.name = "local-paper"
     monkeypatch.setattr(
         conn_mod,
         "_probe_exchange_and_external",
@@ -855,7 +851,7 @@ async def test_pause_threshold_respects_config(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.health.exchange_probe_failure_threshold = 5
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.runtime.paused = False
     cfg.runtime.scheduler_enabled = True
     save_config(cfg)
@@ -907,7 +903,7 @@ async def test_intermittent_failure_resets_counter(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.health.exchange_probe_failure_threshold = 3
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.runtime.paused = False
     cfg.runtime.scheduler_enabled = True
     save_config(cfg)
@@ -957,7 +953,7 @@ async def test_connectivity_adds_owner_when_already_manually_paused(tmp_path, mo
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.health.exchange_probe_failure_threshold = 2
-    cfg.exchange.name = "okx"
+    cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.runtime.paused = True  # Already paused!
     save_config(cfg)
 
@@ -1165,7 +1161,7 @@ async def test_auto_resume_recollects_successes_after_failure_during_llm_probe(t
         "reachable": True,
         "latency_ms": 1.0,
         "error": None,
-        "exchange": cfg.exchange.name,
+        "exchange": "bitget",
     }
     external_probe = {
         "reachable": True,
@@ -1190,7 +1186,7 @@ async def test_auto_resume_recollects_successes_after_failure_during_llm_probe(t
                     "reachable": False,
                     "latency_ms": None,
                     "error": "new outage",
-                    "exchange": cfg.exchange.name,
+                    "exchange": "bitget",
                 }
             )
         return {"any_usable": True, "checked": 1, "results": []}
@@ -1235,7 +1231,7 @@ async def test_network_recovery_keeps_pause_after_new_failure_during_llm_probe(t
                 "reachable": False,
                 "latency_ms": None,
                 "error": "new outage",
-                "exchange": cfg.exchange.name,
+                "exchange": "bitget",
             }
         )
         return {"any_usable": True, "checked": 1, "results": []}

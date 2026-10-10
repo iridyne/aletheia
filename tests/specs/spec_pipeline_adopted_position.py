@@ -1209,7 +1209,7 @@ def test_live_reconcile_scope_follows_configured_exchange(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import _execution_mode_for
 
     loader.CONFIG_PATH.write_text(
-        yaml.safe_dump({"exchange": {"name": "okx", "mode": "live"}}),
+        yaml.safe_dump({"exchange": {"paper_execution_mode": "okx_demo", "mode": "live"}}),
         encoding="utf-8",
     )
     loader._invalidate_config_cache()

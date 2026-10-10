@@ -27,7 +27,7 @@ class LiveConfig:
 | 项 | 行为 | 位置 |
 |----|------|------|
 | 入口 | `live_unlock(req: LiveUnlockRequest)` | `server/routes/live.py` |
-| 前置 | `confirm=true` **且** 首次需 `acknowledge_first_unlock=true`;当前状态须为 `live_disabled`;随后必须通过当前 `exchange.name` 对应 live broker 的私有账户预检 | `live.py` |
+| 前置 | `confirm=true` **且** 首次需 `acknowledge_first_unlock=true`;当前状态须为 `live_disabled`;随后必须通过当前 `exchange.paper_execution_mode` 所属交易所对应 live broker 的私有账户预检 | `live.py` |
 | 方向 | 仅 `live_disabled → live_limited`(单向) | — |
 | 反向锁定 | 独立路由；同时清除 unlock evidence | `live.py` |
 

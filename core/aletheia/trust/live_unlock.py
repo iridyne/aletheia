@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from aletheia.config.exchanges import live_execution_mode_for_exchange
+from aletheia.config.exchanges import execution_mode_venue, live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
 from aletheia.storage.time_utils import utcnow as _now
 
@@ -63,7 +63,7 @@ def _evidence_binding(evidence: dict[str, Any]) -> str:
 def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
     """Resolve selected broker identity without contacting an exchange."""
     cfg = cfg or load_config()
-    broker = str(getattr(cfg.exchange, "name", "") or "").strip().lower()
+    broker = execution_mode_venue(cfg.exchange.paper_execution_mode) or ""
     mode = live_execution_mode_for_exchange(broker)
     if mode is None:
         raise ValueError("selected_exchange_unsupported")
@@ -89,7 +89,6 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
         "credential_generation": credential_generation,
         "uta_profile": uta_profile,
         "paper_execution_mode": str(getattr(cfg.exchange, "paper_execution_mode", "")),
-        "risk_allowed_exchange": str(getattr(cfg.risk, "allowed_exchange", "")),
     })
     return {
         "broker": broker,
@@ -332,7 +331,7 @@ def active_live_profile_conflict(cfg, broker: str, profile: str) -> bool:
     """Whether a credential profile is the currently unlocked live identity."""
     return (
         getattr(getattr(cfg, "live", None), "state", "") == "live_limited"
-        and str(getattr(getattr(cfg, "exchange", None), "name", "")).lower() == broker.lower()
+        and (execution_mode_venue(cfg.exchange.paper_execution_mode) or "") == broker.lower()
         and profile == "live"
     )
 

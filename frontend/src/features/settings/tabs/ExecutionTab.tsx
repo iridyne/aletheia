@@ -14,7 +14,7 @@ import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { CapitalEventsCard, TradingParamsCard } from '../execution/PaperTradingSettings'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
-import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../types'
+import type { SettingsDirtyProps, SettingsStatusProps } from '../types'
 
 export const EXCHANGE_CONNECTION_SECTION = {
   id: 'exchange-connection', title: 'Exchange Connection', tab: 'execution',
@@ -62,7 +62,7 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
       )}
       {isVisible(EXCHANGE_CONNECTION_SECTION.id) && (
         <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
-          <PrimaryExchangeCard settings={settings} qc={qc} />
+          <PrimaryExchangeCard status={status} settings={settings} qc={qc} />
           <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
@@ -102,10 +102,9 @@ const PRIMARY_EXCHANGES = [
   { id: 'binance',       label: 'Binance',          desc: 'Data + paper execution via Binance Testnet' },
 ] as const
 
-function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
+function PrimaryExchangeCard({ status, qc }: SettingsStatusProps) {
   const confirm = useConfirm()
-  const exchangeName = String(settings?.exchange?.name || '')
-  const effective = exchangeName
+  const effective = String(status?.execution_exchange || '')
 
   const [err, setErr] = useState<string | null>(null)
   const mut = useMutation({
@@ -118,7 +117,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
     <div>
       <Row
         label="Primary exchange"
-        hint="Atomically updates market data source, paper execution mode, and risk allowlist."
+        hint="Sets the execution account; market data follows it."
       >
         <select
           value={effective}
@@ -128,7 +127,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
             const label = PRIMARY_EXCHANGES.find(ex => ex.id === id)?.label ?? id
             if (!(await confirm({
               title: `Switch primary exchange to ${label}?`,
-              description: 'This atomically updates data source, paper execution mode, and risk allowlist.',
+              description: 'This sets the execution account; market data follows it.',
               confirmLabel: 'Switch exchange',
               variant: 'warning',
             }))) return
@@ -323,7 +322,7 @@ function LiveStateRow({ status, settings, qc }: SettingsStatusProps) {
   const [showWall, setShowWall] = useState(false)
   const [credError, setCredError] = useState<string | undefined>(undefined)
   const [preflight, setPreflight] = useState<any | null>(null)
-  const broker = String(settings?.exchange?.name || status.exchange || 'not available')
+  const broker = String(status.execution_exchange || 'not available')
   const refreshLiveState = () => {
     qc.invalidateQueries({ queryKey: ['status'] })
     qc.invalidateQueries({ queryKey: ['settings'] })

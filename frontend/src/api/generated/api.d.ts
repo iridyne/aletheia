@@ -971,7 +971,7 @@ export interface paths {
          * Get Default Exchange Config
          * @description Preferred instrument exchange for observation-only UI ordering.
          *
-         *     Prefers the operator-selected `exchange.name` when it names a real venue;
+         *     Prefers the venue of `exchange.paper_execution_mode` (the trading account);
          *     falls back to `market_data.ccxt_exchange` so the chart's OHLCV provider and
          *     the instrument search popup agree on ordering. Never surfaces credentials.
          */
@@ -4857,7 +4857,7 @@ export interface paths {
         put?: never;
         /**
          * Set Primary Exchange
-         * @description Atomically set primary exchange across data, execution, and risk axes.
+         * @description Atomically point execution and market data at one exchange.
          */
         post: operations["set_primary_exchange_api_settings_primary_exchange_post"];
         delete?: never;
@@ -7898,11 +7898,6 @@ export interface components {
              */
             mode: string;
             /**
-             * Name
-             * @default
-             */
-            name: string;
-            /**
              * Paper Execution Mode
              * @default
              */
@@ -10780,11 +10775,6 @@ export interface components {
              * @default true
              */
             allow_short_live: boolean;
-            /**
-             * Allowed Exchange
-             * @default
-             */
-            allowed_exchange: string;
             /**
              * Catastrophic Stop Enabled
              * @default true

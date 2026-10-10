@@ -176,7 +176,6 @@ async def test_status_reports_retired_account_as_unavailable(client):
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
-    cfg.exchange.name = "okx"  # Retained preference must not imply a connection.
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
@@ -195,7 +194,6 @@ async def test_status_reports_execution_and_data_exchange_divergence(client):
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.market_data.ccxt_exchange = "binance"
     save_config(cfg)
