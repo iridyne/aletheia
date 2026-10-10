@@ -23,7 +23,7 @@ import {
   RuntimeSystemTab, SOFTWARE_UPDATES_SECTION,
 } from '../features/settings/tabs/RuntimeSystemTab'
 import {
-  EQUITIES_SECTION, MACRO_SIGNALS_SECTION, MARKET_DATA_SECTION, NEWS_FEEDS_SECTION,
+  MACRO_SIGNALS_SECTION, MARKET_DATA_SECTION,
   PREDICTION_MARKETS_SECTION, SignalsTab,
 } from '../features/settings/tabs/SignalsTab'
 import {
@@ -43,7 +43,7 @@ const TABS: { id: Tab; label: string; description: string }[] = [
   { id: 'risk',      label: 'Risk & Universe',     description: 'Risk limits, tradable symbols, and universe board' },
   { id: 'health',    label: 'Health & Alerts',     description: 'Self-heal, startup gates, and notifications' },
   { id: 'runtime',   label: 'Runtime & System',    description: 'App shell, updates, retention, and network' },
-  { id: 'signals',   label: 'Signals',             description: 'Market data sources, news feeds, macro signals, and observed assets' },
+  { id: 'signals',   label: 'Signals',             description: 'Market data sources, macro signals, and observed assets' },
   { id: 'advanced',  label: 'Advanced',            description: 'Read-only configuration coverage and diagnostics' },
 ]
 
@@ -111,14 +111,8 @@ function getSectionSummary(id: string, settings: any, status: any): string | nul
       return settings?.market_data?.ccxt_exchange ? String(settings.market_data.ccxt_exchange).toUpperCase() : 'Follows account'
     case 'macro-sentiment-signals':
       return 'Macro & sentiment'
-    case 'news-feeds':
-      return 'RSS ingestion'
     case 'prediction-markets':
       return 'Polymarket observer'
-    case 'observed-us-equities': {
-      const count = (settings?.market_data?.observed_equities ?? []).length
-      return `${count} ticker${count === 1 ? '' : 's'}`
-    }
     case 'configuration-matrix':
       return 'Read-only audit'
     default:
@@ -217,9 +211,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; description: stri
   // Signals
   { title: MARKET_DATA_SECTION.title,        tab: MARKET_DATA_SECTION.tab, slug: MARKET_DATA_SECTION.id, description: MARKET_DATA_SECTION.description, alt: [...MARKET_DATA_SECTION.searchTerms] },
   { title: MACRO_SIGNALS_SECTION.title,      tab: MACRO_SIGNALS_SECTION.tab, slug: MACRO_SIGNALS_SECTION.id, description: MACRO_SIGNALS_SECTION.description, alt: [...MACRO_SIGNALS_SECTION.searchTerms] },
-  { title: NEWS_FEEDS_SECTION.title,         tab: NEWS_FEEDS_SECTION.tab, slug: NEWS_FEEDS_SECTION.id, description: NEWS_FEEDS_SECTION.description, alt: [...NEWS_FEEDS_SECTION.searchTerms] },
   { title: PREDICTION_MARKETS_SECTION.title, tab: PREDICTION_MARKETS_SECTION.tab, slug: PREDICTION_MARKETS_SECTION.id, description: PREDICTION_MARKETS_SECTION.description, alt: [...PREDICTION_MARKETS_SECTION.searchTerms] },
-  { title: EQUITIES_SECTION.title,           tab: EQUITIES_SECTION.tab, slug: EQUITIES_SECTION.id, description: EQUITIES_SECTION.description, alt: [...EQUITIES_SECTION.searchTerms] },
   // Advanced
   { title: ADVANCED_SECTION.title,     tab: ADVANCED_SECTION.tab, slug: ADVANCED_SECTION.id, description: ADVANCED_SECTION.description, alt: [...ADVANCED_SECTION.searchTerms] },
 ]

@@ -19,7 +19,6 @@ describe('Prediction Lens status presentation', () => {
     expect(SRC).not.toContain('Prediction Market 已关闭')
     expect(SRC).toContain('Preferences (configuration only)')
     expect(SRC).toContain('DataStateMessage')
-    expect(SRC).toContain("statusView.state !== 'enabled'")
   })
 
   it('renders distinct notices for disabled, unavailable, stale, and loading states', () => {

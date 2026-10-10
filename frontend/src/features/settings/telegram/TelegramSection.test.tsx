@@ -23,7 +23,6 @@ describe("TelegramSection", () => {
 		expect(
 			parseTelegramDraft({
 				chatIdsInput: "123, -456, +789",
-				summaryHourInput: "0",
 				dndStartInput: "0",
 				dndEndInput: "0",
 			}),
@@ -31,7 +30,6 @@ describe("TelegramSection", () => {
 			ok: true,
 			value: {
 				allowed_chat_ids: [123, -456, 789],
-				daily_summary_hour_cst: 0,
 				dnd_start_hour: 0,
 				dnd_end_hour: 0,
 			},
@@ -39,15 +37,13 @@ describe("TelegramSection", () => {
 	});
 
 	it.each([
-		["123abc", "8", "23", "7", "Chat ID"],
-		["123", "", "23", "7", "Summary hour"],
-		["123", "8", "24", "7", "DND start hour"],
+		["123abc", "23", "7", "Chat ID"],
+		["123", "24", "7", "DND start hour"],
 	])(
 		"rejects malformed Telegram drafts without coercing them",
-		(chatIdsInput, summaryHourInput, dndStartInput, dndEndInput, errorField) => {
+		(chatIdsInput, dndStartInput, dndEndInput, errorField) => {
 			const result = parseTelegramDraft({
 				chatIdsInput,
-				summaryHourInput,
 				dndStartInput,
 				dndEndInput,
 			});
@@ -78,8 +74,6 @@ describe("TelegramSection", () => {
 		expect(html).toContain("Allowed chat IDs");
 		expect(html).toContain('placeholder="123456789, 987654321"');
 		expect(html).toContain('class="mono"');
-		expect(html).toContain("Daily PnL summary (08:00 CST)");
-		expect(html).toContain("Summary hour (CST)");
 		expect(html).toContain("aletheia secrets set telegram.bot_token");
 		expect(html).not.toContain("settings-config-title");
 	});

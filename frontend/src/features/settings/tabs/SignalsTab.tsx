@@ -13,7 +13,6 @@ import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsDirtyProps, SettingsProps } from '../types'
-import type { components, DeepPartial } from '../../../api/settings'
 
 export const MARKET_DATA_SECTION = {
   id: 'market-data-sources', title: 'Market Data Sources', tab: 'signals',
@@ -27,22 +26,10 @@ export const MACRO_SIGNALS_SECTION = {
   searchTerms: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'],
 } satisfies SettingsFeatureDescriptor
 
-export const NEWS_FEEDS_SECTION = {
-  id: 'news-feeds', title: 'News Feeds', tab: 'signals',
-  description: 'Automated RSS news ingestion. Feeds are fetched periodically and displayed on the News Intelligence page.',
-  searchTerms: ['rss', 'ingestion'],
-} satisfies SettingsFeatureDescriptor
-
 export const PREDICTION_MARKETS_SECTION = {
   id: 'prediction-markets', title: 'Prediction Markets', tab: 'signals',
   description: 'Polymarket observer — fetches probability data for information-edge signals. Observation-only, never routed to execution.',
   searchTerms: ['polymarket', 'categories'],
-} satisfies SettingsFeatureDescriptor
-
-export const EQUITIES_SECTION = {
-  id: 'observed-us-equities', title: 'Observed US Equities', tab: 'signals',
-  description: 'US equity tickers for equity_observer (observation-only, not traded). Requires Bitget xStock support for the ticker.',
-  searchTerms: ['xstocks', 'equity'],
 } satisfies SettingsFeatureDescriptor
 
 function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
@@ -54,7 +41,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [primary, setPrimary] = useState(String(md.ccxt_exchange || ''))
   const [fallback, setFallback] = useState(String(md.ccxt_fallback || ''))
   const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
-  const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
   const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
   const [historyHours, setHistoryHours] = useState(md.derivatives_history_hours ?? 24)
   const [stockTokens, setStockTokens] = useState(listToCsv(md.observed_stock_tokens))
@@ -75,7 +61,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       ccxt_exchange: primary,
       ccxt_fallback: fallback,
       ohlcv_cache_ttl_min: cacheTtl,
-      enable_yfinance_macro: yfinance,
       enable_long_short_ratio: longShortRatio,
       derivatives_history_hours: historyHours,
       observed_stock_tokens: parseCsvList(stockTokens),
@@ -89,7 +74,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const dirty = primary !== String(md.ccxt_exchange || '')
     || fallback !== String(md.ccxt_fallback || '')
     || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
-    || yfinance !== !!md.enable_yfinance_macro
     || longShortRatio !== (md.enable_long_short_ratio ?? true)
     || historyHours !== (md.derivatives_history_hours ?? 24)
     || stockTokens !== listToCsv(md.observed_stock_tokens)
@@ -104,7 +88,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setPrimary(String(md.ccxt_exchange || ''))
       setFallback(String(md.ccxt_fallback || ''))
       setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
-      setYfinance(!!md.enable_yfinance_macro)
       setLongShortRatio(md.enable_long_short_ratio ?? true)
       setHistoryHours(md.derivatives_history_hours ?? 24)
       setStockTokens(listToCsv(md.observed_stock_tokens))
@@ -143,9 +126,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           style={{ width: '80px' }} />
         <span className="hint">min</span>
       </Row>
-      <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
-        <Toggle checked={yfinance} persistence="staged" onChange={v => { setYfinance(v); setMsg(null) }} />
-      </Row>
       <Row label="Long/Short ratio" hint="Pull Binance Futures globalLongShortAccountRatio per observed symbol every 2 min. Filled into open_interest_snapshots.long_short_ratio and folded into crowding_score. USDT-margined linear perps only.">
         <Toggle checked={longShortRatio} persistence="staged" onChange={v => { setLongShortRatio(v); setMsg(null) }} />
       </Row>
@@ -155,7 +135,7 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           style={{ width: '80px' }} />
         <span className="hint">hours (0 = off)</span>
       </Row>
-      <Row label="Stock tokens" hint="Exchange-traded equity tokens for real-time price tracking. Supports Bitget r-series (rNVDA/USDT, rTSLA/USDT) and ON-series (AAPLON/USDT). Comma-separated. Used by equity_observer for cross-validation and Serenity for supply-chain research.">
+      <Row label="Stock tokens" hint="Exchange-traded equity tokens for real-time price tracking. Supports Bitget r-series (rNVDA/USDT, rTSLA/USDT) and ON-series (AAPLON/USDT). Comma-separated. Used by Serenity for supply-chain research.">
         <input value={stockTokens} placeholder="rNVDA/USDT, rTSLA/USDT, AAPLON/USDT"
           onChange={e => { setStockTokens(e.target.value); setMsg(null) }}
           className="mono w-full" />
@@ -320,151 +300,8 @@ function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
   )
 }
 
-// ─── Equities ───
-
-function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
-  const [draft, setDraft] = useState<string[]>(serverTickers)
-  const [input, setInput] = useState('')
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  const mut = useMutation({
-    mutationFn: () => api.updateEquities(draft),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const add = () => {
-    const t = input.trim().toUpperCase()
-    if (!t || draft.includes(t)) return
-    setDraft(prev => [...prev, t]); setInput(''); setMsg(null)
-  }
-  const remove = (t: string) => { setDraft(prev => prev.filter(x => x !== t)); setMsg(null) }
-
-  const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverTickers.slice().sort())
-
-  useSettingsDraftLifecycle({
-    id: 'equities',
-    dirty,
-    onDirty,
-    serverKey: settings,
-    adoptServer: () => setDraft(serverTickers),
-  })
-
-  return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div className="flex flex-wrap gap-1 mb-3" style={{ minHeight: '2rem' }}>
-        {draft.map(t => (
-          <span key={t} className="symbol-chip allow">
-            {t}
-            <button onClick={() => remove(t)} title={`Remove ${t}`}>×</button>
-          </span>
-        ))}
-        {draft.length === 0 && (
-          <span className="hint" style={{ margin: 0 }}>No tickers — equity_observer will not run.</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <input
-          value={input} placeholder="e.g. AAPL"
-          onChange={e => setInput(e.target.value.toUpperCase())}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          style={{ width: '120px', fontFamily: 'var(--mono)', textTransform: 'uppercase' }}
-        />
-        <button className="secondary" onClick={add}>Add</button>
-        {dirty && (
-          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
-            {mut.isPending ? 'Saving…' : 'Save changes'}
-          </button>
-        )}
-      </div>
-      <SaveMsg msg={msg} />
-      <p className="hint">
-        US equity tickers observed by equity_observer (yfinance daily bars + Bitget xStock price deviation).
-        Observation-only — not traded. Changes take effect on next agent cycle (Mon–Fri market hours).
-      </p>
-    </div>
-  )
-}
-
-// ─── News Feeds config ───
-
-function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const news = settings?.news
-  const [enabled, setEnabled] = useState(true)
-  const [interval, setInterval_] = useState(15)
-  const [feeds, setFeeds] = useState<DeepPartial<components['schemas']['NewsFeedEntry']>[]>([])
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  const mut = useMutation({
-    mutationFn: () => api.updateNewsConfig({
-      enabled,
-      fetch_interval_minutes: interval,
-      feeds: feeds.map(f => ({ name: String(f.name || ''), url: String(f.url || ''), source: String(f.source || ''), enabled: f.enabled !== false })),
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const dirty = !!news && (
-    enabled !== (news.enabled ?? true)
-    || interval !== (news.fetch_interval_minutes ?? 15)
-    || JSON.stringify(feeds) !== JSON.stringify(news.feeds ?? [])
-  )
-
-  useSettingsDraftLifecycle({
-    id: 'news-feeds',
-    dirty,
-    onDirty,
-    serverKey: settings,
-    adoptServer: () => {
-      if (!news) return
-      setEnabled(news.enabled ?? true)
-      setInterval_(news.fetch_interval_minutes ?? 15)
-      setFeeds(news.feeds ?? [])
-    },
-  })
-
-  const toggleFeed = (idx: number) => {
-    setFeeds(prev => prev.map((f, i) => i === idx ? { ...f, enabled: !f.enabled } : f))
-    setMsg(null)
-  }
-
-  if (!news) return null
-
-  return (
-    <div className="card mb-0">
-      <Row label="News ingestion" hint="Master switch for automatic RSS feed collection.">
-        <Toggle checked={enabled} persistence="staged" onChange={setEnabled} />
-      </Row>
-      <Row label="Fetch interval" hint="Minutes between feed checks (5–120).">
-        <input type="number" min={5} max={120} step={5} value={interval}
-          onChange={e => { setInterval_(Number(e.target.value)); setMsg(null) }}
-          className="mono" style={{ width: '70px' }}
-        />
-      </Row>
-      <div className="section-label mt-4">Feeds</div>
-      <div className="news-feeds-grid">
-        {feeds.map((f: any, i: number) => (
-          <div key={f.url} className="news-feed-row">
-            <Toggle checked={f.enabled} persistence="staged" aria-label={`Enable ${f.name}`} onChange={() => toggleFeed(i)} />
-            <div className="news-feed-info">
-              <span className="news-feed-name">{f.name}</span>
-              <span className="news-feed-source text-muted text-xs">{f.source}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save news config'}</button>
-      </div>
-      <SaveMsg msg={msg} />
-    </div>
-  )
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// SIGNALS TAB — market data, news, macro signals, prediction markets, equities
+// SIGNALS TAB — market data, macro signals, prediction markets
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SignalsTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
@@ -485,21 +322,9 @@ export function SignalsTab({ settings, qc, onDirty, sectionId }: SettingsDirtyPr
         </SettingsFeatureSection>
       )}
 
-      {isVisible(NEWS_FEEDS_SECTION.id) && (
-        <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
-          <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
-        </SettingsFeatureSection>
-      )}
-
       {isVisible(PREDICTION_MARKETS_SECTION.id) && (
         <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
           <PredictionToggleCard qc={qc} />
-        </SettingsFeatureSection>
-      )}
-
-      {isVisible(EQUITIES_SECTION.id) && (
-        <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
-          <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
     </div>

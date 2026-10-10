@@ -1988,61 +1988,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/news": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List News */
-        get: operations["list_news_api_news_get"];
-        put?: never;
-        /**
-         * Create News
-         * @description Manually create a news item (for testing or manual curation).
-         */
-        post: operations["create_news_api_news_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/news/{news_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get News Item */
-        get: operations["get_news_item_api_news__news_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/news/{news_id}/analyze": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Analyze News */
-        post: operations["analyze_news_api_news__news_id__analyze_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/okx/credentials-status": {
         parameters: {
             query?: never;
@@ -3513,26 +3458,6 @@ export interface paths {
         patch: operations["update_prediction_preferences_api_prediction_preferences_patch"];
         trace?: never;
     };
-    "/api/prediction/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Trigger Prediction Refresh
-         * @description Manually trigger a prediction observer run via the durable job queue.
-         */
-        post: operations["trigger_prediction_refresh_api_prediction_refresh_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/prediction/runs": {
         parameters: {
             query?: never;
@@ -4446,26 +4371,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/equities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update Observed Equities
-         * @description Update US equity tickers observed by equity_observer (observation-only, not traded).
-         */
-        post: operations["update_observed_equities_api_settings_equities_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/event_triggers": {
         parameters: {
             query?: never;
@@ -4874,23 +4779,6 @@ export interface paths {
          * @description Test proxy connectivity by pinging Binance API through the configured proxy.
          */
         post: operations["test_network_proxy_api_settings_network_test_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/news": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Update News Config */
-        post: operations["update_news_config_api_settings_news_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5950,8 +5838,6 @@ export interface components {
             /** Unavailable Reason */
             unavailable_reason: string;
         };
-        /** AnalyzeRequest */
-        AnalyzeRequest: Record<string, never>;
         /** AppConfig */
         AppConfig: {
             /**
@@ -7209,40 +7095,6 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** CreateNewsRequest */
-        CreateNewsRequest: {
-            /**
-             * Event Type
-             * @default other
-             */
-            event_type: string;
-            /**
-             * Relevance Score
-             * @default 0.5
-             */
-            relevance_score: number;
-            /**
-             * Sentiment
-             * @default neutral
-             */
-            sentiment: string;
-            /**
-             * Source
-             * @default manual
-             */
-            source: string;
-            /** Summary */
-            summary?: string | null;
-            /**
-             * Symbols Mentioned
-             * @default []
-             */
-            symbols_mentioned: string[];
-            /** Title */
-            title: string;
-            /** Url */
-            url?: string | null;
-        };
         /** DayOfWeekStats */
         DayOfWeekStats: {
             /** Avg Pnl Pct */
@@ -7355,8 +7207,8 @@ export interface components {
          *       `warn_only` means budget crossings are signals, never blocks.
          *       `fallback_to_defaults` and `hard_block` are opt-in for
          *       non-safety callers only; safety-relevant callers
-         *       (pi_trading_decision, risk_critic,
-         *       agent_shell/trading_decision) stay warn-only regardless.
+         *       (pi_trading_decision, agent_shell/trading_decision) stay
+         *       warn-only regardless.
          *     - `harness_header_default_on`: Phase 5 feature flag. Off until an
          *       ablation study (see docs/design/proposals/
          *       tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears
@@ -7891,11 +7743,6 @@ export interface components {
             };
             summary: components["schemas"]["WorkbenchSummary"] | null;
             universe: components["schemas"]["WorkbenchUniverse"];
-        };
-        /** EquitiesConfigUpdate */
-        EquitiesConfigUpdate: {
-            /** Tickers */
-            tickers: string[];
         };
         /** EquityCurveResponse */
         EquityCurveResponse: {
@@ -8585,10 +8432,6 @@ export interface components {
             max_bars_per_pair?: number | null;
             /** Min Bars For Backtest */
             min_bars_for_backtest?: number | null;
-            /** Nightly Backfill Enabled */
-            nightly_backfill_enabled?: boolean | null;
-            /** Nightly Backfill Hour Cst */
-            nightly_backfill_hour_cst?: number | null;
         };
         /** HoldBucket */
         HoldBucket: {
@@ -9048,8 +8891,6 @@ export interface components {
             enable_hyperliquid?: boolean | null;
             /** Enable Long Short Ratio */
             enable_long_short_ratio?: boolean | null;
-            /** Enable Yfinance Macro */
-            enable_yfinance_macro?: boolean | null;
             /** Observed Prediction Markets */
             observed_prediction_markets?: string[] | null;
             /** Observed Stock Tokens */
@@ -9254,17 +9095,6 @@ export interface components {
              */
             retention_days: number;
         };
-        /** NewsConfigUpdate */
-        NewsConfigUpdate: {
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Feeds */
-            feeds?: components["schemas"]["NewsFeedUpdate"][] | null;
-            /** Fetch Interval Minutes */
-            fetch_interval_minutes?: number | null;
-            /** Retention Days */
-            retention_days?: number | null;
-        };
         /** NewsFeedEntry */
         NewsFeedEntry: {
             /** Categories */
@@ -9273,17 +9103,6 @@ export interface components {
              * Enabled
              * @default true
              */
-            enabled: boolean;
-            /** Name */
-            name: string;
-            /** Source */
-            source: string;
-            /** Url */
-            url: string;
-        };
-        /** NewsFeedUpdate */
-        NewsFeedUpdate: {
-            /** Enabled */
             enabled: boolean;
             /** Name */
             name: string;
@@ -12397,8 +12216,6 @@ export interface components {
         TelegramConfigUpdate: {
             /** Allowed Chat Ids */
             allowed_chat_ids?: number[] | null;
-            /** Daily Summary Hour Cst */
-            daily_summary_hour_cst?: number | null;
             /** Dnd Enabled */
             dnd_enabled?: boolean | null;
             /** Dnd End Hour */
@@ -12407,8 +12224,6 @@ export interface components {
             dnd_start_hour?: number | null;
             /** Enabled */
             enabled?: boolean | null;
-            /** Notify Daily Summary */
-            notify_daily_summary?: boolean | null;
             /** Notify Trade Fills */
             notify_trade_fills?: boolean | null;
         };
@@ -13276,8 +13091,6 @@ export interface components {
             enabled?: boolean | null;
             /** Notify Alerts */
             notify_alerts?: boolean | null;
-            /** Notify Daily Summary */
-            notify_daily_summary?: boolean | null;
             /** Notify Trade Fills */
             notify_trade_fills?: boolean | null;
             /** Secret */
@@ -15880,138 +15693,6 @@ export interface operations {
             };
         };
     };
-    list_news_api_news_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                status?: string | null;
-                symbol?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_news_api_news_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateNewsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_news_item_api_news__news_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                news_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    analyze_news_api_news__news_id__analyze_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                news_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["AnalyzeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     okx_credentials_status_api_okx_credentials_status_get: {
         parameters: {
             query?: never;
@@ -18194,9 +17875,7 @@ export interface operations {
     };
     get_prediction_market_history_api_prediction_markets__market_id__history_get: {
         parameters: {
-            query?: {
-                interval?: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 market_id: string;
@@ -18339,26 +18018,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    trigger_prediction_refresh_api_prediction_refresh_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -20122,39 +19781,6 @@ export interface operations {
             };
         };
     };
-    update_observed_equities_api_settings_equities_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EquitiesConfigUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     update_event_trigger_config_api_settings_event_triggers_post: {
         parameters: {
             query?: never;
@@ -20873,39 +20499,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    update_news_config_api_settings_news_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NewsConfigUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

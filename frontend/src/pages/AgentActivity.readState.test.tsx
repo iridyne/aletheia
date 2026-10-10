@@ -22,7 +22,7 @@ import AgentActivity from './AgentActivity'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const RUN = {
-  id: 'run-1', agent_name: 'research_agent', status: 'completed', trigger_type: 'manual',
+  id: 'run-1', agent_name: 'post_trade_reviewer', status: 'completed', trigger_type: 'manual',
   model_provider: null, model_name: null, outputs_created: '[]', started_at: '2026-09-04T00:00:00Z',
   ended_at: null, cost_estimate: null, tools_called: '["legacy-search"]', errors: '[]',
 }
@@ -91,13 +91,13 @@ it('renders an intentional empty catalog only after a successful read', async ()
 it('retains a cached catalog as stale without authorizing manual runs', async () => {
   let rejectCatalog!: (error: Error) => void
   client.setQueryData(['agent-catalog'], { agents: [{
-    name: 'research_agent', side_effect_class: 'research', cost_class: 'high', gate_check: false,
+    name: 'post_trade_reviewer', side_effect_class: 'review', cost_class: 'medium', gate_check: false,
   }] })
   mocks.getAgentCatalog.mockReturnValue(new Promise((_, reject) => { rejectCatalog = reject }))
   await renderActivity()
   await waitForText('Agent catalog is stale')
 
-  const runButton = host.querySelector('button[aria-label="research_agent"]') as HTMLButtonElement
+  const runButton = host.querySelector('button[aria-label="post_trade_reviewer"]') as HTMLButtonElement
   expect(runButton).not.toBeNull()
   expect(runButton.disabled).toBe(true)
   act(() => runButton.click())

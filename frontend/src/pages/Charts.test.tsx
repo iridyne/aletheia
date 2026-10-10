@@ -84,7 +84,6 @@ function makeClient() {
   client.setQueryData(['market-opportunities', 'SOL/USDT', 'perp'], [])
   client.setQueryData(['trades'], [])
   client.setQueryData(['opportunities'], [])
-  client.setQueryData(['news'], [])
   client.setQueryData(['prediction-markets'], [])
   client.setQueryData(['config-default-exchange'], { exchange: 'bitget' })
   return client

@@ -26,7 +26,6 @@ const TradesPositions = lazy(() => import('./pages/TradesPositions'))
 const Charts = lazy(() => import('./pages/Charts'))
 const Settings = lazy(() => import('./pages/Settings'))
 const RiskControls = lazy(() => import('./pages/RiskControls'))
-const NewsIntel = lazy(() => import('./pages/NewsIntel'))
 const CommandCenter = lazy(() => import('./pages/CommandCenter'))
 const SerenityLens = lazy(() => import('./pages/SerenityLens'))
 const PredictionLens = lazy(() => import('./pages/PredictionLens'))
@@ -223,7 +222,6 @@ export default function App() {
                 <Route path="/command-center" element={<CommandCenter />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/risk" element={<RiskControls />} />
-                <Route path="/news" element={<NewsIntel />} />
                 <Route path="/serenity-lens" element={<SerenityLens />} />
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/usage" element={<Usage />} />

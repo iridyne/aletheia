@@ -543,15 +543,6 @@ export interface MarketOpportunityInstrument {
 
 export type MarketTrade = components["schemas"]["OrderView"];
 
-export interface MarketNewsItem {
-	id: string;
-	title: string;
-	sentiment?: string | null;
-	source?: string | null;
-	published_at?: string | null;
-	summary?: string | null;
-}
-
 function timeframeMs(timeframe: string): number | null {
 	const match = /^(\d+)([mhd])$/.exec(timeframe);
 	if (!match) return null;
@@ -1618,8 +1609,6 @@ export const api = {
 		),
 	updateSymbolFilter: (body: { mode: string; symbols: string[] }) =>
 		post<{ mode: string; symbols: string[] }>("/settings/symbols", body),
-	updateEquities: (tickers: string[]) =>
-		post<{ observed_equities: string[] }>("/settings/equities", { tickers }),
 	updateTradingConfig: (
 		body: Partial<{
 			default_stop_loss_pct: number;
@@ -1846,8 +1835,6 @@ export const api = {
 			enabled: boolean;
 			allowed_chat_ids: number[];
 			notify_trade_fills: boolean;
-			notify_daily_summary: boolean;
-			daily_summary_hour_cst: number;
 			dnd_enabled: boolean;
 			dnd_start_hour: number;
 			dnd_end_hour: number;
@@ -1860,7 +1847,6 @@ export const api = {
 			secret: string;
 			notify_trade_fills: boolean;
 			notify_alerts: boolean;
-			notify_daily_summary: boolean;
 			timeout_sec: number;
 		}>,
 	) => post<{ updated: Record<string, any> }>("/settings/webhook", body),
@@ -1980,7 +1966,6 @@ export const api = {
 		fetchJson<import("../types").PredictionMarket[]>("/prediction/markets"),
 	getPredictionRuns: () =>
 		fetchJson<import("../types").PredictionObserverRun[]>("/prediction/runs"),
-	refreshPrediction: () => post("/prediction/refresh"),
 	getPredictionEvents: (category?: string) =>
 		fetchJson<import("../types").PredictionEvent[]>(
 			`/prediction/events${category ? `?category=${category}` : ""}`,
@@ -2245,19 +2230,6 @@ export const api = {
 			"/market/data-coverage",
 		),
 
-	// News Intelligence
-	getNews: (limit = 50) => fetchJson<MarketNewsItem[]>(`/news?limit=${limit}`),
-	getNewsItem: (id: string) => fetchJson<any>(`/news/${id}`),
-	analyzeNews: (id: string) => post<any>(`/news/${id}/analyze`),
-	createNews: (body: {
-		title: string;
-		source?: string;
-		summary?: string;
-		symbols_mentioned?: string[];
-		sentiment?: string;
-	}) => post<any>("/news", body),
-	updateNewsConfig: (body: any) => post<any>("/settings/news", body),
-
 	// Command Center
 	sendCommand: (input: string, context?: Record<string, string>) =>
 		post<any>("/command", { input, context }),
@@ -2476,7 +2448,6 @@ export const api = {
 			ccxt_fallback: string;
 			confirm_exchange_divergence: boolean;
 			ohlcv_cache_ttl_min: number;
-			enable_yfinance_macro: boolean;
 			observed_stock_tokens: string[];
 			observed_prediction_markets: string[];
 			// Round 2 macro signals
@@ -2501,8 +2472,6 @@ export const api = {
 			enabled: boolean;
 			max_bars_per_pair: number;
 			default_months: number;
-			nightly_backfill_enabled: boolean;
-			nightly_backfill_hour_cst: number;
 			min_bars_for_backtest: number;
 			active_universe_backfill_enabled: boolean;
 			active_universe_backfill_interval_minutes: number;

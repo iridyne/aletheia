@@ -9,7 +9,7 @@ import { ToastProvider } from '../components/ui/Toast'
 
 const mocks = vi.hoisted(() => ({
   getPredictionMarkets: vi.fn(), getPredictionPreferences: vi.fn(), getPredictionRuns: vi.fn(),
-  getPredictionStatus: vi.fn(), refreshPrediction: vi.fn(), updatePredictionPreferences: vi.fn(),
+  getPredictionStatus: vi.fn(), updatePredictionPreferences: vi.fn(),
 }))
 
 vi.mock('../api/client', () => ({ api: mocks }))

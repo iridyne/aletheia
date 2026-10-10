@@ -100,7 +100,6 @@ interface WebhookConfig {
 	secret_configured?: boolean;
 	notify_trade_fills?: boolean;
 	notify_alerts?: boolean;
-	notify_daily_summary?: boolean;
 	timeout_sec?: number;
 	last_delivery?: {
 		status: "delivered" | "failed";
@@ -123,7 +122,6 @@ export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<strin
 	const [removeSecret, setRemoveSecret] = useState(false);
 	const [notifyFills, setNotifyFills] = useState(true);
 	const [notifyAlerts, setNotifyAlerts] = useState(true);
-	const [notifySummary, setNotifySummary] = useState(true);
 	const [timeoutSec, setTimeoutSec] = useState(10);
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -135,7 +133,6 @@ export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<strin
 				secret: removeSecret ? "" : secret || undefined,
 				notify_trade_fills: notifyFills,
 				notify_alerts: notifyAlerts,
-				notify_daily_summary: notifySummary,
 				timeout_sec: timeoutSec,
 			}),
 		onSuccess: (data) => {
@@ -164,7 +161,6 @@ export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<strin
 			|| removeSecret
 		|| notifyFills !== (webhook.notify_trade_fills !== false)
 		|| notifyAlerts !== (webhook.notify_alerts !== false)
-		|| notifySummary !== (webhook.notify_daily_summary !== false)
 		|| timeoutSec !== (webhook.timeout_sec ?? 10);
 	useSettingsDraftLifecycle({
 		id: "webhook",
@@ -178,7 +174,6 @@ export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<strin
 				setRemoveSecret(false);
 			setNotifyFills(webhook.notify_trade_fills !== false);
 			setNotifyAlerts(webhook.notify_alerts !== false);
-			setNotifySummary(webhook.notify_daily_summary !== false);
 			setTimeoutSec(webhook.timeout_sec ?? 10);
 		},
 	});
@@ -254,7 +249,6 @@ export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<strin
 				<Toggle checked={notifyFills} persistence="staged" label="Trade fill events" onChange={(value) => { setNotifyFills(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row settings-action-row-start">
-				<Toggle checked={notifySummary} persistence="staged" label="Daily summary event" onChange={(value) => { setNotifySummary(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row">
 				<button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
