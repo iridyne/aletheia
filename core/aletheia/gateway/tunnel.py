@@ -166,7 +166,9 @@ def _process_command_line(pid: int) -> str | None:
             )
             args = ["powershell", "-NoProfile", "-Command", command]
         else:
-            args = ["ps", "-p", str(pid), "-o", "command="]
+            # -ww: without it procps truncates to the terminal width (80 when
+            # unknown), cutting off the --config path the ownership check needs.
+            args = ["ps", "-ww", "-p", str(pid), "-o", "command="]
         proc = subprocess.run(
             args,
             capture_output=True,
