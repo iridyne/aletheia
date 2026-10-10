@@ -4,8 +4,7 @@
 > 以及每个**接缝(seam)**的前置/后置条件、守卫位置、与中间载体的字段约定。
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
-> **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-09-07 (D2:唯一 Candidate→Entry Plan 入场主线) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
+> **基线**:本契约描述当前行为;代码与本契约不一致时记为 conformance gap(GitHub Issue),不改写契约迁就缺陷。
 
 ---
 
@@ -36,9 +35,9 @@ flowchart TD
     P -->|Invalidated| Q[Terminal No Entry]
     P -->|Yes| R[Latest Exact State]
     R --> S[Canonical Risk Reservation]
-    S --> T[Approved Order Tactic]
-    T -->|Maker| U[Post-Only Limit]
-    T -->|Urgent| V[Opposing-BBO IOC Limit]
+    S --> T[Frozen capture policy]
+    T -->|PRICE_FIRST / MAKER_PREFERRED passive leg| U[Post-Only Limit]
+    T -->|FILL_FIRST / MAKER_PREFERRED after timeout| V[Opposing-BBO IOC Limit]
     N -->|Invalidated| W[Gateway Cancel]
     M --> X[Venue Outcome]
     U --> X
@@ -238,7 +237,7 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 - **DL-INV-41 post-submit Plan integrity**:Entry Plan 在 `ordered/partially_filled` 后即使 JSON/hash 损坏，也不得丢失外部 Order ownership；只能使用耐久 Plan↔Order identity 进入 canonical Gateway cancel/reconcile，保留 partial Fill 与原始 integrity reason。证据不完整保持 retry-suppressing unresolved state。
 - **DL-INV-42 Mechanism-aware planning authority**:current PlanningGeneration 的 mechanism、direction、selection policy/epoch 与 mechanism version 必须与当前 typed Candidate context/hash 一致。Fast Monitoring 与 Order Intent creation 在任何 pre-order side effect 前复核该身份；不一致则终结旧 Plan，且撤单仍只能经 Gateway。
 - **DL-INV-35 Price Action 权限隔离**:`market-structure/v2` 只可将同一 [Market Structure Derived Data Contract](market_structure_contract.md) 的连续、已收盘、同 venue 1m 因果事实投影成 append-only Shadow assessment；历史 v1 行保持不可变。BOS/CHoCH 不得改变 Opportunity、Risk 或 Execution。hard-gate consumer seam 必须对未批准版本及 unavailable 结果 fail closed，生产 allowlist 为空。
-- **DL-INV-36 Universe instrument background**:每个进入 feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`，并解析到一个明确支持的 analysis context。当前只支持既有 crypto context 与经核验的 `stock_linked_perp` context；后者只消费 instrument-local 行情、成本与衍生品证据，BTC 相对强弱、全局 crypto regime 和旧 crypto-family prior 明确不适用。Candidate publication 将同一 background 与 applicability 冻结进 typed context；缺失、冲突、未解析或无受支持 context 均 fail closed，完整 equity 身份本身不是拒绝理由。
+- **DL-INV-36 Universe instrument background**:每个进入 feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`，并解析到一个明确支持的 analysis context。当前产品只有 crypto context：venue 标为真实世界资产的永续（`isRwa`）被 registry 拉黑，代码中残留的 `stock_linked_perp` context 因此在主线不可达，不构成支持声明。Candidate publication 将同一 background 与 applicability 冻结进 typed context；缺失、冲突、未解析或无受支持 context 均 fail closed，完整 equity 身份本身不是拒绝理由。
 - **DL-INV-37 Candidate planning priority**:稀缺 Entry Planner capacity 必须先 claim 当前 `last_candidate_id` 所指向的最低 Candidate rank；每轮可用 3–15 个并发 worker 依次完成 CAS claim 后并行规划，且每个 generation 仍只有一个 owner。rank 只决定调度顺序，不进入 planning identity 或经济权限。exact rank 不可用时稳定回退 generation `created_at`、再 `id`，不得随机排序或因 rank/score churn 创建重复 LLM work。
 - **DL-INV-29 Funding 符号固定**:正 funding 是 longs pay shorts / long crowding，支持 contrarian short；负 funding 是 shorts pay longs / short crowding，支持 contrarian long 并反对 short。语义改变必须轮换 policy epoch。
 

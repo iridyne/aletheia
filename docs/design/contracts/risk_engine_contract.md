@@ -2,9 +2,9 @@
 
 > **角色**:定义 Risk Engine 作为"agent 不可绕过的硬墙"的完整决策契约。
 > 这是 trust 边界的核心——[Product Direction](../../product/definition/DIRECTION.md) 要求失败可生还且自主权只能逐级获得。
-> **基线**：以当前代码与可执行证据为底；本契约描述当前权威行为，偏差进入 GitHub Issues，历史问题证据见 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)。
+> **基线**：本契约描述当前权威行为；偏差进入 GitHub Issues。
+> **产品范围**：只交易 USDT 本位加密永续，唯一获准新入场路由是 `bitget_demo`。下表中涉及现货、`okx_demo`、`binance_testnet` 的分支是主线不可达或仅服务冻结路由的残留，不是支持声明。
 > **不变式来源**:[trust_and_change_control §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-09-14 · 维护者:Aletheia Dev
 
 ---
 
@@ -111,7 +111,12 @@ epoch 的内容、哈希、历史保留与旋转规则不变。
 >
 > 关卡 #5 的比较量：比较的是 **pledged cash（保证金）= notional / leverage**，而非原始名义价值。原始名义价值与可用现金相比时，任何杠杆 > `1/risk_pct` 的单子都会被错误拒绝（20% 风险时为 5x）；以保证金比较后，有效杠杆上限由账户余额自然决定，不受 per_trade_risk_pct 的隐式 cap。spec: RE-B05c、RE-B05d。
 
-> **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`，其他值在 Risk admission
+> **关卡 #15 与 spec 0001**：#15 现由 `LessonStore` 的 manual/owner block 规则驱动。已批准的
+> [spec 0001-learning-loop](../specs/0001-learning-loop/spec.md) 删除 `ps_lessons` 生命周期，并规定
+> 建议级规则不得阻断（LL-R13），阻断只能经 LL-R19 + owner 准入。spec 实施时 #15 必须改由
+> Authority tier 驱动；该合同修改应列入 spec 0001 的 Contract Delta（当前遗漏）。
+
+> **Spot 杠杆身份（残留）**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`，其他值在 Risk admission
 > 以 `invalid_spot_leverage` 拒绝。期货的合法杠杆与保证金计算不变。
 
 > **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 market_type/quantity/entry_price/current_price/leverage 只要缺失、非正数、非有限数或自相矛盾，也会稳定拒绝而不是从分子消失。拒绝 token 携带 sanitized Position id 与稳定 field category，避免一条坏仓位只产生无法定位的泛化重复告警。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~28。
@@ -224,7 +229,7 @@ sizing 不得接回 canonical Entry 路径。
 
 ## 7. 已知缺陷
 
-§7 已知缺陷: 截至 2026-06-23, 无已知缺陷待修。
+当前偏差只在 GitHub Issues 中跟踪，本节不维护清单。
 
 ---
 
@@ -247,11 +252,11 @@ sizing 不得接回 canonical Entry 路径。
 
 `D2-S02` 保持负向 tripwire，防止独立执行器在没有信任边界审查时
 出现。任何独立执行入口、风险池或权威 PnL 隔离都是跨域且触及信任
-边界的变化，必须先建立 Proposal；它们不是本 Contract 的未来待办。
+边界的变化，必须先写成 [spec](../specs/README.md)；它们不是本 Contract 的未来待办。
 
 ### evaluate_proposal 唯一入口不变式
 
-**所有 TradeProposal**（无论来源是主赛道 PI 还是未来 serenity_executor）到达 `gateway.submit_proposal` 之前，**必须经过 `evaluate_proposal()`**。
+**所有 TradeProposal**（Entry Plan 执行经 `execute_existing_proposal`，调试 CLI 经 `submit_proposal`）在任何 broker 调用之前**必须经过 `evaluate_proposal()`**。
 
 - `gateway._execute_proposal` 是唯一通向 broker 下单的函数
 - `evaluate_proposal` 在 `_execute_proposal` 内调用，`risk_result.approved` 守卫在所有 broker 调用之前

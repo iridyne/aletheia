@@ -1,9 +1,10 @@
 # Kill Conditions 契约 (L2 金标准)
 
-> **角色**：定义 demo 阶段三条系统级 Kill 判决——防止系统在已证明无效或危险状态下持续运行。
-> 每条 Kill 条件均有对应的可执行 spec claim 锁死，防止代码漂移。
+> **角色**：定义 demo 阶段的三条 Kill 判据及其计算函数。
+> **运行时执行者**：只有 K3 有生产调用方（`server/routes/live.py` 的 Live 解锁）。K1、K2 的计算函数
+> （`analytics/go_live_scorecard.py`）当前**没有任何生产调用方**，只被 spec 测试调用：它们是 owner
+> 在观察窗口中手动评估的判据，不会自动暂停入场或终止实验。需要自动 Kill 时须另写 [spec](../specs/README.md)。
 > **不变式来源**：[Product Direction 的永久边界](../../product/definition/DIRECTION.md#enduring-product-boundaries)；[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
-> Last aligned with code: 2026-08-06 · 维护者: Aletheia Dev
 
 ---
 
@@ -15,15 +16,11 @@
 
 **Kill 阈值**：`PF < 0.5`
 
-> **历史背景**：终止于 2026-06-27 的 Round 1 协议曾使用 0.85。当前
-> [EXPERIMENT_PROTOCOL](../../product/experiments/EXPERIMENT_PROTOCOL.md) 不复制这个
-> 历史数值；机器执行阈值以本契约和 `go_live_scorecard.py` 的 0.5 为准。
-
 **结构与行为前提**：
 - `_check_profit_factor()` 返回的 criterion `weight > 0`（D8-S01 锁死，已实现）
 - 极低 PF（< kill 阈值）评为 `status='fail'` 且 `score=0`（D8-B01 锁死，已实现）
 
-**当前机器保护**：
+**计算函数（无运行时调用方）**：
 - `check_kill_condition_consecutive_rounds()` 按 14 日窗口计算连续低于 0.5 的轮次；
 - 当前函数遇到空窗口即停止，未另设每窗最小样本量；调用方不得把它描述成样本充分的
   盈利性判决；
@@ -38,7 +35,7 @@
 **判决标准**：系统连续 3 个自然日没有新的 position open，
 意味着决策链已经僵死——数据在流动，但系统无法将机会转化为行动。
 
-**当前机器保护**：
+**计算函数（无运行时调用方）**：
 - `count_consecutive_zero_fill_days()` 读取 `positions.opened_at` 并返回连续无新开仓天数；
 - 函数名保留历史 `zero_fill` 用语，但当前统计单元是 position open，不是 `fills` 表行。
 - 原 doctor 探针 `_probe_profit_loop()`（`loop.profit`）及其 claim D8-S03 已随 #2945（2e69baae9）删除。
@@ -49,15 +46,8 @@
 
 ## K3：Live Unlock 须 Scorecard Composite Score ≥ 70
 
-**判决标准**：人类操作员点击"解锁 live"时，系统必须自动计算 go_live_scorecard 综合分，
-`composite_score < 70` 时硬性阻断解锁请求——demo 表现是 live 的唯一入场券。
-
-**不变式（D8-C01）**：`POST /api/settings/live-unlock` 在迁移至 `live_limited` 前
-**必须**调用 `compute_scorecard()` 且 `composite_score >= 70`，任何绕过路径均违约。
-
-**当前状态**：`server/routes/live.py` 在状态迁移前调用 `compute_scorecard()`；
-低于 70、非 green、存在 blocker，或合格交易净已实现收益不为正都会阻断。
-D8-B02/D8-C01 与负净收益、loss-first drawdown 回归锁定当前门禁。
+该门禁的完整定义与不变式 D8-C01（scorecard `composite_score >= 70`、绿灯、无 blocker、
+合格交易净收益为正）只在 [live_unlock_contract §4a](live_unlock_contract.md) 维护，本节不复制。
 
 **对应 Spec Claims**：D8-B02 · D8-C01
 
@@ -70,18 +60,6 @@ D8-B02/D8-C01 与负净收益、loss-first drawdown 回归锁定当前门禁。
 tripwire 变红，提醒必须补充完整 spec 后才能合并。
 
 **对应 Spec Claims**：D8-B03
-
----
-
-## 契约执行命令
-
-```bash
-# 运行 kill_conditions 所有 claims（含 xfail tripwires）
-uv run pytest tests/specs/spec_kill_conditions.py -v
-
-# 全量 spec（确认无回归）
-uv run pytest tests/specs/ -q
-```
 
 ---
 
