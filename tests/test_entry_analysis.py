@@ -680,3 +680,54 @@ def test_unset_zone_keeps_frozen_anchor_identity():
     anchor = _anchor("confirmed_swing", 100.0, "swing:1")
     assert "zone" not in anchor.model_dump(mode="json")
     assert EntryAnchor.model_validate(anchor.model_dump(mode="json")).anchor_id == anchor.anchor_id
+
+
+def test_planner_input_carries_only_current_in_scope_lessons_and_they_are_citable(monkeypatch):
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell import context as shell_context
+    from aletheia.agent_shell import entry_planner
+
+    now = datetime.now(timezone.utc)
+    instant = lambda value: datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+
+    def lesson(lesson_id, factor_key, *, expires=1, dry_run_until=-1):
+        return SimpleNamespace(
+            lesson_id=lesson_id, category="entry_timing", severity="warning", summary=f"{lesson_id} summary",
+            created_at=now.isoformat(), recommendation_json=None,
+            evidence_json=json.dumps({"supporting_factor_keys": [factor_key] if factor_key else []}),
+            expires_at=(now + timedelta(days=expires)).isoformat(),
+            dry_run_until=(now + timedelta(days=dry_run_until)).isoformat(),
+        )
+
+    applied = [
+        lesson("match", "momentum:BTC/USDT:long:high:clean"),
+        lesson("expired", "momentum:BTC/USDT:long:high:clean", expires=-1),
+        lesson("dry-run", "momentum:BTC/USDT:long:high:clean", dry_run_until=1),
+        lesson("other-symbol", "momentum:ETH/USDT:long:high:clean"),
+        lesson("other-direction", "momentum:BTC/USDT:short:high:clean"),
+        lesson("other-family", "mean_reversion:BTC/USDT:long:high:clean"),
+        lesson("no-scope", None),
+    ]
+    monkeypatch.setattr(shell_context, "_list_learning_lessons", lambda status, limit: applied)
+    monkeypatch.setattr(entry_planner.repo, "get_latest_feature_snapshot", lambda asset_id: {})
+    monkeypatch.setattr(entry_planner.repo, "get_ohlcv_candles", lambda *args, **kwargs: [])
+    monkeypatch.setattr(entry_planner.repo, "get_universe_snapshot_created_at", lambda snapshot_id: instant(2))
+    monkeypatch.setattr(entry_planner.repo, "list_all_open_positions", lambda: [])
+    generation, candidate = _planner_inputs(instant)
+
+    _feature, built = entry_planner._build_fresh_entry_context(generation, candidate, {}, "test")
+    frozen = EntryAnalysisContext.model_validate_json(built.model_dump_json())
+
+    assert frozen.lessons == ({"lesson_id": "match", "category": "entry_timing", "summary": "match summary"},)
+    assert entry_model_view(frozen)["lessons"] == [dict(frozen.lessons[0])]
+    hypothesis = EntryHypothesis(
+        decision="NO_PLAN", reason_code="INSUFFICIENT_EVIDENCE", mechanism="continuation", direction="long",
+        risk_tier="NONE", horizon="NONE", learning_evidence_refs=("lesson:match",),
+    )
+    validate_hypothesis_references(hypothesis, frozen)
+    with pytest.raises(ValueError, match="hypothesis_learning_context_unavailable"):
+        validate_hypothesis_references(
+            hypothesis.model_copy(update={"learning_evidence_refs": ("lesson:expired",)}), frozen,
+        )

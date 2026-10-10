@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -113,102 +112,90 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch, 
 
 
 
-def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,
-                            complete: bool = True) -> None:
-    _ts = datetime.now(timezone.utc).isoformat()
-    db.execute(
-        "INSERT INTO filter_candidate_outcomes "
-        "(id,outcome_candidate_key,venue,symbol,scanner_family,direction,horizon,market_type,"
-        "entry_price_usd,exit_price_usd,entry_ts,due_at,settled_at,directional_return_pct,"
-        "settlement_price_source,settlement_lag_sec,"
-        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
-        "net_return_pct,min_tradable_edge_pct,cost_model_version,status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            oid, f"candidate-{oid}", "bitget", symbol,
-            scanner, direction, "24h", "spot", 100.0,
-            101.2 if (direction == "long" and complete) else (98.8 if complete else None),
-            _ts, _ts, _ts,
-            1.2 if complete else None,
-            "horizon_ohlcv" if complete else None, 0 if complete else None,
-            0.1 if complete else None, 0.1 if complete else None,
-            0.0 if complete else None,
-            1.0 if complete else None, 0.05 if complete else None,
-            "v1" if complete else None, "settled",
-        ),
+def _source_trade(position_id: str, realized_pnl: float, *, eligible: bool = True) -> str:
+    """A closed position and the trade_case_study that reviews it; returns the case id."""
+    from datetime import timedelta
+
+    from aletheia.storage import repositories as repo
+    from extensions.knowledge.manager import create_trade_case_study
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    now = datetime.now(timezone.utc)
+    if eligible:
+        _insert_closed_position_via_producer(
+            position_id=position_id, symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=1.0, entry_price=100.0, realized_pnl=realized_pnl,
+            execution_mode="bitget_demo", closed_at=now.isoformat(),
+        )
+    else:  # an administrative close carries a number but no clean outcome
+        repo._insert("positions", {
+            "id": position_id, "symbol": "BTC/USDT", "market_type": "usdt_futures",
+            "direction": "long", "quantity": 1.0, "entry_price": 100.0,
+            "execution_mode": "bitget_demo", "status": "closed", "realized_pnl": realized_pnl,
+            "opened_at": (now - timedelta(hours=2)).isoformat(), "closed_at": now.isoformat(),
+            "close_reason": "reconciled_gone", "close_category": "administrative",
+            "exit_price_source": "unavailable", "exit_fill_verified": False,
+            "outcome_eligible": False, "outcome_exclusion_reason": "administrative_close",
+            "outcome_semantics_version": "oi-v1",
+        })
+    case = create_trade_case_study(
+        f"Case: BTC/USDT long {position_id}",
+        f"# Case {position_id}\n\nA closed BTC/USDT long reviewed for the lesson reviewer fixture. " * 2,
+        metadata={"position_id": position_id, "symbol": "BTC/USDT", "direction": "long"},
     )
+    assert case is not None
+    return case.id
 
 
 @spec_claim(
     SpecClaim(
         "LE-B03", "learning_evolution", "§5.1 clean reviewer evidence", "L2b",
-        "Incomplete, identity-less, or non-cost-aware candidate outcomes cannot count toward lesson review.",
+        "Only a lesson's own source trades with a clean realized net outcome count toward lesson review.",
         status="implemented",
     ),
     SpecClaim(
         "LE-B04", "learning_evolution", "§5.2 exact-scope reviewer gate", "L2b",
-        "A lesson is deferred when its exact populated scope misses the sample floor even if global history is large.",
+        "A lesson is deferred when its own clean source trades miss the sample floor, "
+        "even if other clean closes exist.",
         status="implemented",
     ),
 )
-async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
+async def test_lesson_reviewer_judges_a_lesson_from_its_source_trades(monkeypatch):
     from extensions.research import lesson_reviewer
     from extensions.learning.lessons import LessonStore
-    from aletheia.storage.sqlite import get_db
 
-    db = get_db()
-    for i in range(25):
-        _insert_forward_outcome(
-            db, oid=f"global-{i}", symbol="ETH/USDT", direction="short", scanner="reversion",
-        )
-    for i in range(5):
-        _insert_forward_outcome(
-            db, oid=f"exact-{i}", symbol="BTC/USDT", direction="long", scanner="momentum",
-        )
-    for i in range(30):
-        _insert_forward_outcome(
-            db, oid=f"dirty-{i}", symbol="BTC/USDT", direction="long", scanner="momentum",
-            complete=False,
-        )
-    _insert_forward_outcome(
-        db, oid="malformed-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
-    )
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET min_tradable_edge_pct='malformed' "
-        "WHERE id='malformed-edge'"
-    )
-    _insert_forward_outcome(
-        db, oid="blob-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
-    )
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET min_tradable_edge_pct=? WHERE id='blob-edge'",
-        (b"0.05",),
-    )
-    db.commit()
+    store = LessonStore()
+    judged = {}
 
-    lesson = LessonStore().create(
-        "BTC/USDT momentum longs should be preferred",
-        source_type="trade_case_study", source_id="case-exact", category="entry_timing",
-        severity="warning",
-        evidence={"scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT"},
-        recommendation={"action": "prefer", "symbol": "BTC/USDT", "direction": "long",
-                        "scanner": "momentum"},
-    )
-    judge = AsyncMock(return_value=("accept", "broad history looks positive"))
+    async def judge(lesson, evidence, run_id):
+        judged[lesson.lesson_id] = lesson_reviewer._evidence_block(evidence)
+        return "accept", "source trades back it", False
+
     monkeypatch.setattr(lesson_reviewer, "_judge", judge)
+    supported = store.create(
+        "BTC/USDT longs closed at a profit", source_type="trade_case_study", source_id="case",
+        category="entry_timing", evidence={"supporting_source_ids": [
+            _source_trade("win-1", 2.0), _source_trade("win-2", 1.0), _source_trade("loss-1", -1.0),
+            _source_trade("admin-1", 50.0, eligible=False),
+        ]},
+    )
+    thin = store.create(
+        "Two trades are not a lesson yet", source_type="trade_case_study", source_id="case",
+        category="entry_timing", evidence={"supporting_source_ids": [
+            _source_trade("thin-1", 1.0), _source_trade("thin-2", 1.0),
+        ]},
+    )
 
-    evidence = lesson_reviewer._fetch_evidence(lesson)
-    assert evidence["aggregate"]["total"] == 30
-    assert evidence["exact_scope"]["total"] == 5
-    from aletheia.analytics.outcome_semantics import assess_realized_position
-    assert assess_realized_position({
-        "id": "synthetic", "closed_at": "2026-07-11T00:00:00+00:00",
-        "close_reason": "reconciled_gone", "realized_pnl": 100,
-        "entry_price": 100, "quantity": 1,
-    }).eligible is False
+    evidence = lesson_reviewer._fetch_evidence(supported)
+    assert (evidence["total"], evidence["wins"]) == (3, 2)
+    assert evidence["excluded"] == {"administrative_close": 1}
+
     await lesson_reviewer.run_lesson_reviewer(run_id="test")
-    assert LessonStore().get(lesson.lesson_id).status == "proposed"
-    judge.assert_not_awaited()
+    reviewed, deferred = store.get(supported.lesson_id), store.get(thin.lesson_id)
+    assert reviewed is not None and reviewed.status == "applied"
+    assert "total: 3, win_rate: 66.7%" in judged[supported.lesson_id]
+    assert deferred is not None and deferred.status == "proposed"
+    assert thin.lesson_id not in judged
 
 
 @spec_claim(

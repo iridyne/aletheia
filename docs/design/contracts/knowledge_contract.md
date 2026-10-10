@@ -230,13 +230,15 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py`）�
 
 ## §6 当前 Learning 管线状态
 
-### A1. ps_lessons 当前诊断/Risk 消费与历史入场注入
+### A1. ps_lessons 的入场消费、诊断与 Risk 消费
 
-当前 `agent_shell/context.py::_curated_learning_context` 只为 Operator 只读诊断提供已应用、未过期且已过 dry-run 的 lessons；Risk 继续独立执行既有 lesson constraints。以下 trading_context/trading_decision 链为已退役的历史入场注入，不是当前消费者。
+**2026-10-10 owner 撤回本节此前的“入场注入已退役”**（决策见 DECISIONS.md 2026-10-10 “学习闭环重新接上入场”）。当前三个消费者：
 
-**历史实现（已退役）**: `trading_context.py` 读取 `LessonStore().list_all(status="applied", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
+- **Entry Planner**：`agent_shell/context.py::entry_lessons` 经 `configure_learning_context_reader` 注入的 reader 读取 `status="applied"`、未过期、已过 `dry_run_until` 的 lessons，只保留 scope 与本 Candidate 匹配的，最多 5 条，每条只含 `lesson_id`、`category`、`summary`；由 `agent_shell/entry_planner.py::_build_fresh_entry_context` 写入冻结的 `EntryAnalysisContext.lessons`（`planner_input_json`）。lesson 的 scope 来自其 recommendation 或全部 `supporting_factor_keys`（`family:symbol:direction:...`）一致的维度：symbol、direction、scanner family（与规划代次的 `candidate_family` 比较）；没有任何可恢复 scope 的 lesson 不进入。模型可在 `learning_evidence_refs` 里引用 `lesson:<lesson_id>`，只能引用本次提供的 lesson。lesson 是系统自己复盘过的错误与成功，只供权衡，单独不能授权入场（canonical entry prompt 原文写明）。
+- **Operator 只读诊断**：`agent_shell/context.py::_curated_learning_context` 提供同样的已应用、未过期、已过 dry-run 的 lessons（不按 Candidate 过滤）。
+- **Risk**：`risk/engine.py::_check_lesson_constraints` 独立执行既有 lesson constraints。
 
-`ps_lessons` 的历史入场消费路径（已退役）：`dreaming_agent` 提炼 → `LessonStore` → `lesson_reviewer` 审核并 `mark_applied()` → `trading_context` Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（`status="applied"` 且未过期的 lesson）。
+**已退役的旧实现**: `trading_context.py` 读取 `LessonStore().list_all(status="applied", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。这条不按 Candidate 过滤的注入不恢复；上面的 Entry Planner 路径取代它。
 
 **历史缺陷（Round 1）**: `ps_lessons` 写入但无消费者，dreaming 工作进死路。该断点已修复；`accepted` 现在只是短暂中间态，稳定消费态是 `applied`。
 
@@ -317,6 +319,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py`）�
 
 | 消费方 | 检索方式 | 代码锚点 |
 |--------|---------|---------|
+| Entry Planner | applied、未过期、已过 dry-run 且 scope 匹配本 Candidate 的 `ps_lessons`，最多 5 条，冻结进 `EntryAnalysisContext.lessons`，可引用为 `lesson:<id>` | `agent_shell/context.py::entry_lessons`、`agent_shell/entry_planner.py::_build_fresh_entry_context` |
 | Operator 只读诊断 | applied、未过期且已过 dry-run 的 `ps_lessons`，advisory-only | `agent_shell/context.py::_curated_learning_context` |
 | `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `extensions/research/dreaming_agent.py` |
 
@@ -334,7 +337,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py`）�
 
 两者的消费者已退役，历史测量语义与 LP-S14 枚举见
 [history/knowledge_retired_entry_consumers.md](../history/knowledge_retired_entry_consumers.md)。
-不得据此为 Planner 新增消费权。
+不得据此为 Planner 新增消费权；唯一例外是 §6 A1 的 applied lessons（owner 2026-10-10 决定）。
 
 ### 8.3 风控阈值（暂不开放）
 

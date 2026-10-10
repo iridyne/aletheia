@@ -52,7 +52,7 @@ def test_entry_schema_is_unchanged_by_contract_extraction():
     from aletheia.trading.entry_analysis import EntryAnalysisContext
 
     encoded = json.dumps(EntryAnalysisContext.model_json_schema(), sort_keys=True, separators=(",", ":"))
-    assert hashlib.sha256(encoded.encode()).hexdigest() == "495c3b4e853bfa836ab5757544452e2cce88fa724e76330e28b9cd96a0e342ed"
+    assert hashlib.sha256(encoded.encode()).hexdigest() == "84acfb40f72ddf2ca2574d5ea189449602a32264e9ab78e179a1181029749dd3"
 
 
 @pytest.mark.parametrize("entrypoint", ["web", "cli"])

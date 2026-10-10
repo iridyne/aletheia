@@ -11,8 +11,10 @@ Repeat the supplied Candidate Opportunity mechanism and direction exactly. Selec
 anchor IDs and profile IDs present in the supplied context. Select supporting/opposing refs only
 from reference_contract.citable_fact_refs. ENTRY_PLAN must cite at least one supporting ref from
 reference_contract.current_market_fact_refs. Nested source_fact_refs are provenance, not automatically
-citable facts. Learning refs come only from learning_context.evidence_refs; Learning alone cannot
-authorize entry. If evidence is insufficient return identity-correct NO_PLAN, never invent refs.
+citable facts. Learning refs come only from learning_context.evidence_refs or lesson:<lesson_id> for a
+supplied lesson; Learning alone cannot authorize entry. lessons are the system's own reviewed mistakes
+and successes on this Candidate's scope: weigh them, but they alone never authorize an entry.
+If evidence is insufficient return identity-correct NO_PLAN, never invent refs.
 Horizon is INTRADAY or SWING entry timing, not the holding period. Anchors come from 15m, 1h and 4h
 structure; each structural anchor carries its timeframe and its zone (low/high/touches), the band of
 nearby same-timeframe levels it stands for. Every invalidation-capable anchor supplied is on the

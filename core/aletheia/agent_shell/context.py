@@ -106,6 +106,70 @@ def _lesson_is_current(expires_at: str | None, now: datetime) -> bool:
         return False
 
 
+def _active_lessons(now: datetime, *, limit: int):
+    """Applied lessons that are unexpired and past their dry-run window."""
+    if _list_learning_lessons is None:
+        return
+    for lesson in _list_learning_lessons(status="applied", limit=limit):
+        if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
+            continue
+        dry_run_until = getattr(lesson, "dry_run_until", None)
+        if dry_run_until and _lesson_is_current(dry_run_until, now):
+            continue
+        yield lesson
+
+
+def _lesson_scope(lesson) -> dict[str, str]:
+    """The symbol/direction/scanner family a lesson's own evidence pins down.
+
+    A dimension is in scope only when the recommendation names it or every
+    supporting factor key (``family:symbol:direction:...``) agrees on it.
+    """
+    import json
+
+    def _load(raw) -> dict:
+        try:
+            value = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    rec, evidence = _load(lesson.recommendation_json), _load(lesson.evidence_json)
+    keys = [str(key).split(":") for key in evidence.get("supporting_factor_keys") or ()]
+    keys = [parts for parts in keys if len(parts) == 5]
+    scope = {}
+    for index, name, rec_key in ((0, "family", "scanner"), (1, "symbol", "symbol"), (2, "direction", "direction")):
+        values = {parts[index] for parts in keys if parts[index] != "unknown"}
+        value = rec.get(rec_key) or (next(iter(values)) if len(values) == 1 else None)
+        if value:
+            scope[name] = str(value)
+    return scope
+
+
+def entry_lessons(*, symbol: str, direction: str, family: str, now: datetime) -> tuple[dict, ...]:
+    """At most five current lessons whose own scope matches this Candidate.
+
+    A lesson with no recoverable scope is not about this Candidate and is left out.
+    """
+    from aletheia.data.symbols import to_canonical
+
+    candidate = {"family": family, "symbol": to_canonical(symbol), "direction": direction}
+    matched = []
+    for lesson in _active_lessons(now, limit=-1):
+        scope = _lesson_scope(lesson)
+        if "symbol" in scope:
+            scope["symbol"] = to_canonical(scope["symbol"])
+        if scope and all(candidate[key] == value for key, value in scope.items()):
+            matched.append({
+                "lesson_id": lesson.lesson_id,
+                "category": lesson.category,
+                "summary": _short_text(lesson.summary, 240),
+            })
+            if len(matched) == 5:
+                break
+    return tuple(matched)
+
+
 def _curated_learning_context() -> dict:
     """Return reviewed, non-expired Learning facts for diagnostic use only.
 
@@ -127,12 +191,7 @@ def _curated_learning_context() -> dict:
             },
         }
     lessons = []
-    for lesson in _list_learning_lessons(status="applied", limit=30):
-        if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
-            continue
-        dry_run_until = getattr(lesson, "dry_run_until", None)
-        if dry_run_until and _lesson_is_current(dry_run_until, now):
-            continue
+    for lesson in _active_lessons(now, limit=30):
         lessons.append({
             "lesson_id": lesson.lesson_id,
             "category": lesson.category,

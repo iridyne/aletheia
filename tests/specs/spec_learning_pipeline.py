@@ -293,44 +293,23 @@ def test_applied_policy_version_closure():
 )
 async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provider):
     """Behavioral proof on the autouse in-memory DB. Mocks ONLY the LLM network
-    boundary and its provider construction; LessonStore / PolicyStore / evidence SQL all run for
+    boundary and its provider construction; LessonStore / PolicyStore / source-trade evidence all run for
     real, and we assert the resulting DB state — not that a mock was called.
     """
-    from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock
 
     import extensions.research.lesson_reviewer as lr
     from extensions.learning.lessons import LessonStore
     from extensions.learning.skills import SkillStore
     from extensions.policies.store import PolicyStore
-    from aletheia.storage.models import new_id
-    from aletheia.storage.sqlite import get_db
-    _ts = datetime.now(timezone.utc).isoformat()
-
-    db = get_db()
-    # Seed >= _MIN_SETTLED_EVIDENCE settled outcomes so the deterministic floor passes.
-    for _ in range(25):
-        db.execute(
-            "INSERT INTO filter_candidate_outcomes "
-                "(id, outcome_candidate_key, venue, symbol, scanner_family, direction, horizon, "
-                " market_type, entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
-                " settlement_price_source, settlement_lag_sec, "
-                " gross_return_pct, directional_return_pct, "
-                " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
-                " net_return_pct, min_tradable_edge_pct, min_cost_covering_edge_pct, cost_model_version, status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (new_id(), new_id(), "bitget", "BTC/USDT", "momentum", "long", "24h",
-                 "spot", 100.0, _ts, _ts, _ts, 102.0, "horizon_ohlcv", 0, 2.0, 2.0,
-                 0.1, 0.1, 0.0,
-                 1.8, 0.05, 0.25, "v1", "settled"),
-        )
-    db.commit()
+    from tests.specs.spec_learning_final_consumers import _source_trade
 
     store = LessonStore()
     lesson = store.create(
         summary="Momentum longs on BTC/USDT carry edge in this regime",
         source_type="trade_case_study", source_id="x",
         category="entry_timing", severity="warning",
+        evidence={"supporting_source_ids": [_source_trade(f"src-{i}", 1.5) for i in range(3)]},
     )
 
     monkeypatch.setattr(
@@ -368,10 +347,8 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch,
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
     monkeypatch.setattr(
         lr, "_fetch_evidence",
-        lambda _lesson: {
-            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-        },
+        lambda _lesson: {"total": 3, "wins": 2, "win_rate": 66.7, "avg_return": 0.1,
+                         "trades": [], "excluded": {}},
     )
     call = AsyncMock(return_value=(None, "structured_empty_content"))
     monkeypatch.setattr(lr, "llm_structured", call)
@@ -401,10 +378,8 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
     monkeypatch.setattr(
         lr, "_fetch_evidence",
-        lambda _lesson: {
-            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-        },
+        lambda _lesson: {"total": 3, "wins": 2, "win_rate": 66.7, "avg_return": 0.1,
+                         "trades": [], "excluded": {}},
     )
     monkeypatch.setattr(
         lr, "llm_structured",
@@ -430,10 +405,8 @@ async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
     monkeypatch.setattr(
         lr,
         "_fetch_evidence",
-        lambda _lesson: {
-            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
-        },
+        lambda _lesson: {"total": 3, "wins": 2, "win_rate": 66.7, "avg_return": 0.1,
+                         "trades": [], "excluded": {}},
     )
 
     async def reject_while_judging(*_args, **_kwargs):
@@ -462,10 +435,7 @@ async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
     monkeypatch.setattr(
         lr,
         "_fetch_evidence",
-        lambda _lesson: {
-            "aggregate": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
-            "exact_scope": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
-        },
+        lambda _lesson: {"total": 0},
     )
     real_policy_store = policy_module.PolicyStore
 
@@ -540,10 +510,7 @@ async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monke
     monkeypatch.setattr(
         lr,
         "_fetch_evidence",
-        lambda _lesson: {
-            "aggregate": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
-            "exact_scope": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
-        },
+        lambda _lesson: {"total": 0},
     )
 
     result = await lr.run_lesson_reviewer(run_id="test")
