@@ -563,10 +563,10 @@ async def test_verified_exit_private_history_is_registered_and_bounded(monkeypat
 @spec_claim(
     SpecClaim(
         "DU-S13", _CONTRACT, "§perp structure observation path", "L2a",
-        "perp_structure_snapshots is registered in data_utilization.md, has a "
-        "whitelisted fixture collector, and reaches the decision context via "
-        "render_enriched_context_md(perp_structure=...), while doctor exposes "
-        "freshness. It stays observation-only until a real feed is added.",
+        "perp_structure_snapshots is registered in data_utilization.md as "
+        "observation-only, has a whitelisted fixture collector and a "
+        "render_enriched_context_md(perp_structure=...) hook with no production "
+        "caller, while doctor exposes freshness.",
     ),
 )
 def test_perp_structure_registered_and_consumed():
@@ -574,8 +574,8 @@ def test_perp_structure_registered_and_consumed():
     assert "perp_structure_snapshots" in doc, (
         "data_utilization.md §3 must register the perp structure observation path"
     )
-    assert "market_observer" in doc and "doctor" in doc, (
-        "perp structure registration must declare the prompt consumer and freshness check"
+    assert "无 Entry Planner 消费者" in doc and "doctor" in doc, (
+        "perp structure registration must state it has no decision consumer and name its freshness check"
     )
 
     collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
@@ -841,7 +841,7 @@ def test_market_context_timeframes_cover_all_three_periods():
         "DU-S12", _CONTRACT, "§official RSS feeds", "L2a",
         "Default news feeds include SEC/CFTC/Ethereum Foundation official RSS "
         "sources, and data_utilization.md §3 registers them as NewsCollector -> "
-        "news_items -> market_observer/research_worker consumers.",
+        "news_items -> research_worker (its only consumer).",
     ),
 )
 def test_official_news_feeds_registered_and_consumed():
@@ -861,8 +861,8 @@ def test_official_news_feeds_registered_and_consumed():
     assert "NewsCollector" in doc and "news_items" in doc, (
         "official RSS registration must declare collector and storage (DU-S12)"
     )
-    assert "market_observer" in doc and "research_worker" in doc, (
-        "official RSS registration must declare consumers (DU-S12)"
+    assert "research_worker" in doc, (
+        "official RSS registration must declare its consumer (DU-S12)"
     )
 
 
