@@ -138,7 +138,7 @@ def test_holding_horizon_requires_positive_finite_value(holding):
 @pytest.mark.parametrize("mechanism,family,direction,market_type,school", [
     ("continuation", "momentum", "long", "perp", "short_term"),
     ("reversal", "mean_reversion", "short", "perp", "short_term"),
-    ("continuation", "momentum", "long", "spot", "serenity"),
+    ("continuation", "momentum", "long", "perp", "serenity"),
 ])
 def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, request, tmp_path, mechanism, family, direction, market_type, school):
     import asyncio
@@ -170,13 +170,16 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     save_config(cfg)
     cfg = load_config()
     from aletheia.agent_runtime.runtime_session import start_runtime_session, end_runtime_session
+    # EntryPlan.producer_commit is required; pin the boot commit so the case does
+    # not depend on the test host having a git checkout.
+    monkeypatch.setattr("aletheia.agent_runtime.build_info._boot_commit", "controlled-test-commit")
     start_runtime_session(cfg)
     request.addfinalizer(end_runtime_session)
     research_id = None
     if school == "serenity":
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
         from aletheia.storage.models import UniverseMember
-        theme, opportunity = _serenity_publication_source()
+        theme, opportunity = _serenity_publication_source(market_type)
         research_id = opportunity.id
         [candidate_id] = publish_serenity_candidates(theme.id, [research_id])
         candidate = UniverseMember.model_validate(repo.get_candidate(candidate_id))

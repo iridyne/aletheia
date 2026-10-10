@@ -157,7 +157,7 @@ def test_historical_measured_context_hash_is_not_rewritten():
     assert _member(restored).candidate_selection_utility_pct == 1.5
 
 
-def _serenity_publication_source():
+def _serenity_publication_source(market_type="spot"):
     import math
     from datetime import timezone
     from aletheia.config.loader import load_config, save_config
@@ -174,11 +174,11 @@ def _serenity_publication_source():
     save_config(cfg)
     theme = SerenityTheme(name="Research publication", status="active")
     repo.insert_serenity_theme(theme)
-    opportunity = SerenityOpportunity(theme_id=theme.id, symbol="BTC/USDT", direction="long", market_type="spot")
+    opportunity = SerenityOpportunity(theme_id=theme.id, symbol="BTC/USDT", direction="long", market_type=market_type)
     repo.insert_serenity_opportunity(opportunity)
     repo.insert_serenity_evidence(SerenityEvidence(theme_id=theme.id, title="Filed research", source="sec",
         source_ref="https://www.sec.gov/Archives/research", tier="disclosed", assessed_tier="disclosed", supports=True))
-    asset = UniverseAsset(venue=venue, symbol=opportunity.symbol, market_type="spot")
+    asset = UniverseAsset(venue=venue, symbol=opportunity.symbol, market_type=market_type)
     repo.upsert_universe_asset(asset)
     repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(asset_id=asset.id, ts=now.isoformat(),
         quote_volume_24h=10_000_000, spread_bps=5, depth_10bps_usd=30_000, data_freshness_sec=0,
@@ -188,7 +188,7 @@ def _serenity_publication_source():
         candles = [Candle(timestamp=end-(count-index)*interval, open=100+math.sin(index/3),
             high=102+math.sin(index/3), low=98+math.sin(index/3), close=100+math.sin(index/3), volume=1000)
             for index in range(count)]
-        repo.upsert_ohlcv_candles(opportunity.symbol, timeframe, candles, exchange=venue, market_type="spot")
+        repo.upsert_ohlcv_candles(opportunity.symbol, timeframe, candles, exchange=venue, market_type=market_type)
     repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?, last_mutated_at=?", (now.isoformat(), now.isoformat()))
     return theme, opportunity
 
