@@ -209,6 +209,7 @@ def oi_change(oi: pd.Series | None, ts: pd.Series) -> np.ndarray:
     for i, (a, t) in enumerate(zip(after_idx, ts)):
         if a < len(oi) and oi.index[a] <= t + pd.Timedelta("30min"):
             after[i] = oi.iloc[a]
+    before = np.where(before > 0, before, np.nan)  # a few snapshots report OI = 0
     return after / before - 1
 
 

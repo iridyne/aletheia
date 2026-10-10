@@ -82,4 +82,6 @@ unseen period (October 2026 onward).
 Any change to the rules after the first in-sample run is recorded here with its reason. Code-bug fixes are
 allowed (they make the script do what this document says) and are listed; rule changes are not.
 
-- (none yet)
+- Code bug, after the first in-sample run: two metrics snapshots report open interest 0, so the OI
+  change divided by zero and landed in the "flat/up" split; such snapshots are now unknown. Affects 2 of
+  17,782 primary-cell events, both unfilled, so no reported number moved; no rule changed.

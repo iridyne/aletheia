@@ -22,6 +22,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Forced-flow event study — 2026-10-10](trading-theory/13_forced_flow_event_study_results_2026-10-10.md)
+  **fails** its pre-registration ([12](trading-theory/12_forced_flow_event_study_preregistration_2026-10-10.md)):
+  resting a bid under extreme taker selling in 30 thin Binance perps loses net of 14 bp in every in-sample month
+  (Apr–Aug 2026); only the up-drifting September holdout is positive; the liquidation-like OI-drop subset is worst.
 - [Where AstraQuant and VergeX make money — 2026-10-09](trading-strategy/COMPETITOR_PNL_SOURCE_ASTRAQUANT_VERGEX_2026-10-09.md)
   finds no verifiable net-of-cost user profit for either; decomposes the only ledger (an owner-run AstraQuant demo,
   43 trades) into market beta, demo-price distortion and concentration; documents that platform revenue comes from
