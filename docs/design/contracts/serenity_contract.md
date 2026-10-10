@@ -256,9 +256,9 @@ Proposal→Gateway→Position/reconciliation 必须保留 school 与 source，�
 
 ## §10 股票代币执行 (xstock)
 
-Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equity_tradeable`,与 equity_observer 的观察专用 `equity` 互不干扰:
-- research_worker 的 stock-token 研究分类不是执行批准；只有已登记的 exact venue/symbol/market_type 与受支持 instrument context、真实 PA/eligibility 门可发布 Candidate。纯股票 ticker 或预测问题文本不能伪造成 instrument。
-- `equity_observer` 不含 `equity_tradeable`,保持观察-only,OBS-S04 不被破坏(SX-S03)。
+股票代币(xStocks)不在产品范围内(仅 USDT 永续)。research_worker 不再识别、不再放行股票代币 symbol,只产出 `asset_class="crypto"`、`market_type="perp"` 的机会:
+- 只有已登记的 exact venue/symbol/market_type 与受支持 instrument context、真实 PA/eligibility 门可发布 Candidate。纯股票 ticker、股票代币或预测问题文本不能伪造成 instrument。
+- `equity_observer` 保持观察-only,OBS-S04 不被破坏。
 - 加密-only 过滤(§2 不变量 #5,SE-S07/I07): `_is_tradeable_crypto_symbol`(= research_worker 的 `_is_allowed_serenity_symbol` 别名) + `_ALLOWED_QUOTE_CURRENCIES` 在持久化前拒绝 MSTR/USD、SPY、GBP/USD、USDT/INR,放行 BTC/USDT、ETH/BTC 等。
 
 ---
@@ -291,7 +291,6 @@ promote→PI 队列、TradingDecision 和 broker 源码拼写断言已不代表�
 | `spec_serenity_promote.py` | serenity_promote | promote→PI 队列 (Option A) + D5 开关 | SP-S01~S06, SP-B01~B03 |
 | `spec_serenity_holding.py` | serenity_holding | trade_school 穿透 + 长周期不被 72h 杀 | SH-S01~S10, SH-B01~B03 |
 | `spec_serenity_live_readiness.py` | serenity_live_readiness | live 对称 + 信任边界隔离 | LR-S01~S06 |
-| `spec_serenity_xstock_execution.py` | serenity_xstock_execution | equity_tradeable 资产类别 | SX-S01~S03 |
 
 Research attempt lifecycle 的聚焦行为由 `tests/test_serenity_workbench.py` 和
 `tests/test_serenity_scheduler_continuity.py` 覆盖：queued/running cancel race、worker

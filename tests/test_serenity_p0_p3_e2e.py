@@ -323,23 +323,6 @@ class TestP3FlowContextBlock:
         assert "DOGE/USDT" not in result
         assert "Delta1h=0.0%" not in result
 
-    def test_equity_context_block_references_yfinance(self):
-        """_get_equity_context_block has yfinance injection logic (import path test).
-
-        Full yfinance network call is NOT exercised in CI — we verify the code
-        structure handles ImportError gracefully (yfinance not installed in test env).
-        """
-        from extensions.research.research_worker import _get_equity_context_block
-
-        # Should not crash even if yfinance is not installed
-        # (the code has try/except ImportError)
-        with patch("aletheia.config.loader.load_config") as mock_cfg:
-            mock_cfg.return_value.market_data.observed_stock_tokens = ["rNVDA/USDT"]
-            result = _get_equity_context_block()
-            # Even without yfinance, the ticker list should be present
-            if result:
-                assert "NVDA" in result
-
 
 # ---------------------------------------------------------------------------
 # Link 9→10 — Serenity feedback loop closure

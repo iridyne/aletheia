@@ -136,7 +136,7 @@ async def test_adapter_normalizes_market_facts_without_registry_authority(monkey
     assert (facts[0].price_precision, facts[0].amount_precision, facts[0].min_notional) == (2, 3, 5)
     assert facts[1].is_test_or_dated and facts[1].market_type == "perp"
     assert facts[1].contract_size == 0.01
-    assert facts[2].is_tokenized_equity and facts[2].background["asset_class"] == "equity"
+    assert facts[2].background["asset_class"] == "equity"
     perp_facts = await provider.get_market_instruments("perp")
     assert [item.symbol for item in perp_facts] == ["TEST/USDT"]
 

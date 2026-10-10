@@ -30,52 +30,18 @@ _CONTRACT = "data_utilization_contract"
 @spec_claim(
     SpecClaim(
         "EQ-R01", _CONTRACT, "§stock-token-registry", "L2a",
-        "symbols.py exposes is_stock_token(), stock_token_to_ticker(), and "
-        "ticker_to_stock_tokens(); is_stock_token('rNVDA/USDT') returns True.",
+        "symbols.py exposes ticker_to_stock_tokens() for the equity observer, "
+        "r-series before ON-series.",
     ),
 )
 def test_stock_token_functions_exist():
-    from aletheia.data.symbols import (
-        is_stock_token,
-        stock_token_to_ticker,
-        ticker_to_stock_tokens,
-    )
-    # r-series token recognised
-    assert is_stock_token("rNVDA/USDT"), "rNVDA/USDT must be a stock token"
-    assert is_stock_token("rTSLA/USDT"), "rTSLA/USDT must be a stock token"
-    assert is_stock_token("rAAPL/USDT"), "rAAPL/USDT must be a stock token"
+    from aletheia.data.symbols import ticker_to_stock_tokens
 
-    # ON-series token recognised (registry-based)
-    assert is_stock_token("AAPLON/USDT"), "AAPLON/USDT must be a stock token"
-    assert is_stock_token("TSLAON/USDT"), "TSLAON/USDT must be a stock token"
-
-    # Single-letter NYSE tickers are real listings and Bitget lists them as
-    # rV/rT/rC. A two-character floor classified them as ordinary crypto, which
-    # put thin tokenized-equity markets into the crypto candidate pool.
-    assert is_stock_token("rV/USDT"), "rV/USDT (Visa) must be a stock token"
-    assert is_stock_token("rT/USDT"), "rT/USDT (AT&T) must be a stock token"
-    assert is_stock_token("rC/USDT"), "rC/USDT (Citigroup) must be a stock token"
-    assert stock_token_to_ticker("rV/USDT") == "V"
-
-    # Non-token NOT recognised
-    assert not is_stock_token("BTC/USDT"), "BTC/USDT is not a stock token"
-    assert not is_stock_token("ETH/USDT"), "ETH/USDT is not a stock token"
-    # The rule keys on a lowercase r before an uppercase ticker, not on length:
-    # a lowercase stem is not a ticker.
-    assert not is_stock_token("reth/USDT"), "reth/USDT is not a stock token"
-    assert not is_stock_token("RENDER/USDT"), "RENDER/USDT is not a stock token"
-
-    # ticker lookup works for both series
-    assert stock_token_to_ticker("rNVDA/USDT") == "NVDA"
-    assert stock_token_to_ticker("AAPLON/USDT") == "AAPL"
-    assert stock_token_to_ticker("rTSLA/USDT") == "TSLA"
-
-    # ticker → tokens: r-series first, then ON-series
     tokens = ticker_to_stock_tokens("AAPL")
-    assert len(tokens) >= 1, "AAPL must have at least one token"
     assert tokens[0] == "rAAPL/USDT", "r-series must be first (higher liquidity)"
-    # AAPLON should also appear if present in registry
     assert "AAPLON/USDT" in tokens, "AAPLON/USDT must be in AAPL token list"
+    # Single-letter NYSE tickers are real r-series listings (rV = Visa).
+    assert ticker_to_stock_tokens("V")[0] == "rV/USDT"
 
 
 # ---------------------------------------------------------------------------
@@ -100,33 +66,6 @@ def test_equity_observer_uses_priority_token_lookup():
     # The iteration over candidate_tokens and break on first successful price
     assert "for token_sym in candidate_tokens" in src, (
         "equity_observer must iterate candidate_tokens in priority order"
-    )
-
-
-# ---------------------------------------------------------------------------
-# EQ-R03 — research_worker has equity_chain lens
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "EQ-R03", _CONTRACT, "§serenity-equity-chain-lens", "L2a",
-        "research_worker.py defines _EQUITY_CHAIN_LENS and appends it to "
-        "active_lenses when equities are configured.",
-    ),
-)
-def test_research_worker_has_equity_chain_lens():
-    src = (_ROOT / "extensions" / "research" / "research_worker.py").read_text(encoding="utf-8")
-    assert "_EQUITY_CHAIN_LENS" in src, (
-        "research_worker must define _EQUITY_CHAIN_LENS"
-    )
-    assert "equity_chain" in src, (
-        "research_worker must register 'equity_chain' lens key"
-    )
-    assert "_get_equity_context_block" in src, (
-        "research_worker must define _get_equity_context_block() for context injection"
-    )
-    assert "active_lenses" in src, (
-        "research_worker must build active_lenses list (conditionally includes equity_chain)"
     )
 
 
@@ -174,34 +113,6 @@ def test_schema_has_observed_stock_tokens():
     # Default should include at least one r-series entry
     r_series = [t for t in tokens if t.startswith("r") and "/" in t]
     assert r_series, "Default observed_stock_tokens must include at least one r-series entry"
-
-
-# ---------------------------------------------------------------------------
-# EQ-R06 — stock_token_market_type() returns correct types (spot / swap)
-# ---------------------------------------------------------------------------
-
-@spec_claim(
-    SpecClaim(
-        "EQ-R06", _CONTRACT, "§stock-token-market-type", "L2a",
-        "stock_token_market_type() returns 'spot' for r-series / ON-series tokens "
-        "and respects _STOCK_TOKEN_NON_SPOT overrides for future swap instruments.",
-    ),
-)
-def test_stock_token_market_type():
-    from aletheia.data.symbols import stock_token_market_type, MARKET_SPOT
-
-    # r-series are spot by default
-    assert stock_token_market_type("rNVDA/USDT") == MARKET_SPOT
-    assert stock_token_market_type("rTSLA/USDT") == MARKET_SPOT
-
-    # ON-series are spot by default
-    assert stock_token_market_type("AAPLON/USDT") == MARKET_SPOT
-
-    # _STOCK_TOKEN_NON_SPOT extension point exists in symbols.py
-    src = (_ROOT / "core" / "aletheia" / "data" / "symbols.py").read_text(encoding="utf-8")
-    assert "_STOCK_TOKEN_NON_SPOT" in src, (
-        "symbols.py must define _STOCK_TOKEN_NON_SPOT dict for swap overrides"
-    )
 
 
 # ---------------------------------------------------------------------------

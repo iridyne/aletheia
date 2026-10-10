@@ -119,27 +119,18 @@ async def test_backfill_uses_exact_bound_provider_and_keeps_writer(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("token", [False, True])
 @pytest.mark.parametrize("quote_fails", [False, True])
-async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypatch, token, quote_fails):
+async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypatch, quote_fails):
     from extensions.data import ccxt_provider
     from aletheia.data import providers
     from aletheia.data.symbols import InstrumentId
     from aletheia.trading import market_data
 
-    instrument = InstrumentId.from_parts("bitget", "AAPLON/USDT" if token else "BTC/USDT", "spot")
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     calls, writes, closed = [], [], []
     monkeypatch.setattr(market_data, "load_config", lambda: object())
-    monkeypatch.setattr(market_data, "_build_dynamic_instruments", lambda cfg: [] if token else [instrument])
-    monkeypatch.setattr(market_data, "stock_tokens_from_config", lambda cfg: [instrument] if token else [])
-    monkeypatch.setattr(market_data, "_xstock_failure_counts", {})
+    monkeypatch.setattr(market_data, "_build_dynamic_instruments", lambda cfg: [instrument])
     monkeypatch.setattr(market_data, "insert_market_snapshot_batch", lambda rows: writes.extend(rows) or len(rows))
-
-    async def unavailable_listing(*args):
-        return None
-
-    monkeypatch.setattr("aletheia.data.venue_listing_cache.get_venue_listing", unavailable_listing)
-    monkeypatch.setattr(market_data, "_listed_symbols_on_exchange", unavailable_listing)
 
     class Provider:
         async def get_ticker(self, target):

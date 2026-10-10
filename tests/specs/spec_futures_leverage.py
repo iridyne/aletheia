@@ -174,9 +174,9 @@ def test_opportunity_carries_derivatives_fields():
 
 @spec_claim(
     SpecClaim("FL-S18", "futures_leverage", "§18 perp observed by default", "L2b",
-              "With usdt_futures enabled (default), observed_instruments_from_config emits "
-              "BOTH spot and perp instruments per observed symbol — perp observation needs "
-              "no explicit observed_instruments config (deferred §6 satisfied functionally)"),
+              "observed_instruments_from_config emits one perp instrument per observed "
+              "symbol — perp observation needs no explicit observed_instruments config "
+              "(deferred §6 satisfied functionally)"),
 )
 def test_perp_observed_by_default_config():
     from aletheia.config.schema import AletheiaConfig

@@ -252,7 +252,6 @@ def forbidden(*args, **kwargs):
     raise AssertionError("composition must not read secrets, open clients or use stale bindings")
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
-providers.configure_listing_reader(forbidden)
 providers.configure_market_data_factory(forbidden)
 attempted = []
 class MissingData:
@@ -287,7 +286,6 @@ except ModuleNotFoundError as exc:
     assert missing == "broken_dependency" and exc.name == missing, exc
 else:
     assert missing != "broken_dependency", "internal dependency defects must propagate"
-    assert providers._listing_reader is None
     assert providers._provider_factory is None
     try:
         providers.get_market_data_provider("okx", exact_venue=True)

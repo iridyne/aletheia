@@ -2,10 +2,7 @@ from aletheia.config.exchange_alignment import market_data_exchange
 import logging
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
-from aletheia.data.symbols import (
-    InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP,
-    stock_token_exchange, is_stock_token,
-)
+from aletheia.data.symbols import InstrumentId, to_canonical, MARKET_PERP
 
 logger = logging.getLogger("aletheia.trading.instruments")
 
@@ -21,51 +18,11 @@ def instrument_market_to_db_market(market_type: str) -> str:
 # Canonical timeframes (used by data layer and agent reasoning)
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
-def stock_tokens_from_config(cfg) -> list[InstrumentId]:
-    """Return all configured tokenized equity/ETF instruments as InstrumentId list.
-
-    Reads only the canonical ``observed_stock_tokens`` workset.
-
-    Exchange is inferred via ``stock_token_exchange()`` — Bitget r-series and
-    ON-series resolve to "bitget"; future OKX SWAP entries resolve to "okx".
-    This makes the function exchange-agnostic: new token series on any exchange
-    only need a registry entry in ``symbols.py``.
-
-    Invalid / non-token entries are silently skipped so a bad config line does
-    not break the entire collection run.
-    """
-    tokens = list(getattr(cfg.market_data, "observed_stock_tokens", None) or [])
-    seen: set[str] = set()
-    merged: list[str] = []
-    for s in tokens:
-        key = to_canonical(s)
-        if key and key not in seen:
-            seen.add(key)
-            merged.append(s)
-
-    result = []
-    for s in merged:
-        if not is_stock_token(s):
-            continue
-        exchange = stock_token_exchange(s)
-        try:
-            result.append(InstrumentId.from_parts(exchange, s, MARKET_SPOT))
-        except ValueError:
-            # A stock token that fails InstrumentId construction is legitimately
-            # skipped (bad config, unknown exchange). Any other exception —
-            # AttributeError from a bad InstrumentId implementation, TypeError
-            # from a wrong argument — is a programming defect we want to see.
-            logger.warning("trading_instruments: stock token failed InstrumentId construction; token skipped from collection", exc_info=True)
-    return result
-
-
 def observed_instruments_from_config(cfg) -> list[InstrumentId]:
     """Return the full InstrumentId list for market data collection.
 
     If observed_instruments is configured (non-empty), parses and returns them.
-    Otherwise derives from observed_symbols + ccxt_exchange (legacy path).
-    When usdt_futures is enabled, the legacy path emits both spot AND perp
-    instruments so the data pipeline sees futures symbols.
+    Otherwise derives one perp instrument per observed_symbols entry.
 
     Invalid entries are silently skipped — callers get a best-effort list.
     """
@@ -77,28 +34,13 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
             except ValueError:
                 logger.warning("trading_instruments: observed-instrument spec failed to parse; instrument skipped from collection", exc_info=True)
         return result
-    # Legacy path: symbols + exchange from config.
-    # Dedup: when both spot and usdt_futures are enabled, emit ONE instrument per
-    # canonical symbol using cfg.exchange.preferred_market_type. Directional
-    # analysis (market_observer LLM read) is instrument-agnostic — the same ETH
-    # read 76% long whether the instrument is spot or perp (price ≈ identical).
-    # Emitting two would call the LLM twice for the same signal and downstream
-    # consumers would receive duplicate opportunities. OD-S01 locks.
+    # Legacy path: observed_symbols on the market-data venue. USDT perpetuals are
+    # the only product (CAPABILITY_GROUND_TRUTH), so each symbol is one perp.
     exchange = market_data_exchange(cfg)
-    preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
-    result = []
-    for sym in cfg.market_data.observed_symbols:
-        spot_ok = cfg.exchange.enabled_markets.get("spot", True)
-        perp_ok = cfg.exchange.enabled_markets.get("usdt_futures", False)
-        if spot_ok and perp_ok:
-            # Both enabled — pick one by configured preference ("auto" → perp).
-            mt = MARKET_SPOT if preferred == "spot" else MARKET_PERP
-            result.append(InstrumentId.from_parts(exchange, sym, mt))
-        elif spot_ok:
-            result.append(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
-        elif perp_ok:
-            result.append(InstrumentId.from_parts(exchange, sym, MARKET_PERP))
-    return result
+    return [
+        InstrumentId.from_parts(exchange, sym, MARKET_PERP)
+        for sym in cfg.market_data.observed_symbols
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +122,3 @@ def calc_liquidation_price(
     else:
         return entry_price * (1.0 + 1.0 / leverage - mmr)
 
-
-def futures_instruments_from_config(cfg) -> list[InstrumentId]:
-    """Return InstrumentId list for configured futures symbols."""
-    exchange = market_data_exchange(cfg)
-    symbols = getattr(cfg.exchange, "futures_symbols", []) or []
-    return [InstrumentId.from_parts(exchange, sym, MARKET_PERP) for sym in symbols]

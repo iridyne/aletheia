@@ -39,48 +39,22 @@ _ALLOWED_QUOTE_CURRENCIES = frozenset({"USDT", "USDC", "BTC", "ETH", "BUSD"})
 
 
 def _is_allowed_serenity_symbol(symbol: str) -> bool:
-    """Return True for symbols that may be persisted as SerenityOpportunity records.
+    """Return True for USDT-style crypto pairs that may be persisted as SerenityOpportunity records.
 
-    Accepts:
-    - Canonical crypto pairs: BTC/USDT, ETH/USDT, SOL/USDT …  (USDT/USDC/BTC/ETH quote)
-    - Exchange stock tokens:  rNVDA/USDT, rTSLA/USDT, AAPLON/USDT … (is_stock_token=True)
+    Accepts canonical crypto pairs: BTC/USDT, ETH/USDT, SOL/USDT … (USDT/USDC/BTC/ETH quote).
 
     Rejects:
     - Bare tickers without a quote: MSTR, SPY, BTC
     - Forex / USD-quoted pairs: GBP/USD, AAPL/USD
     - Macro aggregates / non-tradeable: ALTCOINS, STABLECOIN_SUPPLY_AGGREGATE
     - Symbols longer than 14 chars base (catches most hallucinated tickers)
-
-    The function is intentionally permissive toward stock tokens.
-
-    #22 correction (2026-07-08): the previous docstring said stock tokens are
-    "observation-only (asset_class='equity')", but this function's caller
-    actually tags them as `asset_class='equity_tradeable'` (line ~769). The
-    two labels have distinct meanings:
-
-      - `asset_class='equity'`         → observation-only. Emitted by
-                                          equity_observer.
-                                          trading_decision.py:1324 skips these.
-      - `asset_class='equity_tradeable'` → Serenity-research xStocks tokens
-                                          that ARE spot-tradable on Bitget.
-                                          trading_decision.py:1321 lets them
-                                          through the execution gate.
-
-    So stock tokens THAT come through this validator will be flagged as
-    `equity_tradeable` and can execute. The execution eligibility guard
-    still lives in trading_context Layer 3; that's where the two classes
-    diverge downstream.
     """
-    from aletheia.data.symbols import is_stock_token as _is_stock_token
     if not symbol or "/" not in symbol:
         return False
     parts = symbol.split("/")
     if len(parts) != 2:
         return False
     base, quote = parts[0].strip(), parts[1].strip()
-    # Stock tokens (rNVDA, AAPLON, …) are explicitly allowed.
-    if _is_stock_token(symbol):
-        return True
     # Crypto pairs must have an allowed quote currency.
     if quote not in _ALLOWED_QUOTE_CURRENCIES:
         return False
@@ -191,88 +165,6 @@ def _get_recent_news_for_research() -> str:
         return "\n\nRecent News Headlines (last 24h, auto-analyzed):\n" + "\n".join(lines)
     except Exception as e:
         logger.debug("news injection into research context failed: %s", e)
-        return ""
-
-
-def _get_equity_context_block() -> str:
-    """Build a short equity context block for injection into the research prompt.
-
-    Reads the configured stock tokens and recently observed equity opportunities
-    to give Serenity lenses awareness of the observed US equity universe.
-    Returns an empty string when no equities are configured (zero-overhead).
-    """
-    try:
-        from aletheia.config.loader import load_config
-        from aletheia.data.symbols import stock_token_to_ticker, is_stock_token
-
-        cfg = load_config()
-        tokens = list(cfg.market_data.observed_stock_tokens or [])
-
-        tickers = sorted({
-            stock_token_to_ticker(t)
-            for t in tokens
-            if is_stock_token(t) and stock_token_to_ticker(t)
-        })
-        if not tickers:
-            return ""
-
-        lines = [
-            "\n\nObserved US equity universe (exchange stock tokens — observation only, not traded):",
-        ]
-        lines.append(f"Tickers: {', '.join(tickers)}")
-        # Build a concise list of the token formats actually configured so the
-        # equity_chain lens knows which symbols to use in its output.
-        from aletheia.data.symbols import ticker_to_stock_tokens as _t2st
-        example_tokens: list[str] = []
-        for _t in tickers[:4]:
-            _toks = _t2st(_t)
-            if _toks:
-                example_tokens.append(_toks[0])  # r-series first (highest liquidity)
-        token_examples = ", ".join(example_tokens) if example_tokens else "rNVDA/USDT, rTSLA/USDT"
-        lines.append(
-            f"These are available as exchange-traded stock tokens (e.g. {token_examples}). "
-            "Use the canonical token symbol (with /USDT quote) when identifying specific opportunities. "
-            "Focus supply-chain and thematic research on these names and their ecosystems."
-        )
-
-        # Inject yfinance fundamentals for the observed tickers
-        try:
-            import yfinance as yf
-            fundamentals_lines: list[str] = []
-            for t in tickers[:6]:
-                try:
-                    info = yf.Ticker(t).info
-                    pe = info.get("trailingPE") or info.get("forwardPE")
-                    ps = info.get("priceToSalesTrailing12Months")
-                    mcap = info.get("marketCap")
-                    rev_growth = info.get("revenueGrowth")
-                    margin = info.get("profitMargins")
-                    sector = info.get("sector", "")
-                    parts_f: list[str] = [f"{t}:"]
-                    if pe:
-                        parts_f.append(f"PE={pe:.1f}")
-                    if ps:
-                        parts_f.append(f"PS={ps:.1f}")
-                    if mcap:
-                        parts_f.append(f"MCap=${mcap / 1e9:.0f}B")
-                    if rev_growth is not None:
-                        parts_f.append(f"RevGrowth={rev_growth * 100:.0f}%")
-                    if margin is not None:
-                        parts_f.append(f"Margin={margin * 100:.0f}%")
-                    if sector:
-                        parts_f.append(f"({sector})")
-                    if len(parts_f) > 1:
-                        fundamentals_lines.append(" ".join(parts_f))
-                except Exception:
-                    continue
-            if fundamentals_lines:
-                lines.append("\nFundamentals (latest):")
-                lines.extend(fundamentals_lines)
-        except ImportError:
-            logger.debug("research_worker: yfinance fundamentals import unavailable; equity context block omits fundamentals section", exc_info=True)
-
-        return "\n".join(lines)
-    except Exception:
         return ""
 
 
@@ -431,50 +323,15 @@ _LENS_MACRO_SYSTEM = (
     "Return 4-8 macro evidence items. Return raw JSON array, no markdown."
 )
 
-_LENS_EQUITY_CHAIN_SYSTEM = (
-    "You are an EQUITY SUPPLY-CHAIN RESEARCHER for a trading research system. "
-    "Your mandate: analyse US-listed companies accessible via exchange-traded stock tokens "
-    "(e.g. rNVDA/USDT, rTSLA/USDT, rAAPL/USDT, rAMD/USDT, rMSFT/USDT and similar r-series; "
-    "or ON-series tokens like AAPLON/USDT, TSLAON/USDT) with a focus on "
-    "industrial supply-chain dynamics, competitive positioning, and near-term catalysts. "
-    "Think like an investor looking for HIDDEN ALPHA in the value chain: "
-    "  • Upstream suppliers that will benefit BEFORE the headline name does "
-    "  • Downstream customers whose order flow signals demand acceleration or contraction "
-    "  • Adjacent competitors/substitutes gaining or losing share "
-    "  • Capital-expenditure announcements that ripple through equipment/materials suppliers "
-    "  • Regulatory / patent / geopolitical factors that shift competitive advantage "
-    "Focus especially on SMALL and MID-CAP names available as r-series tokens — these often "
-    "have less coverage and more mispricing. Provide concrete, actionable signals with "
-    "supporting reasoning; avoid generic macro commentary already covered by the macro lens. "
-    "Return ONLY a JSON array of evidence objects. Each must have: "
-    '"title" (string: company/theme name + key finding), '
-    '"source" (string: use "research", "news", or "market_data"), '
-    '"source_ref" (string: e.g. "NVDA Q1 2026 earnings, supply-chain channel checks"), '
-    '"summary" (string: 2-3 sentences — WHO, WHAT signal, and WHY it matters for price), '
-    '"symbol" (string or null: the stock token canonical symbol WITH /USDT quote, e.g. "rNVDA/USDT" '
-    'or "rPLD/USDT"; prefer the r-series form; null if the insight is theme-level only), '
-    '"tier" (string: "likely" for analyst/news-backed claims; "speculative" for inferred; '
-    '"high_confidence" only if there is an external verifiable URL/filing you can cite), '
-    '"confidence" (string: same scale as tier), "supports" (boolean). '
-    "Return 5-12 evidence items covering a diverse set of companies and themes. "
-    "Return raw JSON array, no markdown."
-)
-
 # Registry of all standard research lenses. Order matters: technical first for
 # price anchoring, then flow (derivatives context), sentiment (narrative), macro (cycle).
-# equity_chain lens runs last (longest context, most LLM budget).
 # Lenses are run sequentially to stay within the configured endpoint's token budget.
-# equity_chain is appended only when equity tickers are configured (see _run_pipeline_inner).
 RESEARCH_LENSES = [
     ("technical", _LENS_TECHNICAL_SYSTEM),
     ("flow", _LENS_FLOW_SYSTEM),
     ("sentiment", _LENS_SENTIMENT_SYSTEM),
     ("macro", _LENS_MACRO_SYSTEM),
 ]
-
-# The equity_chain lens is added dynamically when observed_equities/observed_stock_tokens
-# are non-empty. Kept separate so standard crypto-only runs are unaffected.
-_EQUITY_CHAIN_LENS = ("equity_chain", _LENS_EQUITY_CHAIN_SYSTEM)
 
 _CLAIMS_SYSTEM = (
     "You are a structured claim extractor. Given evidence summaries, extract atomic claims. "
@@ -500,14 +357,12 @@ _THEMES_SYSTEM = (
 _OPPORTUNITIES_SYSTEM = (
     "You are an opportunity identifier for a trading research system. "
     "Given research themes with evidence, identify potential opportunities. "
-    "SYMBOL RULES — only two valid formats: "
-    "(1) Crypto perpetual/spot: BTC/USDT, ETH/USDT, SOL/USDT (quote must be USDT/USDC/BTC/ETH). "
-    "(2) Exchange stock tokens: rNVDA/USDT, rTSLA/USDT, rAAPL/USDT (Bitget r-series); "
-    "or AAPLON/USDT, TSLAON/USDT (Bitget ON-series). "
-    "NEVER output bare stock tickers (MSTR, SPY), forex (GBP/USD), "
+    "SYMBOL RULES — crypto pairs only: BTC/USDT, ETH/USDT, SOL/USDT "
+    "(quote must be USDT/USDC/BTC/ETH). "
+    "NEVER output exchange stock tokens (rNVDA/USDT, AAPLON/USDT), bare stock tickers (MSTR, SPY), forex (GBP/USD), "
     "USD-quoted equity (AAPL/USD), macro aggregates, or symbols without a /USDT quote. "
     "Return ONLY a JSON array of opportunity objects. Each must have: "
-    '"symbol" (string: canonical format per the rules above — e.g. "BTC/USDT" or "rNVDA/USDT"), '
+    '"symbol" (string: canonical format per the rules above — e.g. "BTC/USDT"), '
     '"direction" (string: "long" or "short"), '
     '"thesis" (string: why this is an opportunity), '
     '"evidence_tier" (string, your PROPOSED grade: one of "disclosed", "high_confidence", "likely", "speculative" '
@@ -661,11 +516,6 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
 
     news_block = _get_recent_news_for_research()
 
-    # Inject equity context when stock tokens are configured, so all lenses are
-    # aware of the observed universe and the equity_chain lens gets a rich brief.
-    equity_block = _get_equity_context_block()
-    has_equity_context = bool(equity_block)
-
     # Inject derivatives flow data (Coinalyze OI + liquidations) when available.
     flow_block = _get_flow_context_block()
 
@@ -675,14 +525,10 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         f"{existing_context}\n"
         f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         f"{news_block}"
-        f"{equity_block}"
         f"{flow_block}"
     )
 
-    # Build active lens list: standard 4 lenses + equity_chain when equities present.
     active_lenses = list(RESEARCH_LENSES)
-    if has_equity_context and run.get("mode") != "methodology":
-        active_lenses.append(_EQUITY_CHAIN_LENS)
 
     # --- Stage 1: Collect Evidence (S1: multi-lens parallel research) ---
     _check_cancellation(run_id)
@@ -712,8 +558,8 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         all_evidence_items = evidence_items
         lens_summaries["methodology"] = len(evidence_items)
     else:
-        # S1: sequential lens research — technical, flow, sentiment, macro, and optionally
-        # equity_chain. Sequential (not asyncio.gather) to stay within rate limits.
+        # S1: sequential lens research — technical, flow, sentiment, macro.
+        # Sequential (not asyncio.gather) to stay within rate limits.
         for lens_name, lens_system in active_lenses:
             _check_cancellation(run_id)
             lens_text, lens_err = await llm_complete(
@@ -896,26 +742,13 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 if not _is_allowed_serenity_symbol(raw_sym):
                     logger.info(
                         "Skipping hallucinated symbol from LLM: %r "
-                        "— must be USDT-quoted crypto pair or exchange stock token",
+                        "— must be USDT-quoted crypto pair",
                         raw_sym,
                     )
                     continue
                 theme_id = persisted_themes[min(i, len(persisted_themes) - 1)] if persisted_themes else None
                 if theme_id:
-                    # Classify instrument: stock token (equity, spot) vs crypto pair.
-                    # This drives execution routing in trading_context Layer 3 and the
-                    # slash/no-slash display rule in the frontend via fmtSymbol().
-                    from aletheia.data.symbols import (
-                        is_stock_token as _is_stock_token,
-                        stock_token_market_type as _stock_mkt_type,
-                    )
                     _sym = item.get("symbol", "BTC/USDT")
-                    if _is_stock_token(_sym):
-                        _asset_class = "equity_tradeable"
-                        _market_type = _stock_mkt_type(_sym)  # "spot" for r-series/ON-series; "swap" for future OKX SWAP
-                    else:
-                        _asset_class = "crypto"
-                        _market_type = "perp"  # USDT perpetuals are the only product
                     # The opportunity's authoritative tier is derived from the strongest
                     # INDEPENDENTLY ASSESSED supporting evidence under this theme, not the
                     # LLM's self-graded `evidence_tier` (which is kept only as a proposal).
@@ -947,8 +780,6 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                         risk_flags=json.dumps(item.get("risk_flags", [])),
                         verdict_json=json.dumps(verdict_obj),
                         researchability_grade=r_grade,
-                        asset_class=_asset_class,
-                        market_type=_market_type,
                     )
                     try:
                         repo.insert_serenity_opportunity(opp)

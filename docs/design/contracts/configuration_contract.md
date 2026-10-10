@@ -43,9 +43,10 @@ decoding validates and consumes `observed_xstocks`, merging it with the historic
 canonical/default token list once without rewriting the source file. Normal
 saves contain no legacy alias; an explicit canonical empty save stays empty after
 reload. The generic market-data endpoint rejects `observed_xstocks` writes.
-Collector, equity observer and research context consume only the canonical list;
-confirmed delisting removes tokens from that list under the existing rule.
-This does not change listing evidence, observation-only admission or trading policy.
+Only the equity observer consumes the canonical list. Tokenised stocks are out of
+product scope (USDT perpetuals only): the market-data collector, price feed and
+Serenity research context no longer read it, and nothing removes tokens from it
+automatically. This does not change observation-only admission or trading policy.
 The former alias is [historical](../history/observed_xstocks_settings_control.md).
 
 ## Network proxy settings

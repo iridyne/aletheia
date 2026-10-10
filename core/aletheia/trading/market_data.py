@@ -16,7 +16,6 @@ from aletheia.storage.repositories import insert_market_snapshot, insert_market_
 from aletheia.trading.instruments import (
     MARKET_USDT_FUTURES,
     observed_instruments_from_config,
-    stock_tokens_from_config,
 )
 
 logger = logging.getLogger("aletheia.market_data")
@@ -57,137 +56,6 @@ def _instrument_market_from_row(mt: str | None) -> str:
     if mt in (MARKET_SPOT, MARKET_PERP, "futures"):
         return mt
     return MARKET_SPOT
-
-# Consecutive xStock fetch failure counter per symbol.
-# Triggers infra_event after XSTOCK_FAILURE_THRESHOLD consecutive failures.
-_xstock_failure_counts: dict[str, int] = {}
-_XSTOCK_FAILURE_THRESHOLD = 3
-_XSTOCK_LISTING_TIMEOUT_SEC = 10.0
-
-
-def _consume_detached_task(task: asyncio.Future) -> None:
-    """Consume a deadline-detached task result so late failures are not leaked."""
-    try:
-        task.exception()
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        logger.debug("market_data: detached task raised an exception after its deadline; result already discarded", exc_info=True)
-
-
-async def _wait_without_cancel_drain(awaitable, *, timeout: float):
-    """Enforce a wall-clock deadline without awaiting cancellation-resistant I/O."""
-    task = asyncio.ensure_future(awaitable)
-    try:
-        done, _pending = await asyncio.wait({task}, timeout=timeout)
-    except asyncio.CancelledError:
-        task.add_done_callback(_consume_detached_task)
-        task.cancel()
-        raise
-    if task not in done:
-        task.add_done_callback(_consume_detached_task)
-        task.cancel()
-        raise asyncio.TimeoutError
-    return task.result()
-
-
-async def _listed_symbols_on_exchange(exchange_name: str) -> frozenset[str] | None:
-    """Return active spot symbols, or None when listing status is indeterminate.
-
-    The complete provider lifecycle runs in the deadline-owned task. If CCXT resists
-    cancellation, the caller returns at the deadline while that task finishes cleanup.
-    """
-
-    from aletheia.data.providers import read_market_listing
-
-    try:
-        return await _wait_without_cancel_drain(
-            read_market_listing(exchange_name, spot_only=True),
-            timeout=_XSTOCK_LISTING_TIMEOUT_SEC,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.debug(
-            "Could not load listing status from %s (%s); keeping configured symbols",
-            exchange_name,
-            e,
-        )
-        return None
-
-
-def _auto_remove_xstock(sym: str, exchange_name: str, consecutive: int) -> bool:
-    """Remove a stock token from config after live market-list verification confirms it is absent.
-
-    consecutive is the current failure count, used only for logging context.
-    """
-    try:
-        from aletheia.config.loader import edit_config
-        from aletheia.infra.events import emit_infra_event
-
-        with edit_config() as cfg:
-            canon = to_canonical(sym)
-            tokens = list(cfg.market_data.observed_stock_tokens or [])
-            filtered_tokens = [t for t in tokens if to_canonical(t) != canon]
-            if filtered_tokens == tokens:
-                return False
-            before = {
-                "observed_stock_tokens": tokens,
-            }
-            after = {
-                "observed_stock_tokens": filtered_tokens,
-            }
-            cfg.market_data.observed_stock_tokens = filtered_tokens
-        logger.warning(
-            "Auto-removed xStock %s from config (confirmed not listed on exchange, "
-            "failure count=%d)",
-            sym, consecutive,
-        )
-        try:
-            from aletheia.files.jsonl import write_audit
-
-            write_audit({
-                "actor": "system",
-                "source": "market_data",
-                "event_type": "xstock_observation_config_auto_removed",
-                "entity_type": "market_data_config",
-                "entity_id": canon,
-                "before": before,
-                "after": after,
-                "exchange": exchange_name,
-                "consecutive_failures": consecutive,
-                "message": (
-                    f"Removed {canon} from xStock observation config after "
-                    f"{exchange_name} confirmed it absent"
-                ),
-            })
-        except Exception:  # noqa: BLE001
-            logger.error(
-                "xStock %s config removal persisted without an audit record",
-                canon,
-                exc_info=True,
-            )
-        try:
-            emit_infra_event(
-                severity="warning",
-                source="market_data",
-                code=f"xstock_auto_removed:{canon}",
-                message=(
-                    f"xStock {canon} auto-removed from config after {exchange_name} "
-                    f"confirmed it absent (failure count={consecutive})"
-                ),
-                action=(
-                    "Review observed_stock_tokens in config "
-                    "to confirm removal"
-                ),
-                dedupe_sec=0,
-            )
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to emit xStock removal event for %s", canon, exc_info=True)
-        return True
-    except Exception:
-        logger.debug("Failed to auto-remove xStock %s from config", sym, exc_info=True)
-        return False
 
 
 def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
@@ -281,8 +149,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
 
 def market_snapshot_target_groups(cfg) -> set[tuple[str, str]]:
     """Return the venue/market-type groups this collector is responsible for."""
-    targets = _build_dynamic_instruments(cfg) + stock_tokens_from_config(cfg)
-    return {(target.exchange, target.market_type) for target in targets}
+    return {(target.exchange, target.market_type) for target in _build_dynamic_instruments(cfg)}
 
 
 async def collect_market_snapshots() -> dict:
@@ -290,10 +157,6 @@ async def collect_market_snapshots() -> dict:
 
     Includes open Positions and exact pending carriers before bounded discovery
     sources so active entry candidates retain durable price observations.
-
-    xStock instruments are pre-filtered against the Bitget venue listing cache
-    (TTL 6h) before the fetch loop so that delisted tokens never enter the
-    loop and never accumulate error counts or trigger DB writes.
     """
     # The gateway owner applies pending migrations before process start; scheduler
     # jobs MUST NOT apply migrations — schema ownership stays outside workers.
@@ -301,17 +164,6 @@ async def collect_market_snapshots() -> dict:
     cfg = load_config()
 
     instruments = _build_dynamic_instruments(cfg)
-    _xstocks_raw = stock_tokens_from_config(cfg)
-    # Pre-filter xStocks against the venue listing whitelist.  This resolves
-    # the root cause of the 569-consecutive-failure loop: delisted ON-series
-    # tokens (AAPLON/USDT etc.) are dropped here before any network call is made.
-    # fail-open: if the cache cannot load (network down), all xStocks are kept.
-    if _xstocks_raw:
-        from aletheia.data.venue_listing_cache import get_venue_listing, filter_by_listing
-        _bitget_listing = await get_venue_listing("bitget")
-        xstocks = filter_by_listing(_xstocks_raw, listing=_bitget_listing, venue="bitget")
-    else:
-        xstocks = _xstocks_raw
 
     from aletheia.data.providers import get_market_data_provider, require_exact_ticker_venue
     collected = []
@@ -387,72 +239,8 @@ async def collect_market_snapshots() -> dict:
                 if isinstance(result, BaseException):
                     raise result
 
-    # xStocks retain a separate exact Bitget provider (no configured fallback).
-    # Note: xstocks has already been filtered by the venue listing cache above;
-    # the listing_cache below is the post-failure auto-remove path (kept as belt-and-suspenders).
-    if xstocks:
-        xprovider = get_market_data_provider(exchange="bitget", exact_venue=True)
-        listing_cache: dict[str, frozenset[str] | None] = {}
-        xstock_error_start = len(errors)
-        xstock_written = 0
-        try:
-            for instrument in xstocks:
-                try:
-                    snap = await _fetch_snap(instrument, xprovider)
-                    _pending_snaps.append(snap)
-                    collected.append(str(instrument))
-                    _xstock_failure_counts[instrument.symbol] = 0  # reset on success
-                except Exception as e:
-                    errors.append(f"{instrument}: {e}")
-                    logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
-                    sym = instrument.symbol
-                    _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
-                    consecutive = _xstock_failure_counts[sym]
-                    # Emit once when this failure window crosses the threshold.
-                    # Per-cycle warning logs continue below/above the threshold;
-                    # repeating the durable audit forever only amplifies writes.
-                    if consecutive == _XSTOCK_FAILURE_THRESHOLD:
-                        from aletheia.files.jsonl import write_audit
-                        write_audit({
-                            "actor": "system",
-                            "source": "market_data",
-                            "event_type": "infra_event",
-                            "entity_id": sym,
-                            "message": (
-                                f"xStock {sym} fetch failed {consecutive} "
-                                "consecutive times — provider may be degraded"
-                            ),
-                            "severity": "warning",
-                            "consecutive_failures": consecutive,
-                            "last_error": str(e)[:200],
-                        })
-                    # Load each responsible venue once per collection cycle. None means
-                    # indeterminate and fails open by preserving configured intent.
-                    exchange_name = instrument.exchange
-                    if exchange_name not in listing_cache:
-                        listing_cache[exchange_name] = await _listed_symbols_on_exchange(
-                            exchange_name
-                        )
-                    listed = listing_cache[exchange_name]
-                    if listed is not None and to_canonical(sym) not in listed:
-                        if _auto_remove_xstock(sym, exchange_name, consecutive):
-                            _xstock_failure_counts.pop(sym, None)
-        finally:
-            try:
-                if _pending_snaps:
-                    xstock_written = insert_market_snapshot_batch(_pending_snaps)
-                    _pending_snaps.clear()
-                logger.info(
-                    "market_data source finished venue=bitget attempted=%d written=%d errors=%d",
-                    len(xstocks),
-                    xstock_written,
-                    len(errors) - xstock_error_start,
-                )
-            finally:
-                await xprovider.close()
-
     return {
-        "attempted": len(instruments) + len(xstocks),
+        "attempted": len(instruments),
         "written": len(collected),
         "collected": collected,
         "errors": errors,

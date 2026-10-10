@@ -269,17 +269,9 @@ def get_watched_instruments(
     _always_on_identities: set[tuple[str, str, str]] | None = None,
     _universe_round_by_identity: dict[tuple[str, str, str], int] | None = None,
 ):
-    """Return exact instruments for positions, pending candidates, and Universe.
-
-    Stock tokens (xStocks) are filtered against the venue listing cache before
-    being added.  The cache is populated by collect_market_snapshots (async, 5min
-    cadence) and read here synchronously (get_cached_listing).  On a cold cache
-    the filter is skipped (fail-open) so startup is not blocked on a network call.
-    """
+    """Return exact instruments for positions, pending candidates, and Universe."""
     from aletheia.config.loader import load_config
     from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
-    from aletheia.data.symbols import is_stock_token, stock_token_exchange
-    from aletheia.data.venue_listing_cache import get_cached_listing
 
     seen: set[tuple[str, str, str]] = set()
     always_on: set[tuple[str, str, str]] = set()
@@ -288,15 +280,6 @@ def get_watched_instruments(
     result: list[InstrumentId] = []
     cfg = load_config()
     default_exchange = market_data_exchange(cfg)
-
-    # Load per-venue listing caches once for this call (sync cache read only).
-    _listing_cache: dict[str, frozenset[str] | None] = {}
-
-    def _get_listing(venue: str) -> frozenset[str] | None:
-        key = venue.lower()
-        if key not in _listing_cache:
-            _listing_cache[key] = get_cached_listing(key)
-        return _listing_cache[key]
 
     def append_instrument(
         raw_symbol: str,
@@ -308,26 +291,15 @@ def get_watched_instruments(
     ) -> None:
         if not raw_symbol:
             return
-        exchange = stock_token_exchange(raw_symbol) if is_stock_token(raw_symbol) else venue
         normalized_market = MARKET_PERP if market_type == "usdt_futures" else market_type
         try:
             instrument = InstrumentId.from_parts(
-                exchange or default_exchange,
+                venue or default_exchange,
                 raw_symbol,
                 normalized_market or MARKET_SPOT,
             )
         except ValueError:
             return
-        # For stock tokens, filter against the venue listing cache.  On a cold
-        # cache (None) we fall through and keep the instrument (fail-open).
-        if is_stock_token(raw_symbol):
-            listing = _get_listing(instrument.exchange)
-            if listing is not None and instrument.symbol not in listing:
-                logger.debug(
-                    "price_feed: skipping unlisted stock token %s on %s",
-                    instrument.symbol, instrument.exchange,
-                )
-                return
         # Protective lifecycle pricing is exact by symbol + physical market, so
         # same-symbol spot and perp Positions must both remain watched.
         identity = (

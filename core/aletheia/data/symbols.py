@@ -131,7 +131,9 @@ def to_yfinance(symbol: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Generic stock token registry
+# Stock token registry -- kept only for extensions/research/equity_observer.py
+# (being removed under #3930); delete together with it. Tokenised stocks are out
+# of product scope: nothing on the trading spine reads this.
 # ---------------------------------------------------------------------------
 # Explicit registry for tokenized equity tokens where the name does NOT follow
 # a simple pattern (ON-series, ETFs with non-obvious tickers, future OKX SWAP,
@@ -165,27 +167,6 @@ _STOCK_TOKEN_REGISTRY: dict[str, tuple[str, str]] = {
     # e.g. "AAPL/USDT": ("AAPL", "okx") once the OKX stock-SWAP adapter exists.
 }
 
-# Market-type overrides for stock tokens that are NOT plain spot.
-# All entries in _STOCK_TOKEN_REGISTRY default to MARKET_SPOT ("spot").
-# When OKX SWAP stock tokens are added to the registry, register their canonical
-# symbols here too so stock_token_market_type() returns the correct value.
-# Format: canonical_symbol → market_type string (matches InstrumentId._VALID_MARKET_TYPES).
-#
-# Example for future OKX SWAP:
-#   "AAPL/USDT": "swap",    # perpetual SWAP on OKX
-#   "AAPL-USD-XPERP": "perp",
-_STOCK_TOKEN_NON_SPOT: dict[str, str] = {
-    # (currently empty — all known Bitget r-series and ON-series are spot)
-}
-
-# Backward-compat view of the ON-series registry (base token → ticker).
-# Used only by the deprecated xstock_to_ticker / ticker_to_xstock functions.
-_XSTOCK_BASE_TO_TICKER: dict[str, str] = {
-    sym.split("/")[0]: ticker
-    for sym, (ticker, _) in _STOCK_TOKEN_REGISTRY.items()
-    if sym.endswith("/USDT")
-}
-
 
 def _is_r_series_base(base: str) -> bool:
     """True for Bitget r-series token base coins: lowercase 'r' + an uppercase ticker.
@@ -212,30 +193,6 @@ def _is_r_series_base(base: str) -> bool:
     return bool(stem) and stem.isupper() and len(stem) <= 6
 
 
-def stock_token_to_ticker(symbol: str) -> str | None:
-    """Generic: map any exchange stock token symbol → equity ticker.
-
-    Resolution order:
-    1. Explicit ``_STOCK_TOKEN_REGISTRY`` (ON-series, OKX SWAP, manual overrides).
-    2. Bitget r-series rule: strip leading 'r' → ticker ('rNVDA/USDT' → 'NVDA').
-
-    Returns None when the symbol is not a recognised stock token.
-
-    Note: to_canonical() uppercases everything, destroying the lowercase 'r'
-    prefix used by the r-series rule.  We therefore extract the original base
-    from the raw symbol (before uppercasing) to preserve case for the rule check.
-    """
-    canon = to_canonical(symbol)
-    entry = _STOCK_TOKEN_REGISTRY.get(canon)
-    if entry:
-        return entry[0]
-    # Extract original base preserving case ('rNVDA/USDT' → 'rNVDA').
-    raw_base = symbol.strip().split("/")[0].split(":")[0]
-    if _is_r_series_base(raw_base):
-        return raw_base[1:].upper()
-    return None
-
-
 def stock_token_exchange(symbol: str) -> str:
     """Get the exchange that lists this stock token.
 
@@ -248,29 +205,6 @@ def stock_token_exchange(symbol: str) -> str:
     if entry:
         return entry[1]
     return "bitget"  # default: r-series tokens live on Bitget
-
-
-def is_stock_token(symbol: str) -> bool:
-    """Return True if symbol is a tokenized equity/ETF on any supported exchange."""
-    return stock_token_to_ticker(symbol) is not None
-
-
-def stock_token_market_type(symbol: str) -> str:
-    """Return the market type for a stock token symbol.
-
-    All current Bitget r-series and ON-series tokens are spot (cash-settled,
-    no funding rate, no liquidation).  Future OKX SWAP tokens are perpetual
-    swaps — register them in ``_STOCK_TOKEN_NON_SPOT`` to override.
-
-    Returns MARKET_SPOT ("spot") for any unregistered / unknown symbol so callers
-    always get a valid string (never None).
-
-    Use this when building InstrumentId or deciding the display convention:
-      - spot → keep slash  (BTC/USDT  →  BTC/USDT)
-      - swap/perp → drop slash  (AAPL/USDT  →  AAPLUSDT)
-    """
-    canon = to_canonical(symbol)
-    return _STOCK_TOKEN_NON_SPOT.get(canon, MARKET_SPOT)
 
 
 def ticker_to_stock_tokens(ticker: str) -> list[str]:
@@ -464,10 +398,6 @@ def build_instrument_background(
         underlying_subtypes = [underlying_subtypes]
     underlying_subtypes = [str(value) for value in underlying_subtypes]
 
-    raw_base = str(raw.get("baseCoin") or market_info.get("base") or base)
-    raw_quote = str(market_info.get("quote") or canonical.partition("/")[2])
-    raw_symbol = f"{raw_base}/{raw_quote}"
-    stock_ticker = stock_token_to_ticker(raw_symbol)
     okx_category = str(raw.get("instCategory") or "")
     # Bitget perps: isRwa=YES is any real-world-asset underlying (equity, metal,
     # oil, index) without a finer category; NO is crypto; absent stays unresolved.
@@ -476,7 +406,7 @@ def build_instrument_background(
         if venue == "bitget" and market_type == MARKET_PERP else ""
     )
     is_exchange_equity = underlying_type.endswith("EQUITY") or okx_category == "3"
-    if stock_ticker or is_exchange_equity:
+    if is_exchange_equity:
         asset_class = "equity"
     elif bitget_rwa in {"YES", "NO"}:
         asset_class = "real_world_asset" if bitget_rwa == "YES" else "crypto"
@@ -517,9 +447,7 @@ def build_instrument_background(
             "tradifi_perpetual" if market_type == MARKET_PERP
             else f"tokenized_{asset_class}"
         )
-        reference_asset = stock_ticker or (
-            base if underlying_type or bitget_rwa else None
-        )
+        reference_asset = base if underlying_type or bitget_rwa else None
         relationship = "tracks_reference_price" if reference_asset else "unknown"
         background_status = "complete" if reference_asset else "partial"
     else:
@@ -544,7 +472,6 @@ def build_instrument_background(
                 "exchange_metadata"
                 if (
                     underlying_type
-                    or stock_ticker
                     or bitget_rwa
                     or raw.get("instCategory") is not None
                 )
@@ -569,27 +496,6 @@ def build_instrument_background(
             "source_refs": [_SEMICONDUCTOR_3X_SOURCE],
         }
     return background
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatibility aliases (ON-series original API)
-# ---------------------------------------------------------------------------
-
-def xstock_to_ticker(symbol: str) -> str | None:
-    """Deprecated: use stock_token_to_ticker().  Maps any stock token → equity ticker."""
-    return stock_token_to_ticker(symbol)
-
-
-def ticker_to_xstock(ticker: str) -> str | None:
-    """Deprecated: use ticker_to_stock_tokens().
-
-    Returns the Bitget ON-series symbol for a ticker ('AAPL' → 'AAPLON/USDT'), or
-    None if no ON-series exists.  Preserves the old behaviour of preferring ON-series
-    over r-series for callers that were written before r-series support was added.
-    """
-    inv = {v: k for k, v in _XSTOCK_BASE_TO_TICKER.items()}
-    base = inv.get(ticker.strip().upper())
-    return f"{base}/USDT" if base else None
 
 
 @dataclass(frozen=True)

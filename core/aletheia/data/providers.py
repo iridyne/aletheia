@@ -1,8 +1,8 @@
 """Market-data provider protocol + value models (Ticker, Candle).
 
 Normalized contracts with no concrete adapter imports or third-party deps.
-Composition binds optional listing reads and fresh provider creation; tests can
-replace those side effects without importing concrete adapters.
+Composition binds fresh provider creation; tests can replace that side effect
+without importing concrete adapters.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from typing import Iterable, Literal, Protocol, runtime_checkable
 from aletheia.data.symbols import InstrumentId
 
 
-_listing_reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None = None
 _provider_factory: Callable[..., MarketDataProvider] | None = None
 _macro_reader: Callable[[], Awaitable[str]] | None = None
 _prediction_history_reader: Callable[..., Awaitable[list[dict]]] | None = None
@@ -79,25 +78,6 @@ def get_market_data_provider(
     )
 
 
-def configure_listing_reader(
-    reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None,
-) -> None:
-    global _listing_reader
-    _listing_reader = reader
-
-
-async def read_market_listing(venue: str, *, spot_only: bool) -> frozenset[str]:
-    """Read confirmed listing facts; unavailable is never confirmed emptiness."""
-    if _listing_reader is None:
-        raise RuntimeError("market listing reader unavailable")
-    listed = await _listing_reader(venue, spot_only)
-    if not isinstance(listed, frozenset) or not listed or any(
-        not isinstance(symbol, str) or not symbol.strip() for symbol in listed
-    ):
-        raise ValueError("market listing result is empty or invalid")
-    return listed
-
-
 # Canonical timeframe → milliseconds. Single source of truth for bar durations.
 # Covers the Bitget/Binance/OKX granularities the charts UI exposes for parity
 # with mainstream exchange terminals; agent reasoning still uses the smaller
@@ -140,7 +120,6 @@ class MarketInstrument:
     price_precision: int | None = None
     amount_precision: int | None = None
     is_test_or_dated: bool = False
-    is_tokenized_equity: bool = False
     contract_size: float | None = None
 
 

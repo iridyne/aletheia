@@ -2,7 +2,7 @@
   "note": "Frozen baseline for tests/audit/test_no_silent_except_pass.py. Every entry below is a `except <...>: pass` under core/aletheia or extensions as of the generated_at date. Sites are a shame list, not a permit: every PR that removes one site removes its baseline entry. New sites MUST either logging/audit/reraise the exception, or be added to this file with a reason. Updated 2026-09-27: 164 -> 42; 122 sites now log and each remaining site carries the reason it stays silent.",
   "generated_at": "2026-09-27",
   "generator": "python -m ast walk over core/aletheia + extensions",
-  "count": 42,
+  "count": 41,
   "sites": [
     {
       "file": "core/aletheia/_gateway_runner.py",
@@ -151,7 +151,7 @@
     },
     {
       "file": "core/aletheia/main.py",
-      "line": 519,
+      "line": 517,
       "reason": "SystemExit from the install subcommand is the CLI own exit path"
     },
     {
@@ -180,23 +180,18 @@
       "reason": "sqlite3.ProgrammingError from close() on an already-closed connection is idempotent"
     },
     {
-      "file": "core/aletheia/trading/market_data.py",
-      "line": 72,
-      "reason": "CancelledError is requested control flow; task cancellation stays silent"
-    },
-    {
       "file": "extensions/analytics/guard_promotion.py",
       "line": 39,
       "reason": "best-effort temp-file cleanup on the atomic-write error path; original exception is re-raised"
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 852,
+      "line": 848,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {
       "file": "extensions/data/ccxt_provider.py",
-      "line": 861,
+      "line": 857,
       "reason": "CancelledError is requested control flow; task cancellation stays silent"
     },
     {

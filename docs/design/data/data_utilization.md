@@ -61,8 +61,7 @@
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
 | 预测市场 | PolymarketProvider | prediction 表 | 原始 Opportunity observation-only；market_observer 预测块→LLM；派生 divergence 可进入 crypto 决策链，但必须先确定 question polarity | ✅ unknown/negated/mixed polarity fail-closed |
 | 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
-| xStock 上市状态（责任交易所 active spot market list） | market_data 失败路径经 `get_market_data_provider(native_ccxt=True)` 查询 | 不落行情表；确认缺失时只更新 canonical `observed_stock_tokens` 并写 audit，见[配置 Contract](../contracts/configuration_contract.md) | 仅维护 observation-only xStock 采集范围 | 🟡；单轮每 venue 一次、10s 硬截止；超时/网络失败/空列表均为 indeterminate，保留配置 |
-| **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot**；亦注入 Serenity equity_chain lens 上下文 | ✅ |
+| **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot** | ✅ |
 | 市场状态 regime | MacroCollector 与存量读取共用 `data/freshness.py` 风险标签投影；独立 `extensions/regime/collector.py`/detector | `macro_snapshots.risk_regime` + `market_regimes` | market_observer / emitter / ranker / System Operator | ✅ 宏观标签不依赖 collector 可用性；Universe regime 使用真实约7天 market-cap baseline 与已完成日K true range；缺历史时 unavailable，不回落24h proxy |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
 | 清算 liquidations | CoinalyzeCollector（key-guard，data_collector_context；DU-S06/DU-T01） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
@@ -145,7 +144,6 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 - **Position X 离线材料（🟡）**：`aletheia.data.position_x` 只读授权样本中的维度说明、结构总结、拟合结果、`analysis_*.json` 的表达样式和 prompt 组织方式；`extract_position_x_material_bundle()` 可一次性把目录中的授权材料提炼成安全 knowledge cards 与结构化快照。原始 prompt、账户、地址、余额、credential、token 不进入运行时卡片、日志或 prompt；拟合文件只保留公式提示、相关性结论和 source hash。
 - **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；Data Extension 从自身 `coinalyze_api_key` Secret Store reference 读取，缺失时可用专属 `COINALYZE_API_KEY` 环境回退；均未配置时返回 `errors=["no_key"]` 并诚实跳过。Core 配置只保留 enable flag；若旧 `config.yaml` 仍含原始 key 字段，加载时会拒绝并安全提示手工移除字段，不回显值。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
-- **xStock 上市状态（🟡）**：只在 ticker 失败后查询责任交易所 active spot market list；结果只维护 observation-only 采集配置，不进入排序、风控或执行。查询按 venue 单轮复用并有硬截止，任何不确定结果都保留用户配置。锁定于 DU-S24。
 - **Learning Contribution Observability（🟠）**：这里登记的是已有内部事实的展示消费者，
   不是 collected-but-unused 外部数据源。A1 evaluator/lifecycle 已消费这些表；有界、只读、诚实的
   `lco-v1` summary、多路径 dashboard contribution selector、当前路由性能/cache 与当前 surface 无障碍已实现。
@@ -167,7 +165,6 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-S21 | L2c | Hyperliquid OI 按 source + freshness 读取并与 funding 一起渲染，System Operator manifest 保存实际 row ids |
 | DU-S22 | L2c | owner aggregate import 保存 source ref/hash + audit，建立 1h/4h/24h shadow outcomes；14 天前及无数据时均不影响决策 |
 | DU-S23 | superseded | 本地 paper funding settler 已退役；公共费率保留为市场/研究事实，不替代外部账户私有资金费证据 |
-| DU-S24 | L2b | xStock 上市状态源在 §3 登记；Core 经 listing Port 精确查询责任 venue，Adapter 负责 native provider 与关闭；单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
 | DU-S27 | L2a | LiteLLM 公共模型/原生工具价格目录生成不可变、事件时点解析的快照；Gateway startup 单飞 refresh，且没有前端或人工价格 writer；cache/reasoning/web-search 的已观察计数必须有对应费率，Usage 只读计算且历史账本不回写 |
 | DU-S28 | L2a | Binance USD-M 公共 fast-market facts 仅经 venue-neutral CCXT Pro 适配器进入 Fast Monitoring 内存消费者；不持久化、不读取凭证、不进入订单路由，未观察到通道事实时不得 ready；已退役的原生 Binance Spot/Bitget WebSocket 传输不得复活 |

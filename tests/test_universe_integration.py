@@ -153,26 +153,6 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     )
 
 
-def test_background_preserves_bitget_stock_token_boundary():
-    from aletheia.data.symbols import build_instrument_background
-
-    background = build_instrument_background(
-        symbol="RNVDA/USDT",
-        venue="bitget",
-        market_type="spot",
-        market_info={
-            "symbol": "RNVDA/USDT",
-            "base": "RNVDA",
-            "quote": "USDT",
-            "info": {"baseCoin": "rNVDA"},
-        },
-    )
-
-    assert background["asset_class"] == "equity"
-    assert background["reference_asset"] == "NVDA"
-    assert background["status"] == "complete"
-
-
 def _fake_features():
     """Simulate features that would come from collect_features."""
     return [
