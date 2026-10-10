@@ -2767,7 +2767,7 @@ def _tpsl_fill_check_body():
         import json as _json
         from aletheia.storage.repositories import list_all_open_positions
         from aletheia.execution.exchange_materialization import (
-            claim_observed_tpsl_close, materialize_private_close,
+            claim_observed_tpsl_close, locally_owned_entry_order_ids, materialize_private_close,
         )
         from aletheia.uta.manager import (
             configured_identity, create_native_protection_reader,
@@ -2875,7 +2875,9 @@ def _tpsl_fill_check_body():
                                 or history.plan_order_id != str(plan_order_id)
                             ):
                                 raise ValueError("native_protection_history_identity_mismatch")
-                            execute_ids = set(history.execute_order_ids)
+                            execute_ids = set(history.execute_order_ids) - locally_owned_entry_order_ids(
+                                execution_mode, history.execute_order_ids,
+                            )
                             if len(execute_ids) != 1:
                                 continue
                             execute_order_id = next(iter(execute_ids))

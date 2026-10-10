@@ -27,6 +27,25 @@ from aletheia.uta.models import FillReport
 
 logger = logging.getLogger("aletheia.execution.exchange_materialization")
 
+def locally_owned_entry_order_ids(execution_mode: str, venue_order_ids) -> set[str]:
+    """Venue order ids this account already holds locally as non-close Orders.
+
+    A venue may list the order that carried an entry preset among a strategy's
+    executed children (Bitget UTA v3 strategy-sub-orders); such an id is the
+    entry, never the protective close.
+    """
+    ids = sorted({str(value) for value in venue_order_ids if str(value or "").strip()})
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    rows = repo.get_db().execute(
+        f"SELECT exchange_order_id FROM orders WHERE execution_mode=? "
+        f"AND close_reason IS NULL AND exchange_order_id IN ({placeholders})",
+        (execution_mode, *ids),
+    ).fetchall()
+    return {str(row["exchange_order_id"]) for row in rows}
+
+
 def claim_observed_tpsl_close(
     position_id: str,
     *,
