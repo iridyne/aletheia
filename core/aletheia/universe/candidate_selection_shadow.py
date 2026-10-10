@@ -481,13 +481,15 @@ def load_candidate_selection_outcomes(
         (f"{CANDIDATE_SELECTION_RECORD_VERSION}%", cutoff.isoformat())
         if cutoff else (f"{CANDIDATE_SELECTION_RECORD_VERSION}%", int(limit_batches) * 1000)
     )
+    # Stream the cursor: the full history is hundreds of MB of JSON text, and a
+    # fetchall() held all of it (plus glibc-fragmented freed copies) every refresh.
     records = db.execute(
         "SELECT r.scanner_run_id, r.compact_output_json FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
         f"WHERE b.record_version LIKE ?{cutoff_clause} "
         f"ORDER BY b.captured_at DESC, r.candidate_index{limit_clause}",
         params,
-    ).fetchall()
+    )
     manifest = selection_policy.get("semantic_manifest") or {}
     expected_acquisition = manifest.get("feature_acquisition")
     excluded = 0

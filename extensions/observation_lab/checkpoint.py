@@ -325,12 +325,13 @@ def _lab_state_fingerprint(*, db: sqlite3.Connection | None = None) -> str:
             continue
         if any(column not in columns for column in selected_columns):
             raise RuntimeError(f"checkpoint_lab_schema_unavailable:{name}")
-        rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
+        # Iterate the cursor instead of fetchall(): the sort below needs the encoded
+        # rows, but not a second full copy as sqlite3.Row objects.
         encoded_rows = sorted(
-            [
+            (
                 [_json_value(row[column]) for column in selected_columns]
-                for row in rows
-            ],
+                for row in db.execute(f'SELECT * FROM "{name}"')
+            ),
             key=canonical_json_safe,
         )
         material.append({
