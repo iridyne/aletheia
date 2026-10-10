@@ -97,8 +97,8 @@ Market Observer 不再注册为调度任务；历史归因与读取不代表活�
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
 | `post_trade_reviewer` | 4h | closed positions | knowledge_items(post_trade_review) | dreaming_agent, retrieve_lessons() | ✅ |
 | `risk_critic` | 6h | proposal / risk_decisions history | medium-confidence `research_note`（subtype=risk_lesson） | advisory note / audit；不进入 `retrieve_lessons()` 的 high-confidence 池 | ✅ 不写 RiskDecision 或改硬风控 |
-| `equity_observer` | 工作日 /30min | yfinance + xStocks | opportunities(equity) | 无当前消费者 | ⛔ 出产品范围（股票）；`observed_equities` 默认空时每轮直接返回；保留与删除待 owner 裁定 |
-| `prediction_observer` | 30min | polymarket/kalshi API | `prediction_observer_runs` + opportunities | 无当前消费者 | ⛔ 出产品范围（预测市场）；`prediction_enabled` 默认 False 时直接返回；保留与删除待 owner 裁定 |
+| `equity_observer` | 工作日 /30min | yfinance + xStocks | opportunities(equity) | 无当前消费者 | ⛔ 冻结（owner 2026-10-10，出产品范围）；`observed_equities` 默认空时每轮直接返回；取消注册见 spec 0003 FC-R04 |
+| `prediction_observer` | 30min | polymarket/kalshi API | `prediction_observer_runs` + opportunities | 无当前消费者 | ⛔ 冻结（owner 2026-10-10，出产品范围）；`prediction_enabled` 默认 False 时直接返回；取消注册见 spec 0003 FC-R04 |
 | `guard_promotion` | cron 04:00 CST | learned guards / candidates 的 expires_at | 仅 TTL 到期 deprecated（名称与行为不符：不做晋级） | 显式 owner review 才可晋级 | 🟡 learned guards 由 spec 0001 的 AVOID 规则取代 |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | 合格研究经 `publish_serenity_candidates` 发布 Candidate / PlanningGeneration，再由 Planner / Compiler 生成 EntryPlan | ✅ 每日批次键防重；不恢复 PiDecision 入场 |
 | `serenity_startup_catchup` | gateway 启动后4min一次 | 最近成功 Serenity run + 当前活动/批次记录 | 缺失时创建一个 scheduled research run | ✅ 补 02:00 漏跑；fresh/active/attempted 均 no-op，暂停恢复后仍可执行 |
@@ -110,7 +110,7 @@ Market Observer 不再注册为调度任务；历史归因与读取不代表活�
 | Historical Python Operator assessments | retired under #3134 | persisted history only | operator_assessment / audit records | read-only inspection; no scheduler or fallback writer | archived |
 | Current Operator runtime (`operator-shell/`) | Gateway-supervised subprocess, no scheduler row | agent_shell_heartbeats / tasks / sessions / messages / events / artifacts | 状态面板（经 `/api/operator/status` 派生）、operator 自身的任务与 recommendation | 仅经 least-privilege operator surface 读写；不跑自己的模型循环；见 [The Operator runtime](../architecture/OPERATOR_SHELL.md) 与 [Status Surface Contract](../contracts/status_surface_contract.md) | ✅ 由 `OperatorShellMonitor` 守护 |
 
-另有 `persona_rollout`（8h，persona sizing 状态机）：[Entry sizing 合同](../contracts/entry_sizing_and_financing_contract.md)明文排除 persona 仓位进入主线，属双实现残留，保留与删除待 owner 裁定。
+另有 `persona_rollout`（8h，persona sizing 状态机）：[Entry sizing 合同](../contracts/entry_sizing_and_financing_contract.md)明文排除 persona 仓位进入主线，persona 整体挂起（owner 2026-10-10），停止调度见 spec 0003 FC-R07。
 
 Learning 行为生产任务受 `agent.autonomous_learning` 控制；结果结算、funding、durable outcome replay 与 Observation Lab 保留各自独立边界。旧 contribution evaluator、measurement catch-up 和 lifecycle controller/reconciler 已退役，历史任务记录不代表当前调度或晋级权限；见 [Agent Contracts](../contracts/agent_contracts.md#1-scheduler-job-overview)。
 

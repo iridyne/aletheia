@@ -2,6 +2,10 @@
 
 ## Status and boundary
 
+> **On hold (2026-10-10).** `assess_trading_mandate_fit` has no production caller and new
+> Proposals carrying mandate evidence are rejected (`storage/proposal_hypothesis.py`); only
+> historical records are read. Removing the Settings control is spec 0003 FC-R08.
+
 A Trading Mandate is a governance and provenance contract. It is **not a
 trading strategy**, a Strategy Factory replacement, a mandate router, or a
 second decision authority. The first supported contract is

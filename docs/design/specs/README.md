@@ -45,6 +45,7 @@ and are linked from `spec.md`, never copied.
 | `implemented` | The Contract Delta has been applied to the named Contracts and every requirement has an executable claim; the spec is now frozen history |
 | `superseded` | Replaced; `superseded_by` names the successor |
 | `rejected` | Will not be pursued; kept as evidence |
+| `on_hold` | Owner paused it; no implementing work until the hold is lifted |
 
 State is a design decision, not progress. Owners, checklists and PR status stay in GitHub.
 `approved` does not mean implemented; a Contract still describes only current behavior
@@ -82,3 +83,4 @@ requirement-id uniqueness and the zero-marker rule for `approved`.
 |---|---|---|
 | [0001-learning-loop](0001-learning-loop/spec.md) | approved | Decision-level learning from own mistakes: replay labels, process review, one playbook, advisory vs authority tiers, bundle on/off measurement |
 | [0003-futures-only-convergence](0003-futures-only-convergence/spec.md) | draft | Remove code serving closed scopes: spot residue and defaults, spot fallback, out-of-scope observers, orphan data renderers, persona sizing, uncalled functions |
+| [0004-market-environment-context](0004-market-environment-context/spec.md) | draft | Give the Entry Planner the market-wide facts already collected (regime, dominance, sentiment, breadth, cross-venue funding/OI) as advisory context, measured by randomisation |

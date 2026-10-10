@@ -23,9 +23,10 @@ ALLOWED_PROPOSAL_STATUSES = {
     "rejected",
     "implemented",
     "superseded",
+    "on_hold",
 }
 # SDD spec format: docs/design/specs/README.md is the definition.
-ALLOWED_SPEC_STATUSES = {"draft", "approved", "implemented", "superseded", "rejected"}
+ALLOWED_SPEC_STATUSES = {"draft", "approved", "implemented", "superseded", "rejected", "on_hold"}
 SPEC_FRONTMATTER_KEYS = ("id", "title", "status", "depth", "prefix")
 SPEC_REQUIRED_HEADINGS = {
     "spec.md": (

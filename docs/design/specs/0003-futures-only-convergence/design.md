@@ -53,17 +53,16 @@ matching what `config/exchange_alignment.py` already writes.
 
 ### Out-of-scope producers (FC-R04)
 
-Pending the clarification, either delete `equity_observer`, `prediction_observer`,
-the `/prediction/*` routes and the Prediction page, or keep them behind one
-default-off flag that also keeps the routes unregistered. Registration code exists
-twice (`main.py`, `server/app.py`); whichever outcome is chosen leaves one
-registration site.
+Frozen behind one default-off flag, `research.frozen_observers`: when false, neither
+`equity_observer` nor `prediction_observer` is registered, the `/prediction/*` routes
+are not mounted and the Prediction page is hidden. Registration code exists twice
+(`main.py`, `server/app.py`); it moves to one site that reads the flag. CN Equity's
+proposal is marked on hold.
 
 ### Data consumers (FC-R05)
 
-Delete `data/context_builder.py::render_enriched_context_md` and
-`trading/market_context.py::build_market_context` (and their tests), then, per the
-clarification, stop each orphan collector or mark it observation-only in
+Macro, breadth and cross-venue facts get a consumer through spec 0004, which also deletes
+the dead renderers. On-chain stays observation-only with its reason recorded in
 `data_utilization.md`. A `check_docs` rule fails when the registry contains an ❌
 row, so the state cannot drift back.
 
@@ -77,9 +76,17 @@ Delete `trading/persona.py`, `trading/persona_rollout.py`, `trading/sizing_polic
 the `persona_rollout` job and the Settings persona fields; `trading/entry_sizing.py`
 stays the only sizing implementation.
 
+### Zero-open alert (FC-R09)
+
+`analytics/go_live_scorecard.py::count_consecutive_zero_fill_days` returns a typed
+`unavailable` on error instead of `0`. The existing `health_check` job reads it and raises
+`candidate_entry_stalled` through the existing alert sink once per stall (cleared when a
+position opens). No entry is paused.
+
 ### Dead code (FC-R08)
 
-Delete `portfolio/position_manager.py::reduce_position_routed` and the Windows
+Persona (FC-R07) and trading mandate (FC-R08) are on hold: their jobs and Settings controls
+are unregistered, code and tables stay. Delete `portfolio/position_manager.py::reduce_position_routed` and the Windows
 gateway service modules (`gateway/windows_*.py`, `_win32_proc.py`) with their
 imports in `gateway/service_control.py`. Trading mandate and K1/K2 follow the
 clarification.
@@ -122,6 +129,7 @@ where the owner has not yet decided (FC-R04, R08).
 | FC-R05 | Data consumers | `check_docs` orphan-row rule + `tests/specs/spec_data_utilization.py` | deterministic test |
 | FC-R06 | News | `tests/specs/spec_futures_only.py::FC-R06` (job ids by `serenity.enabled`) | deterministic test |
 | FC-R07 | Sizing | `tests/specs/spec_futures_only.py::FC-R07` (job ids; Settings payload) | deterministic test |
+| FC-R09 | Zero-open alert | `tests/specs/spec_kill_conditions.py::FC-R09` (3 empty days → one alert; query failure → unavailable) | deterministic test |
 | FC-R08 | Dead code | `tests/specs/spec_futures_only.py::FC-R08` (AST: no definition) + `tests/test_service_control.py` | deterministic test |
 
 ## Rollout and rollback

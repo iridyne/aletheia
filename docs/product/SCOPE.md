@@ -54,8 +54,9 @@ presence does not widen the supported mainline; use the exact status and gap in
 
 ## Approved implementation scope, not current support
 
-The accepted [CN Equity Market Kernel Proposal](../design/proposals/cn-equity-market-kernel.md)
-authorizes implementation of `market_id=cn_equity` under Issue #2572. This is
+The [CN Equity Market Kernel Proposal](../design/proposals/cn-equity-market-kernel.md)
+is **on hold** (owner 2026-10-10); while on hold it authorizes no work. When lifted, it
+covers implementation of `market_id=cn_equity` under Issue #2572. This is
 an implementation boundary, not a claim that any current Runtime observes,
 trades, accounts for, or qualifies mainland equities.
 

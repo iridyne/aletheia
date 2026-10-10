@@ -19,6 +19,7 @@ the reasoning will not survive in a PR body; otherwise use an Issue and a PR.
 | `rejected` | Direction will not be pursued |
 | `implemented` | Current normative behavior has moved to its Contract, Product Truth, Decision, or Operations owner |
 | `superseded` | A newer Proposal or Decision replaced this design |
+| `on_hold` | Owner paused the direction; no implementation work is admitted until the hold is lifted |
 
 Proposal state is not work progress. Owners, priorities, checklists, issue
 status, and PR status stay in GitHub. Accepted does not mean implemented.
@@ -40,11 +41,11 @@ draft here that is revised moves into the spec format.
   still `legacy` until the cutover. spec 0001 LL-R16 depends on that cutover.
 - [Learning observability](learning_observability.md) (`accepted`): remaining
   full-workbench targets are unplanned and overlap spec 0001 LL-R21.
-- [CN Equity Market Kernel](cn-equity-market-kernel.md) (`accepted`, no code):
-  outside the futures-only product scope; whether to reject it is an owner decision.
+- [CN Equity Market Kernel](cn-equity-market-kernel.md) (`on_hold`, no code): paused by
+  the owner on 2026-10-10; outside the futures-only product scope.
 - [Fedora immutable Runtime updates](fedora_immutable_runtime_updates.md)
-  (`draft`, no code): depends on retired remote CI and Paper mode; whether to reject
-  it is an owner decision.
+  (`draft`, no code): signed release artifact instead of on-host source builds; depends
+  on retired remote CI and Paper mode. Owner decision pending.
 
 ## Implemented proposals
 

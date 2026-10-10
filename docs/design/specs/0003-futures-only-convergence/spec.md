@@ -124,20 +124,26 @@ Non-goals:
 
 ### FC-R04 Out-of-scope producers
 
-`The scheduler shall not register equity_observer or prediction_observer, and the server shall not expose prediction-market routes or pages.`
+`The scheduler shall not register equity_observer or prediction_observer, and the server shall not register prediction-market routes or show the Prediction page, unless research.frozen_observers is explicitly enabled.`
 
-[NEEDS CLARIFICATION: delete the equity/prediction observers, their routes and the Prediction page outright, or keep the code frozen behind an off-by-default flag? Also: reject the CN Equity proposal?]
+The code is frozen, not deleted (owner 2026-10-10). CN Equity is on hold: its proposal
+status becomes on-hold and `ACTIVE_RUNTIME_SCOPE.authorized_extensions.cn_equity`
+admits no implementation work until the owner lifts the hold.
 
 #### Scenarios
 
 - WHEN the scheduler starts with default config THEN neither job id is registered.
-- WHEN `GET /api/prediction/...` is called THEN the route does not exist.
+- WHEN `GET /api/prediction/...` is called with default config THEN the route does not exist.
+- WHEN `research.frozen_observers` is true THEN both jobs and the routes register as today.
 
 ### FC-R05 Every collector has a consumer
 
 `When a data collector job is registered, data_utilization.md shall name its decision consumer or its accepted observation-only reason, and LLM renderers without a production caller shall be deleted.`
 
-[NEEDS CLARIFICATION: for macro, fear/greed, top movers, on-chain (DefiLlama), Hyperliquid and yfinance macro — stop collecting, keep as observation-only research data, or feed one of them into the Entry Planner input under a new spec?]
+The owner decided the collected data must be used (2026-10-10). How macro, breadth and
+cross-venue facts reach the Entry Planner is owned by
+[spec 0004-market-environment-context](../0004-market-environment-context/spec.md);
+this requirement only removes the dead renderers once 0004's provider replaces them.
 
 #### Scenarios
 
@@ -155,9 +161,9 @@ Non-goals:
 
 ### FC-R07 One sizing implementation
 
-`The system shall size entries only through trading/entry_sizing.py, and the persona sizing state machine and its persona_rollout job shall be removed.`
+`The system shall size entries only through trading/entry_sizing.py, and while persona sizing is on hold the scheduler shall not register persona_rollout and Settings shall not offer persona rollout controls.`
 
-[NEEDS CLARIFICATION: confirm removal of persona sizing (trading/persona.py, persona_rollout.py, sizing_policy.py and the Settings persona controls).]
+Persona is on hold as a whole (owner 2026-10-10): code stays, nothing runs or is offered.
 
 #### Scenarios
 
@@ -166,14 +172,28 @@ Non-goals:
 
 ### FC-R08 No uncalled trading-path functions
 
-`The trading path shall contain no function without a production caller; reduce_position_routed, assess_trading_mandate_fit and the Windows gateway service modules shall be deleted.`
+`The trading path shall contain no function without a production caller; reduce_position_routed and the Windows gateway service modules shall be deleted, and the trading mandate capability shall be on hold with no Settings control.`
 
-[NEEDS CLARIFICATION: delete the trading mandate capability (contract trading_mandate_contract.md, ~1444 lines) or keep it frozen? Should K1/K2 kill functions gain a runtime consumer (pause new entries) or stay manual?]
+[NEEDS CLARIFICATION: trading mandate — keep on hold (recommended) or delete? K2 zero-open alert — accept FC-R09 as written?]
 
 #### Scenarios
 
 - WHEN the code is searched THEN `reduce_position_routed` and `windows_machine_service` have no definition.
 - WHEN `gateway service status` runs on Linux THEN it reports the systemd user service only.
+
+### FC-R09 Zero-open alert (K2 made real)
+
+`While the selected execution mode has opened no new position for kill_conditions.zero_open_alert_days consecutive UTC days (default 3), the health job shall raise one candidate_entry_stalled alert per stall and expose it in doctor and Telegram; if the count cannot be computed, it shall report unavailable, never zero.`
+
+K2's function (`analytics/go_live_scorecard.py::count_consecutive_zero_fill_days`) has no
+production caller and returns `0` on any error, which reads as "healthy". This turns it
+into an alert only: it does not pause entries. K1 stays a manual owner judgment because
+there are too few closed positions for a 14-day profit-factor window to mean anything.
+
+#### Scenarios
+
+- WHEN no position opened for 3 UTC days THEN one `candidate_entry_stalled` alert exists and repeats are suppressed until a position opens.
+- WHEN the positions query fails THEN the item is `unavailable` with the error class, not `0`.
 
 ## Contract Delta
 
@@ -184,6 +204,8 @@ Non-goals:
 
 ### MODIFIED
 
+- `kill_conditions_contract.md` K2: becomes the zero-open alert with an unavailable state (FC-R09).
+
 - `entry_sizing_and_financing_contract.md`: sizing has no spot branch (FC-R02); persona sizing removed from Non-goals because it no longer exists (FC-R07).
 - `execution_contract.md` §3.1: residual spot branch sentence removed (FC-R02).
 - `scheduler_contract.md` and `SYSTEM_MAP.md`: job table loses `equity_observer`, `prediction_observer`, `persona_rollout`; `news_fetch`/`news_analyze` become Serenity-conditional (FC-R04, R06, R07).
@@ -191,8 +213,8 @@ Non-goals:
 
 ### REMOVED
 
-- `trading_mandate_contract.md` if FC-R08 removes the capability.
-- `kill_conditions_contract.md` K1/K2 if they stay manual (moved to EXPERIMENT_PROTOCOL as owner judgment).
+- `trading_mandate_contract.md`: status becomes on-hold (FC-R08); removal only if the owner chooses delete.
+- `kill_conditions_contract.md` K1: moved to EXPERIMENT_PROTOCOL as an owner judgment (no runtime consumer).
 - Spot sections of `ohlcv_provider_result_contract.md` and `data_layer.md` (FC-R03).
 
 ## Clarify
@@ -209,12 +231,10 @@ Non-goals:
 
 ## Open questions
 
-- [NEEDS CLARIFICATION: FC-R04 delete vs freeze the equity/prediction observers; reject CN Equity.]
-- [NEEDS CLARIFICATION: FC-R05 fate of each orphan data domain.]
-- [NEEDS CLARIFICATION: FC-R07 confirm persona sizing removal.]
-- [NEEDS CLARIFICATION: FC-R08 trading mandate delete vs freeze; K1/K2 runtime consumer or manual.]
+- [NEEDS CLARIFICATION: FC-R08 trading mandate on hold (recommended) or delete; accept FC-R09 zero-open alert.]
 
 ## Decision log
 
 - 2026-10-09 — Owner: spot is out of scope; USDT perpetuals are the only product ([DECISIONS](../../../governance/decisions/DECISIONS.md)).
 - 2026-10-10 — Owner: one capability keeps one implementation; framework changes must remove coupling, not swap one hard-coded value for another.
+- 2026-10-10 — Owner: freeze equity/prediction observers; CN Equity on hold; persona on hold; unused collected data must be put to use (→ spec 0004).

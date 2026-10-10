@@ -6,7 +6,7 @@ authorized_extensions:
   cn_equity:
     proposal: docs/design/proposals/cn-equity-market-kernel.md
     tracking_issue: 2572
-    implementation_state: authorized_not_implemented
+    implementation_state: on_hold_not_implemented
     default_runtime_state: disabled
     permitted_runtime_states:
       - disabled
@@ -72,8 +72,9 @@ Bitget Demo route requires Full permission; registering an account in this docum
 does not enable Entry Plan on another route. Observe, unsupported routes and any
 effective Live state fail closed before model invocation.
 
-The `authorized_extensions.cn_equity` declaration admits only the bounded
-implementation work approved by its Proposal. It does not add CN Equity to the
+The `authorized_extensions.cn_equity` declaration is **on hold** (owner
+2026-10-10): no CN implementation work is admitted until the hold is lifted. When
+lifted, it admits only the bounded implementation work approved by its Proposal. It does not add CN Equity to the
 active instrument profiles or current Runtime proof. CN starts semantically
 `disabled`: no CN V2 producer, Candidate, Proposal, reservation, Order, Fill,
 Position, Outcome, or qualification fact may be created until the corresponding

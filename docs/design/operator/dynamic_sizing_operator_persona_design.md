@@ -1,5 +1,9 @@
 # 设计：System-Operator 集成的动态仓位决策 + 交易 Persona + Learning 策略域
 
+> **On hold (owner, 2026-10-10).** The whole persona sizing path is paused: entries are sized only by
+> [Entry sizing and financing](../contracts/entry_sizing_and_financing_contract.md). Removing the
+> `persona_rollout` job and Settings controls is [spec 0003 FC-R07](../specs/0003-futures-only-convergence/spec.md).
+
 > **#3134 retirement (2026-09-23):** The Python `operator_loop` configuration writer
 > is removed; references below describe historical design, not a current owner.
 > Existing sizing/Persona contracts and their independent consumers are unchanged.

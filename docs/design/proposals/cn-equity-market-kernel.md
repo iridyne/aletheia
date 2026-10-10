@@ -1,6 +1,6 @@
 ---
 id: cn-equity-market-kernel
-status: accepted
+status: on_hold
 github_issue: 2573
 related_contracts:
   - docs/design/contracts/entry-plan-contract.md
@@ -11,6 +11,9 @@ related_contracts:
   - docs/design/contracts/opportunity_outcome_contract.md
 supersedes: []
 ---
+
+> **On hold (owner, 2026-10-10).** No implementation work is admitted while the product is
+> futures-only; the authorisation in Active Runtime Scope is suspended until the hold is lifted.
 
 # CN Equity Market Kernel
 
