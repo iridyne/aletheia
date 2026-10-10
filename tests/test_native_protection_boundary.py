@@ -15,6 +15,7 @@ def test_native_client_exposes_only_required_private_reads():
     }
     assert methods == {
         "get_plan_order_history", "get_order_fills", "get_order_fill_reports",
+        "get_open_tpsl_orders",  # entry-preset read-back, execution_contract §4 (#3848)
     }
 
 
