@@ -1,10 +1,13 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
+> Approved successor design: [spec 0001-learning-loop](../specs/0001-learning-loop/spec.md)
+> (2026-10-10). This contract keeps describing current behavior until an implementing change
+> applies that spec's Contract Delta.
 > Last aligned: 2026-08-23 bounded `lco-v1` observability truth reconciliation.
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Related design authorities:
-> [`learning_evolution.md`](../proposals/learning_evolution.md) and
+> [`learning_evolution.md`](../proposals/learning_evolution.md) (superseded by spec 0001) and
 > [`learning_observability.md`](../proposals/learning_observability.md), plus the
 > factor-scoring-specific
 > [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md).

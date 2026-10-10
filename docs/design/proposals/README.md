@@ -3,6 +3,9 @@
 Proposals describe substantial future behavior without claiming that behavior
 already exists.
 
+> Since 2026-10-10 new designs are written as SDD specs in [`../specs/`](../specs/README.md).
+> This folder keeps legacy Proposals; a revised one moves into the spec format.
+
 A Proposal is optional and never a precondition
 ([2026-09-26 decision](../../governance/decisions/DECISIONS.md)). Write one when
 the reasoning will not survive in a PR body; otherwise use an Issue and a PR.
@@ -41,7 +44,6 @@ Status `accepted` or `draft`: direction recorded, complete behavior not yet curr
 - [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
   bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
   and pessimistic-promotion safeguards.
-- [Learning evolution](learning_evolution.md): governed learning changes.
 - [Learning observability](learning_observability.md): learning measurement and
   operator visibility; the remaining full-workbench targets are unplanned.
 - [Observation Experiment Ownership V2](observation_experiment_ownership_v2.md):
@@ -115,6 +117,8 @@ is stable decision history.
   contract.
 - [Tokenomics harness phase plan (2026-07-30)](tokenomics_harness_phase_plan_2026-07-30.md):
   superseded by [Tokenomics / LLM Economics Harness](tokenomics_harness.md).
+- [Learning evolution](learning_evolution.md): superseded by spec
+  [0001-learning-loop](../specs/0001-learning-loop/spec.md).
 
 The executed V2/V3 convergence plan (2026-09-26) is archived at
 [`archive/repair/V2_V3_CONVERGENCE_PLAN_2026-09-26.md`](../../archive/repair/V2_V3_CONVERGENCE_PLAN_2026-09-26.md);

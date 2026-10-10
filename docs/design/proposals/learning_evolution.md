@@ -1,12 +1,18 @@
 ---
 id: learning-evolution
-status: accepted
+status: superseded
+superseded_by: ../specs/0001-learning-loop/spec.md
 related_contracts:
   - ../contracts/learning_contract.md
 supersedes: []
 ---
 
 # Learning Evolution Proposal
+
+> **Superseded 2026-10-10** by [spec 0001-learning-loop](../specs/0001-learning-loop/spec.md).
+> Kept unchanged below as decision history. Its per-artifact prospective treatment/control
+> lifecycle (§3–§7) no longer governs advisory learning; authority-tier rigor is carried
+> into the spec's authority requirements.
 
 > Proposal status: accepted design, not a product implementation claim.
 > Current fact: the shared measured lifecycle is implemented for

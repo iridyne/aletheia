@@ -1,5 +1,36 @@
 # Architecture Decision Log
 
+## 2026-10-10 — 新设计统一写成 SDD 规格，放在 `docs/design/specs/`（owner 决定，#3934）
+
+**Decision:** 重大设计不再写成自由格式的 Proposal，而是按固定的 SDD 格式写成规格：
+`docs/design/specs/NNNN-name/spec.md`（WHAT/WHY：EARS 需求、WHEN/THEN 场景、对合同的
+ADDED/MODIFIED/REMOVED 增量、澄清表、决策记录）+ `design.md`（HOW：数据模型、流程、失败语义、
+备选方案、需求→验证追溯表）。格式定义在 [specs README](../../design/specs/README.md)，由
+`scripts/ci/check_docs.py::spec_format_failures` 强制。任务清单不进仓库，仍由 GitHub 承载。
+`approved` 的规格是实现 PR 的金标准；合同仍只描述当前行为，直到实现变更把增量写进合同。
+
+**Why:** 文档按时期堆积、格式各异，同一能力在合同、提案、研究文档之间互相矛盾
+（例：学习系统合同 948 行混合现行与历史规则）。参照 GitHub Spec Kit、Kiro、OpenSpec 与 EARS 的公开实践。
+
+**Consequences:** `docs/design/proposals/` 只保留旧提案，修订时迁入新格式；第一份规格是
+[0001-learning-loop](../../design/specs/0001-learning-loop/spec.md)，同时把
+`learning_evolution.md` 标为 superseded。
+
+---
+
+## 2026-10-10 — 学习结果分"建议级"与"授权级"两级（owner 决定，#3934，D1/D2）
+
+**Decision:** 建议级教训（有上限、可引用、不拦截、不改仓位杠杆）可以不经逐条前瞻测量直接进入入场
+提示词，效果用整包开/关的随机对照测量，有害自动关闭；拦截、调仓等授权级动作保留逐条严格门槛。
+学习单元改为"每次入场决策 + 回放 R 标签"，教训统一存于一个打法手册。细则见
+[spec 0001-learning-loop](../../design/specs/0001-learning-loop/spec.md)。
+
+**Why:** 旧设计要求每条教训先做每组 50 样本的前瞻对照才能影响决策，样本上不可达、统计上又测不准，
+导致"教训进入下一次决策"在设计上没有合法通路（评估见
+`docs/research/agents-learning/LEARNING_DESIGN_EVALUATION_2026-10-10.md`）。
+
+---
+
 ## 2026-10-09 — 原地更新回滚只追加不删（#1441 / #1621 / #1910，D1，owner 决定见 #3765）
 
 **Decision:** 原地更新回滚（`ops/update/auto.py:_restore_old_runtime`，自动更新与 schema 更新回滚共用）
