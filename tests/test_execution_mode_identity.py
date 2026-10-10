@@ -10,6 +10,7 @@ from aletheia.config.exchanges import (
     execution_mode_environment,
     execution_mode_venue,
     is_live_execution_mode,
+    selected_live_execution_mode,
 )
 from aletheia.risk.demo_entry_quality import EXCHANGE_DEMO_MODES
 
@@ -86,3 +87,20 @@ def test_bitget_tpsl_recovery_uses_registered_account_environment(monkeypatch, m
             mode, expected_account=identity.model_copy(update={"environment": "testnet"}),
         )
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("paper_mode", "live_mode"),
+    [
+        ("bitget_demo", "bitget_live_limited"),
+        ("okx_demo", "okx_live_limited"),
+        ("paper_internal", None),
+        ("", None),
+    ],
+)
+def test_selected_live_account_follows_the_one_venue_key(paper_mode, live_mode):
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = paper_mode
+    assert selected_live_execution_mode(cfg) == live_mode

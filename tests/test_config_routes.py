@@ -2028,7 +2028,6 @@ async def test_market_data_exchange_divergence_requires_explicit_confirmation(cl
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "okx_demo"
-    cfg.exchange.name = "okx"
     cfg.market_data.ccxt_exchange = "okx"
     save_config(cfg)
 

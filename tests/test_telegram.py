@@ -46,7 +46,6 @@ async def test_status_command_reports_unconfigured_execution(tmp_path, monkeypat
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
-    cfg.exchange.name = "okx"  # Retained preference, not an active connection.
     cfg.exchange.paper_execution_mode = ""
     save_config(cfg)
 

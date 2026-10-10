@@ -12,7 +12,7 @@ logger = logging.getLogger("aletheia.universe.fast_stream")
 
 from pydantic import BaseModel, ConfigDict
 
-from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
+from aletheia.config.exchanges import execution_mode_venue
 from aletheia.data.symbols import InstrumentId
 
 
@@ -148,16 +148,6 @@ _FAST_STREAM_ADAPTERS = {
 
 
 
-def execution_venue_for_mode(execution_mode: str) -> str:
-    """Resolve venue identity from the existing execution-mode authority map."""
-
-    mode = str(execution_mode or "")
-    for venue, (_, paper_mode) in EXCHANGE_UNIFICATION_MAP.items():
-        if mode == paper_mode or mode == LIVE_EXECUTION_MODES.get(venue):
-            return venue
-    return "unknown"
-
-
 def fast_market_stream_available(execution_mode: str) -> bool:
     return str(execution_mode or "") in _FAST_STREAM_ADAPTERS
 
@@ -165,12 +155,12 @@ def fast_market_stream_available(execution_mode: str) -> bool:
 def fast_market_data_venue_for_config(cfg) -> str:
     """Resolve trigger data from the selected external execution account."""
 
-    return execution_venue_for_mode(cfg.exchange.paper_execution_mode)
+    return execution_mode_venue(cfg.exchange.paper_execution_mode) or "unknown"
 
 
 def fast_market_stream_available_for_config(cfg) -> bool:
     venue = fast_market_data_venue_for_config(cfg)
-    return any(execution_venue_for_mode(mode) == venue for mode in _FAST_STREAM_ADAPTERS)
+    return any(execution_mode_venue(mode) == venue for mode in _FAST_STREAM_ADAPTERS)
 
 
 def fast_market_data_unavailability_reason(
@@ -196,7 +186,7 @@ def fast_market_data_unavailability_reason(
     configured_venue = fast_market_data_venue_for_config(cfg)
     if str(venue or "").lower() != configured_venue:
         return "FAST_MARKET_DATA_VENUE_MISMATCH"
-    if not any(execution_venue_for_mode(mode) == configured_venue for mode in _FAST_STREAM_ADAPTERS):
+    if not any(execution_mode_venue(mode) == configured_venue for mode in _FAST_STREAM_ADAPTERS):
         return "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
     if (
         cfg.exchange.paper_execution_mode == "binance_testnet"
@@ -212,7 +202,7 @@ def fast_market_stream_for_config(cfg) -> FastMarketStream:
 
     venue = fast_market_data_venue_for_config(cfg)
     adapter_mode = next(
-        (mode for mode in _FAST_STREAM_ADAPTERS if execution_venue_for_mode(mode) == venue),
+        (mode for mode in _FAST_STREAM_ADAPTERS if execution_mode_venue(mode) == venue),
         None,
     )
     if adapter_mode is None:
@@ -224,5 +214,5 @@ def fast_market_stream_for_execution_mode(execution_mode: str) -> FastMarketStre
     adapter = _FAST_STREAM_ADAPTERS.get(str(execution_mode or ""))
     if adapter is not None:
         return adapter()
-    venue = execution_venue_for_mode(execution_mode)
+    venue = execution_mode_venue(execution_mode) or "unknown"
     raise RuntimeError(f"fast_trigger_stream_unavailable:{venue}")

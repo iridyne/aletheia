@@ -135,9 +135,8 @@ def _seed_test_live_identity(cfg, monkeypatch):
     from datetime import datetime, timedelta, timezone
     import aletheia.trust.live_unlock as trust
 
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = "bitget"
     from tests.helpers.live_identity import bind_live_identity
 
     bind_live_identity(monkeypatch, lambda ref: f"test-secret:{ref}")

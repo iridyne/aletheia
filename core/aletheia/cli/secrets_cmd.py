@@ -37,7 +37,9 @@ def set_cmd(key: str = typer.Argument(..., help="Secret key path, e.g. bitget.de
     from aletheia.config.loader import load_config
 
     cfg = load_config()
-    selected_live_prefix = f"{str(cfg.exchange.name or '').lower()}.live."
+    from aletheia.config.exchanges import execution_mode_venue
+
+    selected_live_prefix = f"{execution_mode_venue(cfg.exchange.paper_execution_mode) or ''}.live."
     if cfg.live.state == "live_limited" and key.strip().lower().startswith(selected_live_prefix):
         typer.echo(
             "Error: lock live trading and re-run the selected-account preflight before rotating the selected live credentials.",

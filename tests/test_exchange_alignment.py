@@ -7,7 +7,6 @@ def test_exchange_alignment_uses_actual_execution_mode_not_preference_name():
     from aletheia.config.exchange_alignment import exchange_alignment
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = "bitget"  # stale preference must not define actual routing
     cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.market_data.ccxt_exchange = "binance"
 
@@ -35,7 +34,6 @@ def test_config_diagnostic_names_actual_execution_exchange():
     from aletheia.diagnostics.config_consistency import _check_exchange_consistency
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.market_data.ccxt_exchange = "binance"
 
@@ -56,8 +54,7 @@ def test_paper_execution_mode_vocabulary_excludes_uta_credential_profiles():
     trading halt reachable from one dashboard POST. Both surfaces now derive from the
     authority instead of restating it, so they cannot drift apart again.
     """
-    from aletheia.config.exchange_alignment import _EXECUTION_MODE_EXCHANGES
-    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+    from aletheia.config.exchanges import execution_mode_venue
     from aletheia.risk.policy import (
         DEMO_EXECUTION_MODES,
         LIVE_EXECUTION_MODES,
@@ -66,15 +63,9 @@ def test_paper_execution_mode_vocabulary_excludes_uta_credential_profiles():
     )
 
     profiles = {"binance_live", "okx_live"}
-    assert not profiles & set(_EXECUTION_MODE_EXCHANGES)
+    assert all(execution_mode_venue(profile) is None for profile in profiles)
     assert not profiles & DEMO_EXECUTION_MODES
     assert not profiles & LIVE_EXECUTION_MODES
-
-    # The alignment map is the registry's paper modes, no more and no less.
-    assert _EXECUTION_MODE_EXCHANGES == {
-        paper_mode: ccxt_name
-        for ccxt_name, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
-    }
 
     # The reason they must never be accepted: Risk cannot resolve a policy for them.
     cfg = AletheiaConfig()

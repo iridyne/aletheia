@@ -33,7 +33,7 @@ def resolve_selected_execution_mode() -> str | None:
     live evidence falls back to the configured paper/demo mode.
     """
     try:
-        from aletheia.config.exchanges import live_execution_mode_for_exchange
+        from aletheia.config.exchanges import selected_live_execution_mode
         from aletheia.config.loader import load_config, read_only_config
         from aletheia.uta.manager import UTA_EXECUTION_MODES
 
@@ -51,9 +51,7 @@ def resolve_selected_execution_mode() -> str | None:
             from aletheia.trust.live_unlock import current_authorization_ref
 
             if current_authorization_ref(cfg) is not None:
-                return live_execution_mode_for_exchange(
-                    getattr(cfg.exchange, "name", "") or ""
-                ) or paper_mode or None
+                return selected_live_execution_mode(cfg) or paper_mode or None
         return paper_mode or None
     except Exception:
         return None

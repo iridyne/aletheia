@@ -27,7 +27,6 @@ def setup_test_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     cfg = loader.load_config()
-    cfg.exchange.name = cfg.risk.allowed_exchange = "bitget"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     loader.save_config(cfg)
     from decimal import Decimal
@@ -57,8 +56,6 @@ def test_existing_account_configuration_exemptions(
     from tests.helpers.risk_trade_fixture import approvable_risk_trade
 
     cfg = load_config()
-    cfg.exchange.name = "bitget"
-    cfg.risk.allowed_exchange = "okx"
     cfg.exchange.mode = "demo" if mode.endswith("live_limited") else "live"
     save_config(cfg)
     monkeypatch.setattr(
@@ -93,15 +90,12 @@ def test_existing_account_configuration_exemptions(
     selected = [
         violation
         for violation in result.violations
-        if violation.startswith(("exchange_not_allowed:", "account_mode_mismatch:"))
+        if violation.startswith("account_mode_mismatch:")
     ]
     expected = []
     if bound:
         order_mode = "live" if mode.endswith("live_limited") else "demo"
-        expected = [
-            "exchange_not_allowed:bitget!=okx",
-            f"account_mode_mismatch:order={order_mode},exchange={cfg.exchange.mode}",
-        ]
+        expected = [f"account_mode_mismatch:order={order_mode},exchange={cfg.exchange.mode}"]
     assert selected == expected
     reset_db()
 
@@ -114,6 +108,34 @@ def test_unknown_account_binding_never_grants_self_contained_exemption(mode):
     )
 
     assert execution_mode_account_config_binding(mode) is AccountConfigBinding.GLOBAL
+
+
+def test_risk_has_no_exchange_allowlist_and_keeps_account_mode_match(tmp_path, monkeypatch):
+    """The venue is exchange.paper_execution_mode alone; no allowlist key exists.
+
+    A bound demo order passes on a demo account and is rejected only by the
+    account-environment match (9b) once the account is switched to live.
+    """
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from tests.helpers.risk_trade_fixture import approvable_risk_trade
+
+    trade: dict = approvable_risk_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_demo", quantity=0.001, price=60000, **trade,
+    )
+    assert evaluate_proposal(proposal, decision_role="preflight").violations == []
+
+    cfg = load_config()
+    cfg.exchange.mode = "live"
+    save_config(cfg)
+    assert evaluate_proposal(proposal, decision_role="preflight").violations == [
+        "account_mode_mismatch:order=demo,exchange=live",
+    ]
+    reset_db()
 
 
 def test_risk_approves_valid_demo_proposal(tmp_path, monkeypatch):

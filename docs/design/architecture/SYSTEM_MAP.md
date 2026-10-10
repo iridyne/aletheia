@@ -145,7 +145,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | Config 类 | 字段数 | 前端覆盖率 | 缺口 |
 |-----------|-------|-----------|------|
 | ExchangeConfig | 5 | 100% | — |
-| RiskConfig | 18 | 94% | allowed_exchange(immutable,合理) |
+| RiskConfig | 17 | 100% | — |
 | TelegramConfig | 8 | 100% | — |
 | UniverseConfig | 13 | 100% | — |
 | TradingConfig | 17 | 88% | — |

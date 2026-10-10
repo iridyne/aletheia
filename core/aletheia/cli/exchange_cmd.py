@@ -6,7 +6,7 @@ Switch primary exchange, toggle demo/live mode, and show current state.
 import typer
 
 from aletheia.config.exchange_alignment import market_data_exchange
-from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, VALID_EXCHANGES
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, VALID_EXCHANGES, execution_mode_venue
 
 exchange_app = typer.Typer(no_args_is_help=True)
 
@@ -17,7 +17,7 @@ def use(
         ..., help=f"Exchange to activate: {', '.join(VALID_EXCHANGES)}"
     ),
 ):
-    """Switch primary exchange (atomically sets data source, execution, and risk)."""
+    """Switch primary exchange (sets the execution account; market data follows it)."""
     from aletheia.config.loader import edit_config
 
     eid = exchange_id.strip().lower()
@@ -26,12 +26,9 @@ def use(
         raise typer.Exit(1)
 
     with edit_config() as cfg:
-        old_name = cfg.exchange.name
         old_mode = cfg.exchange.paper_execution_mode
         desired_mode = EXCHANGE_UNIFICATION_MAP[eid][1]
-        if cfg.live.state == "live_limited" and (
-            eid != str(old_name or "").lower() or desired_mode != old_mode
-        ):
+        if cfg.live.state == "live_limited" and desired_mode != old_mode:
             typer.echo(
                 "Error: lock live trading and re-run the selected-account preflight before switching exchange.",
                 err=True,
@@ -47,16 +44,14 @@ def use(
         "actor": "human", "source": "cli",
         "event_type": "primary_exchange_changed",
         "entity_type": "exchange_config",
-        "before": {"exchange.name": old_name, "paper_execution_mode": old_mode},
-        "after": {"exchange.name": cfg.exchange.name, "paper_execution_mode": cfg.exchange.paper_execution_mode},
+        "before": {"paper_execution_mode": old_mode},
+        "after": {"paper_execution_mode": cfg.exchange.paper_execution_mode},
         "message": f"Primary exchange set to {eid} via CLI",
     })
 
     typer.echo(f"Switched to: {eid}")
-    typer.echo(f"  exchange.name:             {cfg.exchange.name}")
     typer.echo(f"  paper_execution_mode:      {cfg.exchange.paper_execution_mode}")
     typer.echo(f"  market data exchange:      {market_data_exchange(cfg)} (follows the account)")
-    typer.echo(f"  risk.allowed_exchange:      {cfg.risk.allowed_exchange}")
     typer.echo("")
     typer.echo("Note: restart gateway for changes to take full effect.")
 
@@ -107,23 +102,22 @@ def show():
 
     cfg = load_config()
     typer.echo("=== Exchange Config ===")
-    typer.echo(f"  name:                 {cfg.exchange.name}")
+    typer.echo(f"  execution venue:      {execution_mode_venue(cfg.exchange.paper_execution_mode) or 'not configured'}")
     typer.echo(f"  mode:                 {cfg.exchange.mode}")
     typer.echo(f"  paper_execution_mode: {cfg.exchange.paper_execution_mode}")
     typer.echo(f"  market data exchange: {market_data_exchange(cfg)}"
                f"{'' if cfg.market_data.ccxt_exchange else ' (follows the account)'}")
-    typer.echo(f"  allowed_exchange:     {cfg.risk.allowed_exchange}")
     typer.echo(f"  enabled_markets:      {cfg.exchange.enabled_markets}")
 
 
 def _configured_account() -> str:
     """The execution mode the configured exchange.mode actually trades through."""
-    from aletheia.config.exchanges import live_execution_mode_for_exchange
+    from aletheia.config.exchanges import selected_live_execution_mode
     from aletheia.config.loader import load_config
 
     cfg = load_config()
     if cfg.exchange.mode == "live":
-        mode = live_execution_mode_for_exchange(cfg.exchange.name) or ""
+        mode = selected_live_execution_mode(cfg) or ""
     else:
         mode = str(cfg.exchange.paper_execution_mode or "")
     if not mode:

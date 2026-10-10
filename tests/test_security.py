@@ -32,9 +32,8 @@ def _isolate(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     cfg = load_config()
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = "bitget"
     save_config(cfg)
     from tests.helpers.live_identity import bind_live_identity
 

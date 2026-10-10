@@ -430,7 +430,6 @@ export type RiskStatus = components['schemas']['RiskStatusResponse']
 export interface SystemStatus {
   gateway_running: boolean
   paused: boolean
-  exchange: string
   exchange_mode: string
   paper_execution_mode: string
   execution_target: 'external_exchange' | 'not_configured' | 'unavailable'

@@ -1679,10 +1679,8 @@ export const api = {
 	setPrimaryExchange: (exchange_id: string) =>
 		post<{
 			exchange_id: string;
-			"exchange.name": string;
 			"exchange.paper_execution_mode": string;
 			"market_data.ccxt_exchange": string;
-			"risk.allowed_exchange": string;
 		}>("/settings/primary-exchange", { exchange_id }),
 	updateRuntimeConfig: (
 		body: Partial<{

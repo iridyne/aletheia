@@ -111,7 +111,6 @@ def test_selected_execution_mode_uses_authorized_live_identity(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = "okx"
     cfg.exchange.mode = "live"
     cfg.exchange.paper_execution_mode = "okx_demo"
     cfg.live.state = "live_limited"

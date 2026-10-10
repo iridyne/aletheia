@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 
-from aletheia.config.exchanges import live_execution_mode_for_exchange
+from aletheia.config.exchanges import selected_live_execution_mode
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_credential_generation, get_secret
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
@@ -93,7 +93,7 @@ def _profile_spec(cfg, execution_mode: str):
 def read_credential_revision(execution_mode: str, *, cfg=None) -> tuple[str, tuple[str, ...]]:
     """Hash only the selected live account's configured credential references."""
     cfg = cfg or load_config()
-    if str(cfg.exchange.mode or "").lower() != "live" or execution_mode != live_execution_mode_for_exchange(cfg.exchange.name):
+    if str(cfg.exchange.mode or "").lower() != "live" or execution_mode != selected_live_execution_mode(cfg):
         raise ValueError("selected_live_account_required")
     try:
         scope, _profile, _venue, _environment, fields, _profile_type = _profile_spec(cfg, execution_mode)

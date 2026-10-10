@@ -534,14 +534,16 @@ def get_market_opportunities(
 def get_default_exchange_config():
     """Preferred instrument exchange for observation-only UI ordering.
 
-    Prefers the operator-selected `exchange.name` when it names a real venue;
+    Prefers the venue of `exchange.paper_execution_mode` (the trading account);
     falls back to `market_data.ccxt_exchange` so the chart's OHLCV provider and
     the instrument search popup agree on ordering. Never surfaces credentials.
     """
     cfg = load_config()
-    venue = getattr(cfg.exchange, "name", "") or ""
-    if venue and venue.lower() not in {"paper_internal", "unknown", ""}:
-        return {"exchange": venue.lower()}
+    from aletheia.config.exchanges import execution_mode_venue
+
+    venue = execution_mode_venue(cfg.exchange.paper_execution_mode)
+    if venue:
+        return {"exchange": venue}
     fallback = market_data_exchange(cfg)
     return {"exchange": fallback.lower()}
 

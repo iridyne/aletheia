@@ -824,11 +824,11 @@ def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | Non
     cfg = cfg or load_config()
     if _is_live(execution_mode):
         try:
-            from aletheia.config.exchanges import live_execution_mode_for_exchange
+            from aletheia.config.exchanges import selected_live_execution_mode
             from aletheia.trust.live_unlock import evidence_matches_config
 
             if (
-                live_execution_mode_for_exchange(cfg.exchange.name) == execution_mode
+                selected_live_execution_mode(cfg) == execution_mode
                 and cfg.live.state == "live_limited"
             ):
                 valid, _ = evidence_matches_config(cfg, getattr(cfg.live, "unlock_evidence", None))
@@ -1247,9 +1247,9 @@ def _evaluate_proposal_locked(
     # A live proposal must use the broker whose private account was selected for
     # the current configuration.
     if is_live_execution_mode(proposal.execution_mode):
-        from aletheia.config.exchanges import live_execution_mode_for_exchange
+        from aletheia.config.exchanges import selected_live_execution_mode
 
-        expected_live_mode = live_execution_mode_for_exchange(cfg.exchange.name)
+        expected_live_mode = selected_live_execution_mode(cfg)
         if expected_live_mode is not None and proposal.execution_mode != expected_live_mode:
             violations.append(
                 f"selected_exchange_mismatch:{proposal.execution_mode}!={expected_live_mode}"
@@ -1460,13 +1460,12 @@ def _evaluate_proposal_locked(
                     scope=resolved_policy.mode,
                 )
 
-    # 9a/9b. Preserve the account's owner-approved global-config binding.
+    # 9b. Preserve the account's owner-approved global-config binding. (9a, an
+    # exchange allowlist comparing two config copies, was removed 2026-10-10.)
     if (
         execution_mode_account_config_binding(proposal.execution_mode)
         == AccountConfigBinding.GLOBAL
     ):
-        if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
-            violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
         # Bound accounts retain both live and demo mode checks. Independent
         # accounts retain their existing exemption, not a new trading authority.
         if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
@@ -2715,11 +2714,11 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     """Read equity from the exact cached UTA account without fallback capital."""
     if _is_live(execution_mode):
         try:
-            from aletheia.config.exchanges import live_execution_mode_for_exchange
+            from aletheia.config.exchanges import selected_live_execution_mode
             from aletheia.trust.live_unlock import evidence_matches_config
 
             if (
-                live_execution_mode_for_exchange(cfg.exchange.name) == execution_mode
+                selected_live_execution_mode(cfg) == execution_mode
                 and cfg.live.state == "live_limited"
             ):
                 valid, _ = evidence_matches_config(cfg, getattr(cfg.live, "unlock_evidence", None))
@@ -3034,9 +3033,9 @@ def _config_active_execution_mode(cfg) -> str:
     fallbacks all work correctly.
     """
     if cfg.exchange.mode == "live":
-        from aletheia.config.exchanges import live_execution_mode_for_exchange
+        from aletheia.config.exchanges import selected_live_execution_mode
 
-        return live_execution_mode_for_exchange(cfg.exchange.name) or ""
+        return selected_live_execution_mode(cfg) or ""
     return getattr(cfg.exchange, "paper_execution_mode", None) or ""
 
 

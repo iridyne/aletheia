@@ -267,7 +267,6 @@ def _seed_theme_with_opportunities(n: int = 2):
     assert n <= len(_PUBLISHABLE_SYMBOLS), "extend _PUBLISHABLE_SYMBOLS"
     now = datetime.now(timezone.utc)
     cfg = load_config()
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     venue = "bitget"
     cfg.market_data.ccxt_exchange = venue

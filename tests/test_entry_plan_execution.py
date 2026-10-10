@@ -156,7 +156,6 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
     _setup_db(tmp_path, monkeypatch)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", _actual_ai_entry_authority)
     cfg = load_config()
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.agent.permission_mode = "Full"
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)

@@ -167,7 +167,6 @@ def _serenity_publication_source():
     now = datetime.now(timezone.utc)
     cfg = load_config()
     # Publication fixtures need an explicit monitorable route; fresh config is blank.
-    cfg.exchange.name = "bitget"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     venue = "bitget"
     cfg.market_data.ccxt_exchange = venue

@@ -1338,9 +1338,7 @@ L0–L4 成熟度判据。文档**不写**任何能力的当前级别、缺口�
 **Guardrail:**
 - 新交易所的下单资格仍然要显式登记：`ACTIVE_RUNTIME_SCOPE.md` 的 `execution_modes` 和
   `ENTRY_ROUTE_POLICIES` 各加一项，并配上对应的测试。改配置不会自动放行。
-- 还没收敛的身份键：`exchange.name` 和 `risk.allowed_exchange` 仍然独立，分别决定实盘账户和
-  风控允许名单。日常切换走 `aletheia exchange use` 或 Settings → Primary Exchange，三项会一起
-  改；只改 `paper_execution_mode` 时，行情会跟着走，这两项不会。把它们收成同一个来源是后续工作。
+- 交易所身份收成一个配置键见下方 2026-10-10「交易所身份只来自 `exchange.paper_execution_mode`」。
 - 历史缺口恢复和过期平仓标记清理现在覆盖所有已登记账户。这项扩大是语义变化（D1）。
   2026-10-10 Fedora 只读核查：没有任何非 Bitget 的外部订单，所以部署后线上行为不变。
 - 测试：`test_market_data_follows_the_trading_account`、
@@ -1371,3 +1369,25 @@ owner 于 2026-10-10 确认。
   这个问题是独立审查发现的：统一路径每轮都会做全账户读，原来的 profile 没有声明。
 - `test_reconciliation_covers_every_registered_account_through_one_path`；
   审计 `test_reconciliation_incomplete_read_logging` 的处理点数由 10 降到 8，依据是被删路径正好有 2 个。
+
+## 2026-10-10 — 交易所身份只来自 `exchange.paper_execution_mode`，删除风控交易所白名单
+
+**Decision:** 交易所身份只有一个配置键：`exchange.paper_execution_mode`（`exchange.mode` 仍然只表示
+demo/live）。删除 `exchange.name` 和 `risk.allowed_exchange` 两个字段，它们只是这个键的副本，唯一写入方是
+`apply_primary_exchange`。实盘账户改为 `config.exchanges.selected_live_execution_mode(cfg)`：
+取 `paper_execution_mode` 所属交易所的 `*_live_limited`。执行模式到交易所的映射只留
+`config.exchanges.execution_mode_venue` 一份，删掉 `exchange_alignment.execution_exchange_for_mode`
+（及其 `configured_exchange` 回退）和 `universe.fast_stream.execution_venue_for_mode`。
+风控 9a（交易所白名单）删除；9b（账户 demo/live 环境匹配）保留不变。已有 config.yaml 里的这两个键在
+加载时丢弃并回写（`config/loader.py`）。owner 2026-10-10 被问到"要不要去掉风控里的交易所白名单检查"，回复："可以去掉，想去掉立马都可以做"。
+
+**Reason:** 9a 比较的是 `cfg.exchange.name` 和 `risk.allowed_exchange` 两份配置副本，从不看订单自己的
+交易所，所以拦不住任何真实的错单。Fedora 2026-10-10 只读核查：两个键都是 `paper_internal`，而实际下单走
+`bitget_demo`，没有一条风控决定因 `exchange_not_allowed` 被拒。三份副本还会漂移：只改
+`paper_execution_mode` 时另外两份不跟着变。
+
+**Guardrail:**
+- 实盘仍默认关闭（`live.state = live_disabled`）；实盘解锁证据的 `config_revision` 摘要不再含
+  `risk_allowed_exchange`，所以已有解锁证据会被判为过期，需要重新预检（fail-closed）。
+- 测试：`test_risk_has_no_exchange_allowlist_and_keeps_account_mode_match`、
+  `test_load_drops_removed_exchange_identity_copies`。

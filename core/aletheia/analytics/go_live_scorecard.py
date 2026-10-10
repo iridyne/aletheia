@@ -352,7 +352,9 @@ def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
-        broker = str(getattr(cfg.exchange, "name", "") or "").lower()
+        from aletheia.config.exchanges import execution_mode_venue
+
+        broker = execution_mode_venue(cfg.exchange.paper_execution_mode) or ""
         if str(getattr(cfg.exchange, "mode", "") or "").lower() == "live":
             from aletheia.trust.live_unlock import evidence_matches_config
 

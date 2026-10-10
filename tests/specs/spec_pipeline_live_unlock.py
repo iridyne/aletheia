@@ -42,9 +42,8 @@ def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False
     jsonl_mod._last_audit_hash = None
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.exchange.mode = "live"
-    cfg.risk.allowed_exchange = "bitget"
     cfg.live.state = state
     cfg.live.first_live_confirmation_done = first_done
 

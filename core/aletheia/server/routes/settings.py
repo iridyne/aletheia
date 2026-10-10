@@ -587,9 +587,7 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         data_exchange=market_data_exchange_for_values(
             data_exchange=cfg_check.market_data.ccxt_exchange,
             paper_execution_mode=next_paper_mode,
-            configured_exchange=cfg_check.exchange.name,
         ),
-        configured_exchange=cfg_check.exchange.name,
     )
     if req.paper_execution_mode is not None and req.paper_execution_mode != cfg_check.exchange.paper_execution_mode:
         _require_exchange_divergence_confirmation(
@@ -629,7 +627,7 @@ class PrimaryExchangeRequest(SettingsRequest):
 
 @router.post("/primary-exchange")
 def set_primary_exchange(req: PrimaryExchangeRequest):
-    """Atomically set primary exchange across data, execution, and risk axes."""
+    """Atomically point execution and market data at one exchange."""
     eid = req.exchange_id.strip().lower()
     valid = set(_EXCHANGE_UNIFICATION_MAP)
     if eid not in valid:
@@ -640,10 +638,7 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
     desired_paper_mode = _EXCHANGE_UNIFICATION_MAP[eid][1]
     _reject_live_identity_change(
         cfg_check,
-        changed=(
-            eid != str(cfg_check.exchange.name or "").lower()
-            or desired_paper_mode != cfg_check.exchange.paper_execution_mode
-        ),
+        changed=desired_paper_mode != cfg_check.exchange.paper_execution_mode,
     )
 
     old = None
@@ -651,20 +646,16 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
     def mutator(cfg):
         nonlocal old, after
         old = {
-            "exchange.name": cfg.exchange.name,
             "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
             "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-            "risk.allowed_exchange": cfg.risk.allowed_exchange,
         }
 
         from aletheia.config.exchange_alignment import apply_primary_exchange
         apply_primary_exchange(cfg, eid)
 
         after = {
-            "exchange.name": cfg.exchange.name,
             "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
             "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-            "risk.allowed_exchange": cfg.risk.allowed_exchange,
         }
         return True
 
@@ -1757,7 +1748,7 @@ class RiskConfigUpdate(SettingsRequest):
 
 
 # Fields that must never be changed via the dashboard (safety invariants).
-_RISK_IMMUTABLE = {"allowed_exchange", "require_risk_check_for_all_orders"}
+_RISK_IMMUTABLE = {"require_risk_check_for_all_orders"}
 
 # Demo/paper capacity controls intentionally have no application-level maximum.
 # They remain positive, finite typed values and continue to pass through every
@@ -2300,12 +2291,10 @@ def update_market_data_config(req: MarketDataConfigUpdate):
         next_data_exchange = market_data_exchange_for_values(
             data_exchange=str(validated_updates.get("ccxt_exchange", latest.market_data.ccxt_exchange)),
             paper_execution_mode=latest.exchange.paper_execution_mode,
-            configured_exchange=latest.exchange.name,
         )
         latest_alignment = exchange_alignment_for_values(
             paper_execution_mode=latest.exchange.paper_execution_mode,
             data_exchange=next_data_exchange,
-            configured_exchange=latest.exchange.name,
         )
         if (
             "ccxt_exchange" in validated_updates

@@ -774,7 +774,7 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     # The explicitly selected exchange determines the live account identity.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.portfolio import position_manager as pm

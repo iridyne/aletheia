@@ -55,7 +55,7 @@ const TAB_ALIASES: Record<string, Tab> = {
 function getSectionSummary(id: string, settings: any, status: any): string | null {
   switch (id) {
     case 'exchange-connection': {
-      const name = String(settings?.exchange?.name || '')
+      const name = String(status?.execution_exchange || '')
       return name ? name.toUpperCase() : 'Not configured'
     }
     case 'trading-mode':

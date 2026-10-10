@@ -260,11 +260,6 @@ export interface components {
              */
             mode: string;
             /**
-             * Name
-             * @default
-             */
-            name: string;
-            /**
              * Paper Execution Mode
              * @default
              */
@@ -1385,11 +1380,6 @@ export interface components {
              * @default true
              */
             allow_short_live: boolean;
-            /**
-             * Allowed Exchange
-             * @default
-             */
-            allowed_exchange: string;
             /**
              * Catastrophic Stop Enabled
              * @default true

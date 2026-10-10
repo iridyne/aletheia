@@ -95,15 +95,13 @@ async def probe_exchange(cfg=None) -> dict:
 
     Returns {reachable: bool, latency_ms: float|None, error: str|None, exchange: str}
     """
-    from aletheia.config.exchange_alignment import execution_exchange_for_mode
+    from aletheia.config.exchanges import execution_mode_venue
 
     if cfg is None:
         from aletheia.config.loader import load_config
         cfg = load_config()
 
-    exchange_name = execution_exchange_for_mode(
-        cfg.exchange.paper_execution_mode, configured_exchange=cfg.exchange.name,
-    ) or cfg.exchange.name
+    exchange_name = execution_mode_venue(cfg.exchange.paper_execution_mode) or ""
     url = _EXCHANGE_ENDPOINTS.get(exchange_name)
     if not url:
         return {
@@ -583,7 +581,11 @@ async def _resume_from_network(
         )
         return True
     recovery_failure_generation = _exchange_failure_generation
-    exchange = (_last_probe_result or {}).get("exchange", cfg.exchange.name)
+    from aletheia.config.exchanges import execution_mode_venue
+
+    exchange = (_last_probe_result or {}).get(
+        "exchange", execution_mode_venue(cfg.exchange.paper_execution_mode) or "",
+    )
 
     # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
     # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
