@@ -23,15 +23,34 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+def exchange_upnl(monkeypatch, values):
+    """Serve exchange uPnL per (symbol, direction) for bitget_demo usdt_futures.
+
+    Position uPnL is the exchange value or unavailable (PL-PM-18); no local
+    (mark - entry) * qty estimate exists to fall back on.
+    """
+    from aletheia.data.symbols import to_canonical
+    from aletheia.portfolio import pnl
+
+    market_type = pnl._normalize_upnl_market_type("usdt_futures")
+    index = {
+        (to_canonical(symbol), "bitget_demo", market_type, direction): value
+        for (symbol, direction), value in values.items()
+    }
+    monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: index)
+
+
 def test_long_position_pnl(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTCUSDT", market_type="usdt_futures", direction="long",
         quantity=2.0, entry_price=100.0, execution_mode="bitget_demo",
     ))
-    # Simulate a fresh exact instrument mark at 110.
+    # Simulate a fresh exact instrument mark at 110 and the exchange's uPnL.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
+    exchange_upnl(monkeypatch, {("BTCUSDT", "long"): 20.0})
     summary = compute_portfolio()
+    assert summary["positions"][0]["unrealized_pnl_source"] == "exchange_exact"
     assert summary["unrealized_pnl"] == 20.0
     assert summary["positions_count"] == 1
     assert summary["exposure_by_symbol"]["BTCUSDT"] == 220.0
@@ -44,8 +63,12 @@ def test_short_position_pnl(tmp_path, monkeypatch):
         symbol="ETHUSDT", market_type="usdt_futures", direction="short",
         quantity=3.0, entry_price=200.0, execution_mode="bitget_demo",
     ))
-    # Simulate a fresh exact instrument mark at 180; short profit = (200-180)*3 = 60.
+    # The exchange reports the short's uPnL; the local Position keys it by direction.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 180.0)
+    exchange_upnl(monkeypatch, {
+        ("ETHUSDT", "short"): 60.0,
+        ("ETHUSDT", "long"): -999.0,
+    })
     summary = compute_portfolio()
     assert summary["unrealized_pnl"] == 60.0
     reset_db()
@@ -55,7 +78,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
         symbol="BTCUSDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=90.0,
@@ -63,7 +86,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
     ))
     repo.insert_position(Position(
         symbol="BTCUSDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="short",
         quantity=1.0,
         entry_price=90.0,
@@ -71,7 +94,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
     ))
     repo.insert_position(Position(
         symbol="ETHUSDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=100.0,
@@ -81,6 +104,11 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
         lambda s, mt, *, venue: 100.0,
     )
+    exchange_upnl(monkeypatch, {
+        ("BTCUSDT", "long"): 10.0,
+        ("BTCUSDT", "short"): -10.0,
+        ("ETHUSDT", "long"): 0.0,
+    })
 
     summary = compute_portfolio()
 
@@ -104,7 +132,7 @@ def test_mark_to_market_updates_every_open_position_beyond_display_limit(
         repo.insert_position(Position(
             id=f"mark-all-{index:03d}",
             symbol="BTC/USDT",
-            market_type="spot",
+            market_type="usdt_futures",
             direction="long",
             quantity=1.0,
             entry_price=100.0,
@@ -117,8 +145,11 @@ def test_mark_to_market_updates_every_open_position_beyond_display_limit(
 
     assert len(marked) == 55
     oldest = repo._select_one("positions", "mark-all-000")
+    assert oldest is not None
     assert oldest["current_price"] == 110.0
-    assert oldest["unrealized_pnl"] == 10.0
+    # No exchange uPnL: the row is honestly unavailable, never a local estimate.
+    assert oldest["unrealized_pnl"] is None
+    assert oldest["unrealized_pnl_source"] == "unavailable"
     reset_db()
 
 
@@ -225,7 +256,7 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
         symbol="BTCUSDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=100.0,
@@ -234,22 +265,23 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
         entry_fee=0.0,
         exit_fee=0.0,
         funding_cost=0.0,
-        funding_source="not_applicable",
+        funding_source="broker_ledger",
         status="closed",
         execution_mode="bitget_demo",
         closed_at=datetime.now(timezone.utc).isoformat(),
     ))
     repo.insert_position(Position(
         symbol="ETHUSDT",
-        market_type="spot",
+        market_type="usdt_futures",
         direction="long",
         quantity=2.0,
         entry_price=50.0,
         execution_mode="bitget_demo",
         status="open",
     ))
-    # open ETH position at 60 => unrealized +10
+    # open ETH position: the exchange reports +20 uPnL
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 60.0)
+    exchange_upnl(monkeypatch, {("ETHUSDT", "long"): 20.0})
     # closed BTC position closed today should contribute to realized today, closed_at is today by default from model
     summary = compute_portfolio()
     assert summary["today_realized_pnl"] == 15.0
