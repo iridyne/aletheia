@@ -39,7 +39,7 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
         return bool(re.search(rf"\{{ to: '{re.escape(to)}', label: '{re.escape(label)}'[^}}]*\}}", scope))
 
     assert _has_item(research.group(0), "/serenity-lens", "Serenity Lens")
-    assert _has_item(research.group(0), "/news", "News Intel")
+    assert not _has_item(research.group(0), "/news", "News Intel")  # news pipeline removed (#3930)
     assert _has_item(decision.group(0), "/universe", "Entry Workbench")
     assert "Blotter" not in decision.group(0)
     assert "Approval Desk" not in decision.group(0)
