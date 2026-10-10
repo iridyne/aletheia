@@ -426,3 +426,22 @@ def test_gateway_proven_stopped_rejects_unverifiable_live_pid(tmp_path, monkeypa
     monkeypatch.setattr(pidfile, "_process_cmdline", lambda pid: "python -m pytest")
     assert pidfile.gateway_proven_stopped() is True
     assert pidfile.read_pid() is None
+
+
+def test_process_cmdline_ps_fallback_reads_full_command_line(monkeypatch):
+    from aletheia.gateway import pidfile
+
+    calls = {}
+
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+
+        class R:
+            stdout = ""
+            returncode = 1
+
+        return R()
+
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    pidfile._process_cmdline(2**30)  # no /proc entry -> ps fallback
+    assert "-ww" in calls["argv"]

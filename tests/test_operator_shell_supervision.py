@@ -550,3 +550,26 @@ def test_gateway_supervisor_starts_and_stops_operator_monitor(tmp_path, monkeypa
     assert result["gave_up"] is False
     assert calls["start"] == 1
     assert calls["stop"] == 1
+
+
+def test_operator_shell_ps_reads_full_command_lines(monkeypatch):
+    # Without -ww procps truncates at 80 columns off a tty; index.ts/loader.mjs vanish.
+    from aletheia.gateway import operator_shell
+
+    monkeypatch.setattr(operator_shell.platform, "system", lambda: "Linux")
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+
+        class R:
+            stdout = ""
+
+        return R()
+
+    monkeypatch.setattr(operator_shell.subprocess, "run", fake_run)
+    operator_shell._list_operator_shell_processes()
+    operator_shell._read_process_command_line(2**30)  # no /proc entry -> ps fallback
+
+    assert len(calls) == 2
+    assert all("-ww" in argv for argv in calls)
