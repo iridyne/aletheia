@@ -38,7 +38,7 @@ Inventories of design docs, code and practice (2026-10-10; read-only).
 |---|---|---|---|
 | Candidate Selection Utility (`core/aletheia/universe/economic_utility.py:469`) | Expected 4h net return of a mechanism×direction cohort | shrunk cohort mean − SE over full-denominator outcomes | **Yes** — Universe admission order (`universe/service.py:785-811`) |
 | Fixed-horizon outcomes FCO (`universe/filter_outcome_recorder.py`) | Net return had we taken the candidate | settlement, not estimation | data source for the above, Entry context, lesson reviewer |
-| Observation Lab (`extensions/observation_lab/manifest.py:430`, `learning/verdicts.py:412`) | ITT effect of a treatment | stable hash assignment; conditional randomization test | wired into Entry/sizing/Risk; returns baseline unless an owner publishes an `authorizing` manifest (runtime state not verified) |
+| Observation Lab (`extensions/observation_lab/manifest.py:430`, `learning/verdicts.py:412`) | ITT effect of a treatment | stable hash assignment; conditional randomization test | wired into Entry/sizing/Risk; returns baseline — Fedora has 0 manifests (verified 2026-10-10), so it has never changed behavior |
 | Filter shadow / filter replay (`observation_lab/filter_shadow.py`, `counterfactual/filter_replay.py`) | Would a looser threshold admit better candidates | shrunk mean + **IID** bootstrap | report only; replay off by default (`controller.shadow_enabled=False`) |
 | Conviction-gate calibration, propensity, IPS/DR, advisories (`extensions/counterfactual/`) | Causal effect of the conviction gate | naive mean / logistic propensity / DR | **No** — CLI only; `shadow_trades` has no writer since #3704 |
 | Twin and relative-rank shadows (`universe/twin_*`, `relative_rank_*`) | Step vs continuous scoring | hash clusters, 0.5 propensity | **No** — builders have no production caller; contract names a removed authority |
@@ -273,7 +273,7 @@ Non-goals:
 
 - [NEEDS CLARIFICATION: Owner — approve deleting the dead/frozen causal stack listed under REMOVED (history tables are kept)?]
 - [NEEDS CLARIFICATION: Owner — Candidate Selection Utility stays the live selection authority as an E1 claim with forward-only confirmation (CE-R12), instead of adding a randomized holdout. Agree?]
-- [NEEDS CLARIFICATION: Fact to verify on Fedora read-only before approval — current `observation_authority_state` and whether any `authorizing` manifest exists.]
+- Verified on Fedora read-only 2026-10-10: `observation_authority_state.experiment_authority = lab` since 2026-09-03 (cutover proof recorded); `execution_manifests` = 0 rows, `manifest_revocations` = 0. No Observation Lab treatment has ever changed behavior; documents stating authority is still `legacy` are stale.
 
 ## Decision log
 
