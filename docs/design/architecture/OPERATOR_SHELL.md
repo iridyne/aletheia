@@ -107,8 +107,8 @@ allowlisted, and the allowlist may not name anything dead.
 
 ## 7. Related authority
 
-- [Agent Contracts](../contracts/agent_contracts.md) — the operator's behavioural
-  contract (the concept document defers to it).
+- [Agent Contracts §E](../contracts/agent_contracts.md) — the operator's behavioural
+  contract, requirements OP-C01..OP-C06; this page is the diagnostic companion.
 - [Status Surface Contract](../contracts/status_surface_contract.md) — how the
   operator's state and the other status inputs become what the UI shows, and the
   coupling rule that keeps the two ends of this seam moving together.
