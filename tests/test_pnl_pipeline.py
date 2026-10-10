@@ -156,7 +156,7 @@ def test_archived_position_is_not_marked_or_persisted(db, monkeypatch):
         "L2c",
         "Exchange uPnL may be assigned only when the remote and local Position "
         "share a known normalized market type; missing, unknown, or mismatched "
-        "market types must fall back to the local mark estimate.",
+        "market types leave the Position uPnL unavailable (no local estimate).",
         status="implemented",
     )
 )

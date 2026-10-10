@@ -330,8 +330,8 @@ async def test_portfolio_endpoint(client, monkeypatch):
     assert data["execution_mode_status"] == "resolved"
     assert data["positions_count"] == 1
     assert [position["execution_mode"] for position in data["positions"]] == ["bitget_demo"]
-    # No exchange cache in test env → unrealized_pnl is None per-position → aggregate 0.0
-    assert data["unrealized_pnl"] == 0.0
+    # No exchange cache in test env: per-position uPnL is unavailable, so the aggregate is too.
+    assert data["unrealized_pnl"] is None
 
 
 @pytest.mark.anyio

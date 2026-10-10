@@ -389,7 +389,7 @@ def notify_daily_summary() -> None:
         realized = (
             portfolio.get("today_realized_pnl") if realized_complete else None
         )
-        unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
+        unrealized = portfolio.get("unrealized_pnl")
         open_count = portfolio.get("positions_count", 0)
         total = portfolio.get("total_value_usdt", 0.0)
         realized_text = (
@@ -401,7 +401,7 @@ def notify_daily_summary() -> None:
         lines = [
             "Daily Summary",
             f"Realized: {realized_text}",
-            f"Unrealized: {unrealized:+.2f} USDT",
+            "Unrealized: unavailable" if unrealized is None else f"Unrealized: {unrealized:+.2f} USDT",
             f"Open positions: {open_count}",
             f"Portfolio value: {total:.2f} USDT",
         ]

@@ -272,6 +272,25 @@ def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
     assert "Total: unavailable" in response
 
 
+def test_pnl_command_reports_unavailable_unrealized_instead_of_zero(monkeypatch):
+    import aletheia.portfolio.pnl as pnl
+
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda: {
+            "today_realized_pnl": 3.0,
+            "today_realized_pnl_complete": True,
+            "unrealized_pnl": None,
+        },
+    )
+
+    response = TelegramBot()._cmd_pnl()
+
+    assert "Unrealized: unavailable" in response
+    assert "Total: unavailable" in response
+
+
 @pytest.mark.anyio
 async def test_reply_failure_does_not_stop_polling_or_replay_command(monkeypatch, caplog):
     bot = TelegramBot()

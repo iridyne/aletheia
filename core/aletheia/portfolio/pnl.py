@@ -300,8 +300,8 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
     """Build exact broker/account/instrument/direction exchange uPnL matches.
 
     Legacy exchange caches lacking broker or market identity are deliberately
-    not used for per-position PnL. Ambiguous duplicate records also fall back
-    to the local estimate rather than selecting an arbitrary exposure.
+    not used for per-position PnL. Ambiguous duplicate records leave the
+    Position uPnL unavailable rather than selecting an arbitrary exposure.
 
     The returned mapping keeps the historical four-tuple lookup for simple,
     unscoped fixtures and adds five-/six-tuple keys for account fingerprints and
@@ -1480,7 +1480,9 @@ def _compute_portfolio(
     if selected_mode:
         positions = [p for p in positions if p["execution_mode"] == selected_mode]
 
-    total_unrealized = sum((p.get("unrealized_pnl") or 0.0) for p in positions)
+    # One unavailable position uPnL makes the local total unavailable, never zero.
+    position_upnls = [_finite_number(p.get("unrealized_pnl")) for p in positions]
+    total_unrealized = None if None in position_upnls else sum(v for v in position_upnls if v is not None)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
     today_closed = _closed_today(selected_mode)
     total_today_realized, today_realized_unavailable_count = _complete_realized_total(today_closed)
@@ -1521,7 +1523,7 @@ def _compute_portfolio(
     final_unrealized = total_unrealized
     final_positions_count = len(positions)
     final_exposure = exposure
-    final_today_pnl = total_unrealized + total_today_realized
+    final_today_pnl = None if total_unrealized is None else total_unrealized + total_today_realized
     # Account value comes from the external account, never position notional.
     final_total_value: float | None = None
     account_equity_usdt: float | None = None
@@ -1642,7 +1644,7 @@ def _compute_portfolio(
         "total_value_usdt": (round(final_total_value, 4) if final_total_value is not None else None),
         "account_equity_usdt": account_equity_usdt,
         "position_notional_usdt": round(total_notional, 4),
-        "unrealized_pnl": round(final_unrealized, 4),
+        "unrealized_pnl": round(final_unrealized, 4) if final_unrealized is not None else None,
         "realized_pnl": (round(total_realized, 4)),
         "realized_pnl_complete": realized_unavailable_count == 0,
         "realized_pnl_unavailable_count": realized_unavailable_count,
@@ -1668,7 +1670,7 @@ def _compute_portfolio(
         # currently persist — parked as a Serenity-adjacent improvement).
         # Kept as-is for API back-compat; UI callers are expected to
         # transition to today_realized_pnl for the honest "Today" number.
-        "today_pnl": round(final_today_pnl, 4),
+        "today_pnl": round(final_today_pnl, 4) if final_today_pnl is not None else None,
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
         "unrealized_by_symbol": {k: round(v, 4) for k, v in unrealized_by_symbol.items()},

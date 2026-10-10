@@ -322,12 +322,14 @@ Position 的 id、symbol、market type 与 sanitized field category，不执行�
 非敏感 account fingerprint；fingerprint 不一致时必须 fail closed。broker 提供 Position identity 时，
 远端值还必须在同一 fingerprint 作用域内命中该 identity；同一作用域的重复 identity 标为 ambiguous，
 不能 last-row-wins。没有本地 broker Position identity 时，只有远端当前作用域唯一且本地 open Position
-也只有一个候选，才允许采用聚合值；任一侧基数大于一都拒绝分配，逐行保留本地 mark estimate。
+也只有一个候选，才允许采用聚合值；任一侧基数大于一都拒绝分配，逐行 uPnL 为 unavailable。
 缺失/未知/不一致 market type 仍拒绝采用远端值。没有 fingerprint 或 broker identity 的 legacy cache
-行只走原有单候选兼容路径，不能作为 exchange-backed Demo qualification 证据。远端值还必须来自被现有
-cache-health classifier 判定为 `ok` 的统一缓存；`stale` 或无法判定 freshness 的缓存只能退回本地 mark
-estimate，持久化路径也不得把其中的远端值写入 Position。Position/API/UI 通过
-`unrealized_pnl_source` 暴露 `exchange_exact`、`ambiguous`、`unavailable` 或 `local_estimate`。
+行只走原有单候选兼容路径，不能作为 exchange-backed Demo qualification 证据。统一缓存被
+cache-health classifier 判定为 `generation_mismatch` 或 `unconfigured` 时拒绝全部远端值；`stale` 缓存的
+远端值仍被采用（它含 funding 与 mark-price basis，本地无法复算）。系统从不计算本地 `(mark - entry) * qty`
+估算：没有可采用的远端值时 Position uPnL 为 `None`，组合汇总的 `unrealized_pnl` / `today_pnl` 只要有
+一个 open Position 的 uPnL unavailable 就同为 `None`，不得把缺失当零。Position/API/UI 通过
+`unrealized_pnl_source` 暴露 `exchange_exact`、`ambiguous` 或 `unavailable`。
 可执行检查：`PL-PM-16`、`PL-PM-17`、`PL-PM-18`、`PL-PM-19`。
 
 一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
