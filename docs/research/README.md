@@ -22,6 +22,9 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [TSMOM trend on Binance perpetuals — pre-registration 2026-10-11](trading-theory/14_tsmom_trend_preregistration_2026-10-11.md):
+  untuned 20/60/120-day time-series momentum, weekly, top-20 point-in-time universe (delisted included), 10 bp per
+  side plus actual funding; holdout 2024-01..2026-09 run once. Results pending.
 - [Forced-flow event study — 2026-10-10](trading-theory/13_forced_flow_event_study_results_2026-10-10.md)
   **fails** its pre-registration ([12](trading-theory/12_forced_flow_event_study_preregistration_2026-10-10.md)):
   resting a bid under extreme taker selling in 30 thin Binance perps loses net of 14 bp in every in-sample month
