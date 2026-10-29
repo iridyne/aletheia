@@ -1,0 +1,18 @@
+[Unit]
+Description=Aletheia Gateway user service
+After=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/home/admin/aletheia
+ExecStart=/home/admin/aletheia/.venv/bin/python3 /home/admin/aletheia/core/aletheia/_gateway_runner.py --no-browser
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=120
+MemoryMax=5899M
+MemoryHigh=4866M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,394 @@
+# Filter Evidence — retired entry-chain text
+
+> **History (moved 2026-10-10).** Verbatim text of `docs/design/contracts/filter_evidence_contract.md` before the
+> golden-standard rewrite, kept because roughly 60% of it described the retired Ranker / PiDecision /
+> Market Observer / System Operator entry chain. It is provenance, not current authority; the current
+> contract is [filter_evidence_contract.md](../contracts/filter_evidence_contract.md). Section 2 holds the
+> `observer_pre_filter` and Ranker/System Operator consumer rules removed from
+> [opportunity_outcome_contract.md](../contracts/opportunity_outcome_contract.md) §8 in the same rewrite.
+
+## 1. Former filter_evidence_contract.md (verbatim)
+
+### Opportunity 筛选证据与负反馈契约
+
+> 状态：Stage E 证据基础已实施；交易行为调参仍关闭。
+> 目标：让每个筛选关卡的放行、拒绝和后续净结果可被真实比较，而不是用整个策略族的总收益猜测某个关卡应该放宽还是收紧。
+> 不变边界：本契约不自动改参数、不改风控上限、不启用实盘、不绕过 Execution Gateway。
+> Last updated: 2026-09-07 (canonical entry cutover; historical filter evidence preserved)
+> 入场边界：当前唯一入场为 Candidate → Planning Generation → Entry Planner → Compiler → Entry Plan → Risk/Gateway。下文 Ranker、PaperTrader、signal_pending、旧 Operator debate/claim 与 Opportunity 入队规则仅解释切换前的历史证据，不再授权生产、推进或恢复；其 filter ID、参数和 cohort 不得重标为当前 Planning 事实。
+
+#### 1. 为什么不能只记“最后被拒绝”
+
+Opportunity 主链上的“过滤”实际包含四种不同问题：
+
+1. **市场能力门**：交易所是否支持、数据是否新鲜、点差和成交额是否可执行。这些门不是 alpha 预测器。
+2. **方向假设门**：scanner、Observer 或 System Operator 是否给出做多/做空假设。没有事前方向就没有可归因净收益。
+3. **质量/排序门**：置信度、TTL、factor、guard、批次上限和冷却时间。这些才是主要负反馈对象。
+4. **安全/执行门**：风控、实盘锁、交易所精度和下单失败。这些硬门不得因“错过收益”自动放宽；authoritative Risk 的最终 filter/outcome evidence 是同一事务的必需写入，失败必须阻断执行。
+
+只保存终点拒绝会丢失前面已放行的关卡；只保存放行会没有对照组。因此必须记录一个候选在当次评估中实际经过的每一关，到首个拒绝为止。
+
+#### 2. 候选身份与分叉
+
+##### 2.1 `candidate_key`
+
+`candidate_key` 表示“在某一决策时点的一个交易假设”，不是纯 symbol：
+
+- Universe 选币：`universe_member:<member_id>`。
+- Universe 无方向前置门：以 `scanner_run_id + asset_id/feature_snapshot_id`
+  在 `filter_decision_batches` 中保存，不伪造交易方向。
+- Observer 单次评估：`observer:<run_id>:<venue>:<symbol>:<market_type>`。
+- Ranker 单次机会：`opportunity:<opportunity_id>`。
+- System Operator：`pi_decision:<decision_id>`。
+- Risk：`proposal:<proposal_id>`。
+
+同一 symbol 的现货和永续合约必须是不同候选。新一次 Observer 评估也是新候选，因为它的入场时间和行情已经改变。
+
+##### 2.2 必备身份字段
+
+每条筛选记录必须尽可能携带：
+
+- `candidate_kind` / `candidate_key` / `parent_candidate_key`
+- `run_id` / `opportunity_id` / `universe_snapshot_id` / `universe_member_id` / `proposal_id`
+- `venue` / `symbol` / `market_type`
+- `direction` / `scanner_family` / `regime_tag`
+- `evaluated_at`
+
+`direction` 允许为 NULL，但 NULL 意味着它只能衡量“市场后来是否有大幅波动”，不能衡量可赚取的净 alpha。
+
+#### 3. 不可变筛选记录
+
+`filter_decisions` 每行表示某一候选在某一关的一次事前判断：
+
+- `filter_name` / `stage` / `sequence_no`
+- `decision`: `passed | rejected | not_applicable | error`
+- `reason_code`：稳定、不带动态金额的机器码
+- `reason_detail`：用于人工排查的简短说明
+- `input_snapshot`：该关真正消费的最小输入，不保存整段 prompt/context
+- `parameter_snapshot`：当时门槛和开关
+- `filter_version`：由 schema 版本 + filter 名 + 参数快照的规范 JSON 计算
+- `code_commit`：Gateway 启动时代码提交，不在热路径 shell out
+- `outcome_candidate_key`：可与同一事前时点的净结果相连
+
+`passed` 只表示该关真实执行且未阻断。以 `guard_candidate_block` 为例：Learning/Guard
+关闭时必须写 `not_applicable`，配置或运行异常必须写 `error`，不得把“未评估”冒充为
+`passed/guard_not_blocking`。
+
+Overview、`aletheia inspect entry-status` 与 `inspect candidates` 的当前入场事实来自
+既有 workbench：`get_entry_workbench_summary` / `list_entry_workbench_candidates`，
+并以 `candidate_attention`、`entry_plans`、`planning_history` 展示 durable generation/Plan 状态。
+读取失败必须明确 unavailable，不能回退 Ranker、重跑 admission 或用旧 pending 计数填充。
+历史 filter trace、blocker、wake telemetry 仍按原来源读取，不得冒充当前入场漏斗。
+
+**历史旧入场证据（以下至 §3.1 的旧队列/Operator 规则）**：仅约束历史解释，不恢复旧 writer。
+
+对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
+`filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
+direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
+在 `system_operator_skip_remediation/b1.5` 中，该 assessment 只有经过一次有界 blind 反事实确认，且
+`skip_kind=adverse_candidate_evidence`、typed adverse reason 与候选特定 evidence 均非空时才可
+成为 terminal reject；每一个 reason 还必须由确定性 validator 绑定到同一候选的 fact refs，并随
+PiDecision evidence manifest 持久化。manifest 至少包含 Opportunity/Universe member/snapshot/feature id、
+feature freshness、B2 完整摘要、regime、近期绩效样本量、rank 的 ordering-only 语义和 validated claims。
+`insufficient_evidence`、rank priority 单值、账户权益、单笔近期结果、可选 telemetry 缺失、unsupported action 或 malformed
+conviction 都不是拒绝事实；二次仍无效时只写去重的
+`operator_decision_deferred_unchanged_context` observation，保持 pending 且不生成 outcome cohort。defer key
+必须包含候选 id 与物质 fingerprint；一个候选 defer 后，同批下一候选仍可评估。
+任一必需 evidence 写入失败时，整个 final claim 回滚，pending 保持可重试；不得留下 `reviewed`
+Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
+但禁止伪造 outcome 或事后补入场价。对于有精确 queued Opportunity 身份的 skip，若
+决策时实时快照已过期，允许且只允许复用该 Opportunity 在入队时已完整登记的四个
+固定 horizon outcome cohort（相同 venue、symbol、market、direction、entry price 与
+entry timestamp）；trace 必须标注 `queued_candidate_fixed`。不完整或身份不一致的 cohort
+仍必须回滚，不能以旧快照、别的市场或新造价格代替。
+
+`doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
+skip、`operator_evaluation_events` 的 no-candidate heartbeat/unchanged-context defer、pending 与 proposal 计数。若存在活跃的
+`system_operator_skip_remediation` policy epoch，raw 24h 计数必须与该 epoch 的诊断计数同时展示：
+raw 路径还必须分列 direct model skip、trade-intent 后门控 skip、经过当前 epoch 确认的 adverse skip；
+重载前的缺口仍可审计，但不得污染当前 epoch 的 finding。无 target 记录
+不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
+放行、自动调参或执行权限。新 zero-pending heartbeat 只能写 observation event，不能再写无 target skip。
+`skip_halt` 报告必须同时给出版本化 finding：`not_applicable`、`awaiting_outcomes`、
+`recording_incident`、`protective_skip_observed`、`overrestriction_suspect`、
+`operator_liveness_incident` 或 `diagnosis_unavailable`。后两种 suspect/liveness 输出至多推荐
+不可执行 replay/shadow 草案；它们不是 Proposal、Risk 或配置 mutation 的权限。
+`skip-halt-v2` 将窗口明确分成两层：最近 24h candidate 用于立即检查 identity/trace/四个 seed
+完整性和当前流量；效果判断只使用其前一段、已经跨过 24h primary horizon 的固定 cohort。
+最近尚未成熟的 skip 必须显示为 `immature_candidate_skips`，但不得阻塞成熟 cohort 得出
+protective/suspect finding；成熟 cohort 自身仍有 overdue outcome 时才返回 `awaiting_outcomes`。
+`signal_source=system_cascade` 的生命周期清理行不是 Operator 对候选的模型判断，必须单独报告为
+administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效果 cohort。
+
+生产者在拒绝输入时，该原因是唯一解释事实：Universe emitter、Divergence scanner
+若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
+独立生产者放行并新建 Opportunity 时也必须留下精确事实。Universe-linked 新路径只发布
+Candidate Planning Generation，并由 Entry Planner 产生 Entry Plan；不再发布 Setup 或 executable
+Opportunity。历史缺少或携带 `setup_id`/V2 generation 的 `universe_scanner` Opportunity 均只保留为
+legacy/observation carrier，不得获得当前入场执行权；Ranker/API 旧入场路径已删除。
+Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
+事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
+当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
+failed 并返回失败，禁止继续发布 completed。
+Candidate attention 的 requalification/terminal reconciliation 与对应 scanner run 的 `completed`
+证据必须在同一个 Universe publication transaction 提交；任一写入失败时，两者全部回滚，失败或
+partial refresh 不得留下续租或 quota/admission 终态。
+所有 Universe family 共用 Candidate→Entry Plan→Execution 生命周期；Trigger 只属于 TRIGGERED plan。
+`setup_armed_entry_not_eligible` 与 `triggered_opportunity_created` 仅是历史 adapter 审计事件，不取得
+新开仓权限。V1 不引入新的 pullback、ATR、SMC/ICT
+或 order-flow threshold；entry trigger、entry zone、market-validity invalidation、same-venue cost
+snapshot 与 material fingerprint 必须来自当前已授权的 scanner/tradability/freshness 事实。
+进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer
+eligibility rejection，转为 `signal_queue_evicted` 并终结该 Opportunity。它不是 System Operator
+判断，不得创建 `operator_action_assessment`、outcome seed 或 B2 cohort 成员；暂时无法取得
+producer attestation 时仍返回 typed unavailable，保留载体重试。
+Opportunity 的 open/queued TTL 过期也必须与 `ttl_expired` 记录同事务提交；证据失败则保留原状态。
+这条规则同样覆盖 System Operator 的两次权限重查：若 Opportunity 在 LLM 评估期间或
+Proposal preflight 之后才越过 `valid_until`，preflight/claim 必须共用同一个仓储 CAS，写且只写一条
+`opportunity_ttl / ttl_expired` 事实；证据失败时不得单独提交 `expired`、最终 PiDecision 或 TradeProposal。
+
+旧 Ranker 层 `family_ttl` 软过滤与硬顶语义随 Ranker 退役，原文见 [history/ranker_paper_trader_filter_evidence.md](../history/ranker_paper_trader_filter_evidence.md)。
+
+`UniverseService.refresh` 的 change-suppression 分支（fingerprint 未变且
+`_SNAPSHOT_HEARTBEAT_SEC` 未到）在复用旧 snapshot 时，必须调用
+`repositories.refresh_active_snapshot_ttls` **前滑**该 snapshot 的
+`universe_members.expires_at`，并只为 legacy NULL-generation carrier 兼容前滑
+open/queued `opportunities.valid_until`（
+`WHERE expires_at < new_expires`，只前滑不回退）。这是把 "reuse snapshot"
+真正做成 no-op 的必要一步：没有这条前滑，第一次分配后 30–60 分钟内 fingerprint
+稳定的家族全部会在 Ranker 扫时集体 `ttl_expired`，与"依然被推荐"这个复用
+判定相矛盾。触发后的 V2 Opportunity 继续由自身 `valid_until` 控制，不跟随 Candidate TTL。
+前滑写属于 idempotent 前进操作，允许非事务性失败（降级为软过滤
+兜底），但成功时必须在日志留下 `members=N opps=M` 计数便于回放。
+Change-suppression fingerprint 必须覆盖会改变载体语义的字段：venue、market、rank、
+scanner family/direction、execution eligibility、family TTL、risk flags 与精确入场证据价；
+只允许排除不会改变这些语义的 ranking score 抖动。任一字段变化必须发布新 snapshot，
+不得前滑旧方向、旧资格或旧 outcome seed 的 TTL。
+
+snapshot 被 supersede 时，只将仍为 `open` 的分析代次在同一事务中转为 `expired` 并写
+`universe_snapshot_status / universe_snapshot_superseded`。已有 `queued` 是已认领的耐久
+Operator carrier：保留原 snapshot/member 作为因果来源，由 Opportunity `valid_until` 决定
+后续权限；`reviewed/expired` 终态同样不得改写。证据失败时整个 open cascade 回滚，重复运行
+不得生成重复事实。Overview/API 必须把这类 superseded generation 与真正 `ttl_expired` 分开，
+不得把所有 `status=expired` 解释为 TTL。
+
+业务写入只允许 INSERT，不回写历史判断。幂等键至少包含
+`candidate_key + filter_name + decision + filter_version`，重试不制造重复证据，
+但同一候选先被批次上限拒绝、后来真实放行时可分别保留两条事实。
+每日数据治理允许整行删除超过保留期的分析证据，这不等于改写决策；
+权威 `RiskDecision`、proposal、order、fill、position 和 audit 记录不在此清理范围。
+
+API 密钥、Authorization、原始 LLM prompt/context 和新闻全文禁止写入。
+
+##### 3.1 Historical B2 System Operator candidate evidence
+
+System Operator 的 B2 debate evidence 不是全量策略族胜率。它只可由同一
+`system_operator_b2_candidate_evidence` policy epoch 中、已写入
+`signal_enqueue=passed` 的候选终态 `operator_action_assessment`，按
+`scanner_family + direction + normalized market_type + score bucket + 24h` 聚合。
+summary 的最小 trace（epoch、tier、bucket、样本/coverage、成本模型和状态）写入该 assessment
+的 `input_snapshot`，不保存 prompt。样本少于 20、coverage 低于 70% 或身份不完整时必须为
+`insufficient_evidence`：中性未知，不得被叙述为负向 alpha 或自动降低 conviction；成本模型不一致
+则为 `data_quality_incident`。同一序列化 summary 必须输入 assessment、Bull 与 Bear。该行为不
+改变 Ranker、Risk 的独立 `family_direction_edge()`、Execution 或 Live 权限。
+
+`qualified_negative` 只表示上述同身份、同方向且已成熟 cohort 的净收益为负，并作为该候选的
+反方历史证据；它不表示价格方向 bearish，也不单独授权 trade、skip、veto 或 conviction 变化。
+Funding 的方向语义固定为：正 funding 表示 longs pay shorts / long crowding，支持 contrarian
+short；负 funding 表示 shorts pay longs / short crowding，支持 contrarian long，并反对 short。
+outcome 或 funding 语义变化必须轮换 policy epoch，禁止把不同语义的样本混入同一 cohort。
+
+PiDecision 的 `evidence_manifest_json.operator_rationale` 必须完整保存 `skip_kind`、adverse reason/evidence、
+supporting/opposing signals 与 risk factors，权威 `reasoning` 保存全文。短 reflection 或 UI 可以截断显示，
+但不得把 200/300 字 convenience cap 当作耐久审计事实。
+
+对 registry/ticker/tradability 这类高频、无方向关卡，允许用
+`filter_decision_batches` 压缩表达：每个 scanner run + filter version 一行，
+`candidate_facts` JSON 内保留该关实际评估的每个候选键、标的身份、
+pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和各类决定数
+必须与 JSON 事实一致。有方向、可结算的关卡仍必须使用逐候选
+`filter_decisions`，不允许批次聚合后丢失 outcome 连接。
+为避免 10 分钟批次重复存储每个 JSON 字段名，当前编码为
+`{"fields":[...],"rows":[[presence_mask,...values]]}` 的无损行矩阵，再以
+`zlib-base64:` 自描述前缀压缩为 SQLite TEXT。`decode_filter_decision_batch()`
+同时支持当前压缩编码、未压缩行矩阵和旧的 plain-list JSON；
+压缩不得改变候选数、字段值或缺失字段语义。
+
+#### 4. 过滤候选的固定时点结果
+
+`filter_candidate_outcomes` 以 `outcome_candidate_key + horizon` 唯一。一般过滤证据的
+固定周期矩阵为 `15m / 1h / 4h / 24h`。Measured Learning exposure 已经在
+`target_horizon` 声明唯一授权周期；该 experiment 专用写入只保存这一周期，不能再为
+同一 exposure 生成三个无人消费的结果。selected 与 dropped 两个 arm 都必须保存目标
+周期，经济公式、时点行情质量和现货/合约隔离完全复用
+`opportunity_outcome_contract.md`。
+
+只要 `venue + symbol + market_type` 完整、入场价为决策时点可见的正数，且事前已有
+`long` 或 `short`，才创建固定周期观察结果。结果分两级：
+
+1. 事前已有 `long` 或 `short` 时，保存 gross、directional 和成本后 net；禁止事后选更赚的方向。
+2. 永续合约缺入场资金费时可保存 gross/directional，但 net 必须为 NULL。
+
+事前确实无方向时不得创建结果行：没有方向就算不出 directional，`net_return_pct` 永远为
+NULL，这类行只会占用存储并消耗一次结算时点行情观测，不可能成为可度量证据。历史
+`direction=unknown` 行是既成事实的只读审计证据，保持不可变——不回填、不迁移、不删除。
+
+同一候选经过多个关卡时只结算一份结果，避免把同一个价格路径当成多个独立样本。
+
+定时结算在既有 canonical 配额和时间预算内采用三层顺序：先处理当前运行
+`code_commit`、当前 open `universe_family_calibration` epoch 的 exact outcome，
+再处理同一 open epoch 的旧 build outcome，最后回到普通历史 FIFO。该顺序只保证
+当前可授权测量身份不会被旧 build backlog 饿死；不得改变候选选择、assignment、
+经济公式、阈值或行为 authority。无法取得 boot commit 时 fail closed 到 open-epoch
+优先级，不猜测当前 build。
+
+#### 5. 关卡与证据等级（含历史关卡）
+
+表中的 Ranker、旧 Operator 和入队关卡已退役，仅保留原 filter 身份供历史统计；不构成当前配置或执行入口。
+
+| 关卡 | 当时是否有方向 | 要记录的事实 | 可否用于净收益负反馈 |
+|---|---:|---|---:|
+| registry/交易所能力 | 否 | 支持/不支持、数据缺失 | 否，只报能力覆盖 |
+| ticker 成交额预筛 | 否 | volume、threshold、market | 否，只报可执行性/波动遗漏 |
+| tradability（稳定币/黑名单/volume/spread/freshness） | 否 | 按顺序记每关放行到首个拒绝 | 否，黑名单永不自动调参 |
+| scanner 假设 | 是 | family、direction、各 family score | 是 |
+| quota/explore-exploit | 是 | selected/control、rank、quota、regime | 是，但必须同池比较 |
+| Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误；regime/funding crowding 保留事前方向与精确 instrument outcome | 有事前方向时可评价；无方向只报 gross coverage |
+| Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
+| Observer advisory enrichment | 是 | exact Opportunity/snapshot/member/instrument、assessment 与 emitter admission 结果 | 否，不具 entry producer authority |
+| LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
+| Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
+| open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
+| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；direct model `skip` 有一次确认、typed adverse evidence 与 `operator_action_assessment`；遗留假动作是 retryable unavailable | 是，但不在有对照前改门槛 |
+| Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
+| Risk | 是 | `RiskDecision` 与最终 filter/outcome evidence 在同一事务提交 | 证据失败回滚 authority，永不自动放宽 |
+| Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |
+
+每个 registry 项必须声明唯一 `authority_class`：`fact_or_execution`、
+`risk_or_safety`、`attention_ranking` 或 `strategy_judgment`。前两类可以继续硬阻断且
+不得因收益证据自动放宽；attention 只控制有界供给；strategy 必须保留 baseline 与固定周期
+outcome。Ranker 的 `symbol_filter`、neutral/direction、confidence、factor 和 Guard 都必须在
+registry 中，禁止新增未登记的永久 inline gate。
+
+`XAUT/PAXG` 是价格会波动的黄金 RWA，不是美元稳定币，因此不得在
+`tradability_stablecoin` 中提前排除。它们仍必须通过交易所 ticker、成交额、
+点差、新鲜度、后续风控和执行能力检查；分类修正不等于授权实盘。
+
+#### 6. 负反馈统计契约
+
+统计单元至少为：
+
+`filter_name + stage + filter_version + scanner_family + direction + market_type + horizon`
+
+`stage` 是关卡身份的一部分。同名过滤器如果分别发生在 System Operator 和
+proposal submission，必须分别留痕、分别统计；幂等键至少包含
+`candidate_key + filter_name + stage + sequence + decision + filter_version`。
+控制器展示的当前值优先使用证据行自己的 `parameter_snapshot`，不能用注册表中的
+概括值覆盖历史上真正执行过的参数。
+
+regime 样本足够后再增加 `regime_tag`，禁止小样本无限切片。
+
+学习目标不是胜率，而是净期望。每个 pass/reject cell 保存：
+
+- `n_total / n_net / outcome_coverage`
+- `avg_net / median_net / profit_factor / MFE / MAE`
+- 按同 cohort 总体均值收缩后的 `shrunk_avg_net`
+- 相关重复样本按 `outcome_candidate_key` 去重，不按关卡行数数多次
+
+MVP 收缩公式：
+
+`shrunk_mean = (n * sample_mean + k * cohort_prior_mean) / (n + k)`，默认 `k=20`。
+
+一个关卡只有在以下条件全部满足时才可以输出 `overrestrictive_suspect`：
+
+1. pass/reject 两边都至少 20 个完整 net 样本；
+2. 两边 outcome coverage 都不低于 70%；
+3. 只使用一个 `filter_version`；
+4. reject 的收缩净期望高于 pass 至少 5bp，且 reject 自身大于 0；
+5. 关卡不是 risk/live/credential/exchange-capability 硬门。
+
+观察数据不是随机实验，因此结论只能是 `suspect`，不能直接改配置。自动收紧也不能只因 pass 亏损就触发；它需要门槛附近的反事实或独立回放。
+
+同一候选可能跨调度轮次重复经过同一关卡。统计必须按
+`filter_name + stage + filter_version + outcome_candidate_key` 选择最早一次持久化决定，
+把候选唯一归入 first-exposure pass 或 reject cohort；后续重试只用于轨迹排障，不再次贡献
+收益样本。时间窗在首次暴露排序完成后应用，禁止把窗口外首次放行遗忘后，将窗口内后续拒绝
+冒充首次决定。
+
+对达到嫌疑门槛的可重放单调阈值，先执行固定版本、有界、只读的 gate-only replay。回放必须
+显示新增放行样本、净结果覆盖、原始和收缩净期望及未覆盖的下游关卡；任何 `ready` 只允许
+进入独立 shadow 实验，不得直接写配置。具体边界见 `docs/design/market-systems/filter_replay.md`。
+
+独立 shadow 实验必须在回放后预登记固定 version/cohort/control/treatment/停止门槛，从登记
+时刻之后的新 first-exposure 样本开始，禁止复用挑选阈值的历史样本做验证。control 与新增
+shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；生产 filter version 变化则
+实验失效。同一个固定 version/stage/family/direction/market/horizon 只能登记一个 treatment，
+后续回放波动不得并行追逐另一个阈值。`ready_for_review` 只表示可人工复核，任何状态都不得写
+生产配置或改变候选放行。
+
+#### 7. 历史批次选择规则（已退役）
+
+旧 Ranker/PaperTrader 的批次与 signal_pending 入队语义已退役，原文见 [history/ranker_paper_trader_filter_evidence.md](../history/ranker_paper_trader_filter_evidence.md)。
+
+#### 8. 失败与运维语义
+
+- 一般观察证据写入失败不能改变原交易决定，但必须记 warning/doctor coverage，不得沉默当成完整证据。
+  若某条证据正是 Opportunity 进入永久终态的唯一原因，则证据与状态必须同成同败；失败时保留 `open`。
+- outcome 取价失败保持 `failed`/NULL，不用同名现货或过晚价格补齐。
+- `outcome_settler` 以有界的 row/time capacity 结算 canonical `filter_candidate_outcomes`
+  （原 `universe_forward_outcomes` mirror 已随 #3701 在 v94 删除）。
+- 在该 capacity 内，Observation Lab active window 中与该 generation
+  冻结 behavior contract 匹配的 exact outcome keys 优先；其次为仍有经过原始
+  exposure 校验的 active retention claim 的历史 keys，再按 `due_at` oldest-first。
+  已持久化的 horizon-qualified key 不重复拼接 horizon。保留 discovery benchmark
+  与 Candidate Selection Utility/twin pending 优先集合。当前结算不查询退役 Learning 表。
+  Lab 通过物理只读连接读取，受既有 prologue deadline 限制；不可用时显式报告
+  `Lab priority unavailable` 并继续普通到期队列，不假报健康。该优先级只改变有界
+  结算顺序，不改变冻结成本、精确市场价格、retention、经济资格或交易权限。
+- `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
+- `outcome_settler` 每 10 分钟运行（`scheduler.py` `id="outcome_settler"`）；刚到期的 filter outcome 在 20 分钟宽限内标为
+  `awaiting_cadence`，不算故障。超过宽限的 `stale_overdue` 才参与积压告警，口径与主 forward
+  outcome 诊断一致。
+- `doctor` 同时校验批次里的候选总数是否等于 pass/reject/not-applicable/error 之和。
+- Trade Funnel 优先从 `filter_decisions` 读取窗口内 ranker 历史候选，不在审计时重跑 ranker；
+  `proposal_submission` 拒绝原因必须单列，不能统称为未知的 decision-to-proposal 丢失。
+- `filter_decision_batches` 保留 30 天；体积较大的 ticker/tradability 全量事实在
+  filter name、stage、parameter version 不变时至多每小时写一份。参数版本变化必须立即
+  写入，节流查找失败时 fail open 写入，不能把证据缺失伪装成重复。
+- `filter_decisions` 保留 45 天，`filter_candidate_outcomes` 保留 30 天；active exposure
+  clean-window guard 可以延长有效窗口。它们是分析证据，不是交易因果原件。
+
+#### 9. Stage E 历史实施记录
+
+见 [history/ranker_paper_trader_filter_evidence.md](../history/ranker_paper_trader_filter_evidence.md)。
+
+#### 10. 诊断时间窗口与 sizing 口径
+
+- `opportunity audit --hours N --view controller` 必须按
+  `filter_decisions.evaluated_at` 截断证据；交互式近期报告不得暗中回退成全历史。
+  scheduler 的长期 shadow controller 不传窗口，继续使用全历史积累。
+- Opportunity overview 同时报告窗口内数据库总数、实际重建数和过滤后显示数。
+  `--limit` 只是重建成本上限，不得冒充窗口样本量。
+- sizing trace 的历史计划值来自持久化 proposal notional，实际成交优先来自该
+  proposal 的 fills。按当前配置反算的值只能标为 current-policy projection，不得
+  描述成历史决策事实；position 仅是缺 fill 旧链路的 fallback。
+
+## 2. Removed opportunity_outcome_contract.md §8 consumer rules (verbatim)
+
+- scanner 校准、family edge、doctor signal health、lesson evidence 和自动 guard 只读取 `net_return_pct IS NOT NULL` 的新结果。
+- 历史 `forward_return_pct` 保留用于历史解释，不回填虚构成本，也不混入净收益样本。
+- 任何按方向或市场聚合的消费者必须至少按 `scanner_family + direction + market_type + horizon` 区分；若上层暂时不能消费该粒度，应保持中性而不是合并相反经济含义。
+- Alpha 对照组在拥有同口径成本前必须明确标为 gross comparison，不得声称是净盈利证据。
+- 新 shadow/control 行必须通过 `outcome_candidate_key` 读取共享 net 结果；历史 gross-only 行仍可解释，但不进入 ranker/System Operator alpha 基线。
+- 过滤器 pass/reject 对照按 `filter_name + stage + filter_version +
+  outcome_candidate_key` 的首次持久化 exposure 唯一归因；后续 retry 不得把同一
+  outcome 同时放入 pass 和 reject。
+- `observer_pre_filter` 的诊断必须使用事发时持久化的 `matched_rules`、RSI、
+  ATR 和 parameter snapshot，拆分 `rsi_only` / `atr_only` /
+  `rsi_and_atr` / `neither`；不得用当前代码重跑历史输入后改写归因。
+- persistent recommendation 的 `filter_version` 与当前生产版本不一致时，只能
+  标记 `production_filter_version_changed` 并保留为历史假说；不得触发 replay、
+  shadow experiment 或参数建议。
+- Observer RSI/ATR 回放必须使用事前固定的有限网格、候选上限、当前 exact
+  filter version 和完整净结果。历史回放即使达门，也只授权前瞻 shadow，不授权
+  修改生产阈值。

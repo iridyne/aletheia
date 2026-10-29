@@ -1,0 +1,13 @@
+#3134 owner-gated runtime checkpoint — 94435c5e2
+
+The merged page-bound repair now has real scheduled recovery evidence: original essential broker_funding_settler ran naturally on runtime session520440038694. Historical DOGE56c173ee3ed0 moved funding_costNULL→0.01000194 and realized_pnlNULL→-0.36767064; Outcome remains ineligible/missing_attribution. No manual settlement was called. This proves old-cost recovery through the existing owner, NOT a new-build natural eligible Outcome.
+
+Remaining PEPE8426b8721a44 is closed/administrative_close with verified-exit flag but zero position_close_events rows. Existing materializer rejects it; old6749 already required exactly one matching full-close event. Execution Contract§11.6 and EX-B19 do not permit bypassing this check or dropping administrative labels from the queue. Funding/realized remainNULL and Outcome remainsineligible; health honestly remainsdegraded with funding_recovery_pending1. Two independent source/Contract reviews agree this is a retained historical evidence gap, not a new page-bound defect. Do not fabricate an event, suppress health, change Risk or rewrite history.
+
+Current independent BitgetDemo UTA read-only health returned healthy/readable, reasonnull, profileversion1; schema/current runtime/source/Observer continuity and exact-head operator capacity/browser proof passed as linked in5776121836. Both original owned timers restored; no maintenance lock/holder remains. Original global manual brake generation50232da9dbaf41f7af79575d048c7c91 remainsactive; Live remainsdisabled; Release/Continue NOT performed.
+
+Two explicit owner questions are pending (neither is assumed approved):
+1. Accept the precisely bounded old PEPE historical-degraded exception while preserving history/health/Risk truth, then release only the already-authorized original manual brake and Continue the existing autonomous BitgetDemo flow; or retain brake pending separately authorized historical evidence repair.
+2. Retain September12 #1884 holder attribution as explicitlyUNVERIFIED independent history, non-blocking for #3134, while requiring the current exact-deployed capacity/recovery proof already obtained; or retain historical attribution as a closure blocker.
+
+Until answered, #3134 remainsOPEN. New-session natural entry/private Fill/Position/natural close/cost-complete eligible Outcome evidence remainspending, not fabricated from recovered old closes. All current source changes are committed/pushed/merged (#3394, two scoped commits,179 focused pass). Main master=origin/master94435c5e2,0/0; preserved HANDOFF is the only untracked file. Old legacy branch/bundle/HANDOFF remain archive-only. No further refactor is justified by these historical evidence gaps.

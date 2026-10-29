@@ -1,0 +1,4 @@
+Batch65 acquisition timestamp: absent after successful actual get_market_instruments body
+Batch65 dated contract collision: swap contractSize=1 overwritten with dated contractSize=10
+Settings clear: canonical [] still schedules legacy TSLA
+Close fallback: identical cancellation evidence is selected by product-name string: {'bitget_demo': 1, 'okx_demo': False}

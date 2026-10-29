@@ -1,0 +1,636 @@
+{
+ "tag": "095808",
+ "time": "2026-10-10 09:58:08",
+ "pid": 2313213,
+ "mem_mb": {
+  "VmRSS": 1939,
+  "RssAnon": 1842,
+  "RssFile": 96,
+  "VmSwap": 191
+ },
+ "tracemalloc_tracing": false,
+ "gc_counts": [
+  135,
+  2,
+  5
+ ],
+ "gc_stats": [
+  {
+   "collections": 3445,
+   "collected": 150163,
+   "uncollectable": 0
+  },
+  {
+   "collections": 313,
+   "collected": 119773,
+   "uncollectable": 0
+  },
+  {
+   "collections": 26,
+   "collected": 3204688,
+   "uncollectable": 0
+  }
+ ],
+ "gc_threshold": [
+  2000,
+  10,
+  10
+ ],
+ "gc_freeze_count": 0,
+ "n_gc_objects": 1101155,
+ "top_by_count": [
+  [
+   "builtins.dict",
+   551830
+  ],
+  [
+   "builtins.function",
+   142800
+  ],
+  [
+   "builtins.tuple",
+   103591
+  ],
+  [
+   "builtins.list",
+   70566
+  ],
+  [
+   "builtins.cell",
+   55032
+  ],
+  [
+   "builtins.set",
+   20352
+  ],
+  [
+   "ccxt.base.types.Entry",
+   15734
+  ],
+  [
+   "builtins.frozenset",
+   13524
+  ],
+  [
+   "pydantic.fields.FieldInfo",
+   13454
+  ],
+  [
+   "weakref.ReferenceType",
+   12911
+  ],
+  [
+   "builtins.getset_descriptor",
+   8898
+  ],
+  [
+   "builtins.type",
+   5693
+  ],
+  [
+   "annotationlib.ForwardRef",
+   4727
+  ],
+  [
+   "aletheia.trading.technical_analysis.TechnicalBar",
+   4725
+  ],
+  [
+   "typing.Union",
+   4105
+  ],
+  [
+   "builtins.module",
+   3831
+  ],
+  [
+   "pydantic._internal._mock_val_ser.MockValSer",
+   3808
+  ],
+  [
+   "_frozen_importlib.ModuleSpec",
+   3794
+  ],
+  [
+   "_frozen_importlib_external.SourceFileLoader",
+   3560
+  ],
+  [
+   "builtins.builtin_function_or_method",
+   3256
+  ],
+  [
+   "builtins.wrapper_descriptor",
+   3214
+  ],
+  [
+   "_abc._abc_data",
+   2941
+  ],
+  [
+   "builtins.method_descriptor",
+   2492
+  ],
+  [
+   "pydantic._internal._model_construction.ModelMetaclass",
+   2327
+  ],
+  [
+   "pydantic._internal._decorators.DecoratorInfos",
+   2327
+  ],
+  [
+   "builtins.property",
+   2014
+  ],
+  [
+   "pydantic._internal._mock_val_ser.MockCoreSchema",
+   1904
+  ],
+  [
+   "dataclasses.Field",
+   1622
+  ],
+  [
+   "builtins.member_descriptor",
+   1569
+  ],
+  [
+   "_cython_3_2_4.cython_function_or_method",
+   1431
+  ],
+  [
+   "builtins.method",
+   1262
+  ],
+  [
+   "fastapi.dependencies.models.Dependant",
+   1252
+  ],
+  [
+   "pydantic_core._pydantic_core.SchemaSerializer",
+   1197
+  ],
+  [
+   "typing._LiteralGenericAlias",
+   1195
+  ],
+  [
+   "pydantic_core._pydantic_core.SchemaValidator",
+   1193
+  ],
+  [
+   "types.GenericAlias",
+   1132
+  ],
+  [
+   "typing_extensions._TypedDictMeta",
+   1115
+  ],
+  [
+   "builtins.classmethod",
+   1094
+  ],
+  [
+   "typing._AnnotatedAlias",
+   1072
+  ],
+  [
+   "builtins.slice",
+   1002
+  ]
+ ],
+ "top_by_shallow_bytes_mb": [
+  [
+   "builtins.dict",
+   136.4
+  ],
+  [
+   "builtins.function",
+   22.9
+  ],
+  [
+   "builtins.type",
+   7.8
+  ],
+  [
+   "builtins.tuple",
+   6.3
+  ],
+  [
+   "builtins.list",
+   5.3
+  ],
+  [
+   "builtins.set",
+   5.1
+  ],
+  [
+   "builtins.frozenset",
+   4.0
+  ],
+  [
+   "pydantic._internal._model_construction.ModelMetaclass",
+   3.8
+  ],
+  [
+   "pydantic.fields.FieldInfo",
+   3.4
+  ],
+  [
+   "builtins.cell",
+   2.1
+  ],
+  [
+   "typing_extensions._TypedDictMeta",
+   1.8
+  ],
+  [
+   "weakref.ReferenceType",
+   1.0
+  ],
+  [
+   "abc.ABCMeta",
+   0.8
+  ],
+  [
+   "collections.deque",
+   0.7
+  ],
+  [
+   "ccxt.base.types.Entry",
+   0.7
+  ],
+  [
+   "annotationlib.ForwardRef",
+   0.6
+  ],
+  [
+   "builtins.getset_descriptor",
+   0.5
+  ],
+  [
+   "aletheia.trading.technical_analysis.TechnicalBar",
+   0.4
+  ],
+  [
+   "typing._TypedDictMeta",
+   0.3
+  ],
+  [
+   "typing.Union",
+   0.3
+  ],
+  [
+   "re.Pattern",
+   0.3
+  ],
+  [
+   "_cython_3_2_4.cython_function_or_method",
+   0.3
+  ],
+  [
+   "builtins.module",
+   0.3
+  ],
+  [
+   "_io.BufferedWriter",
+   0.3
+  ],
+  [
+   "pydantic._internal._mock_val_ser.MockValSer",
+   0.2
+  ],
+  [
+   "builtins.builtin_function_or_method",
+   0.2
+  ],
+  [
+   "builtins.wrapper_descriptor",
+   0.2
+  ],
+  [
+   "enum.EnumType",
+   0.2
+  ],
+  [
+   "dataclasses.Field",
+   0.2
+  ],
+  [
+   "pydantic._internal._decorators.DecoratorInfos",
+   0.2
+  ],
+  [
+   "_abc._abc_data",
+   0.2
+  ],
+  [
+   "_frozen_importlib.ModuleSpec",
+   0.2
+  ],
+  [
+   "builtins.method_descriptor",
+   0.2
+  ],
+  [
+   "_frozen_importlib_external.SourceFileLoader",
+   0.2
+  ],
+  [
+   "typing._ProtocolMeta",
+   0.2
+  ],
+  [
+   "pydantic_core._pydantic_core.SchemaSerializer",
+   0.2
+  ],
+  [
+   "pydantic_core._pydantic_core.SchemaValidator",
+   0.2
+  ],
+  [
+   "builtins.property",
+   0.2
+  ],
+  [
+   "_io.BufferedReader",
+   0.1
+  ],
+  [
+   "pydantic._internal._mock_val_ser.MockCoreSchema",
+   0.1
+  ]
+ ],
+ "big_containers": [
+  [
+   "dict",
+   161165,
+   3754,
+   "{'__subclasses__': '__subclasses__', '__basicsize__': '__basicsize__', '__itemsize__': '__itemsize__', '__flags__': '__flags__', '__weakrefoffset__': '__weakref"
+  ]
+ ],
+ "big_module_globals": [],
+ "scan_secs": 1.0,
+ "threads": [
+  [
+   "MainThread",
+   false
+  ],
+  [
+   "aletheia-sqlite-writer",
+   true
+  ],
+  [
+   "aletheia-manual-agent-worker",
+   true
+  ],
+  [
+   "APScheduler",
+   true
+  ],
+  [
+   "asyncio_0",
+   false
+  ],
+  [
+   "asyncio_1",
+   false
+  ],
+  [
+   "asyncio_2",
+   false
+  ],
+  [
+   "ThreadPoolExecutor-1_0",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-4_0",
+   true
+  ],
+  [
+   "aletheia-scheduler-async",
+   true
+  ],
+  [
+   "aletheia-scheduler-sync",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-0_0",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-5_0",
+   true
+  ],
+  [
+   "asyncio_0",
+   true
+  ],
+  [
+   "asyncio_1",
+   true
+  ],
+  [
+   "asyncio_2",
+   true
+  ],
+  [
+   "asyncio_0",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-3_0",
+   true
+  ],
+  [
+   "asyncio_3",
+   false
+  ],
+  [
+   "aletheia-inference-broker",
+   true
+  ],
+  [
+   "asyncio_0",
+   true
+  ],
+  [
+   "aletheia-universe-audit-sync",
+   true
+  ],
+  [
+   "asyncio_1",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-7_0",
+   true
+  ],
+  [
+   "aletheia-news-analyzer-async",
+   true
+  ],
+  [
+   "ThreadPoolExecutor-2_0",
+   true
+  ],
+  [
+   "asyncio_3",
+   true
+  ],
+  [
+   "candidate-selection_0",
+   true
+  ],
+  [
+   "asyncio_0",
+   false
+  ],
+  [
+   "AnyIO worker thread",
+   false
+  ],
+  [
+   "AnyIO worker thread",
+   false
+  ]
+ ],
+ "n_modules": 3860,
+ "heavy_libs_loaded": [
+  "numpy",
+  "pandas",
+  "aiohttp",
+  "httpx"
+ ],
+ "mallinfo_mb": {
+  "arena": 1766.7,
+  "ordblks": 0.0,
+  "smblks": 0.0,
+  "hblks": 0.0,
+  "hblkhd": 4.1,
+  "usmblks": 0.0,
+  "fsmblks": 0.0,
+  "uordblks": 226.6,
+  "fordblks": 1540.1,
+  "keepcost": 46.4
+ },
+ "pymalloc_allocated_blocks": 3598093,
+ "stacks": [
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/home/admin/aletheia/.venv/lib64/python3.14/site-packages/anyio/_backends/_asyncio.py\", line 991, in run\n    item = self.queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/home/admin/aletheia/.venv/lib64/python3.14/site-packages/anyio/_backends/_asyncio.py\", line 991, in run\n    item = self.queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/agent_runtime/scheduler.py\", line 401, in _thread_main\n    loop.run_forever()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 678, in run_forever\n    self._run_once()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 2019, in _run_once\n    event_list = self._selector.select(timeout)\n  File \"/usr/lib64/python3.14/selectors.py\", line 452, in select\n    fd_event_list = self._selector.poll(timeout, max_ev)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/agent_runtime/scheduler.py\", line 607, in _worker_main\n    item = self._queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/model_provider/broker.py\", line 337, in _thread_main\n    loop.run_forever()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 678, in run_forever\n    self._run_once()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 2019, in _run_once\n    event_list = self._selector.select(timeout)\n  File \"/usr/lib64/python3.14/selectors.py\", line 452, in select\n    fd_event_list = self._selector.poll(timeout, max_ev)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/agent_runtime/scheduler.py\", line 607, in _worker_main\n    item = self._queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/agent_runtime/scheduler.py\", line 401, in _thread_main\n    loop.run_forever()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 678, in run_forever\n    self._run_once()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 2019, in _run_once\n    event_list = self._selector.select(timeout)\n  File \"/usr/lib64/python3.14/selectors.py\", line 452, in select\n    fd_event_list = self._selector.poll(timeout, max_ev)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/usr/lib64/python3.14/concurrent/futures/thread.py\", line 116, in _worker\n    work_item = work_queue.get(block=True)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/.venv/lib64/python3.14/site-packages/apscheduler/schedulers/blocking.py\", line 28, in _main_loop\n    self._event.wait(wait_seconds)\n  File \"/usr/lib64/python3.14/threading.py\", line 670, in wait\n    signaled = self._cond.wait(timeout)\n  File \"/usr/lib64/python3.14/threading.py\", line 373, in wait\n    gotit = waiter.acquire(True, timeout)\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/agent_runtime/job_queue.py\", line 130, in _worker_main\n    job = self._queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/usr/lib64/python3.14/threading.py\", line 1044, in _bootstrap\n    self._bootstrap_inner()\n  File \"/usr/lib64/python3.14/threading.py\", line 1082, in _bootstrap_inner\n    self._context.run(self.run)\n  File \"/usr/lib64/python3.14/threading.py\", line 1024, in run\n    self._target(*self._args, **self._kwargs)\n  File \"/home/admin/aletheia/core/aletheia/storage/sqlite.py\", line 551, in _run\n    job = self._queue.get()\n  File \"/usr/lib64/python3.14/queue.py\", line 199, in get\n    self.not_empty.wait()\n  File \"/usr/lib64/python3.14/threading.py\", line 369, in wait\n    waiter.acquire()\n",
+  "  File \"/home/admin/aletheia/.venv/lib64/python3.14/site-packages/uvicorn/server.py\", line 75, in run\n    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())\n  File \"/usr/lib64/python3.14/asyncio/runners.py\", line 205, in run\n    return runner.run(main)\n  File \"/usr/lib64/python3.14/asyncio/runners.py\", line 128, in run\n    return self._loop.run_until_complete(task)\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 707, in run_until_complete\n    self.run_forever()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 678, in run_forever\n    self._run_once()\n  File \"/usr/lib64/python3.14/asyncio/base_events.py\", line 2019, in _run_once\n    event_list = self._selector.select(timeout)\n  File \"/usr/lib64/python3.14/selectors.py\", line 452, in select\n    fd_event_list = self._selector.poll(timeout, max_ev)\n  File \"<string>\", line 53, in <module>\n"
+ ],
+ "asyncio_tasks": [
+  [
+   "CcxtProFastMarketStream._watch_loop",
+   4
+  ],
+  [
+   "InferenceBroker._provider_worker",
+   2
+  ],
+  [
+   "_SlidingWindowLimiter.acquire",
+   2
+  ],
+  [
+   "OpenAICompatibleProvider.complete",
+   2
+  ],
+  [
+   "BaseExchange.load_markets_helper",
+   2
+  ],
+  [
+   "Event.wait",
+   2
+  ],
+  [
+   "_watch_loop.<locals>.dispatch.<locals>.run",
+   1
+  ],
+  [
+   "<async_generator_asend object at 0x7f9108117780>",
+   1
+  ],
+  [
+   "ClientWebSocketResponse.receive",
+   1
+  ],
+  [
+   "<async_generator_asend object at 0x7f91234de640>",
+   1
+  ],
+  [
+   "Server.serve",
+   1
+  ],
+  [
+   "startup_behavior_gate",
+   1
+  ],
+  [
+   "_pi_daemon_loop",
+   1
+  ],
+  [
+   "_watch_loop",
+   1
+  ],
+  [
+   "EventLoopLagMonitor.run",
+   1
+  ],
+  [
+   "_llm_startup_gate",
+   1
+  ],
+  [
+   "lifespan.<locals>._startup_exchange_sync",
+   1
+  ],
+  [
+   "startup_exchange_gate",
+   1
+  ],
+  [
+   "LifespanOn.main",
+   1
+  ],
+  [
+   "Client.ping_loop",
+   1
+  ]
+ ]
+}

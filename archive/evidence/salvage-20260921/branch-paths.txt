@@ -1,0 +1,972 @@
+M	.coveragerc
+M	.gitignore
+M	README.md
+D	aletheia/cli/alpha.py
+D	aletheia/cli/flow.py
+D	aletheia/cli/funnel.py
+D	aletheia/cli/model.py
+D	aletheia/cli/permission.py
+D	aletheia/cli/secrets_cmd.py
+D	aletheia/cli/sizing.py
+D	aletheia/data/ccxt_provider.py
+D	aletheia/data/collectors/derivatives.py
+D	aletheia/data/yfinance_provider.py
+D	aletheia/exchanges/bitget/profile_config.py
+D	aletheia/main.py
+D	aletheia/maintenance/outcome_integrity.py
+D	aletheia/maintenance/settlement_requeue.py
+D	aletheia/universe/registry.py
+D	aletheia/uta/profiles/__init__.py
+D	aletheia/utils/__init__.py
+R100	aletheia/__init__.py	core/aletheia/__init__.py
+R099	aletheia/_gateway_runner.py	core/aletheia/_gateway_runner.py
+R100	aletheia/agent_runtime/__init__.py	core/aletheia/agent_runtime/__init__.py
+R100	aletheia/agent_runtime/auto_resume.py	core/aletheia/agent_runtime/auto_resume.py
+R100	aletheia/agent_runtime/build_info.py	core/aletheia/agent_runtime/build_info.py
+R095	aletheia/agent_runtime/connectivity.py	core/aletheia/agent_runtime/connectivity.py
+R100	aletheia/agent_runtime/fast_trigger_watch.py	core/aletheia/agent_runtime/fast_trigger_watch.py
+R100	aletheia/agent_runtime/health.py	core/aletheia/agent_runtime/health.py
+R100	aletheia/agent_runtime/job_queue.py	core/aletheia/agent_runtime/job_queue.py
+R100	aletheia/agent_runtime/orchestrator.py	core/aletheia/agent_runtime/orchestrator.py
+R100	aletheia/agent_runtime/pause_ownership.py	core/aletheia/agent_runtime/pause_ownership.py
+R100	aletheia/agent_runtime/permissions.py	core/aletheia/agent_runtime/permissions.py
+R100	aletheia/agent_runtime/pi_daemon.py	core/aletheia/agent_runtime/pi_daemon.py
+R100	aletheia/agent_runtime/resume_gate.py	core/aletheia/agent_runtime/resume_gate.py
+R100	aletheia/agent_runtime/run_context.py	core/aletheia/agent_runtime/run_context.py
+R100	aletheia/agent_runtime/run_logger.py	core/aletheia/agent_runtime/run_logger.py
+R100	aletheia/agent_runtime/run_view.py	core/aletheia/agent_runtime/run_view.py
+R099	aletheia/agent_runtime/runtime_session.py	core/aletheia/agent_runtime/runtime_session.py
+R094	aletheia/agent_runtime/scheduler.py	core/aletheia/agent_runtime/scheduler.py
+R100	aletheia/agent_runtime/stability_monitor.py	core/aletheia/agent_runtime/stability_monitor.py
+R096	aletheia/agent_runtime/startup_behavior_gate.py	core/aletheia/agent_runtime/startup_behavior_gate.py
+R100	aletheia/agent_runtime/startup_gate.py	core/aletheia/agent_runtime/startup_gate.py
+R100	aletheia/agent_runtime/tool_registry.py	core/aletheia/agent_runtime/tool_registry.py
+R100	aletheia/agent_runtime/wake_events.py	core/aletheia/agent_runtime/wake_events.py
+R100	aletheia/agent_shell/__init__.py	core/aletheia/agent_shell/__init__.py
+R100	aletheia/agent_shell/audit.py	core/aletheia/agent_shell/audit.py
+R100	aletheia/agent_shell/b2_evidence_policy.py	core/aletheia/agent_shell/b2_evidence_policy.py
+R100	aletheia/agent_shell/commands.py	core/aletheia/agent_shell/commands.py
+R100	aletheia/agent_shell/compaction.py	core/aletheia/agent_shell/compaction.py
+R100	aletheia/agent_shell/context.py	core/aletheia/agent_shell/context.py
+R099	aletheia/agent_shell/entry_planner.py	core/aletheia/agent_shell/entry_planner.py
+R100	aletheia/agent_shell/executor.py	core/aletheia/agent_shell/executor.py
+R100	aletheia/agent_shell/file_artifacts.py	core/aletheia/agent_shell/file_artifacts.py
+R100	aletheia/agent_shell/intent.py	core/aletheia/agent_shell/intent.py
+R100	aletheia/agent_shell/leverage_policy.py	core/aletheia/agent_shell/leverage_policy.py
+R100	aletheia/agent_shell/operator_loop.py	core/aletheia/agent_shell/operator_loop.py
+R100	aletheia/agent_shell/operator_recommendations.py	core/aletheia/agent_shell/operator_recommendations.py
+R100	aletheia/agent_shell/operator_store.py	core/aletheia/agent_shell/operator_store.py
+R100	aletheia/agent_shell/permissions.py	core/aletheia/agent_shell/permissions.py
+R100	aletheia/agent_shell/reflection.py	core/aletheia/agent_shell/reflection.py
+R100	aletheia/agent_shell/registry.py	core/aletheia/agent_shell/registry.py
+R100	aletheia/agent_shell/runtime.py	core/aletheia/agent_shell/runtime.py
+R100	aletheia/agent_shell/sessions.py	core/aletheia/agent_shell/sessions.py
+R100	aletheia/agent_shell/skip_policy.py	core/aletheia/agent_shell/skip_policy.py
+R100	aletheia/agent_shell/synthesis.py	core/aletheia/agent_shell/synthesis.py
+R100	aletheia/agent_shell/trading_context.py	core/aletheia/agent_shell/trading_context.py
+R100	aletheia/agent_shell/vergex_policy.py	core/aletheia/agent_shell/vergex_policy.py
+R100	aletheia/agents/__init__.py	core/aletheia/agents/__init__.py
+R100	aletheia/agents/divergence_scanner.py	core/aletheia/agents/divergence_scanner.py
+R100	aletheia/agents/helpers.py	core/aletheia/agents/helpers.py
+R100	aletheia/agents/market_observer.py	core/aletheia/agents/market_observer.py
+R100	aletheia/agents/portfolio_agent.py	core/aletheia/agents/portfolio_agent.py
+R100	aletheia/agents/risk_critic.py	core/aletheia/agents/risk_critic.py
+R100	aletheia/agents/round_robin.py	core/aletheia/agents/round_robin.py
+R100	aletheia/analytics/__init__.py	core/aletheia/analytics/__init__.py
+R099	aletheia/analytics/alpha_attribution.py	core/aletheia/analytics/alpha_attribution.py
+R100	aletheia/analytics/attribution.py	core/aletheia/analytics/attribution.py
+R100	aletheia/analytics/candidate_facts.py	core/aletheia/analytics/candidate_facts.py
+R100	aletheia/analytics/candidate_supply.py	core/aletheia/analytics/candidate_supply.py
+R098	aletheia/analytics/causal_controls.py	core/aletheia/analytics/causal_controls.py
+R100	aletheia/analytics/close_reasons.py	core/aletheia/analytics/close_reasons.py
+A	core/aletheia/analytics/confidence_calibration.py
+R100	aletheia/analytics/debate_impact.py	core/aletheia/analytics/debate_impact.py
+R099	aletheia/analytics/entry_exit_geometry.py	core/aletheia/analytics/entry_exit_geometry.py
+R100	aletheia/analytics/execution_mode.py	core/aletheia/analytics/execution_mode.py
+R100	aletheia/analytics/exit_attribution.py	core/aletheia/analytics/exit_attribution.py
+R100	aletheia/analytics/exit_breakeven_shadow.py	core/aletheia/analytics/exit_breakeven_shadow.py
+R100	aletheia/analytics/exit_driver_comparison.py	core/aletheia/analytics/exit_driver_comparison.py
+R100	aletheia/analytics/exit_policy_advisor.py	core/aletheia/analytics/exit_policy_advisor.py
+R100	aletheia/analytics/exit_trailing_qualification.py	core/aletheia/analytics/exit_trailing_qualification.py
+R100	aletheia/analytics/factor_feedback.py	core/aletheia/analytics/factor_feedback.py
+R100	aletheia/analytics/family_scorecard.py	core/aletheia/analytics/family_scorecard.py
+R100	aletheia/analytics/filter_controller.py	core/aletheia/analytics/filter_controller.py
+R100	aletheia/analytics/filter_evidence.py	core/aletheia/analytics/filter_evidence.py
+R100	aletheia/analytics/filter_registry.py	core/aletheia/analytics/filter_registry.py
+R100	aletheia/analytics/go_live_scorecard.py	core/aletheia/analytics/go_live_scorecard.py
+R100	aletheia/analytics/guard_effectiveness.py	core/aletheia/analytics/guard_effectiveness.py
+R100	aletheia/analytics/guard_impact.py	core/aletheia/analytics/guard_impact.py
+R100	aletheia/analytics/guard_promotion.py	core/aletheia/analytics/guard_promotion.py
+R099	aletheia/analytics/holding_time.py	core/aletheia/analytics/holding_time.py
+A	core/aletheia/analytics/insight_synthesizer.py
+R100	aletheia/analytics/learning_window.py	core/aletheia/analytics/learning_window.py
+A	core/aletheia/analytics/memo_effectiveness.py
+R100	aletheia/analytics/momentum_geometry_replay.py	core/aletheia/analytics/momentum_geometry_replay.py
+R100	aletheia/analytics/opportunity_flow.py	core/aletheia/analytics/opportunity_flow.py
+R100	aletheia/analytics/opportunity_lifecycle_story.py	core/aletheia/analytics/opportunity_lifecycle_story.py
+R100	aletheia/analytics/opportunity_progress.py	core/aletheia/analytics/opportunity_progress.py
+R100	aletheia/analytics/outcome_integrity.py	core/aletheia/analytics/outcome_integrity.py
+R100	aletheia/analytics/outcome_semantics.py	core/aletheia/analytics/outcome_semantics.py
+R100	aletheia/analytics/performance_summary.py	core/aletheia/analytics/performance_summary.py
+R100	aletheia/analytics/pi_evidence.py	core/aletheia/analytics/pi_evidence.py
+R100	aletheia/analytics/position_lifecycle_story.py	core/aletheia/analytics/position_lifecycle_story.py
+R100	aletheia/analytics/position_path_observations.py	core/aletheia/analytics/position_path_observations.py
+R100	aletheia/analytics/position_replay.py	core/aletheia/analytics/position_replay.py
+R100	aletheia/analytics/profit_gradient.py	core/aletheia/analytics/profit_gradient.py
+R100	aletheia/analytics/profit_gradient_estimators.py	core/aletheia/analytics/profit_gradient_estimators.py
+R100	aletheia/analytics/profit_gradient_evidence.py	core/aletheia/analytics/profit_gradient_evidence.py
+R100	aletheia/analytics/profit_loop_counterfactual.py	core/aletheia/analytics/profit_loop_counterfactual.py
+R100	aletheia/analytics/profit_loop_diagnosis.py	core/aletheia/analytics/profit_loop_diagnosis.py
+R100	aletheia/analytics/ranker_objective_audit.py	core/aletheia/analytics/ranker_objective_audit.py
+A	core/aletheia/analytics/reasoning_feedback.py
+R100	aletheia/analytics/sizing_counterfactual.py	core/aletheia/analytics/sizing_counterfactual.py
+R096	aletheia/analytics/sizing_trace.py	core/aletheia/analytics/sizing_trace.py
+R100	aletheia/analytics/skip_diagnosis.py	core/aletheia/analytics/skip_diagnosis.py
+R100	aletheia/analytics/streaks.py	core/aletheia/analytics/streaks.py
+R100	aletheia/analytics/temporal.py	core/aletheia/analytics/temporal.py
+R100	aletheia/analytics/thesis_lineage.py	core/aletheia/analytics/thesis_lineage.py
+R099	aletheia/analytics/trade_attribution.py	core/aletheia/analytics/trade_attribution.py
+R100	aletheia/analytics/trade_funnel.py	core/aletheia/analytics/trade_funnel.py
+R100	aletheia/analytics/trade_insights.py	core/aletheia/analytics/trade_insights.py
+R100	aletheia/analytics/trade_path.py	core/aletheia/analytics/trade_path.py
+R100	aletheia/analytics/trade_stats.py	core/aletheia/analytics/trade_stats.py
+R100	aletheia/analytics/trading_mandate_compliance.py	core/aletheia/analytics/trading_mandate_compliance.py
+R100	aletheia/async_utils.py	core/aletheia/async_utils.py
+R100	aletheia/backup/__init__.py	core/aletheia/backup/__init__.py
+R100	aletheia/backup/restore.py	core/aletheia/backup/restore.py
+R100	aletheia/backup/service.py	core/aletheia/backup/service.py
+R100	aletheia/backup/verify.py	core/aletheia/backup/verify.py
+R100	aletheia/cli/__init__.py	core/aletheia/cli/__init__.py
+R099	aletheia/cli/audit_cmd.py	core/aletheia/cli/audit_cmd.py
+R100	aletheia/cli/bitget_cmd.py	core/aletheia/cli/bitget_cmd.py
+R100	aletheia/cli/control_cmd.py	core/aletheia/cli/control_cmd.py
+R085	aletheia/cli/data_cmd.py	core/aletheia/cli/data_cmd.py
+R094	aletheia/cli/dev.py	core/aletheia/cli/dev.py
+R099	aletheia/cli/dev_seed.py	core/aletheia/cli/dev_seed.py
+R100	aletheia/cli/doctor_cmd.py	core/aletheia/cli/doctor_cmd.py
+R100	aletheia/cli/evidence_cmd.py	core/aletheia/cli/evidence_cmd.py
+R100	aletheia/cli/exchange_cmd.py	core/aletheia/cli/exchange_cmd.py
+R100	aletheia/cli/gateway.py	core/aletheia/cli/gateway.py
+R100	aletheia/cli/guard_cmd.py	core/aletheia/cli/guard_cmd.py
+R099	aletheia/cli/inspect_cmd.py	core/aletheia/cli/inspect_cmd.py
+R099	aletheia/cli/install.py	core/aletheia/cli/install.py
+R087	aletheia/cli/knowledge_cmd.py	core/aletheia/cli/knowledge_cmd.py
+R100	aletheia/cli/learning_cmd.py	core/aletheia/cli/learning_cmd.py
+R100	aletheia/cli/migration_progress.py	core/aletheia/cli/migration_progress.py
+A	core/aletheia/cli/model.py
+R100	aletheia/cli/network_cmd.py	core/aletheia/cli/network_cmd.py
+R100	aletheia/cli/observe_cmd.py	core/aletheia/cli/observe_cmd.py
+R100	aletheia/cli/operator.py	core/aletheia/cli/operator.py
+R092	aletheia/cli/opportunity.py	core/aletheia/cli/opportunity.py
+R100	aletheia/cli/risk_cmd.py	core/aletheia/cli/risk_cmd.py
+R100	aletheia/cli/runtime_cmd.py	core/aletheia/cli/runtime_cmd.py
+A	core/aletheia/cli/secrets_cmd.py
+R091	aletheia/cli/thesis.py	core/aletheia/cli/thesis.py
+R100	aletheia/cli/tunnel.py	core/aletheia/cli/tunnel.py
+R100	aletheia/cli/update_cmd.py	core/aletheia/cli/update_cmd.py
+R100	aletheia/config/__init__.py	core/aletheia/config/__init__.py
+R100	aletheia/config/exchange_alignment.py	core/aletheia/config/exchange_alignment.py
+R075	aletheia/config/exchanges.py	core/aletheia/config/exchanges.py
+R100	aletheia/config/execution_costs.py	core/aletheia/config/execution_costs.py
+R099	aletheia/config/loader.py	core/aletheia/config/loader.py
+R100	aletheia/config/prediction.py	core/aletheia/config/prediction.py
+R100	aletheia/config/redact.py	core/aletheia/config/redact.py
+R098	aletheia/config/schema.py	core/aletheia/config/schema.py
+R089	aletheia/config/secrets.py	core/aletheia/config/secrets.py
+R100	aletheia/counterfactual/__init__.py	core/aletheia/counterfactual/__init__.py
+R100	aletheia/counterfactual/advisories.py	core/aletheia/counterfactual/advisories.py
+R100	aletheia/counterfactual/calibration.py	core/aletheia/counterfactual/calibration.py
+R100	aletheia/counterfactual/estimators.py	core/aletheia/counterfactual/estimators.py
+R100	aletheia/counterfactual/filter_experiments.py	core/aletheia/counterfactual/filter_experiments.py
+R100	aletheia/counterfactual/filter_replay.py	core/aletheia/counterfactual/filter_replay.py
+R100	aletheia/counterfactual/propensity.py	core/aletheia/counterfactual/propensity.py
+R100	aletheia/counterfactual/trades.py	core/aletheia/counterfactual/trades.py
+R100	aletheia/data/__init__.py	core/aletheia/data/__init__.py
+R100	aletheia/data/active_ohlcv_backfill.py	core/aletheia/data/active_ohlcv_backfill.py
+R100	aletheia/data/cache.py	core/aletheia/data/cache.py
+A	core/aletheia/data/ccxt_provider.py
+R100	aletheia/data/collector_health.py	core/aletheia/data/collector_health.py
+R050	aletheia/data/collector_runner.py	core/aletheia/data/collector_runner.py
+R100	aletheia/data/collectors/__init__.py	core/aletheia/data/collectors/__init__.py
+A	core/aletheia/data/collectors/derivatives.py
+A	core/aletheia/data/collectors/microstructure.py
+R100	aletheia/data/collectors/vergex_structure.py	core/aletheia/data/collectors/vergex_structure.py
+R100	aletheia/data/context_builder.py	core/aletheia/data/context_builder.py
+R100	aletheia/data/data_coverage.py	core/aletheia/data/data_coverage.py
+R081	aletheia/data/derivatives_facts.py	core/aletheia/data/derivatives_facts.py
+R092	aletheia/data/freshness.py	core/aletheia/data/freshness.py
+R096	aletheia/data/history_downloader.py	core/aletheia/data/history_downloader.py
+R100	aletheia/data/macro_liquidity.py	core/aletheia/data/macro_liquidity.py
+A	core/aletheia/data/market_catalog.py
+A	core/aletheia/data/market_history.py
+R100	aletheia/data/market_structure.py	core/aletheia/data/market_structure.py
+R099	aletheia/data/models.py	core/aletheia/data/models.py
+R100	aletheia/data/news_entities.py	core/aletheia/data/news_entities.py
+R100	aletheia/data/normalizer.py	core/aletheia/data/normalizer.py
+A	core/aletheia/data/options_volatility.py
+R062	aletheia/data/collectors/microstructure.py	core/aletheia/data/orderbook.py
+R100	aletheia/data/perp_structure_shadow.py	core/aletheia/data/perp_structure_shadow.py
+R100	aletheia/data/position_x.py	core/aletheia/data/position_x.py
+R100	aletheia/data/positioning_evidence.py	core/aletheia/data/positioning_evidence.py
+R097	aletheia/data/price_feed.py	core/aletheia/data/price_feed.py
+R093	aletheia/data/providers.py	core/aletheia/data/providers.py
+R100	aletheia/data/smc_enrichment.py	core/aletheia/data/smc_enrichment.py
+R100	aletheia/data/sources/__init__.py	core/aletheia/data/sources/__init__.py
+R097	aletheia/data/sources/chain.py	core/aletheia/data/sources/chain.py
+R090	aletheia/data/symbols.py	core/aletheia/data/symbols.py
+R100	aletheia/data/venue_health.py	core/aletheia/data/venue_health.py
+R082	aletheia/data/venue_listing_cache.py	core/aletheia/data/venue_listing_cache.py
+R100	aletheia/diagnostics/__init__.py	core/aletheia/diagnostics/__init__.py
+R100	aletheia/diagnostics/config_consistency.py	core/aletheia/diagnostics/config_consistency.py
+R097	aletheia/diagnostics/doctor.py	core/aletheia/diagnostics/doctor.py
+R100	aletheia/economics/__init__.py	core/aletheia/economics/__init__.py
+R100	aletheia/economics/agent_roles.py	core/aletheia/economics/agent_roles.py
+R100	aletheia/economics/budgets.py	core/aletheia/economics/budgets.py
+R100	aletheia/economics/context_artifacts.py	core/aletheia/economics/context_artifacts.py
+R099	aletheia/economics/context_effectiveness.py	core/aletheia/economics/context_effectiveness.py
+R100	aletheia/economics/historical_viability.py	core/aletheia/economics/historical_viability.py
+R100	aletheia/economics/inference_calls.py	core/aletheia/economics/inference_calls.py
+R100	aletheia/economics/pricing_sync.py	core/aletheia/economics/pricing_sync.py
+R100	aletheia/economics/schema.py	core/aletheia/economics/schema.py
+R100	aletheia/economics/tracing.py	core/aletheia/economics/tracing.py
+R100	aletheia/economics/usage_insights.py	core/aletheia/economics/usage_insights.py
+R100	aletheia/exchanges/__init__.py	core/aletheia/execution/__init__.py
+R077	aletheia/execution/broker_funding.py	core/aletheia/execution/broker_funding.py
+R100	aletheia/execution/broker_utils.py	core/aletheia/execution/broker_utils.py
+R100	aletheia/execution/close_convergence.py	core/aletheia/execution/close_convergence.py
+R085	aletheia/execution/coordinator.py	core/aletheia/execution/coordinator.py
+R099	aletheia/execution/entry_plan_execution.py	core/aletheia/execution/entry_plan_execution.py
+R100	aletheia/execution/errors.py	core/aletheia/execution/errors.py
+R086	aletheia/execution/exchange_materialization.py	core/aletheia/execution/exchange_materialization.py
+R096	aletheia/execution/gateway.py	core/aletheia/execution/gateway.py
+R100	aletheia/execution/oco.py	core/aletheia/execution/oco.py
+R052	aletheia/execution/order_constraints.py	core/aletheia/execution/order_constraints.py
+R100	aletheia/execution/pending_close_recovery.py	core/aletheia/execution/pending_close_recovery.py
+R100	aletheia/execution/position_enrichment.py	core/aletheia/execution/position_enrichment.py
+R100	aletheia/execution/post_commit_audit.py	core/aletheia/execution/post_commit_audit.py
+R080	aletheia/execution/reconciliation.py	core/aletheia/execution/reconciliation.py
+R100	aletheia/execution/stale_order_cleanup.py	core/aletheia/execution/stale_order_cleanup.py
+R085	aletheia/execution/stops.py	core/aletheia/execution/stops.py
+R057	aletheia/execution/venue_capabilities.py	core/aletheia/execution/venue_capabilities.py
+R100	aletheia/execution/verified_exit.py	core/aletheia/execution/verified_exit.py
+R100	aletheia/exchanges/bitget/__init__.py	core/aletheia/files/__init__.py
+R100	aletheia/files/git.py	core/aletheia/files/git.py
+R100	aletheia/files/jsonl.py	core/aletheia/files/jsonl.py
+R100	aletheia/files/markdown.py	core/aletheia/files/markdown.py
+R100	aletheia/files/paths.py	core/aletheia/files/paths.py
+R100	aletheia/execution/__init__.py	core/aletheia/gateway/__init__.py
+R100	aletheia/gateway/_win32_proc.py	core/aletheia/gateway/_win32_proc.py
+R100	aletheia/gateway/autostart.py	core/aletheia/gateway/autostart.py
+R100	aletheia/gateway/client_order_id.py	core/aletheia/gateway/client_order_id.py
+R100	aletheia/gateway/console_text.py	core/aletheia/gateway/console_text.py
+R098	aletheia/gateway/frontdoor.py	core/aletheia/gateway/frontdoor.py
+R100	aletheia/gateway/frontdoor_route.py	core/aletheia/gateway/frontdoor_route.py
+R100	aletheia/gateway/frontdoor_runner.py	core/aletheia/gateway/frontdoor_runner.py
+R098	aletheia/gateway/git_hooks.py	core/aletheia/gateway/git_hooks.py
+R100	aletheia/gateway/lifecycle.py	core/aletheia/gateway/lifecycle.py
+R100	aletheia/gateway/logs.py	core/aletheia/gateway/logs.py
+R100	aletheia/gateway/managed_service.py	core/aletheia/gateway/managed_service.py
+R100	aletheia/gateway/network.py	core/aletheia/gateway/network.py
+R099	aletheia/gateway/operator_shell.py	core/aletheia/gateway/operator_shell.py
+R100	aletheia/gateway/pidfile.py	core/aletheia/gateway/pidfile.py
+R098	aletheia/gateway/preflight.py	core/aletheia/gateway/preflight.py
+R100	aletheia/gateway/service_control.py	core/aletheia/gateway/service_control.py
+R100	aletheia/gateway/session_service.py	core/aletheia/gateway/session_service.py
+R100	aletheia/gateway/tunnel.py	core/aletheia/gateway/tunnel.py
+R100	aletheia/gateway/windows_firewall.py	core/aletheia/gateway/windows_firewall.py
+R100	aletheia/gateway/windows_identity.py	core/aletheia/gateway/windows_identity.py
+R100	aletheia/gateway/windows_machine_service.py	core/aletheia/gateway/windows_machine_service.py
+R097	aletheia/infra/__init__.py	core/aletheia/infra/__init__.py
+R100	aletheia/infra/error_summary.py	core/aletheia/infra/error_summary.py
+R100	aletheia/infra/errors.py	core/aletheia/infra/errors.py
+R099	aletheia/infra/events.py	core/aletheia/infra/events.py
+R100	aletheia/files/__init__.py	core/aletheia/knowledge/__init__.py
+R100	aletheia/knowledge/document.py	core/aletheia/knowledge/document.py
+R100	aletheia/knowledge/frontmatter.py	core/aletheia/knowledge/frontmatter.py
+R100	aletheia/knowledge/guards.py	core/aletheia/knowledge/guards.py
+R100	aletheia/knowledge/maintenance.py	core/aletheia/knowledge/maintenance.py
+R100	aletheia/knowledge/manager.py	core/aletheia/knowledge/manager.py
+R100	aletheia/knowledge/recovery.py	core/aletheia/knowledge/recovery.py
+R100	aletheia/knowledge/retrieval.py	core/aletheia/knowledge/retrieval.py
+R100	aletheia/knowledge/router.py	core/aletheia/knowledge/router.py
+R100	aletheia/knowledge/seed_guards.py	core/aletheia/knowledge/seed_guards.py
+R100	aletheia/learning/__init__.py	core/aletheia/learning/__init__.py
+R100	aletheia/learning/behavior_contracts.py	core/aletheia/learning/behavior_contracts.py
+R100	aletheia/learning/cohorts.py	core/aletheia/learning/cohorts.py
+R100	aletheia/learning/contrastive_evidence.py	core/aletheia/learning/contrastive_evidence.py
+R100	aletheia/learning/contribution.py	core/aletheia/learning/contribution.py
+R100	aletheia/learning/control.py	core/aletheia/learning/control.py
+R100	aletheia/learning/demo_entry_quality.py	core/aletheia/learning/demo_entry_quality.py
+R074	aletheia/learning/economic_knowledge.py	core/aletheia/learning/economic_knowledge.py
+R100	aletheia/learning/entry_context.py	core/aletheia/learning/entry_context.py
+R100	aletheia/learning/evidence.py	core/aletheia/learning/evidence.py
+R100	aletheia/learning/evidence_epoch.py	core/aletheia/learning/evidence_epoch.py
+R083	aletheia/learning/experiments.py	core/aletheia/learning/experiments.py
+R100	aletheia/learning/guard_routing.py	core/aletheia/learning/guard_routing.py
+R100	aletheia/learning/hypotheses.py	core/aletheia/learning/hypotheses.py
+R100	aletheia/learning/hypothesis_compiler.py	core/aletheia/learning/hypothesis_compiler.py
+R100	aletheia/learning/hypothesis_research.py	core/aletheia/learning/hypothesis_research.py
+R100	aletheia/learning/knowledge_yield.py	core/aletheia/learning/knowledge_yield.py
+R100	aletheia/learning/ledger.py	core/aletheia/learning/ledger.py
+R076	aletheia/learning/lessons.py	core/aletheia/learning/lessons.py
+R100	aletheia/learning/memory_assets.py	core/aletheia/learning/memory_assets.py
+R100	aletheia/learning/meta_evolution.py	core/aletheia/learning/meta_evolution.py
+R100	aletheia/learning/models.py	core/aletheia/learning/models.py
+R100	aletheia/learning/opportunity_information_policy.py	core/aletheia/learning/opportunity_information_policy.py
+R100	aletheia/learning/outcomes.py	core/aletheia/learning/outcomes.py
+R100	aletheia/learning/policy_epochs.py	core/aletheia/learning/policy_epochs.py
+R100	aletheia/learning/prompt_bundles.py	core/aletheia/learning/prompt_bundles.py
+R100	aletheia/learning/read_models.py	core/aletheia/learning/read_models.py
+R100	aletheia/learning/registry.py	core/aletheia/learning/registry.py
+R100	aletheia/learning/skills.py	core/aletheia/learning/skills.py
+R100	aletheia/learning/t0_context.py	core/aletheia/learning/t0_context.py
+R100	aletheia/learning/t0_coverage.py	core/aletheia/learning/t0_coverage.py
+R100	aletheia/learning/verdicts.py	core/aletheia/learning/verdicts.py
+R100	aletheia/logging_config.py	core/aletheia/logging_config.py
+A	core/aletheia/main.py
+R100	aletheia/maintenance/__init__.py	core/aletheia/maintenance/__init__.py
+R060	aletheia/maintenance/database_capacity.py	core/aletheia/maintenance/database_capacity.py
+R100	aletheia/maintenance/filesystem_retention.py	core/aletheia/maintenance/filesystem_retention.py
+R100	aletheia/maintenance/historical_accounting.py	core/aletheia/maintenance/historical_accounting.py
+A	core/aletheia/maintenance/outcome_integrity.py
+A	core/aletheia/maintenance/settlement_requeue.py
+R100	aletheia/gateway/__init__.py	core/aletheia/model_provider/__init__.py
+R094	aletheia/model_provider/base.py	core/aletheia/model_provider/base.py
+R100	aletheia/model_provider/broker.py	core/aletheia/model_provider/broker.py
+R100	aletheia/model_provider/fallback.py	core/aletheia/model_provider/fallback.py
+R100	aletheia/model_provider/guardrails.py	core/aletheia/model_provider/guardrails.py
+R100	aletheia/model_provider/inference_contract.py	core/aletheia/model_provider/inference_contract.py
+R100	aletheia/model_provider/registry.py	core/aletheia/model_provider/registry.py
+R091	aletheia/model_provider/router.py	core/aletheia/model_provider/router.py
+R100	aletheia/net.py	core/aletheia/net.py
+R099	aletheia/notifications.py	core/aletheia/notifications.py
+R100	aletheia/observation_lab/__init__.py	core/aletheia/observation_lab/__init__.py
+R100	aletheia/observation_lab/canonical.py	core/aletheia/observation_lab/canonical.py
+R100	aletheia/observation_lab/canonical_schema.py	core/aletheia/observation_lab/canonical_schema.py
+R100	aletheia/observation_lab/checkpoint.py	core/aletheia/observation_lab/checkpoint.py
+R100	aletheia/observation_lab/conflict.py	core/aletheia/observation_lab/conflict.py
+R100	aletheia/observation_lab/db.py	core/aletheia/observation_lab/db.py
+R100	aletheia/observation_lab/evaluator.py	core/aletheia/observation_lab/evaluator.py
+R100	aletheia/observation_lab/execution_owner.py	core/aletheia/observation_lab/execution_owner.py
+R100	aletheia/observation_lab/exposure.py	core/aletheia/observation_lab/exposure.py
+R100	aletheia/observation_lab/filter_shadow.py	core/aletheia/observation_lab/filter_shadow.py
+R100	aletheia/observation_lab/kernel.py	core/aletheia/observation_lab/kernel.py
+R100	aletheia/observation_lab/manifest.py	core/aletheia/observation_lab/manifest.py
+R100	aletheia/observation_lab/migration.py	core/aletheia/observation_lab/migration.py
+R100	aletheia/observation_lab/runner.py	core/aletheia/observation_lab/runner.py
+R100	aletheia/observation_lab/runtime_status.py	core/aletheia/observation_lab/runtime_status.py
+R100	aletheia/observation_lab/ufc_shadow.py	core/aletheia/observation_lab/ufc_shadow.py
+R100	aletheia/observation_lab/units.py	core/aletheia/observation_lab/units.py
+R100	aletheia/observation_lab/update_settlement.py	core/aletheia/observation_lab/update_settlement.py
+R100	aletheia/observation_lab/worker_lock.py	core/aletheia/observation_lab/worker_lock.py
+R100	aletheia/operator_service_identity.py	core/aletheia/operator_service_identity.py
+R100	aletheia/package_integrity.py	core/aletheia/package_integrity.py
+R100	aletheia/packaged_process.py	core/aletheia/packaged_process.py
+R100	aletheia/policies/__init__.py	core/aletheia/policies/__init__.py
+R100	aletheia/policies/diff.py	core/aletheia/policies/diff.py
+R100	aletheia/policies/store.py	core/aletheia/policies/store.py
+R100	aletheia/knowledge/__init__.py	core/aletheia/portfolio/__init__.py
+R100	aletheia/portfolio/account_loss.py	core/aletheia/portfolio/account_loss.py
+R100	aletheia/portfolio/broker_funding_settlement.py	core/aletheia/portfolio/broker_funding_settlement.py
+R100	aletheia/portfolio/disappearance_confirmation.py	core/aletheia/portfolio/disappearance_confirmation.py
+R100	aletheia/portfolio/disappearance_settlement.py	core/aletheia/portfolio/disappearance_settlement.py
+R100	aletheia/portfolio/exchange_sync.py	core/aletheia/portfolio/exchange_sync.py
+R100	aletheia/portfolio/exit_plan.py	core/aletheia/portfolio/exit_plan.py
+R100	aletheia/portfolio/exit_rules.py	core/aletheia/portfolio/exit_rules.py
+R100	aletheia/portfolio/funding_audit.py	core/aletheia/portfolio/funding_audit.py
+R100	aletheia/portfolio/market_signal_reader.py	core/aletheia/portfolio/market_signal_reader.py
+R067	aletheia/portfolio/outcome_closure.py	core/aletheia/portfolio/outcome_closure.py
+R064	aletheia/portfolio/outcome_hooks.py	core/aletheia/portfolio/outcome_hooks.py
+R095	aletheia/portfolio/pnl.py	core/aletheia/portfolio/pnl.py
+R099	aletheia/portfolio/position_manager.py	core/aletheia/portfolio/position_manager.py
+R100	aletheia/portfolio/position_path_observer.py	core/aletheia/portfolio/position_path_observer.py
+R100	aletheia/portfolio/position_reconciler.py	core/aletheia/portfolio/position_reconciler.py
+R100	aletheia/portfolio/reconciliation_integrity.py	core/aletheia/portfolio/reconciliation_integrity.py
+R100	aletheia/regime/__init__.py	core/aletheia/regime/__init__.py
+R100	aletheia/regime/collector.py	core/aletheia/regime/collector.py
+R100	aletheia/regime/detector.py	core/aletheia/regime/detector.py
+R100	aletheia/model_provider/__init__.py	core/aletheia/risk/__init__.py
+R100	aletheia/risk/demo_entry_quality.py	core/aletheia/risk/demo_entry_quality.py
+R098	aletheia/risk/engine.py	core/aletheia/risk/engine.py
+R100	aletheia/risk/kill_switch.py	core/aletheia/risk/kill_switch.py
+R100	aletheia/risk/policy.py	core/aletheia/risk/policy.py
+R099	aletheia/runtime_home_migration.py	core/aletheia/runtime_home_migration.py
+R100	aletheia/runtime_paths.py	core/aletheia/runtime_paths.py
+R100	aletheia/portfolio/__init__.py	core/aletheia/server/__init__.py
+R086	aletheia/server/app.py	core/aletheia/server/app.py
+R100	aletheia/server/compression.py	core/aletheia/server/compression.py
+R100	aletheia/server/dev_reload.py	core/aletheia/server/dev_reload.py
+R100	aletheia/server/operator_service_auth.py	core/aletheia/server/operator_service_auth.py
+R100	aletheia/server/responsiveness.py	core/aletheia/server/responsiveness.py
+R100	aletheia/risk/__init__.py	core/aletheia/server/routes/__init__.py
+R099	aletheia/server/routes/analytics.py	core/aletheia/server/routes/analytics.py
+R093	aletheia/server/routes/bitget.py	core/aletheia/server/routes/bitget.py
+R100	aletheia/server/routes/capital.py	core/aletheia/server/routes/capital.py
+R100	aletheia/server/routes/command.py	core/aletheia/server/routes/command.py
+R099	aletheia/server/routes/data.py	core/aletheia/server/routes/data.py
+R100	aletheia/server/routes/dev_reload.py	core/aletheia/server/routes/dev_reload.py
+R100	aletheia/server/routes/economics.py	core/aletheia/server/routes/economics.py
+R100	aletheia/server/routes/export.py	core/aletheia/server/routes/export.py
+R100	aletheia/server/routes/gateway.py	core/aletheia/server/routes/gateway.py
+R100	aletheia/server/routes/health.py	core/aletheia/server/routes/health.py
+R100	aletheia/server/routes/live.py	core/aletheia/server/routes/live.py
+R090	aletheia/server/routes/model.py	core/aletheia/server/routes/model.py
+R100	aletheia/server/routes/operator.py	core/aletheia/server/routes/operator.py
+R100	aletheia/server/routes/persistence.py	core/aletheia/server/routes/persistence.py
+R100	aletheia/server/routes/risk.py	core/aletheia/server/routes/risk.py
+R098	aletheia/server/routes/settings.py	core/aletheia/server/routes/settings.py
+A	core/aletheia/server/routes/telegram.py
+R099	aletheia/server/routes/ui.py	core/aletheia/server/routes/ui.py
+R100	aletheia/server/routes/universe.py	core/aletheia/server/routes/universe.py
+R100	aletheia/server/routes/update.py	core/aletheia/server/routes/update.py
+R100	aletheia/server/routes/ws.py	core/aletheia/server/routes/ws.py
+R100	aletheia/server/startup_policy.py	core/aletheia/server/startup_policy.py
+R100	aletheia/server/__init__.py	core/aletheia/storage/__init__.py
+R100	aletheia/storage/artifact_store.py	core/aletheia/storage/artifact_store.py
+R100	aletheia/storage/event_store.py	core/aletheia/storage/event_store.py
+R100	aletheia/storage/hashing.py	core/aletheia/storage/hashing.py
+R100	aletheia/storage/market_ohlcv_layout.py	core/aletheia/storage/market_ohlcv_layout.py
+R100	aletheia/storage/market_ohlcv_tiering.py	core/aletheia/storage/market_ohlcv_tiering.py
+R100	aletheia/storage/migration_drop_universe_features_raw.py	core/aletheia/storage/migration_drop_universe_features_raw.py
+R100	aletheia/storage/migrations.py	core/aletheia/storage/migrations.py
+R100	aletheia/storage/models.py	core/aletheia/storage/models.py
+R100	aletheia/storage/proposal_hypothesis.py	core/aletheia/storage/proposal_hypothesis.py
+R099	aletheia/storage/repositories.py	core/aletheia/storage/repositories.py
+R100	aletheia/storage/sqlite.py	core/aletheia/storage/sqlite.py
+R100	aletheia/sync/__init__.py	core/aletheia/sync/__init__.py
+R100	aletheia/sync/conflicts.py	core/aletheia/sync/conflicts.py
+R100	aletheia/sync/exporter.py	core/aletheia/sync/exporter.py
+R100	aletheia/sync/importer.py	core/aletheia/sync/importer.py
+A	core/aletheia/telegram/__init__.py
+A	core/aletheia/telegram/commands.py
+R100	aletheia/trading/__init__.py	core/aletheia/trading/__init__.py
+R100	aletheia/trading/entry_activation.py	core/aletheia/trading/entry_activation.py
+R100	aletheia/trading/entry_analysis.py	core/aletheia/trading/entry_analysis.py
+R100	aletheia/trading/entry_authority.py	core/aletheia/trading/entry_authority.py
+R100	aletheia/trading/entry_capture.py	core/aletheia/trading/entry_capture.py
+R100	aletheia/trading/entry_compat.py	core/aletheia/trading/entry_compat.py
+R100	aletheia/trading/entry_contract.py	core/aletheia/trading/entry_contract.py
+R100	aletheia/trading/entry_execution_projection.py	core/aletheia/trading/entry_execution_projection.py
+R100	aletheia/trading/entry_lifecycle.py	core/aletheia/trading/entry_lifecycle.py
+R100	aletheia/trading/entry_plan.py	core/aletheia/trading/entry_plan.py
+R100	aletheia/trading/entry_plan_compiler.py	core/aletheia/trading/entry_plan_compiler.py
+R100	aletheia/trading/entry_profiles.py	core/aletheia/trading/entry_profiles.py
+R100	aletheia/trading/entry_snapshot.py	core/aletheia/trading/entry_snapshot.py
+R100	aletheia/trading/indicators.py	core/aletheia/trading/indicators.py
+R090	aletheia/trading/instruments.py	core/aletheia/trading/instruments.py
+R098	aletheia/trading/market_context.py	core/aletheia/trading/market_context.py
+R088	aletheia/trading/market_data.py	core/aletheia/trading/market_data.py
+R100	aletheia/trading/market_session.py	core/aletheia/trading/market_session.py
+R100	aletheia/trading/momentum_entry_geometry.py	core/aletheia/trading/momentum_entry_geometry.py
+R100	aletheia/trading/momentum_trigger.py	core/aletheia/trading/momentum_trigger.py
+R100	aletheia/trading/persona.py	core/aletheia/trading/persona.py
+R100	aletheia/trading/persona_rollout.py	core/aletheia/trading/persona_rollout.py
+R100	aletheia/trading/playbooks.py	core/aletheia/trading/playbooks.py
+R100	aletheia/trading/serenity_evidence.py	core/aletheia/trading/serenity_evidence.py
+R078	aletheia/trading/serenity_publication.py	core/aletheia/trading/serenity_publication.py
+R100	aletheia/trading/serenity_scoring.py	core/aletheia/trading/serenity_scoring.py
+R100	aletheia/trading/sizing.py	core/aletheia/trading/sizing.py
+R100	aletheia/trading/sizing_policy.py	core/aletheia/trading/sizing_policy.py
+R100	aletheia/trading/strategy_lifecycle.py	core/aletheia/trading/strategy_lifecycle.py
+R100	aletheia/trading/technical_analysis.py	core/aletheia/trading/technical_analysis.py
+R100	aletheia/trading/technical_snapshot_service.py	core/aletheia/trading/technical_snapshot_service.py
+R100	aletheia/trading/trade_motivation.py	core/aletheia/trading/trade_motivation.py
+R100	aletheia/trading/trading_mandate.py	core/aletheia/trading/trading_mandate.py
+R100	aletheia/trading/trigger_specs.py	core/aletheia/trading/trigger_specs.py
+R100	aletheia/trust/__init__.py	core/aletheia/trust/__init__.py
+R100	aletheia/trust/behavior_authority.py	core/aletheia/trust/behavior_authority.py
+R097	aletheia/trust/live_unlock.py	core/aletheia/trust/live_unlock.py
+R100	aletheia/universe/__init__.py	core/aletheia/universe/__init__.py
+R100	aletheia/universe/allocator.py	core/aletheia/universe/allocator.py
+R100	aletheia/universe/baseline_integrity.py	core/aletheia/universe/baseline_integrity.py
+R100	aletheia/universe/candidate_eligibility.py	core/aletheia/universe/candidate_eligibility.py
+R100	aletheia/universe/candidate_funding.py	core/aletheia/universe/candidate_funding.py
+R100	aletheia/universe/candidate_opportunity.py	core/aletheia/universe/candidate_opportunity.py
+R100	aletheia/universe/candidate_selection_authority.py	core/aletheia/universe/candidate_selection_authority.py
+R100	aletheia/universe/candidate_selection_evaluation.py	core/aletheia/universe/candidate_selection_evaluation.py
+R100	aletheia/universe/candidate_selection_shadow.py	core/aletheia/universe/candidate_selection_shadow.py
+R100	aletheia/universe/candidate_selection_utility.py	core/aletheia/universe/candidate_selection_utility.py
+R100	aletheia/universe/continuous_scoring.py	core/aletheia/universe/continuous_scoring.py
+R100	aletheia/universe/discovery_benchmark.py	core/aletheia/universe/discovery_benchmark.py
+R100	aletheia/universe/economic_utility.py	core/aletheia/universe/economic_utility.py
+A	core/aletheia/universe/fast_stream.py
+R100	aletheia/universe/fast_trigger.py	core/aletheia/universe/fast_trigger.py
+R075	aletheia/universe/features.py	core/aletheia/universe/features.py
+R100	aletheia/universe/filter_advisor.py	core/aletheia/universe/filter_advisor.py
+R100	aletheia/universe/filter_outcome_recorder.py	core/aletheia/universe/filter_outcome_recorder.py
+R100	aletheia/universe/filters.py	core/aletheia/universe/filters.py
+R100	aletheia/universe/funding_units.py	core/aletheia/universe/funding_units.py
+R100	aletheia/universe/market_structure.py	core/aletheia/universe/market_structure.py
+R100	aletheia/universe/opportunity_evidence.py	core/aletheia/universe/opportunity_evidence.py
+R100	aletheia/universe/outcome_economics.py	core/aletheia/universe/outcome_economics.py
+R099	aletheia/universe/outcome_recorder.py	core/aletheia/universe/outcome_recorder.py
+A	core/aletheia/universe/registry.py
+R100	aletheia/universe/relative_rank_evaluation.py	core/aletheia/universe/relative_rank_evaluation.py
+R100	aletheia/universe/relative_rank_experiment.py	core/aletheia/universe/relative_rank_experiment.py
+R100	aletheia/universe/relative_rank_persistence.py	core/aletheia/universe/relative_rank_persistence.py
+R100	aletheia/universe/relative_rank_shadow.py	core/aletheia/universe/relative_rank_shadow.py
+R100	aletheia/universe/scanners.py	core/aletheia/universe/scanners.py
+R100	aletheia/universe/service.py	core/aletheia/universe/service.py
+R100	aletheia/universe/snapshot_freshness.py	core/aletheia/universe/snapshot_freshness.py
+R100	aletheia/universe/twin_allocation.py	core/aletheia/universe/twin_allocation.py
+R100	aletheia/universe/twin_evaluation.py	core/aletheia/universe/twin_evaluation.py
+R100	aletheia/universe/twin_experiment.py	core/aletheia/universe/twin_experiment.py
+R100	aletheia/universe/twin_persistence.py	core/aletheia/universe/twin_persistence.py
+R100	aletheia/universe/twin_scoring.py	core/aletheia/universe/twin_scoring.py
+R100	aletheia/update/__init__.py	core/aletheia/update/__init__.py
+R099	aletheia/update/applier.py	core/aletheia/update/applier.py
+R098	aletheia/update/auto.py	core/aletheia/update/auto.py
+R100	aletheia/update/bootstrap.py	core/aletheia/update/bootstrap.py
+R100	aletheia/update/continuity.py	core/aletheia/update/continuity.py
+R096	aletheia/update/git_ops.py	core/aletheia/update/git_ops.py
+R100	aletheia/update/packaged.py	core/aletheia/update/packaged.py
+R100	aletheia/update/packaged_commands.py	core/aletheia/update/packaged_commands.py
+R100	aletheia/update/process_env.py	core/aletheia/update/process_env.py
+R100	aletheia/update/smoke.py	core/aletheia/update/smoke.py
+R095	aletheia/update/target_fresh.py	core/aletheia/update/target_fresh.py
+R083	aletheia/uta/__init__.py	core/aletheia/uta/__init__.py
+R100	aletheia/uta/compat.py	core/aletheia/uta/compat.py
+R100	aletheia/uta/contract.py	core/aletheia/uta/contract.py
+R100	aletheia/uta/errors.py	core/aletheia/uta/errors.py
+R054	aletheia/uta/funding.py	core/aletheia/uta/funding.py
+R054	aletheia/uta/manager.py	core/aletheia/uta/manager.py
+R098	aletheia/uta/models.py	core/aletheia/uta/models.py
+R100	aletheia/uta/registry.py	core/aletheia/uta/registry.py
+R100	aletheia/server/routes/__init__.py	core/aletheia/utils/__init__.py
+R100	aletheia/utils/dt.py	core/aletheia/utils/dt.py
+M	docs/design/architecture/ARCHITECTURE.md
+M	docs/design/architecture/SYSTEM_MAP.md
+M	docs/design/contracts/execution_contract.md
+M	docs/design/contracts/learning_contract.md
+M	docs/design/contracts/risk_engine_contract.md
+M	docs/design/contracts/serenity_contract.md
+M	docs/design/data/RETENTION_POLICY.md
+M	docs/design/data/RETENTION_WRITE_GUARDRAILS_TODO.md
+M	docs/design/data/data_utilization.md
+M	docs/design/frontend/overview_redesign.md
+A	docs/design/history/RECONCILIATION_ABSENCE_RESOLVER_RETIREMENT.md
+A	docs/design/history/equity_metadata_alias.md
+A	docs/design/history/flow_cli_alias.md
+A	docs/design/history/gateway_symbol_cache_aliases.md
+A	docs/design/history/model_cli_configuration.md
+A	docs/design/history/native_funding_readers.md
+A	docs/design/history/observed_stocks_settings_control.md
+A	docs/design/history/observed_xstocks_settings_write.md
+A	docs/design/history/permission_cli.md
+A	docs/design/history/secrets_cli_reads.md
+M	docs/design/market-systems/EQUITY_INTEGRATION_DESIGN.md
+M	docs/design/proposals/unified_trading_account.md
+M	docs/governance/policies/trust_and_change_control.md
+M	docs/governance/policies/trust_boundaries.yaml
+M	docs/operations/deployment/DEPLOYMENT.md
+M	docs/operations/development/DEVELOPMENT_PREVIEW.md
+M	docs/operations/development/PYTEST_OPTIMIZATION_GUIDE.md
+M	docs/operations/development/TRUST_BOUNDARY_COVERAGE.md
+M	docs/operations/development/agent-guides/SAFETY_AND_TRUST.md
+M	docs/operations/packaged-runtime-power-optimization-report.md
+M	docs/operations/records/evidence-3031/baseline_probes.py
+M	docs/operations/runbooks/OPPORTUNITY_LIFECYCLE_CLI.md
+M	docs/operations/runbooks/RUNBOOK.md
+M	docs/product/capability-integrity/CAPABILITY_INVENTORY.md
+M	docs/research/audits/SLIM_CORE_OWNERS_2026-09-13.md
+M	docs/research/audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md
+A	extensions/__init__.py
+A	extensions/coinalyze/__init__.py
+R096	aletheia/data/collectors/coinalyze.py	extensions/coinalyze/collector.py
+A	extensions/coingecko/__init__.py
+R100	aletheia/data/sources/coingecko.py	extensions/coingecko/market_data.py
+R100	aletheia/data/collectors/coingecko_top.py	extensions/coingecko/top.py
+A	extensions/defillama/__init__.py
+R100	aletheia/data/collectors/defillama.py	extensions/defillama/collector.py
+A	extensions/deribit/__init__.py
+R099	aletheia/data/collectors/options_structure.py	extensions/deribit/options_structure.py
+R086	aletheia/data/options_volatility.py	extensions/deribit/volatility.py
+R100	aletheia/storage/__init__.py	extensions/exchanges/__init__.py
+R100	aletheia/exchanges/binance/__init__.py	extensions/exchanges/binance/__init__.py
+R086	aletheia/exchanges/binance/client.py	extensions/exchanges/binance/client.py
+A	extensions/exchanges/binance/comparison.py
+A	extensions/exchanges/binance/derivatives_metadata.py
+R054	aletheia/universe/fast_stream.py	extensions/exchanges/binance/fast_stream.py
+A	extensions/exchanges/binance/funding.py
+A	extensions/exchanges/binance/instrument_background.py
+A	extensions/exchanges/binance/market_taker.py
+A	extensions/exchanges/binance/positioning.py
+R097	aletheia/uta/profiles/binance.py	extensions/exchanges/binance/profile.py
+R099	aletheia/data/sources/binance_public.py	extensions/exchanges/binance/public_market_data.py
+R100	aletheia/telegram/__init__.py	extensions/exchanges/bitget/__init__.py
+R100	aletheia/exchanges/bitget/auth.py	extensions/exchanges/bitget/auth.py
+R095	aletheia/exchanges/bitget/client.py	extensions/exchanges/bitget/client.py
+A	extensions/exchanges/bitget/extension.py
+A	extensions/exchanges/bitget/fast_stream.py
+A	extensions/exchanges/bitget/funding.py
+A	extensions/exchanges/bitget/instrument_background.py
+A	extensions/exchanges/bitget/market_funding.py
+R098	aletheia/uta/profiles/bitget.py	extensions/exchanges/bitget/profile.py
+A	extensions/exchanges/bitget/profile_config.py
+A	extensions/exchanges/ccxt/__init__.py
+R097	aletheia/uta/ccxt_adapter.py	extensions/exchanges/ccxt/adapter.py
+A	extensions/exchanges/ccxt/derivatives_metadata.py
+A	extensions/exchanges/ccxt/market_capabilities.py
+A	extensions/exchanges/ccxt/market_data.py
+A	extensions/exchanges/ccxt/order_constraints.py
+A	extensions/exchanges/ccxt/orderbook.py
+A	extensions/exchanges/ccxt/profiles/__init__.py
+R099	aletheia/uta/profiles/base.py	extensions/exchanges/ccxt/profiles/base.py
+A	extensions/exchanges/ccxt/registry_catalog.py
+A	extensions/exchanges/ccxt/tickers.py
+A	extensions/exchanges/composition.py
+R100	aletheia/exchanges/okx/__init__.py	extensions/exchanges/okx/__init__.py
+R085	aletheia/exchanges/okx/client.py	extensions/exchanges/okx/client.py
+A	extensions/exchanges/okx/derivatives_metadata.py
+A	extensions/exchanges/okx/funding.py
+A	extensions/exchanges/okx/instrument_background.py
+A	extensions/exchanges/okx/market_capabilities.py
+A	extensions/exchanges/okx/market_taker.py
+R097	aletheia/uta/profiles/okx.py	extensions/exchanges/okx/profile.py
+R100	aletheia/exchanges/submission_errors.py	extensions/exchanges/submission_errors.py
+A	extensions/fred/__init__.py
+A	extensions/fred/collector.py
+A	extensions/hyperliquid/__init__.py
+R091	aletheia/data/collectors/hyperliquid.py	extensions/hyperliquid/collector.py
+A	extensions/learning/__init__.py
+R059	aletheia/analytics/confidence_calibration.py	extensions/learning/confidence_calibration.py
+R099	aletheia/agents/dreaming_agent.py	extensions/learning/dreaming_agent.py
+R066	aletheia/analytics/insight_synthesizer.py	extensions/learning/insight_synthesizer.py
+R090	aletheia/agents/lesson_reviewer.py	extensions/learning/lesson_reviewer.py
+R091	aletheia/analytics/memo_effectiveness.py	extensions/learning/memo_effectiveness.py
+R098	aletheia/agents/post_trade_reviewer.py	extensions/learning/post_trade_reviewer.py
+R075	aletheia/analytics/reasoning_feedback.py	extensions/learning/reasoning_feedback.py
+R099	aletheia/analytics/trade_case_builder.py	extensions/learning/trade_case_builder.py
+A	extensions/macro/__init__.py
+R066	aletheia/data/collectors/macro.py	extensions/macro/collector.py
+A	extensions/market_data.py
+A	extensions/model_endpoints/__init__.py
+R090	aletheia/model_provider/anthropic_compatible.py	extensions/model_endpoints/anthropic_compatible.py
+R095	aletheia/model_provider/openai_compatible.py	extensions/model_endpoints/openai_compatible.py
+A	extensions/news/__init__.py
+R097	aletheia/data/news_analyzer.py	extensions/news/analyzer.py
+R094	aletheia/server/routes/news.py	extensions/news/api.py
+R100	aletheia/data/news_collector.py	extensions/news/collector.py
+A	extensions/observation/__init__.py
+R078	aletheia/agents/equity_observer.py	extensions/observation/equity_observer.py
+A	extensions/prediction/__init__.py
+R097	aletheia/server/routes/prediction.py	extensions/prediction/api.py
+R098	aletheia/agents/prediction_observer.py	extensions/prediction/observer.py
+R085	aletheia/data/polymarket_provider.py	extensions/prediction/polymarket.py
+A	extensions/research/__init__.py
+R098	aletheia/agents/research_agent.py	extensions/research/research_agent.py
+A	extensions/serenity/__init__.py
+R087	aletheia/agents/research_worker.py	extensions/serenity/research_worker.py
+A	extensions/telegram/__init__.py
+R056	aletheia/telegram/bot.py	extensions/telegram/bot.py
+R064	aletheia/server/routes/telegram.py	extensions/telegram/health.py
+A	extensions/volume_scanner/__init__.py
+R094	aletheia/data/collectors/volume_scanner.py	extensions/volume_scanner/collector.py
+A	extensions/yahoo/__init__.py
+A	extensions/yahoo/market_data.py
+M	frontend/scripts/check-performance.mjs
+M	frontend/scripts/compress-assets.mjs
+M	frontend/scripts/generate-api-types.mjs
+M	frontend/src/api/client.ts
+M	frontend/src/api/generated/api.d.ts
+M	frontend/src/api/generated/settings.d.ts
+M	frontend/src/features/settings/model-providers/ModelProvidersSection.test.tsx
+M	frontend/src/features/settings/model-providers/ModelProvidersSection.tsx
+M	frontend/src/features/settings/settingsSwitchNames.test.ts
+M	frontend/src/features/settings/tabs/AdvancedTab.tsx
+M	frontend/src/features/settings/tabs/SignalsTab.test.tsx
+M	frontend/src/features/settings/tabs/SignalsTab.tsx
+M	frontend/vite.config.ts
+R099	aletheia/maintenance/data_retention_backfill.py	ops/maintenance/data_retention_backfill.py
+A	ops/maintenance/database_compaction.py
+A	ops/maintenance/outcome_integrity.py
+R098	aletheia/maintenance/repair_administrative_close.py	ops/maintenance/repair_administrative_close.py
+R098	aletheia/maintenance/repair_doge_adoption_overlap.py	ops/maintenance/repair_doge_adoption_overlap.py
+A	ops/maintenance/settlement_requeue.py
+M	packaging/pyinstaller/aletheia-core.spec
+M	pyproject.toml
+M	release-please-config.json
+M	scripts/check_docs.py
+M	scripts/ci_plan.py
+M	scripts/ci_yield.py
+M	scripts/coverage_floors.py
+M	scripts/dev/dev-init.sh
+M	scripts/release/build_bundle.py
+M	scripts/release/build_packaged_runtime.py
+M	scripts/runtime/start-release.sh
+M	scripts/watch_backend.py
+A	tests/broker_funding_fixture.py
+M	tests/conftest.py
+M	tests/e2e/test_exchange_funding_golden_path.py
+M	tests/e2e/test_pipeline_antihallucination_chain.py
+M	tests/e2e/test_pipeline_exchange_entry_to_position.py
+M	tests/e2e/test_pipeline_universe_outcome.py
+M	tests/fill_reports.py
+A	tests/market_data.py
+M	tests/model_http.py
+M	tests/risk_trade_fixture.py
+M	tests/specs/spec_active_runtime_scope.py
+M	tests/specs/spec_agent_contracts.py
+M	tests/specs/spec_analytics_contracts.py
+M	tests/specs/spec_api_reference.py
+M	tests/specs/spec_audit_chain.py
+M	tests/specs/spec_broker_funding_settlement.py
+M	tests/specs/spec_candidate_selection_utility.py
+M	tests/specs/spec_data_layer.py
+M	tests/specs/spec_data_model.py
+M	tests/specs/spec_data_utilization.py
+M	tests/specs/spec_defillama.py
+M	tests/specs/spec_entry_plan_contract.py
+M	tests/specs/spec_equity_observer.py
+M	tests/specs/spec_execution.py
+M	tests/specs/spec_filter_evidence.py
+M	tests/specs/spec_gateway_stability.py
+M	tests/specs/spec_hyperliquid.py
+M	tests/specs/spec_insight_feedback_loop.py
+M	tests/specs/spec_kill_conditions.py
+M	tests/specs/spec_knowledge_fts.py
+M	tests/specs/spec_learning_attribution.py
+M	tests/specs/spec_learning_authority.py
+M	tests/specs/spec_learning_contribution.py
+M	tests/specs/spec_learning_final_consumers.py
+M	tests/specs/spec_learning_pipeline.py
+M	tests/specs/spec_learning_registry.py
+M	tests/specs/spec_live_unlock.py
+M	tests/specs/spec_llm_inference_harness.py
+M	tests/specs/spec_macro_signals.py
+M	tests/specs/spec_market_structure.py
+M	tests/specs/spec_market_type_dedup.py
+M	tests/specs/spec_model_routing.py
+M	tests/specs/spec_network_egress.py
+M	tests/specs/spec_observation_experiment_ownership.py
+M	tests/specs/spec_operator_contract_parity.py
+M	tests/specs/spec_operator_loop.py
+M	tests/specs/spec_opportunity_information_integrity_p1.py
+M	tests/specs/spec_opportunity_outcomes.py
+M	tests/specs/spec_outcome_integrity.py
+M	tests/specs/spec_persistence.py
+M	tests/specs/spec_pi_decision_chain.py
+M	tests/specs/spec_pipeline_adopted_position.py
+M	tests/specs/spec_pipeline_bitget_preset_protection.py
+M	tests/specs/spec_pipeline_entry_enrichment.py
+M	tests/specs/spec_pipeline_exchange_materialization.py
+M	tests/specs/spec_pipeline_historical_chain_recovery.py
+M	tests/specs/spec_pipeline_live_unlock.py
+M	tests/specs/spec_pipeline_market_data.py
+M	tests/specs/spec_pipeline_middle_state_integrity.py
+M	tests/specs/spec_pipeline_multibroker_reconciliation.py
+M	tests/specs/spec_pipeline_outcome_feedback.py
+M	tests/specs/spec_pipeline_position_manager.py
+M	tests/specs/spec_pipeline_risk_execution_integrity.py
+M	tests/specs/spec_pipeline_risk_gate.py
+M	tests/specs/spec_pipeline_stop_propagation.py
+M	tests/specs/spec_pipeline_tpsl_private_materialization.py
+M	tests/specs/spec_risk_engine.py
+M	tests/specs/spec_serenity_attribution.py
+M	tests/specs/spec_serenity_evidence.py
+M	tests/specs/spec_serenity_multi_lens.py
+M	tests/specs/spec_serenity_promote.py
+M	tests/specs/spec_serenity_researchability.py
+M	tests/specs/spec_serenity_verdict.py
+M	tests/specs/spec_serenity_xstock_execution.py
+M	tests/specs/spec_spot_parity.py
+M	tests/specs/spec_subsystem_observers.py
+M	tests/specs/spec_trading_mandate.py
+M	tests/specs/spec_universe_distribution_audit.py
+M	tests/specs/spec_universe_pipeline.py
+M	tests/specs/spec_uta_boundary.py
+M	tests/test_acceptance.py
+M	tests/test_active_ohlcv_backfill.py
+M	tests/test_agent_run_artifacts.py
+M	tests/test_agent_runtime.py
+M	tests/test_agent_shell.py
+M	tests/test_alpha_attribution.py
+M	tests/test_architecture_fitness.py
+M	tests/test_attribution.py
+M	tests/test_auto_update.py
+M	tests/test_bitget.py
+M	tests/test_bitget_adapter.py
+M	tests/test_bitget_broker.py
+M	tests/test_bitget_profile.py
+M	tests/test_bitget_uta_v3_switch.py
+M	tests/test_broker_funding_economics.py
+M	tests/test_candidate_coverage_counts.py
+M	tests/test_candidate_funding.py
+M	tests/test_candidate_opportunity_persistence.py
+M	tests/test_candidate_selection_utility.py
+M	tests/test_case_builder_errors_visible.py
+M	tests/test_ccxt_provider_async_persistence.py
+M	tests/test_ccxt_provider_factory.py
+M	tests/test_change_contract_check.py
+M	tests/test_ci_plan.py
+M	tests/test_ci_preflight.py
+M	tests/test_cli.py
+M	tests/test_cli_install.py
+M	tests/test_client_partial_fill.py
+M	tests/test_clipped_close.py
+M	tests/test_coingecko_top_collector.py
+M	tests/test_collector_health.py
+M	tests/test_confidence_calibration.py
+M	tests/test_config_routes.py
+M	tests/test_connectivity.py
+M	tests/test_cr_ex01_reconcile.py
+M	tests/test_crypto_fallback.py
+M	tests/test_data_collectors.py
+M	tests/test_data_collectors_integration.py
+M	tests/test_data_provider_and_async_fixes.py
+M	tests/test_database_capacity.py
+M	tests/test_database_capacity_cli.py
+M	tests/test_debate_impact_audit.py
+M	tests/test_demo_trading.py
+M	tests/test_derivatives_collector.py
+M	tests/test_derivatives_comparison.py
+M	tests/test_derivatives_facts_contract.py
+M	tests/test_derivatives_readiness.py
+M	tests/test_derivatives_semantics.py
+M	tests/test_diagnostics_honesty_fixes.py
+M	tests/test_docs_cli_consistency.py
+M	tests/test_doctor.py
+M	tests/test_doctor_content_probes.py
+M	tests/test_dreaming_ledger.py
+M	tests/test_dynamic_instruments_market_type.py
+M	tests/test_entry_activation.py
+M	tests/test_entry_exit_geometry.py
+M	tests/test_entry_logic.py
+M	tests/test_entry_plan_execution.py
+M	tests/test_entry_planner.py
+M	tests/test_ex04_live_authorization.py
+M	tests/test_exchange_submission_integrity.py
+M	tests/test_exec_d_recovery.py
+M	tests/test_execution_mode_identity.py
+M	tests/test_exit_intent_wiring.py
+M	tests/test_experience_loop.py
+M	tests/test_fill_materialization.py
+M	tests/test_frontdoor.py
+M	tests/test_frontend_build_config.py
+M	tests/test_frontend_ci_build_contract.py
+M	tests/test_gateway_order_constraints.py
+M	tests/test_guard_impact_audit.py
+M	tests/test_health.py
+M	tests/test_high_backup_security.py
+M	tests/test_high_w2b_positions.py
+M	tests/test_high_w2c_operator.py
+M	tests/test_history_downloader.py
+M	tests/test_instrument_aware_collectors.py
+A	tests/test_instrument_background_adapters.py
+M	tests/test_io_honesty_fixes.py
+M	tests/test_knowledge.py
+M	tests/test_learning_analytics_fixes.py
+M	tests/test_learning_contamination_fixes.py
+M	tests/test_learning_inheritance.py
+M	tests/test_live_gate.py
+M	tests/test_live_unlock_trust.py
+M	tests/test_local_release_session.py
+M	tests/test_macos_packaged_app.py
+M	tests/test_macos_release_runtime.py
+M	tests/test_macro_collector.py
+M	tests/test_macro_liquidity.py
+M	tests/test_macro_source_time.py
+M	tests/test_manual_close_route.py
+M	tests/test_market_context.py
+M	tests/test_market_data_venue_health.py
+M	tests/test_market_observer_batch_prefetch.py
+M	tests/test_market_observer_integration.py
+M	tests/test_market_observer_logging.py
+M	tests/test_market_observer_valid_until.py
+M	tests/test_market_routes.py
+M	tests/test_market_structure.py
+M	tests/test_microstructure_collector.py
+M	tests/test_migration_fast_path.py
+M	tests/test_model_catalogue_health.py
+M	tests/test_model_profiles.py
+M	tests/test_model_provider.py
+M	tests/test_model_sdk_transport.py
+M	tests/test_news_integrity.py
+M	tests/test_notifications.py
+M	tests/test_observation_canonical_bridge.py
+M	tests/test_oco_reconcile.py
+M	tests/test_ohlcv_provider_boundary.py
+M	tests/test_okx_broker.py
+M	tests/test_openapi_export.py
+M	tests/test_opportunity_attribution_integrity.py
+M	tests/test_opportunity_flow_ledger.py
+M	tests/test_options_structure_gamma_flip.py
+M	tests/test_options_volatility.py
+M	tests/test_order_constraints.py
+M	tests/test_outcome_closure.py
+M	tests/test_outcome_consumers.py
+M	tests/test_outcome_history_remediation.py
+M	tests/test_outcome_reporting.py
+M	tests/test_overview_layout.py
+M	tests/test_packaged_runtime_contract.py
+M	tests/test_packaged_update.py
+M	tests/test_performance_storage_batches.py
+A	tests/test_polymarket_provider.py
+M	tests/test_position_reconciler.py
+M	tests/test_position_update_ownership.py
+M	tests/test_positioning_evidence.py
+M	tests/test_post_trade_reviewer_outcomes.py
+M	tests/test_prediction_history.py
+M	tests/test_prediction_manual_admission.py
+M	tests/test_prediction_refresh.py
+M	tests/test_price_feed.py
+M	tests/test_profitability_execution_mode_scope.py
+M	tests/test_proposals_approval_ui.py
+M	tests/test_pydantic_v2_serialization_invariants.py
+M	tests/test_reconciliation.py
+M	tests/test_reconciliation_properties.py
+M	tests/test_registry_whitelist.py
+M	tests/test_release_bundle.py
+M	tests/test_release_version_contract.py
+M	tests/test_remote_control_network.py
+M	tests/test_repair_administrative_close.py
+M	tests/test_repair_doge_adoption_overlap.py
+M	tests/test_retention_backfill.py
+M	tests/test_retired_execution_surfaces.py
+M	tests/test_retired_model_providers.py
+M	tests/test_risk_checks_full.py
+M	tests/test_risk_engine.py
+M	tests/test_route_threadpool_boundaries.py
+M	tests/test_runtime.py
+M	tests/test_runtime_home_contract.py
+M	tests/test_scheduler_runtime_facts.py
+M	tests/test_scheduler_timeouts.py
+M	tests/test_secrets.py
+M	tests/test_secrets_cli.py
+M	tests/test_security.py
+M	tests/test_serenity_p0_p3_e2e.py
+M	tests/test_serenity_scheduler_continuity.py
+M	tests/test_serenity_workbench.py
+M	tests/test_set_leverage.py
+M	tests/test_settings_concurrency.py
+M	tests/test_settings_honesty.py
+M	tests/test_settlement_deferral.py
+M	tests/test_sizing_trace_audit.py
+M	tests/test_startup_behavior_gate.py
+M	tests/test_stock_linked_attribution.py
+M	tests/test_structured_json_routing.py
+M	tests/test_supervisor.py
+M	tests/test_telegram.py
+M	tests/test_thesis_lineage.py
+M	tests/test_three_gaps.py
+M	tests/test_tpsl.py
+M	tests/test_trade_case_builder.py
+M	tests/test_trade_funnel_audit.py
+M	tests/test_tunnel_auth_agent_runs.py
+M	tests/test_ui_bootstrap.py
+M	tests/test_universe_fast_trigger.py
+M	tests/test_universe_features.py
+M	tests/test_universe_integration.py
+M	tests/test_universe_outcome_economics.py
+M	tests/test_universe_service.py
+M	tests/test_update.py
+M	tests/test_update_applier.py
+M	tests/test_update_target_freshness.py
+M	tests/test_venue_listing_cache.py
+M	tests/test_vergex_utilization_completion.py
+M	tests/test_verified_exit.py
+M	tests/test_windows_dogfood.py
+M	tests/test_xstocks_observer.py
+M	tests/uta/test_ccxt_adapter.py
+M	tests/uta/test_execution_coordinator.py
+M	tests/uta/test_manager.py

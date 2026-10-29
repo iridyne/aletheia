@@ -1,0 +1,24 @@
++ 454849ef3793b04d1806119df41c49f54e7b434d refactor(core): use registered execution environment for protection
++ b1cfd7a7573af925520c85b86c1d043dc3e7cb58 test: align adoption fixtures with active execution identity
++ c3dc36ebce292d222ab172c4af3f37d85906c403 test(architecture): enforce Slim Core ownership boundaries
++ 880415e1b733ccb0b24007fdac33893eec0f28b7 refactor(layout): split Core from Extensions
++ 3c46fa2b7f857dd3f2a0af8a222932d3459a9dea test(uta): cover converged exchange boundary
++ 83cd67361d963ae09b1a2433039ba0e35e0e0b9c test(specs): align executable contracts with Slim Core
++ 5c013936ae0d6a2db44805e38272465aa4dbb29f test(regression): relocate focused Slim Core coverage
++ e2e4c9c9c203c88c4ed7fdf20df7cc3909b3f001 chore(dev): follow the Core source root
++ f7665bba6a4fb10208ea4ecb8cf814378cb60d9d docs(product): state the active Slim Product surface
++ 0fa688bdda7d0f1d3a5670611e41d4e8f4046379 docs(contracts): bind Slim Core authority semantics
++ 1d08b8dd29a7301b691597c6d31c2c2d4a2e62ab docs(trust): record Core and Extension authority
++ 53b1ff1e349f9c72953cf41fb37bbd998210bcc1 docs(history): archive retired authority surfaces
++ 3f8994b3f7e3687692a55c5de67a9ad0a7eeeee1 docs(layout): follow relocated capability owners
++ 29c332ab89ab24d75ed1d2732a200c2655f7e677 docs(audit): record Slim Core ownership evidence
++ fdcb3157b1a0e54c169edb0fab98be6a7f47110a fix(settings): expose canonical Slim Product fields
++ f06254f782cd7da9bfdae4e9a2a13a8e67263695 chore(frontend): target the Core static root
++ 2125cd9f49b5c377b6253ae84e48ced03617a36e refactor(storage): centralize Fill mutation
++ 69e39dc126cc6f0d04fdbdc426a0a25e1331f25a chore(runtime): follow the relocated package root
++ 6286e3041ddd8341e55069f17fd6cbdaf23753c8 test(frontend): restore final-head consistency
++ 3db575da3fbc53cbae12d4c794b604b6b4750cd3 test(risk): seed exact venue snapshots
++ 928a6eb8cc4b24177593dfa53c5b18f9d45693e4 chore(layout): complete relocated runtime paths
++ dbb7685b67a1c875fa6a6b4dcf16b368b8d26b87 test(layout): follow current capability owners
++ aa9cd3b6c33b289aa7e0c1385f5168c15fd21a0a test(specs): restore conformance registry
++ ee62856e96af12968915529ed3fac2992c794b14 test(candidate): preserve bootstrap fixture coverage

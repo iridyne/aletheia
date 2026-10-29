@@ -1,0 +1,1050 @@
+ .coveragerc                                        |   22 +-
+ .gitignore                                         |    6 +-
+ AGENTS.md                                          |  106 +-
+ README.md                                          |   93 +-
+ aletheia/cli/alpha.py                              |   25 -
+ aletheia/cli/flow.py                               |   45 -
+ aletheia/cli/funnel.py                             |   26 -
+ aletheia/cli/permission.py                         |   36 -
+ aletheia/cli/secrets_cmd.py                        |   86 -
+ aletheia/cli/sizing.py                             |   26 -
+ aletheia/data/ccxt_provider.py                     |  888 --------
+ aletheia/data/collectors/derivatives.py            |  705 ------
+ aletheia/data/yfinance_provider.py                 |   87 -
+ aletheia/exchanges/bitget/native_protection.py     |   41 -
+ aletheia/exchanges/bitget/profile_config.py        |   29 -
+ aletheia/learning/outcome_feedback.py              |  119 -
+ aletheia/learning/risk_evidence.py                 |   35 -
+ aletheia/learning/sizing_evidence.py               |   71 -
+ aletheia/main.py                                   |  291 ---
+ aletheia/maintenance/outcome_integrity.py          |  282 ---
+ aletheia/maintenance/settlement_requeue.py         |  122 -
+ aletheia/model_provider/credential_cli.py          |   71 -
+ aletheia/model_provider/credential_routes.py       |  681 ------
+ aletheia/model_provider/http_runtime.py            |  136 --
+ aletheia/server/routes/bitget.py                   |   78 -
+ aletheia/server/routes/model.py                    |  499 ----
+ aletheia/trading/entry_learning.py                 |  148 --
+ aletheia/trust/learning_safety.py                  |   37 -
+ aletheia/universe/registry.py                      |  216 --
+ aletheia/utils/__init__.py                         |    0
+ {aletheia => core/aletheia}/__init__.py            |    0
+ {aletheia => core/aletheia}/_gateway_runner.py     |    8 +-
+ .../aletheia}/agent_runtime/__init__.py            |    0
+ .../aletheia}/agent_runtime/auto_resume.py         |    0
+ .../aletheia}/agent_runtime/build_info.py          |    0
+ .../aletheia}/agent_runtime/connectivity.py        |   78 +-
+ .../aletheia}/agent_runtime/fast_trigger_watch.py  |    0
+ .../aletheia}/agent_runtime/health.py              |    0
+ .../aletheia}/agent_runtime/job_queue.py           |    0
+ .../aletheia}/agent_runtime/orchestrator.py        |    0
+ .../aletheia}/agent_runtime/pause_ownership.py     |    0
+ .../aletheia}/agent_runtime/permissions.py         |    0
+ .../aletheia}/agent_runtime/pi_daemon.py           |    0
+ .../aletheia}/agent_runtime/resume_gate.py         |    0
+ .../aletheia}/agent_runtime/run_context.py         |    0
+ .../aletheia}/agent_runtime/run_logger.py          |    0
+ .../aletheia}/agent_runtime/run_view.py            |    0
+ .../aletheia}/agent_runtime/runtime_session.py     |    2 +-
+ .../aletheia}/agent_runtime/scheduler.py           |  396 +++-
+ .../aletheia}/agent_runtime/stability_monitor.py   |    0
+ .../agent_runtime/startup_behavior_gate.py         |   28 +-
+ .../aletheia}/agent_runtime/startup_gate.py        |   12 +-
+ .../aletheia}/agent_runtime/tool_registry.py       |    0
+ .../aletheia}/agent_runtime/wake_events.py         |    0
+ .../aletheia}/agent_shell/__init__.py              |    0
+ {aletheia => core/aletheia}/agent_shell/audit.py   |    0
+ .../aletheia}/agent_shell/b2_evidence_policy.py    |    0
+ .../aletheia}/agent_shell/commands.py              |    0
+ .../aletheia}/agent_shell/compaction.py            |    0
+ {aletheia => core/aletheia}/agent_shell/context.py |    0
+ .../aletheia}/agent_shell/entry_planner.py         |    6 +-
+ .../aletheia}/agent_shell/executor.py              |    0
+ .../aletheia}/agent_shell/file_artifacts.py        |    0
+ {aletheia => core/aletheia}/agent_shell/intent.py  |    0
+ .../aletheia}/agent_shell/leverage_policy.py       |    0
+ .../aletheia}/agent_shell/operator_loop.py         |    0
+ .../agent_shell/operator_recommendations.py        |    0
+ .../aletheia}/agent_shell/operator_store.py        |    0
+ .../aletheia}/agent_shell/permissions.py           |    0
+ .../aletheia}/agent_shell/reflection.py            |    4 +-
+ .../aletheia}/agent_shell/registry.py              |    0
+ {aletheia => core/aletheia}/agent_shell/runtime.py |    0
+ .../aletheia}/agent_shell/sessions.py              |    0
+ .../aletheia}/agent_shell/skip_policy.py           |    0
+ .../aletheia}/agent_shell/synthesis.py             |    0
+ .../aletheia}/agent_shell/trading_context.py       |    0
+ .../aletheia}/agent_shell/vergex_policy.py         |    0
+ {aletheia => core/aletheia}/agents/__init__.py     |    0
+ .../aletheia}/agents/divergence_scanner.py         |    2 +-
+ {aletheia => core/aletheia}/agents/helpers.py      |   10 +-
+ .../aletheia}/agents/market_observer.py            |    2 +-
+ .../aletheia}/agents/portfolio_agent.py            |    0
+ {aletheia => core/aletheia}/agents/risk_critic.py  |    0
+ {aletheia => core/aletheia}/agents/round_robin.py  |    0
+ {aletheia => core/aletheia}/analytics/__init__.py  |    0
+ .../aletheia}/analytics/alpha_attribution.py       |    6 +-
+ .../aletheia}/analytics/attribution.py             |    0
+ .../aletheia}/analytics/candidate_facts.py         |    2 +-
+ .../aletheia}/analytics/candidate_supply.py        |    0
+ .../aletheia}/analytics/causal_controls.py         |    4 +-
+ .../aletheia}/analytics/close_reasons.py           |    0
+ core/aletheia/analytics/confidence_calibration.py  |  105 +
+ .../aletheia}/analytics/debate_impact.py           |    0
+ .../aletheia}/analytics/entry_exit_geometry.py     |    4 +-
+ .../aletheia}/analytics/execution_mode.py          |    0
+ .../aletheia}/analytics/exit_attribution.py        |    0
+ .../aletheia}/analytics/exit_breakeven_shadow.py   |    0
+ .../aletheia}/analytics/exit_driver_comparison.py  |    0
+ .../aletheia}/analytics/exit_policy_advisor.py     |    0
+ .../analytics/exit_trailing_qualification.py       |    0
+ .../aletheia}/analytics/factor_feedback.py         |    2 +-
+ .../aletheia}/analytics/family_scorecard.py        |    0
+ .../aletheia}/analytics/filter_controller.py       |    2 +-
+ .../aletheia}/analytics/filter_evidence.py         |    7 +-
+ .../aletheia}/analytics/filter_registry.py         |    0
+ .../aletheia}/analytics/go_live_scorecard.py       |    0
+ .../aletheia}/analytics/guard_effectiveness.py     |    2 +-
+ .../aletheia}/analytics/guard_impact.py            |    0
+ .../aletheia}/analytics/guard_promotion.py         |  159 +-
+ .../aletheia}/analytics/holding_time.py            |    2 -
+ core/aletheia/analytics/insight_synthesizer.py     |  209 ++
+ .../aletheia}/analytics/learning_window.py         |    0
+ core/aletheia/analytics/memo_effectiveness.py      |   28 +
+ .../analytics/momentum_geometry_replay.py          |    0
+ .../aletheia}/analytics/opportunity_flow.py        |    0
+ .../analytics/opportunity_lifecycle_story.py       |    0
+ .../aletheia}/analytics/opportunity_progress.py    |    0
+ .../aletheia}/analytics/outcome_integrity.py       |    0
+ .../aletheia}/analytics/outcome_semantics.py       |  119 +-
+ .../aletheia}/analytics/performance_summary.py     |    0
+ .../aletheia}/analytics/pi_evidence.py             |    0
+ .../analytics/position_lifecycle_story.py          |    0
+ .../analytics/position_path_observations.py        |    0
+ .../aletheia}/analytics/position_replay.py         |    0
+ .../aletheia}/analytics/profit_gradient.py         |    0
+ .../analytics/profit_gradient_estimators.py        |    0
+ .../analytics/profit_gradient_evidence.py          |    2 +-
+ .../analytics/profit_loop_counterfactual.py        |    0
+ .../aletheia}/analytics/profit_loop_diagnosis.py   |    2 +-
+ .../aletheia}/analytics/ranker_objective_audit.py  |    2 +-
+ core/aletheia/analytics/reasoning_feedback.py      |   58 +
+ .../aletheia}/analytics/sizing_counterfactual.py   |    0
+ .../aletheia}/analytics/sizing_trace.py            |   30 +-
+ .../aletheia}/analytics/skip_diagnosis.py          |    2 +-
+ {aletheia => core/aletheia}/analytics/streaks.py   |    0
+ {aletheia => core/aletheia}/analytics/temporal.py  |    0
+ .../aletheia}/analytics/thesis_lineage.py          |    0
+ .../aletheia}/analytics/trade_attribution.py       |    4 +-
+ .../aletheia}/analytics/trade_funnel.py            |    0
+ .../aletheia}/analytics/trade_insights.py          |    0
+ .../aletheia}/analytics/trade_path.py              |    0
+ .../aletheia}/analytics/trade_stats.py             |    0
+ .../analytics/trading_mandate_compliance.py        |    0
+ {aletheia => core/aletheia}/async_utils.py         |    0
+ {aletheia => core/aletheia}/backup/__init__.py     |    0
+ {aletheia => core/aletheia}/backup/restore.py      |    0
+ {aletheia => core/aletheia}/backup/service.py      |    0
+ {aletheia => core/aletheia}/backup/verify.py       |    0
+ {aletheia => core/aletheia}/cli/__init__.py        |    0
+ {aletheia => core/aletheia}/cli/audit_cmd.py       |    4 +-
+ {aletheia => core/aletheia}/cli/bitget_cmd.py      |    0
+ {aletheia => core/aletheia}/cli/control_cmd.py     |    0
+ {aletheia => core/aletheia}/cli/data_cmd.py        |   59 -
+ {aletheia => core/aletheia}/cli/dev.py             |    4 +-
+ {aletheia => core/aletheia}/cli/dev_seed.py        |    2 +-
+ {aletheia => core/aletheia}/cli/doctor_cmd.py      |    0
+ {aletheia => core/aletheia}/cli/evidence_cmd.py    |    0
+ {aletheia => core/aletheia}/cli/exchange_cmd.py    |    0
+ {aletheia => core/aletheia}/cli/gateway.py         |    0
+ {aletheia => core/aletheia}/cli/guard_cmd.py       |    0
+ {aletheia => core/aletheia}/cli/inspect_cmd.py     |    2 +-
+ {aletheia => core/aletheia}/cli/install.py         |    2 +-
+ {aletheia => core/aletheia}/cli/knowledge_cmd.py   |   18 -
+ {aletheia => core/aletheia}/cli/learning_cmd.py    |    0
+ .../aletheia}/cli/migration_progress.py            |    0
+ {aletheia => core/aletheia}/cli/model.py           |    0
+ {aletheia => core/aletheia}/cli/network_cmd.py     |    0
+ {aletheia => core/aletheia}/cli/observe_cmd.py     |    0
+ {aletheia => core/aletheia}/cli/operator.py        |    0
+ {aletheia => core/aletheia}/cli/opportunity.py     |   14 -
+ {aletheia => core/aletheia}/cli/risk_cmd.py        |    0
+ {aletheia => core/aletheia}/cli/runtime_cmd.py     |    0
+ core/aletheia/cli/secrets_cmd.py                   |   35 +
+ {aletheia => core/aletheia}/cli/thesis.py          |   16 -
+ {aletheia => core/aletheia}/cli/tunnel.py          |    0
+ {aletheia => core/aletheia}/cli/update_cmd.py      |    0
+ {aletheia => core/aletheia}/config/__init__.py     |    0
+ .../aletheia}/config/exchange_alignment.py         |    0
+ {aletheia => core/aletheia}/config/exchanges.py    |    6 +-
+ .../aletheia}/config/execution_costs.py            |    0
+ {aletheia => core/aletheia}/config/loader.py       |    2 +-
+ {aletheia => core/aletheia}/config/prediction.py   |    0
+ {aletheia => core/aletheia}/config/redact.py       |    0
+ {aletheia => core/aletheia}/config/schema.py       |   34 +-
+ {aletheia => core/aletheia}/config/secrets.py      |   73 +-
+ .../aletheia}/counterfactual/__init__.py           |    0
+ .../aletheia}/counterfactual/advisories.py         |    0
+ .../aletheia}/counterfactual/calibration.py        |    0
+ .../aletheia}/counterfactual/estimators.py         |    0
+ .../aletheia}/counterfactual/filter_experiments.py |    0
+ .../aletheia}/counterfactual/filter_replay.py      |    2 +-
+ .../aletheia}/counterfactual/propensity.py         |    0
+ .../aletheia}/counterfactual/trades.py             |    0
+ {aletheia => core/aletheia}/data/__init__.py       |    0
+ .../aletheia}/data/active_ohlcv_backfill.py        |    0
+ {aletheia => core/aletheia}/data/cache.py          |    0
+ core/aletheia/data/ccxt_provider.py                |  107 +
+ .../aletheia}/data/collector_health.py             |    0
+ .../aletheia}/data/collector_runner.py             |   69 +-
+ .../aletheia}/data/collectors/__init__.py          |    0
+ core/aletheia/data/collectors/derivatives.py       |  302 +++
+ core/aletheia/data/collectors/microstructure.py    |   19 +
+ .../aletheia}/data/collectors/vergex_structure.py  |    0
+ .../aletheia}/data/context_builder.py              |    0
+ {aletheia => core/aletheia}/data/data_coverage.py  |    0
+ .../aletheia}/data/derivatives_facts.py            |  153 +-
+ {aletheia => core/aletheia}/data/freshness.py      |   16 +-
+ .../aletheia}/data/history_downloader.py           |   14 +-
+ .../aletheia}/data/macro_liquidity.py              |    0
+ core/aletheia/data/market_catalog.py               |   32 +
+ core/aletheia/data/market_history.py               |   24 +
+ .../aletheia}/data/market_structure.py             |    3 +-
+ {aletheia => core/aletheia}/data/models.py         |    4 +
+ {aletheia => core/aletheia}/data/news_entities.py  |    0
+ {aletheia => core/aletheia}/data/normalizer.py     |    0
+ core/aletheia/data/options_volatility.py           |   35 +
+ .../aletheia/data/orderbook.py                     |  104 +-
+ .../aletheia}/data/perp_structure_shadow.py        |    0
+ {aletheia => core/aletheia}/data/position_x.py     |    0
+ .../aletheia}/data/positioning_evidence.py         |    0
+ {aletheia => core/aletheia}/data/price_feed.py     |   20 +-
+ {aletheia => core/aletheia}/data/providers.py      |  156 +-
+ {aletheia => core/aletheia}/data/smc_enrichment.py |    0
+ .../aletheia}/data/sources/__init__.py             |    0
+ {aletheia => core/aletheia}/data/sources/chain.py  |    7 -
+ {aletheia => core/aletheia}/data/symbols.py        |   61 +-
+ {aletheia => core/aletheia}/data/venue_health.py   |    0
+ .../aletheia}/data/venue_listing_cache.py          |   25 +-
+ .../aletheia}/diagnostics/__init__.py              |    0
+ .../aletheia}/diagnostics/config_consistency.py    |    0
+ {aletheia => core/aletheia}/diagnostics/doctor.py  |  155 +-
+ {aletheia => core/aletheia}/economics/__init__.py  |    0
+ .../aletheia}/economics/agent_roles.py             |    0
+ {aletheia => core/aletheia}/economics/budgets.py   |    0
+ .../aletheia}/economics/context_artifacts.py       |    0
+ .../aletheia}/economics/context_effectiveness.py   |    2 +-
+ .../aletheia}/economics/historical_viability.py    |    0
+ .../aletheia}/economics/inference_calls.py         |    0
+ .../aletheia}/economics/pricing_sync.py            |    0
+ {aletheia => core/aletheia}/economics/schema.py    |    0
+ {aletheia => core/aletheia}/economics/tracing.py   |    0
+ .../aletheia}/economics/usage_insights.py          |    0
+ .../aletheia/execution}/__init__.py                |    0
+ .../aletheia}/execution/broker_funding.py          |  121 -
+ .../aletheia}/execution/broker_utils.py            |    0
+ .../aletheia}/execution/close_convergence.py       |    0
+ .../aletheia}/execution/coordinator.py             |  105 +-
+ .../aletheia}/execution/entry_plan_execution.py    |    3 +-
+ {aletheia => core/aletheia}/execution/errors.py    |    0
+ .../execution/exchange_materialization.py          |  167 +-
+ {aletheia => core/aletheia}/execution/gateway.py   |   78 +-
+ {aletheia => core/aletheia}/execution/oco.py       |    0
+ .../aletheia}/execution/order_constraints.py       |  122 +-
+ .../aletheia}/execution/pending_close_recovery.py  |    0
+ .../aletheia}/execution/position_enrichment.py     |    0
+ .../aletheia}/execution/post_commit_audit.py       |    0
+ .../aletheia}/execution/reconciliation.py          |  426 +---
+ .../aletheia}/execution/stale_order_cleanup.py     |    0
+ {aletheia => core/aletheia}/execution/stops.py     |   27 +-
+ .../aletheia}/execution/venue_capabilities.py      |  111 +-
+ .../aletheia}/execution/verified_exit.py           |    0
+ .../bitget => core/aletheia/files}/__init__.py     |    0
+ {aletheia => core/aletheia}/files/git.py           |    0
+ {aletheia => core/aletheia}/files/jsonl.py         |    0
+ {aletheia => core/aletheia}/files/markdown.py      |    0
+ {aletheia => core/aletheia}/files/paths.py         |    0
+ .../aletheia/gateway}/__init__.py                  |    0
+ {aletheia => core/aletheia}/gateway/_win32_proc.py |    0
+ {aletheia => core/aletheia}/gateway/autostart.py   |    0
+ .../aletheia}/gateway/client_order_id.py           |    0
+ .../aletheia}/gateway/console_text.py              |    0
+ {aletheia => core/aletheia}/gateway/frontdoor.py   |   18 +-
+ .../aletheia}/gateway/frontdoor_route.py           |    0
+ .../aletheia}/gateway/frontdoor_runner.py          |    0
+ {aletheia => core/aletheia}/gateway/git_hooks.py   |    2 +-
+ {aletheia => core/aletheia}/gateway/lifecycle.py   |    0
+ {aletheia => core/aletheia}/gateway/logs.py        |    0
+ .../aletheia}/gateway/managed_service.py           |    0
+ {aletheia => core/aletheia}/gateway/network.py     |    0
+ .../aletheia}/gateway/operator_shell.py            |    2 +-
+ {aletheia => core/aletheia}/gateway/pidfile.py     |    0
+ {aletheia => core/aletheia}/gateway/preflight.py   |    4 +-
+ .../aletheia}/gateway/service_control.py           |    0
+ .../aletheia}/gateway/session_service.py           |    0
+ {aletheia => core/aletheia}/gateway/tunnel.py      |    0
+ .../aletheia}/gateway/windows_firewall.py          |    0
+ .../aletheia}/gateway/windows_identity.py          |    0
+ .../aletheia}/gateway/windows_machine_service.py   |    0
+ {aletheia => core/aletheia}/infra/__init__.py      |    1 -
+ {aletheia => core/aletheia}/infra/error_summary.py |    0
+ {aletheia => core/aletheia}/infra/errors.py        |    0
+ {aletheia => core/aletheia}/infra/events.py        |    1 -
+ .../files => core/aletheia/knowledge}/__init__.py  |    0
+ {aletheia => core/aletheia}/knowledge/document.py  |    0
+ .../aletheia}/knowledge/frontmatter.py             |    0
+ {aletheia => core/aletheia}/knowledge/guards.py    |    0
+ .../aletheia}/knowledge/maintenance.py             |    0
+ {aletheia => core/aletheia}/knowledge/manager.py   |    0
+ {aletheia => core/aletheia}/knowledge/recovery.py  |    0
+ {aletheia => core/aletheia}/knowledge/retrieval.py |    0
+ {aletheia => core/aletheia}/knowledge/router.py    |    0
+ .../aletheia}/knowledge/seed_guards.py             |    0
+ {aletheia => core/aletheia}/learning/__init__.py   |    0
+ .../aletheia}/learning/behavior_contracts.py       |    0
+ {aletheia => core/aletheia}/learning/cohorts.py    |    2 +-
+ .../aletheia}/learning/contrastive_evidence.py     |    0
+ .../aletheia}/learning/contribution.py             |    0
+ {aletheia => core/aletheia}/learning/control.py    |    0
+ .../aletheia}/learning/demo_entry_quality.py       |    4 +-
+ .../aletheia}/learning/economic_knowledge.py       |   40 -
+ .../aletheia}/learning/entry_context.py            |  185 +-
+ {aletheia => core/aletheia}/learning/evidence.py   |    0
+ .../aletheia}/learning/evidence_epoch.py           |    0
+ .../aletheia}/learning/experiments.py              |   78 +-
+ .../aletheia}/learning/guard_routing.py            |    0
+ {aletheia => core/aletheia}/learning/hypotheses.py |    0
+ .../aletheia}/learning/hypothesis_compiler.py      |    0
+ .../aletheia}/learning/hypothesis_research.py      |    0
+ .../aletheia}/learning/knowledge_yield.py          |    0
+ {aletheia => core/aletheia}/learning/ledger.py     |    2 +-
+ {aletheia => core/aletheia}/learning/lessons.py    |   63 +-
+ .../aletheia}/learning/memory_assets.py            |    0
+ .../aletheia}/learning/meta_evolution.py           |    0
+ {aletheia => core/aletheia}/learning/models.py     |    0
+ .../learning/opportunity_information_policy.py     |    1 +
+ core/aletheia/learning/outcomes.py                 |  137 ++
+ .../aletheia}/learning/policy_epochs.py            |    0
+ .../aletheia}/learning/prompt_bundles.py           |    0
+ .../aletheia}/learning/read_models.py              |    0
+ {aletheia => core/aletheia}/learning/registry.py   |    5 -
+ {aletheia => core/aletheia}/learning/skills.py     |    0
+ {aletheia => core/aletheia}/learning/t0_context.py |    0
+ .../aletheia}/learning/t0_coverage.py              |    0
+ {aletheia => core/aletheia}/learning/verdicts.py   |    0
+ {aletheia => core/aletheia}/logging_config.py      |    0
+ core/aletheia/main.py                              |  440 ++++
+ .../aletheia}/maintenance/__init__.py              |    0
+ .../aletheia}/maintenance/database_capacity.py     |  173 +-
+ .../aletheia}/maintenance/filesystem_retention.py  |    0
+ .../aletheia}/maintenance/historical_accounting.py |    0
+ core/aletheia/maintenance/outcome_integrity.py     |  157 ++
+ core/aletheia/maintenance/settlement_requeue.py    |   41 +
+ .../aletheia/model_provider}/__init__.py           |    0
+ {aletheia => core/aletheia}/model_provider/base.py |   15 +-
+ .../aletheia}/model_provider/broker.py             |    0
+ .../aletheia}/model_provider/fallback.py           |    0
+ .../aletheia}/model_provider/guardrails.py         |    0
+ .../aletheia}/model_provider/inference_contract.py |    0
+ .../aletheia}/model_provider/registry.py           |    0
+ .../aletheia}/model_provider/router.py             |  191 +-
+ {aletheia => core/aletheia}/net.py                 |   12 +-
+ {aletheia => core/aletheia}/notifications.py       |    6 +-
+ .../aletheia}/observation_lab/__init__.py          |    0
+ .../aletheia}/observation_lab/canonical.py         |    0
+ .../aletheia}/observation_lab/canonical_schema.py  |    0
+ .../aletheia}/observation_lab/checkpoint.py        |    0
+ .../aletheia}/observation_lab/conflict.py          |    0
+ {aletheia => core/aletheia}/observation_lab/db.py  |    0
+ .../aletheia}/observation_lab/evaluator.py         |    0
+ .../aletheia}/observation_lab/execution_owner.py   |    0
+ .../aletheia}/observation_lab/exposure.py          |    0
+ .../aletheia}/observation_lab/filter_shadow.py     |    2 +-
+ .../aletheia}/observation_lab/kernel.py            |    0
+ .../aletheia}/observation_lab/manifest.py          |    0
+ .../aletheia}/observation_lab/migration.py         |    0
+ .../aletheia}/observation_lab/runner.py            |    0
+ .../aletheia}/observation_lab/runtime_status.py    |    0
+ .../aletheia}/observation_lab/ufc_shadow.py        |    0
+ .../aletheia}/observation_lab/units.py             |    0
+ .../aletheia}/observation_lab/update_settlement.py |    0
+ .../aletheia}/observation_lab/worker_lock.py       |    0
+ .../aletheia}/operator_service_identity.py         |    0
+ {aletheia => core/aletheia}/package_integrity.py   |    0
+ {aletheia => core/aletheia}/packaged_process.py    |    0
+ {aletheia => core/aletheia}/policies/__init__.py   |    0
+ {aletheia => core/aletheia}/policies/diff.py       |    0
+ {aletheia => core/aletheia}/policies/store.py      |    0
+ .../aletheia/portfolio}/__init__.py                |    0
+ .../aletheia}/portfolio/account_loss.py            |    0
+ .../portfolio/broker_funding_settlement.py         |    0
+ .../portfolio/disappearance_confirmation.py        |    0
+ .../portfolio/disappearance_settlement.py          |    0
+ .../aletheia}/portfolio/exchange_sync.py           |    0
+ {aletheia => core/aletheia}/portfolio/exit_plan.py |    0
+ .../aletheia}/portfolio/exit_rules.py              |    0
+ .../aletheia}/portfolio/funding_audit.py           |    0
+ .../aletheia}/portfolio/market_signal_reader.py    |    0
+ .../aletheia}/portfolio/outcome_closure.py         |    0
+ .../aletheia}/portfolio/outcome_hooks.py           |  120 +-
+ {aletheia => core/aletheia}/portfolio/pnl.py       |  182 ++
+ .../aletheia}/portfolio/position_manager.py        |    2 +-
+ .../aletheia}/portfolio/position_path_observer.py  |   11 +-
+ .../aletheia}/portfolio/position_reconciler.py     |    0
+ .../portfolio/reconciliation_integrity.py          |    0
+ {aletheia => core/aletheia}/regime/__init__.py     |    0
+ {aletheia => core/aletheia}/regime/collector.py    |    0
+ {aletheia => core/aletheia}/regime/detector.py     |   38 -
+ .../aletheia/risk}/__init__.py                     |    0
+ .../aletheia}/risk/demo_entry_quality.py           |   45 +-
+ {aletheia => core/aletheia}/risk/engine.py         |   60 +-
+ {aletheia => core/aletheia}/risk/kill_switch.py    |    0
+ {aletheia => core/aletheia}/risk/policy.py         |    0
+ .../aletheia}/runtime_home_migration.py            |    2 +-
+ {aletheia => core/aletheia}/runtime_paths.py       |    0
+ .../portfolio => core/aletheia/server}/__init__.py |    0
+ {aletheia => core/aletheia}/server/app.py          |  478 ++--
+ {aletheia => core/aletheia}/server/compression.py  |    0
+ {aletheia => core/aletheia}/server/dev_reload.py   |    0
+ .../aletheia}/server/operator_service_auth.py      |    0
+ .../aletheia}/server/responsiveness.py             |    0
+ .../aletheia/server/routes}/__init__.py            |    0
+ .../aletheia}/server/routes/analytics.py           |    4 +-
+ .../aletheia/server/routes/bitget.py               |  104 +-
+ .../aletheia}/server/routes/capital.py             |    0
+ .../aletheia}/server/routes/command.py             |    0
+ {aletheia => core/aletheia}/server/routes/data.py  |   32 +-
+ .../aletheia}/server/routes/dev_reload.py          |    0
+ .../aletheia}/server/routes/economics.py           |    0
+ .../aletheia}/server/routes/export.py              |    0
+ .../aletheia}/server/routes/gateway.py             |    0
+ .../aletheia}/server/routes/health.py              |    0
+ {aletheia => core/aletheia}/server/routes/live.py  |    0
+ core/aletheia/server/routes/model.py               | 1120 +++++++++
+ .../aletheia}/server/routes/operator.py            |    0
+ .../aletheia}/server/routes/persistence.py         |    0
+ {aletheia => core/aletheia}/server/routes/risk.py  |    0
+ .../aletheia}/server/routes/settings.py            |   69 +-
+ core/aletheia/server/routes/telegram.py            |   11 +
+ {aletheia => core/aletheia}/server/routes/ui.py    |   31 +-
+ .../aletheia}/server/routes/universe.py            |    0
+ .../aletheia}/server/routes/update.py              |    0
+ {aletheia => core/aletheia}/server/routes/ws.py    |    0
+ .../aletheia}/server/startup_policy.py             |    0
+ .../server => core/aletheia/storage}/__init__.py   |    0
+ .../aletheia}/storage/artifact_store.py            |    0
+ {aletheia => core/aletheia}/storage/event_store.py |    0
+ {aletheia => core/aletheia}/storage/hashing.py     |    0
+ .../aletheia}/storage/market_ohlcv_layout.py       |    0
+ .../aletheia}/storage/market_ohlcv_tiering.py      |    0
+ .../migration_drop_universe_features_raw.py        |    0
+ {aletheia => core/aletheia}/storage/migrations.py  |    0
+ {aletheia => core/aletheia}/storage/models.py      |    0
+ .../aletheia}/storage/proposal_hypothesis.py       |    0
+ .../aletheia}/storage/repositories.py              |   27 +-
+ {aletheia => core/aletheia}/storage/sqlite.py      |    0
+ {aletheia => core/aletheia}/sync/__init__.py       |    0
+ {aletheia => core/aletheia}/sync/conflicts.py      |    0
+ {aletheia => core/aletheia}/sync/exporter.py       |    0
+ {aletheia => core/aletheia}/sync/importer.py       |    0
+ core/aletheia/telegram/__init__.py                 |   35 +
+ core/aletheia/telegram/commands.py                 |  217 ++
+ {aletheia => core/aletheia}/trading/__init__.py    |    0
+ .../aletheia}/trading/entry_activation.py          |    0
+ .../aletheia}/trading/entry_analysis.py            |   50 +-
+ .../aletheia}/trading/entry_authority.py           |    0
+ .../aletheia}/trading/entry_capture.py             |    0
+ .../aletheia}/trading/entry_compat.py              |    0
+ .../aletheia}/trading/entry_contract.py            |    0
+ .../trading/entry_execution_projection.py          |    0
+ .../aletheia}/trading/entry_lifecycle.py           |    0
+ {aletheia => core/aletheia}/trading/entry_plan.py  |    0
+ .../aletheia}/trading/entry_plan_compiler.py       |    0
+ .../aletheia}/trading/entry_profiles.py            |    0
+ .../aletheia}/trading/entry_snapshot.py            |    0
+ {aletheia => core/aletheia}/trading/indicators.py  |    0
+ {aletheia => core/aletheia}/trading/instruments.py |   17 +-
+ .../aletheia}/trading/market_context.py            |   14 +-
+ {aletheia => core/aletheia}/trading/market_data.py |   97 +-
+ .../aletheia}/trading/market_session.py            |    0
+ .../aletheia}/trading/momentum_entry_geometry.py   |    0
+ .../aletheia}/trading/momentum_trigger.py          |    0
+ {aletheia => core/aletheia}/trading/persona.py     |    4 +-
+ .../aletheia}/trading/persona_rollout.py           |   16 +-
+ {aletheia => core/aletheia}/trading/playbooks.py   |    0
+ .../aletheia}/trading/serenity_evidence.py         |    0
+ .../aletheia}/trading/serenity_publication.py      |   69 +
+ .../aletheia}/trading/serenity_scoring.py          |    0
+ {aletheia => core/aletheia}/trading/sizing.py      |    0
+ .../aletheia}/trading/sizing_policy.py             |   92 +-
+ .../aletheia}/trading/strategy_lifecycle.py        |    0
+ .../aletheia}/trading/technical_analysis.py        |    0
+ .../trading/technical_snapshot_service.py          |    0
+ .../aletheia}/trading/trade_motivation.py          |    0
+ .../aletheia}/trading/trading_mandate.py           |    0
+ .../aletheia}/trading/trigger_specs.py             |    0
+ {aletheia => core/aletheia}/trust/__init__.py      |    0
+ .../aletheia}/trust/behavior_authority.py          |   18 +-
+ {aletheia => core/aletheia}/trust/live_unlock.py   |   79 +-
+ {aletheia => core/aletheia}/universe/__init__.py   |    0
+ {aletheia => core/aletheia}/universe/allocator.py  |    0
+ .../aletheia}/universe/baseline_integrity.py       |    0
+ .../aletheia}/universe/candidate_eligibility.py    |    0
+ .../aletheia}/universe/candidate_funding.py        |    0
+ .../aletheia}/universe/candidate_opportunity.py    |    0
+ .../universe/candidate_selection_authority.py      |   30 +
+ .../universe/candidate_selection_evaluation.py     |    2 +-
+ .../universe/candidate_selection_shadow.py         |    0
+ .../universe/candidate_selection_utility.py        |    0
+ .../aletheia}/universe/continuous_scoring.py       |    0
+ .../aletheia}/universe/discovery_benchmark.py      |    0
+ .../aletheia}/universe/economic_utility.py         |    0
+ core/aletheia/universe/fast_stream.py              |  228 ++
+ .../aletheia}/universe/fast_trigger.py             |    0
+ {aletheia => core/aletheia}/universe/features.py   |  479 ++--
+ .../aletheia}/universe/filter_advisor.py           |    0
+ .../aletheia}/universe/filter_outcome_recorder.py  |    0
+ {aletheia => core/aletheia}/universe/filters.py    |    0
+ .../aletheia}/universe/funding_units.py            |    0
+ .../aletheia}/universe/market_structure.py         |    0
+ .../aletheia}/universe/opportunity_evidence.py     |    0
+ .../aletheia}/universe/outcome_economics.py        |    0
+ .../aletheia}/universe/outcome_recorder.py         |   17 +-
+ core/aletheia/universe/registry.py                 |  163 ++
+ .../aletheia}/universe/relative_rank_evaluation.py |    2 +-
+ .../aletheia}/universe/relative_rank_experiment.py |    0
+ .../universe/relative_rank_persistence.py          |    0
+ .../aletheia}/universe/relative_rank_shadow.py     |    0
+ {aletheia => core/aletheia}/universe/scanners.py   |    0
+ {aletheia => core/aletheia}/universe/service.py    |  117 +-
+ .../aletheia}/universe/snapshot_freshness.py       |    0
+ .../aletheia}/universe/twin_allocation.py          |    0
+ .../aletheia}/universe/twin_evaluation.py          |    2 +-
+ .../aletheia}/universe/twin_experiment.py          |    0
+ .../aletheia}/universe/twin_persistence.py         |    0
+ .../aletheia}/universe/twin_scoring.py             |    0
+ {aletheia => core/aletheia}/update/__init__.py     |    0
+ {aletheia => core/aletheia}/update/applier.py      |    8 +-
+ {aletheia => core/aletheia}/update/auto.py         |   13 +-
+ {aletheia => core/aletheia}/update/bootstrap.py    |    0
+ {aletheia => core/aletheia}/update/continuity.py   |    0
+ {aletheia => core/aletheia}/update/git_ops.py      |   12 +-
+ {aletheia => core/aletheia}/update/packaged.py     |    0
+ .../aletheia}/update/packaged_commands.py          |    0
+ {aletheia => core/aletheia}/update/process_env.py  |    0
+ {aletheia => core/aletheia}/update/smoke.py        |    0
+ {aletheia => core/aletheia}/update/target_fresh.py |   12 +-
+ {aletheia => core/aletheia}/uta/__init__.py        |    0
+ {aletheia => core/aletheia}/uta/compat.py          |    0
+ {aletheia => core/aletheia}/uta/contract.py        |   16 -
+ {aletheia => core/aletheia}/uta/errors.py          |    0
+ {aletheia => core/aletheia}/uta/funding.py         |   47 +-
+ {aletheia => core/aletheia}/uta/manager.py         |  279 ++-
+ {aletheia => core/aletheia}/uta/models.py          |   11 +-
+ {aletheia => core/aletheia}/uta/registry.py        |    0
+ .../routes => core/aletheia/utils}/__init__.py     |    0
+ {aletheia => core/aletheia}/utils/dt.py            |    0
+ docs/README.md                                     |   24 +-
+ docs/design/api/api_reference.md                   |    2 +-
+ docs/design/architecture/ARCHITECTURE.md           |   55 +-
+ docs/design/architecture/SYSTEM_MAP.md             |    1 -
+ docs/design/contracts/agent_contracts.md           |    7 +-
+ docs/design/contracts/execution_contract.md        |    4 +
+ docs/design/contracts/learning_contract.md         |   60 +-
+ .../contracts/llm_inference_harness_contract.md    |   14 -
+ docs/design/contracts/risk_engine_contract.md      |   26 +-
+ docs/design/contracts/serenity_contract.md         |    6 +-
+ docs/design/data/RETENTION_POLICY.md               |    8 +-
+ .../design/data/RETENTION_WRITE_GUARDRAILS_TODO.md |    4 +-
+ docs/design/data/data_utilization.md               |   10 +-
+ docs/design/frontend/overview_redesign.md          |    2 +-
+ .../RECONCILIATION_ABSENCE_RESOLVER_RETIREMENT.md  |   14 +
+ docs/design/history/equity_metadata_alias.md       |   11 +
+ docs/design/history/flow_cli_alias.md              |   14 +
+ .../design/history/gateway_symbol_cache_aliases.md |   32 +
+ docs/design/history/model_cli_configuration.md     |    7 +
+ docs/design/history/native_funding_readers.md      |   20 +
+ .../history/observed_stocks_settings_control.md    |   38 +
+ .../history/observed_xstocks_settings_write.md     |   33 +
+ docs/design/history/permission_cli.md              |    8 +
+ docs/design/history/secrets_cli_reads.md           |    8 +
+ .../market-systems/EQUITY_INTEGRATION_DESIGN.md    |    2 +-
+ .../proposals/slim_core_http_model_transport.md    |   12 -
+ docs/design/proposals/unified_trading_account.md   |    4 +-
+ .../policies/documentation_governance.md           |   47 +-
+ .../policies/trust_and_change_control.md           |   48 +-
+ docs/governance/policies/trust_boundaries.yaml     |   20 +-
+ docs/operations/deployment/DEPLOYMENT.md           |    2 +-
+ docs/operations/development/DEVELOPMENT_PREVIEW.md |    2 +-
+ .../development/PYTEST_OPTIMIZATION_GUIDE.md       |    2 +-
+ .../development/TRUST_BOUNDARY_COVERAGE.md         |    2 +-
+ .../agent-guides/DEVELOPMENT_WORKFLOW.md           |   11 +-
+ .../development/agent-guides/SAFETY_AND_TRUST.md   |   20 +-
+ .../development/agent-guides/TASK_ROUTING.md       |   21 +-
+ .../packaged-runtime-power-optimization-report.md  |    6 +-
+ .../records/evidence-3031/baseline_probes.py       |    2 +-
+ .../runbooks/OPPORTUNITY_LIFECYCLE_CLI.md          |   20 +-
+ docs/operations/runbooks/RUNBOOK.md                |   15 +-
+ docs/product/CAPABILITY_GROUND_TRUTH.md            |   21 -
+ docs/product/README.md                             |   48 +-
+ .../capability-integrity/CAPABILITY_INVENTORY.md   |    4 +-
+ .../research/audits/SLIM_CORE_OWNERS_2026-09-13.md | 2378 +++++++++++++++++++-
+ .../audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md      |  147 +-
+ extensions/__init__.py                             |    1 +
+ extensions/coinalyze/__init__.py                   |   10 +
+ .../coinalyze/collector.py                         |   13 +-
+ extensions/coingecko/__init__.py                   |    8 +
+ .../coingecko/market_data.py                       |    0
+ .../coingecko/top.py                               |    0
+ extensions/defillama/__init__.py                   |    8 +
+ .../defillama/collector.py                         |    0
+ extensions/deribit/__init__.py                     |    8 +
+ .../deribit}/options_structure.py                  |    2 +-
+ .../deribit/volatility.py                          |   34 +-
+ .../storage => extensions/exchanges}/__init__.py   |    0
+ .../exchanges/binance/__init__.py                  |    0
+ .../exchanges/binance/client.py                    |   74 +-
+ extensions/exchanges/binance/comparison.py         |   11 +
+ .../exchanges/binance/derivatives_metadata.py      |    3 +
+ .../exchanges/binance}/fast_stream.py              |  533 +----
+ extensions/exchanges/binance/funding.py            |   16 +
+ .../exchanges/binance/instrument_background.py     |   41 +
+ extensions/exchanges/binance/market_taker.py       |   11 +
+ extensions/exchanges/binance/positioning.py        |   70 +
+ .../exchanges/binance/profile.py                   |    4 +-
+ .../exchanges/binance/public_market_data.py        |    3 +-
+ .../exchanges/bitget}/__init__.py                  |    0
+ {aletheia => extensions}/exchanges/bitget/auth.py  |    0
+ .../exchanges/bitget/client.py                     |   91 +-
+ extensions/exchanges/bitget/extension.py           |  100 +
+ extensions/exchanges/bitget/fast_stream.py         |  334 +++
+ extensions/exchanges/bitget/funding.py             |   16 +
+ .../exchanges/bitget/instrument_background.py      |   38 +
+ extensions/exchanges/bitget/market_funding.py      |   22 +
+ .../exchanges/bitget/profile.py                    |    5 +-
+ extensions/exchanges/bitget/profile_config.py      |   54 +
+ extensions/exchanges/ccxt/__init__.py              |    1 +
+ .../exchanges/ccxt/adapter.py                      |   35 +-
+ extensions/exchanges/ccxt/derivatives_metadata.py  |   91 +
+ extensions/exchanges/ccxt/market_capabilities.py   |   66 +
+ extensions/exchanges/ccxt/market_data.py           |  904 ++++++++
+ extensions/exchanges/ccxt/order_constraints.py     |  116 +
+ extensions/exchanges/ccxt/orderbook.py             |   81 +
+ extensions/exchanges/ccxt/profiles/__init__.py     |    1 +
+ .../exchanges/ccxt}/profiles/base.py               |    1 +
+ extensions/exchanges/ccxt/registry_catalog.py      |   83 +
+ extensions/exchanges/ccxt/tickers.py               |  102 +
+ {aletheia => extensions}/exchanges/composition.py  |  177 +-
+ {aletheia => extensions}/exchanges/okx/__init__.py |    0
+ {aletheia => extensions}/exchanges/okx/client.py   |   98 -
+ extensions/exchanges/okx/derivatives_metadata.py   |    4 +
+ extensions/exchanges/okx/funding.py                |   26 +
+ extensions/exchanges/okx/instrument_background.py  |   37 +
+ extensions/exchanges/okx/market_capabilities.py    |   64 +
+ extensions/exchanges/okx/market_taker.py           |   16 +
+ .../okx.py => extensions/exchanges/okx/profile.py  |    4 +-
+ .../exchanges/submission_errors.py                 |    0
+ extensions/fred/__init__.py                        |    8 +
+ extensions/fred/collector.py                       |  128 ++
+ extensions/hyperliquid/__init__.py                 |    8 +
+ .../hyperliquid/collector.py                       |   24 +-
+ extensions/learning/__init__.py                    |   45 +
+ .../learning}/confidence_calibration.py            |  127 +-
+ .../learning}/dreaming_agent.py                    |    2 -
+ .../learning}/insight_synthesizer.py               |  224 +-
+ .../learning}/lesson_reviewer.py                   |   51 +-
+ .../learning}/memo_effectiveness.py                |   23 -
+ .../learning}/post_trade_reviewer.py               |    6 +-
+ .../learning}/reasoning_feedback.py                |   94 +-
+ .../learning}/trade_case_builder.py                |    2 +-
+ extensions/macro/__init__.py                       |    8 +
+ .../macro.py => extensions/macro/collector.py      |  147 +-
+ extensions/market_data.py                          |  171 ++
+ extensions/model_endpoints/__init__.py             |   18 +
+ .../model_endpoints}/anthropic_compatible.py       |   17 +-
+ .../model_endpoints}/openai_compatible.py          |   17 +-
+ extensions/news/__init__.py                        |   21 +
+ .../news/analyzer.py                               |   11 +-
+ .../routes/news.py => extensions/news/api.py       |   14 +-
+ .../news/collector.py                              |    0
+ extensions/observation/__init__.py                 |    8 +
+ .../observation}/equity_observer.py                |  134 +-
+ extensions/prediction/__init__.py                  |    8 +
+ .../prediction.py => extensions/prediction/api.py  |    8 +-
+ .../prediction/observer.py                         |    8 +-
+ .../prediction/polymarket.py                       |   49 +-
+ extensions/research/__init__.py                    |    8 +
+ .../research}/research_agent.py                    |    2 -
+ extensions/serenity/__init__.py                    |    1 +
+ .../serenity}/research_worker.py                   |  198 +-
+ extensions/telegram/__init__.py                    |   10 +
+ {aletheia => extensions}/telegram/bot.py           |  204 +-
+ .../routes.py => extensions/telegram/health.py     |   18 +-
+ extensions/volume_scanner/__init__.py              |   10 +
+ .../volume_scanner/collector.py                    |    8 +-
+ extensions/yahoo/__init__.py                       |    1 +
+ extensions/yahoo/market_data.py                    |  221 ++
+ frontend/scripts/check-performance.mjs             |    2 +-
+ frontend/scripts/compress-assets.mjs               |    2 +-
+ frontend/scripts/generate-api-types.mjs            |    2 +-
+ frontend/src/api/boot.ts                           |    2 +-
+ frontend/src/api/client.test.ts                    |    7 +-
+ frontend/src/api/client.ts                         |   10 +-
+ frontend/src/api/generated/api.d.ts                |   31 +-
+ frontend/src/api/generated/settings.d.ts           |    4 -
+ .../model-providers/ModelProvidersSection.test.tsx |   28 +-
+ .../model-providers/ModelProvidersSection.tsx      |   14 +-
+ .../src/features/settings/model-providers/types.ts |    3 +-
+ .../features/settings/settingsSwitchNames.test.ts  |    2 +-
+ .../src/features/settings/tabs/AdvancedTab.tsx     |    2 +-
+ .../features/settings/tabs/ExecutionTab.test.tsx   |   23 +-
+ .../src/features/settings/tabs/ExecutionTab.tsx    |   21 +-
+ .../src/features/settings/tabs/SignalsTab.test.tsx |   47 +-
+ frontend/src/features/settings/tabs/SignalsTab.tsx |   19 +-
+ frontend/src/pages/Overview.test.tsx               |    8 +-
+ frontend/src/pages/Overview.tsx                    |    8 +-
+ frontend/vite.config.ts                            |    2 +-
+ .../maintenance/data_retention_backfill.py         |    6 +-
+ ops/maintenance/database_compaction.py             |  218 ++
+ ops/maintenance/outcome_integrity.py               |  167 ++
+ .../maintenance/repair_administrative_close.py     |    9 +-
+ .../maintenance/repair_doge_adoption_overlap.py    |    7 +-
+ ops/maintenance/settlement_requeue.py              |   80 +
+ packaging/pyinstaller/aletheia-core.spec           |    2 +-
+ pyproject.toml                                     |    7 +-
+ release-please-config.json                         |    2 +-
+ scripts/check_docs.py                              |    4 +-
+ scripts/ci_plan.py                                 |   46 +-
+ scripts/ci_yield.py                                |    8 +-
+ scripts/coverage_floors.py                         |   20 +-
+ scripts/dev/dev-init.sh                            |    2 +-
+ scripts/export_openapi_schema.py                   |    3 -
+ scripts/harness_header_ablation.py                 |    7 -
+ scripts/release/build_bundle.py                    |    8 +-
+ scripts/release/build_packaged_runtime.py          |    2 +-
+ scripts/runtime/start-release.sh                   |    2 +-
+ scripts/watch_backend.py                           |    4 +-
+ tests/authority_writer_checks.py                   |  135 --
+ tests/broker_funding_fixture.py                    |  133 ++
+ tests/conftest.py                                  |   85 +-
+ tests/e2e/test_exchange_funding_golden_path.py     |   58 +-
+ tests/e2e/test_outcome_integrity_full_lifecycle.py |    4 +-
+ tests/e2e/test_pipeline_antihallucination_chain.py |    2 +-
+ .../test_pipeline_exchange_entry_to_position.py    |    2 +-
+ tests/e2e/test_pipeline_guard_promotion.py         |   10 +-
+ tests/e2e/test_pipeline_universe_outcome.py        |    6 +-
+ tests/fill_reports.py                              |    2 +-
+ tests/live_identity.py                             |   11 -
+ tests/market_data.py                               |   46 +
+ tests/model_http.py                                |    6 +-
+ tests/ohlcv_test_helpers.py                        |   24 -
+ tests/outcome_feedback.py                          |   11 -
+ tests/risk_trade_fixture.py                        |    8 +-
+ tests/specs/spec_active_runtime_scope.py           |    8 +-
+ tests/specs/spec_agent_contracts.py                |   36 +-
+ tests/specs/spec_analytics_contracts.py            |   20 +-
+ tests/specs/spec_api_reference.py                  |   31 +-
+ tests/specs/spec_audit_chain.py                    |    4 +-
+ tests/specs/spec_broker_funding_settlement.py      |   27 +-
+ tests/specs/spec_candidate_selection_utility.py    |   22 +-
+ tests/specs/spec_data_layer.py                     |   22 +-
+ tests/specs/spec_data_model.py                     |   16 +-
+ tests/specs/spec_data_utilization.py               |  222 +-
+ tests/specs/spec_defillama.py                      |   27 +-
+ tests/specs/spec_entry_plan_contract.py            |   19 +-
+ tests/specs/spec_equity_observer.py                |    6 +-
+ tests/specs/spec_execution.py                      |   40 +-
+ tests/specs/spec_filter_evidence.py                |    8 +-
+ tests/specs/spec_gateway_stability.py              |   29 +-
+ tests/specs/spec_guard_authority.py                |   24 +-
+ tests/specs/spec_hyperliquid.py                    |   37 +-
+ tests/specs/spec_hypothesis_research.py            |    5 +-
+ tests/specs/spec_insight_feedback_loop.py          |   19 +-
+ tests/specs/spec_kill_conditions.py                |    8 +-
+ tests/specs/spec_knowledge_fts.py                  |    8 +-
+ tests/specs/spec_learning_attribution.py           |   13 +-
+ tests/specs/spec_learning_authority.py             |   11 +
+ tests/specs/spec_learning_contract.py              |    2 +-
+ tests/specs/spec_learning_contribution.py          |    4 +-
+ tests/specs/spec_learning_final_consumers.py       |    7 +-
+ tests/specs/spec_learning_pipeline.py              |  155 +-
+ tests/specs/spec_learning_registry.py              |    2 +-
+ tests/specs/spec_lesson_guards.py                  |    2 -
+ tests/specs/spec_live_unlock.py                    |    5 +-
+ tests/specs/spec_llm_inference_harness.py          |   28 +-
+ tests/specs/spec_macro_signals.py                  |   88 +-
+ tests/specs/spec_market_structure.py               |   10 +-
+ tests/specs/spec_market_type_dedup.py              |    3 -
+ tests/specs/spec_model_routing.py                  |    2 +-
+ tests/specs/spec_network_egress.py                 |    2 +-
+ .../specs/spec_observation_experiment_ownership.py |   51 +-
+ tests/specs/spec_operator_contract_parity.py       |    2 +-
+ tests/specs/spec_operator_loop.py                  |   10 +-
+ .../spec_opportunity_information_integrity_p1.py   |    6 +-
+ tests/specs/spec_opportunity_outcomes.py           |    2 +-
+ tests/specs/spec_outcome_integrity.py              |   55 +-
+ tests/specs/spec_persistence.py                    |    8 +-
+ tests/specs/spec_pi_decision_chain.py              |   16 +-
+ tests/specs/spec_pipeline_adopted_position.py      |   20 +-
+ .../spec_pipeline_bitget_preset_protection.py      |    8 +-
+ .../spec_pipeline_exchange_materialization.py      |  118 +-
+ .../spec_pipeline_historical_chain_recovery.py     |    8 +-
+ tests/specs/spec_pipeline_live_unlock.py           |    5 +-
+ tests/specs/spec_pipeline_market_data.py           |   30 +-
+ .../specs/spec_pipeline_middle_state_integrity.py  |   30 +-
+ .../spec_pipeline_multibroker_reconciliation.py    |   89 +-
+ tests/specs/spec_pipeline_outcome_feedback.py      |   30 +-
+ tests/specs/spec_pipeline_outcome_shadow_anchor.py |    2 -
+ tests/specs/spec_pipeline_position_manager.py      |    2 +-
+ .../spec_pipeline_risk_execution_integrity.py      |    8 +-
+ tests/specs/spec_pipeline_risk_gate.py             |    8 +-
+ .../spec_pipeline_tpsl_private_materialization.py  |   92 +-
+ tests/specs/spec_risk_engine.py                    |   27 +-
+ tests/specs/spec_serenity_attribution.py           |    6 +-
+ tests/specs/spec_serenity_evidence.py              |    8 +-
+ tests/specs/spec_serenity_multi_lens.py            |    6 +-
+ tests/specs/spec_serenity_promote.py               |   22 +-
+ tests/specs/spec_serenity_researchability.py       |   12 +-
+ tests/specs/spec_serenity_verdict.py               |   10 +-
+ tests/specs/spec_serenity_xstock_execution.py      |    4 +-
+ tests/specs/spec_spot_parity.py                    |    6 +-
+ tests/specs/spec_subsystem_observers.py            |   49 +-
+ tests/specs/spec_trading_mandate.py                |   25 +-
+ tests/specs/spec_universe_distribution_audit.py    |   26 +-
+ tests/specs/spec_universe_pipeline.py              |   37 +-
+ tests/specs/spec_uta_boundary.py                   |  114 +-
+ tests/test_acceptance.py                           |   12 +-
+ tests/test_active_ohlcv_backfill.py                |    2 +-
+ tests/test_agent_run_artifacts.py                  |    4 +-
+ tests/test_agent_runtime.py                        |  126 +-
+ tests/test_agent_shell.py                          |    1 +
+ tests/test_alpha_attribution.py                    |    6 +-
+ tests/test_architecture_fitness.py                 | 1057 ++++++---
+ tests/test_attribution.py                          |    2 +-
+ tests/test_auto_update.py                          |  152 +-
+ tests/test_bitget.py                               |    2 +-
+ tests/test_bitget_adapter.py                       |   34 +-
+ tests/test_bitget_profile.py                       |   17 +-
+ tests/test_bitget_uta_v3_switch.py                 |   26 +-
+ tests/test_broker_funding_economics.py             |   82 +-
+ tests/test_brokerless_composition.py               |   77 -
+ tests/test_candidate_coverage_counts.py            |  626 +++---
+ tests/test_candidate_funding.py                    |   57 +-
+ tests/test_candidate_learning_boundary.py          |   29 -
+ tests/test_candidate_opportunity_persistence.py    |   26 +-
+ tests/test_candidate_selection_utility.py          |   46 +-
+ tests/test_case_builder_errors_visible.py          |   27 +-
+ tests/test_ccxt_provider_async_persistence.py      |   64 +-
+ tests/test_ccxt_provider_factory.py                |  442 +++-
+ tests/test_change_contract_check.py                |   14 +-
+ tests/test_ci_plan.py                              |   30 +-
+ tests/test_ci_preflight.py                         |   10 +-
+ tests/test_cli.py                                  |   12 +-
+ tests/test_cli_install.py                          |    6 +-
+ tests/test_client_partial_fill.py                  |   14 +-
+ tests/test_clipped_close.py                        |   85 +-
+ tests/test_coingecko_top_collector.py              |    8 +-
+ tests/test_collector_health.py                     |   39 +
+ tests/test_confidence_calibration.py               |  110 +
+ tests/test_config_routes.py                        |  168 +-
+ tests/test_connectivity.py                         |  178 +-
+ tests/test_cr_ex01_reconcile.py                    |    4 +-
+ tests/test_crypto_fallback.py                      |   58 +-
+ tests/test_data_collectors.py                      |  232 +-
+ tests/test_data_collectors_integration.py          |   39 +-
+ tests/test_data_provider_and_async_fixes.py        |   65 +-
+ tests/test_database_capacity.py                    |   10 +-
+ tests/test_database_capacity_cli.py                |   21 +
+ tests/test_debate_impact_audit.py                  |    6 +-
+ tests/test_demo_quality_epoch_boundary.py          |   67 -
+ tests/test_demo_trading.py                         |   11 +-
+ tests/test_derivative_feature_boundary.py          |  115 -
+ tests/test_derivative_source_time_boundary.py      |   65 -
+ tests/test_derivatives_collector.py                |  256 ++-
+ tests/test_derivatives_comparison.py               |  108 +-
+ tests/test_derivatives_facts_contract.py           |  150 +-
+ tests/test_derivatives_readiness.py                |    8 +-
+ tests/test_derivatives_semantics.py                |   94 +-
+ tests/test_diagnostics_honesty_fixes.py            |    8 +-
+ tests/test_docs_cli_consistency.py                 |   22 +-
+ tests/test_doctor.py                               |  146 +-
+ tests/test_doctor_content_probes.py                |   34 +-
+ tests/test_doctor_credential_boundary.py           |   46 -
+ tests/test_dreaming_ledger.py                      |   40 +-
+ tests/test_dynamic_instruments_market_type.py      |    4 +-
+ tests/test_entry_activation.py                     |    5 +-
+ tests/test_entry_analysis.py                       |    6 +-
+ tests/test_entry_exit_geometry.py                  |   11 +-
+ tests/test_entry_learning_boundary.py              |   84 -
+ tests/test_entry_logic.py                          |    1 -
+ tests/test_entry_plan_execution.py                 |  104 +-
+ tests/test_entry_planner.py                        |   32 +-
+ tests/test_ex04_live_authorization.py              |    5 +-
+ tests/test_exchange_submission_integrity.py        |   20 +-
+ tests/test_exec_d_recovery.py                      |   12 +-
+ tests/test_execution_mode_identity.py              |   59 +-
+ tests/test_exit_intent_wiring.py                   |    1 +
+ tests/test_experience_loop.py                      |   17 +-
+ tests/test_fill_materialization.py                 |    2 +-
+ tests/test_frontdoor.py                            |   32 +
+ tests/test_frontend_build_config.py                |    2 +-
+ tests/test_frontend_ci_build_contract.py           |    4 +-
+ tests/test_gateway_order_constraints.py            |   27 +
+ tests/test_guard_analytics.py                      |   43 +-
+ tests/test_guard_expiry_job.py                     |   46 -
+ tests/test_guard_impact_audit.py                   |    6 +-
+ tests/test_health.py                               |   20 +-
+ tests/test_high_backup_security.py                 |   31 +-
+ tests/test_high_w2b_positions.py                   |   10 +-
+ tests/test_high_w2c_operator.py                    |    2 +-
+ tests/test_history_downloader.py                   |   47 +
+ tests/test_instrument_aware_collectors.py          |   50 +-
+ tests/test_instrument_background_adapters.py       |  106 +
+ tests/test_io_honesty_fixes.py                     |    3 +-
+ tests/test_knowledge.py                            |    6 +-
+ tests/test_learning_analytics_fixes.py             |   18 +-
+ tests/test_learning_contamination_fixes.py         |   28 +-
+ tests/test_learning_inheritance.py                 |   21 +-
+ tests/test_learning_safety_boundary.py             |  116 -
+ tests/test_live_gate.py                            |    5 +-
+ tests/test_live_unlock_trust.py                    |  193 +-
+ tests/test_llm_structured_failure_diagnostics.py   |    2 -
+ tests/test_local_release_session.py                |    2 +-
+ tests/test_macos_packaged_app.py                   |    4 +-
+ tests/test_macos_release_runtime.py                |    4 +-
+ tests/test_macro_collector.py                      |  119 +-
+ tests/test_macro_liquidity.py                      |   60 +-
+ tests/test_macro_source_time.py                    |   26 +-
+ tests/test_manual_close_route.py                   |    2 +-
+ tests/test_market_context.py                       |  131 +-
+ tests/test_market_data_venue_health.py             |   10 +-
+ tests/test_market_fact_boundary.py                 |   52 -
+ tests/test_market_listing_boundary.py              |  179 --
+ tests/test_market_observer_batch_prefetch.py       |    3 +-
+ tests/test_market_observer_integration.py          |   10 +-
+ tests/test_market_observer_logging.py              |    4 +-
+ tests/test_market_observer_valid_until.py          |    4 +-
+ tests/test_market_provider_port.py                 |  109 -
+ tests/test_market_routes.py                        |   43 +-
+ tests/test_market_structure.py                     |    2 +-
+ tests/test_microstructure_collector.py             |   69 +-
+ tests/test_migration_fast_path.py                  |    2 +-
+ tests/test_model_catalogue_health.py               |    4 +-
+ tests/test_model_construction_boundary.py          |  140 --
+ tests/test_model_credential_ingress_boundary.py    |   82 -
+ tests/test_model_credential_status_boundary.py     |  104 -
+ tests/test_model_identity_boundary.py              |   73 -
+ tests/test_model_profiles.py                       |  151 +-
+ tests/test_model_provider.py                       |  115 +-
+ tests/test_model_sdk_transport.py                  |   49 +-
+ tests/test_net_fallback.py                         |   30 -
+ tests/test_news_integrity.py                       |  133 +-
+ tests/test_notifications.py                        |   21 +-
+ tests/test_observation_canonical_bridge.py         |   19 +-
+ tests/test_oco_reconcile.py                        |   34 +-
+ tests/test_ohlcv_feature_boundary.py               |  145 --
+ tests/test_ohlcv_provider_boundary.py              |    4 +-
+ tests/test_okx_broker.py                           |   42 +-
+ tests/test_openapi_export.py                       |   11 +-
+ tests/test_opportunity_attribution_integrity.py    |    4 +-
+ tests/test_opportunity_flow_ledger.py              |   26 +-
+ tests/test_options_structure_gamma_flip.py         |    5 +-
+ tests/test_options_volatility.py                   |   26 +-
+ tests/test_order_constraints.py                    |   95 +-
+ tests/test_order_writer_boundary.py                |   91 -
+ tests/test_orderbook_feature_boundary.py           |   72 -
+ tests/test_outcome_assessment_boundary.py          |   27 -
+ tests/test_outcome_closure.py                      |   59 +-
+ tests/test_outcome_consumers.py                    |    6 +-
+ tests/test_outcome_feedback_boundary.py            |   77 -
+ tests/test_outcome_history_remediation.py          |   17 +-
+ tests/test_outcome_integrity_read_model.py         |    4 +-
+ tests/test_outcome_reporting.py                    |    5 +-
+ tests/test_overview_layout.py                      |    2 +-
+ tests/test_packaged_runtime_contract.py            |    8 +-
+ tests/test_packaged_update.py                      |    2 +-
+ tests/test_performance_storage_batches.py          |    6 +-
+ tests/test_planning_writer_boundary.py             |  156 --
+ tests/test_polymarket_provider.py                  |   22 +
+ tests/test_position_path_observer.py               |  131 +-
+ tests/test_position_reconciler.py                  |   17 +
+ tests/test_position_update_ownership.py            |  222 +-
+ tests/test_positioning_evidence.py                 |   10 +-
+ tests/test_post_trade_reviewer_outcomes.py         |   16 +-
+ tests/test_prediction_history.py                   |   64 +
+ tests/test_prediction_manual_admission.py          |   34 +-
+ tests/test_prediction_refresh.py                   |    2 +-
+ tests/test_price_feed.py                           |   28 +
+ tests/test_profitability_execution_mode_scope.py   |    8 +-
+ tests/test_proposal_writer_boundary.py             |   84 -
+ tests/test_proposals_approval_ui.py                |    4 +-
+ tests/test_protection_environment.py               |   35 -
+ tests/test_pydantic_v2_serialization_invariants.py |    2 +-
+ tests/test_reconciliation.py                       |  161 +-
+ tests/test_reconciliation_properties.py            |  123 +-
+ tests/test_regime_boundary.py                      |   90 -
+ tests/test_registry_market_boundary.py             |  125 -
+ tests/test_registry_whitelist.py                   |  133 +-
+ tests/test_release_bundle.py                       |   28 +-
+ tests/test_release_version_contract.py             |    6 +-
+ tests/test_remote_control_network.py               |   30 +
+ tests/test_repair_administrative_close.py          |    2 +-
+ tests/test_repair_doge_adoption_overlap.py         |    2 +-
+ tests/test_retention_backfill.py                   |   12 +-
+ tests/test_retired_execution_surfaces.py           |    5 +-
+ tests/test_retired_model_providers.py              |   10 +-
+ tests/test_risk_engine.py                          |   63 +-
+ tests/test_risk_lesson_boundary.py                 |   87 -
+ tests/test_route_threadpool_boundaries.py          |    2 +-
+ tests/test_runtime.py                              |   75 +-
+ tests/test_runtime_home_contract.py                |    6 +-
+ tests/test_runtime_replay_pack.py                  |    2 +-
+ tests/test_scheduler_runtime_facts.py              |    1 +
+ tests/test_scheduler_timeouts.py                   |  176 +-
+ tests/test_secrets.py                              |   83 +
+ tests/test_secrets_cli.py                          |   30 +-
+ tests/test_security.py                             |   55 +-
+ tests/test_serenity_p0_p3_e2e.py                   |   51 +-
+ tests/test_serenity_scheduler_continuity.py        |  182 +-
+ tests/test_serenity_workbench.py                   |  195 +-
+ tests/test_set_leverage.py                         |    2 +-
+ tests/test_settings_concurrency.py                 |   41 +
+ tests/test_settings_honesty.py                     |  136 +-
+ tests/test_settlement_deferral.py                  |   22 +-
+ tests/test_sizing_learning_boundary.py             |   91 -
+ tests/test_sizing_trace_audit.py                   |   10 +-
+ tests/test_startup_behavior_gate.py                |   27 +
+ tests/test_startup_gate.py                         |   21 +-
+ tests/test_stock_linked_attribution.py             |    4 +-
+ tests/test_structured_json_routing.py              |   17 +-
+ tests/test_supervisor.py                           |    2 +-
+ tests/test_taker_observation_boundary.py           |   90 -
+ tests/test_telegram.py                             |   95 +-
+ tests/test_telegram_route_boundary.py              |   26 -
+ tests/test_thesis_lineage.py                       |    9 +-
+ tests/test_three_gaps.py                           |    6 +-
+ tests/test_ticker_observation_boundary.py          |   89 -
+ tests/test_tpsl.py                                 |   22 +-
+ tests/test_trade_case_builder.py                   |   58 +-
+ tests/test_trade_funnel_audit.py                   |    6 +-
+ tests/test_tunnel_auth_agent_runs.py               |    9 +
+ tests/test_ui_bootstrap.py                         |   26 +-
+ tests/test_universe_fast_trigger.py                |   70 +-
+ tests/test_universe_features.py                    |  494 ++--
+ tests/test_universe_integration.py                 |   25 +-
+ tests/test_universe_outcome_economics.py           |   24 +-
+ tests/test_universe_service.py                     |  108 +-
+ tests/test_update.py                               |   20 +-
+ tests/test_update_applier.py                       |    4 +-
+ tests/test_update_target_freshness.py              |   35 +-
+ tests/test_venue_listing_cache.py                  |   64 +-
+ tests/test_vergex_utilization_completion.py        |   63 +-
+ tests/test_verified_exit.py                        |   30 +-
+ tests/test_windows_dogfood.py                      |    2 +-
+ tests/test_xstocks_observer.py                     |  161 +-
+ tests/uta/test_ccxt_adapter.py                     |  136 +-
+ tests/uta/test_composition.py                      |  166 --
+ tests/uta/test_execution_coordinator.py            |   51 +-
+ tests/uta/test_import_boundaries.py                |   69 -
+ tests/uta/test_manager.py                          |  170 +-
+ 1049 files changed, 22151 insertions(+), 18961 deletions(-)

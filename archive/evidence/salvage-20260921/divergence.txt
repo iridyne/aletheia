@@ -1,0 +1,235 @@
+< ab6e1836d refactor: move feature market bootstrap behind provider facts (#3296)
+< daf3d5bba refactor: move feature market bootstrap behind provider facts
+< 3709f00a6 refactor: bind feature scans through provider port (#3294)
+< d1da09be6 fix: preserve feature provider fallback construction
+< b9d39ef05 refactor: bind feature scans through market provider port
+< 677f4292b refactor(data): own universe feature OHLCV observations (#3293)
+< 50e62f744 fix: honor closed bars and venue cooldowns in observations
+< 82e84077c refactor(data): own universe feature OHLCV observations (#3134)
+< 07a6049b8 refactor(data): own universe feature ticker batches (#3288)
+< 57594a353 refactor(data): own universe feature ticker batches (#3134)
+< a570316c8 refactor(data): own orderbook feature acquisition (#3134) (#3287)
+< 407bef85d refactor(data): own orderbook feature acquisition
+< c2f2cab34 refactor(data): own funding and open-interest feature reads (#3134) (#3286)
+< fb5cba1ce test(data): prove derivative readers share the scan provider
+< 3d07493d3 refactor(data): own funding and open-interest feature reads
+< 61b3c20b4 docs: unify project truth and bounded AI development delegation (#3280)
+< ed9733ac3 docs: unify project truth and bounded engineering delegation (#3279)
+< d1f319c4b refactor(data): isolate native taker observations from Core features (#3134) (#3277)
+< e408b42fd Merge master registry boundary into taker observation batch
+< 135069b69 refactor(data): normalize venue facts before Core registry admission (#3134) (#3275)
+< 37272d59e fix(data): reject noncanonical registry facts
+< d46e4dc7a refactor(data): isolate native taker observations from Core features
+< d676cd728 Merge branch 'master' of https://github.com/iridyne/aletheia into refactor/3134-57-registry-market-facts
+< 38caa5bcc fix(data): reject contradictory registry background identities
+< b6db8a630 refactor(data): keep source-time facts independent of collectors (#3134) (#3276)
+< 17eedad2e refactor(data): keep source-time facts independent of collectors
+< 60c380c97 refactor(data): normalize venue facts before Core registry admission
+< c21ff4c76 fix(data): isolate Position observation reads behind Core port (#3134) (#3274)
+< da45b9652 docs(data): align Position observation ownership inventory
+< 15d6e6021 Merge branch 'master' of https://github.com/iridyne/aletheia into refactor/3134-56-position-observation-port
+< 4e2ea142e test(data): verify composed observation-only capability
+< 84cee8bce test: prove Candidate publication and maintenance owners (#3134 batch 52) (#3270)
+< dc147b92a Merge branch 'master' of https://github.com/iridyne/aletheia into test/3134-52-candidate-writer-proof
+< 215bc4f5f test(storage): close verified Candidate writer proof gaps
+< 09052a9ec refactor(data): bind standard Core provider reads (#3134 batch 55) (#3273)
+< 8910c250e fix(data): keep position observation behind Core provider boundary
+< 205b0cc36 refactor(data): bind standard Core market provider reads
+< 06b66c561 Merge commit 'a89c45acde68d2c8972e093c44349917194447e2' into test/3134-52-candidate-writer-proof
+< a89c45acd fix(data): keep exact chart history without a provider (#3134 batch 54) (#3272)
+< e7ed5044b test: close Candidate writer review counterexamples
+< af5fca764 fix(storage): preserve Proposal immutability and writer owners (#3134 batch 53) (#3271)
+< db0c004f0 fix(data): retain chart history when provider initialization fails
+< b8cb42340 fix(storage): preserve immutable Proposal content at update boundary
+< 0dc2efb0a Merge commit '220768d5436ed2c8b20f1f812b861f152d7c9789' into test/3134-52-candidate-writer-proof
+< 41ee111c8 test: enforce bounded Candidate publication and maintenance owners
+< 220768d54 refactor(data): isolate public listing reads (#3134 batch 51) (#3269)
+< 2b849cdc9 refactor(data): isolate public listing reads behind normalized boundary
+< 821c36aa5 test: narrow Fill writer proof to canonical owners (#3134 batch 50) (#3268)
+< 342a87619 test: converge RiskDecision writer proof (#3134 batch 49) (#3267)
+< 3b47aea04 test: verify Fill proof with shared mutation repair (#3134)
+< 5be95d8ae Merge commit '2f39eff2e9f5cc5b3ec650079570599b07ab3b95' into test/3134-50-fill-writer-proof
+< 2f39eff2e test: close reviewed Risk writer proof gaps (#3134)
+< 7f1f6eae8 test: narrow Fill writer proof to canonical owners (#3134 batch 50)
+< 0d0a4a6a4 Merge commit '3fd9d2cd2346949ce1bff0264ffee6b9c3e19fef' into test/3134-49-risk-writer-proof
+< 0626a05d6 test: converge RiskDecision writer proof (#3134 batch 49)
+< 3fd9d2cd2 refactor: keep pure market facts outside CCXT (#3134 batch 48) (#3266)
+< 77de898c0 Merge commit '7281e1e660f8bae8976f096c4e8e56a1d62df1ae' into refactor/3134-48-market-facts
+< 12db65d2b refactor: keep pure market facts outside CCXT (#3134 batch 48)
+< 7281e1e66 fix: allow brokerless Core composition (#3134 batch 47) (#3265)
+< 8d0fea099 fix: allow brokerless Core composition (#3134 batch 47)
+< 0f188b569 refactor: isolate optional Regime evidence from Core (#3134 batch 46) (#3264)
+< 13b9695fd refactor: keep Doctor outside raw credential boundary (#3134 batch 45) (#3263)
+< 578329ffb fix: preserve one published Regime snapshot per read (#3134)
+< 537ba3690 Merge branch 'refactor/3134-45-doctor-credential-status' into refactor/3134-46-regime-boundary
+< 02b4cc137 fix: bind adapters in fresh deployment Doctor process (#3134)
+< 0c86158e2 refactor: isolate optional Regime evidence from Core (#3134)
+< bee75c765 refactor: keep Doctor outside raw credential boundary (#3134)
+< cb7237329 refactor: contain Telegram health in optional adapter (#3134 batch 44) (#3262)
+< 8f3eda796 refactor: bind optional candidate-filter path declaration (#3134 batch 43) (#3261)
+< e24bce7e4 fix: retire obsolete guard settings mutations (#3134 batch 42) (#3260)
+< 4e97c6f48 Merge branch 'refactor/3134-43-behavior-registry-boundary' into refactor/3134-44-telegram-health-boundary
+< c01eb6fbf Merge branch 'fix/3134-42-retire-guard-settings' into refactor/3134-43-behavior-registry-boundary
+< 125a3d542 docs: correct writable Guard API reference (#3134)
+< f5dd04868 refactor: contain Telegram health in optional adapter (#3134)
+< 54d525afc Merge branch 'fix/3134-42-retire-guard-settings' into refactor/3134-43-behavior-registry-boundary
+< 6292b1701 fix: use canonical Guard request type in client (#3134)
+< 3cbf0bf0f refactor: bind optional candidate-filter path declaration (#3134)
+< e02127b82 test: use current Candidate identity in recovery fixture (#3134)
+< 4f01d5579 fix: retire obsolete guard settings mutations (#3134)
+< 5650b80e3 refactor: retire legacy guard auto-promotion writer (#3134 batch 41) (#3259)
+< 7f3868130 refactor: bind optional Persona Learning safety queries (#3134 batch 40) (#3258)
+< a9eb57087 test: pin Generation and EntryPlan writer boundaries (#3134 batch 39) (#3257)
+< 2e3d04c3b Merge branch 'refactor/3134-40-persona-learning-gates' into fix/3134-41-retire-guard-auto-promotion
+< 81c219552 Merge commit '8d05db6b7' into refactor/3134-40-persona-learning-gates
+< 8d05db6b7 test: close compound writer alias and DDL gaps (#3134)
+< 24ab761ce refactor: retire legacy guard auto-promotion writer (#3134)
+< 35954d0d7 Merge commit 'fdfecc453' into refactor/3134-40-persona-learning-gates
+< fdfecc453 test: reject conditional writer alias exports (#3134)
+< 7c2fe4e5e Merge commit 'eceaedbf9' into refactor/3134-40-persona-learning-gates
+< eceaedbf9 test: complete Planning lifecycle caller inventory (#3134)
+< 6e3e0b319 refactor: bind optional Persona Learning safety queries (#3134)
+< dc2954d40 test: pin Generation and EntryPlan writer boundaries (#3134)
+< e6335f975 test(core): prove declared Order writer boundaries (#3134 batch 38) (#3256)
+< 60d3afb42 test: close literal Order writer proof gaps (#3134)
+< 7ec5ce1ad test(core): close Order writer guard review gaps
+< 0ff15ef7a fix(universe): retire legacy publication veto (#3134 batch 37) (#3255)
+< f5db83af7 refactor(core): isolate optional sizing evidence (#3134 batch 36) (#3254)
+< 03d265aa7 refactor(core): converge candidate evidence identity (#3134 batch 35) (#3253)
+< 3df711c3d Merge branch 'fix/3134-37-retire-legacy-candidate-veto' into test/3134-38-order-writer-proof
+< 4b2576b89 Merge branch 'refactor/3134-36-optional-sizing-evidence' into fix/3134-37-retire-legacy-candidate-veto
+< eb76e1175 Merge branch 'refactor/3134-35-candidate-evidence-boundary' into refactor/3134-36-optional-sizing-evidence
+< 383c2ecd9 test(core): guard declared Order writer ownership (#3134)
+< 88ba56299 Merge remote-tracking branch 'origin/master' into refactor/3134-35-candidate-evidence-boundary
+< cbba5397a test(learning): restore boundary verification (#3134 batch 34) (#3252)
+< da52ec402 fix(universe): retire legacy experiment publication veto (#3134)
+< 46f191a5b Merge remote-tracking branch 'origin/master' into test/3134-34-learning-verification
+< 8630a2578 refactor(core): consolidate shared outcome assessment (#3134 batch 33) (#3251)
+< 30edd3181 refactor(core): isolate optional persona sizing evidence (#3134)
+< 462dcce2f docs(product): point Outcome inventory to current Core owner
+< 60b5d7fbf refactor(core): remove candidate evidence learning dependency (#3134)
+< 118b7b075 test(learning): align verification with optional construction boundaries
+< 7886c262a Merge remote-tracking branch 'origin/master' into refactor/3134-33-core-outcome-assessment
+< a97332514 refactor(entry): isolate optional Learning context producer (#3134 batch 32) (#3250)
+< cabde10c3 refactor(core): consolidate shared outcome assessment (#3134)
+< 51562e3da Merge remote-tracking branch 'origin/master' into refactor/3134-32-entry-learning-boundary
+< fe8c05b5c refactor(risk): isolate Demo quality epoch persistence (#3134 batch 31) (#3249)
+< 3de1e3d72 refactor(entry): separate Core evidence contract from Learning producer (#3134)
+< a861cb7c1 refactor(risk): bind optional Demo quality epoch persistence (#3134)
+< 067ab8444 refactor(risk): isolate optional lesson treatment evidence (#3134 batch 30) (#3248)
+< f5369e721 Merge remote-tracking branch 'origin/master' into refactor/3134-30-risk-lesson-evidence
+< ce046336e refactor(outcome): isolate optional feedback delivery (#3134 batch 29) (#3247)
+< c6a2e28fc Merge remote-tracking branch 'origin/master' into refactor/3134-29-optional-outcome-feedback
+< eee066708 test(storage): prove scoped settlement writer boundaries (#3134 batch 28) (#3246)
+< 8de193667 test(ownership): close literal and callable writer bypasses (#3134)
+< af1e973f6 test(outcome): bind standalone Serenity feedback and align contract (#3134)
+< 39f0bf36e refactor(risk): isolate optional lesson treatment evidence (#3134)
+< ded584390 test(ownership): reject conflict updates and writer aliases (#3134)
+< 9ec085786 refactor(outcome): bind optional feedback outside Core (#3134)
+< 9b2012350 test(storage): protect scoped Position settlement writers
+< 54795398b refactor(execution): converge observed-close claim ownership (#3134 batch 27) (#3245)
+< d6f5d3430 refactor(execution): own observed close claims in materializer
+< b6df08743 refactor(model): isolate credential ingress and retain Core authority (#3134 batch 26) (#3244)
+< 3bb056d83 refactor(model): move credential ingress behind Model boundary
+< 64a14b3e5 refactor(model): project sanitized credential status (#3134 batch 25) (#3243)
+< ab57faa34 fix(model): preserve unavailable credential store status
+< 52b5f9768 refactor(model): expose sanitized credential status to Core and UI
+< fb56ed98e refactor(model): normalize completion facts before Core policy (#3134 batch 24) (#3242)
+< f04b61e64 refactor(model): normalize completion facts before Core policy
+< 24f326f15 refactor(model): confine credential identity to implementation (#3134 batch 23) (#3241)
+< 25c8fb801 refactor(model): confine credential-backed identity to implementation
+< 2734b00f4 refactor(model): isolate configured HTTP construction from Core (#3134 batch 22) (#3240)
+< 36947801a merge: retain endpoint provenance and HTTP binding checks
+< 1cb5a1ec8 fix(model): bind endpoint attempt identity without guessing (#3134 batch 21) (#3239)
+< 2c3fd59c5 refactor(model): bind HTTP construction outside Core routing
+< 811035017 fix(model): bind attempt provenance without endpoint guessing
+< 163b35a33 refactor(trust): isolate selected credential revision in Exchange (#3134 batch 19) (#3237)
+< 6e79e3c40 merge: retain both credential isolation regressions from master
+< d4894c44f refactor(exchanges): isolate scoped credential HTTP ingress (#3134) (#3236)
+< db90b5116 fix(model): confine candidate credential reuse to configured endpoint (#3134 batch 20) (#3238)
+< acdbe8357 fix(settings): report absent credential adapters truthfully
+< 8a61c050a test(trust): bind remaining live gate credential fixture
+< 60a7328f3 fix(model): bind stored candidate credentials to configured endpoint
+< 36f5caad1 refactor(trust): delegate selected credential revision to Exchange
+< 8a4dd95a1 refactor(exchanges): isolate scoped credential HTTP ingress from Core (#3134)
+< a6ed49f74 refactor(uta): isolate native protection reads from scheduler (#3134) (#3234)
+< a8da25739 fix(trust): repair live identity metadata binding after #3231 (#3134) (#3235)
+< 1bce19fbd test(architecture): guard the RiskDecision mutation owner (#3134) (#3233)
+< 2f47507f9 test(risk): reject static writer aliases and qualified DML (#3134)
+< a258c5f43 test(uta): move TPSL environment proof to native reader boundary (#3134)
+< 9bee45f39 fix(trust): read live identity metadata through configured UTA boundary (#3134)
+< 5ccfed624 test(risk): close ordinary writer guard bypasses (#3134)
+< 81cc0da77 refactor(uta): isolate native protection reads from scheduler (#3134)
+< 500bffbe3 test(architecture): protect the canonical RiskDecision writer boundary
+< b829d0535 fix(uta): keep absent venue profiles from blocking other accounts (#3134) (#3232)
+< 62ae48549 refactor(uta): move scoped exchange construction out of Core (#3134) (#3231)
+< 1fc75ade9 merge verified UTA composition parent
+< 3b426d0ca merge master: preserve exact order checks across UTA composition split
+< f7151c482 fix(uta): validate exact order evidence at Core read boundary (#3134) (#3230)
+< 603d20da2 Merge branch 'refactor/3134-13-uta-composition' into fix/3134-14-absent-venue-profile
+< d5d94e2d0 fix(uta): bind before all CLI dispatch and bootstrap checks
+< 63b98e49e merge master: retain isolated profiles with exact order validation
+< 676968051 fix(uta): isolate unavailable venue profiles during account enumeration
+< f7729d4d1 refactor(uta): bind concrete exchange construction at entrypoints
+< 1c66b925f refactor(uta): isolate contract and selected profile imports (#3134) (#3229)
+< 4a69f7a71 fix(uta): validate exact order evidence at Core read boundary
+< 12266493d refactor(execution): converge observed close Fill ownership (#3134 batch 10) (#3228)
+< 508702832 refactor(uta): isolate contracts and selected profile imports (#3134)
+< d253106a2 refactor(execution): own observed close fill materialization (#3134)
+< d93a73a8f test(execution): use canonical identity and normalized fill fixtures (#3134 batch 9) (#3227)
+< 80d79de8b fix(connectivity): report missing exchange probes unavailable (#3134 batch 7) (#3225)
+< ad2ee9c8a fix(connectivity): preserve probed venue in pause evidence
+< cbbd73113 refactor(execution): classify protection by account environment (#3134 batch 8) (#3226)
+< 945ff3f5a test(execution): bind fixtures to canonical identity and fill reports (#3134)
+< 17a75ab95 fix(connectivity): probe resolved execution venue before preference
+< 850db4979 refactor(execution): classify protection by account environment (#3134)
+< 34a45908c Merge master after diagnostic credential repair
+< c263f41cc fix(connectivity): report missing exchange probes unavailable (#3134)
+< 9ff540dce fix(network): redact diagnostic exception details (#3134 batch 6) (#3224)
+< f2f6b98ec fix(network): redact diagnostic exception details (#3134)
+< 486f75b9f fix(doctor): redact proxy diagnostics (#3223)
+< 11be2df39 fix(data): bound FRED credential handling (#3222)
+< c3862f08a fix(data): bound Coinalyze credential handling (#3221)
+< ba27c6d9d refactor(risk): make account config binding explicit (#3220)
+< 2dc7dbb70 refactor(risk): require exact market snapshot identity (#3219)
+< 3e7f7c70e fix(doctor): redact proxy diagnostics
+< 030f324aa Merge branch 'refactor/3134-03-coinalyze-credential-boundary' into refactor/3134-04-fred-credential-boundary
+< 6f1879cb8 Merge branch 'refactor/3134-02-account-binding' into refactor/3134-03-coinalyze-credential-boundary
+< f2c1b3932 Merge branch 'refactor/3134-01-risk-freshness' into refactor/3134-02-account-binding
+< 3361d5e7e fix(data): persist exact execution instrument snapshots
+< b90ea9db3 Merge branch 'refactor/3134-03-coinalyze-credential-boundary' into refactor/3134-04-fred-credential-boundary
+< 1d461ce32 Merge branch 'refactor/3134-02-account-binding' into refactor/3134-03-coinalyze-credential-boundary
+< 18d92d063 Merge branch 'refactor/3134-01-risk-freshness' into refactor/3134-02-account-binding
+< dfa72f223 fix(net): omit credentials from retry diagnostics
+< bd63bbe87 test(risk): verify venue in stale-data gate
+< b6b90476c fix(data): bound FRED credential handling
+< badeb0fec docs(trust): scope missing-provider side effects
+< 8236fcfc1 fix(data): bound Coinalyze credential handling
+< efbf2b147 docs(governance): require durable git checkpoints (#3218)
+< c82a4ef2d refactor(risk): make account config binding explicit
+< 708ae3267 docs(risk): bind exact freshness contract
+< 3acff2455 refactor(risk): require exact market snapshot identity
+> ee62856e9 test(candidate): preserve bootstrap fixture coverage
+> aa9cd3b6c test(specs): restore conformance registry
+> dbb7685b6 test(layout): follow current capability owners
+> 928a6eb8c chore(layout): complete relocated runtime paths
+> 3db575da3 test(risk): seed exact venue snapshots
+> 6286e3041 test(frontend): restore final-head consistency
+> 69e39dc12 chore(runtime): follow the relocated package root
+> 2125cd9f4 refactor(storage): centralize Fill mutation
+> f06254f78 chore(frontend): target the Core static root
+> fdcb3157b fix(settings): expose canonical Slim Product fields
+> 29c332ab8 docs(audit): record Slim Core ownership evidence
+> 3f8994b3f docs(layout): follow relocated capability owners
+> 53b1ff1e3 docs(history): archive retired authority surfaces
+> 1d08b8dd2 docs(trust): record Core and Extension authority
+> 0fa688bdd docs(contracts): bind Slim Core authority semantics
+> f7665bba6 docs(product): state the active Slim Product surface
+> e2e4c9c9c chore(dev): follow the Core source root
+> 5c013936a test(regression): relocate focused Slim Core coverage
+> 83cd67361 test(specs): align executable contracts with Slim Core
+> 3c46fa2b7 test(uta): cover converged exchange boundary
+> 880415e1b refactor(layout): split Core from Extensions
+> c3dc36ebc test(architecture): enforce Slim Core ownership boundaries
+> b1cfd7a75 test: align adoption fixtures with active execution identity
+> 454849ef3 refactor(core): use registered execution environment for protection

@@ -1,0 +1,304 @@
+# Agent Contracts — retired, duplicated and summarized sections
+
+> **History (moved 2026-10-10).** Retired or superseded design kept as evidence; not current authority. See [design history](README.md).
+
+Moved verbatim from [`agent_contracts.md`](../contracts/agent_contracts.md) when it was rewritten
+into the numbered Contract form. Current behavior lives only in that Contract; the job registry
+lives only in [`scheduler_contract.md`](../contracts/scheduler_contract.md). Learning-agent detail
+below is current until [spec 0001](../specs/0001-learning-loop/spec.md) replaces it; the
+Contract keeps a one-line summary of each.
+
+## Former second job table (§1 Scheduler Job Overview)
+
+| Job ID | Interval | Executor | Description |
+|--------|----------|----------|-------------|
+| market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
+| equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
+| prediction_observer | 30min | agents | Prediction market scan |
+| pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
+| position_manager | 30s | protective | Manage open positions (trailing stop, exit) |
+| position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
+| tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
+| position_reconcile | 5min | io | Reconcile local vs exchange positions |
+| post_trade_reviewer | 4h | agents | Review closed trades for lessons |
+| risk_critic | 6h | agents | Evaluate risk exposure and write an advisory research note |
+| dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
+| lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
+| insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
+| confidence_calibration | 6h | io | Compute ECE calibration metrics |
+| health_check | 10min | io | Doctor health probe |
+| cleanup | cron 03:17 CST | io | Data retention cleanup |
+| exchange_sync | 5min | io | Refresh exchange account cache |
+| portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
+| reconciliation | 2min | io | Order/Fill reconciliation for every exchange account mode (no Live gating) |
+| price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
+| daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
+| data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
+| data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
+| demo_capabilities | 4h | io | Refresh the configured demo account's instrument capabilities |
+| guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
+| universe_refresh | 10min | maintenance_io | Universe composition refresh |
+| ohlcv_nightly_backfill | cron (configurable) CST | maintenance_io | Historical OHLCV gap fill |
+| ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | maintenance_io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
+| filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
+| persona_rollout | 8h | io | Rechecks durable exact Persona/policy/step evidence; advances at most one parameter or refreezes, never changes unrelated config |
+| connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
+| outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete Serenity post-mortem delivery |
+| news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
+| outcome_settler | 10min | maintenance_io | Settle due Filter Candidate Outcomes (`filter_candidate_outcomes`); `universe_forward_outcomes` was dropped in v94 (#3701) |
+| broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
+| serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
+| learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+| funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in persisted funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
+| pricing_reference_refresh | 6h | io | Refresh the LLM pricing reference (`aletheia.economics.pricing_sync`) |
+| universe_scanner_audit_reconciler | 5min | audit | Retry pending Universe scanner audit JSONL mirrors after DB-authoritative recovery |
+| observation_lab_bridge | 1min | audit | Drain Main delivery receipts and mirror Lab audit intents |
+| venue_margin_facts | 5min | io | Maintain venue margin-tier facts for the Planner's live demand (#3741) |
+
+Learning behavior producers remain gated by `agent.autonomous_learning`.
+Outcome settlement, funding, durable outcome replay and the Observation Lab runner/bridge
+retain their independent safety and measurement boundaries. The legacy contribution
+evaluator, measurement catch-up and lifecycle controller/reconciler are retired.
+Historical job-health rows are evidence only, never active schedules.
+After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
+`last_failure_reason` preserve the most recent failure.
+
+The former local-simulator funding settler and its public-rate settlement path
+are [archived](../history/local_simulated_risk_execution.md). They are not active
+jobs. Current verified-close feedback is durably queued and independently
+retried by `outcome_hook_replay`.
+
+`broker_funding_settler` is exchange-accounting recovery, not trading authority. It runs during
+layered pause and rotates a durable scheduling cursor so expired, transient, malformed, or
+CAS-conflicting prefixes cannot starve later closes. Only the matching UTA profile's typed
+`funding_history_retention_expired` result may write the terminal automatic-retry reason
+`broker_funding_history_expired`; PnL/funding remain `NULL`, no cash or Outcome/Learning hook is
+created, and credential/network/permission failures stay retryable.
+
+`funding_audit_reconciler` is audit delivery maintenance, not an accounting or trading job. New
+paper/broker funding settlements commit the authoritative SQLite audit with their economics and
+enroll only that audit for JSONL delivery. The essential reconciler starts one minute after boot,
+runs every five minutes on the isolated `audit` executor, and retries at most 100 oldest rows with a
+15-second bounded worker. Failure degrades audit/job health but never changes accounting status,
+replays cash/Position/hook facts, pauses scheduling, or changes infrastructure readiness.
+
+## Retired agents
+
+#### market_observer (retired 2026-09-24 — removed from the runtime topology)
+
+Retired under the accepted proposal
+[`docs/design/proposals/retire_market_observer.md`](../proposals/retire_market_observer.md)
+(#2933). The agent, its scheduler job, its registration, and the diagnostic surfaces
+that reported its liveness were deleted because its admitted workset had no producer:
+`source_agent="universe_scanner"` no longer exists, so nothing could ever reach its
+`signal_emitter` admission gate. The deterministic Universe → Opportunity mainline
+is the sole candidate supply path. Historical `market_observer` runs and
+`metadata.observer_assessment` rows remain readable as audit-only evidence; they
+grant no current entry or enrichment authority.
+
+#### stock_observer (removed 2026-06-17 — superseded by equity_observer)
+
+The retired name is absent from the manual agent catalog and is rejected with
+HTTP 403 by `POST /api/agent-runs/start`, including Operator service calls.
+Use `equity_observer`; historical runs remain readable. Historical
+`observed_stocks` config is decoded into the sole `observed_equities` workset
+under the [configuration contract](../contracts/configuration_contract.md); no runtime alias
+or writable legacy control remains.
+
+#### Historical Ranker / PaperTrader (retired entry)
+
+The former deterministic ranker scored Opportunities, bounded a five-carrier
+pending queue and applied family TTL penalties. PaperTrader then wrote
+`signal_pending` PiDecisions and woke the Operator. These are historical semantics
+only: neither job, queue admission, TTL writer nor on-demand notification remains
+an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
+
+#### Historical TradingDecision / Momentum Setup (nonexecuting history)
+
+The former Three-layer Context, Bull/Bear debate, final PiDecision and reflection
+claim chain is retired for entry. Its old rationale/provenance remains readable;
+new plans never write or recover that entry state. The former Setup arm/refuse,
+ConditionalAuthorization and materialization path likewise has no adapter
+exception when a current Plan is absent. Fast Monitoring watches EntryPlans, not
+old Setups; historical arm/trigger rows cannot create a new Proposal. Existing
+order identity is recovered by Gateway, not by reviving Setup execution.
+
+### C. Strategy Agents — REMOVED (Position C, 2026-07-02)
+
+The rules engine (`strategy_designer` + `backtest_orchestrator`) was **deleted**.
+Strategy generation / DSL / backtesting no longer exist. The historical replacement
+was `evaluate_trading_opportunity`; that entry evaluator is now also retired.
+Current entry is Candidate → PlanningGeneration → Planner/Compiler → EntryPlan. `strategy_records`, `backtest_runs` and `backtest_trades` were dropped in schema v92/v91
+(issues #3702/#3703, 2026-09-29) — all had zero rows on Fedora at retirement audit. The deterministic `guard_promotion`
+job was re-homed from the deleted daily backtest cycle. Its retained schedule now
+only performs learned-guard TTL expiry; candidate promotion is explicit owner review
+(see scheduler_contract §job table).
+
+#### Learning contribution measurement (retired scheduler)
+
+The former recurring `learning_contribution_evaluator`, startup measurement
+catch-up and lifecycle-controller jobs are not registered in the current
+Scheduler. Their persisted exposures, outcomes and verdicts remain historical
+evidence. The current owner surface is the bounded read-only
+`/api/analytics/learning-contribution` projection; it cannot invoke an evaluator,
+change experiment state, grant Paper influence, or affect Candidate, Risk,
+Execution, exchange or Live state. The broader `lco-v1` design remains the
+[`learning_observability`](../proposals/learning_observability.md) Proposal.
+
+## Text moved out of the Entry Planner IO section (not Planner behavior)
+
+- **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes remain observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. Read-only comparisons reject retrospective imports, mixed epochs and mixed feature contracts; cost-aware evidence stays unavailable. No automatic source/scheduler or promotion authority is introduced, and this evidence never changes Agent, Risk or Execution authority.
+
+## Learning-agent detail (summarized in the Contract; replaced by spec 0001)
+
+#### post_trade_reviewer
+
+- **Owner**: `extensions/research/post_trade_reviewer.py`, explicitly composed in
+  the existing Core registry; missing Research omits its job and rejects manual
+  enqueue before persistence. Core retains central Outcome eligibility.
+- **Trigger**: scheduler every 4h; disabled when `agent.autonomous_learning=false`
+- **Inputs**: Recently closed positions (no existing review), market context at entry/exit
+- **LLM**: Yes (analysis of trade quality)
+- **Outputs**: knowledge_items (item_type=post_trade_review)
+- **Side effects**: Writes reviews (the review→strategy_designer event chain was removed with the rules engine, Position C)
+- **Input budget**: consumes complete proposal-linked decision records only. It may
+  reduce the number of whole Positions to stay within the total prompt budget and
+  reports the omitted count; it never truncates a selected Position's rationale.
+
+#### risk_critic
+
+- **Owner**: `extensions/research/risk_critic.py`, registered by CLI/Web composition
+  in the existing Core agent registry. An absent producer is unavailable in the
+  manual catalog and omitted from the scheduler, not recorded as a failed run.
+- **Trigger**: scheduler every 6h; disabled when `agent.autonomous_learning=false`
+- **Inputs**: Open positions, risk config, recent violations, portfolio exposure
+- **LLM**: Yes (risk assessment)
+- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `extensions/research/risk_critic.py` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`)
+- **Side effects**: Writes one medium-confidence advisory research note. It does not flag opportunities or write `risk_decisions`; those facts remain owned by the Risk Engine. Automatic Risk lessons remain advisory because `risk_lesson_constraint` is not measurement-supported.
+
+#### dreaming_daily
+
+- **Owner / availability**: Dreaming and Lesson Reviewer have one implementation each in
+  `extensions/research`; CLI/Web compose their manual functions into the Core agent
+  registry. Scheduler receives only the existing async lesson-extraction helper and
+  synchronous Serenity enqueue callback. Missing producers are unavailable in the
+  catalog and omitted from cron/startup catch-up before Learning guards, without
+  failed attempts, success watermarks or endless retries for absent work. Each
+  available nightly sub-capability can still run independently.
+- **Manual versus scheduled**: Full manual Dreaming writes knowledge summaries,
+  daily reviews when its existing trigger permits, lessons and the optional Git
+  artifact snapshot. The nightly wrapper enqueues Serenity and extracts lessons;
+  it does not invoke full manual Dreaming. Lesson Reviewer retains scoped evidence
+  floors, LessonStore CAS, immutable policy-history transaction and draft-skill
+  creation/recovery; it neither activates skills nor writes execution facts.
+- **Trigger**: daily 02:00 CST; the shared Learning catch-up checks the latest missed lesson-extraction window 5 minutes after boot; `serenity_startup_catchup` separately repairs the research batch at 4 minutes
+- **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
+- **LLM**: Yes (synthesis)
+- **Outputs**: knowledge_items (item_type=dreaming_log, daily_review), serenity research runs/themes/evidence/opportunities
+- **24h trading-performance block**: Every `daily_review` begins with a deterministic block (`_build_daily_trading_performance`) reading the central `eligible_strategy_outcomes()` cohort from the last 24h; raw lifecycle flags are not sufficient evidence. Labels: `PROFIT_DAY` / `LOSS_DAY` / `FLAT_DAY` / `NOT_AVAILABLE`. Excluded, unavailable, truncated, inconsistent, or invalid outcome evidence remains `NOT_AVAILABLE` and is reported with the raw/excluded counts; no P&L is coerced to zero. The block is also included in the LLM prompt so the narrative reflects the day's verified cost-complete P&L.
+- **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction uses `learning_job_health.input_watermark` to catch up one missed date-window without duplicate restart runs
+
+#### insight_synthesizer
+
+- **Owner**: optional `extensions/analytics/insight_synthesizer.py`; CLI/Web binds the existing scheduler callback. Without this report package, no report cron is registered and startup catch-up records unavailable without advancing a success watermark.
+- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day) + durable shared startup catch-up after 5min
+- **Inputs**: knowledge_items, opportunities, positions, strategy performance
+- **LLM**: Yes
+- **Outputs**: Synthesized insights; reasoning_feedback piggyback (per-bucket statistics)
+- **Side effects**: Writes insight items; updates reasoning feedback cache
+
+#### confidence_calibration
+
+- **Owner**: optional `extensions/analytics/confidence_calibration.py`; CLI/Web binds the scheduler builder and Core go-live scorecard readers. Missing reports retain the existing zero-score readiness blocker; score thresholds and economic eligibility are unchanged. The two report API handlers belong to the same optional package.
+- **Trigger**: every 6h
+- **Inputs**: PI decisions with conviction scores + actual outcomes (position P&L)
+- **LLM**: No (pure statistical computation)
+- **Outputs**: Calibration scores (ECE by bucket), grade (excellent/good/fair/poor)
+- **Side effects**: Updates calibration cache; exposed via /analytics/confidence-calibration
+
+## Former cross-cutting copies (owners: data_model.md §1/§9, scheduler_contract.md, llm_inference_harness_contract.md, live_unlock_contract.md)
+
+## 3. Cross-Cutting Concerns
+
+### SQLite Concurrency
+
+All agents share the same SQLite DB. Invariants that MUST hold (full detail in [data_model §1, §9](../data/data_model.md)):
+1. `_WRITE_LOCK` (`sqlite.py`) — process-wide `threading.Lock`, acquired by `transaction()` before every `BEGIN`, released after `COMMIT`/`ROLLBACK`. Primary write serialization; `database is locked` cannot occur in normal operation.
+2. WAL mode + `busy_timeout=30000ms` (30s) as last-resort fallback — `storage/sqlite.py::_open_connection`
+3. One connection per thread via `threading.local`
+4. `was_in_tx = db.in_transaction` captured BEFORE writes; commit only `if not was_in_tx`
+5. Scheduler pools are sized in `scheduler.py::_EXECUTOR_WORKERS` (`default` 2, every other pool 1); never above 3 ([scheduler_contract](../contracts/scheduler_contract.md) INV-SCH-1)
+6. Never `await` or do network I/O inside a `with transaction():` block — `_WRITE_LOCK` is held for the full transaction duration
+
+### Job Timeouts (hard wall-clock bound, per-job — `_ASYNC_JOB_TIMEOUT_SEC`)
+
+Not a single 300s default — each job has its own cap in `scheduler.py`'s
+`_ASYNC_JOB_TIMEOUT_SEC`, shared by `_run_async_with_timeout` and
+`_run_sync_with_timeout`. The per-job values are listed in the
+[scheduler contract §3](../contracts/scheduler_contract.md) job table. `misfire_grace_time`
+is set per `add_job`.
+
+### Error Handling & Failure Isolation
+
+- **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`_run_job_guarded`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
+- **Leaked-tx cleanup**: scheduler rolls back any leaked transaction before/after each job.
+- **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure`. Non-cascading.
+- **Entry stale-input expiry**: canonical attention deadlines, planning retry/claim and Plan expiry bound current work; old pending cannot extend market-data refresh demand or wake a retired evaluator.
+
+### LLM Fallback (request-level, unified — `complete_with_fallback` in `core/aletheia/model_provider/fallback.py`)
+
+- Every provider completion is admitted by the process-wide Inference Broker before
+  fallback execution. Admission is Provider-scoped and enforces bounded priority
+  queues, concurrency, RPM/TPM and one total queue+execution deadline. Manual agent
+  HTTP requests create a durable queued AgentRun and return `202 + job_id`; a
+  persistent single worker owns execution outside the Uvicorn event loop.
+
+- `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit, connect/network/remote-protocol/proxy transport failures), tries the next candidate model from the explicit ordered `fallback_models` configuration only; discovery and model-name heuristics cannot supply candidates (see [Inference Harness failure semantics](../contracts/llm_inference_harness_contract.md#failure-and-recovery-semantics)). Authentication and other permanent 4xx failures do not retry. Timeout exceptions remain terminal so five sequential 60-second model attempts cannot overrun bounded agent jobs.
+- `agents.helpers.llm_structured()` 对非对象/不可解析 JSON、schema 校验失败和空输出最多尝试 2 次：第一次使用原始请求，第二次只在这些结构化失败后追加一次随机 nonce 修复消息，并保持同一输出预算；不再把上一轮坏输出或递增预算带回第三次尝试。全部尝试共享 180 秒总墙钟预算，不继承 provider 面向长研究输出的 300 秒上限。当前 HTTP provider 使用 portable strict JSON Schema；不支持该字段时由适配器执行有界 schema fallback。`fallback_to_defaults` 默认关闭；只有非关键调用方显式开启时，失败才返回 schema 派生默认值，并在 error 字符串保留 `(fallback)` 标记。当前生产调用方均未开启该选项。
+- **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).
+- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. equity_observer → technical-only signals).
+
+### Permission Modes (two surfaces — see [live_unlock_contract §5](../contracts/live_unlock_contract.md))
+
+> ⚠️ Corrected: not a flat Read Only/Operator/Full. There are TWO ranked surfaces:
+- **Worker** (Agent Shell): `Observe < Paper < Full` (default `Paper`)
+- **Operator** (PI/Dashboard): `ReadOnly < Research < PaperAuto < AllowEditing < Auto` (default `ReadOnly`)
+
+`FORBIDDEN_INTENTS` (enable_live / bypass_risk / change_risk_limits / ...) are uncallable in ANY mode — `FORBIDDEN_INTENTS` in `core/aletheia/agent_shell/registry.py`.
+
+## Former data-flow summary
+
+## 4. Data Flow Summary
+
+```text
+Universe discovery ──────┐
+                        ├─ durable Candidate / current PlanningGeneration
+Serenity research + PA ──┘               │
+                                Entry Planner / Hypothesis
+                                        │
+                                Deterministic Compiler
+                                        │
+                                Immutable EntryPlan
+                                        │
+                              Plan execution / watcher
+                                        │
+                                    Proposal
+                                        │
+                                  Risk → Gateway
+                                        │
+                                 Order → Fill → Position
+                                                    │
+                              position_manager / portfolio review
+                                                    │
+                                       Gateway close / adjust
+                                                    │
+                                  closed-trade review → knowledge
+```
+
+Other observers add research evidence, not a second admission path. Research
+feedback can inform later source publication but cannot bypass PA, Planner,
+Compiler, Risk or Gateway. UTA-only external accounts, one-way Lab authority and
+unique auto.run deployment are approved future portions, not delivered claims
+of this entry-contract update; unrelated agent/measurement contracts above are
+not changed by the entry cutover.

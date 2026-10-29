@@ -1,0 +1,19 @@
+{
+ "before": {
+  "VmRSS": 2285,
+  "RssAnon": 2155,
+  "arena": 2005,
+  "in_use": 428,
+  "free_held": 1577
+ },
+ "after": {
+  "VmRSS": 1181,
+  "RssAnon": 1050,
+  "arena": 1959,
+  "in_use": 431,
+  "free_held": 1528
+ },
+ "malloc_trim_rc": 1,
+ "secs": 0.108,
+ "time": "2026-10-10 09:59:55"
+}
